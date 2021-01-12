@@ -4,8 +4,8 @@ services:
   unit-test:
     build:
       context: ../../
-      dockerfile: ./docker/buildkite/Dockerfile
-    command: /bin/sh -c "docker/buildkite/run-tests.sh"
+      dockerfile: .buildkite/docker/Dockerfile
+    command: /bin/sh -c ".buildkite/docker/build.sh"
     environment:
       - "USER=unittest"
     volumes:

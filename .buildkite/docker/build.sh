@@ -3,4 +3,3 @@ set -e
 set -x
 
 cargo build
-cargo test
