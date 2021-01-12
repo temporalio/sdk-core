@@ -2,6 +2,15 @@ syntax = "proto3";
 
 package temporal.api.coresdk.v1;
 
+// Note: Intellij will think these imports don't work because of the slightly odd nature of
+// the include paths. They work.
+
+import "temporal/api/workflowservice/v1/request_response.proto";
+import "temporal/api/taskqueue/v1/message.proto";
+import "temporal/api/enums/v1/failed_cause.proto";
+import "temporal/api/failure/v1/message.proto";
+import "temporal/api/common/v1/message.proto";
+
 // TODO: SDK prefix in front of everything is maybe pointless given it's all within this package
 
 service CoreSDKService {
@@ -24,12 +33,12 @@ message PollSDKTaskResp {
 
 message SDKWFTask {
     // Original task from temporal service
-    temporal.api.request_response.v1.PollWorkflowTaskQueueResponse original = 1;
+    temporal.api.workflowservice.v1.PollWorkflowTaskQueueResponse original = 1;
 }
 
 message SDKActivityTask {
     // Original task from temporal service
-    temporal.api.request_response.v1.PollActivityTaskQueueResponse original = 1;
+    temporal.api.workflowservice.v1.PollActivityTaskQueueResponse original = 1;
 }
 
 
@@ -79,5 +88,6 @@ message SDKWFCommand {
     oneof command {
         // Commands go here. Should we reuse and add on top of the originals?
         // https://github.com/temporalio/api/blob/master/temporal/api/command/v1/message.proto#L174
+        bool nothing = 1;
     }
 }

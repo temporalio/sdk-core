@@ -1,0 +1,598 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.workflowservice.v1;
+
+option go_package = "go.temporal.io/api/workflowservice/v1;workflowservice";
+option java_package = "io.temporal.api.workflowservice.v1";
+option java_multiple_files = true;
+option java_outer_classname = "RequestResponseProto";
+option ruby_package = "Temporal::Api::WorkflowService::V1";
+
+import "temporal/api/enums/v1/workflow.proto";
+import "temporal/api/enums/v1/namespace.proto";
+import "temporal/api/enums/v1/failed_cause.proto";
+import "temporal/api/enums/v1/common.proto";
+import "temporal/api/enums/v1/query.proto";
+import "temporal/api/enums/v1/task_queue.proto";
+import "temporal/api/common/v1/message.proto";
+import "temporal/api/history/v1/message.proto";
+import "temporal/api/workflow/v1/message.proto";
+import "temporal/api/command/v1/message.proto";
+import "temporal/api/failure/v1/message.proto";
+import "temporal/api/filter/v1/message.proto";
+import "temporal/api/namespace/v1/message.proto";
+import "temporal/api/query/v1/message.proto";
+import "temporal/api/replication/v1/message.proto";
+import "temporal/api/taskqueue/v1/message.proto";
+import "temporal/api/version/v1/message.proto";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+import "dependencies/gogoproto/gogo.proto";
+
+message RegisterNamespaceRequest {
+    string namespace = 1;
+    string description = 2;
+    string owner_email = 3;
+    google.protobuf.Duration workflow_execution_retention_period = 4 [(gogoproto.stdduration) = true];
+    repeated temporal.api.replication.v1.ClusterReplicationConfig clusters = 5;
+    string active_cluster_name = 6;
+    // A key-value map for any customized purpose.
+    map<string, string> data = 7;
+    string security_token = 8;
+    bool is_global_namespace = 9;
+    // If unspecified (ARCHIVAL_STATE_UNSPECIFIED) then default server configuration is used.
+    temporal.api.enums.v1.ArchivalState history_archival_state = 10;
+    string history_archival_uri = 11;
+    // If unspecified (ARCHIVAL_STATE_UNSPECIFIED) then default server configuration is used.
+    temporal.api.enums.v1.ArchivalState visibility_archival_state = 12;
+    string visibility_archival_uri = 13;
+}
+
+message RegisterNamespaceResponse {
+}
+
+message ListNamespacesRequest {
+    int32 page_size = 1;
+    bytes next_page_token = 2;
+}
+
+message ListNamespacesResponse {
+    repeated DescribeNamespaceResponse namespaces = 1;
+    bytes next_page_token = 2;
+}
+
+message DescribeNamespaceRequest {
+    string namespace = 1;
+    string id = 2;
+}
+
+message DescribeNamespaceResponse {
+    temporal.api.namespace.v1.NamespaceInfo namespace_info = 1;
+    temporal.api.namespace.v1.NamespaceConfig config = 2;
+    temporal.api.replication.v1.NamespaceReplicationConfig replication_config = 3;
+    int64 failover_version = 4;
+    bool is_global_namespace = 5;
+}
+
+// (-- api-linter: core::0134::request-mask-required=disabled
+//     aip.dev/not-precedent: UpdateNamespace RPC doesn't follow Google API format. --)
+// (-- api-linter: core::0134::request-resource-required=disabled
+//     aip.dev/not-precedent: UpdateNamespace RPC doesn't follow Google API format. --)
+message UpdateNamespaceRequest {
+    string namespace = 1;
+    temporal.api.namespace.v1.UpdateNamespaceInfo update_info = 2;
+    temporal.api.namespace.v1.NamespaceConfig config = 3;
+    temporal.api.replication.v1.NamespaceReplicationConfig replication_config = 4;
+    string security_token = 5;
+    string delete_bad_binary = 6;
+}
+
+message UpdateNamespaceResponse {
+    temporal.api.namespace.v1.NamespaceInfo namespace_info = 1;
+    temporal.api.namespace.v1.NamespaceConfig config = 2;
+    temporal.api.replication.v1.NamespaceReplicationConfig replication_config = 3;
+    int64 failover_version = 4;
+    bool is_global_namespace = 5;
+}
+
+message DeprecateNamespaceRequest {
+    string namespace = 1;
+    string security_token = 2;
+}
+
+message DeprecateNamespaceResponse {
+}
+
+message StartWorkflowExecutionRequest {
+    string namespace = 1;
+    string workflow_id = 2;
+    temporal.api.common.v1.WorkflowType workflow_type = 3;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 4;
+    temporal.api.common.v1.Payloads input = 5;
+    // Total workflow execution timeout including retries and continue as new.
+    google.protobuf.Duration workflow_execution_timeout = 6 [(gogoproto.stdduration) = true];
+    // Timeout of a single workflow run.
+    google.protobuf.Duration workflow_run_timeout = 7 [(gogoproto.stdduration) = true];
+    // Timeout of a single workflow task.
+    google.protobuf.Duration workflow_task_timeout = 8 [(gogoproto.stdduration) = true];
+    string identity = 9;
+    string request_id = 10;
+    // Default: WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE.
+    temporal.api.enums.v1.WorkflowIdReusePolicy workflow_id_reuse_policy = 11;
+    // Retries up to workflow_execution_timeout_seconds.
+    temporal.api.common.v1.RetryPolicy retry_policy = 12;
+    string cron_schedule = 13;
+    temporal.api.common.v1.Memo memo = 14;
+    temporal.api.common.v1.SearchAttributes search_attributes = 15;
+    temporal.api.common.v1.Header header = 16;
+}
+
+message StartWorkflowExecutionResponse {
+    string run_id = 1;
+}
+
+message GetWorkflowExecutionHistoryRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution execution = 2;
+    int32 maximum_page_size = 3;
+    bytes next_page_token = 4;
+    bool wait_new_event = 5;
+    // Default: HISTORY_EVENT_FILTER_TYPE_ALL_EVENT.
+    temporal.api.enums.v1.HistoryEventFilterType history_event_filter_type = 6;
+    bool skip_archival = 7;
+}
+
+message GetWorkflowExecutionHistoryResponse {
+    temporal.api.history.v1.History history = 1;
+    repeated temporal.api.common.v1.DataBlob raw_history = 2;
+    bytes next_page_token = 3;
+    bool archived = 4;
+}
+
+message PollWorkflowTaskQueueRequest {
+    string namespace = 1;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 2;
+    string identity = 3;
+    string binary_checksum = 4;
+}
+
+message PollWorkflowTaskQueueResponse {
+    bytes task_token = 1;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
+    temporal.api.common.v1.WorkflowType workflow_type = 3;
+    int64 previous_started_event_id = 4;
+    int64 started_event_id = 5;
+    int32 attempt = 6;
+    int64 backlog_count_hint = 7;
+    temporal.api.history.v1.History history = 8;
+    bytes next_page_token = 9;
+    temporal.api.query.v1.WorkflowQuery query = 10;
+    temporal.api.taskqueue.v1.TaskQueue workflow_execution_task_queue = 11;
+    google.protobuf.Timestamp scheduled_time = 12 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp started_time = 13 [(gogoproto.stdtime) = true];
+    map<string, temporal.api.query.v1.WorkflowQuery> queries = 14;
+}
+
+message RespondWorkflowTaskCompletedRequest {
+    bytes task_token = 1;
+    repeated temporal.api.command.v1.Command commands = 2;
+    string identity = 3;
+    temporal.api.taskqueue.v1.StickyExecutionAttributes sticky_attributes = 4;
+    bool return_new_workflow_task = 5;
+    bool force_create_new_workflow_task = 6;
+    string binary_checksum = 7;
+    map<string, temporal.api.query.v1.WorkflowQueryResult> query_results = 8;
+    string namespace = 9;
+}
+
+message RespondWorkflowTaskCompletedResponse {
+    PollWorkflowTaskQueueResponse workflow_task = 1;
+}
+
+message RespondWorkflowTaskFailedRequest {
+    bytes task_token = 1;
+    temporal.api.enums.v1.WorkflowTaskFailedCause cause = 2;
+    temporal.api.failure.v1.Failure failure = 3;
+    string identity = 4;
+    string binary_checksum = 5;
+    string namespace = 6;
+}
+
+message RespondWorkflowTaskFailedResponse {
+}
+
+message PollActivityTaskQueueRequest {
+    string namespace = 1;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 2;
+    string identity = 3;
+    temporal.api.taskqueue.v1.TaskQueueMetadata task_queue_metadata = 4;
+}
+
+message PollActivityTaskQueueResponse {
+    bytes task_token = 1;
+    string workflow_namespace = 2;
+    temporal.api.common.v1.WorkflowType workflow_type = 3;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 4;
+    temporal.api.common.v1.ActivityType activity_type = 5;
+    string activity_id = 6;
+    temporal.api.common.v1.Header header = 7;
+    temporal.api.common.v1.Payloads input = 8;
+    temporal.api.common.v1.Payloads heartbeat_details = 9;
+    google.protobuf.Timestamp scheduled_time = 10 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp current_attempt_scheduled_time = 11 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp started_time = 12 [(gogoproto.stdtime) = true];
+    int32 attempt = 13;
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration schedule_to_close_timeout = 14 [(gogoproto.stdduration) = true];
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration start_to_close_timeout = 15 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration heartbeat_timeout = 16 [(gogoproto.stdduration) = true];
+    // This is an actual retry policy the service uses.
+    // It can be different from the one provided (or not) during activity scheduling
+    // as the service can override the provided one in case its values are not specified
+    // or exceed configured system limits.
+    temporal.api.common.v1.RetryPolicy retry_policy = 17;
+}
+
+message RecordActivityTaskHeartbeatRequest {
+    bytes task_token = 1;
+    temporal.api.common.v1.Payloads details = 2;
+    string identity = 3;
+    string namespace = 4;
+}
+
+message RecordActivityTaskHeartbeatResponse {
+    bool cancel_requested = 1;
+}
+
+message RecordActivityTaskHeartbeatByIdRequest {
+    string namespace = 1;
+    string workflow_id = 2;
+    string run_id = 3;
+    string activity_id = 4;
+    temporal.api.common.v1.Payloads details = 5;
+    string identity = 6;
+}
+
+message RecordActivityTaskHeartbeatByIdResponse {
+    bool cancel_requested = 1;
+}
+
+message RespondActivityTaskCompletedRequest {
+    bytes task_token = 1;
+    temporal.api.common.v1.Payloads result = 2;
+    string identity = 3;
+    string namespace = 4;
+}
+
+message RespondActivityTaskCompletedResponse {
+}
+
+message RespondActivityTaskCompletedByIdRequest {
+    string namespace = 1;
+    string workflow_id = 2;
+    string run_id = 3;
+    string activity_id = 4;
+    temporal.api.common.v1.Payloads result = 5;
+    string identity = 6;
+}
+
+message RespondActivityTaskCompletedByIdResponse {
+}
+
+message RespondActivityTaskFailedRequest {
+    bytes task_token = 1;
+    temporal.api.failure.v1.Failure failure = 2;
+    string identity = 3;
+    string namespace = 4;
+}
+
+message RespondActivityTaskFailedResponse {
+}
+
+message RespondActivityTaskFailedByIdRequest {
+    string namespace = 1;
+    string workflow_id = 2;
+    string run_id = 3;
+    string activity_id = 4;
+    temporal.api.failure.v1.Failure failure = 5;
+    string identity = 6;
+}
+
+message RespondActivityTaskFailedByIdResponse {
+}
+
+message RespondActivityTaskCanceledRequest {
+    bytes task_token = 1;
+    temporal.api.common.v1.Payloads details = 2;
+    string identity = 3;
+    string namespace = 4;
+}
+
+message RespondActivityTaskCanceledResponse {
+}
+
+message RespondActivityTaskCanceledByIdRequest {
+    string namespace = 1;
+    string workflow_id = 2;
+    string run_id = 3;
+    string activity_id = 4;
+    temporal.api.common.v1.Payloads details = 5;
+    string identity = 6;
+}
+
+message RespondActivityTaskCanceledByIdResponse {
+}
+
+message RequestCancelWorkflowExecutionRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
+    string identity = 3;
+    string request_id = 4;
+    string first_execution_run_id = 5;
+}
+
+message RequestCancelWorkflowExecutionResponse {
+}
+
+message SignalWorkflowExecutionRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
+    string signal_name = 3;
+    temporal.api.common.v1.Payloads input = 4;
+    string identity = 5;
+    string request_id = 6;
+    string control = 7;
+}
+
+message SignalWorkflowExecutionResponse {
+}
+
+message SignalWithStartWorkflowExecutionRequest {
+    string namespace = 1;
+    string workflow_id = 2;
+    temporal.api.common.v1.WorkflowType workflow_type = 3;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 4;
+    temporal.api.common.v1.Payloads input = 5;
+    // Total workflow execution timeout including retries and continue as new
+    google.protobuf.Duration workflow_execution_timeout = 6 [(gogoproto.stdduration) = true];
+    // Timeout of a single workflow run
+    google.protobuf.Duration workflow_run_timeout = 7 [(gogoproto.stdduration) = true];
+    // Timeout of a single workflow task
+    google.protobuf.Duration workflow_task_timeout = 8 [(gogoproto.stdduration) = true];
+    string identity = 9;
+    string request_id = 10;
+    temporal.api.enums.v1.WorkflowIdReusePolicy workflow_id_reuse_policy = 11;
+    string signal_name = 12;
+    temporal.api.common.v1.Payloads signal_input = 13;
+    string control = 14;
+    // Default: WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE.
+    temporal.api.common.v1.RetryPolicy retry_policy = 15;
+    string cron_schedule = 16;
+    temporal.api.common.v1.Memo memo = 17;
+    temporal.api.common.v1.SearchAttributes search_attributes = 18;
+    temporal.api.common.v1.Header header = 19;
+}
+
+message SignalWithStartWorkflowExecutionResponse {
+    string run_id = 1;
+}
+
+message ResetWorkflowExecutionRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
+    string reason = 3;
+    int64 workflow_task_finish_event_id = 4;
+    string request_id = 5;
+}
+
+message ResetWorkflowExecutionResponse {
+    string run_id = 1;
+}
+
+message TerminateWorkflowExecutionRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
+    string reason = 3;
+    temporal.api.common.v1.Payloads details = 4;
+    string identity = 5;
+    string first_execution_run_id = 6;
+}
+
+message TerminateWorkflowExecutionResponse {
+}
+
+message ListOpenWorkflowExecutionsRequest {
+    string namespace = 1;
+    int32 maximum_page_size = 2;
+    bytes next_page_token = 3;
+    temporal.api.filter.v1.StartTimeFilter start_time_filter = 4;
+    oneof filters {
+        temporal.api.filter.v1.WorkflowExecutionFilter execution_filter = 5;
+        temporal.api.filter.v1.WorkflowTypeFilter type_filter = 6;
+    }
+}
+
+message ListOpenWorkflowExecutionsResponse {
+    repeated temporal.api.workflow.v1.WorkflowExecutionInfo executions = 1;
+    bytes next_page_token = 2;
+}
+
+message ListClosedWorkflowExecutionsRequest {
+    string namespace = 1;
+    int32 maximum_page_size = 2;
+    bytes next_page_token = 3;
+    temporal.api.filter.v1.StartTimeFilter start_time_filter = 4;
+    oneof filters {
+        temporal.api.filter.v1.WorkflowExecutionFilter execution_filter = 5;
+        temporal.api.filter.v1.WorkflowTypeFilter type_filter = 6;
+        temporal.api.filter.v1.StatusFilter status_filter = 7;
+    }
+}
+
+message ListClosedWorkflowExecutionsResponse {
+    repeated temporal.api.workflow.v1.WorkflowExecutionInfo executions = 1;
+    bytes next_page_token = 2;
+}
+
+message ListWorkflowExecutionsRequest {
+    string namespace = 1;
+    int32 page_size = 2;
+    bytes next_page_token = 3;
+    string query = 4;
+}
+
+message ListWorkflowExecutionsResponse {
+    repeated temporal.api.workflow.v1.WorkflowExecutionInfo executions = 1;
+    bytes next_page_token = 2;
+}
+
+message ListArchivedWorkflowExecutionsRequest {
+    string namespace = 1;
+    int32 page_size = 2;
+    bytes next_page_token = 3;
+    string query = 4;
+}
+
+message ListArchivedWorkflowExecutionsResponse {
+    repeated temporal.api.workflow.v1.WorkflowExecutionInfo executions = 1;
+    bytes next_page_token = 2;
+}
+
+message ScanWorkflowExecutionsRequest {
+    string namespace = 1;
+    int32 page_size = 2;
+    bytes next_page_token = 3;
+    string query = 4;
+}
+
+message ScanWorkflowExecutionsResponse {
+    repeated temporal.api.workflow.v1.WorkflowExecutionInfo executions = 1;
+    bytes next_page_token = 2;
+}
+
+message CountWorkflowExecutionsRequest {
+    string namespace = 1;
+    string query = 2;
+}
+
+message CountWorkflowExecutionsResponse {
+    int64 count = 1;
+}
+
+message GetSearchAttributesRequest {
+}
+
+message GetSearchAttributesResponse {
+    map<string, temporal.api.enums.v1.IndexedValueType> keys = 1;
+}
+
+// TODO:  deprecated APIs
+message RespondQueryTaskCompletedRequest {
+    bytes task_token = 1;
+    temporal.api.enums.v1.QueryResultType completed_type = 2;
+    temporal.api.common.v1.Payloads query_result = 3;
+    string error_message = 4;
+    reserved 5;
+    string namespace = 6;
+}
+
+message RespondQueryTaskCompletedResponse {
+}
+
+message ResetStickyTaskQueueRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution execution = 2;
+}
+
+message ResetStickyTaskQueueResponse {
+}
+
+message QueryWorkflowRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution execution = 2;
+    temporal.api.query.v1.WorkflowQuery query = 3;
+    // QueryRejectCondition can used to reject the query if workflow state does not satisfy condition.
+    // Default: QUERY_REJECT_CONDITION_NONE.
+    temporal.api.enums.v1.QueryRejectCondition query_reject_condition = 4;
+}
+
+message QueryWorkflowResponse {
+    temporal.api.common.v1.Payloads query_result = 1;
+    temporal.api.query.v1.QueryRejected query_rejected = 2;
+}
+
+message DescribeWorkflowExecutionRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution execution = 2;
+}
+
+message DescribeWorkflowExecutionResponse {
+    temporal.api.workflow.v1.WorkflowExecutionConfig execution_config = 1;
+    temporal.api.workflow.v1.WorkflowExecutionInfo workflow_execution_info = 2;
+    repeated temporal.api.workflow.v1.PendingActivityInfo pending_activities = 3;
+    repeated temporal.api.workflow.v1.PendingChildExecutionInfo pending_children = 4;
+}
+
+message DescribeTaskQueueRequest {
+    string namespace = 1;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 2;
+    temporal.api.enums.v1.TaskQueueType task_queue_type = 3;
+    bool include_task_queue_status = 4;
+}
+
+message DescribeTaskQueueResponse {
+    repeated temporal.api.taskqueue.v1.PollerInfo pollers = 1;
+    temporal.api.taskqueue.v1.TaskQueueStatus task_queue_status = 2;
+}
+
+message GetClusterInfoRequest {
+}
+
+// GetClusterInfoResponse contains information about Temporal cluster.
+message GetClusterInfoResponse {
+    // Key is client name i.e "temporal-go", "temporal-java", or "temporal-cli".
+    // Value is ranges of supported versions of this client i.e ">1.1.1 <=1.4.0 || ^5.0.0".
+    map<string,string> supported_clients = 1;
+    string server_version = 2;
+    string cluster_id = 3;
+    temporal.api.version.v1.VersionInfo version_info = 4;
+    string cluster_name = 5;
+    int32 history_shard_count = 6;
+}
+
+message ListTaskQueuePartitionsRequest {
+    string namespace = 1;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 2;
+}
+
+message ListTaskQueuePartitionsResponse {
+    repeated temporal.api.taskqueue.v1.TaskQueuePartitionMetadata activity_task_queue_partitions = 1;
+    repeated temporal.api.taskqueue.v1.TaskQueuePartitionMetadata workflow_task_queue_partitions = 2;
+}

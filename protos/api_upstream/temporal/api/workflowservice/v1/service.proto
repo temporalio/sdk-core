@@ -1,0 +1,283 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.workflowservice.v1;
+
+option go_package = "go.temporal.io/api/workflowservice/v1;workflowservice";
+option java_package = "io.temporal.api.workflowservice.v1";
+option java_multiple_files = true;
+option java_outer_classname = "ServiceProto";
+option ruby_package = "Temporal::Api::WorkflowService::V1";
+
+
+import "temporal/api/workflowservice/v1/request_response.proto";
+
+// WorkflowService API is exposed to provide support for long running applications.  Application is expected to call
+// StartWorkflowExecution to create an instance for each instance of long running workflow.  Such applications are expected
+// to have a worker which regularly polls for WorkflowTask and ActivityTask from the WorkflowService.  For each
+// WorkflowTask, application is expected to process the history of events for that session and respond back with next
+// commands.  For each ActivityTask, application is expected to execute the actual logic for that task and respond back
+// with completion or failure.  Worker is expected to regularly heartbeat while activity task is running.
+service WorkflowService {
+
+    // RegisterNamespace creates a new namespace which can be used as a container for all resources.  Namespace is a top level
+    // entity within Temporal, used as a container for all resources like workflow executions, task queues, etc.  Namespace
+    // acts as a sandbox and provides isolation for all resources within the namespace.  All resources belongs to exactly one
+    // namespace.
+    rpc RegisterNamespace (RegisterNamespaceRequest) returns (RegisterNamespaceResponse) {
+    }
+
+    // DescribeNamespace returns the information and configuration for a registered namespace.
+    rpc DescribeNamespace (DescribeNamespaceRequest) returns (DescribeNamespaceResponse) {
+    }
+
+    // ListNamespaces returns the information and configuration for all namespaces.
+    rpc ListNamespaces (ListNamespacesRequest) returns (ListNamespacesResponse) {
+    }
+
+    // (-- api-linter: core::0134::method-signature=disabled
+    //     aip.dev/not-precedent: UpdateNamespace RPC doesn't follow Google API format. --)
+    // (-- api-linter: core::0134::response-message-name=disabled
+    //     aip.dev/not-precedent: UpdateNamespace RPC doesn't follow Google API format. --)
+    // UpdateNamespace is used to update the information and configuration for a registered namespace.
+    rpc UpdateNamespace (UpdateNamespaceRequest) returns (UpdateNamespaceResponse) {
+    }
+
+    // DeprecateNamespace is used to update state of a registered namespace to DEPRECATED.  Once the namespace is deprecated
+    // it cannot be used to start new workflow executions.  Existing workflow executions will continue to run on
+    // deprecated namespaces.
+    rpc DeprecateNamespace (DeprecateNamespaceRequest) returns (DeprecateNamespaceResponse) {
+    }
+
+    // StartWorkflowExecution starts a new long running workflow instance.  It will create the instance with
+    // 'WorkflowExecutionStarted' event in history and also schedule the first WorkflowTask for the worker to make the
+    // first command for this instance.  It will return 'WorkflowExecutionAlreadyStartedFailure', if an instance already
+    // exists with same workflowId.
+    rpc StartWorkflowExecution (StartWorkflowExecutionRequest) returns (StartWorkflowExecutionResponse) {
+    }
+
+    // GetWorkflowExecutionHistory returns the history of specified workflow execution.  It fails with 'NotFoundFailure' if specified workflow
+    // execution in unknown to the service.
+    rpc GetWorkflowExecutionHistory (GetWorkflowExecutionHistoryRequest) returns (GetWorkflowExecutionHistoryResponse) {
+    }
+
+    // PollWorkflowTaskQueue is called by application worker to process WorkflowTask from a specific task queue.  A
+    // WorkflowTask is dispatched to callers for active workflow executions, with pending workflow tasks.
+    // Application is then expected to call 'RespondWorkflowTaskCompleted' API when it is done processing the WorkflowTask.
+    // It will also create a 'WorkflowTaskStarted' event in the history for that session before handing off WorkflowTask to
+    // application worker.
+    rpc PollWorkflowTaskQueue (PollWorkflowTaskQueueRequest) returns (PollWorkflowTaskQueueResponse) {
+    }
+
+    // RespondWorkflowTaskCompleted is called by application worker to complete a WorkflowTask handed as a result of
+    // 'PollWorkflowTaskQueue' API call.  Completing a WorkflowTask will result in new events for the workflow execution and
+    // potentially new ActivityTask being created for corresponding commands.  It will also create a WorkflowTaskCompleted
+    // event in the history for that session.  Use the 'taskToken' provided as response of PollWorkflowTaskQueue API call
+    // for completing the WorkflowTask.
+    // The response could contain a new workflow task if there is one or if the request asking for one.
+    rpc RespondWorkflowTaskCompleted (RespondWorkflowTaskCompletedRequest) returns (RespondWorkflowTaskCompletedResponse) {
+    }
+
+    // RespondWorkflowTaskFailed is called by application worker to indicate failure.  This results in
+    // WorkflowTaskFailedEvent written to the history and a new WorkflowTask created.  This API can be used by client to
+    // either clear sticky task queue or report any panics during WorkflowTask processing.  Temporal will only append first
+    // WorkflowTaskFailed event to the history of workflow execution for consecutive failures.
+    rpc RespondWorkflowTaskFailed (RespondWorkflowTaskFailedRequest) returns (RespondWorkflowTaskFailedResponse) {
+    }
+
+    // PollActivityTaskQueue is called by application worker to process ActivityTask from a specific task queue.  ActivityTask
+    // is dispatched to callers whenever a ScheduleTask command is made for a workflow execution.
+    // Application is expected to call 'RespondActivityTaskCompleted' or 'RespondActivityTaskFailed' once it is done
+    // processing the task.
+    // Application also needs to call 'RecordActivityTaskHeartbeat' API within 'heartbeatTimeoutSeconds' interval to
+    // prevent the task from getting timed out.  An event 'ActivityTaskStarted' event is also written to workflow execution
+    // history before the ActivityTask is dispatched to application worker.
+    rpc PollActivityTaskQueue (PollActivityTaskQueueRequest) returns (PollActivityTaskQueueResponse) {
+    }
+
+    // RecordActivityTaskHeartbeat is called by application worker while it is processing an ActivityTask.  If worker fails
+    // to heartbeat within 'heartbeatTimeoutSeconds' interval for the ActivityTask, then it will be marked as timedout and
+    // 'ActivityTaskTimedOut' event will be written to the workflow history.  Calling 'RecordActivityTaskHeartbeat' will
+    // fail with 'NotFoundFailure' in such situations.  Use the 'taskToken' provided as response of
+    // PollActivityTaskQueue API call for heart beating.
+    rpc RecordActivityTaskHeartbeat (RecordActivityTaskHeartbeatRequest) returns (RecordActivityTaskHeartbeatResponse) {
+    }
+
+    // (-- api-linter: core::0136::prepositions=disabled
+    //     aip.dev/not-precedent: "By" is used to indicate request type. --)
+    // RecordActivityTaskHeartbeatById is called by application worker while it is processing an ActivityTask.  If worker fails
+    // to heartbeat within 'heartbeatTimeoutSeconds' interval for the ActivityTask, then it will be marked as timed out and
+    // 'ActivityTaskTimedOut' event will be written to the workflow history.  Calling 'RecordActivityTaskHeartbeatById' will
+    // fail with 'NotFoundFailure' in such situations.  Instead of using 'taskToken' like in RecordActivityTaskHeartbeat,
+    // use Namespace, WorkflowId and ActivityId
+    rpc RecordActivityTaskHeartbeatById (RecordActivityTaskHeartbeatByIdRequest) returns (RecordActivityTaskHeartbeatByIdResponse) {
+    }
+
+    // RespondActivityTaskCompleted is called by application worker when it is done processing an ActivityTask.  It will
+    // result in a new 'ActivityTaskCompleted' event being written to the workflow history and a new WorkflowTask
+    // created for the workflow so new commands could be made.  Use the 'taskToken' provided as response of
+    // PollActivityTaskQueue API call for completion. It fails with 'NotFoundFailure' if the taskToken is not valid
+    // anymore due to activity timeout.
+    rpc RespondActivityTaskCompleted (RespondActivityTaskCompletedRequest) returns (RespondActivityTaskCompletedResponse) {
+    }
+
+    // (-- api-linter: core::0136::prepositions=disabled
+    //     aip.dev/not-precedent: "By" is used to indicate request type. --)
+    // RespondActivityTaskCompletedById is called by application worker when it is done processing an ActivityTask.
+    // It will result in a new 'ActivityTaskCompleted' event being written to the workflow history and a new WorkflowTask
+    // created for the workflow so new commands could be made.  Similar to RespondActivityTaskCompleted but use Namespace,
+    // WorkflowId and ActivityId instead of 'taskToken' for completion. It fails with 'NotFoundFailure'
+    // if the these Ids are not valid anymore due to activity timeout.
+    rpc RespondActivityTaskCompletedById (RespondActivityTaskCompletedByIdRequest) returns (RespondActivityTaskCompletedByIdResponse) {
+    }
+
+    // RespondActivityTaskFailed is called by application worker when it is done processing an ActivityTask.  It will
+    // result in a new 'ActivityTaskFailed' event being written to the workflow history and a new WorkflowTask
+    // created for the workflow instance so new commands could be made.  Use the 'taskToken' provided as response of
+    // PollActivityTaskQueue API call for completion. It fails with 'NotFoundFailure' if the taskToken is not valid
+    // anymore due to activity timeout.
+    rpc RespondActivityTaskFailed (RespondActivityTaskFailedRequest) returns (RespondActivityTaskFailedResponse) {
+    }
+
+    // (-- api-linter: core::0136::prepositions=disabled
+    //     aip.dev/not-precedent: "By" is used to indicate request type. --)
+    // RespondActivityTaskFailedById is called by application worker when it is done processing an ActivityTask.
+    // It will result in a new 'ActivityTaskFailed' event being written to the workflow history and a new WorkflowTask
+    // created for the workflow instance so new commands could be made.  Similar to RespondActivityTaskFailed but use
+    // Namespace, WorkflowId and ActivityId instead of 'taskToken' for completion. It fails with 'NotFoundFailure'
+    // if the these Ids are not valid anymore due to activity timeout.
+    rpc RespondActivityTaskFailedById (RespondActivityTaskFailedByIdRequest) returns (RespondActivityTaskFailedByIdResponse) {
+    }
+
+    // RespondActivityTaskCanceled is called by application worker when it is successfully canceled an ActivityTask.  It will
+    // result in a new 'ActivityTaskCanceled' event being written to the workflow history and a new WorkflowTask
+    // created for the workflow instance so new commands could be made.  Use the 'taskToken' provided as response of
+    // PollActivityTaskQueue API call for completion. It fails with 'NotFoundFailure' if the taskToken is not valid
+    // anymore due to activity timeout.
+    rpc RespondActivityTaskCanceled (RespondActivityTaskCanceledRequest) returns (RespondActivityTaskCanceledResponse) {
+    }
+
+    // (-- api-linter: core::0136::prepositions=disabled
+    //     aip.dev/not-precedent: "By" is used to indicate request type. --)
+    // RespondActivityTaskCanceledById is called by application worker when it is successfully canceled an ActivityTask.
+    // It will result in a new 'ActivityTaskCanceled' event being written to the workflow history and a new WorkflowTask
+    // created for the workflow instance so new commands could be made.  Similar to RespondActivityTaskCanceled but use
+    // Namespace, WorkflowId and ActivityId instead of 'taskToken' for completion. It fails with 'NotFoundFailure'
+    // if the these Ids are not valid anymore due to activity timeout.
+    rpc RespondActivityTaskCanceledById (RespondActivityTaskCanceledByIdRequest) returns (RespondActivityTaskCanceledByIdResponse) {
+    }
+
+    // RequestCancelWorkflowExecution is called by application worker when it wants to request cancellation of a workflow instance.
+    // It will result in a new 'WorkflowExecutionCancelRequested' event being written to the workflow history and a new WorkflowTask
+    // created for the workflow instance so new commands could be made. It fails with 'NotFoundFailure' if the workflow is not valid
+    // anymore due to completion or doesn't exist.
+    rpc RequestCancelWorkflowExecution (RequestCancelWorkflowExecutionRequest) returns (RequestCancelWorkflowExecutionResponse) {
+    }
+
+    // SignalWorkflowExecution is used to send a signal event to running workflow execution.  This results in
+    // WorkflowExecutionSignaled event recorded in the history and a workflow task being created for the execution.
+    rpc SignalWorkflowExecution (SignalWorkflowExecutionRequest) returns (SignalWorkflowExecutionResponse) {
+    }
+
+    // (-- api-linter: core::0136::prepositions=disabled
+    //     aip.dev/not-precedent: "With" is used to indicate combined operation. --)
+    // SignalWithStartWorkflowExecution is used to ensure sending signal to a workflow.
+    // If the workflow is running, this results in WorkflowExecutionSignaled event being recorded in the history
+    // and a workflow task being created for the execution.
+    // If the workflow is not running or not found, this results in WorkflowExecutionStarted and WorkflowExecutionSignaled
+    // events being recorded in history, and a workflow task being created for the execution
+    rpc SignalWithStartWorkflowExecution (SignalWithStartWorkflowExecutionRequest) returns (SignalWithStartWorkflowExecutionResponse) {
+    }
+
+    // ResetWorkflowExecution reset an existing workflow execution to WorkflowTaskCompleted event(exclusive).
+    // And it will immediately terminating the current execution instance.
+    rpc ResetWorkflowExecution (ResetWorkflowExecutionRequest) returns (ResetWorkflowExecutionResponse) {
+    }
+
+    // TerminateWorkflowExecution terminates an existing workflow execution by recording WorkflowExecutionTerminated event
+    // in the history and immediately terminating the execution instance.
+    rpc TerminateWorkflowExecution (TerminateWorkflowExecutionRequest) returns (TerminateWorkflowExecutionResponse) {
+    }
+
+    // ListOpenWorkflowExecutions is a visibility API to list the open executions in a specific namespace.
+    rpc ListOpenWorkflowExecutions (ListOpenWorkflowExecutionsRequest) returns (ListOpenWorkflowExecutionsResponse) {
+    }
+
+    // ListClosedWorkflowExecutions is a visibility API to list the closed executions in a specific namespace.
+    rpc ListClosedWorkflowExecutions (ListClosedWorkflowExecutionsRequest) returns (ListClosedWorkflowExecutionsResponse) {
+    }
+
+    // ListWorkflowExecutions is a visibility API to list workflow executions in a specific namespace.
+    rpc ListWorkflowExecutions (ListWorkflowExecutionsRequest) returns (ListWorkflowExecutionsResponse) {
+    }
+
+    // ListArchivedWorkflowExecutions is a visibility API to list archived workflow executions in a specific namespace.
+    rpc ListArchivedWorkflowExecutions (ListArchivedWorkflowExecutionsRequest) returns (ListArchivedWorkflowExecutionsResponse) {
+    }
+
+    // ScanWorkflowExecutions is a visibility API to list large amount of workflow executions in a specific namespace without order.
+    rpc ScanWorkflowExecutions (ScanWorkflowExecutionsRequest) returns (ScanWorkflowExecutionsResponse) {
+    }
+
+    // CountWorkflowExecutions is a visibility API to count of workflow executions in a specific namespace.
+    rpc CountWorkflowExecutions (CountWorkflowExecutionsRequest) returns (CountWorkflowExecutionsResponse) {
+    }
+
+    // GetSearchAttributes is a visibility API to get all legal keys that could be used in list APIs
+    rpc GetSearchAttributes (GetSearchAttributesRequest) returns (GetSearchAttributesResponse) {
+    }
+
+    // RespondQueryTaskCompleted is called by application worker to complete a QueryTask (which is a WorkflowTask for query)
+    // as a result of 'PollWorkflowTaskQueue' API call. Completing a QueryTask will unblock the client call to 'QueryWorkflow'
+    // API and return the query result to client as a response to 'QueryWorkflow' API call.
+    rpc RespondQueryTaskCompleted (RespondQueryTaskCompletedRequest) returns (RespondQueryTaskCompletedResponse) {
+    }
+
+    // ResetStickyTaskQueue resets the sticky task queue related information in mutable state of a given workflow.
+    // Things cleared are:
+    // 1. StickyTaskQueue
+    // 2. StickyScheduleToStartTimeout
+    rpc ResetStickyTaskQueue (ResetStickyTaskQueueRequest) returns (ResetStickyTaskQueueResponse) {
+    }
+
+    // QueryWorkflow returns query result for a specified workflow execution
+    rpc QueryWorkflow (QueryWorkflowRequest) returns (QueryWorkflowResponse) {
+    }
+
+    // DescribeWorkflowExecution returns information about the specified workflow execution.
+    rpc DescribeWorkflowExecution (DescribeWorkflowExecutionRequest) returns (DescribeWorkflowExecutionResponse) {
+    }
+
+    // DescribeTaskQueue returns information about the target task queue, right now this API returns the
+    // pollers which polled this task queue in last few minutes.
+    rpc DescribeTaskQueue (DescribeTaskQueueRequest) returns (DescribeTaskQueueResponse) {
+    }
+
+    // GetClusterInfo returns information about temporal cluster
+    rpc GetClusterInfo(GetClusterInfoRequest) returns (GetClusterInfoResponse){
+    }
+
+    rpc ListTaskQueuePartitions(ListTaskQueuePartitionsRequest) returns (ListTaskQueuePartitionsResponse) {
+    }
+}
