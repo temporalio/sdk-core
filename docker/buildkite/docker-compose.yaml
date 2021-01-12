@@ -1,0 +1,12 @@
+version: '3.5'
+
+services:
+  unit-test:
+    build:
+      context: ../../
+      dockerfile: ./docker/buildkite/Dockerfile
+    command: /bin/sh -c "docker/buildkite/run-tests.sh"
+    environment:
+      - "USER=unittest"
+    volumes:
+      - "../../:/sdk-core"

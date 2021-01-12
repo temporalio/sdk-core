@@ -1,0 +1,12 @@
+steps:
+  - label: ":java: Unit test"
+    agents:
+      queue: "default"
+      docker: "*"
+    command: "./gradlew --no-daemon test"
+    timeout_in_minutes: 15
+    plugins:
+      - docker-compose#v3.0.0:
+          run: unit-test
+          config: docker/buildkite/docker-compose.yaml
+  - wait
