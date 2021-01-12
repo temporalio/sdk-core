@@ -1,0 +1,12 @@
+steps:
+  - label: ":rust: Unit test"
+    agents:
+      queue: "default"
+      docker: "*"
+    command: "cargo test"
+    timeout_in_minutes: 15
+    plugins:
+      - docker-compose#v3.0.0:
+          run: unit-test
+          config: .buildkite/docker/docker-compose.yaml
+  - wait
