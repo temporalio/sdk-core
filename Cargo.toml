@@ -8,10 +8,17 @@ edition = "2018"
 
 [dependencies]
 async-trait = "0.1"
+derive_more = "0.99"
 prost = "0.6"
 prost-types = "0.6"
 thiserror = "1.0"
 tonic = "0.3"
 
+[dependencies.rustfsm]
+path = "fsm"
+
 [build-dependencies]
 tonic-build = "0.3"
+
+[workspace]
+members = [".", "fsm"]

@@ -1,0 +1,23 @@
+[package]
+name = "state_machine_procmacro"
+version = "0.1.0"
+authors = ["Spencer Judge <sjudge@hey.com>"]
+edition = "2018"
+
+[lib]
+proc-macro = true
+
+[[test]]
+name = "tests"
+path = "tests/progress.rs"
+
+[dependencies]
+derive_more = "0.99"
+proc-macro2 = "1.0"
+syn = { version = "1.0", features = ["default", "extra-traits"] }
+quote = "1.0"
+state_machine_trait = { path = "../state_machine_trait" }
+
+[dev-dependencies]
+trybuild = { version = "1.0", features = ["diff"] }
+

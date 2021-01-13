@@ -1,0 +1,5 @@
+error: Only tuple variants with exactly one item are supported for events
+ --> $DIR/tuple_more_item_event_variant_fail.rs:8:12
+  |
+8 |     One --(A(Foo, Bar), on_a)--> Two
+  |            ^

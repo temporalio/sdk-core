@@ -23,7 +23,7 @@ steps:
     agents:
       queue: "default"
       docker: "*"
-    command: "cargo test"
+    command: "cargo test --workspace"
     timeout_in_minutes: 15
     plugins:
       - docker-compose#v3.0.0:
