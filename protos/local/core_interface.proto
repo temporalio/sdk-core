@@ -16,7 +16,7 @@ import "temporal/api/common/v1/message.proto";
 
 service CoreSDKService {
     rpc PollSDKTask (PollSDKTaskReq) returns (PollSDKTaskResp) {}
-    rpc CompleteSDKTask (CompleteSDKTaskReq) returns (PollSDKTaskResp) {}
+    rpc CompleteSDKTask (CompleteSDKTaskReq) returns (CompleteSDKTaskResp) {}
 }
 
 message PollSDKTaskReq {
@@ -50,6 +50,8 @@ message CompleteSDKTaskReq {
         SDKActivityTaskCompletion activity = 3;
     }
 }
+
+message CompleteSDKTaskResp {}
 
 message SDKWFTaskCompletion {
     oneof status {
