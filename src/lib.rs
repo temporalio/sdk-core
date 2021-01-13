@@ -1,6 +1,6 @@
 pub mod protos;
 
-use protos::coresdk::{PollSdkTaskReq, PollSdkTaskResp, CompleteSdkTaskReq, CompleteSdkTaskResp};
+use protos::coresdk::{CompleteSdkTaskReq, CompleteSdkTaskResp, PollSdkTaskReq, PollSdkTaskResp};
 
 type Result<T, E = SDKServiceError> = std::result::Result<T, E>;
 

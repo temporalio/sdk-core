@@ -1,5 +1,25 @@
 steps:
-  - label: ":rust: Unit test"
+  - label: "fmt"
+    agents:
+      queue: "default"
+      docker: "*"
+    command: "cargo fmt --all -- --check"
+    timeout_in_minutes: 15
+    plugins:
+      - docker-compose#v3.0.0:
+          run: unit-test
+          config: .buildkite/docker/docker-compose.yaml
+  - label: "lint"
+    agents:
+      queue: "default"
+      docker: "*"
+    command: "cargo clippy --all -- -D warnings"
+    timeout_in_minutes: 15
+    plugins:
+      - docker-compose#v3.0.0:
+          run: unit-test
+          config: .buildkite/docker/docker-compose.yaml
+  - label: "test"
     agents:
       queue: "default"
       docker: "*"
