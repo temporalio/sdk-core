@@ -5,8 +5,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_server(false)
         .build_client(false)
         .compile(
-            &["protos/core_interface.proto"],
-            &["protos/api_upstream", "protos"],
+            &["protos/local/core_interface.proto"],
+            &["protos/api_upstream", "protos/local"],
         )?;
     Ok(())
 }
