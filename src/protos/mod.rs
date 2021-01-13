@@ -2,6 +2,8 @@ pub mod coresdk {
     tonic::include_proto!("coresdk");
 }
 
+// No need to lint these
+#[allow(clippy::all)]
 // This is disgusting, but unclear to me how to avoid it. TODO: Discuss w/ prost maintainer
 pub mod temporal {
     pub mod api {
