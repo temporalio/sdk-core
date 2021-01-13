@@ -7,3 +7,22 @@ submodule -- when checking out the repo for the first time make sure you've run
 
 ## Dependencies
 * Protobuf compiler
+
+# Development
+
+All of the following commands are enforced for each pull request.
+
+## Building and testing
+
+You can buld and test the project using cargo:
+`cargo build`
+`cargo test`
+
+## Formatting
+To format all code run:
+`cargo format --all`
+
+## Linting
+We are using [clippy](https://github.com/rust-lang/rust-clippy) for linting.
+You can run it using:
+`cargo clippy --all -- -D warnings`
