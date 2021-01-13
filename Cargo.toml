@@ -4,11 +4,14 @@ version = "0.1.0"
 authors = ["Spencer Judge <spencer@temporal.io>", "Vitaly Arbuzov <vitaly@temporal.io>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
 
 [dependencies]
-tonic = "0.3"
+async-trait = "0.1"
 prost = "0.6"
+prost-types = "0.6"
+thiserror = "1.0"
+tonic = "0.3"
 
 [build-dependencies]
 tonic-build = "0.3"

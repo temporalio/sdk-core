@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package temporal.api.coresdk.v1;
+package coresdk;
 
 // Note: Intellij will think these imports don't work because of the slightly odd nature of
 // the include paths. You can make it work by going to the "Protobuf Support" settings section
