@@ -20,10 +20,12 @@ fsm! {
 
 #[derive(thiserror::Error, Debug)]
 pub enum TimerMachineError {}
+
 pub enum TimerCommand {}
 
 #[derive(Default)]
 pub struct CancelTimerCommandCreated {}
+
 impl CancelTimerCommandCreated {
     pub fn on_command_cancel_timer(self) -> TimerMachineTransition {
         unimplemented!()
@@ -32,6 +34,7 @@ impl CancelTimerCommandCreated {
 
 #[derive(Default)]
 pub struct CancelTimerCommandSent {}
+
 impl CancelTimerCommandSent {
     pub fn on_timer_canceled(self) -> TimerMachineTransition {
         unimplemented!()
@@ -43,6 +46,7 @@ pub struct Canceled {}
 
 #[derive(Default)]
 pub struct Created {}
+
 impl Created {
     pub fn on_schedule(self) -> TimerMachineTransition {
         unimplemented!()
@@ -54,6 +58,7 @@ pub struct Fired {}
 
 #[derive(Default)]
 pub struct StartCommandCreated {}
+
 impl StartCommandCreated {
     pub fn on_timer_started(self) -> TimerMachineTransition {
         unimplemented!()
@@ -65,6 +70,7 @@ impl StartCommandCreated {
 
 #[derive(Default)]
 pub struct StartCommandRecorded {}
+
 impl StartCommandRecorded {
     pub fn on_timer_fired(self) -> TimerMachineTransition {
         unimplemented!()

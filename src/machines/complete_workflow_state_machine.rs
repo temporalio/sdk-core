@@ -1,22 +1,26 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-	CompleteWorkflowMachine, CompleteWorkflowCommand, CompleteWorkflowMachineError
+    CompleteWorkflowMachine, CompleteWorkflowCommand, CompleteWorkflowMachineError
 
-	CompleteWorkflowCommandCreated --(CommandCompleteWorkflowExecution) --> CompleteWorkflowCommandCreated;
-	CompleteWorkflowCommandCreated --(WorkflowExecutionCompleted, on_workflow_execution_completed) --> CompleteWorkflowCommandRecorded;
+    CompleteWorkflowCommandCreated --(CommandCompleteWorkflowExecution) --> CompleteWorkflowCommandCreated;
+    CompleteWorkflowCommandCreated --(WorkflowExecutionCompleted, on_workflow_execution_completed) --> CompleteWorkflowCommandRecorded;
 
-	Created --(Schedule, on_schedule) --> CompleteWorkflowCommandCreated;
+    Created --(Schedule, on_schedule) --> CompleteWorkflowCommandCreated;
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum CompleteWorkflowMachineError {}
+
 pub enum CompleteWorkflowCommand {}
 
 #[derive(Default)]
 pub struct CompleteWorkflowCommandCreated {}
+
 impl CompleteWorkflowCommandCreated {
-	pub fn on_workflow_execution_completed(self) -> CompleteWorkflowMachineTransition { unimplemented!() }
+    pub fn on_workflow_execution_completed(self) -> CompleteWorkflowMachineTransition {
+        unimplemented!()
+    }
 }
 
 #[derive(Default)]
@@ -24,7 +28,9 @@ pub struct CompleteWorkflowCommandRecorded {}
 
 #[derive(Default)]
 pub struct Created {}
-impl Created {
-	pub fn on_schedule(self) -> CompleteWorkflowMachineTransition { unimplemented!() }
-}
 
+impl Created {
+    pub fn on_schedule(self) -> CompleteWorkflowMachineTransition {
+        unimplemented!()
+    }
+}
