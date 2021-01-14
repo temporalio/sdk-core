@@ -1,3 +1,4 @@
+mod machines;
 pub mod protos;
 
 use protos::coresdk::{CompleteSdkTaskReq, CompleteSdkTaskResp, PollSdkTaskReq, PollSdkTaskResp};

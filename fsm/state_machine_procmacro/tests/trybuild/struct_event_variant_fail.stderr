@@ -1,0 +1,5 @@
+error: Struct variants are not supported for events
+ --> $DIR/struct_event_variant_fail.rs:8:12
+  |
+8 |     One --(A{foo: String}, on_a)--> Two
+  |            ^
