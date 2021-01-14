@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    ChildWorkflowMachine, ChildWorkflowCommand, ChildWorkflowMachineError
+    name ChildWorkflowMachine; command ChildWorkflowCommand; error ChildWorkflowMachineError;
 
     Created --(Schedule, on_schedule) --> StartCommandCreated;
 

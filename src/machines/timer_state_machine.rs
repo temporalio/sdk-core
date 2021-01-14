@@ -1,7 +1,10 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    TimerMachine, TimerCommand, TimerMachineError
+    name TimerMachine;
+    command TimerCommand;
+    error TimerMachineError;
+    shared_state SharedState;
 
     CancelTimerCommandCreated --(Cancel) --> CancelTimerCommandCreated;
     CancelTimerCommandCreated --(CommandCancelTimer, on_command_cancel_timer) --> CancelTimerCommandSent;
@@ -17,6 +20,8 @@ fsm! {
     StartCommandRecorded --(TimerFired, on_timer_fired) --> Fired;
     StartCommandRecorded --(Cancel, on_cancel) --> CancelTimerCommandCreated;
 }
+
+pub struct SharedState {}
 
 #[derive(thiserror::Error, Debug)]
 pub enum TimerMachineError {}
@@ -108,4 +113,10 @@ impl TimerMachine {
         */
         unimplemented!()
     }
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn wat() {}
 }

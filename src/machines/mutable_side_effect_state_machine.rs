@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    MutableSideEffectMachine, MutableSideEffectCommand, MutableSideEffectMachineError
+    name MutableSideEffectMachine; command MutableSideEffectCommand; error MutableSideEffectMachineError;
 
     Created --(CheckExecutionState, on_check_execution_state) --> Replaying;
     Created --(CheckExecutionState, on_check_execution_state) --> Executing;

@@ -9,7 +9,7 @@ use syn::{
     parse_macro_input,
     punctuated::Punctuated,
     spanned::Spanned,
-    Error, Fields, Ident, Token, Variant,
+    Error, Fields, Ident, Token, Type, Variant,
 };
 
 /// Parses a DSL for defining finite state machines, and produces code implementing the
@@ -23,12 +23,16 @@ use syn::{
 /// use state_machine_trait::{StateMachine, TransitionResult};
 ///
 /// fsm! {
-///     CardReader, Commands, Infallible
+///     name CardReader; command Commands; error Infallible; shared_state CardId;
 ///
 ///     Locked --(CardReadable(CardData), on_card_readable) --> ReadingCard;
 ///     ReadingCard --(CardAccepted, on_card_accepted) --> DoorOpen;
 ///     ReadingCard --(CardRejected, on_card_rejected) --> Locked;
 ///     DoorOpen --(DoorClosed, on_door_closed) --> Locked;
+/// }
+///
+/// pub struct CardId {
+///     some_id: String
 /// }
 ///
 /// #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -80,7 +84,8 @@ use syn::{
 ///     }
 /// }
 ///
-/// let cr = CardReader::Locked(Locked {});
+/// let cr = CardReaderState::Locked(Locked {});
+/// let crm = CardReader { state: crs, shared_state: CardId { some_id: "an_id!".to_string() } };
 /// let (cr, cmds) = cr
 ///     .on_event(CardReaderEvents::CardReadable("badguy".to_string()))
 ///     .unwrap();
@@ -116,9 +121,15 @@ use syn::{
 /// the `ReadingCard` state.
 ///
 /// The macro will generate a few things:
-/// * An enum with a variant for each state, named with the provided name. In this case:
+/// * A struct for the overall state machine, named with the provided name. Here:
 ///   ```ignore
-///   enum CardMachine {
+///   struct CardMachine {
+///       state: CardMachineState
+///   }
+///   ```
+/// * An enum with a variant for each state, named with the provided name + "State". Here:
+///   ```ignore
+///   enum CardMachineState {
 ///       Locked(Locked),
 ///       ReadingCard(ReadingCard),
 ///       Unlocked(Unlocked),
@@ -145,8 +156,16 @@ pub fn fsm(input: TokenStream) -> TokenStream {
     def.codegen()
 }
 
+mod kw {
+    syn::custom_keyword!(name);
+    syn::custom_keyword!(command);
+    syn::custom_keyword!(error);
+    syn::custom_keyword!(shared_state);
+}
+
 struct StateMachineDefinition {
     name: Ident,
+    shared_state_type: Option<Type>,
     command_type: Ident,
     error_type: Ident,
     transitions: HashSet<Transition>,
@@ -156,10 +175,10 @@ impl Parse for StateMachineDefinition {
     // TODO: Pub keyword
     fn parse(input: ParseStream) -> Result<Self> {
         // First parse the state machine name, command type, and error type
-        let (name, command_type, error_type) = parse_first_line(&input).map_err(|mut e| {
+        let (name, command_type, error_type, shared_state_type) = parse_machine_types(&input).map_err(|mut e| {
             e.combine(Error::new(
                 e.span(),
-                "The first line of the fsm definition should be `MachineName, CommandType, ErrorType`",
+                "The fsm definition should begin with `name MachineName; command CommandType; error ErrorType;` optionally followed by `shared_state SharedStateType;`",
             ));
             e
         })?;
@@ -170,6 +189,7 @@ impl Parse for StateMachineDefinition {
         let transitions = transitions.into_iter().collect();
         Ok(Self {
             name,
+            shared_state_type,
             transitions,
             command_type,
             error_type,
@@ -177,13 +197,28 @@ impl Parse for StateMachineDefinition {
     }
 }
 
-fn parse_first_line(input: &ParseStream) -> Result<(Ident, Ident, Ident)> {
+fn parse_machine_types(input: &ParseStream) -> Result<(Ident, Ident, Ident, Option<Type>)> {
+    let _: kw::name = input.parse()?;
     let name: Ident = input.parse()?;
-    input.parse::<Token![,]>()?;
+    input.parse::<Token![;]>()?;
+
+    let _: kw::command = input.parse()?;
     let command_type: Ident = input.parse()?;
-    input.parse::<Token![,]>()?;
+    input.parse::<Token![;]>()?;
+
+    let _: kw::error = input.parse()?;
     let error_type: Ident = input.parse()?;
-    Ok((name, command_type, error_type))
+    input.parse::<Token![;]>()?;
+
+    let shared_state_type: Option<Type> = if input.peek(kw::shared_state) {
+        let _: kw::shared_state = input.parse()?;
+        let typep = input.parse()?;
+        input.parse::<Token![;]>()?;
+        Some(typep)
+    } else {
+        None
+    };
+    Ok((name, command_type, error_type, shared_state_type))
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -272,9 +307,21 @@ impl StateMachineDefinition {
             }
         });
         let name = &self.name;
-        let main_enum = quote! {
+        let state_enum_name = Ident::new(&format!("{}State", name), name.span());
+        // If user has not defined any shared state, use the unit type.
+        let shared_state_type = self
+            .shared_state_type
+            .clone()
+            .unwrap_or_else(|| syn::parse_str("()").unwrap());
+        let machine_struct = quote! {
+            pub struct #name {
+                state: #state_enum_name,
+                shared_state: #shared_state_type
+            }
+        };
+        let states_enum = quote! {
             #[derive(::derive_more::From)]
-            pub enum #name {
+            pub enum #state_enum_name {
                 #(#state_variants),*
             }
         };
@@ -354,37 +401,39 @@ impl StateMachineDefinition {
                     quote! { _ => { return TransitionResult::InvalidTransition } },
                 ));
             quote! {
-                #name::#from(state_data) => match event {
+                #state_enum_name::#from(state_data) => match event {
                     #(#event_branches),*
                 }
             }
         });
 
         let trait_impl = quote! {
-            impl ::rustfsm::StateMachine<#name, #events_enum_name, #cmd_type> for #name {
+            impl ::rustfsm::StateMachine<#state_enum_name, #events_enum_name, #cmd_type> for #name {
                 type Error = #err_type;
 
                 fn on_event(self, event: #events_enum_name)
-                  -> ::rustfsm::TransitionResult<#name, Self::Error, #cmd_type> {
-                    match self {
+                  -> ::rustfsm::TransitionResult<#state_enum_name, Self::Error, #cmd_type> {
+                    match self.state {
                         #(#state_branches),*
                     }
                 }
 
-                fn state(&self) -> &Self {
-                    &self
+                fn state(&self) -> &#state_enum_name {
+                    &self.state
                 }
             }
         };
 
         let transition_result_name = Ident::new(&format!("{}Transition", name), name.span());
         let transition_type_alias = quote! {
-            type #transition_result_name = TransitionResult<#name, #err_type, #cmd_type>;
+            type #transition_result_name =
+                TransitionResult<#state_enum_name, #err_type, #cmd_type>;
         };
 
         let output = quote! {
             #transition_type_alias
-            #main_enum
+            #machine_struct
+            #states_enum
             #events_enum
             #trait_impl
         };

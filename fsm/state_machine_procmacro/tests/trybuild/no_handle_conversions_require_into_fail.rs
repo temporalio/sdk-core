@@ -5,7 +5,7 @@ use state_machine_trait::TransitionResult;
 use std::convert::Infallible;
 
 fsm! {
-    SimpleMachine, SimpleMachineCommand, Infallible
+    name SimpleMachine; command SimpleMachineCommand; error Infallible;
 
     One --(A)--> Two;
     Two --(B)--> One;

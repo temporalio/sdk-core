@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    CancelWorkflowMachine, CancelWorkflowCommand, CancelWorkflowMachineError
+    name CancelWorkflowMachine; command CancelWorkflowCommand; error CancelWorkflowMachineError;
 
     CancelWorkflowCommandCreated --(CommandCancelWorkflowExecution) --> CancelWorkflowCommandCreated;
     CancelWorkflowCommandCreated --(WorkflowExecutionCanceled, on_workflow_execution_canceled) --> CancelWorkflowCommandRecorded;

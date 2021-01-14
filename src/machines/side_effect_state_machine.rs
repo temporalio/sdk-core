@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    SideEffectMachine, SideEffectCommand, SideEffectMachineError
+    name SideEffectMachine; command SideEffectCommand; error SideEffectMachineError;
 
     Created --(Schedule, on_schedule) --> MarkerCommandCreated;
     Created --(Schedule, on_schedule) --> MarkerCommandCreatedReplaying;

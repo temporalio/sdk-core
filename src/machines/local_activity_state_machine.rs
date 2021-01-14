@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    LocalActivityMachine, LocalActivityCommand, LocalActivityMachineError
+    name LocalActivityMachine; command LocalActivityCommand; error LocalActivityMachineError;
 
     Created --(CheckExecutionState, on_check_execution_state) --> Replaying;
     Created --(CheckExecutionState, on_check_execution_state) --> Executing;

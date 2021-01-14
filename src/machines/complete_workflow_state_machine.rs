@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    CompleteWorkflowMachine, CompleteWorkflowCommand, CompleteWorkflowMachineError
+    name CompleteWorkflowMachine; command CompleteWorkflowCommand; error CompleteWorkflowMachineError;
 
     CompleteWorkflowCommandCreated --(CommandCompleteWorkflowExecution) --> CompleteWorkflowCommandCreated;
     CompleteWorkflowCommandCreated --(WorkflowExecutionCompleted, on_workflow_execution_completed) --> CompleteWorkflowCommandRecorded;

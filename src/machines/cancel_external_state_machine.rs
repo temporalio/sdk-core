@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    CancelExternalMachine, CancelExternalCommand, CancelExternalMachineError
+    name CancelExternalMachine; command CancelExternalCommand; error CancelExternalMachineError;
 
     Created --(Schedule, on_schedule) --> RequestCancelExternalCommandCreated;
 

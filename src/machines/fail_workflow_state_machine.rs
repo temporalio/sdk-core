@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    FailWorkflowMachine, FailWorkflowCommand, FailWorkflowMachineError
+    name FailWorkflowMachine; command FailWorkflowCommand; error FailWorkflowMachineError;
 
     Created --(Schedule, on_schedule) --> FailWorkflowCommandCreated;
 

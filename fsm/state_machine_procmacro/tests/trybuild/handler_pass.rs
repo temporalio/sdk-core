@@ -5,7 +5,7 @@ use state_machine_trait::TransitionResult;
 use std::convert::Infallible;
 
 fsm! {
-    Simple, SimpleCommand, Infallible
+    name Simple; command SimpleCommand; error Infallible;
 
     One --(A, on_a)--> Two
 }
@@ -21,7 +21,7 @@ pub struct Two {}
 pub enum SimpleCommand {}
 
 fn main() {
-    // main enum exists with both states
-    let _ = Simple::One(One {});
-    let _ = Simple::Two(Two {});
+    // state enum exists with both states
+    let _ = SimpleState::One(One {});
+    let _ = SimpleState::Two(Two {});
 }

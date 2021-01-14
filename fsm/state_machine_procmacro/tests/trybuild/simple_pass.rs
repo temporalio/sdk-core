@@ -5,7 +5,7 @@ use state_machine_trait::TransitionResult;
 use std::convert::Infallible;
 
 fsm! {
-    SimpleMachine, SimpleMachineCommand, Infallible
+    name SimpleMachine; command SimpleMachineCommand; error Infallible;
 
     One --(A)--> Two
 }
@@ -22,9 +22,9 @@ impl From<One> for Two {
 pub enum SimpleMachineCommand {}
 
 fn main() {
-    // main enum exists with both states
-    let _ = SimpleMachine::One(One {});
-    let _ = SimpleMachine::Two(Two {});
+    // state enum exists with both states
+    let _ = SimpleMachineState::One(One {});
+    let _ = SimpleMachineState::Two(Two {});
     // Event enum exists
     let _ = SimpleMachineEvents::A;
 }

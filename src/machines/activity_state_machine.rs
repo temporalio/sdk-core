@@ -3,7 +3,7 @@ use rustfsm::{fsm, TransitionResult};
 // Schedule / cancel are "explicit events" (imperative rather than past events?)
 
 fsm! {
-    ActivityMachine, ActivityCommand, ActivityMachineError
+    name ActivityMachine; command ActivityCommand; error ActivityMachineError;
 
     Created --(Schedule, on_schedule)--> ScheduleCommandCreated;
 

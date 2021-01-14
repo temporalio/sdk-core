@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    SignalExternalMachine, SignalExternalCommand, SignalExternalMachineError
+    name SignalExternalMachine; command SignalExternalCommand; error SignalExternalMachineError;
 
     Created --(Schedule, on_schedule) --> SignalExternalCommandCreated;
 

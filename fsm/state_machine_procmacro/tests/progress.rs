@@ -12,7 +12,7 @@ fn tests() {
 
 //Kept here to inspect manual expansion
 state_machine_procmacro::fsm! {
-    SimpleMachine, SimpleMachineCommand, Infallible
+    name SimpleMachine; command SimpleMachineCommand; error Infallible;
 
     One --(A(String), foo)--> Two;
     One --(B)--> Two;

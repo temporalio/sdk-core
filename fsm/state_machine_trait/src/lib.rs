@@ -5,28 +5,33 @@ use std::error::Error;
 /// input alphabet), uses them to mutate itself, and (may) output some commands (the output
 /// alphabet) as a result.
 ///
-/// The `State`, `Event`, and `Command` type parameters will generally be enumerations
+/// The `State`, `Event`, and `Command` type parameters will generally be enumerations.
+// TODO: Needed for `get_shared_state`?
+// `SharedState` is expected to be a struct.
 pub trait StateMachine<State, Event, Command> {
     /// The error type produced by this state machine when handling events
     type Error: Error;
 
     /// Handle an incoming event
+    // TODO: Taking by ref here means we copy unnecessarily, but, who cares? The data is small.
+    //  The advantage is we get a "transactional" history / capability. Consuming self would be
+    //  technically more efficient.
     fn on_event(self, event: Event) -> TransitionResult<State, Self::Error, Command>;
 
     /// Returns the current state of the machine
     fn state(&self) -> &State;
 }
 
-// TODO: Likely need to return existing state with invalid trans/err
+// TODO: Likely need to return existing state with invalid trans/err as long as on_event consumes
 /// A transition result is emitted every time the [StateMachine] handles an event.
-pub enum TransitionResult<StateMachine, StateMachineError, StateMachineCommand> {
+pub enum TransitionResult<MachineState, StateMachineError, StateMachineCommand> {
     /// This state does not define a transition for this event from this state. All other errors
     /// should use the [Err](enum.TransitionResult.html#variant.Err) variant.
     InvalidTransition,
     /// The transition was successful
     Ok {
         commands: Vec<StateMachineCommand>,
-        new_state: StateMachine,
+        new_state: MachineState,
     },
     /// There was some error performing the transition
     Err(StateMachineError),

@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    WorkflowTaskMachine, WorkflowTaskCommand, WorkflowTaskMachineError
+    name WorkflowTaskMachine; command WorkflowTaskCommand; error WorkflowTaskMachineError;
 
     Created --(WorkflowTaskScheduled, on_workflow_task_scheduled) --> Scheduled;
 

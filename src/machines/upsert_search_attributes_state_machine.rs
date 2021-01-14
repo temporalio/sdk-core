@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    UpsertSearchAttributesMachine, UpsertSearchAttributesCommand, UpsertSearchAttributesMachineError
+    name UpsertSearchAttributesMachine; command UpsertSearchAttributesCommand; error UpsertSearchAttributesMachineError;
 
     Created --(Schedule, on_schedule) --> UpsertCommandCreated;
 
