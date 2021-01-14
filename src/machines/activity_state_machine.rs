@@ -51,10 +51,12 @@ fsm! {
 
 #[derive(thiserror::Error, Debug)]
 pub enum ActivityMachineError {}
+
 pub enum ActivityCommand {}
 
 #[derive(Default)]
 pub struct Created {}
+
 impl Created {
     pub fn on_schedule(self) -> ActivityMachineTransition {
         // would add command here
@@ -64,6 +66,7 @@ impl Created {
 
 #[derive(Default)]
 pub struct ScheduleCommandCreated {}
+
 impl ScheduleCommandCreated {
     pub fn on_activity_task_scheduled(self) -> ActivityMachineTransition {
         // set initial command event id
@@ -78,6 +81,7 @@ impl ScheduleCommandCreated {
 
 #[derive(Default)]
 pub struct ScheduledEventRecorded {}
+
 impl ScheduledEventRecorded {
     pub fn on_task_started(self) -> ActivityMachineTransition {
         // setStartedCommandEventId
@@ -95,6 +99,7 @@ impl ScheduledEventRecorded {
 
 #[derive(Default)]
 pub struct Started {}
+
 impl Started {
     pub fn on_activity_task_completed(self) -> ActivityMachineTransition {
         // notify_completed
@@ -116,6 +121,7 @@ impl Started {
 
 #[derive(Default)]
 pub struct ScheduledActivityCancelCommandCreated {}
+
 impl ScheduledActivityCancelCommandCreated {
     pub fn on_command_request_cancel_activity_task(self) -> ActivityMachineTransition {
         // notifyCanceledIfTryCancel
@@ -125,6 +131,7 @@ impl ScheduledActivityCancelCommandCreated {
 
 #[derive(Default)]
 pub struct ScheduledActivityCancelEventRecorded {}
+
 impl ScheduledActivityCancelEventRecorded {
     pub fn on_activity_task_canceled(self) -> ActivityMachineTransition {
         // notify_canceled
@@ -135,6 +142,7 @@ impl ScheduledActivityCancelEventRecorded {
         ActivityMachineTransition::default::<Canceled>()
     }
 }
+
 impl From<ScheduledActivityCancelCommandCreated> for ScheduledActivityCancelEventRecorded {
     fn from(_: ScheduledActivityCancelCommandCreated) -> Self {
         Self::default()
@@ -143,6 +151,7 @@ impl From<ScheduledActivityCancelCommandCreated> for ScheduledActivityCancelEven
 
 #[derive(Default)]
 pub struct StartedActivityCancelCommandCreated {}
+
 impl StartedActivityCancelCommandCreated {
     pub fn on_activity_task_cancel_requested(self) -> ActivityMachineTransition {
         // notifyCanceledIfTryCancel
@@ -152,6 +161,7 @@ impl StartedActivityCancelCommandCreated {
 
 #[derive(Default)]
 pub struct StartedActivityCancelEventRecorded {}
+
 impl StartedActivityCancelEventRecorded {
     pub fn on_activity_task_completed(self) -> ActivityMachineTransition {
         // notify_completed
@@ -170,6 +180,7 @@ impl StartedActivityCancelEventRecorded {
         ActivityMachineTransition::default::<Failed>()
     }
 }
+
 impl From<ScheduledActivityCancelEventRecorded> for StartedActivityCancelEventRecorded {
     fn from(_: ScheduledActivityCancelEventRecorded) -> Self {
         Self::default()
@@ -178,10 +189,13 @@ impl From<ScheduledActivityCancelEventRecorded> for StartedActivityCancelEventRe
 
 #[derive(Default)]
 pub struct Completed {}
+
 #[derive(Default)]
 pub struct Failed {}
+
 #[derive(Default)]
 pub struct TimedOut {}
+
 #[derive(Default)]
 pub struct Canceled {}
 
