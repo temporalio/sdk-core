@@ -9,12 +9,12 @@ fsm! {
 
     ScheduleCommandCreated --(CommandScheduleActivityTask) --> ScheduleCommandCreated;
     ScheduleCommandCreated
-      --(ActivityTaskScheduled, on_activity_task_scheduled) --> ScheduleEventRecorded;
+      --(ActivityTaskScheduled, on_activity_task_scheduled) --> ScheduledEventRecorded;
     ScheduleCommandCreated --(Cancel, on_canceled) --> Canceled;
 
-    ScheduleEventRecorded --(ActivityTaskStarted, on_task_started) --> Started;
-    ScheduleEventRecorded --(ActivityTaskTimedOut, on_task_timed_out) --> TimedOut;
-    ScheduleEventRecorded --(Cancel, on_canceled) --> ScheduledActivityCancelCommandCreated;
+    ScheduledEventRecorded --(ActivityTaskStarted, on_task_started) --> Started;
+    ScheduledEventRecorded --(ActivityTaskTimedOut, on_task_timed_out) --> TimedOut;
+    ScheduledEventRecorded --(Cancel, on_canceled) --> ScheduledActivityCancelCommandCreated;
 
     Started --(ActivityTaskCompleted, on_activity_task_completed) --> Completed;
     Started --(ActivityTaskFailed, on_activity_task_failed) --> Failed;
@@ -68,7 +68,7 @@ impl ScheduleCommandCreated {
     pub fn on_activity_task_scheduled(self) -> ActivityMachineTransition {
         // set initial command event id
         //  this.initialCommandEventId = currentEvent.getEventId();
-        ActivityMachineTransition::default::<ScheduleEventRecorded>()
+        ActivityMachineTransition::default::<ScheduledEventRecorded>()
     }
     pub fn on_canceled(self) -> ActivityMachineTransition {
         // cancelCommandNotifyCanceled
@@ -77,8 +77,8 @@ impl ScheduleCommandCreated {
 }
 
 #[derive(Default)]
-pub struct ScheduleEventRecorded {}
-impl ScheduleEventRecorded {
+pub struct ScheduledEventRecorded {}
+impl ScheduledEventRecorded {
     pub fn on_task_started(self) -> ActivityMachineTransition {
         // setStartedCommandEventId
         ActivityMachineTransition::default::<Started>()
