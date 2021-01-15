@@ -1,4 +1,6 @@
-pub mod coresdk;
+pub mod coresdk {
+    include!("coresdk.rs");
+}
 
 // No need to lint these
 #[allow(clippy::all)]
