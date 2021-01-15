@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    WorkflowTaskMachine, WorkflowTaskCommand, WorkflowTaskMachineError
+    name WorkflowTaskMachine; command WorkflowTaskCommand; error WorkflowTaskMachineError;
 
     Created --(WorkflowTaskScheduled, on_workflow_task_scheduled) --> Scheduled;
 
@@ -18,10 +18,10 @@ pub enum WorkflowTaskMachineError {}
 
 pub enum WorkflowTaskCommand {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Completed {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {
@@ -30,10 +30,10 @@ impl Created {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Failed {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Scheduled {}
 
 impl Scheduled {
@@ -45,7 +45,7 @@ impl Scheduled {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Started {}
 
 impl Started {
@@ -60,5 +60,5 @@ impl Started {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct TimedOut {}

@@ -4,10 +4,6 @@ version = "0.1.0"
 authors = ["Spencer Judge <sjudge@hey.com>"]
 edition = "2018"
 
-[[test]]
-name = "card_reader"
-path = "tests/card_reader.rs"
-
 [dependencies]
 thiserror = "1.0"
 derive_more = "0.99"

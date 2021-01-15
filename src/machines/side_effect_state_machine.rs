@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    SideEffectMachine, SideEffectCommand, SideEffectMachineError
+    name SideEffectMachine; command SideEffectCommand; error SideEffectMachineError;
 
     Created --(Schedule, on_schedule) --> MarkerCommandCreated;
     Created --(Schedule, on_schedule) --> MarkerCommandCreatedReplaying;
@@ -20,7 +20,7 @@ pub enum SideEffectMachineError {}
 
 pub enum SideEffectCommand {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {
@@ -29,7 +29,7 @@ impl Created {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MarkerCommandCreated {}
 
 impl MarkerCommandCreated {
@@ -38,13 +38,13 @@ impl MarkerCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MarkerCommandCreatedReplaying {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MarkerCommandRecorded {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ResultNotified {}
 
 impl ResultNotified {
@@ -53,7 +53,7 @@ impl ResultNotified {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ResultNotifiedReplaying {}
 
 impl ResultNotifiedReplaying {

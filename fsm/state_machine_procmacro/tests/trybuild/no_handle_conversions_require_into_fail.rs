@@ -5,14 +5,16 @@ use state_machine_trait::TransitionResult;
 use std::convert::Infallible;
 
 fsm! {
-    SimpleMachine, SimpleMachineCommand, Infallible
+    name SimpleMachine; command SimpleMachineCommand; error Infallible;
 
     One --(A)--> Two;
     Two --(B)--> One;
 }
 
+#[derive(Default, Clone)]
 pub struct One {}
 
+#[derive(Default, Clone)]
 pub struct Two {}
 // We implement one of them because trait bound satisfaction error output is not deterministically
 // ordered

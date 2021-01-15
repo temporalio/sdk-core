@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    ContinueAsNewWorkflowMachine, ContinueAsNewWorkflowCommand, ContinueAsNewWorkflowMachineError
+    name ContinueAsNewWorkflowMachine; command ContinueAsNewWorkflowCommand; error ContinueAsNewWorkflowMachineError;
 
     ContinueAsNewWorkflowCommandCreated --(CommandContinueAsNewWorkflowExecution) --> ContinueAsNewWorkflowCommandCreated;
     ContinueAsNewWorkflowCommandCreated --(WorkflowExecutionContinuedAsNew, on_workflow_execution_continued_as_new) --> ContinueAsNewWorkflowCommandRecorded;
@@ -14,7 +14,7 @@ pub enum ContinueAsNewWorkflowMachineError {}
 
 pub enum ContinueAsNewWorkflowCommand {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ContinueAsNewWorkflowCommandCreated {}
 
 impl ContinueAsNewWorkflowCommandCreated {
@@ -23,10 +23,10 @@ impl ContinueAsNewWorkflowCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ContinueAsNewWorkflowCommandRecorded {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {

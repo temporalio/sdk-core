@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    CancelWorkflowMachine, CancelWorkflowCommand, CancelWorkflowMachineError
+    name CancelWorkflowMachine; command CancelWorkflowCommand; error CancelWorkflowMachineError;
 
     CancelWorkflowCommandCreated --(CommandCancelWorkflowExecution) --> CancelWorkflowCommandCreated;
     CancelWorkflowCommandCreated --(WorkflowExecutionCanceled, on_workflow_execution_canceled) --> CancelWorkflowCommandRecorded;
@@ -14,7 +14,7 @@ pub enum CancelWorkflowMachineError {}
 
 pub enum CancelWorkflowCommand {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CancelWorkflowCommandCreated {}
 
 impl CancelWorkflowCommandCreated {
@@ -23,10 +23,10 @@ impl CancelWorkflowCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CancelWorkflowCommandRecorded {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {

@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    CancelExternalMachine, CancelExternalCommand, CancelExternalMachineError
+    name CancelExternalMachine; command CancelExternalCommand; error CancelExternalMachineError;
 
     Created --(Schedule, on_schedule) --> RequestCancelExternalCommandCreated;
 
@@ -17,10 +17,10 @@ pub enum CancelExternalMachineError {}
 
 pub enum CancelExternalCommand {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CancelRequested {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {
@@ -29,7 +29,7 @@ impl Created {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct RequestCancelExternalCommandCreated {}
 
 impl RequestCancelExternalCommandCreated {
@@ -40,7 +40,7 @@ impl RequestCancelExternalCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct RequestCancelExternalCommandRecorded {}
 
 impl RequestCancelExternalCommandRecorded {
@@ -56,5 +56,5 @@ impl RequestCancelExternalCommandRecorded {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct RequestCancelFailed {}

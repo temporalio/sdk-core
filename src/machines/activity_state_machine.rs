@@ -3,7 +3,7 @@ use rustfsm::{fsm, TransitionResult};
 // Schedule / cancel are "explicit events" (imperative rather than past events?)
 
 fsm! {
-    ActivityMachine, ActivityCommand, ActivityMachineError
+    name ActivityMachine; command ActivityCommand; error ActivityMachineError;
 
     Created --(Schedule, on_schedule)--> ScheduleCommandCreated;
 
@@ -54,7 +54,7 @@ pub enum ActivityMachineError {}
 
 pub enum ActivityCommand {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {
@@ -64,7 +64,7 @@ impl Created {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ScheduleCommandCreated {}
 
 impl ScheduleCommandCreated {
@@ -79,7 +79,7 @@ impl ScheduleCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ScheduledEventRecorded {}
 
 impl ScheduledEventRecorded {
@@ -97,7 +97,7 @@ impl ScheduledEventRecorded {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Started {}
 
 impl Started {
@@ -119,7 +119,7 @@ impl Started {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ScheduledActivityCancelCommandCreated {}
 
 impl ScheduledActivityCancelCommandCreated {
@@ -129,7 +129,7 @@ impl ScheduledActivityCancelCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ScheduledActivityCancelEventRecorded {}
 
 impl ScheduledActivityCancelEventRecorded {
@@ -149,7 +149,7 @@ impl From<ScheduledActivityCancelCommandCreated> for ScheduledActivityCancelEven
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StartedActivityCancelCommandCreated {}
 
 impl StartedActivityCancelCommandCreated {
@@ -159,7 +159,7 @@ impl StartedActivityCancelCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StartedActivityCancelEventRecorded {}
 
 impl StartedActivityCancelEventRecorded {
@@ -187,16 +187,16 @@ impl From<ScheduledActivityCancelEventRecorded> for StartedActivityCancelEventRe
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Completed {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Failed {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct TimedOut {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Canceled {}
 
 #[cfg(test)]

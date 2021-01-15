@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    ChildWorkflowMachine, ChildWorkflowCommand, ChildWorkflowMachineError
+    name ChildWorkflowMachine; command ChildWorkflowCommand; error ChildWorkflowMachineError;
 
     Created --(Schedule, on_schedule) --> StartCommandCreated;
 
@@ -24,13 +24,13 @@ pub enum ChildWorkflowMachineError {}
 
 pub enum ChildWorkflowCommand {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Canceled {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Completed {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {
@@ -39,10 +39,10 @@ impl Created {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Failed {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StartCommandCreated {}
 
 impl StartCommandCreated {
@@ -54,7 +54,7 @@ impl StartCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StartEventRecorded {}
 
 impl StartEventRecorded {
@@ -66,10 +66,10 @@ impl StartEventRecorded {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StartFailed {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Started {}
 
 impl Started {
@@ -90,8 +90,8 @@ impl Started {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Terminated {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct TimedOut {}

@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    UpsertSearchAttributesMachine, UpsertSearchAttributesCommand, UpsertSearchAttributesMachineError
+    name UpsertSearchAttributesMachine; command UpsertSearchAttributesCommand; error UpsertSearchAttributesMachineError;
 
     Created --(Schedule, on_schedule) --> UpsertCommandCreated;
 
@@ -14,7 +14,7 @@ pub enum UpsertSearchAttributesMachineError {}
 
 pub enum UpsertSearchAttributesCommand {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {
@@ -23,7 +23,7 @@ impl Created {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct UpsertCommandCreated {}
 
 impl UpsertCommandCreated {
@@ -32,5 +32,5 @@ impl UpsertCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct UpsertCommandRecorded {}

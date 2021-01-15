@@ -10,9 +10,9 @@ fn tests() {
     t.compile_fail("tests/trybuild/*_fail.rs");
 }
 
-//Kept here to inspect manual expansion
+// Kept here to inspect manual expansion
 state_machine_procmacro::fsm! {
-    SimpleMachine, SimpleMachineCommand, Infallible
+    name SimpleMachine; command SimpleMachineCommand; error Infallible;
 
     One --(A(String), foo)--> Two;
     One --(B)--> Two;
@@ -20,7 +20,7 @@ state_machine_procmacro::fsm! {
     Two --(C, baz)--> One
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct One {}
 impl One {
     fn foo(self, _: String) -> SimpleMachineTransition {
@@ -33,7 +33,7 @@ impl From<Two> for One {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Two {}
 impl Two {
     fn baz(self) -> SimpleMachineTransition {
@@ -46,4 +46,4 @@ impl From<One> for Two {
     }
 }
 
-enum SimpleMachineCommand {}
+pub enum SimpleMachineCommand {}

@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    VersionMachine, VersionCommand, VersionMachineError
+    name VersionMachine; command VersionCommand; error VersionMachineError;
 
     Created --(CheckExecutionState, on_check_execution_state) --> Replaying;
     Created --(CheckExecutionState, on_check_execution_state) --> Executing;
@@ -29,7 +29,7 @@ pub enum VersionMachineError {}
 
 pub enum VersionCommand {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {
@@ -38,7 +38,7 @@ impl Created {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Executing {}
 
 impl Executing {
@@ -47,7 +47,7 @@ impl Executing {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MarkerCommandCreated {}
 
 impl MarkerCommandCreated {
@@ -56,13 +56,13 @@ impl MarkerCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MarkerCommandCreatedReplaying {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MarkerCommandRecorded {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Replaying {}
 
 impl Replaying {
@@ -71,7 +71,7 @@ impl Replaying {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ResultNotified {}
 
 impl ResultNotified {
@@ -80,7 +80,7 @@ impl ResultNotified {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ResultNotifiedReplaying {}
 
 impl ResultNotifiedReplaying {
@@ -98,7 +98,7 @@ impl From<MarkerCommandCreatedReplaying> for ResultNotifiedReplaying {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Skipped {}
 
 impl Skipped {
@@ -107,5 +107,5 @@ impl Skipped {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SkippedNotified {}
