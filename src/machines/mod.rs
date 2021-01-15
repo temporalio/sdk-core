@@ -1,3 +1,5 @@
+use crate::protos::temporal::api::command::v1::Command;
+
 #[allow(unused)]
 mod activity_state_machine;
 #[allow(unused)]
@@ -28,3 +30,24 @@ mod upsert_search_attributes_state_machine;
 mod version_state_machine;
 #[allow(unused)]
 mod workflow_task_state_machine;
+
+/// A command which can be cancelled
+#[derive(Debug, Clone)]
+pub struct CancellableCommand {
+    /// The inner protobuf command, if None, command has been cancelled
+    command: Option<Command>,
+}
+
+impl CancellableCommand {
+    pub(crate) fn cancel(&mut self) {
+        self.command = None;
+    }
+}
+
+impl From<Command> for CancellableCommand {
+    fn from(command: Command) -> Self {
+        Self {
+            command: Some(command),
+        }
+    }
+}

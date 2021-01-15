@@ -161,6 +161,7 @@ mod kw {
     syn::custom_keyword!(name);
     syn::custom_keyword!(command);
     syn::custom_keyword!(error);
+    syn::custom_keyword!(shared);
     syn::custom_keyword!(shared_state);
 }
 
@@ -228,6 +229,7 @@ struct Transition {
     to: Ident,
     event: Variant,
     handler: Option<Ident>,
+    mutates_shared: bool,
 }
 
 impl Parse for Transition {
@@ -270,11 +272,18 @@ impl Parse for Transition {
             Fields::Unit => {}
         }
         // Check if there is an event handler, and parse it
-        let handler = if transition_info.peek(Token![,]) {
+        let (mutates_shared, handler) = if transition_info.peek(Token![,]) {
             transition_info.parse::<Token![,]>()?;
-            Some(transition_info.parse()?)
+            // Check for mut keyword signifying handler wants to mutate shared state
+            let mutates = if transition_info.peek(kw::shared) {
+                transition_info.parse::<kw::shared>()?;
+                true
+            } else {
+                false
+            };
+            (mutates, Some(transition_info.parse()?))
         } else {
-            None
+            (false, None)
         };
         // Parse at least one dash followed by the "arrow"
         input.parse::<Token![-]>()?;
@@ -290,6 +299,7 @@ impl Parse for Transition {
             event,
             handler,
             to,
+            mutates_shared,
         })
     }
 }
@@ -362,16 +372,30 @@ impl StateMachineDefinition {
                     if let Some(ts_fn) = ts.handler.clone() {
                         let span = ts_fn.span();
                         match ts.event.fields {
-                            Fields::Unnamed(_) => quote_spanned! {span=>
-                                #events_enum_name::#ev_variant(val) => {
-                                    state_data.#ts_fn(val)
+                            Fields::Unnamed(_) => {
+                                let arglist = if ts.mutates_shared {
+                                    quote! {self.shared_state, val}
+                                } else {
+                                    quote! {val}
+                                };
+                                quote_spanned! {span=>
+                                    #events_enum_name::#ev_variant(val) => {
+                                        state_data.#ts_fn(#arglist)
+                                    }
                                 }
-                            },
-                            Fields::Unit => quote_spanned! {span=>
-                                #events_enum_name::#ev_variant => {
-                                    state_data.#ts_fn()
+                            }
+                            Fields::Unit => {
+                                let arglist = if ts.mutates_shared {
+                                    quote! {self.shared_state}
+                                } else {
+                                    quote! {}
+                                };
+                                quote_spanned! {span=>
+                                    #events_enum_name::#ev_variant => {
+                                        state_data.#ts_fn(#arglist)
+                                    }
                                 }
-                            },
+                            }
                             Fields::Named(_) => unreachable!(),
                         }
                     } else {
