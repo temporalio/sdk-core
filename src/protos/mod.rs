@@ -1,5 +1,5 @@
 pub mod coresdk {
-    tonic::include_proto!("coresdk");
+    include!("coresdk.rs");
 }
 
 // No need to lint these
@@ -9,67 +9,67 @@ pub mod temporal {
     pub mod api {
         pub mod command {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.command.v1");
+                include!("temporal.api.command.v1.rs");
             }
         }
         pub mod enums {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.enums.v1");
+                include!("temporal.api.enums.v1.rs");
             }
         }
         pub mod failure {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.failure.v1");
+                include!("temporal.api.failure.v1.rs");
             }
         }
         pub mod filter {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.filter.v1");
+                include!("temporal.api.filter.v1.rs");
             }
         }
         pub mod common {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.common.v1");
+                include!("temporal.api.common.v1.rs");
             }
         }
         pub mod history {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.history.v1");
+                include!("temporal.api.history.v1.rs");
             }
         }
         pub mod namespace {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.namespace.v1");
+                include!("temporal.api.namespace.v1.rs");
             }
         }
         pub mod query {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.query.v1");
+                include!("temporal.api.query.v1.rs");
             }
         }
         pub mod replication {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.replication.v1");
+                include!("temporal.api.replication.v1.rs");
             }
         }
         pub mod taskqueue {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.taskqueue.v1");
+                include!("temporal.api.taskqueue.v1.rs");
             }
         }
         pub mod version {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.version.v1");
+                include!("temporal.api.version.v1.rs");
             }
         }
         pub mod workflow {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.workflow.v1");
+                include!("temporal.api.workflow.v1.rs");
             }
         }
         pub mod workflowservice {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.workflowservice.v1");
+                include!("temporal.api.workflowservice.v1.rs");
             }
         }
     }
