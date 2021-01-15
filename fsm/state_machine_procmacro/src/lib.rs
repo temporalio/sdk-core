@@ -31,6 +31,7 @@ use syn::{
 ///     DoorOpen --(DoorClosed, on_door_closed) --> Locked;
 /// }
 ///
+/// #[derive(Clone)]
 /// pub struct CardId {
 ///     some_id: String
 /// }
@@ -84,25 +85,24 @@ use syn::{
 ///     }
 /// }
 ///
-/// let cr = CardReaderState::Locked(Locked {});
-/// let crm = CardReader { state: crs, shared_state: CardId { some_id: "an_id!".to_string() } };
-/// let (cr, cmds) = cr
-///     .on_event(CardReaderEvents::CardReadable("badguy".to_string()))
-///     .unwrap();
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let crs = CardReaderState::Locked(Locked {});
+/// let mut cr = CardReader { state: crs, shared_state: CardId { some_id: "an_id!".to_string() } };
+/// let cmds = cr.on_event_mut(CardReaderEvents::CardReadable("badguy".to_string()))?;
 /// assert_eq!(cmds[0], Commands::ProcessData("badguy".to_string()));
 /// assert_eq!(cmds[1], Commands::StartBlinkingLight);
 ///
-/// let (cr, cmds) = cr.on_event(CardReaderEvents::CardRejected).unwrap();
+/// let cmds = cr.on_event_mut(CardReaderEvents::CardRejected)?;
 /// assert_eq!(cmds[0], Commands::StopBlinkingLight);
 ///
-/// let (cr, cmds) = cr
-///     .on_event(CardReaderEvents::CardReadable("goodguy".to_string()))
-///     .unwrap();
+/// let cmds = cr.on_event_mut(CardReaderEvents::CardReadable("goodguy".to_string()))?;
 /// assert_eq!(cmds[0], Commands::ProcessData("goodguy".to_string()));
 /// assert_eq!(cmds[1], Commands::StartBlinkingLight);
 ///
-/// let (_, cmds) = cr.on_event(CardReaderEvents::CardAccepted).unwrap();
+/// let cmds = cr.on_event_mut(CardReaderEvents::CardAccepted)?;
 /// assert_eq!(cmds[0], Commands::StopBlinkingLight);
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// In the above example the first word is the name of the state machine, then after the comma the
@@ -314,13 +314,14 @@ impl StateMachineDefinition {
             .clone()
             .unwrap_or_else(|| syn::parse_str("()").unwrap());
         let machine_struct = quote! {
+            #[derive(Clone)]
             pub struct #name {
                 state: #state_enum_name,
                 shared_state: #shared_state_type
             }
         };
         let states_enum = quote! {
-            #[derive(::derive_more::From)]
+            #[derive(::derive_more::From, Clone)]
             pub enum #state_enum_name {
                 #(#state_variants),*
             }
@@ -408,26 +409,40 @@ impl StateMachineDefinition {
         });
 
         let trait_impl = quote! {
-            impl ::rustfsm::StateMachine<#state_enum_name, #events_enum_name, #cmd_type> for #name {
+            impl ::rustfsm::StateMachine for #name {
                 type Error = #err_type;
+                type State = #state_enum_name;
+                type SharedState = #shared_state_type;
+                type Event = #events_enum_name;
+                type Command = #cmd_type;
 
                 fn on_event(self, event: #events_enum_name)
-                  -> ::rustfsm::TransitionResult<#state_enum_name, Self::Error, #cmd_type> {
+                  -> ::rustfsm::TransitionResult<Self> {
                     match self.state {
                         #(#state_branches),*
                     }
                 }
 
-                fn state(&self) -> &#state_enum_name {
+                fn state(&self) -> &Self::State {
                     &self.state
+                }
+                fn set_state(&mut self, new: Self::State) {
+                    self.state = new
+                }
+
+                fn shared_state(&self) -> &Self::SharedState{
+                    &self.shared_state
+                }
+
+                fn from_parts(shared: Self::SharedState, state: Self::State) -> Self {
+                    Self { shared_state: shared, state }
                 }
             }
         };
 
         let transition_result_name = Ident::new(&format!("{}Transition", name), name.span());
         let transition_type_alias = quote! {
-            type #transition_result_name =
-                TransitionResult<#state_enum_name, #err_type, #cmd_type>;
+            type #transition_result_name = TransitionResult<#name>;
         };
 
         let output = quote! {

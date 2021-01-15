@@ -13,7 +13,7 @@ fsm! {
     Two --(C, baz)--> One
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct One {}
 impl One {
     fn foo(self, _: String) -> SimpleMachineTransition {
@@ -26,7 +26,7 @@ impl From<Two> for One {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Two {}
 impl Two {
     fn baz(self) -> SimpleMachineTransition {
@@ -39,6 +39,6 @@ impl From<One> for Two {
     }
 }
 
-enum SimpleMachineCommand {}
+pub enum SimpleMachineCommand {}
 
 fn main() {}

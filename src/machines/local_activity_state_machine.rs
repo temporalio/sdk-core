@@ -28,7 +28,7 @@ pub enum LocalActivityMachineError {}
 
 pub enum LocalActivityCommand {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {
@@ -37,7 +37,7 @@ impl Created {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Executing {}
 
 impl Executing {
@@ -46,7 +46,7 @@ impl Executing {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MarkerCommandCreated {}
 
 impl MarkerCommandCreated {
@@ -55,16 +55,16 @@ impl MarkerCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MarkerCommandRecorded {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Replaying {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct RequestPrepared {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct RequestSent {}
 
 impl RequestSent {
@@ -79,7 +79,7 @@ impl From<RequestPrepared> for RequestSent {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ResultNotified {}
 
 impl ResultNotified {
@@ -88,7 +88,7 @@ impl ResultNotified {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct WaitingMarkerEvent {}
 
 impl WaitingMarkerEvent {

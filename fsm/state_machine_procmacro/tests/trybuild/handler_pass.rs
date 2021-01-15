@@ -10,12 +10,15 @@ fsm! {
     One --(A, on_a)--> Two
 }
 
+#[derive(Default, Clone)]
 pub struct One {}
 impl One {
     fn on_a(self) -> SimpleTransition {
         SimpleTransition::ok(vec![], Two {})
     }
 }
+
+#[derive(Default, Clone)]
 pub struct Two {}
 
 pub enum SimpleCommand {}

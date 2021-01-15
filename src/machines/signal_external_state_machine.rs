@@ -19,10 +19,10 @@ pub enum SignalExternalMachineError {}
 
 pub enum SignalExternalCommand {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Canceled {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {
@@ -31,10 +31,10 @@ impl Created {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Failed {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SignalExternalCommandCreated {}
 
 impl SignalExternalCommandCreated {
@@ -48,7 +48,7 @@ impl SignalExternalCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SignalExternalCommandRecorded {}
 
 impl SignalExternalCommandRecorded {
@@ -60,5 +60,5 @@ impl SignalExternalCommandRecorded {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Signaled {}

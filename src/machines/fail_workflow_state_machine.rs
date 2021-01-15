@@ -14,7 +14,7 @@ pub enum FailWorkflowMachineError {}
 
 pub enum FailWorkflowCommand {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {
@@ -23,7 +23,7 @@ impl Created {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct FailWorkflowCommandCreated {}
 
 impl FailWorkflowCommandCreated {
@@ -32,5 +32,5 @@ impl FailWorkflowCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct FailWorkflowCommandRecorded {}

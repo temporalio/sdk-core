@@ -14,7 +14,7 @@ pub enum CancelWorkflowMachineError {}
 
 pub enum CancelWorkflowCommand {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CancelWorkflowCommandCreated {}
 
 impl CancelWorkflowCommandCreated {
@@ -23,10 +23,10 @@ impl CancelWorkflowCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CancelWorkflowCommandRecorded {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {

@@ -10,8 +10,10 @@ fsm! {
     One --(A)--> Two
 }
 
+#[derive(Default, Clone)]
 pub struct One {}
 
+#[derive(Default, Clone)]
 pub struct Two {}
 impl From<One> for Two {
     fn from(_: One) -> Self {

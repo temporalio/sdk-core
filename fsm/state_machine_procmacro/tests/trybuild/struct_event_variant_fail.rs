@@ -8,7 +8,9 @@ fsm! {
     One --(A{foo: String}, on_a)--> Two
 }
 
+#[derive(Default, Clone)]
 pub struct One {}
+#[derive(Default, Clone)]
 pub struct Two {}
 
 pub enum SimpleCommand {}

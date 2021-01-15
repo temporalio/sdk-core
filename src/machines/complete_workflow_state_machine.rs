@@ -14,7 +14,7 @@ pub enum CompleteWorkflowMachineError {}
 
 pub enum CompleteWorkflowCommand {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CompleteWorkflowCommandCreated {}
 
 impl CompleteWorkflowCommandCreated {
@@ -23,10 +23,10 @@ impl CompleteWorkflowCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CompleteWorkflowCommandRecorded {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {

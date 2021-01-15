@@ -14,7 +14,7 @@ pub enum ContinueAsNewWorkflowMachineError {}
 
 pub enum ContinueAsNewWorkflowCommand {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ContinueAsNewWorkflowCommandCreated {}
 
 impl ContinueAsNewWorkflowCommandCreated {
@@ -23,10 +23,10 @@ impl ContinueAsNewWorkflowCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ContinueAsNewWorkflowCommandRecorded {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {

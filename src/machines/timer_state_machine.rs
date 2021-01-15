@@ -21,6 +21,7 @@ fsm! {
     StartCommandRecorded --(Cancel, on_cancel) --> CancelTimerCommandCreated;
 }
 
+#[derive(Default, Clone)]
 pub struct SharedState {}
 
 #[derive(thiserror::Error, Debug)]
@@ -31,7 +32,7 @@ pub enum TimerCommand {
     CancelTimer(/* TODO: Command attribs */),
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CancelTimerCommandCreated {}
 impl CancelTimerCommandCreated {
     pub fn on_command_cancel_timer(self) -> TimerMachineTransition {
@@ -40,7 +41,7 @@ impl CancelTimerCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CancelTimerCommandSent {}
 impl CancelTimerCommandSent {
     pub fn on_timer_canceled(self) -> TimerMachineTransition {
@@ -48,10 +49,10 @@ impl CancelTimerCommandSent {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Canceled {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Created {}
 
 impl Created {
@@ -63,10 +64,10 @@ impl Created {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Fired {}
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StartCommandCreated {}
 
 impl StartCommandCreated {
@@ -81,7 +82,7 @@ impl StartCommandCreated {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StartCommandRecorded {}
 
 impl StartCommandRecorded {

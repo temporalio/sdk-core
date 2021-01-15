@@ -11,8 +11,10 @@ fsm! {
     Two --(B)--> One;
 }
 
+#[derive(Default, Clone)]
 pub struct One {}
 
+#[derive(Default, Clone)]
 pub struct Two {}
 // We implement one of them because trait bound satisfaction error output is not deterministically
 // ordered

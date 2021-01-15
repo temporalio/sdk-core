@@ -5,4 +5,4 @@ error[E0277]: the trait bound `One: From<Two>` is not satisfied
    |                  ^^^ the trait `From<Two>` is not implemented for `One`
    |
    = note: required because of the requirements on the impl of `Into<One>` for `Two`
-   = note: required by `TransitionResult::<S, E, C>::from`
+   = note: required by `TransitionResult::<S>::from`
