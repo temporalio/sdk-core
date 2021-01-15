@@ -1,16 +1,13 @@
 #![allow(clippy::large_enum_variant)]
 
-use crate::protos::temporal::api::enums::v1::EventType;
-use crate::protos::temporal::api::history::v1::{
-    history_event, HistoryEvent, TimerCanceledEventAttributes,
-};
 use crate::{
     machines::CancellableCommand,
     protos::{
         coresdk::HistoryEventId,
         temporal::api::{
             command::v1::{command::Attributes, Command, StartTimerCommandAttributes},
-            enums::v1::CommandType,
+            enums::v1::{CommandType, EventType},
+            history::v1::{history_event, HistoryEvent, TimerCanceledEventAttributes},
         },
     },
 };

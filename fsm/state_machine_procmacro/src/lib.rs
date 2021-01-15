@@ -23,17 +23,18 @@ use syn::{
 /// use state_machine_trait::{StateMachine, TransitionResult};
 ///
 /// fsm! {
-///     name CardReader; command Commands; error Infallible; shared_state CardId;
+///     name CardReader; command Commands; error Infallible; shared_state SharedState;
 ///
-///     Locked --(CardReadable(CardData), on_card_readable) --> ReadingCard;
+///     Locked --(CardReadable(CardData), shared on_card_readable) --> ReadingCard;
+///     Locked --(CardReadable(CardData), shared on_card_readable) --> Locked;
 ///     ReadingCard --(CardAccepted, on_card_accepted) --> DoorOpen;
 ///     ReadingCard --(CardRejected, on_card_rejected) --> Locked;
 ///     DoorOpen --(DoorClosed, on_door_closed) --> Locked;
 /// }
 ///
 /// #[derive(Clone)]
-/// pub struct CardId {
-///     some_id: String
+/// pub struct SharedState {
+///     last_id: Option<String>
 /// }
 ///
 /// #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -46,7 +47,7 @@ use syn::{
 /// type CardData = String;
 ///
 /// /// Door is locked / idle / we are ready to read
-/// #[derive(Debug, Clone, Eq, PartialEq, Hash)]
+/// #[derive(Debug, Clone, Eq, PartialEq, Hash, Default)]
 /// pub struct Locked {}
 ///
 /// /// Actively reading the card
@@ -65,14 +66,23 @@ use syn::{
 /// }
 ///
 /// impl Locked {
-///     fn on_card_readable(&self, data: CardData) -> CardReaderTransition {
-///         TransitionResult::ok(
-///             vec![
-///                 Commands::ProcessData(data.clone()),
-///                 Commands::StartBlinkingLight,
-///             ],
-///             ReadingCard { card_data: data },
-///         )
+///     fn on_card_readable(&self, shared_dat: SharedState, data: CardData) -> CardReaderTransition {
+///         match shared_dat.last_id {
+///             // Arbitrarily deny the same person entering twice in a row
+///             Some(d) if d == data => TransitionResult::default::<Locked>(),
+///             _ => {
+///                 // Otherwise issue a processing command. This illustrates using the same handler
+///                 // for different destinations
+///                 TransitionResult::ok_shared(
+///                     vec![
+///                         Commands::ProcessData(data.clone()),
+///                         Commands::StartBlinkingLight,
+///                     ],
+///                     ReadingCard { card_data: data.clone() },
+///                     SharedState { last_id: Some(data) }
+///                 )
+///             }   
+///         }
 ///     }
 /// }
 ///
@@ -87,7 +97,7 @@ use syn::{
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let crs = CardReaderState::Locked(Locked {});
-/// let mut cr = CardReader { state: crs, shared_state: CardId { some_id: "an_id!".to_string() } };
+/// let mut cr = CardReader { state: crs, shared_state: SharedState { last_id: None } };
 /// let cmds = cr.on_event_mut(CardReaderEvents::CardReadable("badguy".to_string()))?;
 /// assert_eq!(cmds[0], Commands::ProcessData("badguy".to_string()));
 /// assert_eq!(cmds[1], Commands::StartBlinkingLight);
@@ -104,7 +114,7 @@ use syn::{
 /// # Ok(())
 /// # }
 /// ```
-///
+///None
 /// In the above example the first word is the name of the state machine, then after the comma the
 /// type (which you must define separately) of commands produced by the machine.
 ///
