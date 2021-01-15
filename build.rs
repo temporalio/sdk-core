@@ -4,6 +4,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Just build the message structs.
         .build_server(false)
         .build_client(false)
+        .out_dir("src/protos")
         .compile(
             &["protos/local/core_interface.proto"],
             &["protos/api_upstream", "protos/local"],

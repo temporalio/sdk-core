@@ -6,3 +6,7 @@ Cargo.lock
 
 /.idea/
 *.iml
+
+# Ignore generated protobuf files
+src/protos/*.rs
+!src/protos/mod.rs
