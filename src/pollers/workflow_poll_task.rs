@@ -16,4 +16,3 @@ impl PollTask<v1::PollWorkflowTaskQueueResponse> for WorkflowPollTask {
         unimplemented!()
     }
 }
-
