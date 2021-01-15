@@ -124,10 +124,11 @@ use syn::{
 /// * A struct for the overall state machine, named with the provided name. Here:
 ///   ```ignore
 ///   struct CardMachine {
-///       state: CardMachineState
+///       state: CardMachineState,
+///       shared_state: CardId,
 ///   }
 ///   ```
-/// * An enum with a variant for each state, named with the provided name + "State". Here:
+/// * An enum with a variant for each state, named with the provided name + "State".
 ///   ```ignore
 ///   enum CardMachineState {
 ///       Locked(Locked),
@@ -139,7 +140,7 @@ use syn::{
 ///   You are expected to define a type for each state, to contain that state's data. If there is
 ///   no data, you can simply: `type StateName = ()`
 /// * An enum with a variant for each event. You are expected to define the type (if any) contained
-///   in the event variant. In this case:
+///   in the event variant.
 ///   ```ignore
 ///   enum CardMachineEvents {
 ///     CardReadable(CardData)
