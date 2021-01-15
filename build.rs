@@ -3,7 +3,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // We don't actually want to build the grpc definitions - we don't need them (for now).
         // Just build the message structs.
         .build_server(false)
-        .build_client(false)
+        .build_client(true)
         .out_dir("src/protos")
         .compile(
             &["protos/local/core_interface.proto"],
