@@ -6,7 +6,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_client(true)
         .out_dir("src/protos")
         .compile(
-            &["protos/local/core_interface.proto"],
+            &[
+                "protos/local/core_interface.proto",
+                "protos/api_upstream/temporal/api/workflowservice/v1/service.proto",
+            ],
             &["protos/api_upstream", "protos/local"],
         )?;
     Ok(())
