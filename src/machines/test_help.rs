@@ -1,9 +1,9 @@
-use crate::protos::temporal::api::history::v1::{
-    WorkflowTaskCompletedEventAttributes, WorkflowTaskStartedEventAttributes,
-};
 use crate::protos::temporal::api::{
     enums::v1::EventType,
-    history::{v1::history_event::Attributes, v1::HistoryEvent},
+    history::v1::{
+        history_event::Attributes, HistoryEvent, WorkflowTaskCompletedEventAttributes,
+        WorkflowTaskStartedEventAttributes,
+    },
 };
 use std::time::SystemTime;
 
