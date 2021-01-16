@@ -152,6 +152,41 @@ impl StartCommandRecorded {
 
 #[cfg(test)]
 mod test {
+    use crate::{
+        machines::test_help::TestHistoryBuilder,
+        protos::temporal::api::{
+            enums::v1::EventType,
+            history::{v1::history_event::Attributes, v1::TimerFiredEventAttributes},
+        },
+    };
+
     #[test]
-    fn wat() {}
+    fn test_fire_happy_path() {
+        // We don't actually have a way to author workflows in rust yet, but the workflow that would
+        // match up with this is just a wf with one timer in it that fires normally.
+        /*
+            1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+            2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+            3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+            4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+            5: EVENT_TYPE_TIMER_STARTED
+            6: EVENT_TYPE_TIMER_FIRED
+            7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+            8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+        */
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_workflow_task();
+        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        t.add(
+            EventType::TimerFired,
+            Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                started_event_id: timer_started_event_id,
+                timer_id: "timer1".to_string(),
+                ..Default::default()
+            }),
+        );
+        t.add_workflow_task_scheduled_and_started();
+        assert_eq!(2, t.get_workflow_task_count());
+    }
 }
