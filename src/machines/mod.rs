@@ -31,6 +31,9 @@ mod version_state_machine;
 #[allow(unused)]
 mod workflow_task_state_machine;
 
+#[cfg(test)]
+mod test_help;
+
 /// A command which can be cancelled
 #[derive(Debug, Clone)]
 pub struct CancellableCommand {
