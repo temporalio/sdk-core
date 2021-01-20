@@ -2,6 +2,7 @@
 extern crate log;
 
 mod machines;
+mod pollers;
 pub mod protos;
 
 use protos::coresdk::{CompleteSdkTaskReq, CompleteSdkTaskResp, PollSdkTaskReq, PollSdkTaskResp};
