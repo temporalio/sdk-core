@@ -40,7 +40,8 @@ use crate::{
         command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent,
     },
 };
-use rustfsm::StateMachine;
+use rustfsm::{MachineError, StateMachine};
+use std::convert::{TryFrom, TryInto};
 
 //  TODO: May need to be our SDKWFCommand type
 pub(crate) type MachineCommand = Command;
@@ -49,9 +50,9 @@ pub(crate) type MachineCommand = Command;
 ///
 /// Formerly known as `EntityStateMachine` in Java.
 trait TemporalStateMachine: CheckStateMachineInFinal {
-    fn handle_command(&self, command_type: CommandType);
+    fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError>;
     fn handle_event(
-        &self,
+        &mut self,
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<(), WFMachinesError>;
@@ -59,6 +60,46 @@ trait TemporalStateMachine: CheckStateMachineInFinal {
     // TODO: This is a weird one that only applies to version state machine. Introduce only if
     //  needed. Ideally handle differently.
     //  fn handle_workflow_task_started();
+}
+
+impl<SM> TemporalStateMachine for SM
+where
+    SM: StateMachine + CheckStateMachineInFinal + Clone,
+    <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
+    <SM as StateMachine>::Event: TryFrom<CommandType>,
+    <SM as StateMachine>::Error: Into<WFMachinesError>,
+{
+    fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError> {
+        if let Ok(converted_command) = command_type.try_into() {
+            match self.on_event_mut(converted_command) {
+                Ok(_) => Ok(()),
+                Err(MachineError::InvalidTransition) => {
+                    Err(WFMachinesError::UnexpectedCommand(command_type))
+                }
+                Err(MachineError::Underlying(_)) => Err(WFMachinesError::Underlying),
+            }
+        } else {
+            Err(WFMachinesError::UnexpectedCommand(command_type))
+        }
+    }
+
+    fn handle_event(
+        &mut self,
+        event: &HistoryEvent,
+        _has_next_event: bool,
+    ) -> Result<(), WFMachinesError> {
+        if let Ok(converted_event) = event.clone().try_into() {
+            match self.on_event_mut(converted_event) {
+                Ok(_) => Ok(()),
+                Err(MachineError::InvalidTransition) => {
+                    Err(WFMachinesError::UnexpectedEvent(event.clone()))
+                }
+                Err(MachineError::Underlying(_)) => Err(WFMachinesError::Underlying),
+            }
+        } else {
+            Err(WFMachinesError::UnexpectedEvent(event.clone()))
+        }
+    }
 }
 
 /// Exists purely to allow generic implementation of `is_final_state` for all [StateMachine]

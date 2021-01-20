@@ -9,7 +9,7 @@ use syn::{
     parse_macro_input,
     punctuated::Punctuated,
     spanned::Spanned,
-    Error, Fields, Ident, Token, Type, Variant,
+    Error, Fields, Ident, Token, Type, Variant, Visibility,
 };
 
 /// Parses a DSL for defining finite state machines, and produces code implementing the
@@ -176,6 +176,7 @@ mod kw {
 }
 
 struct StateMachineDefinition {
+    visibility: Visibility,
     name: Ident,
     shared_state_type: Option<Type>,
     command_type: Ident,
@@ -193,7 +194,9 @@ impl StateMachineDefinition {
 impl Parse for StateMachineDefinition {
     // TODO: Pub keyword
     fn parse(input: ParseStream) -> Result<Self> {
-        // First parse the state machine name, command type, and error type
+        // Parse visibility if present
+        let visibility = input.parse()?;
+        // parse the state machine name, command type, and error type
         let (name, command_type, error_type, shared_state_type) = parse_machine_types(&input).map_err(|mut e| {
             e.combine(Error::new(
                 e.span(),
@@ -207,6 +210,7 @@ impl Parse for StateMachineDefinition {
             input.parse_terminated(Transition::parse)?;
         let transitions = transitions.into_iter().collect();
         Ok(Self {
+            visibility,
             name,
             shared_state_type,
             transitions,
@@ -323,6 +327,7 @@ impl Parse for Transition {
 
 impl StateMachineDefinition {
     fn codegen(&self) -> TokenStream {
+        let visibility = self.visibility.clone();
         // First extract all of the states into a set, and build the enum's insides
         let states: HashSet<_> = self
             .transitions
@@ -343,14 +348,14 @@ impl StateMachineDefinition {
             .unwrap_or_else(|| syn::parse_str("()").unwrap());
         let machine_struct = quote! {
             #[derive(Clone)]
-            pub struct #name {
+            #visibility struct #name {
                 state: #state_enum_name,
                 shared_state: #shared_state_type
             }
         };
         let states_enum = quote! {
             #[derive(::derive_more::From, Clone)]
-            pub enum #state_enum_name {
+            #visibility enum #state_enum_name {
                 #(#state_variants),*
             }
         };

@@ -1,5 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
+use crate::machines::workflow_machines::WFMachinesError;
 use crate::{
     machines::CancellableCommand,
     protos::{
@@ -12,11 +13,12 @@ use crate::{
     },
 };
 use rustfsm::{fsm, TransitionResult};
+use std::convert::TryFrom;
 
 fsm! {
-    name TimerMachine;
+    pub(super) name TimerMachine;
     command TimerCommand;
-    error TimerMachineError;
+    error WFMachinesError;
     shared_state SharedState;
 
     CancelTimerCommandCreated --(Cancel) --> CancelTimerCommandCreated;
@@ -35,8 +37,33 @@ fsm! {
     StartCommandRecorded --(Cancel, on_cancel) --> CancelTimerCommandCreated;
 }
 
+impl TryFrom<HistoryEvent> for TimerMachineEvents {
+    type Error = ();
+
+    fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
+        Ok(match EventType::from_i32(e.event_type) {
+            Some(EventType::TimerStarted) => Self::TimerStarted(e.event_id),
+            Some(EventType::TimerCanceled) => Self::TimerCanceled,
+            Some(EventType::TimerFired) => Self::TimerFired(e),
+            _ => return Err(()),
+        })
+    }
+}
+
+impl TryFrom<CommandType> for TimerMachineEvents {
+    type Error = ();
+
+    fn try_from(c: CommandType) -> Result<Self, Self::Error> {
+        Ok(match c {
+            CommandType::StartTimer => Self::CommandStartTimer,
+            CommandType::CancelTimer => Self::CommandCancelTimer,
+            _ => return Err(()),
+        })
+    }
+}
+
 #[derive(Default, Clone)]
-pub struct SharedState {
+pub(super) struct SharedState {
     timer_attributes: StartTimerCommandAttributes,
 }
 
@@ -58,19 +85,16 @@ impl SharedState {
     }
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum TimerMachineError {}
-
-pub enum TimerCommand {
+pub(super) enum TimerCommand {
     StartTimer(CancellableCommand),
     CancelTimer(/* TODO: Command attribs */),
     ProduceHistoryEvent(HistoryEvent),
 }
 
 #[derive(Default, Clone)]
-pub struct CancelTimerCommandCreated {}
+pub(super) struct CancelTimerCommandCreated {}
 impl CancelTimerCommandCreated {
-    pub fn on_command_cancel_timer(self, dat: SharedState) -> TimerMachineTransition {
+    pub(super) fn on_command_cancel_timer(self, dat: SharedState) -> TimerMachineTransition {
         TimerMachineTransition::ok(
             vec![dat.into_timer_canceled_event_command()],
             Canceled::default(),
@@ -79,10 +103,10 @@ impl CancelTimerCommandCreated {
 }
 
 #[derive(Default, Clone)]
-pub struct CancelTimerCommandSent {}
+pub(super) struct CancelTimerCommandSent {}
 
 #[derive(Default, Clone)]
-pub struct Canceled {}
+pub(super) struct Canceled {}
 impl From<CancelTimerCommandSent> for Canceled {
     fn from(_: CancelTimerCommandSent) -> Self {
         Self::default()
@@ -90,10 +114,10 @@ impl From<CancelTimerCommandSent> for Canceled {
 }
 
 #[derive(Default, Clone)]
-pub struct Created {}
+pub(super) struct Created {}
 
 impl Created {
-    pub fn on_schedule(self, dat: SharedState) -> TimerMachineTransition {
+    pub(super) fn on_schedule(self, dat: SharedState) -> TimerMachineTransition {
         let cmd = Command {
             command_type: CommandType::StartTimer as i32,
             attributes: Some(Attributes::StartTimerCommandAttributes(
@@ -110,19 +134,19 @@ impl Created {
 }
 
 #[derive(Default, Clone)]
-pub struct Fired {}
+pub(super) struct Fired {}
 
 #[derive(Clone)]
-pub struct StartCommandCreated {
+pub(super) struct StartCommandCreated {
     cancellable_command: CancellableCommand,
 }
 
 impl StartCommandCreated {
-    pub fn on_timer_started(self, id: HistoryEventId) -> TimerMachineTransition {
+    pub(super) fn on_timer_started(self, id: HistoryEventId) -> TimerMachineTransition {
         // Java recorded an initial event ID, but it seemingly was never used.
         TimerMachineTransition::default::<StartCommandRecorded>()
     }
-    pub fn on_cancel(mut self, dat: SharedState) -> TimerMachineTransition {
+    pub(super) fn on_cancel(mut self, dat: SharedState) -> TimerMachineTransition {
         // Cancel the initial command - which just sets a "canceled" flag in a wrapper of a
         // proto command. TODO: Does this make any sense?
         let _canceled_cmd = self.cancellable_command.cancel();
@@ -134,16 +158,16 @@ impl StartCommandCreated {
 }
 
 #[derive(Default, Clone)]
-pub struct StartCommandRecorded {}
+pub(super) struct StartCommandRecorded {}
 
 impl StartCommandRecorded {
-    pub fn on_timer_fired(self, event: HistoryEvent) -> TimerMachineTransition {
+    pub(super) fn on_timer_fired(self, event: HistoryEvent) -> TimerMachineTransition {
         TimerMachineTransition::ok(
             vec![TimerCommand::ProduceHistoryEvent(event)],
             Fired::default(),
         )
     }
-    pub fn on_cancel(self) -> TimerMachineTransition {
+    pub(super) fn on_cancel(self) -> TimerMachineTransition {
         TimerMachineTransition::ok(
             vec![TimerCommand::CancelTimer()],
             CancelTimerCommandCreated::default(),

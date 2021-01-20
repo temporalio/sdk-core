@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    name WorkflowTaskMachine; command WorkflowTaskCommand; error WorkflowTaskMachineError;
+    pub(super) name WorkflowTaskMachine; command WorkflowTaskCommand; error WorkflowTaskMachineError;
 
     Created --(WorkflowTaskScheduled, on_workflow_task_scheduled) --> Scheduled;
 
@@ -14,51 +14,51 @@ fsm! {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum WorkflowTaskMachineError {}
+pub(super) enum WorkflowTaskMachineError {}
 
-pub enum WorkflowTaskCommand {}
-
-#[derive(Default, Clone)]
-pub struct Completed {}
+pub(super) enum WorkflowTaskCommand {}
 
 #[derive(Default, Clone)]
-pub struct Created {}
+pub(super) struct Completed {}
+
+#[derive(Default, Clone)]
+pub(super) struct Created {}
 
 impl Created {
-    pub fn on_workflow_task_scheduled(self) -> WorkflowTaskMachineTransition {
+    pub(super) fn on_workflow_task_scheduled(self) -> WorkflowTaskMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct Failed {}
+pub(super) struct Failed {}
 
 #[derive(Default, Clone)]
-pub struct Scheduled {}
+pub(super) struct Scheduled {}
 
 impl Scheduled {
-    pub fn on_workflow_task_started(self) -> WorkflowTaskMachineTransition {
+    pub(super) fn on_workflow_task_started(self) -> WorkflowTaskMachineTransition {
         unimplemented!()
     }
-    pub fn on_workflow_task_timed_out(self) -> WorkflowTaskMachineTransition {
+    pub(super) fn on_workflow_task_timed_out(self) -> WorkflowTaskMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct Started {}
+pub(super) struct Started {}
 
 impl Started {
-    pub fn on_workflow_task_completed(self) -> WorkflowTaskMachineTransition {
+    pub(super) fn on_workflow_task_completed(self) -> WorkflowTaskMachineTransition {
         unimplemented!()
     }
-    pub fn on_workflow_task_failed(self) -> WorkflowTaskMachineTransition {
+    pub(super) fn on_workflow_task_failed(self) -> WorkflowTaskMachineTransition {
         unimplemented!()
     }
-    pub fn on_workflow_task_timed_out(self) -> WorkflowTaskMachineTransition {
+    pub(super) fn on_workflow_task_timed_out(self) -> WorkflowTaskMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct TimedOut {}
+pub(super) struct TimedOut {}

@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    name CompleteWorkflowMachine; command CompleteWorkflowCommand; error CompleteWorkflowMachineError;
+    pub(super) name CompleteWorkflowMachine; command CompleteWorkflowCommand; error CompleteWorkflowMachineError;
 
     CompleteWorkflowCommandCreated --(CommandCompleteWorkflowExecution) --> CompleteWorkflowCommandCreated;
     CompleteWorkflowCommandCreated --(WorkflowExecutionCompleted, on_workflow_execution_completed) --> CompleteWorkflowCommandRecorded;
@@ -10,27 +10,27 @@ fsm! {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum CompleteWorkflowMachineError {}
+pub(super) enum CompleteWorkflowMachineError {}
 
-pub enum CompleteWorkflowCommand {}
+pub(super) enum CompleteWorkflowCommand {}
 
 #[derive(Default, Clone)]
-pub struct CompleteWorkflowCommandCreated {}
+pub(super) struct CompleteWorkflowCommandCreated {}
 
 impl CompleteWorkflowCommandCreated {
-    pub fn on_workflow_execution_completed(self) -> CompleteWorkflowMachineTransition {
+    pub(super) fn on_workflow_execution_completed(self) -> CompleteWorkflowMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct CompleteWorkflowCommandRecorded {}
+pub(super) struct CompleteWorkflowCommandRecorded {}
 
 #[derive(Default, Clone)]
-pub struct Created {}
+pub(super) struct Created {}
 
 impl Created {
-    pub fn on_schedule(self) -> CompleteWorkflowMachineTransition {
+    pub(super) fn on_schedule(self) -> CompleteWorkflowMachineTransition {
         unimplemented!()
     }
 }

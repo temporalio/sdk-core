@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    name SignalExternalMachine; command SignalExternalCommand; error SignalExternalMachineError;
+    pub(super) name SignalExternalMachine; command SignalExternalCommand; error SignalExternalMachineError;
 
     Created --(Schedule, on_schedule) --> SignalExternalCommandCreated;
 
@@ -15,33 +15,33 @@ fsm! {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum SignalExternalMachineError {}
+pub(super) enum SignalExternalMachineError {}
 
-pub enum SignalExternalCommand {}
-
-#[derive(Default, Clone)]
-pub struct Canceled {}
+pub(super) enum SignalExternalCommand {}
 
 #[derive(Default, Clone)]
-pub struct Created {}
+pub(super) struct Canceled {}
+
+#[derive(Default, Clone)]
+pub(super) struct Created {}
 
 impl Created {
-    pub fn on_schedule(self) -> SignalExternalMachineTransition {
+    pub(super) fn on_schedule(self) -> SignalExternalMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct Failed {}
+pub(super) struct Failed {}
 
 #[derive(Default, Clone)]
-pub struct SignalExternalCommandCreated {}
+pub(super) struct SignalExternalCommandCreated {}
 
 impl SignalExternalCommandCreated {
-    pub fn on_cancel(self) -> SignalExternalMachineTransition {
+    pub(super) fn on_cancel(self) -> SignalExternalMachineTransition {
         unimplemented!()
     }
-    pub fn on_signal_external_workflow_execution_initiated(
+    pub(super) fn on_signal_external_workflow_execution_initiated(
         self,
     ) -> SignalExternalMachineTransition {
         unimplemented!()
@@ -49,16 +49,18 @@ impl SignalExternalCommandCreated {
 }
 
 #[derive(Default, Clone)]
-pub struct SignalExternalCommandRecorded {}
+pub(super) struct SignalExternalCommandRecorded {}
 
 impl SignalExternalCommandRecorded {
-    pub fn on_external_workflow_execution_signaled(self) -> SignalExternalMachineTransition {
+    pub(super) fn on_external_workflow_execution_signaled(self) -> SignalExternalMachineTransition {
         unimplemented!()
     }
-    pub fn on_signal_external_workflow_execution_failed(self) -> SignalExternalMachineTransition {
+    pub(super) fn on_signal_external_workflow_execution_failed(
+        self,
+    ) -> SignalExternalMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct Signaled {}
+pub(super) struct Signaled {}

@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    name FailWorkflowMachine; command FailWorkflowCommand; error FailWorkflowMachineError;
+    pub(super) name FailWorkflowMachine; command FailWorkflowCommand; error FailWorkflowMachineError;
 
     Created --(Schedule, on_schedule) --> FailWorkflowCommandCreated;
 
@@ -10,27 +10,27 @@ fsm! {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum FailWorkflowMachineError {}
+pub(super) enum FailWorkflowMachineError {}
 
-pub enum FailWorkflowCommand {}
+pub(super) enum FailWorkflowCommand {}
 
 #[derive(Default, Clone)]
-pub struct Created {}
+pub(super) struct Created {}
 
 impl Created {
-    pub fn on_schedule(self) -> FailWorkflowMachineTransition {
+    pub(super) fn on_schedule(self) -> FailWorkflowMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct FailWorkflowCommandCreated {}
+pub(super) struct FailWorkflowCommandCreated {}
 
 impl FailWorkflowCommandCreated {
-    pub fn on_workflow_execution_failed(self) -> FailWorkflowMachineTransition {
+    pub(super) fn on_workflow_execution_failed(self) -> FailWorkflowMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct FailWorkflowCommandRecorded {}
+pub(super) struct FailWorkflowCommandRecorded {}

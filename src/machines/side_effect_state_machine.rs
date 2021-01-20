@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    name SideEffectMachine; command SideEffectCommand; error SideEffectMachineError;
+    pub(super) name SideEffectMachine; command SideEffectCommand; error SideEffectMachineError;
 
     Created --(Schedule, on_schedule) --> MarkerCommandCreated;
     Created --(Schedule, on_schedule) --> MarkerCommandCreatedReplaying;
@@ -16,48 +16,48 @@ fsm! {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum SideEffectMachineError {}
+pub(super) enum SideEffectMachineError {}
 
-pub enum SideEffectCommand {}
+pub(super) enum SideEffectCommand {}
 
 #[derive(Default, Clone)]
-pub struct Created {}
+pub(super) struct Created {}
 
 impl Created {
-    pub fn on_schedule(self) -> SideEffectMachineTransition {
+    pub(super) fn on_schedule(self) -> SideEffectMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct MarkerCommandCreated {}
+pub(super) struct MarkerCommandCreated {}
 
 impl MarkerCommandCreated {
-    pub fn on_command_record_marker(self) -> SideEffectMachineTransition {
+    pub(super) fn on_command_record_marker(self) -> SideEffectMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct MarkerCommandCreatedReplaying {}
+pub(super) struct MarkerCommandCreatedReplaying {}
 
 #[derive(Default, Clone)]
-pub struct MarkerCommandRecorded {}
+pub(super) struct MarkerCommandRecorded {}
 
 #[derive(Default, Clone)]
-pub struct ResultNotified {}
+pub(super) struct ResultNotified {}
 
 impl ResultNotified {
-    pub fn on_marker_recorded(self) -> SideEffectMachineTransition {
+    pub(super) fn on_marker_recorded(self) -> SideEffectMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct ResultNotifiedReplaying {}
+pub(super) struct ResultNotifiedReplaying {}
 
 impl ResultNotifiedReplaying {
-    pub fn on_marker_recorded(self) -> SideEffectMachineTransition {
+    pub(super) fn on_marker_recorded(self) -> SideEffectMachineTransition {
         unimplemented!()
     }
 }

@@ -1,15 +1,11 @@
-use crate::machines::MachineCommand;
-use crate::protos::temporal::api::history::v1::{
-    TimerStartedEventAttributes, WorkflowExecutionStartedEventAttributes,
-    WorkflowTaskScheduledEventAttributes,
-};
 use crate::{
-    machines::workflow_machines::WorkflowMachines,
+    machines::{workflow_machines::WorkflowMachines, MachineCommand},
     protos::temporal::api::{
         enums::v1::EventType,
         history::v1::{
-            history_event::Attributes, HistoryEvent, WorkflowTaskCompletedEventAttributes,
-            WorkflowTaskStartedEventAttributes,
+            history_event::Attributes, HistoryEvent, TimerStartedEventAttributes,
+            WorkflowExecutionStartedEventAttributes, WorkflowTaskCompletedEventAttributes,
+            WorkflowTaskScheduledEventAttributes, WorkflowTaskStartedEventAttributes,
         },
     },
 };

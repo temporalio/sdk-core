@@ -3,7 +3,7 @@ use rustfsm::{fsm, TransitionResult};
 // Schedule / cancel are "explicit events" (imperative rather than past events?)
 
 fsm! {
-    name ActivityMachine; command ActivityCommand; error ActivityMachineError;
+    pub(super) name ActivityMachine; command ActivityCommand; error ActivityMachineError;
 
     Created --(Schedule, on_schedule)--> ScheduleCommandCreated;
 
@@ -50,94 +50,94 @@ fsm! {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum ActivityMachineError {}
+pub(super) enum ActivityMachineError {}
 
-pub enum ActivityCommand {}
+pub(super) enum ActivityCommand {}
 
 #[derive(Default, Clone)]
-pub struct Created {}
+pub(super) struct Created {}
 
 impl Created {
-    pub fn on_schedule(self) -> ActivityMachineTransition {
+    pub(super) fn on_schedule(self) -> ActivityMachineTransition {
         // would add command here
         ActivityMachineTransition::default::<ScheduleCommandCreated>()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct ScheduleCommandCreated {}
+pub(super) struct ScheduleCommandCreated {}
 
 impl ScheduleCommandCreated {
-    pub fn on_activity_task_scheduled(self) -> ActivityMachineTransition {
+    pub(super) fn on_activity_task_scheduled(self) -> ActivityMachineTransition {
         // set initial command event id
         //  this.initialCommandEventId = currentEvent.getEventId();
         ActivityMachineTransition::default::<ScheduledEventRecorded>()
     }
-    pub fn on_canceled(self) -> ActivityMachineTransition {
+    pub(super) fn on_canceled(self) -> ActivityMachineTransition {
         // cancelCommandNotifyCanceled
         ActivityMachineTransition::default::<Canceled>()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct ScheduledEventRecorded {}
+pub(super) struct ScheduledEventRecorded {}
 
 impl ScheduledEventRecorded {
-    pub fn on_task_started(self) -> ActivityMachineTransition {
+    pub(super) fn on_task_started(self) -> ActivityMachineTransition {
         // setStartedCommandEventId
         ActivityMachineTransition::default::<Started>()
     }
-    pub fn on_task_timed_out(self) -> ActivityMachineTransition {
+    pub(super) fn on_task_timed_out(self) -> ActivityMachineTransition {
         // notify_timed_out
         ActivityMachineTransition::default::<TimedOut>()
     }
-    pub fn on_canceled(self) -> ActivityMachineTransition {
+    pub(super) fn on_canceled(self) -> ActivityMachineTransition {
         // createRequestCancelActivityTaskCommand
         ActivityMachineTransition::default::<ScheduledActivityCancelCommandCreated>()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct Started {}
+pub(super) struct Started {}
 
 impl Started {
-    pub fn on_activity_task_completed(self) -> ActivityMachineTransition {
+    pub(super) fn on_activity_task_completed(self) -> ActivityMachineTransition {
         // notify_completed
         ActivityMachineTransition::default::<Completed>()
     }
-    pub fn on_activity_task_failed(self) -> ActivityMachineTransition {
+    pub(super) fn on_activity_task_failed(self) -> ActivityMachineTransition {
         // notify_failed
         ActivityMachineTransition::default::<Failed>()
     }
-    pub fn on_activity_task_timed_out(self) -> ActivityMachineTransition {
+    pub(super) fn on_activity_task_timed_out(self) -> ActivityMachineTransition {
         // notify_timed_out
         ActivityMachineTransition::default::<TimedOut>()
     }
-    pub fn on_canceled(self) -> ActivityMachineTransition {
+    pub(super) fn on_canceled(self) -> ActivityMachineTransition {
         // createRequestCancelActivityTaskCommand
         ActivityMachineTransition::default::<Failed>()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct ScheduledActivityCancelCommandCreated {}
+pub(super) struct ScheduledActivityCancelCommandCreated {}
 
 impl ScheduledActivityCancelCommandCreated {
-    pub fn on_command_request_cancel_activity_task(self) -> ActivityMachineTransition {
+    pub(super) fn on_command_request_cancel_activity_task(self) -> ActivityMachineTransition {
         // notifyCanceledIfTryCancel
         ActivityMachineTransition::default::<ScheduledActivityCancelCommandCreated>()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct ScheduledActivityCancelEventRecorded {}
+pub(super) struct ScheduledActivityCancelEventRecorded {}
 
 impl ScheduledActivityCancelEventRecorded {
-    pub fn on_activity_task_canceled(self) -> ActivityMachineTransition {
+    pub(super) fn on_activity_task_canceled(self) -> ActivityMachineTransition {
         // notify_canceled
         ActivityMachineTransition::default::<Canceled>()
     }
-    pub fn on_activity_task_timed_out(self) -> ActivityMachineTransition {
+    pub(super) fn on_activity_task_timed_out(self) -> ActivityMachineTransition {
         // notify_timed_out
         ActivityMachineTransition::default::<Canceled>()
     }
@@ -150,32 +150,32 @@ impl From<ScheduledActivityCancelCommandCreated> for ScheduledActivityCancelEven
 }
 
 #[derive(Default, Clone)]
-pub struct StartedActivityCancelCommandCreated {}
+pub(super) struct StartedActivityCancelCommandCreated {}
 
 impl StartedActivityCancelCommandCreated {
-    pub fn on_activity_task_cancel_requested(self) -> ActivityMachineTransition {
+    pub(super) fn on_activity_task_cancel_requested(self) -> ActivityMachineTransition {
         // notifyCanceledIfTryCancel
         ActivityMachineTransition::default::<StartedActivityCancelEventRecorded>()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct StartedActivityCancelEventRecorded {}
+pub(super) struct StartedActivityCancelEventRecorded {}
 
 impl StartedActivityCancelEventRecorded {
-    pub fn on_activity_task_completed(self) -> ActivityMachineTransition {
+    pub(super) fn on_activity_task_completed(self) -> ActivityMachineTransition {
         // notify_completed
         ActivityMachineTransition::default::<Completed>()
     }
-    pub fn on_activity_task_failed(self) -> ActivityMachineTransition {
+    pub(super) fn on_activity_task_failed(self) -> ActivityMachineTransition {
         // notify_failed
         ActivityMachineTransition::default::<Failed>()
     }
-    pub fn on_activity_task_timed_out(self) -> ActivityMachineTransition {
+    pub(super) fn on_activity_task_timed_out(self) -> ActivityMachineTransition {
         // notify_timed_out
         ActivityMachineTransition::default::<TimedOut>()
     }
-    pub fn on_activity_task_canceled(self) -> ActivityMachineTransition {
+    pub(super) fn on_activity_task_canceled(self) -> ActivityMachineTransition {
         // notifyCancellationFromEvent
         ActivityMachineTransition::default::<Failed>()
     }
@@ -188,16 +188,16 @@ impl From<ScheduledActivityCancelEventRecorded> for StartedActivityCancelEventRe
 }
 
 #[derive(Default, Clone)]
-pub struct Completed {}
+pub(super) struct Completed {}
 
 #[derive(Default, Clone)]
-pub struct Failed {}
+pub(super) struct Failed {}
 
 #[derive(Default, Clone)]
-pub struct TimedOut {}
+pub(super) struct TimedOut {}
 
 #[derive(Default, Clone)]
-pub struct Canceled {}
+pub(super) struct Canceled {}
 
 #[cfg(test)]
 mod activity_machine_tests {

@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    name MutableSideEffectMachine; command MutableSideEffectCommand; error MutableSideEffectMachineError;
+    pub(super) name MutableSideEffectMachine; command MutableSideEffectCommand; error MutableSideEffectMachineError;
 
     Created --(CheckExecutionState, on_check_execution_state) --> Replaying;
     Created --(CheckExecutionState, on_check_execution_state) --> Executing;
@@ -25,69 +25,69 @@ fsm! {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum MutableSideEffectMachineError {}
+pub(super) enum MutableSideEffectMachineError {}
 
-pub enum MutableSideEffectCommand {}
+pub(super) enum MutableSideEffectCommand {}
 
 #[derive(Default, Clone)]
-pub struct Created {}
+pub(super) struct Created {}
 
 impl Created {
-    pub fn on_check_execution_state(self) -> MutableSideEffectMachineTransition {
+    pub(super) fn on_check_execution_state(self) -> MutableSideEffectMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct Executing {}
+pub(super) struct Executing {}
 
 impl Executing {
-    pub fn on_schedule(self) -> MutableSideEffectMachineTransition {
+    pub(super) fn on_schedule(self) -> MutableSideEffectMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct MarkerCommandCreated {}
+pub(super) struct MarkerCommandCreated {}
 
 impl MarkerCommandCreated {
-    pub fn on_command_record_marker(self) -> MutableSideEffectMachineTransition {
+    pub(super) fn on_command_record_marker(self) -> MutableSideEffectMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct MarkerCommandCreatedReplaying {}
+pub(super) struct MarkerCommandCreatedReplaying {}
 
 #[derive(Default, Clone)]
-pub struct MarkerCommandRecorded {}
+pub(super) struct MarkerCommandRecorded {}
 
 #[derive(Default, Clone)]
-pub struct Replaying {}
+pub(super) struct Replaying {}
 
 impl Replaying {
-    pub fn on_schedule(self) -> MutableSideEffectMachineTransition {
+    pub(super) fn on_schedule(self) -> MutableSideEffectMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct ResultNotified {}
+pub(super) struct ResultNotified {}
 
 impl ResultNotified {
-    pub fn on_marker_recorded(self) -> MutableSideEffectMachineTransition {
+    pub(super) fn on_marker_recorded(self) -> MutableSideEffectMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct ResultNotifiedReplaying {}
+pub(super) struct ResultNotifiedReplaying {}
 
 impl ResultNotifiedReplaying {
-    pub fn on_non_matching_event(self) -> MutableSideEffectMachineTransition {
+    pub(super) fn on_non_matching_event(self) -> MutableSideEffectMachineTransition {
         unimplemented!()
     }
-    pub fn on_marker_recorded(self) -> MutableSideEffectMachineTransition {
+    pub(super) fn on_marker_recorded(self) -> MutableSideEffectMachineTransition {
         unimplemented!()
     }
 }
@@ -99,13 +99,13 @@ impl From<MarkerCommandCreatedReplaying> for ResultNotifiedReplaying {
 }
 
 #[derive(Default, Clone)]
-pub struct Skipped {}
+pub(super) struct Skipped {}
 
 impl Skipped {
-    pub fn on_command_record_marker(self) -> MutableSideEffectMachineTransition {
+    pub(super) fn on_command_record_marker(self) -> MutableSideEffectMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct SkippedNotified {}
+pub(super) struct SkippedNotified {}

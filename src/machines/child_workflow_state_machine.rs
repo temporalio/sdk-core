@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    name ChildWorkflowMachine; command ChildWorkflowCommand; error ChildWorkflowMachineError;
+    pub(super) name ChildWorkflowMachine; command ChildWorkflowCommand; error ChildWorkflowMachineError;
 
     Created --(Schedule, on_schedule) --> StartCommandCreated;
 
@@ -20,78 +20,80 @@ fsm! {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum ChildWorkflowMachineError {}
+pub(super) enum ChildWorkflowMachineError {}
 
-pub enum ChildWorkflowCommand {}
-
-#[derive(Default, Clone)]
-pub struct Canceled {}
+pub(super) enum ChildWorkflowCommand {}
 
 #[derive(Default, Clone)]
-pub struct Completed {}
+pub(super) struct Canceled {}
 
 #[derive(Default, Clone)]
-pub struct Created {}
+pub(super) struct Completed {}
+
+#[derive(Default, Clone)]
+pub(super) struct Created {}
 
 impl Created {
-    pub fn on_schedule(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_schedule(self) -> ChildWorkflowMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct Failed {}
+pub(super) struct Failed {}
 
 #[derive(Default, Clone)]
-pub struct StartCommandCreated {}
+pub(super) struct StartCommandCreated {}
 
 impl StartCommandCreated {
-    pub fn on_start_child_workflow_execution_initiated(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_start_child_workflow_execution_initiated(
+        self,
+    ) -> ChildWorkflowMachineTransition {
         unimplemented!()
     }
-    pub fn on_cancel(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_cancel(self) -> ChildWorkflowMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct StartEventRecorded {}
+pub(super) struct StartEventRecorded {}
 
 impl StartEventRecorded {
-    pub fn on_child_workflow_execution_started(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_child_workflow_execution_started(self) -> ChildWorkflowMachineTransition {
         unimplemented!()
     }
-    pub fn on_start_child_workflow_execution_failed(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_start_child_workflow_execution_failed(self) -> ChildWorkflowMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct StartFailed {}
+pub(super) struct StartFailed {}
 
 #[derive(Default, Clone)]
-pub struct Started {}
+pub(super) struct Started {}
 
 impl Started {
-    pub fn on_child_workflow_execution_completed(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_child_workflow_execution_completed(self) -> ChildWorkflowMachineTransition {
         unimplemented!()
     }
-    pub fn on_child_workflow_execution_failed(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_child_workflow_execution_failed(self) -> ChildWorkflowMachineTransition {
         unimplemented!()
     }
-    pub fn on_child_workflow_execution_timed_out(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_child_workflow_execution_timed_out(self) -> ChildWorkflowMachineTransition {
         unimplemented!()
     }
-    pub fn on_child_workflow_execution_canceled(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_child_workflow_execution_canceled(self) -> ChildWorkflowMachineTransition {
         unimplemented!()
     }
-    pub fn on_child_workflow_execution_terminated(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_child_workflow_execution_terminated(self) -> ChildWorkflowMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct Terminated {}
+pub(super) struct Terminated {}
 
 #[derive(Default, Clone)]
-pub struct TimedOut {}
+pub(super) struct TimedOut {}

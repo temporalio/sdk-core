@@ -1,14 +1,16 @@
-use crate::protos::temporal::api::history::v1::history_event;
 use crate::{
     machines::{CancellableCommand, MachineCommand, TemporalStateMachine},
-    protos::temporal::api::{enums::v1::EventType, history::v1::HistoryEvent},
+    protos::temporal::api::{
+        enums::v1::{CommandType, EventType},
+        history::v1::{history_event, HistoryEvent},
+    },
 };
 use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
 #[derive(Default)]
-pub(super) struct WorkflowMachines {
+pub(crate) struct WorkflowMachines {
     /// The event id of the last event in the history which is expected to be startedEventId unless
     /// it is replay from a JSON file.
     workflow_task_started_event_id: i64,
@@ -31,11 +33,15 @@ pub(super) struct WorkflowMachines {
 
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum WFMachinesError {
-    // TODO: more context
     #[error("Event {0:?} was not expected")]
     UnexpectedEvent(HistoryEvent),
     #[error("Event {0:?} was malformed: {1}")]
     MalformedEvent(HistoryEvent, String),
+    #[error("Command type {0:?} was not expected")]
+    UnexpectedCommand(CommandType),
+    // TODO: Pretty sure can remove this if no machines need some specific error
+    #[error("Underlying machine error")]
+    Underlying,
 }
 
 impl WorkflowMachines {
@@ -52,7 +58,7 @@ impl WorkflowMachines {
     /// is the last event in the history.
     ///
     /// TODO: Describe what actually happens in here
-    pub(super) fn handle_event(
+    pub(crate) fn handle_event(
         &mut self,
         event: &HistoryEvent,
         has_next_event: bool,
@@ -74,8 +80,8 @@ impl WorkflowMachines {
             .get_initial_command_event_id()
             .map(|id| self.machines_by_id.entry(id))
         {
-            Some(Entry::Occupied(sme)) => {
-                let sm = sme.get();
+            Some(Entry::Occupied(mut sme)) => {
+                let sm = sme.get_mut();
                 sm.handle_event(event, has_next_event)?;
                 if sm.is_final_state() {
                     sme.remove();
@@ -150,7 +156,7 @@ impl WorkflowMachines {
 
     /// Fetches commands ready for processing from the state machines, removing them from the
     /// internal command queue.
-    pub(super) fn take_commands(&mut self) -> Vec<MachineCommand> {
+    pub(crate) fn take_commands(&mut self) -> Vec<MachineCommand> {
         self.commands.drain(0..).flat_map(|c| c.command).collect()
     }
 
