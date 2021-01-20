@@ -99,26 +99,25 @@ impl TestHistoryBuilder {
     pub(super) fn get_workflow_task_count(&self, up_to_event_id: Option<i64>) -> Result<usize> {
         let mut last_wf_started_id = 0;
         let mut count = 0;
-        for (i, event) in self.events.iter().enumerate() {
+        let mut history = self.events.iter().peekable();
+        while let Some(event) = history.next() {
+            let next_event = history.peek();
             if let Some(upto) = up_to_event_id {
                 if event.event_id > upto {
                     return Ok(count);
                 }
             }
-            let at_last_item = i == self.events.len() - 1;
-            let next_item_is_wftc = self
-                .events
-                .get(i + 1)
-                .map(|e| e.event_type == EventType::WorkflowTaskCompleted as i32)
-                .unwrap_or(false);
+            let next_is_completed = next_event.map_or(false, |ne| {
+                ne.event_type == EventType::WorkflowTaskCompleted as i32
+            });
             if event.event_type == EventType::WorkflowTaskStarted as i32
-                && (at_last_item || next_item_is_wftc)
+                && (next_event.is_none() || next_is_completed)
             {
                 last_wf_started_id = event.event_id;
                 count += 1;
             }
-            if at_last_item {
-                // No more events
+
+            if next_event.is_none() {
                 if last_wf_started_id != event.event_id {
                     bail!("Last item in history wasn't WorkflowTaskStarted")
                 }
@@ -154,20 +153,20 @@ impl TestHistoryBuilder {
             0
         };
 
-        while let Some(e) = history.next() {
+        while let Some(event) = history.next() {
             let next_event = history.peek();
             if next_event.is_none() {
-                if e.is_final_wf_execution_event() {
+                if event.is_final_wf_execution_event() {
                     return Ok(());
                 }
-                if started_id != e.event_id {
+                if started_id != event.event_id {
                     // TODO: I think this message is a lie
                     bail!("The last event in the history isn't WF task started");
                 }
                 unreachable!()
             }
 
-            if e.event_type == EventType::WorkflowTaskStarted as i32 {
+            if event.event_type == EventType::WorkflowTaskStarted as i32 {
                 let next_is_completed = next_event.map_or(false, |ne| {
                     ne.event_type == EventType::WorkflowTaskCompleted as i32
                 });
@@ -177,10 +176,10 @@ impl TestHistoryBuilder {
                 });
 
                 if next_event.is_none() || next_is_completed {
-                    started_id = e.event_id;
+                    started_id = event.event_id;
                     count += 1;
-                    if count == toTaskIndex || next_event.is_none() {
-                        wf_machines.handleEvent(e, false);
+                    if count == to_task_index || next_event.is_none() {
+                        wf_machines.handle_event(event, false);
                         return Ok(());
                     }
                 } else if next_event.is_some() && !next_is_failed_or_timeout {
@@ -192,7 +191,7 @@ impl TestHistoryBuilder {
                 }
             }
 
-            wf_machines.handle_event(e, next_event.is_some());
+            wf_machines.handle_event(event, next_event.is_some());
         }
 
         Ok(())
@@ -203,38 +202,34 @@ impl TestHistoryBuilder {
         let mut lastest_wf_started_id = 0;
         let mut previous_wf_started_id = 0;
         let mut count = 0;
-        for (i, event) in self.events.iter().enumerate() {
-            let at_last_item = i == self.events.len() - 1;
+        let mut history = self.events.iter().peekable();
+
+        while let Some(event) = history.next() {
+            let next_event = history.peek();
 
             if event.event_type == EventType::WorkflowTaskStarted as i32 {
-                let next_item_is_wftc = self
-                    .events
-                    .get(i + 1)
-                    .map(|e| e.event_type == EventType::WorkflowTaskCompleted as i32)
-                    .unwrap_or(false);
-                let next_item_is_wf_tf_or_to = self
-                    .events
-                    .get(i + 1)
-                    .map(|e| {
-                        e.event_type == EventType::WorkflowTaskCompleted as i32
-                            || e.event_type == EventType::WorkflowExecutionTimedOut as i32
-                    })
-                    .unwrap_or(false);
+                let next_is_completed = next_event.map_or(false, |ne| {
+                    ne.event_type == EventType::WorkflowTaskCompleted as i32
+                });
+                let next_is_failed_or_timeout = next_event.map_or(false, |ne| {
+                    ne.event_type == EventType::WorkflowTaskFailed as i32
+                        || ne.event_type == EventType::WorkflowTaskTimedOut as i32
+                });
 
-                if at_last_item || next_item_is_wftc {
+                if next_event.is_none() || next_is_completed {
                     previous_wf_started_id = lastest_wf_started_id;
                     lastest_wf_started_id = event.event_id;
                     if lastest_wf_started_id == previous_wf_started_id {
-                        bail!("Latest wf started id and previvous one are equal!")
+                        bail!("Latest wf started id and previous one are equal!")
                     }
                     count += 1;
-                    if count == to_task_index || at_last_item {
+                    if count == to_task_index || next_event.is_none() {
                         return Ok(HistoryInfo::new(
                             previous_wf_started_id,
                             lastest_wf_started_id,
                         ));
                     }
-                } else if !at_last_item && !next_item_is_wf_tf_or_to {
+                } else if next_event.is_some() && !next_is_failed_or_timeout {
                     bail!(
                         "Invalid history! Event {:?} should be WF task completed, \
                          failed, or timed out.",
@@ -243,7 +238,7 @@ impl TestHistoryBuilder {
                 }
             }
 
-            if at_last_item {
+            if next_event.is_none() {
                 if event.is_final_wf_execution_event() {
                     return Ok(HistoryInfo::new(
                         previous_wf_started_id,
