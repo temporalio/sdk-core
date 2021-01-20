@@ -1,8 +1,11 @@
+use crate::protos::temporal::api::history::v1::history_event;
 use crate::{
     machines::{CancellableCommand, MachineCommand, TemporalStateMachine},
     protos::temporal::api::{enums::v1::EventType, history::v1::HistoryEvent},
 };
 use std::collections::{hash_map::Entry, HashMap, VecDeque};
+
+type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
 #[derive(Default)]
 pub(super) struct WorkflowMachines {
@@ -15,6 +18,8 @@ pub(super) struct WorkflowMachines {
     previous_started_event_id: i64,
     /// True if the workflow is replaying from history
     replaying: bool,
+    /// Identifies the current run and is used as a seed for faux-randomness.
+    current_run_id: String,
 
     /// A mapping for accessing all the machines, where the key is the id of the initiating event
     /// for that machine.
@@ -22,6 +27,15 @@ pub(super) struct WorkflowMachines {
 
     /// Queued commands which have been produced by machines and await processing
     commands: VecDeque<CancellableCommand>,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub(crate) enum WFMachinesError {
+    // TODO: more context
+    #[error("Event {0:?} was not expected")]
+    UnexpectedEvent(HistoryEvent),
+    #[error("Event {0:?} was malformed: {1}")]
+    MalformedEvent(HistoryEvent, String),
 }
 
 impl WorkflowMachines {
@@ -38,10 +52,14 @@ impl WorkflowMachines {
     /// is the last event in the history.
     ///
     /// TODO: Describe what actually happens in here
-    pub(super) fn handle_event(&mut self, event: &HistoryEvent, has_next_event: bool) {
+    pub(super) fn handle_event(
+        &mut self,
+        event: &HistoryEvent,
+        has_next_event: bool,
+    ) -> Result<()> {
         if event.is_command_event() {
             self.handle_command_event(event);
-            return;
+            return Ok(());
         }
 
         if self.replaying
@@ -58,7 +76,7 @@ impl WorkflowMachines {
         {
             Some(Entry::Occupied(sme)) => {
                 let sm = sme.get();
-                sm.handle_event(event, has_next_event);
+                sm.handle_event(event, has_next_event)?;
                 if sm.is_final_state() {
                     sme.remove();
                 }
@@ -70,16 +88,64 @@ impl WorkflowMachines {
                     event
                 );
             }
-            _ => self.handle_non_stateful_event(event, has_next_event),
+            _ => self.handle_non_stateful_event(event, has_next_event)?,
         }
+
+        Ok(())
     }
 
-    fn handle_command_event(&self, _event: &HistoryEvent) {
+    fn handle_command_event(&mut self, _event: &HistoryEvent) {
         unimplemented!()
     }
 
-    fn handle_non_stateful_event(&self, _event: &HistoryEvent, _has_next_event: bool) {
-        unimplemented!()
+    fn handle_non_stateful_event(
+        &mut self,
+        event: &HistoryEvent,
+        _has_next_event: bool,
+    ) -> Result<()> {
+        // switch (event.getEventType()) {
+        //     case EVENT_TYPE_WORKFLOW_EXECUTION_STARTED:
+        //         this.currentRunId =
+        //         event.getWorkflowExecutionStartedEventAttributes().getOriginalExecutionRunId();
+        //     callbacks.start(event);
+        //     break;
+        //     case EVENT_TYPE_WORKFLOW_TASK_SCHEDULED:
+        //         WorkflowTaskStateMachine c =
+        //         WorkflowTaskStateMachine.newInstance(
+        //             workflowTaskStartedEventId, new WorkflowTaskCommandsListener());
+        //     c.handleEvent(event, hasNextEvent);
+        //     stateMachines.put(event.getEventId(), c);
+        //     break;
+        //     case EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED:
+        //         callbacks.signal(event);
+        //     break;
+        //     case EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED:
+        //         callbacks.cancel(event);
+        //     break;
+        //     case UNRECOGNIZED:
+        //     break;
+        //     default:
+        //         throw new IllegalArgumentException("Unexpected event:" + event);
+        // }
+        match EventType::from_i32(event.event_type) {
+            Some(EventType::WorkflowExecutionStarted) => {
+                if let Some(history_event::Attributes::WorkflowExecutionStartedEventAttributes(
+                    attrs,
+                )) = &event.attributes
+                {
+                    self.current_run_id = attrs.original_execution_run_id.clone();
+                // TODO: callbacks.start(event) -- but without the callbacks ;)
+                } else {
+                    return Err(WFMachinesError::MalformedEvent(
+                        event.clone(),
+                        "WorkflowExecutionStarted event did not have appropriate attribues"
+                            .to_string(),
+                    ));
+                }
+            }
+            _ => return Err(WFMachinesError::UnexpectedEvent(event.clone())),
+        }
+        Ok(())
     }
 
     /// Fetches commands ready for processing from the state machines, removing them from the

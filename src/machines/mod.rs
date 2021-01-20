@@ -34,29 +34,27 @@ mod workflow_task_state_machine;
 #[cfg(test)]
 mod test_help;
 
-use crate::protos::temporal::api::{
-    command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent,
+use crate::{
+    machines::workflow_machines::WFMachinesError,
+    protos::temporal::api::{
+        command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent,
+    },
 };
 use rustfsm::StateMachine;
 
 //  TODO: May need to be our SDKWFCommand type
 pub(crate) type MachineCommand = Command;
 
-/// Status returned by [EntityStateMachine::handle_event]
-enum HandleEventStatus {
-    // TODO: Feels like we can put more information in these?
-    /// Event handled successfully
-    Ok,
-    /// The event is inapplicable to the current state
-    NonMatchingEvent,
-}
-
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
 ///
 /// Formerly known as `EntityStateMachine` in Java.
 trait TemporalStateMachine: CheckStateMachineInFinal {
     fn handle_command(&self, command_type: CommandType);
-    fn handle_event(&self, event: &HistoryEvent, has_next_event: bool) -> HandleEventStatus;
+    fn handle_event(
+        &self,
+        event: &HistoryEvent,
+        has_next_event: bool,
+    ) -> Result<(), WFMachinesError>;
 
     // TODO: This is a weird one that only applies to version state machine. Introduce only if
     //  needed. Ideally handle differently.

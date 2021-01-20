@@ -1,4 +1,8 @@
 use crate::machines::MachineCommand;
+use crate::protos::temporal::api::history::v1::{
+    TimerStartedEventAttributes, WorkflowExecutionStartedEventAttributes,
+    WorkflowTaskScheduledEventAttributes,
+};
 use crate::{
     machines::workflow_machines::WorkflowMachines,
     protos::temporal::api::{
@@ -28,12 +32,14 @@ impl TestHistoryBuilder {
     /// Add an event by type with attributes. Bundles both into a [HistoryEvent] with an id that is
     /// incremented on each call to add.
     pub(super) fn add(&mut self, event_type: EventType, attribs: Attributes) {
-        self.build_and_push_event(event_type, Some(attribs));
+        self.build_and_push_event(event_type, attribs);
     }
 
-    /// Adds an event to the history by type, without attributes
+    /// Adds an event to the history by type, with default attributes.
     pub(super) fn add_by_type(&mut self, event_type: EventType) {
-        self.build_and_push_event(event_type.clone(), None);
+        let attribs =
+            default_attribs(event_type).expect("Couldn't make default attributes in test builder");
+        self.build_and_push_event(event_type.clone(), attribs);
     }
 
     /// Adds an event, returning the ID that was assigned to it
@@ -42,7 +48,11 @@ impl TestHistoryBuilder {
         event_type: EventType,
         attrs: Option<Attributes>,
     ) -> i64 {
-        self.build_and_push_event(event_type, attrs);
+        if let Some(a) = attrs {
+            self.build_and_push_event(event_type, a);
+        } else {
+            self.add_by_type(event_type);
+        }
         self.current_event_id
     }
 
@@ -74,10 +84,7 @@ impl TestHistoryBuilder {
             scheduled_event_id: self.workflow_task_scheduled_event_id,
             ..Default::default()
         };
-        self.build_and_push_event(
-            EventType::WorkflowTaskStarted,
-            Some(Attributes::WorkflowTaskStartedEventAttributes(attrs)),
-        );
+        self.build_and_push_event(EventType::WorkflowTaskStarted, attrs.into());
     }
 
     pub(super) fn add_workflow_task_completed(&mut self) {
@@ -85,10 +92,7 @@ impl TestHistoryBuilder {
             scheduled_event_id: self.workflow_task_scheduled_event_id,
             ..Default::default()
         };
-        self.build_and_push_event(
-            EventType::WorkflowTaskCompleted,
-            Some(Attributes::WorkflowTaskCompletedEventAttributes(attrs)),
-        );
+        self.build_and_push_event(EventType::WorkflowTaskCompleted, attrs.into());
     }
 
     /// Counts the number of whole workflow tasks. Looks for WFTaskStarted followed by
@@ -190,7 +194,7 @@ impl TestHistoryBuilder {
                     started_id = event.event_id;
                     count += 1;
                     if count == to_task_index || next_event.is_none() {
-                        wf_machines.handle_event(event, false);
+                        wf_machines.handle_event(event, false)?;
                         return Ok(());
                     }
                 } else if next_event.is_some() && !next_is_failed_or_timeout {
@@ -202,7 +206,7 @@ impl TestHistoryBuilder {
                 }
             }
 
-            wf_machines.handle_event(event, next_event.is_some());
+            wf_machines.handle_event(event, next_event.is_some())?;
         }
 
         Ok(())
@@ -265,17 +269,28 @@ impl TestHistoryBuilder {
         unreachable!()
     }
 
-    fn build_and_push_event(&mut self, event_type: EventType, attribs: Option<Attributes>) {
+    fn build_and_push_event(&mut self, event_type: EventType, attribs: Attributes) {
         self.current_event_id += 1;
         let evt = HistoryEvent {
             event_type: event_type as i32,
             event_id: self.current_event_id,
             event_time: Some(SystemTime::now().into()),
-            attributes: attribs,
+            attributes: Some(attribs),
             ..Default::default()
         };
         self.events.push(evt);
     }
+}
+
+fn default_attribs(et: EventType) -> Result<Attributes> {
+    Ok(match et {
+        EventType::WorkflowExecutionStarted => {
+            WorkflowExecutionStartedEventAttributes::default().into()
+        }
+        EventType::WorkflowTaskScheduled => WorkflowTaskScheduledEventAttributes::default().into(),
+        EventType::TimerStarted => TimerStartedEventAttributes::default().into(),
+        _ => bail!("Don't know how to construct default attrs for {:?}", et),
+    })
 }
 
 #[derive(Clone, Debug, derive_more::Constructor, Eq, PartialEq, Hash)]
