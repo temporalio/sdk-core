@@ -382,7 +382,7 @@ impl StateMachineDefinition {
         let events_enum_name = Ident::new(&format!("{}Events", name), name.span());
         let events: Vec<_> = events.into_iter().collect();
         let events_enum = quote! {
-            pub enum #events_enum_name {
+            #visibility enum #events_enum_name {
                 #(#events),*
             }
         };

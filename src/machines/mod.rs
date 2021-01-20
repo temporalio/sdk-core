@@ -67,7 +67,7 @@ where
     SM: StateMachine + CheckStateMachineInFinal + Clone,
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
-    <SM as StateMachine>::Error: Into<WFMachinesError>,
+    <SM as StateMachine>::Error: Into<WFMachinesError> + 'static + Send + Sync,
 {
     fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError> {
         if let Ok(converted_command) = command_type.try_into() {
@@ -76,7 +76,7 @@ where
                 Err(MachineError::InvalidTransition) => {
                     Err(WFMachinesError::UnexpectedCommand(command_type))
                 }
-                Err(MachineError::Underlying(_)) => Err(WFMachinesError::Underlying),
+                Err(MachineError::Underlying(e)) => Err(WFMachinesError::Underlying(Box::new(e))),
             }
         } else {
             Err(WFMachinesError::UnexpectedCommand(command_type))
@@ -88,13 +88,15 @@ where
         event: &HistoryEvent,
         _has_next_event: bool,
     ) -> Result<(), WFMachinesError> {
+        // TODO: `has_next_event` is *only* used by WorkflowTaskStateMachine. Figure out how
+        //   to deal with it.
         if let Ok(converted_event) = event.clone().try_into() {
             match self.on_event_mut(converted_event) {
                 Ok(_) => Ok(()),
                 Err(MachineError::InvalidTransition) => {
                     Err(WFMachinesError::UnexpectedEvent(event.clone()))
                 }
-                Err(MachineError::Underlying(_)) => Err(WFMachinesError::Underlying),
+                Err(MachineError::Underlying(e)) => Err(WFMachinesError::Underlying(Box::new(e))),
             }
         } else {
             Err(WFMachinesError::UnexpectedEvent(event.clone()))

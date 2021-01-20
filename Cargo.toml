@@ -11,16 +11,16 @@ anyhow = "1.0"
 async-trait = "0.1"
 derive_more = "0.99"
 log = "0.4"
-prost = "0.6"
-prost-types = "0.6"
+prost = "0.7"
+prost-types = "0.7"
 thiserror = "1.0"
-tonic = "0.3"
+tonic = "0.4"
 
 [dependencies.rustfsm]
 path = "fsm"
 
 [build-dependencies]
-tonic-build = "0.3"
+tonic-build = "0.4"
 
 [workspace]
 members = [".", "fsm"]

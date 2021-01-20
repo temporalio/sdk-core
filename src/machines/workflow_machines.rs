@@ -1,11 +1,15 @@
 use crate::{
-    machines::{CancellableCommand, MachineCommand, TemporalStateMachine},
+    machines::{
+        workflow_task_state_machine::WorkflowTaskMachine, CancellableCommand, MachineCommand,
+        TemporalStateMachine,
+    },
     protos::temporal::api::{
         enums::v1::{CommandType, EventType},
         history::v1::{history_event, HistoryEvent},
     },
 };
 use std::collections::{hash_map::Entry, HashMap, VecDeque};
+use std::error::Error;
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
@@ -40,8 +44,8 @@ pub(crate) enum WFMachinesError {
     #[error("Command type {0:?} was not expected")]
     UnexpectedCommand(CommandType),
     // TODO: Pretty sure can remove this if no machines need some specific error
-    #[error("Underlying machine error")]
-    Underlying,
+    #[error("Underlying machine error {0:?}")]
+    Underlying(#[from] Box<dyn Error + Send + Sync>),
 }
 
 impl WorkflowMachines {
@@ -107,7 +111,7 @@ impl WorkflowMachines {
     fn handle_non_stateful_event(
         &mut self,
         event: &HistoryEvent,
-        _has_next_event: bool,
+        has_next_event: bool,
     ) -> Result<()> {
         // switch (event.getEventType()) {
         //     case EVENT_TYPE_WORKFLOW_EXECUTION_STARTED:
@@ -144,10 +148,22 @@ impl WorkflowMachines {
                 } else {
                     return Err(WFMachinesError::MalformedEvent(
                         event.clone(),
-                        "WorkflowExecutionStarted event did not have appropriate attribues"
+                        "WorkflowExecutionStarted event did not have appropriate attributes"
                             .to_string(),
                     ));
                 }
+            }
+            Some(EventType::WorkflowTaskScheduled) => {
+                let mut wf_task_sm = WorkflowTaskMachine::new(self.workflow_task_started_event_id);
+                wf_task_sm.handle_event(event, has_next_event)?;
+                self.machines_by_id
+                    .insert(event.event_id, Box::new(wf_task_sm));
+            }
+            Some(EventType::WorkflowExecutionSignaled) => {
+                // TODO: Signal callbacks
+            }
+            Some(EventType::WorkflowExecutionCancelRequested) => {
+                // TODO: Cancel callbacks
             }
             _ => return Err(WFMachinesError::UnexpectedEvent(event.clone())),
         }
