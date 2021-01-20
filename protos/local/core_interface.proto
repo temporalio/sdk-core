@@ -20,8 +20,7 @@ service CoreSDKService {
 }
 
 message PollSDKTaskReq {
-    // Maybe? Not sure it makes sense to support multiple workers in the same core sdk instance
-    repeated temporal.api.taskqueue.v1.TaskQueue task_queues = 1;
+    temporal.api.taskqueue.v1.TaskQueue task_queues = 1;
 }
 
 message PollSDKTaskResp {

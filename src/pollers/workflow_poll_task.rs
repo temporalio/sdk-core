@@ -10,12 +10,30 @@ use crate::protos::temporal::api::workflowservice::v1::{
 };
 use temporal::workflow_service_client::WorkflowServiceClient;
 
-struct WorkflowPollTask<'a> {
+pub(crate) struct WorkflowPollTask<'a> {
     service: &'a mut WorkflowServiceClient<tonic::transport::Channel>,
     namespace: String,
     task_queue: String,
     identity: String,
     binary_checksum: String,
+}
+
+impl WorkflowPollTask<'_> {
+    pub(crate) fn new(
+        service: &mut WorkflowServiceClient<tonic::transport::Channel>,
+        namespace: String,
+        task_queue: String,
+        identity: String,
+        binary_checksum: String,
+    ) -> WorkflowPollTask {
+        return WorkflowPollTask {
+            service,
+            namespace,
+            task_queue,
+            identity,
+            binary_checksum,
+        };
+    }
 }
 
 #[async_trait::async_trait]
