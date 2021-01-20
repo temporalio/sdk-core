@@ -7,8 +7,10 @@ edition = "2018"
 [lib]
 
 [dependencies]
+anyhow = "1.0"
 async-trait = "0.1"
 derive_more = "0.99"
+log = "0.4"
 prost = "0.6"
 prost-types = "0.6"
 thiserror = "1.0"

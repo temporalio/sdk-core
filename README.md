@@ -26,3 +26,12 @@ To format all code run:
 We are using [clippy](https://github.com/rust-lang/rust-clippy) for linting.
 You can run it using:
 `cargo clippy --all -- -D warnings`
+
+## Style Guidelines
+
+### Error handling
+Any error which is returned from a public interface should be well-typed, and we use 
+[thiserror](https://github.com/dtolnay/thiserror) for that purpose.
+
+Errors returned from things only used in testing are free to use 
+[anyhow](https://github.com/dtolnay/anyhow) for less verbosity.

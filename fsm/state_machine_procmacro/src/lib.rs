@@ -183,6 +183,13 @@ struct StateMachineDefinition {
     transitions: HashSet<Transition>,
 }
 
+impl StateMachineDefinition {
+    fn is_final_state(&self, state: &Ident) -> bool {
+        // If no transitions go from this state, it's a final state.
+        self.transitions.iter().find(|t| t.from == *state).is_none()
+    }
+}
+
 impl Parse for StateMachineDefinition {
     // TODO: Pub keyword
     fn parse(input: ParseStream) -> Result<Self> {
@@ -347,6 +354,23 @@ impl StateMachineDefinition {
                 #(#state_variants),*
             }
         };
+        let state_is_final_match_arms = states.iter().map(|s| {
+            let val = if self.is_final_state(s) {
+                quote! { true }
+            } else {
+                quote! { false }
+            };
+            quote! { #state_enum_name::#s(_) => #val }
+        });
+        let states_enum_impl = quote! {
+            impl #state_enum_name {
+                fn is_final(&self) -> bool {
+                    match self {
+                        #(#state_is_final_match_arms),*
+                    }
+                }
+            }
+        };
 
         // Build the events enum
         let events: HashSet<Variant> = self.transitions.iter().map(|t| t.event.clone()).collect();
@@ -469,6 +493,10 @@ impl StateMachineDefinition {
                     &self.shared_state
                 }
 
+                fn on_final_state(&self) -> bool {
+                    self.state.is_final()
+                }
+
                 fn from_parts(shared: Self::SharedState, state: Self::State) -> Self {
                     Self { shared_state: shared, state }
                 }
@@ -484,6 +512,7 @@ impl StateMachineDefinition {
             #transition_type_alias
             #machine_struct
             #states_enum
+            #states_enum_impl
             #events_enum
             #trait_impl
         };

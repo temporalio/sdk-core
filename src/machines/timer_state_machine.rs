@@ -20,7 +20,8 @@ fsm! {
     shared_state SharedState;
 
     CancelTimerCommandCreated --(Cancel) --> CancelTimerCommandCreated;
-    CancelTimerCommandCreated --(CommandCancelTimer, shared on_command_cancel_timer) --> CancelTimerCommandSent;
+    CancelTimerCommandCreated
+        --(CommandCancelTimer, shared on_command_cancel_timer) --> CancelTimerCommandSent;
 
     CancelTimerCommandSent --(TimerCanceled) --> Canceled;
 
@@ -187,6 +188,6 @@ mod test {
             }),
         );
         t.add_workflow_task_scheduled_and_started();
-        assert_eq!(2, t.get_workflow_task_count());
+        assert_eq!(2, t.get_workflow_task_count(None).unwrap());
     }
 }
