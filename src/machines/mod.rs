@@ -38,7 +38,9 @@ use crate::protos::temporal::api::{
     command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent,
 };
 use rustfsm::StateMachine;
-use workflow_machines::WorkflowMachines;
+
+//  TODO: May need to be our SDKWFCommand type
+pub(crate) type MachineCommand = Command;
 
 /// Status returned by [EntityStateMachine::handle_event]
 enum HandleEventStatus {
@@ -81,7 +83,7 @@ where
 #[derive(Debug, Clone)]
 pub struct CancellableCommand {
     /// The inner protobuf command, if None, command has been cancelled
-    command: Option<Command>,
+    command: Option<MachineCommand>,
 }
 
 impl CancellableCommand {

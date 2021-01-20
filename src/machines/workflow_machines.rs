@@ -1,9 +1,10 @@
 use crate::{
-    machines::TemporalStateMachine,
+    machines::{CancellableCommand, MachineCommand, TemporalStateMachine},
     protos::temporal::api::{enums::v1::EventType, history::v1::HistoryEvent},
 };
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
+#[derive(Default)]
 pub(super) struct WorkflowMachines {
     /// The event id of the last event in the history which is expected to be startedEventId unless
     /// it is replay from a JSON file.
@@ -18,9 +19,16 @@ pub(super) struct WorkflowMachines {
     /// A mapping for accessing all the machines, where the key is the id of the initiating event
     /// for that machine.
     machines_by_id: HashMap<i64, Box<dyn TemporalStateMachine>>,
+
+    /// Queued commands which have been produced by machines and await processing
+    commands: VecDeque<CancellableCommand>,
 }
 
 impl WorkflowMachines {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
     /// Returns the id of the last seen WorkflowTaskStarted event
     pub(super) fn get_last_started_event_id(&self) -> i64 {
         self.current_started_event_id
@@ -66,12 +74,18 @@ impl WorkflowMachines {
         }
     }
 
-    fn handle_command_event(&self, event: &HistoryEvent) {
+    fn handle_command_event(&self, _event: &HistoryEvent) {
         unimplemented!()
     }
 
-    fn handle_non_stateful_event(&self, event: &HistoryEvent, has_next_event: bool) {
+    fn handle_non_stateful_event(&self, _event: &HistoryEvent, _has_next_event: bool) {
         unimplemented!()
+    }
+
+    /// Fetches commands ready for processing from the state machines, removing them from the
+    /// internal command queue.
+    pub(super) fn take_commands(&mut self) -> Vec<MachineCommand> {
+        self.commands.drain(0..).flat_map(|c| c.command).collect()
     }
 
     /// Given an event id (possibly zero) of the last successfully executed workflow task and an

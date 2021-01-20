@@ -1,3 +1,4 @@
+use crate::machines::MachineCommand;
 use crate::{
     machines::workflow_machines::WorkflowMachines,
     protos::temporal::api::{
@@ -127,6 +128,15 @@ impl TestHistoryBuilder {
         Ok(count)
     }
 
+    pub(super) fn handle_workflow_task_take_cmds(
+        &self,
+        wf_machines: &mut WorkflowMachines,
+        to_task_index: Option<usize>,
+    ) -> Result<Vec<MachineCommand>> {
+        self.handle_workflow_task(wf_machines, to_task_index)?;
+        Ok(wf_machines.take_commands())
+    }
+
     /// Handle a workflow task using the provided [WorkflowMachines]
     ///
     /// # Panics
@@ -134,8 +144,9 @@ impl TestHistoryBuilder {
     pub(super) fn handle_workflow_task(
         &self,
         wf_machines: &mut WorkflowMachines,
-        to_task_index: usize,
+        to_task_index: Option<usize>,
     ) -> Result<()> {
+        let to_task_index = to_task_index.unwrap_or(usize::MAX);
         let (_, events) = self
             .events
             .split_at(wf_machines.get_last_started_event_id() as usize);

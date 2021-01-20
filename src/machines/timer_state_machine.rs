@@ -153,6 +153,7 @@ impl StartCommandRecorded {
 
 #[cfg(test)]
 mod test {
+    use crate::machines::workflow_machines::WorkflowMachines;
     use crate::{
         machines::test_help::TestHistoryBuilder,
         protos::temporal::api::{
@@ -176,6 +177,8 @@ mod test {
             8: EVENT_TYPE_WORKFLOW_TASK_STARTED
         */
         let mut t = TestHistoryBuilder::default();
+        let mut state_machines = WorkflowMachines::new();
+
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_workflow_task();
         let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
@@ -189,5 +192,7 @@ mod test {
         );
         t.add_workflow_task_scheduled_and_started();
         assert_eq!(2, t.get_workflow_task_count(None).unwrap());
+        let commands = t.handle_workflow_task_take_cmds(&mut state_machines, Some(1));
+        dbg!(commands);
     }
 }
