@@ -1,5 +1,7 @@
 pub mod coresdk {
     include!("coresdk.rs");
+
+    pub type HistoryEventId = i64;
 }
 
 // No need to lint these
