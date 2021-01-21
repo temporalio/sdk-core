@@ -47,18 +47,18 @@ pub mod temporal {
                         if let Some(et) = EventType::from_i32(self.event_type) {
                             match et {
                                 EventType::ActivityTaskScheduled
-                                | EventType::StartChildWorkflowExecutionInitiated
-                                | EventType::TimerStarted
-                                | EventType::WorkflowExecutionCompleted
-                                | EventType::WorkflowExecutionFailed
-                                | EventType::WorkflowExecutionCanceled
-                                | EventType::WorkflowExecutionContinuedAsNew
                                 | EventType::ActivityTaskCancelRequested
-                                | EventType::TimerCanceled
-                                | EventType::RequestCancelExternalWorkflowExecutionInitiated
                                 | EventType::MarkerRecorded
+                                | EventType::RequestCancelExternalWorkflowExecutionInitiated
                                 | EventType::SignalExternalWorkflowExecutionInitiated
-                                | EventType::UpsertWorkflowSearchAttributes => true,
+                                | EventType::StartChildWorkflowExecutionInitiated
+                                | EventType::TimerCanceled
+                                | EventType::TimerStarted
+                                | EventType::UpsertWorkflowSearchAttributes
+                                | EventType::WorkflowExecutionCanceled
+                                | EventType::WorkflowExecutionCompleted
+                                | EventType::WorkflowExecutionContinuedAsNew
+                                | EventType::WorkflowExecutionFailed => true,
                                 _ => false,
                             }
                         } else {

@@ -209,6 +209,7 @@ mod test {
 
     #[test]
     fn test_fire_happy_path() {
+        env_logger::init();
         // We don't actually have a way to author workflows in rust yet, but the workflow that would
         // match up with this is just a wf with one timer in it that fires normally.
         /*
@@ -257,5 +258,6 @@ mod test {
             commands[0].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
+        // TODO: Timer fired event not ever handled for some reason
     }
 }

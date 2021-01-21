@@ -150,7 +150,6 @@ impl TestHistoryBuilder {
         let (_, events) = self
             .events
             .split_at(wf_machines.get_last_started_event_id() as usize);
-        dbg!(&events);
         let mut history = events.iter().peekable();
 
         let hist_info = self.get_history_info(to_task_index)?;
@@ -200,7 +199,6 @@ impl TestHistoryBuilder {
                     return Ok(());
                 }
                 if started_id != event.event_id {
-                    // TODO: I think this message is a lie?
                     bail!(
                         "The last event in the history (id {}) isn't the last WF task \
                            started (id {})",

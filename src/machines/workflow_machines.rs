@@ -37,7 +37,7 @@ pub(crate) struct WorkflowMachines {
 
     /// A mapping for accessing all the machines, where the key is the id of the initiating event
     /// for that machine.
-    machines_by_id: HashMap<i64, Box<dyn TemporalStateMachine>>,
+    machines_by_id: HashMap<i64, Rc<dyn TemporalStateMachine>>,
 
     /// Queued commands which have been produced by machines and await processing
     commands: VecDeque<CancellableCommand>,
@@ -107,9 +107,14 @@ impl WorkflowMachines {
         match event.get_initial_command_event_id() {
             Some(initial_cmd_id) => {
                 if let Some(sm) = self.machines_by_id.get_mut(&initial_cmd_id) {
-                    let commands = sm.handle_event(event, has_next_event)?.into_iter();
+                    // TODO: Remove unwrap
+                    let commands = Rc::get_mut(sm)
+                        .unwrap()
+                        .handle_event(event, has_next_event)?
+                        .into_iter();
                     for cmd in commands {
                         match cmd {
+                            // TODO: Does add command need to be handled here?
                             TSMCommand::WFTaskStartedTrigger {
                                 event_id,
                                 time,
@@ -153,6 +158,7 @@ impl WorkflowMachines {
                 // Have to fetch machine again here to avoid borrowing self mutably twice
                 if let Some(sm) = self.machines_by_id.get_mut(&initial_cmd_id) {
                     if sm.is_final_state() {
+                        dbg!(sm.name(), "final state");
                         self.machines_by_id.remove(&initial_cmd_id);
                     }
                 }
@@ -179,7 +185,7 @@ impl WorkflowMachines {
         //     }
 
         let mut maybe_command;
-        loop {
+        let consumed_cmd = loop {
             // handleVersionMarker can skip a marker event if the getVersion call was removed.
             // In this case we don't want to consume a command.
             // That's why front is used instead of pop_front
@@ -193,18 +199,31 @@ impl WorkflowMachines {
             // TODO: More special handling for version machine - see java
 
             // Feed the machine the event
+            let mut break_later = false;
             if let CancellableCommand::Active {
                 ref mut machine, ..
             } = command
             {
                 // TODO: Remove unwrap
-                Rc::get_mut(machine).unwrap().handle_event(event, true)?;
-                break;
+                let out_commands = Rc::get_mut(machine).unwrap().handle_event(event, true)?;
+                dbg!(&out_commands);
+                break_later = true;
             }
 
             // Consume command
-            self.commands.pop_front();
+            let cmd = self.commands.pop_front();
+            if break_later {
+                // Unwrap OK since we would have already exited if not present. TODO: Cleanup
+                break cmd.unwrap();
+            }
+        };
+
+        // TODO: validate command
+
+        if let CancellableCommand::Active { machine, .. } = consumed_cmd {
+            self.machines_by_id.insert(event.event_id, machine);
         }
+
         Ok(())
     }
 
@@ -234,7 +253,7 @@ impl WorkflowMachines {
                 let mut wf_task_sm = WorkflowTaskMachine::new(self.workflow_task_started_event_id);
                 wf_task_sm.handle_event(event, has_next_event)?;
                 self.machines_by_id
-                    .insert(event.event_id, Box::new(wf_task_sm));
+                    .insert(event.event_id, Rc::new(wf_task_sm));
             }
             Some(EventType::WorkflowExecutionSignaled) => {
                 // TODO: Signal callbacks
