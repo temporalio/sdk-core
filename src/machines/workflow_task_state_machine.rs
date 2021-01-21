@@ -1,3 +1,4 @@
+use crate::machines::TSMCommand;
 use crate::{
     machines::{workflow_machines::WFMachinesError, IsWfTaskMachine},
     protos::temporal::api::{
@@ -10,13 +11,13 @@ use std::{convert::TryFrom, time::SystemTime};
 
 fsm! {
     pub(super) name WorkflowTaskMachine;
-    command WorkflowTaskCommand;
+    command TSMCommand;
     error WFMachinesError;
     shared_state SharedState;
 
     Created --(WorkflowTaskScheduled) --> Scheduled;
 
-    Scheduled --(WorkflowTaskStarted(WFTStartedDat), on_workflow_task_started) --> Started;
+    Scheduled --(WorkflowTaskStarted(WFTStartedDat), shared on_workflow_task_started) --> Started;
     Scheduled --(WorkflowTaskTimedOut) --> TimedOut;
 
     Started --(WorkflowTaskCompleted, on_workflow_task_completed) --> Completed;
@@ -68,13 +69,7 @@ impl TryFrom<CommandType> for WorkflowTaskMachineEvents {
 
 #[derive(Debug, Clone)]
 pub(super) struct SharedState {
-    // TODO: This can be removed I think since all the things that need it got pushed up one layer
     wf_task_started_event_id: i64,
-}
-
-#[derive(Debug)]
-pub(super) enum WorkflowTaskCommand {
-    WFTaskStarted { event_id: i64, time: SystemTime },
 }
 
 #[derive(Default, Clone)]
@@ -96,13 +91,23 @@ pub(super) struct WFTStartedDat {
 impl Scheduled {
     pub(super) fn on_workflow_task_started(
         self,
+        shared: SharedState,
         WFTStartedDat {
             current_time_millis,
             started_event_id,
         }: WFTStartedDat,
     ) -> WorkflowTaskMachineTransition {
+        let cmds = if started_event_id >= shared.wf_task_started_event_id {
+            vec![TSMCommand::WFTaskStartedTrigger {
+                event_id: started_event_id,
+                time: current_time_millis,
+                only_if_last_event: true,
+            }]
+        } else {
+            vec![]
+        };
         WorkflowTaskMachineTransition::ok(
-            vec![],
+            cmds,
             Started {
                 current_time_millis,
                 started_event_id,
@@ -128,9 +133,10 @@ pub(super) struct Started {
 impl Started {
     pub(super) fn on_workflow_task_completed(self) -> WorkflowTaskMachineTransition {
         WorkflowTaskMachineTransition::commands::<_, Completed>(vec![
-            WorkflowTaskCommand::WFTaskStarted {
+            TSMCommand::WFTaskStartedTrigger {
                 event_id: self.started_event_id,
                 time: self.current_time_millis,
+                only_if_last_event: false,
             },
         ])
     }

@@ -44,10 +44,21 @@ use rustfsm::{MachineError, StateMachine};
 use std::{
     convert::{TryFrom, TryInto},
     fmt::Debug,
+    time::SystemTime,
 };
 
 //  TODO: May need to be our SDKWFCommand type
 pub(crate) type MachineCommand = Command;
+
+#[derive(Debug)]
+pub(crate) enum TSMCommand {
+    /// Issed by the [WorkflowTaskMachine] to trigger the event loop
+    WFTaskStartedTrigger {
+        event_id: i64,
+        time: SystemTime,
+        only_if_last_event: bool,
+    },
+}
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
 ///
@@ -59,7 +70,7 @@ trait TemporalStateMachine: CheckStateMachineInFinal + IsWfTaskMachine {
         &mut self,
         event: &HistoryEvent,
         has_next_event: bool,
-    ) -> Result<(), WFMachinesError>;
+    ) -> Result<Vec<TSMCommand>, WFMachinesError>;
 
     // TODO: This is a weird one that only applies to version state machine. Introduce only if
     //  needed. Ideally handle differently.
@@ -72,6 +83,8 @@ where
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
     <SM as StateMachine>::Command: Debug,
+    // TODO: Do we really need this bound? Check back and see how many fsms really issue them this way
+    <SM as StateMachine>::Command: Into<TSMCommand>,
     <SM as StateMachine>::Error: Into<WFMachinesError> + 'static + Send + Sync,
 {
     fn name(&self) -> &str {
@@ -100,12 +113,15 @@ where
         &mut self,
         event: &HistoryEvent,
         _has_next_event: bool,
-    ) -> Result<(), WFMachinesError> {
+    ) -> Result<Vec<TSMCommand>, WFMachinesError> {
         // TODO: Real tracing
         dbg!(self.name(), "handling event", &event);
         if let Ok(converted_event) = event.clone().try_into() {
             match self.on_event_mut(converted_event) {
-                Ok(_) => Ok(()),
+                Ok(c) => {
+                    dbg!(&c);
+                    Ok(c.into_iter().map(Into::into).collect())
+                }
                 Err(MachineError::InvalidTransition) => {
                     Err(WFMachinesError::UnexpectedEvent(event.clone()))
                 }
@@ -133,6 +149,7 @@ where
     }
 }
 
+//TODO: Remove now?
 /// Only should be implemented (with `true`) for [WorkflowTaskMachine]
 // This is a poor but effective substitute for specialization. Remove when it's finally
 // stabilized: https://github.com/rust-lang/rust/issues/31844

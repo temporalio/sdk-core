@@ -1,3 +1,4 @@
+use crate::machines::TSMCommand;
 use crate::{
     machines::{
         timer_state_machine::TimerMachine, workflow_task_state_machine::WorkflowTaskMachine,
@@ -11,8 +12,8 @@ use crate::{
 };
 use std::{
     collections::{HashMap, VecDeque},
-    convert::TryInto,
     error::Error,
+    time::SystemTime,
 };
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
@@ -30,6 +31,8 @@ pub(crate) struct WorkflowMachines {
     replaying: bool,
     /// Identifies the current run and is used as a seed for faux-randomness.
     current_run_id: String,
+    /// The current workflow time if it has been established
+    current_wf_time: Option<SystemTime>,
 
     /// A mapping for accessing all the machines, where the key is the id of the initiating event
     /// for that machine.
@@ -99,15 +102,40 @@ impl WorkflowMachines {
         match event.get_initial_command_event_id() {
             Some(initial_cmd_id) => {
                 if let Some(sm) = self.machines_by_id.get_mut(&initial_cmd_id) {
-                    sm.handle_event(event, has_next_event)?;
+                    let commands = sm.handle_event(event, has_next_event)?.into_iter();
+                    for cmd in commands {
+                        match cmd {
+                            TSMCommand::WFTaskStartedTrigger {
+                                event_id,
+                                time,
+                                only_if_last_event,
+                            } if !only_if_last_event || !has_next_event => {
+                                dbg!("In task started trigger");
+                                // TODO: Seems to only matter for version machine. Figure out then.
+                                // // If some new commands are pending and there are no more command events.
+                                // for (CancellableCommand cancellableCommand : commands) {
+                                //     if (cancellableCommand == null) {
+                                //         break;
+                                //     }
+                                //     cancellableCommand.handleWorkflowTaskStarted();
+                                // }
 
-                    // The workflow task machine has a little bit of special handling
-                    if sm.is_wf_task_machine() {
-                        Self::wf_task_machine_special_handling(sm, event, has_next_event)?;
-                    }
+                                // TODO: Local activity machines
+                                // // Give local activities a chance to recreate their requests if they were lost due
+                                // // to the last workflow task failure. The loss could happen only the last workflow task
+                                // // was forcibly created by setting forceCreate on RespondWorkflowTaskCompletedRequest.
+                                // if (nonProcessedWorkflowTask) {
+                                //     for (LocalActivityStateMachine value : localActivityMap.values()) {
+                                //         value.nonReplayWorkflowTaskStarted();
+                                //     }
+                                // }
 
-                    if sm.is_final_state() {
-                        self.machines_by_id.remove(&initial_cmd_id);
+                                self.current_started_event_id = event_id;
+                                self.set_current_time(time);
+                                self.event_loop();
+                            }
+                            _ => (),
+                        }
                     }
                 } else {
                     error!(
@@ -115,6 +143,13 @@ impl WorkflowMachines {
                      we could not find a matching state machine! Event: {:?}",
                         event
                     );
+                }
+
+                // Have to fetch machine again here to avoid borrowing self mutably twice
+                if let Some(sm) = self.machines_by_id.get_mut(&initial_cmd_id) {
+                    if sm.is_final_state() {
+                        self.machines_by_id.remove(&initial_cmd_id);
+                    }
                 }
             }
             None => self.handle_non_stateful_event(event, has_next_event)?,
@@ -184,64 +219,25 @@ impl WorkflowMachines {
         self.replaying = previous_started_event_id > 0;
     }
 
-    /// Workflow task machines require a bit of special handling
-    fn wf_task_machine_special_handling(
-        machine: &mut Box<dyn TemporalStateMachine>,
-        event: &HistoryEvent,
-        has_next_event: bool,
-    ) -> Result<(), WFMachinesError> {
-        match EventType::from_i32(event.event_type) {
-            Some(EventType::WorkflowTaskStarted) => {
-                // Workflow task machines self-complete if this is the last event
-                // TODO: Does first clause from java matter?
-                //    if (currentEvent.getEventId() >= workflowTaskStartedEventId && !hasNextEvent)
-                //   It does - it will be false during replay
-                let wf_task_started_id = match &event.attributes {
-                    Some(history_event::Attributes::WorkflowTaskStartedEventAttributes(a)) => {
-                        a.scheduled_event_id
-                    }
-                    _ => {
-                        return Err(WFMachinesError::MalformedEvent(
-                            event.clone(),
-                            "".to_string(),
-                        ))
-                    }
-                };
-                if !has_next_event && event.event_id >= wf_task_started_id {
-                    let mut completion = HistoryEvent::default();
-                    completion.event_type = EventType::WorkflowTaskCompleted as i32;
-                    machine.handle_event(
-                        &completion.try_into().ok().expect("Manually constructed"),
-                        has_next_event,
-                    )
-                } else {
-                    Ok(())
-                }
-            }
-            Some(EventType::WorkflowTaskCompleted) => {
-                // TODO: This stuff will need to be passed in independently of self
-                // // If some new commands are pending and there are no more command events.
-                // for (CancellableCommand cancellableCommand : commands) {
-                //     if (cancellableCommand == null) {
-                //         break;
-                //     }
-                //     cancellableCommand.handleWorkflowTaskStarted();
-                // }
-                // // Give local activities a chance to recreate their requests if they were lost due
-                // // to the last workflow task failure. The loss could happen only the last workflow task
-                // // was forcibly created by setting forceCreate on RespondWorkflowTaskCompletedRequest.
-                // if (nonProcessedWorkflowTask) {
-                //     for (LocalActivityStateMachine value : localActivityMap.values()) {
-                //         value.nonReplayWorkflowTaskStarted();
-                //     }
-                // }
-                // WorkflowStateMachines.this.currentStartedEventId = startedEventId;
-                // setCurrentTimeMillis(currentTimeMillis);
-                // eventLoop();
+    fn set_current_time(&mut self, time: SystemTime) -> SystemTime {
+        if self.current_wf_time.map(|t| t < time).unwrap_or(true) {
+            self.current_wf_time = Some(time);
+        }
+        self.current_wf_time
+            .expect("We have just ensured this is populated")
+    }
 
-                Ok(())
-            }
-            _ => Ok(()),
+    fn event_loop(&mut self) {
+        // todo: callbacks.eventLoop()
+        self.prepare_commands()
+    }
+
+    fn prepare_commands(&mut self) {
+        while let Some(c) = self.current_wf_task_commands.pop_front() {
+            // TODO - some special case stuff that can maybe be managed differently?
+            //   handleCommand should be called even on canceled ones to support mutableSideEffect
+            //   command.handleCommand(command.getCommandType());
+            self.commands.push_back(c);
         }
     }
 }
