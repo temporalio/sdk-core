@@ -253,5 +253,9 @@ mod test {
             .unwrap();
         dbg!(&commands);
         assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].command_type,
+            CommandType::CompleteWorkflowExecution as i32
+        );
     }
 }

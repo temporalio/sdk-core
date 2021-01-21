@@ -247,14 +247,13 @@ impl WorkflowMachines {
         Ok(())
     }
 
-    /// Fetches commands ready for processing from the state machines, removing them from the
-    /// internal command queue.
-    pub(crate) fn take_commands(&mut self) -> Vec<MachineCommand> {
+    /// Fetches commands ready for processing from the state machines
+    pub(crate) fn get_commands(&mut self) -> Vec<MachineCommand> {
         self.commands
-            .drain(0..)
+            .iter()
             .filter_map(|c| {
                 if let CancellableCommand::Active { command, .. } = c {
-                    Some(command)
+                    Some(command.clone())
                 } else {
                     None
                 }

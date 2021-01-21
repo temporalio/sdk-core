@@ -134,7 +134,7 @@ impl TestHistoryBuilder {
         to_task_index: Option<usize>,
     ) -> Result<Vec<MachineCommand>> {
         self.handle_workflow_task(wf_machines, to_task_index)?;
-        Ok(wf_machines.take_commands())
+        Ok(wf_machines.get_commands())
     }
 
     /// Handle a workflow task using the provided [WorkflowMachines]
@@ -150,6 +150,7 @@ impl TestHistoryBuilder {
         let (_, events) = self
             .events
             .split_at(wf_machines.get_last_started_event_id() as usize);
+        dbg!(&events);
         let mut history = events.iter().peekable();
 
         let hist_info = self.get_history_info(to_task_index)?;
@@ -166,16 +167,6 @@ impl TestHistoryBuilder {
 
         while let Some(event) = history.next() {
             let next_event = history.peek();
-            if next_event.is_none() {
-                if event.is_final_wf_execution_event() {
-                    return Ok(());
-                }
-                if started_id != event.event_id {
-                    // TODO: I think this message is a lie
-                    bail!("The last event in the history isn't WF task started");
-                }
-                unreachable!()
-            }
 
             if event.event_type == EventType::WorkflowTaskStarted as i32 {
                 let next_is_completed = next_event.map_or(false, |ne| {
@@ -203,6 +194,22 @@ impl TestHistoryBuilder {
             }
 
             wf_machines.handle_event(event, next_event.is_some())?;
+
+            if next_event.is_none() {
+                if event.is_final_wf_execution_event() {
+                    return Ok(());
+                }
+                if started_id != event.event_id {
+                    // TODO: I think this message is a lie?
+                    bail!(
+                        "The last event in the history (id {}) isn't the last WF task \
+                           started (id {})",
+                        event.event_id,
+                        started_id
+                    );
+                }
+                unreachable!()
+            }
         }
 
         Ok(())
