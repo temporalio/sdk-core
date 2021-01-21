@@ -10,7 +10,7 @@ use crate::{
     },
 };
 use std::{
-    collections::{hash_map::Entry, HashMap, VecDeque},
+    collections::{HashMap, VecDeque},
     convert::TryInto,
     error::Error,
 };
@@ -96,32 +96,28 @@ impl WorkflowMachines {
             self.replaying = false;
         }
 
-        match event
-            .get_initial_command_event_id()
-            .map(|id| self.machines_by_id.entry(id))
-        {
-            Some(Entry::Occupied(mut sme)) => {
-                let sm = sme.get_mut();
-                sm.handle_event(event, has_next_event)?;
+        match event.get_initial_command_event_id() {
+            Some(initial_cmd_id) => {
+                if let Some(sm) = self.machines_by_id.get_mut(&initial_cmd_id) {
+                    sm.handle_event(event, has_next_event)?;
 
-                // The workflow task machine has a little bit of special handling
-                if sm.is_wf_task_machine() {
-                    // TODO: Make me work
-                    //self.wf_task_machine_special_handling(sm, event, has_next_event)?;
-                }
+                    // The workflow task machine has a little bit of special handling
+                    if sm.is_wf_task_machine() {
+                        Self::wf_task_machine_special_handling(sm, event, has_next_event)?;
+                    }
 
-                if sm.is_final_state() {
-                    sme.remove();
-                }
-            }
-            Some(Entry::Vacant(_)) => {
-                error!(
-                    "During event handling, this event had an initial command ID but \
+                    if sm.is_final_state() {
+                        self.machines_by_id.remove(&initial_cmd_id);
+                    }
+                } else {
+                    error!(
+                        "During event handling, this event had an initial command ID but \
                      we could not find a matching state machine! Event: {:?}",
-                    event
-                );
+                        event
+                    );
+                }
             }
-            _ => self.handle_non_stateful_event(event, has_next_event)?,
+            None => self.handle_non_stateful_event(event, has_next_event)?,
         }
 
         Ok(())
@@ -190,7 +186,6 @@ impl WorkflowMachines {
 
     /// Workflow task machines require a bit of special handling
     fn wf_task_machine_special_handling(
-        &mut self,
         machine: &mut Box<dyn TemporalStateMachine>,
         event: &HistoryEvent,
         has_next_event: bool,
@@ -201,7 +196,18 @@ impl WorkflowMachines {
                 // TODO: Does first clause from java matter?
                 //    if (currentEvent.getEventId() >= workflowTaskStartedEventId && !hasNextEvent)
                 //   It does - it will be false during replay
-                if !has_next_event {
+                let wf_task_started_id = match &event.attributes {
+                    Some(history_event::Attributes::WorkflowTaskStartedEventAttributes(a)) => {
+                        a.scheduled_event_id
+                    }
+                    _ => {
+                        return Err(WFMachinesError::MalformedEvent(
+                            event.clone(),
+                            "".to_string(),
+                        ))
+                    }
+                };
+                if !has_next_event && event.event_id >= wf_task_started_id {
                     let mut completion = HistoryEvent::default();
                     completion.event_type = EventType::WorkflowTaskCompleted as i32;
                     machine.handle_event(
@@ -213,6 +219,7 @@ impl WorkflowMachines {
                 }
             }
             Some(EventType::WorkflowTaskCompleted) => {
+                // TODO: This stuff will need to be passed in independently of self
                 // // If some new commands are pending and there are no more command events.
                 // for (CancellableCommand cancellableCommand : commands) {
                 //     if (cancellableCommand == null) {
@@ -231,8 +238,6 @@ impl WorkflowMachines {
                 // WorkflowStateMachines.this.currentStartedEventId = startedEventId;
                 // setCurrentTimeMillis(currentTimeMillis);
                 // eventLoop();
-
-                // TODO: We do in fact need to bubble this up -- this all runs in WorkflowMachines
 
                 Ok(())
             }
