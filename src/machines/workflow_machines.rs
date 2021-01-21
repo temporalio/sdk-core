@@ -56,6 +56,8 @@ pub(crate) enum WFMachinesError {
     // TODO: Pretty sure can remove this if no machines need some specific error
     #[error("Underlying machine error {0:?}")]
     Underlying(#[from] Box<dyn Error + Send + Sync>),
+    #[error("No command was scheduled for event {0:?}")]
+    NoCommandScheduledForEvent(HistoryEvent),
 }
 
 impl WorkflowMachines {
@@ -158,8 +160,37 @@ impl WorkflowMachines {
         Ok(())
     }
 
-    fn handle_command_event(&mut self, _event: &HistoryEvent) {
-        unimplemented!()
+    /// A command event is an event which is generated from a command emitted by a past decision.
+    /// Each command has a correspondent event. For example ScheduleActivityTaskCommand
+    /// is recorded to the history as ActivityTaskScheduledEvent.
+    ///
+    /// Command events always follow WorkflowTaskCompletedEvent.
+    ///
+    /// The handling consists from verifying that the next command in the commands queue matches the
+    /// event, command state machine is notified about the event and the command is removed from the
+    /// commands queue.
+    fn handle_command_event(&mut self, event: &HistoryEvent) -> Result<()> {
+        // TODO:
+        //     if (handleLocalActivityMarker(event)) {
+        //       return;
+        //     }
+        let mut maybe_command = self.commands.get(0);
+        if maybe_command.is_none() {
+            return Err(WFMachinesError::NoCommandScheduledForEvent(event.clone()));
+        }
+        while let Some(c) = maybe_command {
+            // TODO: More special handling for version machine
+            // handleVersionMarker can skip a marker event if the getVersion call was removed.
+            // In this case we don't want to consume a command.
+            // That's why get is used instead of pop_front
+
+            // Consume command
+            self.commands.pop_front();
+            if c.command.is_some() {
+                break;
+            }
+        }
+        Ok(())
     }
 
     fn handle_non_stateful_event(
