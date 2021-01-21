@@ -251,5 +251,11 @@ mod test {
             .unwrap();
         dbg!(&commands);
         assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
+            .unwrap();
+        dbg!(&commands);
+        assert_eq!(commands.len(), 1);
     }
 }
