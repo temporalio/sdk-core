@@ -40,10 +40,12 @@ use crate::{
         command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent,
     },
 };
+use prost::alloc::fmt::Formatter;
 use rustfsm::{MachineError, StateMachine};
 use std::{
     convert::{TryFrom, TryInto},
     fmt::Debug,
+    rc::Rc,
     time::SystemTime,
 };
 
@@ -58,6 +60,17 @@ pub(crate) enum TSMCommand {
         time: SystemTime,
         only_if_last_event: bool,
     },
+    /// Issued by state machines to create commands
+    AddCommand(AddCommand),
+    // TODO: This is not quite right. Should be more like "notify completion". Need to investigate
+    //   more examples
+    ProduceHistoryEvent(HistoryEvent),
+}
+
+#[derive(Debug, ::derive_more::From)]
+pub(crate) struct AddCommand {
+    /// The protobuf command
+    pub(crate) command: Command,
 }
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
@@ -149,23 +162,25 @@ where
     }
 }
 
-/// A command which can be cancelled
+/// A command which can be cancelled, associated with some state machine that produced it
 #[derive(Debug, Clone)]
-pub struct CancellableCommand {
-    /// The inner protobuf command, if None, command has been cancelled
-    command: Option<MachineCommand>,
+enum CancellableCommand {
+    Cancelled,
+    Active {
+        /// The inner protobuf command, if None, command has been cancelled
+        command: MachineCommand,
+        machine: Rc<dyn TemporalStateMachine>,
+    },
 }
 
 impl CancellableCommand {
     pub(super) fn cancel(&mut self) {
-        self.command = None;
+        *self = CancellableCommand::Cancelled;
     }
 }
 
-impl From<Command> for CancellableCommand {
-    fn from(command: Command) -> Self {
-        Self {
-            command: Some(command),
-        }
+impl Debug for dyn TemporalStateMachine {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
     }
 }

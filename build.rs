@@ -10,6 +10,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "temporal.api.history.v1.HistoryEvent.attributes",
             "#[derive(::derive_more::From)]",
         )
+        .type_attribute(
+            "temporal.api.command.v1.Command.attributes",
+            "#[derive(::derive_more::From)]",
+        )
         .compile(
             &[
                 "protos/local/core_interface.proto",

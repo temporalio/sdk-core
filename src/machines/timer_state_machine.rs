@@ -1,12 +1,14 @@
 #![allow(clippy::large_enum_variant)]
 
-use crate::machines::workflow_machines::WFMachinesError;
 use crate::{
-    machines::CancellableCommand,
+    machines::{workflow_machines::WFMachinesError, AddCommand, TSMCommand},
     protos::{
         coresdk::HistoryEventId,
         temporal::api::{
-            command::v1::{command::Attributes, Command, StartTimerCommandAttributes},
+            command::v1::{
+                command::Attributes, CancelTimerCommandAttributes, Command,
+                StartTimerCommandAttributes,
+            },
             enums::v1::{CommandType, EventType},
             history::v1::{history_event, HistoryEvent, TimerCanceledEventAttributes},
         },
@@ -17,7 +19,7 @@ use std::convert::TryFrom;
 
 fsm! {
     pub(super) name TimerMachine;
-    command TimerCommand;
+    command TSMCommand;
     error WFMachinesError;
     shared_state SharedState;
 
@@ -34,7 +36,7 @@ fsm! {
     StartCommandCreated --(Cancel, shared on_cancel) --> Canceled;
 
     StartCommandRecorded --(TimerFired(HistoryEvent), on_timer_fired) --> Fired;
-    StartCommandRecorded --(Cancel, on_cancel) --> CancelTimerCommandCreated;
+    StartCommandRecorded --(Cancel, shared on_cancel) --> CancelTimerCommandCreated;
 }
 
 impl TimerMachine {
@@ -47,10 +49,18 @@ impl TimerMachine {
         }
     }
 
-    /// Should generally be called immediately after constructing a timer
-    pub(crate) fn schedule(&mut self) -> Vec<TimerCommand> {
-        self.on_event_mut(TimerMachineEvents::Schedule)
+    /// Create a new timer and immediately schedule it
+    pub(crate) fn new_scheduled(attribs: StartTimerCommandAttributes) -> (Self, AddCommand) {
+        let mut s = Self::new(attribs);
+        let cmd = match s
+            .on_event_mut(TimerMachineEvents::Schedule)
             .expect("Scheduling timers doesn't fail")
+            .pop()
+        {
+            Some(TSMCommand::AddCommand(c)) => c,
+            _ => panic!("Timer on_schedule must produce command"),
+        };
+        (s, cmd)
     }
 }
 
@@ -85,7 +95,7 @@ pub(super) struct SharedState {
 }
 
 impl SharedState {
-    fn into_timer_canceled_event_command(self) -> TimerCommand {
+    fn into_timer_canceled_event_command(self) -> TSMCommand {
         let attrs = TimerCanceledEventAttributes {
             identity: "workflow".to_string(),
             timer_id: self.timer_attributes.timer_id,
@@ -98,23 +108,7 @@ impl SharedState {
             )),
             ..Default::default()
         };
-        TimerCommand::ProduceHistoryEvent(event)
-    }
-}
-
-#[derive(Debug)]
-pub(super) enum TimerCommand {
-    StartTimer(CancellableCommand),
-    CancelTimer(/* TODO: Command attribs */),
-    ProduceHistoryEvent(HistoryEvent),
-}
-
-impl From<TimerCommand> for CancellableCommand {
-    fn from(t: TimerCommand) -> Self {
-        match t {
-            TimerCommand::StartTimer(c) => c,
-            _ => unimplemented!(),
-        }
+        TSMCommand::ProduceHistoryEvent(event)
     }
 }
 
@@ -147,26 +141,19 @@ impl Created {
     pub(super) fn on_schedule(self, dat: SharedState) -> TimerMachineTransition {
         let cmd = Command {
             command_type: CommandType::StartTimer as i32,
-            attributes: Some(Attributes::StartTimerCommandAttributes(
-                dat.timer_attributes,
-            )),
+            attributes: Some(dat.timer_attributes.into()),
         };
-        TimerMachineTransition::ok(
-            vec![TimerCommand::StartTimer(cmd.clone().into())],
-            StartCommandCreated {
-                cancellable_command: CancellableCommand::from(cmd),
-            },
-        )
+        TimerMachineTransition::commands::<_, StartCommandCreated>(vec![TSMCommand::AddCommand(
+            cmd.into(),
+        )])
     }
 }
 
 #[derive(Default, Clone)]
 pub(super) struct Fired {}
 
-#[derive(Clone)]
-pub(super) struct StartCommandCreated {
-    cancellable_command: CancellableCommand,
-}
+#[derive(Default, Clone)]
+pub(super) struct StartCommandCreated {}
 
 impl StartCommandCreated {
     pub(super) fn on_timer_started(self, id: HistoryEventId) -> TimerMachineTransition {
@@ -175,8 +162,7 @@ impl StartCommandCreated {
     }
     pub(super) fn on_cancel(mut self, dat: SharedState) -> TimerMachineTransition {
         // Cancel the initial command - which just sets a "canceled" flag in a wrapper of a
-        // proto command. TODO: Does this make any sense?
-        let _canceled_cmd = self.cancellable_command.cancel();
+        // proto command. TODO: Does this make any sense? - no - propagate up
         TimerMachineTransition::ok(
             vec![dat.into_timer_canceled_event_command()],
             Canceled::default(),
@@ -190,13 +176,23 @@ pub(super) struct StartCommandRecorded {}
 impl StartCommandRecorded {
     pub(super) fn on_timer_fired(self, event: HistoryEvent) -> TimerMachineTransition {
         TimerMachineTransition::ok(
-            vec![TimerCommand::ProduceHistoryEvent(event)],
+            vec![TSMCommand::ProduceHistoryEvent(event)],
             Fired::default(),
         )
     }
-    pub(super) fn on_cancel(self) -> TimerMachineTransition {
+    pub(super) fn on_cancel(self, dat: SharedState) -> TimerMachineTransition {
+        let cmd = Command {
+            command_type: CommandType::CancelTimer as i32,
+            attributes: Some(
+                CancelTimerCommandAttributes {
+                    timer_id: dat.timer_attributes.timer_id,
+                    ..Default::default()
+                }
+                .into(),
+            ),
+        };
         TimerMachineTransition::ok(
-            vec![TimerCommand::CancelTimer()],
+            vec![TSMCommand::AddCommand(cmd.into())],
             CancelTimerCommandCreated::default(),
         )
     }

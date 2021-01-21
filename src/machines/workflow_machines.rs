@@ -13,6 +13,7 @@ use crate::{
 use std::{
     collections::{HashMap, VecDeque},
     error::Error,
+    rc::Rc,
     time::SystemTime,
 };
 
@@ -68,10 +69,12 @@ impl WorkflowMachines {
     /// Create a new timer
     // TODO: Return cancellation callback?
     pub(crate) fn new_timer(&mut self, attribs: StartTimerCommandAttributes) {
-        let mut timer = TimerMachine::new(attribs);
-        let commands = timer.schedule();
-        self.current_wf_task_commands
-            .extend(commands.into_iter().map(Into::into));
+        let (timer, add_cmd) = TimerMachine::new_scheduled(attribs);
+        let cc = CancellableCommand::Active {
+            command: add_cmd.command,
+            machine: Rc::new(timer),
+        };
+        self.current_wf_task_commands.push_back(cc);
     }
 
     /// Returns the id of the last seen WorkflowTaskStarted event
@@ -89,7 +92,7 @@ impl WorkflowMachines {
         has_next_event: bool,
     ) -> Result<()> {
         if event.is_command_event() {
-            self.handle_command_event(event);
+            self.handle_command_event(event)?;
             return Ok(());
         }
 
@@ -174,21 +177,33 @@ impl WorkflowMachines {
         //     if (handleLocalActivityMarker(event)) {
         //       return;
         //     }
-        let mut maybe_command = self.commands.get(0);
-        if maybe_command.is_none() {
-            return Err(WFMachinesError::NoCommandScheduledForEvent(event.clone()));
-        }
-        while let Some(c) = maybe_command {
-            // TODO: More special handling for version machine
+
+        let mut maybe_command;
+        loop {
             // handleVersionMarker can skip a marker event if the getVersion call was removed.
             // In this case we don't want to consume a command.
-            // That's why get is used instead of pop_front
+            // That's why front is used instead of pop_front
+            maybe_command = self.commands.front_mut();
+            let command = if let Some(c) = maybe_command {
+                c
+            } else {
+                return Err(WFMachinesError::NoCommandScheduledForEvent(event.clone()));
+            };
+
+            // TODO: More special handling for version machine - see java
+
+            // Feed the machine the event
+            if let CancellableCommand::Active {
+                ref mut machine, ..
+            } = command
+            {
+                // TODO: Remove unwrap
+                Rc::get_mut(machine).unwrap().handle_event(event, true)?;
+                break;
+            }
 
             // Consume command
             self.commands.pop_front();
-            if c.command.is_some() {
-                break;
-            }
         }
         Ok(())
     }
@@ -235,7 +250,16 @@ impl WorkflowMachines {
     /// Fetches commands ready for processing from the state machines, removing them from the
     /// internal command queue.
     pub(crate) fn take_commands(&mut self) -> Vec<MachineCommand> {
-        self.commands.drain(0..).flat_map(|c| c.command).collect()
+        self.commands
+            .drain(0..)
+            .filter_map(|c| {
+                if let CancellableCommand::Active { command, .. } = c {
+                    Some(command)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Given an event id (possibly zero) of the last successfully executed workflow task and an
