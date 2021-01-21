@@ -1,5 +1,5 @@
 use crate::{
-    machines::workflow_machines::WFMachinesError,
+    machines::{workflow_machines::WFMachinesError, IsWfTaskMachine},
     protos::temporal::api::{
         enums::v1::{CommandType, EventType},
         history::v1::HistoryEvent,
@@ -68,10 +68,14 @@ impl TryFrom<CommandType> for WorkflowTaskMachineEvents {
 
 #[derive(Debug, Clone)]
 pub(super) struct SharedState {
+    // TODO: This can be removed I think since all the things that need it got pushed up one layer
     wf_task_started_event_id: i64,
 }
 
-pub(super) enum WorkflowTaskCommand {}
+#[derive(Debug)]
+pub(super) enum WorkflowTaskCommand {
+    WFTaskStarted { event_id: i64, time: SystemTime },
+}
 
 #[derive(Default, Clone)]
 pub(super) struct Completed {}
@@ -123,7 +127,12 @@ pub(super) struct Started {
 
 impl Started {
     pub(super) fn on_workflow_task_completed(self) -> WorkflowTaskMachineTransition {
-        unimplemented!()
+        WorkflowTaskMachineTransition::commands::<_, Completed>(vec![
+            WorkflowTaskCommand::WFTaskStarted {
+                event_id: self.started_event_id,
+                time: self.current_time_millis,
+            },
+        ])
     }
     pub(super) fn on_workflow_task_failed(self) -> WorkflowTaskMachineTransition {
         unimplemented!()
@@ -140,5 +149,11 @@ impl From<Scheduled> for TimedOut {
 impl From<Started> for TimedOut {
     fn from(_: Started) -> Self {
         Self::default()
+    }
+}
+
+impl IsWfTaskMachine for WorkflowTaskMachine {
+    fn is_wf_task_machine(&self) -> bool {
+        true
     }
 }

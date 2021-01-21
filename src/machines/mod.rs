@@ -41,7 +41,10 @@ use crate::{
     },
 };
 use rustfsm::{MachineError, StateMachine};
-use std::convert::{TryFrom, TryInto};
+use std::{
+    convert::{TryFrom, TryInto},
+    fmt::Debug,
+};
 
 //  TODO: May need to be our SDKWFCommand type
 pub(crate) type MachineCommand = Command;
@@ -49,7 +52,8 @@ pub(crate) type MachineCommand = Command;
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
 ///
 /// Formerly known as `EntityStateMachine` in Java.
-trait TemporalStateMachine: CheckStateMachineInFinal {
+trait TemporalStateMachine: CheckStateMachineInFinal + IsWfTaskMachine {
+    fn name(&self) -> &str;
     fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError>;
     fn handle_event(
         &mut self,
@@ -64,15 +68,24 @@ trait TemporalStateMachine: CheckStateMachineInFinal {
 
 impl<SM> TemporalStateMachine for SM
 where
-    SM: StateMachine + CheckStateMachineInFinal + Clone,
+    SM: StateMachine + CheckStateMachineInFinal + IsWfTaskMachine + Clone,
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
+    <SM as StateMachine>::Command: Debug,
     <SM as StateMachine>::Error: Into<WFMachinesError> + 'static + Send + Sync,
 {
+    fn name(&self) -> &str {
+        <Self as StateMachine>::name(self)
+    }
+
     fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError> {
+        dbg!(self.name(), "handling command", command_type);
         if let Ok(converted_command) = command_type.try_into() {
             match self.on_event_mut(converted_command) {
-                Ok(_) => Ok(()),
+                Ok(c) => {
+                    dbg!(c);
+                    Ok(())
+                }
                 Err(MachineError::InvalidTransition) => {
                     Err(WFMachinesError::UnexpectedCommand(command_type))
                 }
@@ -88,8 +101,8 @@ where
         event: &HistoryEvent,
         _has_next_event: bool,
     ) -> Result<(), WFMachinesError> {
-        // TODO: `has_next_event` is *only* used by WorkflowTaskStateMachine. Figure out how
-        //   to deal with it.
+        // TODO: Real tracing
+        dbg!(self.name(), "handling event", &event);
         if let Ok(converted_event) = event.clone().try_into() {
             match self.on_event_mut(converted_event) {
                 Ok(_) => Ok(()),
@@ -117,6 +130,15 @@ where
 {
     fn is_final_state(&self) -> bool {
         self.on_final_state()
+    }
+}
+
+/// Only should be implemented (with `true`) for [WorkflowTaskMachine]
+// This is a poor but effective substitute for specialization. Remove when it's finally
+// stabilized: https://github.com/rust-lang/rust/issues/31844
+trait IsWfTaskMachine {
+    fn is_wf_task_machine(&self) -> bool {
+        false
     }
 }
 

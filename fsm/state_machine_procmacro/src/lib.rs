@@ -340,6 +340,7 @@ impl StateMachineDefinition {
             }
         });
         let name = &self.name;
+        let name_str = &self.name.to_string();
         let state_enum_name = Ident::new(&format!("{}State", name), name.span());
         // If user has not defined any shared state, use the unit type.
         let shared_state_type = self
@@ -479,6 +480,10 @@ impl StateMachineDefinition {
                 type SharedState = #shared_state_type;
                 type Event = #events_enum_name;
                 type Command = #cmd_type;
+
+                fn name(&self) -> &str {
+                  #name_str
+                }
 
                 fn on_event(self, event: #events_enum_name)
                   -> ::rustfsm::TransitionResult<Self> {

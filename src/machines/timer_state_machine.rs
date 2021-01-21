@@ -12,7 +12,7 @@ use crate::{
         },
     },
 };
-use rustfsm::{fsm, TransitionResult};
+use rustfsm::{fsm, StateMachine, TransitionResult};
 use std::convert::TryFrom;
 
 fsm! {
@@ -35,6 +35,23 @@ fsm! {
 
     StartCommandRecorded --(TimerFired(HistoryEvent), on_timer_fired) --> Fired;
     StartCommandRecorded --(Cancel, on_cancel) --> CancelTimerCommandCreated;
+}
+
+impl TimerMachine {
+    pub(crate) fn new(attribs: StartTimerCommandAttributes) -> Self {
+        Self {
+            state: Created {}.into(),
+            shared_state: SharedState {
+                timer_attributes: attribs,
+            },
+        }
+    }
+
+    /// Should generally be called immediately after constructing a timer
+    pub(crate) fn schedule(&mut self) -> Vec<TimerCommand> {
+        self.on_event_mut(TimerMachineEvents::Schedule)
+            .expect("Scheduling timers doesn't fail")
+    }
 }
 
 impl TryFrom<HistoryEvent> for TimerMachineEvents {
@@ -85,10 +102,20 @@ impl SharedState {
     }
 }
 
+#[derive(Debug)]
 pub(super) enum TimerCommand {
     StartTimer(CancellableCommand),
     CancelTimer(/* TODO: Command attribs */),
     ProduceHistoryEvent(HistoryEvent),
+}
+
+impl From<TimerCommand> for CancellableCommand {
+    fn from(t: TimerCommand) -> Self {
+        match t {
+            TimerCommand::StartTimer(c) => c,
+            _ => unimplemented!(),
+        }
+    }
 }
 
 #[derive(Default, Clone)]
@@ -177,14 +204,12 @@ impl StartCommandRecorded {
 
 #[cfg(test)]
 mod test {
-    use crate::machines::workflow_machines::WorkflowMachines;
+    use super::*;
     use crate::{
-        machines::test_help::TestHistoryBuilder,
-        protos::temporal::api::{
-            enums::v1::EventType,
-            history::{v1::history_event::Attributes, v1::TimerFiredEventAttributes},
-        },
+        machines::{test_help::TestHistoryBuilder, workflow_machines::WorkflowMachines},
+        protos::temporal::api::history::v1::TimerFiredEventAttributes,
     };
+    use std::time::Duration;
 
     #[test]
     fn test_fire_happy_path() {
@@ -202,13 +227,18 @@ mod test {
         */
         let mut t = TestHistoryBuilder::default();
         let mut state_machines = WorkflowMachines::new();
+        state_machines.new_timer(StartTimerCommandAttributes {
+            timer_id: "Sometimer".to_string(),
+            start_to_fire_timeout: Some(Duration::from_secs(5).into()),
+            ..Default::default()
+        });
 
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_workflow_task();
         let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
         t.add(
             EventType::TimerFired,
-            Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
                 started_event_id: timer_started_event_id,
                 timer_id: "timer1".to_string(),
                 ..Default::default()
@@ -216,7 +246,10 @@ mod test {
         );
         t.add_workflow_task_scheduled_and_started();
         assert_eq!(2, t.get_workflow_task_count(None).unwrap());
-        let commands = t.handle_workflow_task_take_cmds(&mut state_machines, Some(1));
-        dbg!(commands);
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
+            .unwrap();
+        dbg!(&commands);
+        assert_eq!(commands.len(), 1);
     }
 }
