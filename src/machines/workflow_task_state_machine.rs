@@ -1,6 +1,5 @@
-use crate::machines::TSMCommand;
 use crate::{
-    machines::{workflow_machines::WFMachinesError, IsWfTaskMachine},
+    machines::{workflow_machines::WFMachinesError, TSMCommand},
     protos::temporal::api::{
         enums::v1::{CommandType, EventType},
         history::v1::HistoryEvent,
@@ -155,11 +154,5 @@ impl From<Scheduled> for TimedOut {
 impl From<Started> for TimedOut {
     fn from(_: Started) -> Self {
         Self::default()
-    }
-}
-
-impl IsWfTaskMachine for WorkflowTaskMachine {
-    fn is_wf_task_machine(&self) -> bool {
-        true
     }
 }

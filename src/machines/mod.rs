@@ -63,7 +63,7 @@ pub(crate) enum TSMCommand {
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
 ///
 /// Formerly known as `EntityStateMachine` in Java.
-trait TemporalStateMachine: CheckStateMachineInFinal + IsWfTaskMachine {
+trait TemporalStateMachine: CheckStateMachineInFinal {
     fn name(&self) -> &str;
     fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError>;
     fn handle_event(
@@ -79,7 +79,7 @@ trait TemporalStateMachine: CheckStateMachineInFinal + IsWfTaskMachine {
 
 impl<SM> TemporalStateMachine for SM
 where
-    SM: StateMachine + CheckStateMachineInFinal + IsWfTaskMachine + Clone,
+    SM: StateMachine + CheckStateMachineInFinal + Clone,
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
     <SM as StateMachine>::Command: Debug,
@@ -146,16 +146,6 @@ where
 {
     fn is_final_state(&self) -> bool {
         self.on_final_state()
-    }
-}
-
-//TODO: Remove now?
-/// Only should be implemented (with `true`) for [WorkflowTaskMachine]
-// This is a poor but effective substitute for specialization. Remove when it's finally
-// stabilized: https://github.com/rust-lang/rust/issues/31844
-trait IsWfTaskMachine {
-    fn is_wf_task_machine(&self) -> bool {
-        false
     }
 }
 
