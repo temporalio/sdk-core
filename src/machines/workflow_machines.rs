@@ -1,11 +1,10 @@
 use crate::machines::WFCommand;
 use crate::{
     machines::{
-        timer_state_machine::TimerMachine, workflow_task_state_machine::WorkflowTaskMachine,
-        CancellableCommand, DrivenWorkflow, MachineCommand, TSMCommand, TemporalStateMachine,
+        workflow_task_state_machine::WorkflowTaskMachine, CancellableCommand, DrivenWorkflow,
+        MachineCommand, TSMCommand, TemporalStateMachine,
     },
     protos::temporal::api::{
-        command::v1::StartTimerCommandAttributes,
         enums::v1::{CommandType, EventType},
         history::v1::{history_event, HistoryEvent},
     },
@@ -80,17 +79,6 @@ impl WorkflowMachines {
         }
     }
 
-    /// Create a new timer
-    // TODO: Seems like this doesn't really belong here now.
-    pub(super) fn new_timer(attribs: StartTimerCommandAttributes) -> WFCommand {
-        let (timer, add_cmd) = TimerMachine::new_scheduled(attribs);
-        CancellableCommand::Active {
-            command: add_cmd.command,
-            machine: Rc::new(timer),
-        }
-        .into()
-    }
-
     /// Returns the id of the last seen WorkflowTaskStarted event
     pub(super) fn get_last_started_event_id(&self) -> i64 {
         self.current_started_event_id
@@ -155,7 +143,7 @@ impl WorkflowMachines {
 
                                 self.current_started_event_id = event_id;
                                 self.set_current_time(time);
-                                self.event_loop();
+                                self.event_loop()?;
                             }
                             TSMCommand::ProduceHistoryEvent(e) => {
                                 // TODO: Make this go. During replay, at least, we need to ensure
@@ -320,11 +308,12 @@ impl WorkflowMachines {
             .expect("We have just ensured this is populated")
     }
 
-    fn event_loop(&mut self) {
-        // todo: callbacks.eventLoop()
-        //   This is where the `EntityManagerListener` would normally deal with the callback
+    fn event_loop(&mut self) -> Result<()> {
+        let results = self.drive_me.iterate_wf()?;
+        self.handle_driven_results(results);
 
-        self.prepare_commands()
+        self.prepare_commands();
+        Ok(())
     }
 
     fn prepare_commands(&mut self) {

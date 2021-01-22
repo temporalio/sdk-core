@@ -1,7 +1,9 @@
 #![allow(clippy::large_enum_variant)]
 
 use crate::{
-    machines::{workflow_machines::WFMachinesError, AddCommand, TSMCommand},
+    machines::{
+        workflow_machines::WFMachinesError, AddCommand, CancellableCommand, TSMCommand, WFCommand,
+    },
     protos::{
         coresdk::HistoryEventId,
         temporal::api::{
@@ -15,19 +17,13 @@ use crate::{
     },
 };
 use rustfsm::{fsm, StateMachine, TransitionResult};
-use std::convert::TryFrom;
+use std::{convert::TryFrom, rc::Rc};
 
 fsm! {
     pub(super) name TimerMachine;
     command TSMCommand;
     error WFMachinesError;
     shared_state SharedState;
-
-    CancelTimerCommandCreated --(Cancel) --> CancelTimerCommandCreated;
-    CancelTimerCommandCreated
-        --(CommandCancelTimer, shared on_command_cancel_timer) --> CancelTimerCommandSent;
-
-    CancelTimerCommandSent --(TimerCanceled) --> Canceled;
 
     Created --(Schedule, shared on_schedule) --> StartCommandCreated;
 
@@ -37,18 +33,25 @@ fsm! {
 
     StartCommandRecorded --(TimerFired(HistoryEvent), on_timer_fired) --> Fired;
     StartCommandRecorded --(Cancel, shared on_cancel) --> CancelTimerCommandCreated;
+
+    CancelTimerCommandCreated --(Cancel) --> CancelTimerCommandCreated;
+    CancelTimerCommandCreated
+        --(CommandCancelTimer, shared on_command_cancel_timer) --> CancelTimerCommandSent;
+
+    CancelTimerCommandSent --(TimerCanceled) --> Canceled;
+}
+
+/// Create a new timer
+pub(super) fn new_timer(attribs: StartTimerCommandAttributes) -> WFCommand {
+    let (timer, add_cmd) = TimerMachine::new_scheduled(attribs);
+    CancellableCommand::Active {
+        command: add_cmd.command,
+        machine: Rc::new(timer),
+    }
+    .into()
 }
 
 impl TimerMachine {
-    pub(crate) fn new(attribs: StartTimerCommandAttributes) -> Self {
-        Self {
-            state: Created {}.into(),
-            shared_state: SharedState {
-                timer_attributes: attribs,
-            },
-        }
-    }
-
     /// Create a new timer and immediately schedule it
     pub(crate) fn new_scheduled(attribs: StartTimerCommandAttributes) -> (Self, AddCommand) {
         let mut s = Self::new(attribs);
@@ -61,6 +64,15 @@ impl TimerMachine {
             _ => panic!("Timer on_schedule must produce command"),
         };
         (s, cmd)
+    }
+
+    fn new(attribs: StartTimerCommandAttributes) -> Self {
+        Self {
+            state: Created {}.into(),
+            shared_state: SharedState {
+                timer_attributes: attribs,
+            },
+        }
     }
 }
 
@@ -113,6 +125,21 @@ impl SharedState {
 }
 
 #[derive(Default, Clone)]
+pub(super) struct Created {}
+
+impl Created {
+    pub(super) fn on_schedule(self, dat: SharedState) -> TimerMachineTransition {
+        let cmd = Command {
+            command_type: CommandType::StartTimer as i32,
+            attributes: Some(dat.timer_attributes.into()),
+        };
+        TimerMachineTransition::commands::<_, StartCommandCreated>(vec![TSMCommand::AddCommand(
+            cmd.into(),
+        )])
+    }
+}
+
+#[derive(Default, Clone)]
 pub(super) struct CancelTimerCommandCreated {}
 impl CancelTimerCommandCreated {
     pub(super) fn on_command_cancel_timer(self, dat: SharedState) -> TimerMachineTransition {
@@ -135,29 +162,14 @@ impl From<CancelTimerCommandSent> for Canceled {
 }
 
 #[derive(Default, Clone)]
-pub(super) struct Created {}
-
-impl Created {
-    pub(super) fn on_schedule(self, dat: SharedState) -> TimerMachineTransition {
-        let cmd = Command {
-            command_type: CommandType::StartTimer as i32,
-            attributes: Some(dat.timer_attributes.into()),
-        };
-        TimerMachineTransition::commands::<_, StartCommandCreated>(vec![TSMCommand::AddCommand(
-            cmd.into(),
-        )])
-    }
-}
-
-#[derive(Default, Clone)]
 pub(super) struct Fired {}
 
 #[derive(Default, Clone)]
 pub(super) struct StartCommandCreated {}
 
 impl StartCommandCreated {
-    pub(super) fn on_timer_started(self, id: HistoryEventId) -> TimerMachineTransition {
-        // Java recorded an initial event ID, but it seemingly was never used.
+    pub(super) fn on_timer_started(self, _id: HistoryEventId) -> TimerMachineTransition {
+        // TODO: Java recorded an initial event ID, but it seemingly was never used.
         TimerMachineTransition::default::<StartCommandRecorded>()
     }
     pub(super) fn on_cancel(mut self, dat: SharedState) -> TimerMachineTransition {
@@ -201,18 +213,20 @@ impl StartCommandRecorded {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::machines::WFCommand;
     use crate::{
         machines::{
-            test_help::TestHistoryBuilder, workflow_machines::WorkflowMachines, DrivenWorkflow,
+            complete_workflow_state_machine::complete_workflow, test_help::TestHistoryBuilder,
+            workflow_machines::WorkflowMachines, DrivenWorkflow, WFCommand,
         },
-        protos::temporal::api::history::v1::{
-            TimerFiredEventAttributes, WorkflowExecutionCanceledEventAttributes,
-            WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
+        protos::temporal::api::{
+            command::v1::CompleteWorkflowExecutionCommandAttributes,
+            history::v1::{
+                TimerFiredEventAttributes, WorkflowExecutionCanceledEventAttributes,
+                WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
+            },
         },
     };
-    use std::sync::mpsc::channel;
-    use std::{error::Error, sync::mpsc::Receiver, time::Duration};
+    use std::{error::Error, sync::mpsc::channel, sync::mpsc::Receiver, time::Duration};
 
     // TODO: This will need to be broken out into it's own place and evolved / made more generic as
     //   we learn more. It replaces "TestEnitityTestListenerBase" in java which is pretty hard to
@@ -274,12 +288,12 @@ mod test {
     fn test_fire_happy_path() {
         env_logger::init();
         let twd = TestWorkflowDriver::new(vec![
-            WorkflowMachines::new_timer(StartTimerCommandAttributes {
+            new_timer(StartTimerCommandAttributes {
                 timer_id: "Sometimer".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
                 ..Default::default()
             }),
-            // Complete wf task
+            complete_workflow(CompleteWorkflowExecutionCommandAttributes::default()),
         ]);
 
         /*
