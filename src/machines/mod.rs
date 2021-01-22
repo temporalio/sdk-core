@@ -1,3 +1,4 @@
+#[allow(unused)]
 mod workflow_machines;
 
 #[allow(unused)]
@@ -89,6 +90,7 @@ trait DrivenWorkflow {
 /// In java this functionality was largely handled via callbacks passed into the state machines
 /// which was difficult to follow
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum TSMCommand {
     /// Issed by the [WorkflowTaskMachine] to trigger the event loop
     WFTaskStartedTrigger {
@@ -211,7 +213,10 @@ where
 
 /// A command which can be cancelled, associated with some state machine that produced it
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 enum CancellableCommand {
+    // TODO: You'll be used soon, friend.
+    #[allow(dead_code)]
     Cancelled,
     Active {
         /// The inner protobuf command, if None, command has been cancelled
@@ -221,8 +226,18 @@ enum CancellableCommand {
 }
 
 impl CancellableCommand {
+    #[allow(dead_code)]
     pub(super) fn cancel(&mut self) {
         *self = CancellableCommand::Cancelled;
+    }
+
+    #[cfg(test)]
+    fn unwrap_machine(&self) -> Rc<dyn TemporalStateMachine> {
+        if let CancellableCommand::Active { machine, .. } = self {
+            machine.clone()
+        } else {
+            panic!("No machine in command, already canceled")
+        }
     }
 }
 

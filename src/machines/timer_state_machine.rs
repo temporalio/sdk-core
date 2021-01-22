@@ -41,14 +41,13 @@ fsm! {
     CancelTimerCommandSent --(TimerCanceled) --> Canceled;
 }
 
-/// Create a new timer
-pub(super) fn new_timer(attribs: StartTimerCommandAttributes) -> WFCommand {
+/// Creates a new, scheduled, timer as a [CancellableCommand]
+pub(super) fn new_timer(attribs: StartTimerCommandAttributes) -> CancellableCommand {
     let (timer, add_cmd) = TimerMachine::new_scheduled(attribs);
     CancellableCommand::Active {
         command: add_cmd.command,
         machine: Rc::new(timer),
     }
-    .into()
 }
 
 impl TimerMachine {
@@ -198,7 +197,6 @@ impl StartCommandRecorded {
             attributes: Some(
                 CancelTimerCommandAttributes {
                     timer_id: dat.timer_attributes.timer_id,
-                    ..Default::default()
                 }
                 .into(),
             ),
@@ -292,7 +290,8 @@ mod test {
                 timer_id: "Sometimer".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
                 ..Default::default()
-            }),
+            })
+            .into(),
             complete_workflow(CompleteWorkflowExecutionCommandAttributes::default()),
         ]);
 
@@ -337,5 +336,33 @@ mod test {
             commands[0].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
+    }
+
+    #[test]
+    fn test_timer_cancel() {
+        // TODO: Incomplete
+
+        let timer_cmd = new_timer(StartTimerCommandAttributes {
+            timer_id: "Sometimer".to_string(),
+            start_to_fire_timeout: Some(Duration::from_secs(5).into()),
+            ..Default::default()
+        });
+        let timer_machine = timer_cmd.unwrap_machine();
+        let twd = TestWorkflowDriver::new(vec![
+            timer_cmd.into(),
+            complete_workflow(CompleteWorkflowExecutionCommandAttributes::default()),
+        ]);
+
+        let mut t = TestHistoryBuilder::default();
+        let mut state_machines = WorkflowMachines::new(Box::new(twd));
+
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_workflow_task();
+        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        t.add_workflow_task_scheduled_and_started();
+        assert_eq!(2, t.get_workflow_task_count(None).unwrap());
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
+            .unwrap();
     }
 }

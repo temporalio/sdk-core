@@ -1,3 +1,5 @@
+#![allow(clippy::enum_variant_names)]
+
 use crate::{
     machines::{workflow_machines::WFMachinesError, TSMCommand},
     protos::temporal::api::{

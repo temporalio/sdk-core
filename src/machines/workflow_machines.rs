@@ -145,14 +145,18 @@ impl WorkflowMachines {
                                 self.set_current_time(time);
                                 self.event_loop()?;
                             }
+                            TSMCommand::WFTaskStartedTrigger { .. } => {}
                             TSMCommand::ProduceHistoryEvent(e) => {
                                 // TODO: Make this go. During replay, at least, we need to ensure
                                 //  produced event matches expected.
                                 dbg!("History event produced", e);
                             }
-                            // TODO: We shouldn't need this. Make a different type if this branch
-                            //  really never ends up being hit.
-                            _ => unreachable!("If this is hit, we're missing something"),
+                            TSMCommand::AddCommand(_) => {
+                                // TODO: This is where we could handle machines saying they need
+                                //  to cancel themselves (since they don't have a ref to their own
+                                //  command, could go with that too) -- but also
+                                unimplemented!()
+                            }
                         }
                     }
                 } else {
@@ -178,16 +182,16 @@ impl WorkflowMachines {
     }
 
     /// A command event is an event which is generated from a command emitted by a past decision.
-    /// Each command has a correspondent event. For example ScheduleActivityTaskCommand
-    /// is recorded to the history as ActivityTaskScheduledEvent.
+    /// Each command has a correspondent event. For example ScheduleActivityTaskCommand is recorded
+    /// to the history as ActivityTaskScheduledEvent.
     ///
     /// Command events always follow WorkflowTaskCompletedEvent.
     ///
-    /// The handling consists from verifying that the next command in the commands queue matches the
-    /// event, command state machine is notified about the event and the command is removed from the
-    /// commands queue.
+    /// The handling consists of verifying that the next command in the commands queue is associated
+    /// with a state machine, which is then notified about the event and the command is removed from
+    /// the commands queue.
     fn handle_command_event(&mut self, event: &HistoryEvent) -> Result<()> {
-        // TODO:
+        // TODO: Local activity handling stuff
         //     if (handleLocalActivityMarker(event)) {
         //       return;
         //     }
@@ -204,8 +208,6 @@ impl WorkflowMachines {
                 return Err(WFMachinesError::NoCommandScheduledForEvent(event.clone()));
             };
 
-            // TODO: More special handling for version machine - see java
-
             // Feed the machine the event
             let mut break_later = false;
             if let CancellableCommand::Active {
@@ -214,6 +216,10 @@ impl WorkflowMachines {
             {
                 // TODO: Remove unwrap
                 let out_commands = Rc::get_mut(machine).unwrap().handle_event(event, true)?;
+                // TODO: Handle invalid event errors
+                //  * More special handling for version machine - see java
+                //  * Command/machine supposed to have cancelled itself
+
                 dbg!(&out_commands);
                 break_later = true;
             }
@@ -229,7 +235,9 @@ impl WorkflowMachines {
         // TODO: validate command
 
         if let CancellableCommand::Active { machine, .. } = consumed_cmd {
-            self.machines_by_id.insert(event.event_id, machine);
+            if !machine.is_final_state() {
+                self.machines_by_id.insert(event.event_id, machine);
+            }
         }
 
         Ok(())
