@@ -37,7 +37,12 @@ mod test_help;
 use crate::{
     machines::workflow_machines::WFMachinesError,
     protos::temporal::api::{
-        command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent,
+        command::v1::Command,
+        enums::v1::CommandType,
+        history::v1::{
+            HistoryEvent, WorkflowExecutionCanceledEventAttributes,
+            WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
+        },
     },
 };
 use prost::alloc::fmt::Formatter;
@@ -50,8 +55,39 @@ use std::{
 };
 
 //  TODO: May need to be our SDKWFCommand type
-pub(crate) type MachineCommand = Command;
+type MachineCommand = Command;
 
+/// Implementors of this trait represent something that can (eventually) call into a workflow to
+/// drive it, start it, signal it, cancel it, etc.
+trait DrivenWorkflow {
+    /// Start the workflow
+    fn start(
+        &self,
+        attribs: WorkflowExecutionStartedEventAttributes,
+    ) -> Result<Vec<WFCommand>, anyhow::Error>;
+
+    /// Iterate the workflow. The workflow driver should execute workflow code until there is
+    /// nothing left to do. EX: Awaiting an activity/timer, workflow completion.
+    fn iterate_wf(&self) -> Result<Vec<WFCommand>, anyhow::Error>;
+
+    /// Signal the workflow
+    fn signal(
+        &self,
+        attribs: WorkflowExecutionSignaledEventAttributes,
+    ) -> Result<(), anyhow::Error>;
+
+    /// Cancel the workflow
+    fn cancel(
+        &self,
+        attribs: WorkflowExecutionCanceledEventAttributes,
+    ) -> Result<(), anyhow::Error>;
+}
+
+/// These commands are issued by state machines to inform their driver ([WorkflowMachines]) that
+/// it may need to take some action.
+///
+/// In java this functionality was largely handled via callbacks passed into the state machines
+/// which was difficult to follow
 #[derive(Debug)]
 pub(crate) enum TSMCommand {
     /// Issed by the [WorkflowTaskMachine] to trigger the event loop
@@ -67,10 +103,21 @@ pub(crate) enum TSMCommand {
     ProduceHistoryEvent(HistoryEvent),
 }
 
-#[derive(Debug, ::derive_more::From)]
+/// The struct for [WFCommand::AddCommand]
+#[derive(Debug, derive_more::From)]
 pub(crate) struct AddCommand {
     /// The protobuf command
     pub(crate) command: Command,
+}
+
+/// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
+/// EX: Create a new timer, complete the workflow, etc.
+///
+/// TODO: Maybe this and TSMCommand are really the same thing?
+#[derive(Debug, derive_more::From)]
+enum WFCommand {
+    /// Add a new entity/command
+    Add(CancellableCommand),
 }
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
@@ -115,7 +162,7 @@ where
                 Err(MachineError::InvalidTransition) => {
                     Err(WFMachinesError::UnexpectedCommand(command_type))
                 }
-                Err(MachineError::Underlying(e)) => Err(WFMachinesError::Underlying(Box::new(e))),
+                Err(MachineError::Underlying(e)) => Err(e.into()),
             }
         } else {
             Err(WFMachinesError::UnexpectedCommand(command_type))
@@ -138,7 +185,7 @@ where
                 Err(MachineError::InvalidTransition) => {
                     Err(WFMachinesError::UnexpectedEvent(event.clone()))
                 }
-                Err(MachineError::Underlying(e)) => Err(WFMachinesError::Underlying(Box::new(e))),
+                Err(MachineError::Underlying(e)) => Err(e.into()),
             }
         } else {
             Err(WFMachinesError::UnexpectedEvent(event.clone()))

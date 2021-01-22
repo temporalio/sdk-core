@@ -201,17 +201,87 @@ impl StartCommandRecorded {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::machines::WFCommand;
     use crate::{
-        machines::{test_help::TestHistoryBuilder, workflow_machines::WorkflowMachines},
-        protos::temporal::api::history::v1::TimerFiredEventAttributes,
+        machines::{
+            test_help::TestHistoryBuilder, workflow_machines::WorkflowMachines, DrivenWorkflow,
+        },
+        protos::temporal::api::history::v1::{
+            TimerFiredEventAttributes, WorkflowExecutionCanceledEventAttributes,
+            WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
+        },
     };
-    use std::time::Duration;
+    use std::sync::mpsc::channel;
+    use std::{error::Error, sync::mpsc::Receiver, time::Duration};
+
+    // TODO: This will need to be broken out into it's own place and evolved / made more generic as
+    //   we learn more. It replaces "TestEnitityTestListenerBase" in java which is pretty hard to
+    //   follow.
+    struct TestWorkflowDriver {
+        /// A queue of things to return upon calls to [DrivenWorkflow::iterate_wf]. This gives us
+        /// more manual control than actually running the workflow for real would, for example
+        /// allowing us to simulate nondeterminism.
+        iteration_results: Receiver<WFCommand>,
+    }
+
+    impl TestWorkflowDriver {
+        pub fn new<I>(iteration_results: I) -> Self
+        where
+            I: IntoIterator<Item = WFCommand>,
+        {
+            let (sender, receiver) = channel();
+            for r in iteration_results.into_iter() {
+                sender.send(r);
+            }
+            Self {
+                iteration_results: receiver,
+            }
+        }
+    }
+
+    impl DrivenWorkflow for TestWorkflowDriver {
+        fn start(
+            &self,
+            attribs: WorkflowExecutionStartedEventAttributes,
+        ) -> Result<Vec<WFCommand>, anyhow::Error> {
+            self.iterate_wf()
+        }
+
+        fn iterate_wf(&self) -> Result<Vec<WFCommand>, anyhow::Error> {
+            // Timeout exists just to make blocking obvious. We should never block.
+            let cmd = self
+                .iteration_results
+                .recv_timeout(Duration::from_millis(10))?;
+            Ok(vec![cmd])
+        }
+
+        fn signal(
+            &self,
+            attribs: WorkflowExecutionSignaledEventAttributes,
+        ) -> Result<(), anyhow::Error> {
+            Ok(())
+        }
+
+        fn cancel(
+            &self,
+            attribs: WorkflowExecutionCanceledEventAttributes,
+        ) -> Result<(), anyhow::Error> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn test_fire_happy_path() {
         env_logger::init();
-        // We don't actually have a way to author workflows in rust yet, but the workflow that would
-        // match up with this is just a wf with one timer in it that fires normally.
+        let twd = TestWorkflowDriver::new(vec![
+            WorkflowMachines::new_timer(StartTimerCommandAttributes {
+                timer_id: "Sometimer".to_string(),
+                start_to_fire_timeout: Some(Duration::from_secs(5).into()),
+                ..Default::default()
+            }),
+            // Complete wf task
+        ]);
+
         /*
             1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
             2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
@@ -223,12 +293,7 @@ mod test {
             8: EVENT_TYPE_WORKFLOW_TASK_STARTED
         */
         let mut t = TestHistoryBuilder::default();
-        let mut state_machines = WorkflowMachines::new();
-        state_machines.new_timer(StartTimerCommandAttributes {
-            timer_id: "Sometimer".to_string(),
-            start_to_fire_timeout: Some(Duration::from_secs(5).into()),
-            ..Default::default()
-        });
+        let mut state_machines = WorkflowMachines::new(Box::new(twd));
 
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_workflow_task();
@@ -258,6 +323,5 @@ mod test {
             commands[0].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
-        // TODO: Timer fired event not ever handled for some reason
     }
 }
