@@ -20,6 +20,9 @@ tonic = "0.4"
 [dependencies.rustfsm]
 path = "fsm"
 
+[dev-dependencies]
+rstest = "0.6"
+
 [build-dependencies]
 tonic-build = "0.4"
 

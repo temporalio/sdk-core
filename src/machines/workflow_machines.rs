@@ -1,8 +1,7 @@
-use crate::machines::WFCommand;
 use crate::{
     machines::{
         workflow_task_state_machine::WorkflowTaskMachine, CancellableCommand, DrivenWorkflow,
-        MachineCommand, TSMCommand, TemporalStateMachine,
+        MachineCommand, TSMCommand, TemporalStateMachine, WFCommand,
     },
     protos::temporal::api::{
         enums::v1::{CommandType, EventType},
@@ -10,6 +9,8 @@ use crate::{
     },
 };
 use std::{
+    borrow::BorrowMut,
+    cell::RefCell,
     collections::{HashMap, VecDeque},
     rc::Rc,
     time::SystemTime,
@@ -34,7 +35,8 @@ pub(crate) struct WorkflowMachines {
 
     /// A mapping for accessing all the machines, where the key is the id of the initiating event
     /// for that machine.
-    machines_by_id: HashMap<i64, Rc<dyn TemporalStateMachine>>,
+    // TODO: Maybe value here should just be `CancellableCommand`
+    machines_by_id: HashMap<i64, Rc<RefCell<dyn TemporalStateMachine>>>,
 
     /// Queued commands which have been produced by machines and await processing
     commands: VecDeque<CancellableCommand>,
@@ -97,10 +99,12 @@ impl WorkflowMachines {
             self.handle_command_event(event)?;
             return Ok(());
         }
+        let event_type = EventType::from_i32(event.event_type)
+            .ok_or_else(|| WFMachinesError::UnexpectedEvent(event.clone()))?;
 
         if self.replaying
             && self.current_started_event_id >= self.previous_started_event_id
-            && event.event_type != EventType::WorkflowTaskCompleted as i32
+            && event_type != EventType::WorkflowTaskCompleted
         {
             // Replay is finished
             self.replaying = false;
@@ -108,20 +112,29 @@ impl WorkflowMachines {
 
         match event.get_initial_command_event_id() {
             Some(initial_cmd_id) => {
-                if let Some(sm) = self.machines_by_id.get_mut(&initial_cmd_id) {
-                    // TODO: Remove unwrap
-                    let commands = Rc::get_mut(sm)
-                        .unwrap()
+                if let Some(sm) = self.machines_by_id.get(&initial_cmd_id) {
+                    let commands = (*sm.clone())
+                        .borrow_mut()
                         .handle_event(event, has_next_event)?
                         .into_iter();
+                    dbg!(&commands);
                     for cmd in commands {
                         match cmd {
                             TSMCommand::WFTaskStartedTrigger {
-                                event_id,
+                                task_started_event_id,
                                 time,
-                                only_if_last_event,
-                            } if !only_if_last_event || !has_next_event => {
+                            } => {
+                                let cur_event_past_or_at_start =
+                                    event.event_id >= task_started_event_id;
+                                if event_type == EventType::WorkflowTaskStarted
+                                    && !(cur_event_past_or_at_start && !has_next_event)
+                                {
+                                    // Last event in history is a task started event, so we don't
+                                    // want to iterate.
+                                    continue;
+                                }
                                 dbg!("In task started trigger");
+
                                 // TODO: Seems to only matter for version machine. Figure out then.
                                 // // If some new commands are pending and there are no more command events.
                                 // for (CancellableCommand cancellableCommand : commands) {
@@ -141,14 +154,13 @@ impl WorkflowMachines {
                                 //     }
                                 // }
 
-                                self.current_started_event_id = event_id;
+                                self.current_started_event_id = task_started_event_id;
                                 self.set_current_time(time);
                                 self.event_loop()?;
                             }
-                            TSMCommand::WFTaskStartedTrigger { .. } => {}
                             TSMCommand::ProduceHistoryEvent(e) => {
                                 // TODO: Make this go. During replay, at least, we need to ensure
-                                //  produced event matches expected.
+                                //  produced event matches expected?
                                 dbg!("History event produced", e);
                             }
                             TSMCommand::AddCommand(_) => {
@@ -169,8 +181,7 @@ impl WorkflowMachines {
 
                 // Have to fetch machine again here to avoid borrowing self mutably twice
                 if let Some(sm) = self.machines_by_id.get_mut(&initial_cmd_id) {
-                    if sm.is_final_state() {
-                        dbg!(sm.name(), "final state");
+                    if sm.borrow().is_final_state() {
                         self.machines_by_id.remove(&initial_cmd_id);
                     }
                 }
@@ -201,7 +212,7 @@ impl WorkflowMachines {
             // handleVersionMarker can skip a marker event if the getVersion call was removed.
             // In this case we don't want to consume a command.
             // That's why front is used instead of pop_front
-            maybe_command = self.commands.front_mut();
+            maybe_command = self.commands.front();
             let command = if let Some(c) = maybe_command {
                 c
             } else {
@@ -210,12 +221,8 @@ impl WorkflowMachines {
 
             // Feed the machine the event
             let mut break_later = false;
-            if let CancellableCommand::Active {
-                ref mut machine, ..
-            } = command
-            {
-                // TODO: Remove unwrap
-                let out_commands = Rc::get_mut(machine).unwrap().handle_event(event, true)?;
+            if let CancellableCommand::Active { mut machine, .. } = command.clone() {
+                let out_commands = (*machine).borrow_mut().handle_event(event, true)?;
                 // TODO: Handle invalid event errors
                 //  * More special handling for version machine - see java
                 //  * Command/machine supposed to have cancelled itself
@@ -235,7 +242,7 @@ impl WorkflowMachines {
         // TODO: validate command
 
         if let CancellableCommand::Active { machine, .. } = consumed_cmd {
-            if !machine.is_final_state() {
+            if !machine.borrow().is_final_state() {
                 self.machines_by_id.insert(event.event_id, machine);
             }
         }
@@ -269,7 +276,7 @@ impl WorkflowMachines {
                 let mut wf_task_sm = WorkflowTaskMachine::new(self.workflow_task_started_event_id);
                 wf_task_sm.handle_event(event, has_next_event)?;
                 self.machines_by_id
-                    .insert(event.event_id, Rc::new(wf_task_sm));
+                    .insert(event.event_id, Rc::new(RefCell::new(wf_task_sm)));
             }
             Some(EventType::WorkflowExecutionSignaled) => {
                 // TODO: Signal callbacks
@@ -324,19 +331,20 @@ impl WorkflowMachines {
         Ok(())
     }
 
+    fn handle_driven_results(&mut self, results: Vec<WFCommand>) {
+        for cmd in results {
+            match cmd {
+                WFCommand::Add(cc) => self.current_wf_task_commands.push_back(cc),
+            }
+        }
+    }
+
     fn prepare_commands(&mut self) {
         while let Some(c) = self.current_wf_task_commands.pop_front() {
             // TODO - some special case stuff that can maybe be managed differently?
             //   handleCommand should be called even on canceled ones to support mutableSideEffect
             //   command.handleCommand(command.getCommandType());
             self.commands.push_back(c);
-        }
-    }
-    fn handle_driven_results(&mut self, results: Vec<WFCommand>) {
-        for cmd in results {
-            match cmd {
-                WFCommand::Add(cc) => self.current_wf_task_commands.push_back(cc),
-            }
         }
     }
 }

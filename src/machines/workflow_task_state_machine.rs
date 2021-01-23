@@ -98,17 +98,12 @@ impl Scheduled {
             started_event_id,
         }: WFTStartedDat,
     ) -> WorkflowTaskMachineTransition {
-        let cmds = if started_event_id >= shared.wf_task_started_event_id {
-            vec![TSMCommand::WFTaskStartedTrigger {
-                event_id: started_event_id,
-                time: current_time_millis,
-                only_if_last_event: true,
-            }]
-        } else {
-            vec![]
-        };
+        dbg!("wtsm started trans");
         WorkflowTaskMachineTransition::ok(
-            cmds,
+            vec![TSMCommand::WFTaskStartedTrigger {
+                task_started_event_id: shared.wf_task_started_event_id,
+                time: current_time_millis,
+            }],
             Started {
                 current_time_millis,
                 started_event_id,
@@ -133,11 +128,11 @@ pub(super) struct Started {
 
 impl Started {
     pub(super) fn on_workflow_task_completed(self) -> WorkflowTaskMachineTransition {
+        dbg!("wtsm completed trans");
         WorkflowTaskMachineTransition::commands::<_, Completed>(vec![
             TSMCommand::WFTaskStartedTrigger {
-                event_id: self.started_event_id,
+                task_started_event_id: self.started_event_id,
                 time: self.current_time_millis,
-                only_if_last_event: false,
             },
         ])
     }

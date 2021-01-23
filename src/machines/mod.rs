@@ -49,6 +49,7 @@ use crate::{
 use prost::alloc::fmt::Formatter;
 use rustfsm::{MachineError, StateMachine};
 use std::{
+    cell::RefCell,
     convert::{TryFrom, TryInto},
     fmt::Debug,
     rc::Rc,
@@ -92,11 +93,10 @@ trait DrivenWorkflow {
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum TSMCommand {
-    /// Issed by the [WorkflowTaskMachine] to trigger the event loop
+    /// Issued by the [WorkflowTaskMachine] to (possibly) trigger the event loop
     WFTaskStartedTrigger {
-        event_id: i64,
+        task_started_event_id: i64,
         time: SystemTime,
-        only_if_last_event: bool,
     },
     /// Issued by state machines to create commands
     AddCommand(AddCommand),
@@ -116,7 +116,7 @@ pub(crate) struct AddCommand {
 /// EX: Create a new timer, complete the workflow, etc.
 ///
 /// TODO: Maybe this and TSMCommand are really the same thing?
-#[derive(Debug, derive_more::From)]
+#[derive(Debug, derive_more::From, Clone)]
 enum WFCommand {
     /// Add a new entity/command
     Add(CancellableCommand),
@@ -145,7 +145,7 @@ where
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
     <SM as StateMachine>::Command: Debug,
-    // TODO: Do we really need this bound? Check back and see how many fsms really issue them this way
+    // TODO: Do we really need this bound? Check back and see if we can just use TSMCommand directly
     <SM as StateMachine>::Command: Into<TSMCommand>,
     <SM as StateMachine>::Error: Into<WFMachinesError> + 'static + Send + Sync,
 {
@@ -154,11 +154,11 @@ where
     }
 
     fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError> {
-        dbg!(self.name(), "handling command", command_type);
+        // dbg!(self.name(), "handling command", command_type);
         if let Ok(converted_command) = command_type.try_into() {
             match self.on_event_mut(converted_command) {
-                Ok(c) => {
-                    dbg!(c);
+                Ok(_c) => {
+                    // dbg!(c);
                     Ok(())
                 }
                 Err(MachineError::InvalidTransition) => {
@@ -177,11 +177,11 @@ where
         _has_next_event: bool,
     ) -> Result<Vec<TSMCommand>, WFMachinesError> {
         // TODO: Real tracing
-        dbg!(self.name(), "handling event", &event);
+        // dbg!(self.name(), "handling event", &event);
         if let Ok(converted_event) = event.clone().try_into() {
             match self.on_event_mut(converted_event) {
                 Ok(c) => {
-                    dbg!(&c);
+                    // dbg!(&c);
                     Ok(c.into_iter().map(Into::into).collect())
                 }
                 Err(MachineError::InvalidTransition) => {
@@ -221,7 +221,7 @@ enum CancellableCommand {
     Active {
         /// The inner protobuf command, if None, command has been cancelled
         command: MachineCommand,
-        machine: Rc<dyn TemporalStateMachine>,
+        machine: Rc<RefCell<dyn TemporalStateMachine>>,
     },
 }
 
@@ -232,9 +232,9 @@ impl CancellableCommand {
     }
 
     #[cfg(test)]
-    fn unwrap_machine(&self) -> Rc<dyn TemporalStateMachine> {
+    fn unwrap_machine(&mut self) -> &mut dyn TemporalStateMachine {
         if let CancellableCommand::Active { machine, .. } = self {
-            machine.clone()
+            RefCell::get_mut(Rc::get_mut(machine).unwrap())
         } else {
             panic!("No machine in command, already canceled")
         }

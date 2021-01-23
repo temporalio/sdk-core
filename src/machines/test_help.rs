@@ -128,37 +128,38 @@ impl TestHistoryBuilder {
         Ok(count)
     }
 
-    pub(super) fn handle_workflow_task_take_cmds(
-        &self,
-        wf_machines: &mut WorkflowMachines,
-        to_task_index: Option<usize>,
-    ) -> Result<Vec<MachineCommand>> {
-        self.handle_workflow_task(wf_machines, to_task_index)?;
-        Ok(wf_machines.get_commands())
-    }
-
-    /// Handle a workflow task using the provided [WorkflowMachines]
+    /// Handle workflow task(s) using the provided [WorkflowMachines]. Will process as many workflow
+    /// tasks as the provided `to_wf_task_num` parameter..
     ///
     /// # Panics
     /// * Can panic if the passed in machines have been manipulated outside of this builder
-    pub(super) fn handle_workflow_task(
+    pub(super) fn handle_workflow_task_take_cmds(
         &self,
         wf_machines: &mut WorkflowMachines,
-        to_task_index: Option<usize>,
+        to_wf_task_num: Option<usize>,
+    ) -> Result<Vec<MachineCommand>> {
+        self.handle_workflow_task(wf_machines, to_wf_task_num)?;
+        Ok(wf_machines.get_commands())
+    }
+
+    fn handle_workflow_task(
+        &self,
+        wf_machines: &mut WorkflowMachines,
+        to_wf_task_num: Option<usize>,
     ) -> Result<()> {
-        let to_task_index = to_task_index.unwrap_or(usize::MAX);
+        let to_wf_task_num = to_wf_task_num.unwrap_or(usize::MAX);
         let (_, events) = self
             .events
             .split_at(wf_machines.get_last_started_event_id() as usize);
         let mut history = events.iter().peekable();
 
-        let hist_info = self.get_history_info(to_task_index)?;
+        let hist_info = self.get_history_info(to_wf_task_num)?;
         wf_machines.set_started_ids(
             hist_info.previous_started_event_id,
             hist_info.workflow_task_started_event_id,
         );
         let mut started_id = hist_info.previous_started_event_id;
-        let mut count = if wf_machines.get_last_started_event_id() > 0 {
+        let mut num_seen_wf_tasks = if wf_machines.get_last_started_event_id() > 0 {
             self.get_workflow_task_count(history.peek().map(|e| e.event_id - 1))?
         } else {
             0
@@ -178,8 +179,8 @@ impl TestHistoryBuilder {
 
                 if next_event.is_none() || next_is_completed {
                     started_id = event.event_id;
-                    count += 1;
-                    if count == to_task_index || next_event.is_none() {
+                    num_seen_wf_tasks += 1;
+                    if num_seen_wf_tasks == to_wf_task_num || next_event.is_none() {
                         wf_machines.handle_event(event, false)?;
                         return Ok(());
                     }

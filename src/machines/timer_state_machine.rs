@@ -17,6 +17,7 @@ use crate::{
     },
 };
 use rustfsm::{fsm, StateMachine, TransitionResult};
+use std::cell::RefCell;
 use std::{convert::TryFrom, rc::Rc};
 
 fsm! {
@@ -46,7 +47,7 @@ pub(super) fn new_timer(attribs: StartTimerCommandAttributes) -> CancellableComm
     let (timer, add_cmd) = TimerMachine::new_scheduled(attribs);
     CancellableCommand::Active {
         command: add_cmd.command,
-        machine: Rc::new(timer),
+        machine: Rc::new(RefCell::new(timer)),
     }
 }
 
@@ -224,29 +225,34 @@ mod test {
             },
         },
     };
+    use rstest::{fixture, rstest};
+    use std::sync::mpsc::Sender;
     use std::{error::Error, sync::mpsc::channel, sync::mpsc::Receiver, time::Duration};
 
     // TODO: This will need to be broken out into it's own place and evolved / made more generic as
     //   we learn more. It replaces "TestEnitityTestListenerBase" in java which is pretty hard to
     //   follow.
     struct TestWorkflowDriver {
-        /// A queue of things to return upon calls to [DrivenWorkflow::iterate_wf]. This gives us
-        /// more manual control than actually running the workflow for real would, for example
-        /// allowing us to simulate nondeterminism.
-        iteration_results: Receiver<WFCommand>,
+        /// A queue of command lists to return upon calls to [DrivenWorkflow::iterate_wf]. This
+        /// gives us more manual control than actually running the workflow for real would, for
+        /// example allowing us to simulate nondeterminism.
+        iteration_results: Receiver<Vec<WFCommand>>,
+        iteration_sender: Sender<Vec<WFCommand>>,
+
+        /// The entire history passed in when we were constructed
+        full_history: Vec<Vec<WFCommand>>,
     }
 
     impl TestWorkflowDriver {
         pub fn new<I>(iteration_results: I) -> Self
         where
-            I: IntoIterator<Item = WFCommand>,
+            I: IntoIterator<Item = Vec<WFCommand>>,
         {
             let (sender, receiver) = channel();
-            for r in iteration_results.into_iter() {
-                sender.send(r);
-            }
             Self {
                 iteration_results: receiver,
+                iteration_sender: sender,
+                full_history: iteration_results.into_iter().collect(),
             }
         }
     }
@@ -256,15 +262,20 @@ mod test {
             &self,
             attribs: WorkflowExecutionStartedEventAttributes,
         ) -> Result<Vec<WFCommand>, anyhow::Error> {
-            self.iterate_wf()
+            dbg!("T start");
+            self.full_history
+                .iter()
+                .for_each(|cmds| self.iteration_sender.send(cmds.to_vec()).unwrap());
+            Ok(vec![])
         }
 
         fn iterate_wf(&self) -> Result<Vec<WFCommand>, anyhow::Error> {
+            dbg!("T iterate");
             // Timeout exists just to make blocking obvious. We should never block.
             let cmd = self
                 .iteration_results
                 .recv_timeout(Duration::from_millis(10))?;
-            Ok(vec![cmd])
+            dbg!(Ok(cmd))
         }
 
         fn signal(
@@ -282,19 +293,8 @@ mod test {
         }
     }
 
-    #[test]
-    fn test_fire_happy_path() {
-        env_logger::init();
-        let twd = TestWorkflowDriver::new(vec![
-            new_timer(StartTimerCommandAttributes {
-                timer_id: "Sometimer".to_string(),
-                start_to_fire_timeout: Some(Duration::from_secs(5).into()),
-                ..Default::default()
-            })
-            .into(),
-            complete_workflow(CompleteWorkflowExecutionCommandAttributes::default()),
-        ]);
-
+    #[fixture]
+    fn fire_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
         /*
             1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
             2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
@@ -304,7 +304,24 @@ mod test {
             6: EVENT_TYPE_TIMER_FIRED
             7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
             8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+
+            Should iterate once, produce started command, iterate again, producing no commands
+            (timer complete), third iteration completes workflow.
         */
+        let twd = TestWorkflowDriver::new(vec![
+            vec![new_timer(StartTimerCommandAttributes {
+                timer_id: "Sometimer".to_string(),
+                start_to_fire_timeout: Some(Duration::from_secs(5).into()),
+                ..Default::default()
+            })
+            .into()],
+            // TODO: Needs to be here in incremental one, but not full :/
+            // vec![], // timer complete, no new commands
+            vec![complete_workflow(
+                CompleteWorkflowExecutionCommandAttributes::default(),
+            )],
+        ]);
+
         let mut t = TestHistoryBuilder::default();
         let mut state_machines = WorkflowMachines::new(Box::new(twd));
 
@@ -321,16 +338,35 @@ mod test {
         );
         t.add_workflow_task_scheduled_and_started();
         assert_eq!(2, t.get_workflow_task_count(None).unwrap());
+        (t, state_machines)
+    }
+
+    #[rstest]
+    fn test_fire_happy_path_inc(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
+        env_logger::init();
+        let (t, mut state_machines) = fire_happy_hist;
+
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
             .unwrap();
-        dbg!(&commands);
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
             .unwrap();
-        dbg!(&commands);
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].command_type,
+            CommandType::CompleteWorkflowExecution as i32
+        );
+    }
+
+    #[rstest]
+    fn test_fire_happy_path_full(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
+        let (t, mut state_machines) = fire_happy_hist;
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
+            .unwrap();
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -342,15 +378,17 @@ mod test {
     fn test_timer_cancel() {
         // TODO: Incomplete
 
-        let timer_cmd = new_timer(StartTimerCommandAttributes {
+        let mut timer_cmd = new_timer(StartTimerCommandAttributes {
             timer_id: "Sometimer".to_string(),
             start_to_fire_timeout: Some(Duration::from_secs(5).into()),
             ..Default::default()
         });
         let timer_machine = timer_cmd.unwrap_machine();
         let twd = TestWorkflowDriver::new(vec![
-            timer_cmd.into(),
-            complete_workflow(CompleteWorkflowExecutionCommandAttributes::default()),
+            vec![timer_cmd.into()],
+            vec![complete_workflow(
+                CompleteWorkflowExecutionCommandAttributes::default(),
+            )],
         ]);
 
         let mut t = TestHistoryBuilder::default();
