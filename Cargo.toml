@@ -1,5 +1,5 @@
 [package]
-name = "sdk-core"
+name = "temporal-sdk-core"
 version = "0.1.0"
 authors = ["Spencer Judge <spencer@temporal.io>", "Vitaly Arbuzov <vitaly@temporal.io>"]
 edition = "2018"
