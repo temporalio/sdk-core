@@ -212,9 +212,10 @@ impl StartCommandRecorded {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::machines::test_help::{TestHistoryBuilder, TestWorkflowDriver};
     use crate::{
         machines::{
-            complete_workflow_state_machine::complete_workflow, test_help::TestHistoryBuilder,
+            complete_workflow_state_machine::complete_workflow,
             workflow_machines::WorkflowMachines, DrivenWorkflow, WFCommand,
         },
         protos::temporal::api::{
@@ -226,76 +227,12 @@ mod test {
         },
     };
     use rstest::{fixture, rstest};
-    use std::sync::mpsc::Sender;
-    use std::{error::Error, sync::mpsc::channel, sync::mpsc::Receiver, time::Duration};
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
-
-    // TODO: This will need to be broken out into it's own place and evolved / made more generic as
-    //   we learn more. It replaces "TestEnitityTestListenerBase" in java which is pretty hard to
-    //   follow.
-    #[derive(Debug)]
-    struct TestWorkflowDriver {
-        /// A queue of command lists to return upon calls to [DrivenWorkflow::iterate_wf]. This
-        /// gives us more manual control than actually running the workflow for real would, for
-        /// example allowing us to simulate nondeterminism.
-        iteration_results: Receiver<Vec<WFCommand>>,
-        iteration_sender: Sender<Vec<WFCommand>>,
-
-        /// The entire history passed in when we were constructed
-        full_history: Vec<Vec<WFCommand>>,
-    }
-
-    impl TestWorkflowDriver {
-        pub fn new<I>(iteration_results: I) -> Self
-        where
-            I: IntoIterator<Item = Vec<WFCommand>>,
-        {
-            let (sender, receiver) = channel();
-            Self {
-                iteration_results: receiver,
-                iteration_sender: sender,
-                full_history: iteration_results.into_iter().collect(),
-            }
-        }
-    }
-
-    impl DrivenWorkflow for TestWorkflowDriver {
-        #[instrument]
-        fn start(
-            &self,
-            attribs: WorkflowExecutionStartedEventAttributes,
-        ) -> Result<Vec<WFCommand>, anyhow::Error> {
-            self.full_history
-                .iter()
-                .for_each(|cmds| self.iteration_sender.send(cmds.to_vec()).unwrap());
-            Ok(vec![])
-        }
-
-        #[instrument]
-        fn iterate_wf(&self) -> Result<Vec<WFCommand>, anyhow::Error> {
-            // Timeout exists just to make blocking obvious. We should never block.
-            let cmd = self
-                .iteration_results
-                .recv_timeout(Duration::from_millis(10))?;
-            event!(Level::DEBUG, msg = "Test wf driver emitting", ?cmd);
-            Ok(cmd)
-        }
-
-        fn signal(
-            &self,
-            attribs: WorkflowExecutionSignaledEventAttributes,
-        ) -> Result<(), anyhow::Error> {
-            Ok(())
-        }
-
-        fn cancel(
-            &self,
-            attribs: WorkflowExecutionCanceledEventAttributes,
-        ) -> Result<(), anyhow::Error> {
-            Ok(())
-        }
-    }
+    use std::{
+        error::Error,
+        sync::mpsc::{channel, Receiver, Sender},
+        time::Duration,
+    };
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     #[fixture]
     fn fire_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
