@@ -39,6 +39,9 @@ pub mod temporal {
                 use crate::protos::temporal::api::{
                     enums::v1::EventType, history::v1::history_event::Attributes,
                 };
+                use prost::alloc::fmt::Formatter;
+                use std::fmt::Display;
+
                 include!("temporal.api.history.v1.rs");
 
                 impl HistoryEvent {
@@ -119,6 +122,17 @@ pub mod temporal {
                             Some(EventType::WorkflowExecutionTerminated) => true,
                             _ => false,
                         }
+                    }
+                }
+
+                impl Display for HistoryEvent {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        write!(
+                            f,
+                            "HistoryEvent(id: {}, {:?})",
+                            self.event_id,
+                            EventType::from_i32(self.event_type)
+                        )
                     }
                 }
             }

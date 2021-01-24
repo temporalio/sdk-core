@@ -9,6 +9,7 @@ use crate::{
 };
 use rustfsm::{fsm, TransitionResult};
 use std::{convert::TryFrom, time::SystemTime};
+use tracing::Level;
 
 fsm! {
     pub(super) name WorkflowTaskMachine;
@@ -98,7 +99,6 @@ impl Scheduled {
             started_event_id,
         }: WFTStartedDat,
     ) -> WorkflowTaskMachineTransition {
-        dbg!("wtsm started trans");
         WorkflowTaskMachineTransition::ok(
             vec![TSMCommand::WFTaskStartedTrigger {
                 task_started_event_id: shared.wf_task_started_event_id,
@@ -128,7 +128,6 @@ pub(super) struct Started {
 
 impl Started {
     pub(super) fn on_workflow_task_completed(self) -> WorkflowTaskMachineTransition {
-        dbg!("wtsm completed trans");
         WorkflowTaskMachineTransition::commands::<_, Completed>(vec![
             TSMCommand::WFTaskStartedTrigger {
                 task_started_event_id: self.started_event_id,

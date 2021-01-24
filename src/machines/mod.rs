@@ -55,6 +55,7 @@ use std::{
     rc::Rc,
     time::SystemTime,
 };
+use tracing::Level;
 
 //  TODO: May need to be our SDKWFCommand type
 type MachineCommand = Command;
@@ -154,13 +155,15 @@ where
     }
 
     fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError> {
-        // dbg!(self.name(), "handling command", command_type);
+        event!(
+            Level::DEBUG,
+            msg = "handling command",
+            ?command_type,
+            machine_name = %self.name()
+        );
         if let Ok(converted_command) = command_type.try_into() {
             match self.on_event_mut(converted_command) {
-                Ok(_c) => {
-                    // dbg!(c);
-                    Ok(())
-                }
+                Ok(_c) => Ok(()),
                 Err(MachineError::InvalidTransition) => {
                     Err(WFMachinesError::UnexpectedCommand(command_type))
                 }
@@ -176,14 +179,15 @@ where
         event: &HistoryEvent,
         _has_next_event: bool,
     ) -> Result<Vec<TSMCommand>, WFMachinesError> {
-        // TODO: Real tracing
-        // dbg!(self.name(), "handling event", &event);
+        event!(
+            Level::DEBUG,
+            msg = "handling event",
+            %event,
+            machine_name = %self.name()
+        );
         if let Ok(converted_event) = event.clone().try_into() {
             match self.on_event_mut(converted_event) {
-                Ok(c) => {
-                    // dbg!(&c);
-                    Ok(c.into_iter().map(Into::into).collect())
-                }
+                Ok(c) => Ok(c.into_iter().map(Into::into).collect()),
                 Err(MachineError::InvalidTransition) => {
                     Err(WFMachinesError::UnexpectedEvent(event.clone()))
                 }

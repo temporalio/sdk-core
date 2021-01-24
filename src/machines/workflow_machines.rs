@@ -15,6 +15,7 @@ use std::{
     rc::Rc,
     time::SystemTime,
 };
+use tracing::Level;
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
@@ -90,6 +91,7 @@ impl WorkflowMachines {
     /// is the last event in the history.
     ///
     /// TODO: Describe what actually happens in here
+    #[instrument(skip(self))]
     pub(crate) fn handle_event(
         &mut self,
         event: &HistoryEvent,
@@ -117,7 +119,7 @@ impl WorkflowMachines {
                         .borrow_mut()
                         .handle_event(event, has_next_event)?
                         .into_iter();
-                    dbg!(&commands);
+                    event!(Level::DEBUG, msg = "Machine produced commands", ?commands);
                     for cmd in commands {
                         match cmd {
                             TSMCommand::WFTaskStartedTrigger {
@@ -133,7 +135,8 @@ impl WorkflowMachines {
                                     // want to iterate.
                                     continue;
                                 }
-                                dbg!("In task started trigger");
+                                let s = span!(Level::DEBUG, "Task started trigger");
+                                let _enter = s.enter();
 
                                 // TODO: Seems to only matter for version machine. Figure out then.
                                 // // If some new commands are pending and there are no more command events.
@@ -158,10 +161,10 @@ impl WorkflowMachines {
                                 self.set_current_time(time);
                                 self.event_loop()?;
                             }
-                            TSMCommand::ProduceHistoryEvent(e) => {
+                            TSMCommand::ProduceHistoryEvent(event) => {
                                 // TODO: Make this go. During replay, at least, we need to ensure
                                 //  produced event matches expected?
-                                dbg!("History event produced", e);
+                                event!(Level::DEBUG, msg = "History event produced", %event);
                             }
                             TSMCommand::AddCommand(_) => {
                                 // TODO: This is where we could handle machines saying they need
@@ -172,10 +175,11 @@ impl WorkflowMachines {
                         }
                     }
                 } else {
-                    error!(
-                        "During event handling, this event had an initial command ID but \
+                    event!(
+                        Level::ERROR,
+                        msg = "During event handling, this event had an initial command ID but \
                      we could not find a matching state machine! Event: {:?}",
-                        event
+                        ?event
                     );
                 }
 
@@ -227,7 +231,11 @@ impl WorkflowMachines {
                 //  * More special handling for version machine - see java
                 //  * Command/machine supposed to have cancelled itself
 
-                dbg!(&out_commands);
+                event!(
+                    Level::DEBUG,
+                    msg = "Machine produced commands",
+                    ?out_commands
+                );
                 break_later = true;
             }
 
