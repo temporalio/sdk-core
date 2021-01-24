@@ -17,8 +17,8 @@ use crate::{
     },
 };
 use rustfsm::{fsm, StateMachine, TransitionResult};
-use std::cell::RefCell;
-use std::{convert::TryFrom, rc::Rc};
+use std::{cell::RefCell, convert::TryFrom, rc::Rc};
+use tracing::Level;
 
 fsm! {
     pub(super) name TimerMachine;
@@ -228,10 +228,13 @@ mod test {
     use rstest::{fixture, rstest};
     use std::sync::mpsc::Sender;
     use std::{error::Error, sync::mpsc::channel, sync::mpsc::Receiver, time::Duration};
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
 
     // TODO: This will need to be broken out into it's own place and evolved / made more generic as
     //   we learn more. It replaces "TestEnitityTestListenerBase" in java which is pretty hard to
     //   follow.
+    #[derive(Debug)]
     struct TestWorkflowDriver {
         /// A queue of command lists to return upon calls to [DrivenWorkflow::iterate_wf]. This
         /// gives us more manual control than actually running the workflow for real would, for
@@ -258,24 +261,25 @@ mod test {
     }
 
     impl DrivenWorkflow for TestWorkflowDriver {
+        #[instrument]
         fn start(
             &self,
             attribs: WorkflowExecutionStartedEventAttributes,
         ) -> Result<Vec<WFCommand>, anyhow::Error> {
-            dbg!("T start");
             self.full_history
                 .iter()
                 .for_each(|cmds| self.iteration_sender.send(cmds.to_vec()).unwrap());
             Ok(vec![])
         }
 
+        #[instrument]
         fn iterate_wf(&self) -> Result<Vec<WFCommand>, anyhow::Error> {
-            dbg!("T iterate");
             // Timeout exists just to make blocking obvious. We should never block.
             let cmd = self
                 .iteration_results
                 .recv_timeout(Duration::from_millis(10))?;
-            dbg!(Ok(cmd))
+            event!(Level::DEBUG, msg = "Test wf driver emitting", ?cmd);
+            Ok(cmd)
         }
 
         fn signal(
@@ -343,7 +347,19 @@ mod test {
 
     #[rstest]
     fn test_fire_happy_path_inc(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        env_logger::init();
+        let (tracer, _uninstall) = opentelemetry_jaeger::new_pipeline()
+            .with_service_name("report_example")
+            .install()
+            .unwrap();
+        let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        tracing_subscriber::registry()
+            .with(opentelemetry)
+            .try_init()
+            .unwrap();
+
+        let s = span!(Level::DEBUG, "Test start", t = "inc");
+        let _enter = s.enter();
+
         let (t, mut state_machines) = fire_happy_hist;
 
         let commands = t
@@ -363,6 +379,19 @@ mod test {
 
     #[rstest]
     fn test_fire_happy_path_full(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
+        let (tracer, _uninstall) = opentelemetry_jaeger::new_pipeline()
+            .with_service_name("report_example")
+            .install()
+            .unwrap();
+        let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        tracing_subscriber::registry()
+            .with(opentelemetry)
+            .try_init()
+            .unwrap();
+
+        let s = span!(Level::DEBUG, "Test start", t = "full");
+        let _enter = s.enter();
+
         let (t, mut state_machines) = fire_happy_hist;
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
