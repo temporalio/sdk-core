@@ -173,7 +173,7 @@ where
                 Ok(c) => {
                     event!(Level::DEBUG, msg = "Machine produced commands", ?c);
                     for cmd in c {
-                        Self::adapt_response(wf_machines, event, has_next_event, cmd)?;
+                        self.adapt_response(wf_machines, event, has_next_event, cmd)?;
                     }
                     Ok(())
                 }
@@ -204,8 +204,14 @@ where
     }
 }
 
+/// This trait exists to bridge [StateMachine]s and the [WorkflowMachines] instance. It has access
+/// to the machine's concrete types while hiding those details from [WorkflowMachines]
 pub(super) trait WFMachinesAdapter: StateMachine {
+    /// Given a reference to [WorkflowMachines], the event being processed, and a command that this
+    /// [StateMachine] instance just produced, perform any handling that needs access to the
+    /// [WorkflowMachines] instance in response to that command.
     fn adapt_response(
+        &self,
         _wf_machines: &mut WorkflowMachines,
         _event: &HistoryEvent,
         _has_next_event: bool,

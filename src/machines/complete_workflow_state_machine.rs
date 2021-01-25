@@ -121,6 +121,7 @@ impl From<CompleteWorkflowCommandCreated> for CompleteWorkflowCommandRecorded {
 
 impl WFMachinesAdapter for CompleteWorkflowMachine {
     fn adapt_response(
+        &self,
         _wf_machines: &mut WorkflowMachines,
         _event: &HistoryEvent,
         _has_next_event: bool,

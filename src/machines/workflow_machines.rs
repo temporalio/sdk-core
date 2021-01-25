@@ -1,3 +1,5 @@
+use crate::machines::timer_state_machine::new_timer;
+use crate::protos::temporal::api::command::v1::StartTimerCommandAttributes;
 use crate::{
     machines::{
         workflow_task_state_machine::WorkflowTaskMachine, CancellableCommand, DrivenWorkflow,
@@ -8,6 +10,8 @@ use crate::{
         history::v1::{history_event, HistoryEvent},
     },
 };
+use futures::channel::oneshot;
+use futures::Future;
 use rustfsm::StateMachine;
 use std::{
     borrow::BorrowMut,
@@ -48,6 +52,9 @@ pub(crate) struct WorkflowMachines {
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: Box<dyn DrivenWorkflow>,
+
+    /// Holds channels for completing timers. Key is the ID of the timer.
+    pub(super) timer_futures: HashMap<String, oneshot::Sender<bool>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -80,7 +87,22 @@ impl WorkflowMachines {
             machines_by_id: Default::default(),
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
+            timer_futures: Default::default(),
         }
+    }
+
+    /// Create a new timer for this workflow with the provided attributes
+    ///
+    /// Returns the command and a future that will resolve when the timer completes
+    pub(super) fn new_timer(
+        &mut self,
+        attribs: StartTimerCommandAttributes,
+    ) -> (CancellableCommand, impl Future) {
+        let timer_id = attribs.timer_id.clone();
+        let timer = new_timer(attribs);
+        let (tx, rx) = oneshot::channel();
+        self.timer_futures.insert(timer_id, tx);
+        (timer, rx)
     }
 
     /// Returns the id of the last seen WorkflowTaskStarted event

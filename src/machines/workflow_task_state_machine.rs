@@ -52,6 +52,7 @@ pub(super) enum WFTaskMachineCommand {
 
 impl WFMachinesAdapter for WorkflowTaskMachine {
     fn adapt_response(
+        &self,
         wf_machines: &mut WorkflowMachines,
         event: &HistoryEvent,
         has_next_event: bool,

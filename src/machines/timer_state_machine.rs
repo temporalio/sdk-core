@@ -149,6 +149,7 @@ impl Created {
 pub(super) struct CancelTimerCommandCreated {}
 impl CancelTimerCommandCreated {
     pub(super) fn on_command_cancel_timer(self, dat: SharedState) -> TimerMachineTransition {
+        // TODO: Think we need to produce a completion command here
         TimerMachineTransition::ok(
             vec![dat.into_timer_canceled_event_command()],
             Canceled::default(),
@@ -214,7 +215,8 @@ impl StartCommandRecorded {
 
 impl WFMachinesAdapter for TimerMachine {
     fn adapt_response(
-        _wf_machines: &mut WorkflowMachines,
+        &self,
+        wf_machines: &mut WorkflowMachines,
         _event: &HistoryEvent,
         _has_next_event: bool,
         my_command: TimerMachineCommand,
@@ -223,7 +225,13 @@ impl WFMachinesAdapter for TimerMachine {
             TimerMachineCommand::AddCommand(_) => {
                 unreachable!()
             }
-            TimerMachineCommand::Complete(_event) => {}
+            // Fire the completion
+            TimerMachineCommand::Complete(_event) => {
+                wf_machines
+                    .timer_futures
+                    .remove(&self.shared_state.timer_attributes.timer_id)
+                    .map(|c| c.send(true));
+            }
         }
         Ok(())
     }
