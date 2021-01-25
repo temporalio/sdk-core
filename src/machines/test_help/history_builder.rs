@@ -210,7 +210,7 @@ impl TestHistoryBuilder {
     }
 
     /// Iterates over the events in this builder to return a [HistoryInfo]
-    fn get_history_info(&self, to_task_index: usize) -> Result<HistoryInfo> {
+    pub(crate) fn get_history_info(&self, to_task_index: usize) -> Result<HistoryInfo> {
         let mut lastest_wf_started_id = 0;
         let mut previous_wf_started_id = 0;
         let mut count = 0;

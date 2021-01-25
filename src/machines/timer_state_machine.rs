@@ -249,19 +249,15 @@ mod test {
             Should iterate once, produce started command, iterate again, producing no commands
             (timer complete), third iteration completes workflow.
         */
-        let twd = TestWorkflowDriver::new(vec![
-            vec![new_timer(StartTimerCommandAttributes {
+        let twd = TestWorkflowDriver::new(async {
+            let timer = new_timer(StartTimerCommandAttributes {
                 timer_id: "Sometimer".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
                 ..Default::default()
-            })
-            .into()],
-            // TODO: Needs to be here in incremental one, but not full :/
-            // vec![], // timer complete, no new commands
-            vec![complete_workflow(
-                CompleteWorkflowExecutionCommandAttributes::default(),
-            )],
-        ]);
+            });
+            timer.await;
+            complete_workflow(CompleteWorkflowExecutionCommandAttributes::default());
+        });
 
         let mut t = TestHistoryBuilder::default();
         let mut state_machines = WorkflowMachines::new(Box::new(twd));
@@ -284,16 +280,6 @@ mod test {
 
     #[rstest]
     fn test_fire_happy_path_inc(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let (tracer, _uninstall) = opentelemetry_jaeger::new_pipeline()
-            .with_service_name("report_example")
-            .install()
-            .unwrap();
-        let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-        tracing_subscriber::registry()
-            .with(opentelemetry)
-            .try_init()
-            .unwrap();
-
         let s = span!(Level::DEBUG, "Test start", t = "inc");
         let _enter = s.enter();
 
