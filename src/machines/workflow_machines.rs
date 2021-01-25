@@ -1,13 +1,14 @@
 use crate::{
     machines::{
         workflow_task_state_machine::WorkflowTaskMachine, CancellableCommand, DrivenWorkflow,
-        MachineCommand, TSMCommand, TemporalStateMachine, WFCommand,
+        MachineCommand, TemporalStateMachine, WFCommand,
     },
     protos::temporal::api::{
         enums::v1::{CommandType, EventType},
         history::v1::{history_event, HistoryEvent},
     },
 };
+use rustfsm::StateMachine;
 use std::{
     borrow::BorrowMut,
     cell::RefCell,
@@ -115,65 +116,9 @@ impl WorkflowMachines {
         match event.get_initial_command_event_id() {
             Some(initial_cmd_id) => {
                 if let Some(sm) = self.machines_by_id.get(&initial_cmd_id) {
-                    let commands = (*sm.clone())
+                    (*sm.clone())
                         .borrow_mut()
-                        .handle_event(event, has_next_event)?
-                        .into_iter();
-                    event!(Level::DEBUG, msg = "Machine produced commands", ?commands);
-                    for cmd in commands {
-                        match cmd {
-                            TSMCommand::WFTaskStartedTrigger {
-                                task_started_event_id,
-                                time,
-                            } => {
-                                let cur_event_past_or_at_start =
-                                    event.event_id >= task_started_event_id;
-                                if event_type == EventType::WorkflowTaskStarted
-                                    && !(cur_event_past_or_at_start && !has_next_event)
-                                {
-                                    // Last event in history is a task started event, so we don't
-                                    // want to iterate.
-                                    continue;
-                                }
-                                let s = span!(Level::DEBUG, "Task started trigger");
-                                let _enter = s.enter();
-
-                                // TODO: Seems to only matter for version machine. Figure out then.
-                                // // If some new commands are pending and there are no more command events.
-                                // for (CancellableCommand cancellableCommand : commands) {
-                                //     if (cancellableCommand == null) {
-                                //         break;
-                                //     }
-                                //     cancellableCommand.handleWorkflowTaskStarted();
-                                // }
-
-                                // TODO: Local activity machines
-                                // // Give local activities a chance to recreate their requests if they were lost due
-                                // // to the last workflow task failure. The loss could happen only the last workflow task
-                                // // was forcibly created by setting forceCreate on RespondWorkflowTaskCompletedRequest.
-                                // if (nonProcessedWorkflowTask) {
-                                //     for (LocalActivityStateMachine value : localActivityMap.values()) {
-                                //         value.nonReplayWorkflowTaskStarted();
-                                //     }
-                                // }
-
-                                self.current_started_event_id = task_started_event_id;
-                                self.set_current_time(time);
-                                self.event_loop()?;
-                            }
-                            TSMCommand::ProduceHistoryEvent(event) => {
-                                // TODO: Make this go. During replay, at least, we need to ensure
-                                //  produced event matches expected?
-                                event!(Level::DEBUG, msg = "History event produced", %event);
-                            }
-                            TSMCommand::AddCommand(_) => {
-                                // TODO: This is where we could handle machines saying they need
-                                //  to cancel themselves (since they don't have a ref to their own
-                                //  command, could go with that too) -- but also
-                                unimplemented!()
-                            }
-                        }
-                    }
+                        .handle_event(event, has_next_event, self)?;
                 } else {
                     event!(
                         Level::ERROR,
@@ -193,6 +138,41 @@ impl WorkflowMachines {
             None => self.handle_non_stateful_event(event, has_next_event)?,
         }
 
+        Ok(())
+    }
+
+    /// Called when we want to run the event loop because a workflow task started event has
+    /// triggered
+    pub(super) fn task_started(
+        &mut self,
+        task_started_event_id: i64,
+        time: SystemTime,
+    ) -> Result<()> {
+        let s = span!(Level::DEBUG, "Task started trigger");
+        let _enter = s.enter();
+
+        // TODO: Seems to only matter for version machine. Figure out then.
+        // // If some new commands are pending and there are no more command events.
+        // for (CancellableCommand cancellableCommand : commands) {
+        //     if (cancellableCommand == null) {
+        //         break;
+        //     }
+        //     cancellableCommand.handleWorkflowTaskStarted();
+        // }
+
+        // TODO: Local activity machines
+        // // Give local activities a chance to recreate their requests if they were lost due
+        // // to the last workflow task failure. The loss could happen only the last workflow task
+        // // was forcibly created by setting forceCreate on RespondWorkflowTaskCompletedRequest.
+        // if (nonProcessedWorkflowTask) {
+        //     for (LocalActivityStateMachine value : localActivityMap.values()) {
+        //         value.nonReplayWorkflowTaskStarted();
+        //     }
+        // }
+
+        self.current_started_event_id = task_started_event_id;
+        self.set_current_time(time);
+        self.event_loop()?;
         Ok(())
     }
 
@@ -226,7 +206,7 @@ impl WorkflowMachines {
             // Feed the machine the event
             let mut break_later = false;
             if let CancellableCommand::Active { mut machine, .. } = command.clone() {
-                let out_commands = (*machine).borrow_mut().handle_event(event, true)?;
+                let out_commands = (*machine).borrow_mut().handle_event(event, true, self)?;
                 // TODO: Handle invalid event errors
                 //  * More special handling for version machine - see java
                 //  * Command/machine supposed to have cancelled itself
@@ -282,7 +262,7 @@ impl WorkflowMachines {
             }
             Some(EventType::WorkflowTaskScheduled) => {
                 let mut wf_task_sm = WorkflowTaskMachine::new(self.workflow_task_started_event_id);
-                wf_task_sm.handle_event(event, has_next_event)?;
+                wf_task_sm.handle_event(event, has_next_event, self)?;
                 self.machines_by_id
                     .insert(event.event_id, Rc::new(RefCell::new(wf_task_sm)));
             }

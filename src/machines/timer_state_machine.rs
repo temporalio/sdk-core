@@ -1,9 +1,9 @@
 #![allow(clippy::large_enum_variant)]
 
+use crate::machines::workflow_machines::WorkflowMachines;
+use crate::machines::WFMachinesAdapter;
 use crate::{
-    machines::{
-        workflow_machines::WFMachinesError, AddCommand, CancellableCommand, TSMCommand, WFCommand,
-    },
+    machines::{workflow_machines::WFMachinesError, AddCommand, CancellableCommand, WFCommand},
     protos::{
         coresdk::HistoryEventId,
         temporal::api::{
@@ -22,7 +22,7 @@ use tracing::Level;
 
 fsm! {
     pub(super) name TimerMachine;
-    command TSMCommand;
+    command TimerMachineCommand;
     error WFMachinesError;
     shared_state SharedState;
 
@@ -40,6 +40,12 @@ fsm! {
         --(CommandCancelTimer, shared on_command_cancel_timer) --> CancelTimerCommandSent;
 
     CancelTimerCommandSent --(TimerCanceled) --> Canceled;
+}
+
+#[derive(Debug)]
+pub(super) enum TimerMachineCommand {
+    AddCommand(AddCommand),
+    Complete(HistoryEvent),
 }
 
 /// Creates a new, scheduled, timer as a [CancellableCommand]
@@ -60,7 +66,7 @@ impl TimerMachine {
             .expect("Scheduling timers doesn't fail")
             .pop()
         {
-            Some(TSMCommand::AddCommand(c)) => c,
+            Some(TimerMachineCommand::AddCommand(c)) => c,
             _ => panic!("Timer on_schedule must produce command"),
         };
         (s, cmd)
@@ -107,7 +113,7 @@ pub(super) struct SharedState {
 }
 
 impl SharedState {
-    fn into_timer_canceled_event_command(self) -> TSMCommand {
+    fn into_timer_canceled_event_command(self) -> TimerMachineCommand {
         let attrs = TimerCanceledEventAttributes {
             identity: "workflow".to_string(),
             timer_id: self.timer_attributes.timer_id,
@@ -120,7 +126,7 @@ impl SharedState {
             )),
             ..Default::default()
         };
-        TSMCommand::ProduceHistoryEvent(event)
+        TimerMachineCommand::Complete(event)
     }
 }
 
@@ -133,9 +139,9 @@ impl Created {
             command_type: CommandType::StartTimer as i32,
             attributes: Some(dat.timer_attributes.into()),
         };
-        TimerMachineTransition::commands::<_, StartCommandCreated>(vec![TSMCommand::AddCommand(
-            cmd.into(),
-        )])
+        TimerMachineTransition::commands::<_, StartCommandCreated>(vec![
+            TimerMachineCommand::AddCommand(cmd.into()),
+        ])
     }
 }
 
@@ -187,10 +193,7 @@ pub(super) struct StartCommandRecorded {}
 
 impl StartCommandRecorded {
     pub(super) fn on_timer_fired(self, event: HistoryEvent) -> TimerMachineTransition {
-        TimerMachineTransition::ok(
-            vec![TSMCommand::ProduceHistoryEvent(event)],
-            Fired::default(),
-        )
+        TimerMachineTransition::ok(vec![TimerMachineCommand::Complete(event)], Fired::default())
     }
     pub(super) fn on_cancel(self, dat: SharedState) -> TimerMachineTransition {
         let cmd = Command {
@@ -203,20 +206,38 @@ impl StartCommandRecorded {
             ),
         };
         TimerMachineTransition::ok(
-            vec![TSMCommand::AddCommand(cmd.into())],
+            vec![TimerMachineCommand::AddCommand(cmd.into())],
             CancelTimerCommandCreated::default(),
         )
+    }
+}
+
+impl WFMachinesAdapter for TimerMachine {
+    fn adapt_response(
+        _wf_machines: &mut WorkflowMachines,
+        _event: &HistoryEvent,
+        _has_next_event: bool,
+        my_command: TimerMachineCommand,
+    ) -> Result<(), WFMachinesError> {
+        match my_command {
+            TimerMachineCommand::AddCommand(_) => {
+                unreachable!()
+            }
+            TimerMachineCommand::Complete(_event) => {}
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::machines::test_help::{TestHistoryBuilder, TestWorkflowDriver};
     use crate::{
         machines::{
             complete_workflow_state_machine::complete_workflow,
-            workflow_machines::WorkflowMachines, DrivenWorkflow, WFCommand,
+            test_help::{TestHistoryBuilder, TestWorkflowDriver},
+            workflow_machines::WorkflowMachines,
+            DrivenWorkflow, WFCommand,
         },
         protos::temporal::api::{
             command::v1::CompleteWorkflowExecutionCommandAttributes,
@@ -249,15 +270,28 @@ mod test {
             Should iterate once, produce started command, iterate again, producing no commands
             (timer complete), third iteration completes workflow.
         */
-        let twd = TestWorkflowDriver::new(async {
-            let timer = new_timer(StartTimerCommandAttributes {
+        // let twd = TestWorkflowDriver::new(async {
+        //     let timer = new_timer(StartTimerCommandAttributes {
+        //         timer_id: "Sometimer".to_string(),
+        //         start_to_fire_timeout: Some(Duration::from_secs(5).into()),
+        //         ..Default::default()
+        //     });
+        //     //timer.await;
+        //     complete_workflow(CompleteWorkflowExecutionCommandAttributes::default());
+        // });
+        let twd = TestWorkflowDriver::new(vec![
+            vec![new_timer(StartTimerCommandAttributes {
                 timer_id: "Sometimer".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
                 ..Default::default()
-            });
-            timer.await;
-            complete_workflow(CompleteWorkflowExecutionCommandAttributes::default());
-        });
+            })
+            .into()],
+            // TODO: Needs to be here in incremental one, but not full :/
+            // vec![], // timer complete, no new commands
+            vec![complete_workflow(
+                CompleteWorkflowExecutionCommandAttributes::default(),
+            )],
+        ]);
 
         let mut t = TestHistoryBuilder::default();
         let mut state_machines = WorkflowMachines::new(Box::new(twd));

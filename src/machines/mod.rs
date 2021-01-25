@@ -36,7 +36,7 @@ mod workflow_task_state_machine;
 mod test_help;
 
 use crate::{
-    machines::workflow_machines::WFMachinesError,
+    machines::workflow_machines::{WFMachinesError, WorkflowMachines},
     protos::temporal::api::{
         command::v1::Command,
         enums::v1::CommandType,
@@ -53,7 +53,6 @@ use std::{
     convert::{TryFrom, TryInto},
     fmt::Debug,
     rc::Rc,
-    time::SystemTime,
 };
 use tracing::Level;
 
@@ -86,26 +85,6 @@ trait DrivenWorkflow {
     ) -> Result<(), anyhow::Error>;
 }
 
-/// These commands are issued by state machines to inform their driver ([WorkflowMachines]) that
-/// it may need to take some action.
-///
-/// In java this functionality was largely handled via callbacks passed into the state machines
-/// which was difficult to follow
-#[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
-pub(crate) enum TSMCommand {
-    /// Issued by the [WorkflowTaskMachine] to (possibly) trigger the event loop
-    WFTaskStartedTrigger {
-        task_started_event_id: i64,
-        time: SystemTime,
-    },
-    /// Issued by state machines to create commands
-    AddCommand(AddCommand),
-    // TODO: This is not quite right. Should be more like "notify completion". Need to investigate
-    //   more examples
-    ProduceHistoryEvent(HistoryEvent),
-}
-
 /// The struct for [WFCommand::AddCommand]
 #[derive(Debug, derive_more::From)]
 pub(crate) struct AddCommand {
@@ -129,11 +108,16 @@ enum WFCommand {
 trait TemporalStateMachine: CheckStateMachineInFinal {
     fn name(&self) -> &str;
     fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError>;
+
+    /// Tell the state machine to handle some event. The [WorkflowMachines] instance calling this
+    /// function passes a reference to itself in so that the [WFMachinesAdapter] trait can use
+    /// the machines' specific type information while also manipulating [WorkflowMachines]
     fn handle_event(
         &mut self,
         event: &HistoryEvent,
         has_next_event: bool,
-    ) -> Result<Vec<TSMCommand>, WFMachinesError>;
+        wf_machines: &mut WorkflowMachines,
+    ) -> Result<(), WFMachinesError>;
 
     // TODO: This is a weird one that only applies to version state machine. Introduce only if
     //  needed. Ideally handle differently.
@@ -142,12 +126,10 @@ trait TemporalStateMachine: CheckStateMachineInFinal {
 
 impl<SM> TemporalStateMachine for SM
 where
-    SM: StateMachine + CheckStateMachineInFinal + Clone,
+    SM: StateMachine + CheckStateMachineInFinal + WFMachinesAdapter + Clone,
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
     <SM as StateMachine>::Command: Debug,
-    // TODO: Do we really need this bound? Check back and see if we can just use TSMCommand directly
-    <SM as StateMachine>::Command: Into<TSMCommand>,
     <SM as StateMachine>::Error: Into<WFMachinesError> + 'static + Send + Sync,
 {
     fn name(&self) -> &str {
@@ -177,8 +159,9 @@ where
     fn handle_event(
         &mut self,
         event: &HistoryEvent,
-        _has_next_event: bool,
-    ) -> Result<Vec<TSMCommand>, WFMachinesError> {
+        has_next_event: bool,
+        wf_machines: &mut WorkflowMachines,
+    ) -> Result<(), WFMachinesError> {
         event!(
             Level::DEBUG,
             msg = "handling event",
@@ -187,7 +170,13 @@ where
         );
         if let Ok(converted_event) = event.clone().try_into() {
             match self.on_event_mut(converted_event) {
-                Ok(c) => Ok(c.into_iter().map(Into::into).collect()),
+                Ok(c) => {
+                    event!(Level::DEBUG, msg = "Machine produced commands", ?c);
+                    for cmd in c {
+                        Self::adapt_response(wf_machines, event, has_next_event, cmd)?;
+                    }
+                    Ok(())
+                }
                 Err(MachineError::InvalidTransition) => {
                     Err(WFMachinesError::UnexpectedEvent(event.clone()))
                 }
@@ -213,6 +202,15 @@ where
     fn is_final_state(&self) -> bool {
         self.on_final_state()
     }
+}
+
+pub(super) trait WFMachinesAdapter: StateMachine {
+    fn adapt_response(
+        _wf_machines: &mut WorkflowMachines,
+        _event: &HistoryEvent,
+        _has_next_event: bool,
+        _my_command: Self::Command,
+    ) -> Result<(), WFMachinesError>;
 }
 
 /// A command which can be cancelled, associated with some state machine that produced it
