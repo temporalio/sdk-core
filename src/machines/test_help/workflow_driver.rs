@@ -6,61 +6,68 @@ use crate::{
         WorkflowExecutionStartedEventAttributes,
     },
 };
-use std::{
-    sync::mpsc::{channel, Receiver, Sender},
-    time::Duration,
+use futures::{
+    channel::mpsc::{channel, Sender},
+    executor::block_on,
+    Future, StreamExt,
 };
 use tracing::Level;
 
-// TODO: This will need to be broken out into it's own place and evolved / made more generic as
-//   we learn more. It replaces "TestEnitityTestListenerBase" in java which is pretty hard to
-//   follow.
+/// This is a test only implementation of a [DrivenWorkflow] which has finer-grained control
+/// over when commands are returned than a normal workflow would.
+///
+/// It replaces "TestEnitityTestListenerBase" in java which is pretty hard to follow.
 #[derive(Debug)]
-pub(crate) struct TestWorkflowDriver {
-    /// A queue of command lists to return upon calls to [DrivenWorkflow::iterate_wf]. This
-    /// gives us more manual control than actually running the workflow for real would, for
-    /// example allowing us to simulate nondeterminism.
-    iteration_results: Receiver<Vec<WFCommand>>,
-    iteration_sender: Sender<Vec<WFCommand>>,
-
-    /// The entire history passed in when we were constructed
-    full_history: Vec<Vec<WFCommand>>,
+pub(in crate::machines) struct TestWorkflowDriver<F> {
+    wf_function: F,
 }
 
-impl TestWorkflowDriver {
-    pub(in crate::machines) fn new<I>(iteration_results: I) -> Self
-    where
-        I: IntoIterator<Item = Vec<WFCommand>>,
-    {
-        let (sender, receiver) = channel();
+impl<F, Fut> TestWorkflowDriver<F>
+where
+    F: Fn(Sender<WFCommand>) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    pub(in crate::machines) fn new(workflow_fn: F) -> Self {
         Self {
-            iteration_results: receiver,
-            iteration_sender: sender,
-            full_history: iteration_results.into_iter().collect(),
+            wf_function: workflow_fn,
         }
     }
+    // TODO: Need some way to make the await return immediately for timer future even when it
+    //   hasn't completed, when it should produce the "thunk" for waiting
+    // pub(crate) fn new_timer(
+    //     &self,
+    //     attribs: StartTimerCommandAttributes,
+    // ) -> (CancellableCommand, impl Future) {
+    // }
 }
 
-impl DrivenWorkflow for TestWorkflowDriver {
-    #[instrument]
+impl<F, Fut> DrivenWorkflow for TestWorkflowDriver<F>
+where
+    F: Fn(Sender<WFCommand>) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    #[instrument(skip(self))]
     fn start(
         &self,
-        attribs: WorkflowExecutionStartedEventAttributes,
+        _attribs: WorkflowExecutionStartedEventAttributes,
     ) -> Result<Vec<WFCommand>, anyhow::Error> {
-        self.full_history
-            .iter()
-            .for_each(|cmds| self.iteration_sender.send(cmds.to_vec()).unwrap());
         Ok(vec![])
     }
 
-    #[instrument]
+    #[instrument(skip(self))]
     fn iterate_wf(&self) -> Result<Vec<WFCommand>, anyhow::Error> {
-        // Timeout exists just to make blocking obvious. We should never block.
-        let cmd = self
-            .iteration_results
-            .recv_timeout(Duration::from_millis(10))?;
-        event!(Level::DEBUG, msg = "Test wf driver emitting", ?cmd);
-        Ok(cmd)
+        dbg!("iterate");
+        let (sender, receiver) = channel(1_000);
+        // Call the closure that produces the workflow future
+        let wf_future = (self.wf_function)(sender);
+
+        // TODO: This block_on might cause issues later
+        block_on(wf_future);
+        let cmds: Vec<_> = block_on(async { receiver.collect().await });
+        event!(Level::DEBUG, msg = "Test wf driver emitting", ?cmds);
+
+        // Return only the last command
+        Ok(vec![cmds.into_iter().last().unwrap()])
     }
 
     fn signal(

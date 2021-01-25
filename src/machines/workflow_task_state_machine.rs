@@ -73,6 +73,7 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
                     // want to iterate.
                     return Ok(());
                 }
+                dbg!(&event);
                 wf_machines.task_started(task_started_event_id, time)?;
             }
         }

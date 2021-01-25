@@ -1,17 +1,16 @@
-use crate::machines::timer_state_machine::new_timer;
-use crate::protos::temporal::api::command::v1::StartTimerCommandAttributes;
 use crate::{
     machines::{
+        test_help::TestWorkflowDriver, timer_state_machine::new_timer,
         workflow_task_state_machine::WorkflowTaskMachine, CancellableCommand, DrivenWorkflow,
         MachineCommand, TemporalStateMachine, WFCommand,
     },
     protos::temporal::api::{
+        command::v1::StartTimerCommandAttributes,
         enums::v1::{CommandType, EventType},
         history::v1::{history_event, HistoryEvent},
     },
 };
-use futures::channel::oneshot;
-use futures::Future;
+use futures::{channel::mpsc::Sender, channel::oneshot, Future};
 use rustfsm::StateMachine;
 use std::{
     borrow::BorrowMut,
@@ -51,7 +50,7 @@ pub(crate) struct WorkflowMachines {
     current_wf_task_commands: VecDeque<CancellableCommand>,
 
     /// The workflow that is being driven by this instance of the machines
-    drive_me: Box<dyn DrivenWorkflow>,
+    drive_me: Box<dyn DrivenWorkflow + 'static>,
 
     /// Holds channels for completing timers. Key is the ID of the timer.
     pub(super) timer_futures: HashMap<String, oneshot::Sender<bool>>,

@@ -255,12 +255,10 @@ mod test {
             },
         },
     };
+    use futures::channel::mpsc::Sender;
+    use futures::{FutureExt, SinkExt};
     use rstest::{fixture, rstest};
-    use std::{
-        error::Error,
-        sync::mpsc::{channel, Receiver, Sender},
-        time::Duration,
-    };
+    use std::{error::Error, time::Duration};
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     #[fixture]
@@ -275,31 +273,21 @@ mod test {
             7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
             8: EVENT_TYPE_WORKFLOW_TASK_STARTED
 
+            // TODO: Update this with deets
             Should iterate once, produce started command, iterate again, producing no commands
             (timer complete), third iteration completes workflow.
         */
-        // let twd = TestWorkflowDriver::new(async {
-        //     let timer = new_timer(StartTimerCommandAttributes {
-        //         timer_id: "Sometimer".to_string(),
-        //         start_to_fire_timeout: Some(Duration::from_secs(5).into()),
-        //         ..Default::default()
-        //     });
-        //     //timer.await;
-        //     complete_workflow(CompleteWorkflowExecutionCommandAttributes::default());
-        // });
-        let twd = TestWorkflowDriver::new(vec![
-            vec![new_timer(StartTimerCommandAttributes {
+        let twd = TestWorkflowDriver::new(|mut command_sink: Sender<WFCommand>| async move {
+            let timer = new_timer(StartTimerCommandAttributes {
                 timer_id: "Sometimer".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
                 ..Default::default()
-            })
-            .into()],
-            // TODO: Needs to be here in incremental one, but not full :/
-            // vec![], // timer complete, no new commands
-            vec![complete_workflow(
-                CompleteWorkflowExecutionCommandAttributes::default(),
-            )],
-        ]);
+            });
+            command_sink.send(timer.into()).await;
+
+            let complete = complete_workflow(CompleteWorkflowExecutionCommandAttributes::default());
+            command_sink.send(complete).await;
+        });
 
         let mut t = TestHistoryBuilder::default();
         let mut state_machines = WorkflowMachines::new(Box::new(twd));
@@ -361,40 +349,11 @@ mod test {
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
             .unwrap();
+        dbg!(&commands);
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
-    }
-
-    #[test]
-    fn test_timer_cancel() {
-        // TODO: Incomplete
-
-        let mut timer_cmd = new_timer(StartTimerCommandAttributes {
-            timer_id: "Sometimer".to_string(),
-            start_to_fire_timeout: Some(Duration::from_secs(5).into()),
-            ..Default::default()
-        });
-        let timer_machine = timer_cmd.unwrap_machine();
-        let twd = TestWorkflowDriver::new(vec![
-            vec![timer_cmd.into()],
-            vec![complete_workflow(
-                CompleteWorkflowExecutionCommandAttributes::default(),
-            )],
-        ]);
-
-        let mut t = TestHistoryBuilder::default();
-        let mut state_machines = WorkflowMachines::new(Box::new(twd));
-
-        t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_workflow_task();
-        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-        t.add_workflow_task_scheduled_and_started();
-        assert_eq!(2, t.get_workflow_task_count(None).unwrap());
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
-            .unwrap();
     }
 }

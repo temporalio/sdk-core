@@ -234,18 +234,9 @@ enum CancellableCommand {
 }
 
 impl CancellableCommand {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // TODO: Use
     pub(super) fn cancel(&mut self) {
         *self = CancellableCommand::Cancelled;
-    }
-
-    #[cfg(test)]
-    fn unwrap_machine(&mut self) -> &mut dyn TemporalStateMachine {
-        if let CancellableCommand::Active { machine, .. } = self {
-            RefCell::get_mut(Rc::get_mut(machine).unwrap())
-        } else {
-            panic!("No machine in command, already canceled")
-        }
     }
 }
 
