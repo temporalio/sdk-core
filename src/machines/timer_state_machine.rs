@@ -228,10 +228,12 @@ impl WFMachinesAdapter for TimerMachine {
             }
             // Fire the completion
             TimerMachineCommand::Complete(_event) => {
-                wf_machines
+                if let Some(a) = wf_machines
                     .timer_notifiers
                     .remove(&self.shared_state.timer_attributes.timer_id)
-                    .map(|a| a.store(true, Ordering::SeqCst));
+                {
+                    a.store(true, Ordering::SeqCst)
+                };
             }
         }
         Ok(())
