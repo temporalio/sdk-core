@@ -9,21 +9,19 @@ use protos::coresdk::{CompleteSdkTaskReq, PollSdkTaskResp, RegistrationReq};
 
 pub type Result<T, E = SDKServiceError> = std::result::Result<T, E>;
 
-// TODO: Should probably enforce Send + Sync
-#[async_trait::async_trait]
 pub trait CoreSDKService {
-    async fn poll_sdk_task(&self) -> Result<PollSdkTaskResp>;
-    async fn complete_sdk_task(&self, req: CompleteSdkTaskReq) -> Result<()>;
-    async fn register_implementations(&self, req: RegistrationReq) -> Result<()>;
+    fn poll_sdk_task(&self) -> Result<PollSdkTaskResp>;
+    fn complete_sdk_task(&self, req: CompleteSdkTaskReq) -> Result<()>;
+    fn register_implementations(&self, req: RegistrationReq) -> Result<()>;
 }
 
 pub struct CoreSDKInitOptions {
-    queue_name: String,
-    max_concurrent_workflow_executions: u32,
-    max_concurrent_activity_executions: u32,
+    _queue_name: String,
+    _max_concurrent_workflow_executions: u32,
+    _max_concurrent_activity_executions: u32,
 }
 
-pub fn init_sdk(opts: CoreSDKInitOptions) -> Result<Box<dyn CoreSDKService>> {
+pub fn init_sdk(_opts: CoreSDKInitOptions) -> Result<Box<dyn CoreSDKService>> {
     Err(SDKServiceError::Unknown {})
 }
 
