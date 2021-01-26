@@ -41,7 +41,6 @@ pub(crate) struct WorkflowMachines {
 
     /// A mapping for accessing all the machines, where the key is the id of the initiating event
     /// for that machine.
-    // TODO: Maybe value here should just be `CancellableCommand`
     machines_by_id: HashMap<i64, Rc<RefCell<dyn TemporalStateMachine>>>,
 
     /// Queued commands which have been produced by machines and await processing
@@ -214,12 +213,11 @@ impl WorkflowMachines {
         //       return;
         //     }
 
-        let mut maybe_command;
         let consumed_cmd = loop {
             // handleVersionMarker can skip a marker event if the getVersion call was removed.
-            // In this case we don't want to consume a command.
-            // That's why front is used instead of pop_front
-            maybe_command = self.commands.front();
+            // In this case we don't want to consume a command. -- we will need to replace it back
+            // to the front when implementing, or something better
+            let maybe_command = self.commands.pop_front();
             let command = if let Some(c) = maybe_command {
                 c
             } else {
@@ -242,11 +240,8 @@ impl WorkflowMachines {
                 break_later = true;
             }
 
-            // Consume command
-            let cmd = self.commands.pop_front();
             if break_later {
-                // Unwrap OK since we would have already exited if not present. TODO: Cleanup
-                break cmd.unwrap();
+                command
             }
         };
 

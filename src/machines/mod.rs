@@ -119,10 +119,6 @@ trait TemporalStateMachine: CheckStateMachineInFinal {
         has_next_event: bool,
         wf_machines: &mut WorkflowMachines,
     ) -> Result<(), WFMachinesError>;
-
-    // TODO: This is a weird one that only applies to version state machine. Introduce only if
-    //  needed. Ideally handle differently.
-    //  fn handle_workflow_task_started();
 }
 
 impl<SM> TemporalStateMachine for SM

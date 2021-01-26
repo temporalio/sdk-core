@@ -93,7 +93,7 @@ where
             }
         }
 
-        // Return only the last command. TODO: Later this will need to account for the wf
+        // Return only the last command, since that's what would've been yielded in a real wf
         Ok(if let Some(c) = last_cmd {
             vec![c]
         } else {
