@@ -241,7 +241,7 @@ impl WorkflowMachines {
             }
 
             if break_later {
-                command
+                break command;
             }
         };
 
