@@ -48,7 +48,6 @@ use crate::{
         },
     },
 };
-use futures::channel::oneshot;
 use prost::alloc::fmt::Formatter;
 use rustfsm::{MachineError, StateMachine};
 use std::{
@@ -56,6 +55,7 @@ use std::{
     convert::{TryFrom, TryInto},
     fmt::Debug,
     rc::Rc,
+    sync::{atomic::AtomicBool, Arc},
 };
 use tracing::Level;
 
@@ -99,7 +99,7 @@ pub(crate) struct AddCommand {
 /// EX: Create a new timer, complete the workflow, etc.
 #[derive(Debug, derive_more::From)]
 pub enum WFCommand {
-    AddTimer(StartTimerCommandAttributes, oneshot::Sender<bool>),
+    AddTimer(StartTimerCommandAttributes, Arc<AtomicBool>),
     CompleteWorkflow(CompleteWorkflowExecutionCommandAttributes),
 }
 

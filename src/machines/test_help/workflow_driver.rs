@@ -9,19 +9,18 @@ use crate::{
         },
     },
 };
-use futures::{channel::oneshot, executor::block_on, lock::Mutex, Future, FutureExt};
-use std::sync::Arc;
+use futures::Future;
 use std::{
     collections::{hash_map, HashMap},
     sync::{
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, Sender},
-        RwLock,
+        Arc, RwLock,
     },
 };
 use tracing::Level;
 
-// TODO: Mutex is not necessary
-type TimerMap = HashMap<String, Arc<futures::lock::Mutex<oneshot::Receiver<bool>>>>;
+type TimerMap = HashMap<String, Arc<AtomicBool>>;
 
 /// This is a test only implementation of a [DrivenWorkflow] which has finer-grained control
 /// over when commands are returned than a normal workflow would.
@@ -31,28 +30,30 @@ type TimerMap = HashMap<String, Arc<futures::lock::Mutex<oneshot::Receiver<bool>
 pub(in crate::machines) struct TestWorkflowDriver<F> {
     wf_function: F,
 
-    /// Holds completion channels for timers so we don't recreate them by accident. Key is timer id.
+    /// Holds status for timers so we don't recreate them by accident. Key is timer id, value is
+    /// true if it is complete.
     ///
-    /// I don't love that this is pretty duplicative of workflow machines
-    timers: RwLock<TimerMap>,
+    /// I don't love that this is pretty duplicative of workflow machines, nor the nasty sync
+    /// involved. Would be good to eliminate.
+    timers: Arc<RwLock<TimerMap>>,
 }
 
 impl<F, Fut> TestWorkflowDriver<F>
 where
-    F: Fn(CommandSender<'_>) -> Fut,
+    F: Fn(CommandSender) -> Fut,
     Fut: Future<Output = ()>,
 {
     pub(in crate::machines) fn new(workflow_fn: F) -> Self {
         Self {
             wf_function: workflow_fn,
-            timers: RwLock::new(HashMap::default()),
+            timers: Arc::new(RwLock::new(HashMap::default())),
         }
     }
 }
 
 impl<F, Fut> DrivenWorkflow for TestWorkflowDriver<F>
 where
-    F: Fn(CommandSender<'_>) -> Fut,
+    F: Fn(CommandSender) -> Fut,
     Fut: Future<Output = ()>,
 {
     #[instrument(skip(self))]
@@ -65,13 +66,14 @@ where
 
     #[instrument(skip(self))]
     fn iterate_wf(&self) -> Result<Vec<WFCommand>, anyhow::Error> {
-        dbg!("iterate");
-        let (sender, receiver) = CommandSender::new(&self.timers);
+        let (sender, receiver) = CommandSender::new(self.timers.clone());
         // Call the closure that produces the workflow future
         let wf_future = (self.wf_function)(sender);
 
-        // TODO: This block_on might cause issues later
-        block_on(wf_future);
+        // Create a tokio runtime to block on the future
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(wf_future);
+
         let cmds = receiver.into_iter();
         event!(Level::DEBUG, msg = "Test wf driver emitting", ?cmds);
 
@@ -87,7 +89,7 @@ where
         }
 
         // Return only the last command. TODO: Later this will need to account for the wf
-        Ok(if let Some(c) = dbg!(last_cmd) {
+        Ok(if let Some(c) = last_cmd {
             vec![c]
         } else {
             vec![]
@@ -118,49 +120,35 @@ pub enum TestWFCommand {
     Waiting,
 }
 
-pub struct CommandSender<'a> {
+pub struct CommandSender {
     chan: Sender<TestWFCommand>,
-    timer_map: &'a RwLock<TimerMap>,
+    timer_map: Arc<RwLock<TimerMap>>,
 }
 
-impl<'a> CommandSender<'a> {
-    fn new(timer_map: &'a RwLock<TimerMap>) -> (Self, Receiver<TestWFCommand>) {
+impl<'a> CommandSender {
+    fn new(timer_map: Arc<RwLock<TimerMap>>) -> (Self, Receiver<TestWFCommand>) {
         let (chan, rx) = mpsc::channel();
         (Self { chan, timer_map }, rx)
     }
 
     /// Request to create a timer, returning future which resolves when the timer completes
     pub fn timer(&mut self, a: StartTimerCommandAttributes) -> impl Future + '_ {
-        dbg!("Timer call", &a.timer_id);
-        let mut rx = match self.timer_map.write().unwrap().entry(a.timer_id.clone()) {
-            hash_map::Entry::Occupied(existing) => {
-                dbg!("occupied");
-                existing.get().clone()
-            }
+        let finished = match self.timer_map.write().unwrap().entry(a.timer_id.clone()) {
+            hash_map::Entry::Occupied(existing) => existing.get().load(Ordering::SeqCst),
             hash_map::Entry::Vacant(v) => {
-                dbg!("vacant");
-                let (tx, rx) = oneshot::channel();
-                let c = WFCommand::AddTimer(a, tx);
+                let atomic = Arc::new(AtomicBool::new(false));
+
+                let c = WFCommand::AddTimer(a, atomic.clone());
                 // In theory we should send this in both branches
                 self.chan.send(c.into()).unwrap();
-                v.insert(Arc::new(Mutex::new(rx))).clone()
+                v.insert(atomic);
+                false
             }
         };
-        let chan = &mut self.chan;
-        async move {
-            // let mut lock = rx.lock().await.fuse();
-            futures::select! {
-                // If the timer is done, nothing to do.
-                _ = &(*rx.lock().await) => {
-                    dbg!("He done");
-                }
-                // Timer is not done. Send waiting command
-                default => {
-                    dbg!("He waitin");
-                    chan.send(TestWFCommand::Waiting).unwrap();
-                }
-            }
+        if !finished {
+            self.chan.send(TestWFCommand::Waiting).unwrap();
         }
+        futures::future::ready(())
     }
 
     pub fn send(&mut self, c: WFCommand) {

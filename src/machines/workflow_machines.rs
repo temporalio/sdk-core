@@ -1,7 +1,6 @@
-use crate::machines::complete_workflow_state_machine::complete_workflow;
 use crate::{
     machines::{
-        test_help::TestWorkflowDriver, timer_state_machine::new_timer,
+        complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
         workflow_task_state_machine::WorkflowTaskMachine, CancellableCommand, DrivenWorkflow,
         MachineCommand, TemporalStateMachine, WFCommand,
     },
@@ -11,13 +10,14 @@ use crate::{
         history::v1::{history_event, HistoryEvent},
     },
 };
-use futures::{channel::oneshot, Future};
+use futures::Future;
 use rustfsm::StateMachine;
 use std::{
     borrow::BorrowMut,
     cell::RefCell,
     collections::{HashMap, VecDeque},
     rc::Rc,
+    sync::{atomic::AtomicBool, Arc},
     time::SystemTime,
 };
 use tracing::Level;
@@ -53,8 +53,8 @@ pub(crate) struct WorkflowMachines {
     /// The workflow that is being driven by this instance of the machines
     drive_me: Box<dyn DrivenWorkflow + 'static>,
 
-    /// Holds channels for completing timers. Key is the ID of the timer.
-    pub(super) timer_futures: HashMap<String, oneshot::Sender<bool>>,
+    /// Holds atomics for completing timers. Key is the ID of the timer.
+    pub(super) timer_futures: HashMap<String, Arc<AtomicBool>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -98,11 +98,11 @@ impl WorkflowMachines {
     pub(super) fn new_timer(
         &mut self,
         attribs: StartTimerCommandAttributes,
-        completion_channel: oneshot::Sender<bool>,
+        completion_flag: Arc<AtomicBool>,
     ) -> CancellableCommand {
         let timer_id = attribs.timer_id.clone();
         let timer = new_timer(attribs);
-        self.timer_futures.insert(timer_id, completion_channel);
+        self.timer_futures.insert(timer_id, completion_flag);
         timer
     }
 
@@ -346,8 +346,8 @@ impl WorkflowMachines {
         for cmd in results {
             // I don't love how boilerplatey this is
             match cmd {
-                WFCommand::AddTimer(attrs, completion_channel) => {
-                    let timer = self.new_timer(attrs, completion_channel);
+                WFCommand::AddTimer(attrs, completion_flag) => {
+                    let timer = self.new_timer(attrs, completion_flag);
                     self.current_wf_task_commands.push_back(timer);
                 }
                 WFCommand::CompleteWorkflow(attrs) => {

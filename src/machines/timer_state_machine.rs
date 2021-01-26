@@ -1,9 +1,10 @@
 #![allow(clippy::large_enum_variant)]
 
-use crate::machines::workflow_machines::WorkflowMachines;
-use crate::machines::WFMachinesAdapter;
 use crate::{
-    machines::{workflow_machines::WFMachinesError, AddCommand, CancellableCommand, WFCommand},
+    machines::{
+        workflow_machines::WFMachinesError, workflow_machines::WorkflowMachines, AddCommand,
+        CancellableCommand, WFCommand, WFMachinesAdapter,
+    },
     protos::{
         coresdk::HistoryEventId,
         temporal::api::{
@@ -17,7 +18,7 @@ use crate::{
     },
 };
 use rustfsm::{fsm, StateMachine, TransitionResult};
-use std::{cell::RefCell, convert::TryFrom, rc::Rc};
+use std::{cell::RefCell, convert::TryFrom, rc::Rc, sync::atomic::Ordering};
 use tracing::Level;
 
 fsm! {
@@ -230,7 +231,7 @@ impl WFMachinesAdapter for TimerMachine {
                 wf_machines
                     .timer_futures
                     .remove(&self.shared_state.timer_attributes.timer_id)
-                    .map(|c| c.send(true));
+                    .map(|a| a.store(true, Ordering::SeqCst));
             }
         }
         Ok(())

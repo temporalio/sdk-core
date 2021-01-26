@@ -6,6 +6,7 @@ edition = "2018"
 
 [lib]
 
+# TODO: Feature flag opentelem stuff
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
@@ -13,15 +14,15 @@ derive_more = "0.99"
 env_logger = "0.8"
 futures = "0.3"
 log = "0.4"
+opentelemetry-jaeger = "0.10"
 prost = "0.7"
 prost-types = "0.7"
 thiserror = "1.0"
+tokio = { version = "1.1", features = ["rt", "rt-multi-thread"] }
 tonic = "0.4"
 tracing = { version = "0.1", features = ["log"] }
-# TODO: Feature flag this stuff
 tracing-opentelemetry = "0.10"
 tracing-subscriber = "0.2"
-opentelemetry-jaeger = "0.10"
 
 [dependencies.rustfsm]
 path = "fsm"
