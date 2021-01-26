@@ -1,19 +1,22 @@
-use crate::protos::temporal::api::command::v1::Command;
 use crate::{
-    machines::{AddCommand, CancellableCommand, TSMCommand, WFCommand, WFMachinesError},
+    machines::{
+        workflow_machines::WorkflowMachines, AddCommand, CancellableCommand, WFCommand,
+        WFMachinesAdapter, WFMachinesError,
+    },
     protos::temporal::api::{
-        command::v1::CompleteWorkflowExecutionCommandAttributes,
+        command::v1::{Command, CompleteWorkflowExecutionCommandAttributes},
         enums::v1::{CommandType, EventType},
         history::v1::HistoryEvent,
     },
 };
 use rustfsm::{fsm, StateMachine, TransitionResult};
+use std::cell::RefCell;
 use std::{convert::TryFrom, rc::Rc};
 
 fsm! {
     pub(super)
     name CompleteWorkflowMachine;
-    command TSMCommand;
+    command CompleteWFCommand;
     error WFMachinesError;
     shared_state CompleteWorkflowExecutionCommandAttributes;
 
@@ -25,14 +28,20 @@ fsm! {
         --> CompleteWorkflowCommandRecorded;
 }
 
+#[derive(Debug)]
+pub(super) enum CompleteWFCommand {
+    AddCommand(AddCommand),
+}
+
 /// Complete a workflow
-pub(super) fn complete_workflow(attribs: CompleteWorkflowExecutionCommandAttributes) -> WFCommand {
+pub(super) fn complete_workflow(
+    attribs: CompleteWorkflowExecutionCommandAttributes,
+) -> CancellableCommand {
     let (machine, add_cmd) = CompleteWorkflowMachine::new_scheduled(attribs);
     CancellableCommand::Active {
         command: add_cmd.command,
-        machine: Rc::new(machine),
+        machine: Rc::new(RefCell::new(machine)),
     }
-    .into()
 }
 
 impl CompleteWorkflowMachine {
@@ -49,7 +58,7 @@ impl CompleteWorkflowMachine {
             .expect("Scheduling timers doesn't fail")
             .pop()
         {
-            Some(TSMCommand::AddCommand(c)) => c,
+            Some(CompleteWFCommand::AddCommand(c)) => c,
             _ => panic!("Timer on_schedule must produce command"),
         };
         (s, cmd)
@@ -91,7 +100,7 @@ impl Created {
             attributes: Some(dat.into()),
         };
         TransitionResult::commands::<_, CompleteWorkflowCommandCreated>(vec![
-            TSMCommand::AddCommand(cmd.into()),
+            CompleteWFCommand::AddCommand(cmd.into()),
         ])
     }
 }
@@ -108,5 +117,17 @@ pub(super) struct CompleteWorkflowCommandRecorded {}
 impl From<CompleteWorkflowCommandCreated> for CompleteWorkflowCommandRecorded {
     fn from(_: CompleteWorkflowCommandCreated) -> Self {
         Default::default()
+    }
+}
+
+impl WFMachinesAdapter for CompleteWorkflowMachine {
+    fn adapt_response(
+        &self,
+        _wf_machines: &mut WorkflowMachines,
+        _event: &HistoryEvent,
+        _has_next_event: bool,
+        _my_command: CompleteWFCommand,
+    ) -> Result<(), WFMachinesError> {
+        Ok(())
     }
 }

@@ -1,7 +1,10 @@
 #![allow(clippy::enum_variant_names)]
 
 use crate::{
-    machines::{workflow_machines::WFMachinesError, TSMCommand},
+    machines::{
+        workflow_machines::{WFMachinesError, WorkflowMachines},
+        WFMachinesAdapter,
+    },
     protos::temporal::api::{
         enums::v1::{CommandType, EventType},
         history::v1::HistoryEvent,
@@ -9,10 +12,11 @@ use crate::{
 };
 use rustfsm::{fsm, TransitionResult};
 use std::{convert::TryFrom, time::SystemTime};
+use tracing::Level;
 
 fsm! {
     pub(super) name WorkflowTaskMachine;
-    command TSMCommand;
+    command WFTaskMachineCommand;
     error WFMachinesError;
     shared_state SharedState;
 
@@ -34,6 +38,45 @@ impl WorkflowTaskMachine {
                 wf_task_started_event_id,
             },
         }
+    }
+}
+
+#[derive(Debug)]
+pub(super) enum WFTaskMachineCommand {
+    /// Issued to (possibly) trigger the event loop
+    WFTaskStartedTrigger {
+        task_started_event_id: i64,
+        time: SystemTime,
+    },
+}
+
+impl WFMachinesAdapter for WorkflowTaskMachine {
+    fn adapt_response(
+        &self,
+        wf_machines: &mut WorkflowMachines,
+        event: &HistoryEvent,
+        has_next_event: bool,
+        my_command: WFTaskMachineCommand,
+    ) -> Result<(), WFMachinesError> {
+        match my_command {
+            WFTaskMachineCommand::WFTaskStartedTrigger {
+                task_started_event_id,
+                time,
+            } => {
+                let event_type = EventType::from_i32(event.event_type)
+                    .ok_or_else(|| WFMachinesError::UnexpectedEvent(event.clone()))?;
+                let cur_event_past_or_at_start = event.event_id >= task_started_event_id;
+                if event_type == EventType::WorkflowTaskStarted
+                    && (!cur_event_past_or_at_start || has_next_event)
+                {
+                    // Last event in history is a task started event, so we don't
+                    // want to iterate.
+                    return Ok(());
+                }
+                wf_machines.task_started(task_started_event_id, time)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -98,17 +141,11 @@ impl Scheduled {
             started_event_id,
         }: WFTStartedDat,
     ) -> WorkflowTaskMachineTransition {
-        let cmds = if started_event_id >= shared.wf_task_started_event_id {
-            vec![TSMCommand::WFTaskStartedTrigger {
-                event_id: started_event_id,
-                time: current_time_millis,
-                only_if_last_event: true,
-            }]
-        } else {
-            vec![]
-        };
         WorkflowTaskMachineTransition::ok(
-            cmds,
+            vec![WFTaskMachineCommand::WFTaskStartedTrigger {
+                task_started_event_id: shared.wf_task_started_event_id,
+                time: current_time_millis,
+            }],
             Started {
                 current_time_millis,
                 started_event_id,
@@ -134,10 +171,9 @@ pub(super) struct Started {
 impl Started {
     pub(super) fn on_workflow_task_completed(self) -> WorkflowTaskMachineTransition {
         WorkflowTaskMachineTransition::commands::<_, Completed>(vec![
-            TSMCommand::WFTaskStartedTrigger {
-                event_id: self.started_event_id,
+            WFTaskMachineCommand::WFTaskStartedTrigger {
+                task_started_event_id: self.started_event_id,
                 time: self.current_time_millis,
-                only_if_last_event: false,
             },
         ])
     }
