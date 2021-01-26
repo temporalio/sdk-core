@@ -23,9 +23,6 @@ pub struct CoreSDKInitOptions {
     max_concurrent_activity_executions: u32,
 }
 
-unsafe impl Send for CoreSDKInitOptions {}
-unsafe impl Sync for CoreSDKInitOptions {}
-
 pub fn init_sdk(opts: CoreSDKInitOptions) -> Result<Box<dyn CoreSDKService>> {
     Err(SDKServiceError::Unknown {})
 }
