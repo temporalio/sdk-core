@@ -71,10 +71,11 @@ enum WFTaskType {
 message SDKWFTask {
     WFTaskType type = 1;
     google.protobuf.Timestamp timestamp = 2 [(gogoproto.stdtime) = true];
+    string workflow_id = 3;
     oneof attributes {
-        StartWorkflowTaskAttributes start_workflow_task_attributes = 3;
-        CompleteTimerTaskAttributes complete_timer_task_attributes = 4;
-        CancelTimerTaskAttributes cancel_timer_task_attributes = 5;
+        StartWorkflowTaskAttributes start_workflow_task_attributes = 4;
+        CompleteTimerTaskAttributes complete_timer_task_attributes = 5;
+        CancelTimerTaskAttributes cancel_timer_task_attributes = 6;
     }
 }
 
