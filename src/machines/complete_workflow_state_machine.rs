@@ -34,13 +34,14 @@ pub(super) enum CompleteWFCommand {
 }
 
 /// Complete a workflow
-pub(super) fn complete_workflow(attribs: CompleteWorkflowExecutionCommandAttributes) -> WFCommand {
+pub(super) fn complete_workflow(
+    attribs: CompleteWorkflowExecutionCommandAttributes,
+) -> CancellableCommand {
     let (machine, add_cmd) = CompleteWorkflowMachine::new_scheduled(attribs);
     CancellableCommand::Active {
         command: add_cmd.command,
         machine: Rc::new(RefCell::new(machine)),
     }
-    .into()
 }
 
 impl CompleteWorkflowMachine {

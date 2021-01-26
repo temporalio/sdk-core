@@ -240,10 +240,11 @@ impl WFMachinesAdapter for TimerMachine {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::machines::test_help::CommandSender;
     use crate::{
         machines::{
             complete_workflow_state_machine::complete_workflow,
-            test_help::{TestHistoryBuilder, TestWorkflowDriver},
+            test_help::{TestHistoryBuilder, TestWFCommand, TestWorkflowDriver},
             workflow_machines::WorkflowMachines,
             DrivenWorkflow, WFCommand,
         },
@@ -277,16 +278,16 @@ mod test {
             Should iterate once, produce started command, iterate again, producing no commands
             (timer complete), third iteration completes workflow.
         */
-        let twd = TestWorkflowDriver::new(|mut command_sink: Sender<WFCommand>| async move {
-            let timer = new_timer(StartTimerCommandAttributes {
+        let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
+            let timer = StartTimerCommandAttributes {
                 timer_id: "Sometimer".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
                 ..Default::default()
-            });
-            command_sink.send(timer.into()).await;
+            };
+            command_sink.timer(timer).await;
 
-            let complete = complete_workflow(CompleteWorkflowExecutionCommandAttributes::default());
-            command_sink.send(complete).await;
+            let complete = CompleteWorkflowExecutionCommandAttributes::default();
+            command_sink.send(complete.into());
         });
 
         let mut t = TestHistoryBuilder::default();

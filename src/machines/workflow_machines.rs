@@ -1,3 +1,4 @@
+use crate::machines::complete_workflow_state_machine::complete_workflow;
 use crate::{
     machines::{
         test_help::TestWorkflowDriver, timer_state_machine::new_timer,
@@ -10,7 +11,7 @@ use crate::{
         history::v1::{history_event, HistoryEvent},
     },
 };
-use futures::{channel::mpsc::Sender, channel::oneshot, Future};
+use futures::{channel::oneshot, Future};
 use rustfsm::StateMachine;
 use std::{
     borrow::BorrowMut,
@@ -90,18 +91,19 @@ impl WorkflowMachines {
         }
     }
 
-    /// Create a new timer for this workflow with the provided attributes
+    /// Create a new timer for this workflow with the provided attributes and sender. The sender
+    /// is sent `true` when the timer completes.
     ///
     /// Returns the command and a future that will resolve when the timer completes
     pub(super) fn new_timer(
         &mut self,
         attribs: StartTimerCommandAttributes,
-    ) -> (CancellableCommand, impl Future) {
+        completion_channel: oneshot::Sender<bool>,
+    ) -> CancellableCommand {
         let timer_id = attribs.timer_id.clone();
         let timer = new_timer(attribs);
-        let (tx, rx) = oneshot::channel();
-        self.timer_futures.insert(timer_id, tx);
-        (timer, rx)
+        self.timer_futures.insert(timer_id, completion_channel);
+        timer
     }
 
     /// Returns the id of the last seen WorkflowTaskStarted event
@@ -342,8 +344,16 @@ impl WorkflowMachines {
 
     fn handle_driven_results(&mut self, results: Vec<WFCommand>) {
         for cmd in results {
+            // I don't love how boilerplatey this is
             match cmd {
-                WFCommand::Add(cc) => self.current_wf_task_commands.push_back(cc),
+                WFCommand::AddTimer(attrs, completion_channel) => {
+                    let timer = self.new_timer(attrs, completion_channel);
+                    self.current_wf_task_commands.push_back(timer);
+                }
+                WFCommand::CompleteWorkflow(attrs) => {
+                    self.current_wf_task_commands
+                        .push_back(complete_workflow(attrs));
+                }
             }
         }
     }

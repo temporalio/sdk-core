@@ -38,7 +38,9 @@ mod test_help;
 use crate::{
     machines::workflow_machines::{WFMachinesError, WorkflowMachines},
     protos::temporal::api::{
-        command::v1::Command,
+        command::v1::{
+            Command, CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
+        },
         enums::v1::CommandType,
         history::v1::{
             HistoryEvent, WorkflowExecutionCanceledEventAttributes,
@@ -46,6 +48,7 @@ use crate::{
         },
     },
 };
+use futures::channel::oneshot;
 use prost::alloc::fmt::Formatter;
 use rustfsm::{MachineError, StateMachine};
 use std::{
@@ -94,12 +97,10 @@ pub(crate) struct AddCommand {
 
 /// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
 /// EX: Create a new timer, complete the workflow, etc.
-///
-/// TODO: Maybe this and TSMCommand are really the same thing?
-#[derive(Debug, derive_more::From, Clone)]
-enum WFCommand {
-    /// Add a new entity/command
-    Add(CancellableCommand),
+#[derive(Debug, derive_more::From)]
+pub enum WFCommand {
+    AddTimer(StartTimerCommandAttributes, oneshot::Sender<bool>),
+    CompleteWorkflow(CompleteWorkflowExecutionCommandAttributes),
 }
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
