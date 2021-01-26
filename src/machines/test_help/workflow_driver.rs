@@ -43,6 +43,11 @@ where
     F: Fn(CommandSender) -> Fut,
     Fut: Future<Output = ()>,
 {
+    /// Create a new test workflow driver from a workflow "function" which is really a closure
+    /// that returns an async block.
+    ///
+    /// In an ideal world, the workflow fn would actually be a generator which can yield commands,
+    /// and we may well end up doing something like that later.
     pub(in crate::machines) fn new(workflow_fn: F) -> Self {
         Self {
             wf_function: workflow_fn,
