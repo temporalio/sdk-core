@@ -229,7 +229,7 @@ impl WFMachinesAdapter for TimerMachine {
             // Fire the completion
             TimerMachineCommand::Complete(_event) => {
                 wf_machines
-                    .timer_futures
+                    .timer_notifiers
                     .remove(&self.shared_state.timer_attributes.timer_id)
                     .map(|a| a.store(true, Ordering::SeqCst));
             }
@@ -275,9 +275,14 @@ mod test {
             7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
             8: EVENT_TYPE_WORKFLOW_TASK_STARTED
 
-            // TODO: Update this with deets
-            Should iterate once, produce started command, iterate again, producing no commands
-            (timer complete), third iteration completes workflow.
+            We have two versions of this test, one which processes the history in two calls,
+            and one which replays all of it in one go. The former will run the event loop three
+            times total, and the latter two.
+
+            There are two workflow tasks, so it seems we should only loop two times, but the reason
+            for the extra iteration in the incremental version is that we need to "wait" for the
+            timer to fire. In the all-in-one-go test, the timer is created and resolved in the same
+            task, hence no extra loop.
         */
         let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
             let timer = StartTimerCommandAttributes {

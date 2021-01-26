@@ -35,6 +35,10 @@ pub(in crate::machines) struct TestWorkflowDriver<F> {
     ///
     /// I don't love that this is pretty duplicative of workflow machines, nor the nasty sync
     /// involved. Would be good to eliminate.
+    ///
+    /// It can and should be eliminated by not recreating CommandSender on every iteration, which
+    /// means keeping the workflow suspended in a future somewhere. I tried this and it was hard,
+    /// but ultimately it's how real workflows will need to work.
     timers: Arc<RwLock<TimerMap>>,
 }
 
@@ -88,7 +92,7 @@ where
             }
         }
 
-        // Return only the last command. TODO: Later this will need to account for the wf
+        // Return only the last command
         Ok(if let Some(c) = last_cmd {
             vec![c]
         } else {

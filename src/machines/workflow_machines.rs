@@ -54,7 +54,7 @@ pub(crate) struct WorkflowMachines {
     drive_me: Box<dyn DrivenWorkflow + 'static>,
 
     /// Holds atomics for completing timers. Key is the ID of the timer.
-    pub(super) timer_futures: HashMap<String, Arc<AtomicBool>>,
+    pub(super) timer_notifiers: HashMap<String, Arc<AtomicBool>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -87,7 +87,7 @@ impl WorkflowMachines {
             machines_by_id: Default::default(),
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
-            timer_futures: Default::default(),
+            timer_notifiers: Default::default(),
         }
     }
 
@@ -102,7 +102,7 @@ impl WorkflowMachines {
     ) -> CancellableCommand {
         let timer_id = attribs.timer_id.clone();
         let timer = new_timer(attribs);
-        self.timer_futures.insert(timer_id, completion_flag);
+        self.timer_notifiers.insert(timer_id, completion_flag);
         timer
     }
 
