@@ -18,6 +18,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "coresdk.SDKWFTask.attributes",
             "#[derive(::derive_more::From)]",
         )
+        .type_attribute(
+            "coresdk.PollSDKTaskResp.task",
+            "#[derive(::derive_more::From)]",
+        )
         .compile(
             &[
                 "protos/local/core_interface.proto",

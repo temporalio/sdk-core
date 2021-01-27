@@ -64,26 +64,26 @@ type MachineCommand = Command;
 
 /// Implementors of this trait represent something that can (eventually) call into a workflow to
 /// drive it, start it, signal it, cancel it, etc.
-trait DrivenWorkflow {
+pub(crate) trait DrivenWorkflow {
     /// Start the workflow
     fn start(
-        &self,
+        &mut self,
         attribs: WorkflowExecutionStartedEventAttributes,
     ) -> Result<Vec<WFCommand>, anyhow::Error>;
 
     /// Iterate the workflow. The workflow driver should execute workflow code until there is
     /// nothing left to do. EX: Awaiting an activity/timer, workflow completion.
-    fn iterate_wf(&self) -> Result<Vec<WFCommand>, anyhow::Error>;
+    fn iterate_wf(&mut self) -> Result<Vec<WFCommand>, anyhow::Error>;
 
     /// Signal the workflow
     fn signal(
-        &self,
+        &mut self,
         attribs: WorkflowExecutionSignaledEventAttributes,
     ) -> Result<(), anyhow::Error>;
 
     /// Cancel the workflow
     fn cancel(
-        &self,
+        &mut self,
         attribs: WorkflowExecutionCanceledEventAttributes,
     ) -> Result<(), anyhow::Error>;
 }

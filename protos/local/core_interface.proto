@@ -62,6 +62,7 @@ message CancelTimerTaskAttributes {
     int32 timer_id = 1;
 }
 
+// TODO: Remove this - type info exists in attributes oneof
 enum WFTaskType {
     START_WORKFLOW = 0;
     COMPLETE_TIMER = 1;
