@@ -108,8 +108,19 @@ message SDKActivityTaskCompletion {
     }
 }
 
+message SDKCommand {
+    // Reserved for SDK specific commands
+}
+
+message Command {
+    oneof variant {
+        temporal.api.command.v1.Command api = 1;
+        SDKCommand sdk = 2;
+    }
+}
+
 message SDKWFTaskSuccess {
-    repeated temporal.api.command.v1.Command commands = 1;
+    repeated Command commands = 1;
     // Other bits from RespondWorkflowTaskCompletedRequest as needed
 }
 
