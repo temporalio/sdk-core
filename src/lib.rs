@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate tracing;
+
 mod machines;
 mod pollers;
 pub mod protos;

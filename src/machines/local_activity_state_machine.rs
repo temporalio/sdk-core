@@ -1,7 +1,7 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    name LocalActivityMachine; command LocalActivityCommand; error LocalActivityMachineError;
+    pub(super) name LocalActivityMachine; command LocalActivityCommand; error LocalActivityMachineError;
 
     Created --(CheckExecutionState, on_check_execution_state) --> Replaying;
     Created --(CheckExecutionState, on_check_execution_state) --> Executing;
@@ -24,51 +24,51 @@ fsm! {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum LocalActivityMachineError {}
+pub(super) enum LocalActivityMachineError {}
 
-pub enum LocalActivityCommand {}
+pub(super) enum LocalActivityCommand {}
 
 #[derive(Default, Clone)]
-pub struct Created {}
+pub(super) struct Created {}
 
 impl Created {
-    pub fn on_check_execution_state(self) -> LocalActivityMachineTransition {
+    pub(super) fn on_check_execution_state(self) -> LocalActivityMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct Executing {}
+pub(super) struct Executing {}
 
 impl Executing {
-    pub fn on_schedule(self) -> LocalActivityMachineTransition {
+    pub(super) fn on_schedule(self) -> LocalActivityMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct MarkerCommandCreated {}
+pub(super) struct MarkerCommandCreated {}
 
 impl MarkerCommandCreated {
-    pub fn on_command_record_marker(self) -> LocalActivityMachineTransition {
+    pub(super) fn on_command_record_marker(self) -> LocalActivityMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct MarkerCommandRecorded {}
+pub(super) struct MarkerCommandRecorded {}
 
 #[derive(Default, Clone)]
-pub struct Replaying {}
+pub(super) struct Replaying {}
 
 #[derive(Default, Clone)]
-pub struct RequestPrepared {}
+pub(super) struct RequestPrepared {}
 
 #[derive(Default, Clone)]
-pub struct RequestSent {}
+pub(super) struct RequestSent {}
 
 impl RequestSent {
-    pub fn on_handle_result(self) -> LocalActivityMachineTransition {
+    pub(super) fn on_handle_result(self) -> LocalActivityMachineTransition {
         unimplemented!()
     }
 }
@@ -80,22 +80,22 @@ impl From<RequestPrepared> for RequestSent {
 }
 
 #[derive(Default, Clone)]
-pub struct ResultNotified {}
+pub(super) struct ResultNotified {}
 
 impl ResultNotified {
-    pub fn on_marker_recorded(self) -> LocalActivityMachineTransition {
+    pub(super) fn on_marker_recorded(self) -> LocalActivityMachineTransition {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct WaitingMarkerEvent {}
+pub(super) struct WaitingMarkerEvent {}
 
 impl WaitingMarkerEvent {
-    pub fn on_marker_recorded(self) -> LocalActivityMachineTransition {
+    pub(super) fn on_marker_recorded(self) -> LocalActivityMachineTransition {
         unimplemented!()
     }
-    pub fn on_non_replay_workflow_task_started(self) -> LocalActivityMachineTransition {
+    pub(super) fn on_non_replay_workflow_task_started(self) -> LocalActivityMachineTransition {
         unimplemented!()
     }
 }

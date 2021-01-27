@@ -9,7 +9,7 @@ use syn::{
     parse_macro_input,
     punctuated::Punctuated,
     spanned::Spanned,
-    Error, Fields, Ident, Token, Type, Variant,
+    Error, Fields, Ident, Token, Type, Variant, Visibility,
 };
 
 /// Parses a DSL for defining finite state machines, and produces code implementing the
@@ -176,6 +176,7 @@ mod kw {
 }
 
 struct StateMachineDefinition {
+    visibility: Visibility,
     name: Ident,
     shared_state_type: Option<Type>,
     command_type: Ident,
@@ -183,10 +184,19 @@ struct StateMachineDefinition {
     transitions: HashSet<Transition>,
 }
 
+impl StateMachineDefinition {
+    fn is_final_state(&self, state: &Ident) -> bool {
+        // If no transitions go from this state, it's a final state.
+        self.transitions.iter().find(|t| t.from == *state).is_none()
+    }
+}
+
 impl Parse for StateMachineDefinition {
     // TODO: Pub keyword
     fn parse(input: ParseStream) -> Result<Self> {
-        // First parse the state machine name, command type, and error type
+        // Parse visibility if present
+        let visibility = input.parse()?;
+        // parse the state machine name, command type, and error type
         let (name, command_type, error_type, shared_state_type) = parse_machine_types(&input).map_err(|mut e| {
             e.combine(Error::new(
                 e.span(),
@@ -200,6 +210,7 @@ impl Parse for StateMachineDefinition {
             input.parse_terminated(Transition::parse)?;
         let transitions = transitions.into_iter().collect();
         Ok(Self {
+            visibility,
             name,
             shared_state_type,
             transitions,
@@ -316,6 +327,7 @@ impl Parse for Transition {
 
 impl StateMachineDefinition {
     fn codegen(&self) -> TokenStream {
+        let visibility = self.visibility.clone();
         // First extract all of the states into a set, and build the enum's insides
         let states: HashSet<_> = self
             .transitions
@@ -328,6 +340,7 @@ impl StateMachineDefinition {
             }
         });
         let name = &self.name;
+        let name_str = &self.name.to_string();
         let state_enum_name = Ident::new(&format!("{}State", name), name.span());
         // If user has not defined any shared state, use the unit type.
         let shared_state_type = self
@@ -336,15 +349,32 @@ impl StateMachineDefinition {
             .unwrap_or_else(|| syn::parse_str("()").unwrap());
         let machine_struct = quote! {
             #[derive(Clone)]
-            pub struct #name {
+            #visibility struct #name {
                 state: #state_enum_name,
                 shared_state: #shared_state_type
             }
         };
         let states_enum = quote! {
             #[derive(::derive_more::From, Clone)]
-            pub enum #state_enum_name {
+            #visibility enum #state_enum_name {
                 #(#state_variants),*
+            }
+        };
+        let state_is_final_match_arms = states.iter().map(|s| {
+            let val = if self.is_final_state(s) {
+                quote! { true }
+            } else {
+                quote! { false }
+            };
+            quote! { #state_enum_name::#s(_) => #val }
+        });
+        let states_enum_impl = quote! {
+            impl #state_enum_name {
+                fn is_final(&self) -> bool {
+                    match self {
+                        #(#state_is_final_match_arms),*
+                    }
+                }
             }
         };
 
@@ -353,7 +383,7 @@ impl StateMachineDefinition {
         let events_enum_name = Ident::new(&format!("{}Events", name), name.span());
         let events: Vec<_> = events.into_iter().collect();
         let events_enum = quote! {
-            pub enum #events_enum_name {
+            #visibility enum #events_enum_name {
                 #(#events),*
             }
         };
@@ -451,6 +481,10 @@ impl StateMachineDefinition {
                 type Event = #events_enum_name;
                 type Command = #cmd_type;
 
+                fn name(&self) -> &str {
+                  #name_str
+                }
+
                 fn on_event(self, event: #events_enum_name)
                   -> ::rustfsm::TransitionResult<Self> {
                     match self.state {
@@ -469,6 +503,10 @@ impl StateMachineDefinition {
                     &self.shared_state
                 }
 
+                fn on_final_state(&self) -> bool {
+                    self.state.is_final()
+                }
+
                 fn from_parts(shared: Self::SharedState, state: Self::State) -> Self {
                     Self { shared_state: shared, state }
                 }
@@ -484,6 +522,7 @@ impl StateMachineDefinition {
             #transition_type_alias
             #machine_struct
             #states_enum
+            #states_enum_impl
             #events_enum
             #trait_impl
         };
