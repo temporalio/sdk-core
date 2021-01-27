@@ -33,19 +33,18 @@ mod version_state_machine;
 mod workflow_task_state_machine;
 
 #[cfg(test)]
-mod test_help;
+pub(crate) mod test_help;
 
-use crate::{
-    machines::workflow_machines::{WFMachinesError, WorkflowMachines},
-    protos::temporal::api::{
-        command::v1::{
-            Command, CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
-        },
-        enums::v1::CommandType,
-        history::v1::{
-            HistoryEvent, WorkflowExecutionCanceledEventAttributes,
-            WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
-        },
+pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
+
+use crate::protos::temporal::api::{
+    command::v1::{
+        Command, CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
+    },
+    enums::v1::CommandType,
+    history::v1::{
+        HistoryEvent, WorkflowExecutionCanceledEventAttributes,
+        WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
     },
 };
 use prost::alloc::fmt::Formatter;
@@ -64,7 +63,7 @@ type MachineCommand = Command;
 
 /// Implementors of this trait represent something that can (eventually) call into a workflow to
 /// drive it, start it, signal it, cancel it, etc.
-pub(crate) trait DrivenWorkflow {
+pub(crate) trait DrivenWorkflow: Send + Sync {
     /// Start the workflow
     fn start(
         &mut self,

@@ -3,6 +3,15 @@ pub mod coresdk {
     include!("coresdk.rs");
 
     pub type HistoryEventId = i64;
+
+    impl PollSdkTaskResp {
+        pub fn from_wf_task(task_token: Vec<u8>, t: SdkwfTask) -> Self {
+            PollSdkTaskResp {
+                task_token,
+                task: Some(t.into()),
+            }
+        }
+    }
 }
 
 // No need to lint these

@@ -73,7 +73,7 @@ pub(crate) enum WFMachinesError {
 }
 
 impl WorkflowMachines {
-    pub(super) fn new(driven_wf: Box<dyn DrivenWorkflow>) -> Self {
+    pub(crate) fn new(driven_wf: Box<dyn DrivenWorkflow>) -> Self {
         Self {
             drive_me: driven_wf,
             // In an ideal world one could say ..Default::default() here and it'd still work.

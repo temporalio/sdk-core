@@ -62,7 +62,7 @@ where
 
 impl<F, Fut> DrivenWorkflow for TestWorkflowDriver<F>
 where
-    F: Fn(CommandSender) -> Fut,
+    F: Fn(CommandSender) -> Fut + Send + Sync,
     Fut: Future<Output = ()>,
 {
     #[instrument(skip(self))]

@@ -55,11 +55,11 @@ message StartWorkflowTaskAttributes {
 }
 
 message CompleteTimerTaskAttributes {
-    int32 timer_id = 1;
+    string timer_id = 1;
 }
 
 message CancelTimerTaskAttributes {
-    int32 timer_id = 1;
+    string timer_id = 1;
 }
 
 // TODO: Remove this - type info exists in attributes oneof

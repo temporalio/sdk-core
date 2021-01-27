@@ -29,6 +29,7 @@ tracing-subscriber = "0.2"
 path = "fsm"
 
 [dev-dependencies]
+mockall = "0.9"
 rstest = "0.6"
 
 [build-dependencies]
