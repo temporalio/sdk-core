@@ -1,4 +1,5 @@
 use super::Result;
+use crate::protosext::HistoryInfo;
 use crate::{
     machines::{workflow_machines::WorkflowMachines, MachineCommand},
     protos::temporal::api::{
@@ -210,64 +211,8 @@ impl TestHistoryBuilder {
     }
 
     /// Iterates over the events in this builder to return a [HistoryInfo] of the n-th workflow task.
-    pub(crate) fn get_history_info(&self, to_wf_task_num: usize) -> Result<HistoryInfo> {
-        let mut lastest_wf_started_id = 0;
-        let mut previous_wf_started_id = 0;
-        let mut count = 0;
-        let mut history = self.events.iter().peekable();
-        let mut events = vec![];
-
-        while let Some(event) = history.next() {
-            events.push(event.clone());
-            let next_event = history.peek();
-
-            if event.event_type == EventType::WorkflowTaskStarted as i32 {
-                let next_is_completed = next_event.map_or(false, |ne| {
-                    ne.event_type == EventType::WorkflowTaskCompleted as i32
-                });
-                let next_is_failed_or_timeout = next_event.map_or(false, |ne| {
-                    ne.event_type == EventType::WorkflowTaskFailed as i32
-                        || ne.event_type == EventType::WorkflowTaskTimedOut as i32
-                });
-
-                if next_event.is_none() || next_is_completed {
-                    previous_wf_started_id = lastest_wf_started_id;
-                    lastest_wf_started_id = event.event_id;
-                    if lastest_wf_started_id == previous_wf_started_id {
-                        bail!("Latest wf started id and previous one are equal!")
-                    }
-                    count += 1;
-                    if count == to_wf_task_num || next_event.is_none() {
-                        return Ok(HistoryInfo::new(
-                            previous_wf_started_id,
-                            lastest_wf_started_id,
-                            events,
-                        ));
-                    }
-                } else if next_event.is_some() && !next_is_failed_or_timeout {
-                    bail!(
-                        "Invalid history! Event {:?} should be WF task completed, \
-                         failed, or timed out.",
-                        &event
-                    );
-                }
-            }
-
-            if next_event.is_none() {
-                if event.is_final_wf_execution_event() {
-                    return Ok(HistoryInfo::new(
-                        previous_wf_started_id,
-                        lastest_wf_started_id,
-                        events,
-                    ));
-                }
-                // No more events
-                if lastest_wf_started_id != event.event_id {
-                    bail!("Last item in history wasn't WorkflowTaskStarted")
-                }
-            }
-        }
-        unreachable!()
+    pub(crate) fn get_history_info(&self, to_wf_task_num: usize) -> HistoryInfo {
+        HistoryInfo::new_from_events(self.events.clone(), to_wf_task_num)
     }
 
     fn build_and_push_event(&mut self, event_type: EventType, attribs: Attributes) {
@@ -292,11 +237,4 @@ fn default_attribs(et: EventType) -> Result<Attributes> {
         EventType::TimerStarted => TimerStartedEventAttributes::default().into(),
         _ => bail!("Don't know how to construct default attrs for {:?}", et),
     })
-}
-
-#[derive(Clone, Debug, derive_more::Constructor, PartialEq)]
-pub struct HistoryInfo {
-    pub previous_started_event_id: i64,
-    pub workflow_task_started_event_id: i64,
-    pub events: Vec<HistoryEvent>,
 }

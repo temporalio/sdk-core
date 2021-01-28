@@ -314,8 +314,6 @@ mod test {
         );
         t.add_workflow_task_scheduled_and_started();
         assert_eq!(2, t.get_workflow_task_count(None).unwrap());
-        assert_eq!(3, t.get_history_info(1).unwrap().events.len());
-        assert_eq!(8, t.get_history_info(2).unwrap().events.len());
         (t, state_machines)
     }
 
