@@ -200,6 +200,7 @@ pub enum CoreError {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::protos::temporal::api::history::v1::History;
     use crate::{
         machines::test_help::TestHistoryBuilder,
         protos::{
@@ -234,9 +235,41 @@ mod test {
             }),
         );
         t.add_workflow_task_scheduled_and_started();
+        /*
+           1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+           2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+           3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+           ---
+           4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+           5: EVENT_TYPE_TIMER_STARTED
+           6: EVENT_TYPE_TIMER_FIRED
+           7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+           8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+           ---
+        */
+        let events_first_batch = t.get_history_info(1).unwrap().events;
+        let wf = Some(WorkflowExecution {
+            workflow_id: wfid.to_string(),
+            run_id: "".to_string(),
+        });
+        let first_response = PollWorkflowTaskQueueResponse {
+            history: Some(History {
+                events: events_first_batch,
+            }),
+            workflow_execution: wf.clone(),
+            ..Default::default()
+        };
+        let events_second_batch = t.get_history_info(2).unwrap().events;
+        let second_response = PollWorkflowTaskQueueResponse {
+            history: Some(History {
+                events: events_second_batch,
+            }),
+            workflow_execution: wf.clone(),
+            ..Default::default()
+        };
+        let responses = vec![first_response, second_response];
 
-        // TODO: Use test history builder to issue appropriate histories
-        let mut tasks = VecDeque::from(vec![]);
+        let mut tasks = VecDeque::from(responses);
         let mut mock_provider = MockWorkProvider::new();
         mock_provider
             .expect_get_work()
@@ -246,7 +279,6 @@ mod test {
             workflow_machines: DashMap::new(),
             work_provider: mock_provider,
         };
-        core.new_workflow(wfid.to_string());
 
         // TODO: These are what poll_task should end up returning
         //             SdkwfTask {
@@ -274,7 +306,8 @@ mod test {
         //             }
         //                 .into(),
 
-        let res = core.poll_task().unwrap();
+        let res = dbg!(core.poll_task().unwrap());
+        assert!(core.workflow_machines.get(wfid).is_some());
         let task_tok = res.task_token;
         let timer_atom = Arc::new(AtomicBool::new(false));
         let cmd: command::Attributes = StartTimerCommandAttributes {

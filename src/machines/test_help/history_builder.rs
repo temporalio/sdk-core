@@ -209,14 +209,16 @@ impl TestHistoryBuilder {
         Ok(())
     }
 
-    /// Iterates over the events in this builder to return a [HistoryInfo]
-    pub(crate) fn get_history_info(&self, to_task_index: usize) -> Result<HistoryInfo> {
+    /// Iterates over the events in this builder to return a [HistoryInfo] of the n-th workflow task.
+    pub(crate) fn get_history_info(&self, to_wf_task_num: usize) -> Result<HistoryInfo> {
         let mut lastest_wf_started_id = 0;
         let mut previous_wf_started_id = 0;
         let mut count = 0;
         let mut history = self.events.iter().peekable();
+        let mut events = vec![];
 
         while let Some(event) = history.next() {
+            events.push(event.clone());
             let next_event = history.peek();
 
             if event.event_type == EventType::WorkflowTaskStarted as i32 {
@@ -235,10 +237,11 @@ impl TestHistoryBuilder {
                         bail!("Latest wf started id and previous one are equal!")
                     }
                     count += 1;
-                    if count == to_task_index || next_event.is_none() {
+                    if count == to_wf_task_num || next_event.is_none() {
                         return Ok(HistoryInfo::new(
                             previous_wf_started_id,
                             lastest_wf_started_id,
+                            events,
                         ));
                     }
                 } else if next_event.is_some() && !next_is_failed_or_timeout {
@@ -255,6 +258,7 @@ impl TestHistoryBuilder {
                     return Ok(HistoryInfo::new(
                         previous_wf_started_id,
                         lastest_wf_started_id,
+                        events,
                     ));
                 }
                 // No more events
@@ -290,8 +294,9 @@ fn default_attribs(et: EventType) -> Result<Attributes> {
     })
 }
 
-#[derive(Clone, Debug, derive_more::Constructor, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, derive_more::Constructor, PartialEq)]
 pub struct HistoryInfo {
     pub previous_started_event_id: i64,
     pub workflow_task_started_event_id: i64,
+    pub events: Vec<HistoryEvent>,
 }
