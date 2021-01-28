@@ -105,7 +105,8 @@ pub enum WFCommand {
     CompleteWorkflow(CompleteWorkflowExecutionCommandAttributes),
 }
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug, derive_more::From)]
+#[error("Couldn't convert <lang> command")]
 pub struct InconvertibleCommandError(pub coresdk::Command);
 
 impl TryFrom<coresdk::Command> for WFCommand {
@@ -127,9 +128,9 @@ impl TryFrom<coresdk::Command> for WFCommand {
                     }
                     _ => unimplemented!(),
                 },
-                _ => Err(c),
+                _ => Err(c.into()),
             },
-            None => Err(c),
+            None => Err(c.into()),
         }
     }
 }

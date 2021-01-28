@@ -94,7 +94,7 @@ where
     }
 
     fn complete_sdk_task(&self, req: CompleteSdkTaskReq) -> Result<(), SDKServiceError> {
-        match &req.completion {
+        match req.completion {
             Some(Completion::Workflow(SdkwfTaskCompletion {
                 status: Some(wfstatus),
             })) => {
@@ -192,8 +192,12 @@ pub enum SDKServiceError {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::protos::coresdk;
+    use crate::protos::coresdk::command::Variant;
     use crate::protos::coresdk::{SdkwfTaskSuccess, UnblockTimerTaskAttibutes};
-    use crate::protos::temporal::api::command::v1::StartTimerCommandAttributes;
+    use crate::protos::temporal::api::command::v1::{
+        command, Command, StartTimerCommandAttributes,
+    };
     use crate::{
         machines::test_help::TestHistoryBuilder,
         protos::{
@@ -268,17 +272,22 @@ mod test {
         let res = core.poll_sdk_task().unwrap();
         let task_tok = res.task_token;
         let timer_atom = Arc::new(AtomicBool::new(false));
+        let cmd: command::Attributes = StartTimerCommandAttributes {
+            timer_id: timer_id.to_string(),
+            ..Default::default()
+        }
+        .into();
+        let cmd: Command = cmd.into();
+        let success = SdkwfTaskSuccess {
+            commands: vec![coresdk::Command {
+                variant: Some(Variant::Api(cmd)),
+            }],
+        };
         core.complete_sdk_task(CompleteSdkTaskReq {
             task_token: task_tok,
-            completion: Some(
-                SdkwfTaskSuccess {
-                    commands: vec![StartTimerCommandAttributes {
-                        timer_id: timer_id.to_string(),
-                        ..Default::default()
-                    }],
-                }
-                .into(),
-            ),
+            completion: Some(Completion::Workflow(SdkwfTaskCompletion {
+                status: Some(Status::Successful(success)),
+            })),
         })
         .unwrap();
 

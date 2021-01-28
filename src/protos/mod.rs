@@ -21,7 +21,20 @@ pub mod temporal {
     pub mod api {
         pub mod command {
             pub mod v1 {
+                use crate::protos::temporal::api::command::v1::command::Attributes;
+                use crate::protos::temporal::api::enums::v1::CommandType;
                 include!("temporal.api.command.v1.rs");
+                impl From<command::Attributes> for Command {
+                    fn from(c: command::Attributes) -> Self {
+                        match c {
+                            a @ Attributes::StartTimerCommandAttributes(_) => Self {
+                                command_type: CommandType::StartTimer as i32,
+                                attributes: Some(a),
+                            },
+                            _ => unimplemented!(),
+                        }
+                    }
+                }
             }
         }
         pub mod enums {
