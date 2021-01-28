@@ -9,8 +9,8 @@ use crate::{
     machines::{DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines},
     protos::{
         coresdk::{
-            complete_task_req::Completion, workflow_task_completion::Status, CompleteTaskReq,
-            RegistrationReq, Task, WorkflowTaskCompletion,
+            complete_task_req::Completion, workflow_task_completion::Status, CompleteTaskReq, Task,
+            WorkflowTaskCompletion,
         },
         temporal::api::{
             common::v1::WorkflowExecution,
