@@ -5,27 +5,29 @@ mod machines;
 mod pollers;
 pub mod protos;
 
-use crate::machines::{InconvertibleCommandError, WorkflowMachines};
-use crate::protos::coresdk::poll_sdk_task_resp;
-use crate::protos::coresdk::poll_sdk_task_resp::Task;
 use crate::{
-    machines::{DrivenWorkflow, WFCommand},
+    machines::{DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines},
     protos::{
         coresdk::{
             complete_sdk_task_req::Completion, sdkwf_task_completion::Status, CompleteSdkTaskReq,
-            PollSdkTaskResp, RegistrationReq, SdkwfTask, SdkwfTaskCompletion,
+            PollSdkTaskResp, RegistrationReq, SdkwfTaskCompletion,
         },
-        temporal::api::history::v1::{
-            WorkflowExecutionCanceledEventAttributes, WorkflowExecutionSignaledEventAttributes,
-            WorkflowExecutionStartedEventAttributes,
+        temporal::api::{
+            common::v1::WorkflowExecution,
+            history::v1::{
+                WorkflowExecutionCanceledEventAttributes, WorkflowExecutionSignaledEventAttributes,
+                WorkflowExecutionStartedEventAttributes,
+            },
+            workflowservice::v1::PollWorkflowTaskQueueResponse,
         },
     },
 };
 use anyhow::Error;
 use dashmap::DashMap;
-use std::convert::TryInto;
-use std::sync::mpsc;
-use std::sync::mpsc::{Receiver, SendError, Sender};
+use std::{
+    convert::TryInto,
+    sync::mpsc::{self, Receiver, SendError, Sender},
+};
 
 pub type Result<T, E = SDKServiceError> = std::result::Result<T, E>;
 
@@ -52,7 +54,7 @@ pub fn init_sdk(_opts: CoreSDKInitOptions) -> Result<Box<dyn CoreSDKService>> {
 
 pub struct CoreSDK<WP> {
     work_provider: WP,
-    /// Key is workflow id -- but perhaps ought to be task token
+    /// Key is workflow id
     workflow_machines: DashMap<String, (WorkflowMachines, Sender<Vec<WFCommand>>)>,
 }
 
@@ -69,13 +71,11 @@ where
 }
 
 /// Implementors can provide new work to the SDK. The connection to the server is the real
-/// implementor, which adapts workflow tasks from the server to sdk workflow tasks.
+/// implementor.
 #[cfg_attr(test, mockall::automock)]
 pub trait WorkProvider {
-    // TODO: Should actually likely return server tasks directly, so coresdk can do things like
-    //  apply history events that don't need workflow to actually do anything, like schedule.
     /// Fetch new work. Should block indefinitely if there is no work.
-    fn get_work(&self, task_queue: &str) -> Result<poll_sdk_task_resp::Task>;
+    fn get_work(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
 }
 
 impl<WP> CoreSDKService for CoreSDK<WP>
@@ -85,12 +85,19 @@ where
     fn poll_sdk_task(&self) -> Result<PollSdkTaskResp, SDKServiceError> {
         // This will block forever in the event there is no work from the server
         let work = self.work_provider.get_work("TODO: Real task queue")?;
-        match work {
-            Task::WfTask(t) => return Ok(PollSdkTaskResp::from_wf_task(b"token".to_vec(), t)),
-            Task::ActivityTask(_) => {
-                unimplemented!()
+        match &work.workflow_execution {
+            Some(WorkflowExecution { workflow_id, .. }) => {
+                // TODO: Only do if it doesn't exist yet
+                self.new_workflow(workflow_id.to_string());
             }
+            // TODO: Appropriate error
+            None => return Err(SDKServiceError::Unknown),
         }
+        // TODO: Apply history to machines, get commands out, convert them to task
+        Ok(PollSdkTaskResp {
+            task_token: work.task_token,
+            task: None,
+        })
     }
 
     fn complete_sdk_task(&self, req: CompleteSdkTaskReq) -> Result<(), SDKServiceError> {
@@ -176,6 +183,7 @@ impl DrivenWorkflow for WorkflowBridge {
 }
 
 #[derive(thiserror::Error, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum SDKServiceError {
     #[error("Unknown service error")]
     Unknown,
@@ -192,70 +200,28 @@ pub enum SDKServiceError {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::protos::coresdk;
-    use crate::protos::coresdk::command::Variant;
-    use crate::protos::coresdk::{SdkwfTaskSuccess, UnblockTimerTaskAttibutes};
-    use crate::protos::temporal::api::command::v1::{
-        command, Command, StartTimerCommandAttributes,
-    };
     use crate::{
         machines::test_help::TestHistoryBuilder,
         protos::{
-            coresdk::StartWorkflowTaskAttributes,
+            coresdk::{self, command::Variant, SdkwfTaskSuccess},
             temporal::api::{
+                command::v1::{command, Command, StartTimerCommandAttributes},
                 enums::v1::EventType,
                 history::v1::{history_event, TimerFiredEventAttributes},
             },
         },
     };
-    use std::collections::VecDeque;
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
+    use std::{
+        collections::VecDeque,
+        sync::{atomic::AtomicBool, Arc},
+    };
 
     #[test]
     fn workflow_bridge() {
         let wfid = "fake_wf_id";
         let timer_id = "fake_timer";
-        let mut tasks = VecDeque::from(vec![
-            SdkwfTask {
-                timestamp: None,
-                workflow_id: wfid.to_string(),
-                task: Some(
-                    StartWorkflowTaskAttributes {
-                        namespace: "namespace".to_string(),
-                        name: "wf name?".to_string(),
-                        arguments: None,
-                    }
-                    .into(),
-                ),
-            }
-            .into(),
-            SdkwfTask {
-                timestamp: None,
-                workflow_id: wfid.to_string(),
-                task: Some(
-                    UnblockTimerTaskAttibutes {
-                        timer_id: timer_id.to_string(),
-                    }
-                    .into(),
-                ),
-            }
-            .into(),
-        ]);
-
-        let mut mock_provider = MockWorkProvider::new();
-        mock_provider
-            .expect_get_work()
-            .returning(move |_| Ok(tasks.pop_front().unwrap()));
-
-        let core = CoreSDK {
-            workflow_machines: DashMap::new(),
-            work_provider: mock_provider,
-        };
-        core.new_workflow(wfid.to_string());
 
         let mut t = TestHistoryBuilder::default();
-
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_workflow_task();
         let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
@@ -268,6 +234,45 @@ mod test {
             }),
         );
         t.add_workflow_task_scheduled_and_started();
+
+        // TODO: Use test history builder to issue appropriate histories
+        let mut tasks = VecDeque::from(vec![]);
+        let mut mock_provider = MockWorkProvider::new();
+        mock_provider
+            .expect_get_work()
+            .returning(move |_| Ok(tasks.pop_front().unwrap()));
+
+        let core = CoreSDK {
+            workflow_machines: DashMap::new(),
+            work_provider: mock_provider,
+        };
+        core.new_workflow(wfid.to_string());
+
+        // TODO: These are what poll_sdk_task should end up returning
+        //             SdkwfTask {
+        //                 timestamp: None,
+        //                 workflow_id: wfid.to_string(),
+        //                 task: Some(
+        //                     StartWorkflowTaskAttributes {
+        //                         namespace: "namespace".to_string(),
+        //                         name: "wf name?".to_string(),
+        //                         arguments: None,
+        //                     }
+        //                         .into(),
+        //                 ),
+        //             }
+        //                 .into(),
+        //             SdkwfTask {
+        //                 timestamp: None,
+        //                 workflow_id: wfid.to_string(),
+        //                 task: Some(
+        //                     UnblockTimerTaskAttibutes {
+        //                         timer_id: timer_id.to_string(),
+        //                     }
+        //                         .into(),
+        //                 ),
+        //             }
+        //                 .into(),
 
         let res = core.poll_sdk_task().unwrap();
         let task_tok = res.task_token;

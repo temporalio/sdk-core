@@ -1,14 +1,14 @@
-use tonic::codegen::Future;
-use tonic::{Response, Status};
-
-use crate::pollers::poll_task::{PollTask, Result};
-use crate::protos::temporal::api::enums::v1 as enums;
-use crate::protos::temporal::api::taskqueue::v1 as tq;
-use crate::protos::temporal::api::workflowservice::v1 as temporal;
-use crate::protos::temporal::api::workflowservice::v1::{
-    PollWorkflowTaskQueueRequest, PollWorkflowTaskQueueResponse,
+use crate::{
+    pollers::poll_task::PollTask,
+    pollers::poll_task::Result,
+    protos::temporal::api::{
+        enums::v1::TaskQueueKind, taskqueue::v1::TaskQueue,
+        workflowservice::v1::workflow_service_client::WorkflowServiceClient,
+        workflowservice::v1::PollWorkflowTaskQueueRequest,
+        workflowservice::v1::PollWorkflowTaskQueueResponse,
+    },
 };
-use temporal::workflow_service_client::WorkflowServiceClient;
+use tonic::{codegen::Future, Response, Status};
 
 struct WorkflowPollTask<'a> {
     service: &'a mut WorkflowServiceClient<tonic::transport::Channel>,
@@ -19,13 +19,13 @@ struct WorkflowPollTask<'a> {
 }
 
 #[async_trait::async_trait]
-impl PollTask<temporal::PollWorkflowTaskQueueResponse> for WorkflowPollTask<'_> {
+impl PollTask<PollWorkflowTaskQueueResponse> for WorkflowPollTask<'_> {
     async fn poll(&mut self) -> Result<PollWorkflowTaskQueueResponse> {
-        let request = tonic::Request::new(temporal::PollWorkflowTaskQueueRequest {
+        let request = tonic::Request::new(PollWorkflowTaskQueueRequest {
             namespace: self.namespace.clone(),
-            task_queue: Some(tq::TaskQueue {
+            task_queue: Some(TaskQueue {
                 name: self.task_queue.clone(),
-                kind: enums::TaskQueueKind::Unspecified as i32,
+                kind: TaskQueueKind::Unspecified as i32,
             }),
             identity: self.identity.clone(),
             binary_checksum: self.binary_checksum.clone(),
