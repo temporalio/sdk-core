@@ -4,11 +4,11 @@ pub mod coresdk {
 
     pub type HistoryEventId = i64;
 
-    impl PollSdkTaskResp {
-        pub fn from_wf_task(task_token: Vec<u8>, t: SdkwfTask) -> Self {
-            PollSdkTaskResp {
+    impl Task {
+        pub fn from_wf_task(task_token: Vec<u8>, t: WorkflowTask) -> Self {
+            Task {
                 task_token,
-                task: Some(t.into()),
+                variant: Some(t.into()),
             }
         }
     }

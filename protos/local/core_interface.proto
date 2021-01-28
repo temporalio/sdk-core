@@ -16,7 +16,6 @@ import "temporal/api/failure/v1/message.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/command/v1/message.proto";
 
-// TODO: Use the SDK prefix?
 message WorkflowIdentifier {
     string namespace = 1;
     string name = 2;
@@ -32,19 +31,17 @@ message RegistrationReq {
     repeated ActivityIdentifier activities = 2;
 }
 
-// TODO: SDK prefix in front of everything is maybe pointless given it's all within this package
-
-service CoreSDKService {
-    rpc PollSDKTask (google.protobuf.Empty) returns (PollSDKTaskResp) {}
-    rpc CompleteSDKTask (CompleteSDKTaskReq) returns (google.protobuf.Empty) {}
+service Core {
+    rpc PollTask (google.protobuf.Empty) returns (Task) {}
+    rpc CompleteTask (CompleteTaskReq) returns (google.protobuf.Empty) {}
     rpc RegisterImplementations (RegistrationReq) returns (google.protobuf.Empty) {}
 }
 
-message PollSDKTaskResp {
+message Task {
     bytes task_token = 1;
-    oneof task {
-        SDKWFTask wf_task = 2;
-        SDKActivityTask activity_task = 3;
+    oneof variant {
+        WorkflowTask workflow = 2;
+        ActivityTask activity = 3;
     }
 }
 
@@ -54,75 +51,75 @@ message StartWorkflowTaskAttributes {
     temporal.api.common.v1.Payloads arguments = 3;
 }
 
-message UnblockTimerTaskAttibutes {
+message TriggerTimerTaskAttributes {
     string timer_id = 1;
 }
 
-message SDKWFTask {
+message WorkflowTask {
     google.protobuf.Timestamp timestamp = 1 [(gogoproto.stdtime) = true];
     string workflow_id = 2;
-    oneof task {
+    oneof attributes {
         StartWorkflowTaskAttributes start_workflow = 3;
-        UnblockTimerTaskAttibutes unblock_timer = 4;
+        TriggerTimerTaskAttributes trigger_timer = 4;
     }
 }
 
-message SDKActivityTask {
+message ActivityTask {
     // Original task from temporal service
     temporal.api.workflowservice.v1.PollActivityTaskQueueResponse original = 1;
 }
 
 
-message CompleteSDKTaskReq {
+message CompleteTaskReq {
     bytes task_token = 1;
     oneof completion {
-        SDKWFTaskCompletion workflow = 2;
-        SDKActivityTaskCompletion activity = 3;
+        WorkflowTaskCompletion workflow = 2;
+        ActivityTaskCompletion activity = 3;
     }
 }
 
-message SDKWFTaskCompletion {
+message WorkflowTaskCompletion {
     oneof status {
-        SDKWFTaskSuccess successful = 1;
-        SDKWFTaskFailure failed = 2;
+        WorkflowTaskSuccess successful = 1;
+        WorkflowTaskFailure failed = 2;
     }
 }
 
-message SDKActivityTaskCompletion {
+message ActivityTaskCompletion {
     oneof status {
-        SDKActivityTaskSuccess successful = 1;
-        SDKActivityTaskFailure failed = 2;
+        ActivityTaskSuccess successful = 1;
+        ActivityTaskFailure failed = 2;
     }
 }
 
-message SDKCommand {
-    // Reserved for SDK specific commands
+message CoreCommand {
+    // Reserved for  specific commands
 }
 
 message Command {
     oneof variant {
         temporal.api.command.v1.Command api = 1;
-        SDKCommand sdk = 2;
+        CoreCommand core = 2;
     }
 }
 
-message SDKWFTaskSuccess {
+message WorkflowTaskSuccess {
     repeated Command commands = 1;
     // Other bits from RespondWorkflowTaskCompletedRequest as needed
 }
 
-message SDKWFTaskFailure {
+message WorkflowTaskFailure {
     temporal.api.enums.v1.WorkflowTaskFailedCause cause = 1;
     temporal.api.failure.v1.Failure failure = 2;
     // Other bits from RespondWorkflowTaskFailedRequest as needed
 }
 
-message SDKActivityTaskSuccess {
+message ActivityTaskSuccess {
     temporal.api.common.v1.Payloads result = 1;
     // Other bits from RespondActivityTaskCompletedRequest as needed
 }
 
-message SDKActivityTaskFailure {
+message ActivityTaskFailure {
     temporal.api.failure.v1.Failure failure = 1;
     // Other bits from RespondActivityTaskFailedRequest as needed
 }

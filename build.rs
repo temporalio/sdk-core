@@ -15,11 +15,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[derive(::derive_more::From)]",
         )
         .type_attribute("coresdk.Command.variant", "#[derive(::derive_more::From)]")
-        .type_attribute("coresdk.SDKWFTask.task", "#[derive(::derive_more::From)]")
         .type_attribute(
-            "coresdk.PollSDKTaskResp.task",
+            "coresdk.WorkflowTask.attributes",
             "#[derive(::derive_more::From)]",
         )
+        .type_attribute("coresdk.Task.variant", "#[derive(::derive_more::From)]")
         .compile(
             &[
                 "protos/local/core_interface.proto",

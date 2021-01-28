@@ -9,8 +9,8 @@ use crate::{
     machines::{DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines},
     protos::{
         coresdk::{
-            complete_sdk_task_req::Completion, sdkwf_task_completion::Status, CompleteSdkTaskReq,
-            PollSdkTaskResp, RegistrationReq, SdkwfTaskCompletion,
+            complete_task_req::Completion, workflow_task_completion::Status, CompleteTaskReq,
+            RegistrationReq, Task, WorkflowTaskCompletion,
         },
         temporal::api::{
             common::v1::WorkflowExecution,
@@ -29,27 +29,27 @@ use std::{
     sync::mpsc::{self, Receiver, SendError, Sender},
 };
 
-pub type Result<T, E = SDKServiceError> = std::result::Result<T, E>;
+pub type Result<T, E = CoreError> = std::result::Result<T, E>;
 
 // TODO: Do we actually need this to be send+sync? Probably, but there's also no reason to have
 //   any given WorfklowMachines instance accessed on more than one thread. Ideally this trait can
 //   be accessed from many threads, but each workflow is pinned to one thread (possibly with many
 //   sharing the same thread). IE: WorkflowMachines should be Send but not Sync, and this should
 //   be both, ideally.
-pub trait CoreSDKService {
-    fn poll_sdk_task(&self) -> Result<PollSdkTaskResp>;
-    fn complete_sdk_task(&self, req: CompleteSdkTaskReq) -> Result<()>;
+pub trait Core {
+    fn poll_task(&self) -> Result<Task>;
+    fn complete_task(&self, req: CompleteTaskReq) -> Result<()>;
     fn register_implementations(&self, req: RegistrationReq) -> Result<()>;
 }
 
-pub struct CoreSDKInitOptions {
+pub struct CoreInitOptions {
     _queue_name: String,
     _max_concurrent_workflow_executions: u32,
     _max_concurrent_activity_executions: u32,
 }
 
-pub fn init_sdk(_opts: CoreSDKInitOptions) -> Result<Box<dyn CoreSDKService>> {
-    Err(SDKServiceError::Unknown {})
+pub fn init(_opts: CoreInitOptions) -> Result<Box<dyn Core>> {
+    Err(CoreError::Unknown {})
 }
 
 pub struct CoreSDK<WP> {
@@ -78,11 +78,11 @@ pub trait WorkProvider {
     fn get_work(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
 }
 
-impl<WP> CoreSDKService for CoreSDK<WP>
+impl<WP> Core for CoreSDK<WP>
 where
     WP: WorkProvider,
 {
-    fn poll_sdk_task(&self) -> Result<PollSdkTaskResp, SDKServiceError> {
+    fn poll_task(&self) -> Result<Task, CoreError> {
         // This will block forever in the event there is no work from the server
         let work = self.work_provider.get_work("TODO: Real task queue")?;
         match &work.workflow_execution {
@@ -91,18 +91,18 @@ where
                 self.new_workflow(workflow_id.to_string());
             }
             // TODO: Appropriate error
-            None => return Err(SDKServiceError::Unknown),
+            None => return Err(CoreError::Unknown),
         }
         // TODO: Apply history to machines, get commands out, convert them to task
-        Ok(PollSdkTaskResp {
+        Ok(Task {
             task_token: work.task_token,
-            task: None,
+            variant: None,
         })
     }
 
-    fn complete_sdk_task(&self, req: CompleteSdkTaskReq) -> Result<(), SDKServiceError> {
+    fn complete_task(&self, req: CompleteTaskReq) -> Result<(), CoreError> {
         match req.completion {
-            Some(Completion::Workflow(SdkwfTaskCompletion {
+            Some(Completion::Workflow(WorkflowTaskCompletion {
                 status: Some(wfstatus),
             })) => {
                 match wfstatus {
@@ -127,11 +127,11 @@ where
             Some(Completion::Activity(_)) => {
                 unimplemented!()
             }
-            _ => Err(SDKServiceError::MalformedCompletion(req)),
+            _ => Err(CoreError::MalformedCompletion(req)),
         }
     }
 
-    fn register_implementations(&self, _req: RegistrationReq) -> Result<(), SDKServiceError> {
+    fn register_implementations(&self, _req: RegistrationReq) -> Result<(), CoreError> {
         unimplemented!()
     }
 }
@@ -184,13 +184,13 @@ impl DrivenWorkflow for WorkflowBridge {
 
 #[derive(thiserror::Error, Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum SDKServiceError {
+pub enum CoreError {
     #[error("Unknown service error")]
     Unknown,
     #[error("No tasks to perform for now")]
     NoWork,
     #[error("Lang SDK sent us a malformed completion: {0:?}")]
-    MalformedCompletion(CompleteSdkTaskReq),
+    MalformedCompletion(CompleteTaskReq),
     #[error("Error buffering commands")]
     CantSendCommands(#[from] SendError<Vec<WFCommand>>),
     #[error("Couldn't interpret command from <lang>")]
@@ -203,7 +203,7 @@ mod test {
     use crate::{
         machines::test_help::TestHistoryBuilder,
         protos::{
-            coresdk::{self, command::Variant, SdkwfTaskSuccess},
+            coresdk::{self, command::Variant, WorkflowTaskSuccess},
             temporal::api::{
                 command::v1::{command, Command, StartTimerCommandAttributes},
                 enums::v1::EventType,
@@ -248,7 +248,7 @@ mod test {
         };
         core.new_workflow(wfid.to_string());
 
-        // TODO: These are what poll_sdk_task should end up returning
+        // TODO: These are what poll_task should end up returning
         //             SdkwfTask {
         //                 timestamp: None,
         //                 workflow_id: wfid.to_string(),
@@ -274,7 +274,7 @@ mod test {
         //             }
         //                 .into(),
 
-        let res = core.poll_sdk_task().unwrap();
+        let res = core.poll_task().unwrap();
         let task_tok = res.task_token;
         let timer_atom = Arc::new(AtomicBool::new(false));
         let cmd: command::Attributes = StartTimerCommandAttributes {
@@ -283,14 +283,14 @@ mod test {
         }
         .into();
         let cmd: Command = cmd.into();
-        let success = SdkwfTaskSuccess {
+        let success = WorkflowTaskSuccess {
             commands: vec![coresdk::Command {
                 variant: Some(Variant::Api(cmd)),
             }],
         };
-        core.complete_sdk_task(CompleteSdkTaskReq {
+        core.complete_task(CompleteTaskReq {
             task_token: task_tok,
-            completion: Some(Completion::Workflow(SdkwfTaskCompletion {
+            completion: Some(Completion::Workflow(WorkflowTaskCompletion {
                 status: Some(Status::Successful(success)),
             })),
         })
