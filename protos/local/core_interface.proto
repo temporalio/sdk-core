@@ -54,29 +54,16 @@ message StartWorkflowTaskAttributes {
     temporal.api.common.v1.Payloads arguments = 3;
 }
 
-message CompleteTimerTaskAttributes {
+message UnblockTimerTaskAttibutes {
     string timer_id = 1;
-}
-
-message CancelTimerTaskAttributes {
-    string timer_id = 1;
-}
-
-// TODO: Remove this - type info exists in attributes oneof
-enum WFTaskType {
-    START_WORKFLOW = 0;
-    COMPLETE_TIMER = 1;
-    CANCEL_TIMER = 2;
 }
 
 message SDKWFTask {
-    WFTaskType type = 1;
-    google.protobuf.Timestamp timestamp = 2 [(gogoproto.stdtime) = true];
-    string workflow_id = 3;
-    oneof attributes {
-        StartWorkflowTaskAttributes start_workflow_task_attributes = 4;
-        CompleteTimerTaskAttributes complete_timer_task_attributes = 5;
-        CancelTimerTaskAttributes cancel_timer_task_attributes = 6;
+    google.protobuf.Timestamp timestamp = 1 [(gogoproto.stdtime) = true];
+    string workflow_id = 2;
+    oneof task {
+        StartWorkflowTaskAttributes start_workflow = 3;
+        UnblockTimerTaskAttibutes unblock_timer = 4;
     }
 }
 

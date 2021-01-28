@@ -5,10 +5,9 @@ mod machines;
 mod pollers;
 pub mod protos;
 
-use crate::machines::WorkflowMachines;
+use crate::machines::{InconvertibleCommandError, WorkflowMachines};
 use crate::protos::coresdk::poll_sdk_task_resp;
 use crate::protos::coresdk::poll_sdk_task_resp::Task;
-use crate::protos::temporal::api::history::v1::HistoryEvent;
 use crate::{
     machines::{DrivenWorkflow, WFCommand},
     protos::{
@@ -24,7 +23,9 @@ use crate::{
 };
 use anyhow::Error;
 use dashmap::DashMap;
-use std::collections::VecDeque;
+use std::convert::TryInto;
+use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, SendError, Sender};
 
 pub type Result<T, E = SDKServiceError> = std::result::Result<T, E>;
 
@@ -51,13 +52,21 @@ pub fn init_sdk(_opts: CoreSDKInitOptions) -> Result<Box<dyn CoreSDKService>> {
 
 pub struct CoreSDK<WP> {
     work_provider: WP,
-    /// Key is workflow id
-    workflows: DashMap<String, WorkflowMachines>,
+    /// Key is workflow id -- but perhaps ought to be task token
+    workflow_machines: DashMap<String, (WorkflowMachines, Sender<Vec<WFCommand>>)>,
 }
 
-// impl<WP> CoreSDK<WP> where WP: WorkProvider {
-//     fn apply_hist_event(event: &HistoryEvent, has_next_event)
-// }
+impl<WP> CoreSDK<WP>
+where
+    WP: WorkProvider,
+{
+    fn new_workflow(&self, id: String) {
+        let (wfb, cmd_sink) = WorkflowBridge::new();
+        let state_machines = WorkflowMachines::new(Box::new(wfb));
+        self.workflow_machines
+            .insert(id, (state_machines, cmd_sink));
+    }
+}
 
 /// Implementors can provide new work to the SDK. The connection to the server is the real
 /// implementor, which adapts workflow tasks from the server to sdk workflow tasks.
@@ -91,16 +100,18 @@ where
             })) => {
                 match wfstatus {
                     Status::Successful(success) => {
-                        // let cmds = success.commands.iter().map(|_c| {
-                        //     // TODO: Make it go
-                        //     vec![]
-                        // });
+                        // Convert to wf commands
+                        let cmds = success
+                            .commands
+                            .into_iter()
+                            .map(|c| c.try_into().map_err(Into::into))
+                            .collect::<Result<Vec<_>>>()?;
                         // TODO: Need to use task token or wfid etc
-                        // self.workflows
-                        //     .get_mut("ID")
-                        //     .unwrap()
-                        //     .incoming_commands
-                        //     .extend(cmds);
+                        self.workflow_machines
+                            .get_mut("fake_wf_id")
+                            .unwrap()
+                            .1
+                            .send(cmds)?;
                     }
                     Status::Failed(_) => {}
                 }
@@ -121,17 +132,24 @@ where
 /// The [DrivenWorkflow] trait expects to be called to make progress, but the [CoreSDKService]
 /// expects to be polled by the lang sdk. This struct acts as the bridge between the two, buffering
 /// output from calls to [DrivenWorkflow] and offering them to [CoreSDKService]
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct WorkflowBridge {
     // does wf id belong in here?
     started_attrs: Option<WorkflowExecutionStartedEventAttributes>,
-    outgoing_tasks: VecDeque<SdkwfTask>,
-    incoming_commands: VecDeque<Vec<WFCommand>>,
+    incoming_commands: Receiver<Vec<WFCommand>>,
 }
 
 impl WorkflowBridge {
-    pub fn get_next_task(&mut self) -> Option<SdkwfTask> {
-        self.outgoing_tasks.pop_front()
+    /// Create a new bridge, returning it and the sink used to send commands to it.
+    pub(crate) fn new() -> (Self, Sender<Vec<WFCommand>>) {
+        let (tx, rx) = mpsc::channel();
+        (
+            Self {
+                started_attrs: None,
+                incoming_commands: rx,
+            },
+            tx,
+        )
     }
 }
 
@@ -145,7 +163,7 @@ impl DrivenWorkflow for WorkflowBridge {
     }
 
     fn iterate_wf(&mut self) -> Result<Vec<WFCommand>, Error> {
-        Ok(self.incoming_commands.pop_front().unwrap_or_default())
+        Ok(self.incoming_commands.try_recv().unwrap_or_default())
     }
 
     fn signal(&mut self, _attribs: WorkflowExecutionSignaledEventAttributes) -> Result<(), Error> {
@@ -165,31 +183,40 @@ pub enum SDKServiceError {
     NoWork,
     #[error("Lang SDK sent us a malformed completion: {0:?}")]
     MalformedCompletion(CompleteSdkTaskReq),
+    #[error("Error buffering commands")]
+    CantSendCommands(#[from] SendError<Vec<WFCommand>>),
+    #[error("Couldn't interpret command from <lang>")]
+    UninterprableCommand(#[from] InconvertibleCommandError),
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::protos::coresdk::{SdkwfTaskSuccess, UnblockTimerTaskAttibutes};
+    use crate::protos::temporal::api::command::v1::StartTimerCommandAttributes;
     use crate::{
-        machines::{test_help::TestHistoryBuilder, WorkflowMachines},
+        machines::test_help::TestHistoryBuilder,
         protos::{
-            coresdk::{CompleteTimerTaskAttributes, StartWorkflowTaskAttributes, WfTaskType},
+            coresdk::StartWorkflowTaskAttributes,
             temporal::api::{
                 enums::v1::EventType,
                 history::v1::{history_event, TimerFiredEventAttributes},
             },
         },
     };
+    use std::collections::VecDeque;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
 
     #[test]
     fn workflow_bridge() {
         let wfid = "fake_wf_id";
+        let timer_id = "fake_timer";
         let mut tasks = VecDeque::from(vec![
             SdkwfTask {
-                r#type: WfTaskType::StartWorkflow as i32,
                 timestamp: None,
                 workflow_id: wfid.to_string(),
-                attributes: Some(
+                task: Some(
                     StartWorkflowTaskAttributes {
                         namespace: "namespace".to_string(),
                         name: "wf name?".to_string(),
@@ -200,12 +227,11 @@ mod test {
             }
             .into(),
             SdkwfTask {
-                r#type: WfTaskType::CompleteTimer as i32,
                 timestamp: None,
                 workflow_id: wfid.to_string(),
-                attributes: Some(
-                    CompleteTimerTaskAttributes {
-                        timer_id: "timer".to_string(),
+                task: Some(
+                    UnblockTimerTaskAttibutes {
+                        timer_id: timer_id.to_string(),
                     }
                     .into(),
                 ),
@@ -218,13 +244,11 @@ mod test {
             .expect_get_work()
             .returning(move |_| Ok(tasks.pop_front().unwrap()));
 
-        let mut wfb = WorkflowBridge::default();
-        let state_machines = WorkflowMachines::new(Box::new(wfb));
         let core = CoreSDK {
-            workflows: DashMap::new(),
+            workflow_machines: DashMap::new(),
             work_provider: mock_provider,
         };
-        core.workflows.insert(wfid.to_string(), state_machines);
+        core.new_workflow(wfid.to_string());
 
         let mut t = TestHistoryBuilder::default();
 
@@ -241,7 +265,23 @@ mod test {
         );
         t.add_workflow_task_scheduled_and_started();
 
-        let res = core.poll_sdk_task();
-        dbg!(res);
+        let res = core.poll_sdk_task().unwrap();
+        let task_tok = res.task_token;
+        let timer_atom = Arc::new(AtomicBool::new(false));
+        core.complete_sdk_task(CompleteSdkTaskReq {
+            task_token: task_tok,
+            completion: Some(
+                SdkwfTaskSuccess {
+                    commands: vec![StartTimerCommandAttributes {
+                        timer_id: timer_id.to_string(),
+                        ..Default::default()
+                    }],
+                }
+                .into(),
+            ),
+        })
+        .unwrap();
+
+        // SDK commands should be StartTimer followed by Complete WE
     }
 }

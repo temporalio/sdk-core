@@ -37,6 +37,9 @@ pub(crate) mod test_help;
 
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
+use crate::protos::coresdk;
+use crate::protos::coresdk::command::Variant;
+use crate::protos::temporal::api::command::v1::command::Attributes;
 use crate::protos::temporal::api::{
     command::v1::{
         Command, CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
@@ -63,7 +66,7 @@ type MachineCommand = Command;
 
 /// Implementors of this trait represent something that can (eventually) call into a workflow to
 /// drive it, start it, signal it, cancel it, etc.
-pub(crate) trait DrivenWorkflow: Send + Sync {
+pub(crate) trait DrivenWorkflow: Send {
     /// Start the workflow
     fn start(
         &mut self,
@@ -100,6 +103,35 @@ pub(crate) struct AddCommand {
 pub enum WFCommand {
     AddTimer(StartTimerCommandAttributes, Arc<AtomicBool>),
     CompleteWorkflow(CompleteWorkflowExecutionCommandAttributes),
+}
+
+#[derive(Debug)]
+pub struct InconvertibleCommandError(pub coresdk::Command);
+
+impl TryFrom<coresdk::Command> for WFCommand {
+    type Error = InconvertibleCommandError;
+
+    fn try_from(c: coresdk::Command) -> Result<Self, Self::Error> {
+        // TODO: Return error without cloning
+        match c.variant.clone() {
+            Some(a) => match a {
+                Variant::Api(Command {
+                    attributes: Some(attrs),
+                    ..
+                }) => match attrs {
+                    Attributes::StartTimerCommandAttributes(s) => {
+                        Ok(WFCommand::AddTimer(s, Arc::new(AtomicBool::new(false))))
+                    }
+                    Attributes::CompleteWorkflowExecutionCommandAttributes(c) => {
+                        Ok(WFCommand::CompleteWorkflow(c))
+                    }
+                    _ => unimplemented!(),
+                },
+                _ => Err(c),
+            },
+            None => Err(c),
+        }
+    }
 }
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
