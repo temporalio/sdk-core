@@ -39,13 +39,10 @@ pub type Result<T, E = CoreError> = std::result::Result<T, E>;
 pub trait Core {
     fn poll_task(&self) -> Result<Task>;
     fn complete_task(&self, req: CompleteTaskReq) -> Result<()>;
-    fn register_implementations(&self, req: RegistrationReq) -> Result<()>;
 }
 
 pub struct CoreInitOptions {
     _queue_name: String,
-    _max_concurrent_workflow_executions: u32,
-    _max_concurrent_activity_executions: u32,
 }
 
 pub fn init(_opts: CoreInitOptions) -> Result<Box<dyn Core>> {
@@ -129,10 +126,6 @@ where
             }
             _ => Err(CoreError::MalformedCompletion(req)),
         }
-    }
-
-    fn register_implementations(&self, _req: RegistrationReq) -> Result<(), CoreError> {
-        unimplemented!()
     }
 }
 

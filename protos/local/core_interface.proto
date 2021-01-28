@@ -16,25 +16,14 @@ import "temporal/api/failure/v1/message.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/command/v1/message.proto";
 
-message WorkflowIdentifier {
-    string namespace = 1;
-    string name = 2;
-}
-
-message ActivityIdentifier {
-    string namespace = 1;
-    string name = 2;
-}
-
-message RegistrationReq {
-    repeated WorkflowIdentifier workflows = 1;
-    repeated ActivityIdentifier activities = 2;
-}
-
 service Core {
-    rpc PollTask (google.protobuf.Empty) returns (Task) {}
+    rpc PollTask (PollTaskReq) returns (Task) {}
     rpc CompleteTask (CompleteTaskReq) returns (google.protobuf.Empty) {}
-    rpc RegisterImplementations (RegistrationReq) returns (google.protobuf.Empty) {}
+}
+
+message PollTaskReq {
+    bool workflows = 1;
+    bool activities = 1;
 }
 
 message Task {
@@ -51,16 +40,17 @@ message StartWorkflowTaskAttributes {
     temporal.api.common.v1.Payloads arguments = 3;
 }
 
-message TriggerTimerTaskAttributes {
+message UnblockTimerTaskAttributes {
     string timer_id = 1;
 }
 
 message WorkflowTask {
     google.protobuf.Timestamp timestamp = 1 [(gogoproto.stdtime) = true];
     string workflow_id = 2;
+    string run_id = 3;
     oneof attributes {
-        StartWorkflowTaskAttributes start_workflow = 3;
-        TriggerTimerTaskAttributes trigger_timer = 4;
+        StartWorkflowTaskAttributes start_workflow = 4;
+        UnblockTimerTaskAttributes unblock_timer = 5;
     }
 }
 
