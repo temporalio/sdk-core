@@ -193,22 +193,15 @@ pub enum CoreError {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::protos::temporal::api::history::v1::History;
     use crate::{
         machines::test_help::TestHistoryBuilder,
-        protos::{
-            coresdk::{self, command::Variant, WorkflowTaskSuccess},
-            temporal::api::{
-                command::v1::{command, Command, StartTimerCommandAttributes},
-                enums::v1::EventType,
-                history::v1::{history_event, TimerFiredEventAttributes},
-            },
+        protos::temporal::api::{
+            command::v1::StartTimerCommandAttributes,
+            enums::v1::EventType,
+            history::v1::{history_event, History, TimerFiredEventAttributes},
         },
     };
-    use std::{
-        collections::VecDeque,
-        sync::{atomic::AtomicBool, Arc},
-    };
+    use std::collections::VecDeque;
 
     #[test]
     fn workflow_bridge() {
@@ -302,24 +295,14 @@ mod test {
         let res = dbg!(core.poll_task().unwrap());
         assert!(core.workflow_machines.get(wfid).is_some());
         let task_tok = res.task_token;
-        let timer_atom = Arc::new(AtomicBool::new(false));
-        let cmd: command::Attributes = StartTimerCommandAttributes {
-            timer_id: timer_id.to_string(),
-            ..Default::default()
-        }
-        .into();
-        let cmd: Command = cmd.into();
-        let success = WorkflowTaskSuccess {
-            commands: vec![coresdk::Command {
-                variant: Some(Variant::Api(cmd)),
-            }],
-        };
-        core.complete_task(CompleteTaskReq {
-            task_token: task_tok,
-            completion: Some(Completion::Workflow(WorkflowTaskCompletion {
-                status: Some(Status::Successful(success)),
-            })),
-        })
+        core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+            StartTimerCommandAttributes {
+                timer_id: timer_id.to_string(),
+                ..Default::default()
+            }
+            .into(),
+            task_tok,
+        ))
         .unwrap();
 
         // SDK commands should be StartTimer followed by Complete WE

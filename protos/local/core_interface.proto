@@ -23,7 +23,7 @@ service Core {
 
 message PollTaskReq {
     bool workflows = 1;
-    bool activities = 1;
+    bool activities = 2;
 }
 
 message Task {

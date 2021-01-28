@@ -1,6 +1,10 @@
 #[allow(clippy::large_enum_variant)]
 pub mod coresdk {
     include!("coresdk.rs");
+    use super::temporal::api::command::v1 as api_command;
+    use super::temporal::api::command::v1::Command as ApiCommand;
+    use crate::protos::coresdk::complete_task_req::Completion;
+    use command::Variant;
 
     pub type HistoryEventId = i64;
 
@@ -9,6 +13,36 @@ pub mod coresdk {
             Task {
                 task_token,
                 variant: Some(t.into()),
+            }
+        }
+    }
+
+    impl From<Vec<ApiCommand>> for WorkflowTaskSuccess {
+        fn from(v: Vec<ApiCommand>) -> Self {
+            WorkflowTaskSuccess {
+                commands: v
+                    .into_iter()
+                    .map(|cmd| Command {
+                        variant: Some(Variant::Api(cmd)),
+                    })
+                    .collect(),
+            }
+        }
+    }
+
+    impl CompleteTaskReq {
+        /// Build a successful completion from some api command attributes and a task token
+        pub fn ok_from_api_attrs(
+            cmd: api_command::command::Attributes,
+            task_token: Vec<u8>,
+        ) -> Self {
+            let cmd: ApiCommand = cmd.into();
+            let success: WorkflowTaskSuccess = vec![cmd].into();
+            CompleteTaskReq {
+                task_token,
+                completion: Some(Completion::Workflow(WorkflowTaskCompletion {
+                    status: Some(workflow_task_completion::Status::Successful(success)),
+                })),
             }
         }
     }
@@ -21,9 +55,10 @@ pub mod temporal {
     pub mod api {
         pub mod command {
             pub mod v1 {
-                use crate::protos::temporal::api::command::v1::command::Attributes;
-                use crate::protos::temporal::api::enums::v1::CommandType;
                 include!("temporal.api.command.v1.rs");
+                use crate::protos::temporal::api::enums::v1::CommandType;
+                use command::Attributes;
+
                 impl From<command::Attributes> for Command {
                     fn from(c: command::Attributes) -> Self {
                         match c {
