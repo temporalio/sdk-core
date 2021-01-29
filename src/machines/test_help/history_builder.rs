@@ -1,16 +1,13 @@
 use super::Result;
 use crate::protosext::HistoryInfo;
-use crate::{
-    machines::{workflow_machines::WorkflowMachines, MachineCommand},
-    protos::temporal::api::{
-        enums::v1::EventType,
-        history::v1::{
-            history_event::Attributes, HistoryEvent, TimerStartedEventAttributes,
-            WorkflowExecutionStartedEventAttributes, WorkflowTaskCompletedEventAttributes,
-            WorkflowTaskScheduledEventAttributes, WorkflowTaskStartedEventAttributes,
-        },
+use crate::{machines::{workflow_machines::WorkflowMachines, MachineCommand}, protos::temporal::api::{
+    enums::v1::EventType,
+    history::v1::{
+        history_event::Attributes, HistoryEvent, TimerStartedEventAttributes,
+        WorkflowExecutionStartedEventAttributes, WorkflowTaskCompletedEventAttributes,
+        WorkflowTaskScheduledEventAttributes, WorkflowTaskStartedEventAttributes,
     },
-};
+}, HistoryInfoError};
 use anyhow::bail;
 use std::time::SystemTime;
 
@@ -211,7 +208,10 @@ impl TestHistoryBuilder {
     }
 
     /// Iterates over the events in this builder to return a [HistoryInfo] of the n-th workflow task.
-    pub(crate) fn get_history_info(&self, to_wf_task_num: usize) -> HistoryInfo {
+    pub(crate) fn get_history_info(
+        &self,
+        to_wf_task_num: usize,
+    ) -> Result<HistoryInfo, HistoryInfoError> {
         HistoryInfo::new_from_events(self.events.clone(), to_wf_task_num)
     }
 

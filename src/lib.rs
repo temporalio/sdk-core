@@ -5,7 +5,7 @@ mod machines;
 mod pollers;
 pub mod protos;
 mod protosext;
-pub use protosext::HistoryInfo;
+pub use protosext::{HistoryInfo, HistoryInfoError};
 
 use crate::{
     machines::{DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines},

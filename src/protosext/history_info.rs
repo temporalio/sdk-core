@@ -63,7 +63,7 @@ impl HistoryInfo {
                         });
                     }
                 } else if next_event.is_some() && !next_is_failed_or_timeout {
-                    Err(HistoryInfoError::FailedOrTimeout(event.clone()));
+                    return Err(HistoryInfoError::FailedOrTimeout(event.clone()));
                 }
             }
 
@@ -84,7 +84,7 @@ impl HistoryInfo {
         unreachable!()
     }
 
-    pub fn new(h: History, to_wf_task_num: usize) -> Self {
+    pub fn new_from_history(h: History, to_wf_task_num: usize) -> Result<Self, HistoryInfoError> {
         Self::new_from_events(h.events, to_wf_task_num)
     }
 }
@@ -121,6 +121,5 @@ mod tests {
             }),
         );
         t.add_workflow_task_scheduled_and_started();
-        t.get
     }
 }
