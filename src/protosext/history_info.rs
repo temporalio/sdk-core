@@ -121,5 +121,7 @@ mod tests {
             }),
         );
         t.add_workflow_task_scheduled_and_started();
+        let history_info_result = t.get_history_info(1);
+        assert!(history_info_result.is_ok());
     }
 }
