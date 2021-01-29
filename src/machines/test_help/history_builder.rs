@@ -1,13 +1,16 @@
 use super::Result;
-use crate::protosext::HistoryInfo;
-use crate::{machines::{workflow_machines::WorkflowMachines, MachineCommand}, protos::temporal::api::{
-    enums::v1::EventType,
-    history::v1::{
-        history_event::Attributes, HistoryEvent, TimerStartedEventAttributes,
-        WorkflowExecutionStartedEventAttributes, WorkflowTaskCompletedEventAttributes,
-        WorkflowTaskScheduledEventAttributes, WorkflowTaskStartedEventAttributes,
+use crate::{
+    machines::{workflow_machines::WorkflowMachines, MachineCommand},
+    protos::temporal::api::{
+        enums::v1::EventType,
+        history::v1::{
+            history_event::Attributes, HistoryEvent, TimerStartedEventAttributes,
+            WorkflowExecutionStartedEventAttributes, WorkflowTaskCompletedEventAttributes,
+            WorkflowTaskScheduledEventAttributes, WorkflowTaskStartedEventAttributes,
+        },
     },
-}, HistoryInfoError};
+    protosext::{HistoryInfo, HistoryInfoError},
+};
 use anyhow::bail;
 use std::time::SystemTime;
 
@@ -212,7 +215,7 @@ impl TestHistoryBuilder {
         &self,
         to_wf_task_num: usize,
     ) -> Result<HistoryInfo, HistoryInfoError> {
-        HistoryInfo::new_from_events(self.events.clone(), to_wf_task_num)
+        HistoryInfo::new_from_events(&self.events, Some(to_wf_task_num))
     }
 
     fn build_and_push_event(&mut self, event_type: EventType, attribs: Attributes) {

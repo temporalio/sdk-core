@@ -57,7 +57,7 @@ pub(crate) struct WorkflowMachines {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub(crate) enum WFMachinesError {
+pub enum WFMachinesError {
     #[error("Event {0:?} was not expected")]
     UnexpectedEvent(HistoryEvent),
     #[error("Event {0:?} was malformed: {1}")]
@@ -106,7 +106,7 @@ impl WorkflowMachines {
     }
 
     /// Returns the id of the last seen WorkflowTaskStarted event
-    pub(super) fn get_last_started_event_id(&self) -> i64 {
+    pub(crate) fn get_last_started_event_id(&self) -> i64 {
         self.current_started_event_id
     }
 
@@ -120,6 +120,7 @@ impl WorkflowMachines {
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
+        dbg!(&event);
         if event.is_command_event() {
             self.handle_command_event(event)?;
             return Ok(());
@@ -311,7 +312,7 @@ impl WorkflowMachines {
 
     /// Given an event id (possibly zero) of the last successfully executed workflow task and an
     /// id of the last event, sets the ids internally and appropriately sets the replaying flag.
-    pub(super) fn set_started_ids(
+    pub(crate) fn set_started_ids(
         &mut self,
         previous_started_event_id: i64,
         workflow_task_started_event_id: i64,
@@ -349,6 +350,7 @@ impl WorkflowMachines {
                     self.current_wf_task_commands
                         .push_back(complete_workflow(attrs));
                 }
+                WFCommand::NoCommandsFromLang => (),
             }
         }
     }

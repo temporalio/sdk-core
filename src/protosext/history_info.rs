@@ -1,3 +1,4 @@
+use crate::machines::{MachineCommand, WFMachinesError, WorkflowMachines};
 use crate::protos::temporal::api::enums::v1::EventType;
 use crate::protos::temporal::api::history::v1::{History, HistoryEvent};
 
@@ -7,6 +8,8 @@ pub struct HistoryInfo {
     pub workflow_task_started_event_id: i64,
     pub events: Vec<HistoryEvent>,
 }
+
+type Result<T, E = HistoryInfoError> = std::result::Result<T, E>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum HistoryInfoError {
@@ -19,12 +22,17 @@ pub enum HistoryInfoError {
     FailedOrTimeout(HistoryEvent),
     #[error("Last item in history wasn't WorkflowTaskStarted")]
     HistoryEndsUnexpectedly,
+    #[error("Underlying error in workflow machine")]
+    UnderlyingMachineError(#[from] WFMachinesError),
 }
 impl HistoryInfo {
-    pub fn new_from_events(
-        events: Vec<HistoryEvent>,
-        to_wf_task_num: usize,
-    ) -> Result<Self, HistoryInfoError> {
+    /// Constructs a new instance, retaining only enough events to reach the provided workflow
+    /// task number. If not provided, all events are retained.
+    pub(crate) fn new_from_events(
+        events: &[HistoryEvent],
+        to_wf_task_num: Option<usize>,
+    ) -> Result<Self> {
+        let to_wf_task_num = to_wf_task_num.unwrap_or(usize::MAX);
         let mut workflow_task_started_event_id = 0;
         let mut previous_started_event_id = 0;
         let mut count = 0;
@@ -83,8 +91,112 @@ impl HistoryInfo {
         unreachable!()
     }
 
-    pub fn new_from_history(h: History, to_wf_task_num: usize) -> Result<Self, HistoryInfoError> {
-        Self::new_from_events(h.events, to_wf_task_num)
+    pub(crate) fn new_from_history(h: &History, to_wf_task_num: Option<usize>) -> Result<Self> {
+        Self::new_from_events(&h.events, to_wf_task_num)
+    }
+
+    /// Handle workflow task(s) using the provided [WorkflowMachines]. Will process as many workflow
+    /// tasks as you provided in the `to_wf_task_num` parameter to the constructor.
+    pub(crate) fn apply_history_take_cmds(
+        &self,
+        wf_machines: &mut WorkflowMachines,
+    ) -> Result<Vec<MachineCommand>> {
+        self.apply_history_events(wf_machines)?;
+        Ok(wf_machines.get_commands())
+    }
+
+    /// Apply events from history to workflow machines. Remember that only the events that exist
+    /// in this instance will be applied, which is determined by `to_wf_task_num` passed into the
+    /// constructor.
+    pub(crate) fn apply_history_events(&self, wf_machines: &mut WorkflowMachines) -> Result<()> {
+        let (_, events) = self
+            .events
+            .split_at(wf_machines.get_last_started_event_id() as usize);
+        let mut history = events.iter().peekable();
+
+        wf_machines.set_started_ids(
+            self.previous_started_event_id,
+            self.workflow_task_started_event_id,
+        );
+        let mut started_id = self.previous_started_event_id;
+
+        while let Some(event) = history.next() {
+            let next_event = history.peek();
+
+            if event.event_type == EventType::WorkflowTaskStarted as i32 {
+                let next_is_completed = next_event.map_or(false, |ne| {
+                    ne.event_type == EventType::WorkflowTaskCompleted as i32
+                });
+                let next_is_failed_or_timeout = next_event.map_or(false, |ne| {
+                    ne.event_type == EventType::WorkflowTaskFailed as i32
+                        || ne.event_type == EventType::WorkflowTaskTimedOut as i32
+                });
+
+                if next_event.is_none() || next_is_completed {
+                    started_id = event.event_id;
+                    if next_event.is_none() {
+                        wf_machines.handle_event(event, false)?;
+                        return Ok(());
+                    }
+                } else if next_event.is_some() && !next_is_failed_or_timeout {
+                    return Err(HistoryInfoError::FailedOrTimeout(event.clone()));
+                }
+            }
+
+            wf_machines.handle_event(event, next_event.is_some())?;
+
+            if next_event.is_none() {
+                if event.is_final_wf_execution_event() {
+                    return Ok(());
+                }
+                if started_id != event.event_id {
+                    return Err(HistoryInfoError::UnexpectedEventId {
+                        previous_started_event_id: started_id,
+                        workflow_task_started_event_id: event.event_id,
+                    });
+                }
+                unreachable!()
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Counts the number of whole workflow tasks in this history info. Looks for WFTaskStarted
+    /// followed by WFTaskCompleted, adding one to the count for every match. It will additionally
+    /// count a WFTaskStarted at the end of the event list.
+    ///
+    /// If `up_to_event_id` is provided, the count will be returned as soon as processing advances
+    /// past that id.
+    pub(crate) fn get_workflow_task_count(&self, up_to_event_id: Option<i64>) -> Result<usize> {
+        let mut last_wf_started_id = 0;
+        let mut count = 0;
+        let mut history = self.events.iter().peekable();
+        while let Some(event) = history.next() {
+            let next_event = history.peek();
+            if let Some(upto) = up_to_event_id {
+                if event.event_id > upto {
+                    return Ok(count);
+                }
+            }
+            let next_is_completed = next_event.map_or(false, |ne| {
+                ne.event_type == EventType::WorkflowTaskCompleted as i32
+            });
+            if event.event_type == EventType::WorkflowTaskStarted as i32
+                && (next_event.is_none() || next_is_completed)
+            {
+                last_wf_started_id = event.event_id;
+                count += 1;
+            }
+
+            if next_event.is_none() {
+                if last_wf_started_id != event.event_id {
+                    return Err(HistoryInfoError::HistoryEndsUnexpectedly);
+                }
+                return Ok(count);
+            }
+        }
+        Ok(count)
     }
 }
 

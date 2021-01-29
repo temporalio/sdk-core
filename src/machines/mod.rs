@@ -62,7 +62,7 @@ use std::{
 use tracing::Level;
 
 //  TODO: May need to be our SDKWFCommand type
-type MachineCommand = Command;
+pub(crate) type MachineCommand = Command;
 
 /// Implementors of this trait represent something that can (eventually) call into a workflow to
 /// drive it, start it, signal it, cancel it, etc.
@@ -101,6 +101,8 @@ pub(crate) struct AddCommand {
 /// EX: Create a new timer, complete the workflow, etc.
 #[derive(Debug, derive_more::From)]
 pub enum WFCommand {
+    /// Returned when we need to wait for the lang sdk to send us something
+    NoCommandsFromLang,
     AddTimer(StartTimerCommandAttributes, Arc<AtomicBool>),
     CompleteWorkflow(CompleteWorkflowExecutionCommandAttributes),
 }

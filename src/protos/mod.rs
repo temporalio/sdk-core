@@ -66,6 +66,10 @@ pub mod temporal {
                                 command_type: CommandType::StartTimer as i32,
                                 attributes: Some(a),
                             },
+                            a @ Attributes::CompleteWorkflowExecutionCommandAttributes(_) => Self {
+                                command_type: CommandType::CompleteWorkflowExecution as i32,
+                                attributes: Some(a),
+                            },
                             _ => unimplemented!(),
                         }
                     }

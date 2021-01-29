@@ -5,8 +5,11 @@ mod machines;
 mod pollers;
 pub mod protos;
 mod protosext;
-pub use protosext::{HistoryInfo, HistoryInfoError};
 
+pub use protosext::HistoryInfo;
+
+use crate::protos::coresdk::WorkflowTaskSuccess;
+use crate::protosext::HistoryInfoError;
 use crate::{
     machines::{DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines},
     protos::{
@@ -53,7 +56,7 @@ pub fn init(_opts: CoreInitOptions) -> Result<Box<dyn Core>> {
 
 pub struct CoreSDK<WP> {
     work_provider: WP,
-    /// Key is workflow id
+    /// Key is workflow id TODO: Make it run ID
     workflow_machines: DashMap<String, (WorkflowMachines, Sender<Vec<WFCommand>>)>,
 }
 
@@ -61,11 +64,31 @@ impl<WP> CoreSDK<WP>
 where
     WP: WorkProvider,
 {
-    fn new_workflow(&self, id: String) {
+    fn instantiate_workflow_if_needed(&self, id: String) {
+        if self.workflow_machines.contains_key(&id) {
+            return;
+        }
         let (wfb, cmd_sink) = WorkflowBridge::new();
         let state_machines = WorkflowMachines::new(Box::new(wfb));
         self.workflow_machines
             .insert(id, (state_machines, cmd_sink));
+    }
+
+    /// Feed commands from the lang sdk into the appropriate workflow bridge
+    fn push_lang_commands(&self, success: WorkflowTaskSuccess) -> Result<(), CoreError> {
+        // Convert to wf commands
+        let cmds = success
+            .commands
+            .into_iter()
+            .map(|c| c.try_into().map_err(Into::into))
+            .collect::<Result<Vec<_>>>()?;
+        // TODO: Need to use run id here
+        self.workflow_machines
+            .get_mut("fake_wf_id")
+            .unwrap()
+            .1
+            .send(cmds)?;
+        Ok(())
     }
 }
 
@@ -84,15 +107,30 @@ where
     fn poll_task(&self) -> Result<Task, CoreError> {
         // This will block forever in the event there is no work from the server
         let work = self.work_provider.get_work("TODO: Real task queue")?;
-        match &work.workflow_execution {
+        let workflow_id = match &work.workflow_execution {
             Some(WorkflowExecution { workflow_id, .. }) => {
-                // TODO: Only do if it doesn't exist yet
-                self.new_workflow(workflow_id.to_string());
+                // TODO: Use run id
+                self.instantiate_workflow_if_needed(workflow_id.to_string());
+                workflow_id
             }
             // TODO: Appropriate error
             None => return Err(CoreError::Unknown),
-        }
+        };
+        let history = if let Some(hist) = work.history {
+            hist
+        } else {
+            return Err(CoreError::BadDataFromWorkProvider(work));
+        };
         // TODO: Apply history to machines, get commands out, convert them to task
+        // TODO: How to get appropriate wf task number?
+        let hist_info = HistoryInfo::new_from_history(&history, None)?;
+        if let Some(mut machines) = self.workflow_machines.get_mut(workflow_id) {
+            let cmds = hist_info.apply_history_take_cmds(&mut machines.value_mut().0)?;
+            dbg!(cmds);
+        } else {
+            //err
+        }
+
         Ok(Task {
             task_token: work.task_token,
             variant: None,
@@ -105,20 +143,7 @@ where
                 status: Some(wfstatus),
             })) => {
                 match wfstatus {
-                    Status::Successful(success) => {
-                        // Convert to wf commands
-                        let cmds = success
-                            .commands
-                            .into_iter()
-                            .map(|c| c.try_into().map_err(Into::into))
-                            .collect::<Result<Vec<_>>>()?;
-                        // TODO: Need to use task token or wfid etc
-                        self.workflow_machines
-                            .get_mut("fake_wf_id")
-                            .unwrap()
-                            .1
-                            .send(cmds)?;
-                    }
+                    Status::Successful(success) => self.push_lang_commands(success)?,
                     Status::Failed(_) => {}
                 }
                 Ok(())
@@ -160,12 +185,18 @@ impl DrivenWorkflow for WorkflowBridge {
         &mut self,
         attribs: WorkflowExecutionStartedEventAttributes,
     ) -> Result<Vec<WFCommand>, Error> {
+        dbg!("wb start");
         self.started_attrs = Some(attribs);
+        // TODO: Need to actually tell the workflow to... start, that's what outgoing was for lol
         Ok(vec![])
     }
 
     fn iterate_wf(&mut self) -> Result<Vec<WFCommand>, Error> {
-        Ok(self.incoming_commands.try_recv().unwrap_or_default())
+        dbg!("wb iter");
+        Ok(self
+            .incoming_commands
+            .try_recv()
+            .unwrap_or(vec![WFCommand::NoCommandsFromLang]))
     }
 
     fn signal(&mut self, _attribs: WorkflowExecutionSignaledEventAttributes) -> Result<(), Error> {
@@ -184,17 +215,22 @@ pub enum CoreError {
     Unknown,
     #[error("No tasks to perform for now")]
     NoWork,
+    #[error("Poll response from server was malformed: {0:?}")]
+    BadDataFromWorkProvider(PollWorkflowTaskQueueResponse),
     #[error("Lang SDK sent us a malformed completion: {0:?}")]
     MalformedCompletion(CompleteTaskReq),
     #[error("Error buffering commands")]
     CantSendCommands(#[from] SendError<Vec<WFCommand>>),
     #[error("Couldn't interpret command from <lang>")]
     UninterprableCommand(#[from] InconvertibleCommandError),
+    #[error("Underlying error in history processing")]
+    UnderlyingHistError(#[from] HistoryInfoError),
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::protos::temporal::api::command::v1::CompleteWorkflowExecutionCommandAttributes;
     use crate::{
         machines::test_help::TestHistoryBuilder,
         protos::temporal::api::{
@@ -296,6 +332,7 @@ mod test {
 
         let res = dbg!(core.poll_task().unwrap());
         assert!(core.workflow_machines.get(wfid).is_some());
+
         let task_tok = res.task_token;
         core.complete_task(CompleteTaskReq::ok_from_api_attrs(
             StartTimerCommandAttributes {
@@ -306,7 +343,15 @@ mod test {
             task_tok,
         ))
         .unwrap();
+        dbg!("sent completion w/ start timer");
 
-        // SDK commands should be StartTimer followed by Complete WE
+        let res = dbg!(core.poll_task().unwrap());
+        let task_tok = res.task_token;
+        core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+            CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
+            task_tok,
+        ))
+        .unwrap();
+        dbg!("sent workflow done");
     }
 }
