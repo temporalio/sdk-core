@@ -1,6 +1,5 @@
 use crate::protos::temporal::api::enums::v1::EventType;
 use crate::protos::temporal::api::history::v1::{History, HistoryEvent};
-use crate::protosext::history_info::HistoryInfoError::UnexpectedEventId;
 
 #[derive(Clone, Debug, derive_more::Constructor, PartialEq)]
 pub struct HistoryInfo {
@@ -92,11 +91,13 @@ impl HistoryInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::machines::test_help::TestHistoryBuilder;
-    use crate::protos::temporal::api::history::v1::{history_event, TimerFiredEventAttributes};
+    use crate::{
+        machines::test_help::TestHistoryBuilder,
+        protos::temporal::api::history::v1::{history_event, TimerFiredEventAttributes},
+    };
 
     #[test]
-    fn blah() {
+    fn history_info_constructs_properly() {
         /*
             1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
             2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
@@ -121,7 +122,9 @@ mod tests {
             }),
         );
         t.add_workflow_task_scheduled_and_started();
-        let history_info_result = t.get_history_info(1);
-        assert!(history_info_result.is_ok());
+        let history_info = t.get_history_info(1).unwrap();
+        assert_eq!(3, history_info.events.len());
+        let history_info = t.get_history_info(2).unwrap();
+        assert_eq!(8, history_info.events.len());
     }
 }
