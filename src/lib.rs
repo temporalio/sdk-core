@@ -4,6 +4,8 @@ extern crate tracing;
 mod machines;
 mod pollers;
 pub mod protos;
+mod protosext;
+pub use protosext::HistoryInfo;
 
 use crate::{
     machines::{DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines},
