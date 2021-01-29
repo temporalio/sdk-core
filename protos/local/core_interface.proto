@@ -36,21 +36,25 @@ message Task {
 
 message StartWorkflowTaskAttributes {
     string namespace = 1;
-    string name = 2;
-    temporal.api.common.v1.Payloads arguments = 3;
+    string workflow_id = 3;
+    string name = 4;
+    temporal.api.common.v1.Payloads arguments = 5;
+    // will be others - workflow exe started attrs, etc
 }
 
+// maybe we just go back to timer fired to keep consistent
 message UnblockTimerTaskAttributes {
     string timer_id = 1;
 }
 
+// TODO: Rename - Activation, iteration, wakeup?
 message WorkflowTask {
     google.protobuf.Timestamp timestamp = 1 [(gogoproto.stdtime) = true];
-    string workflow_id = 2;
-    string run_id = 3;
+    string run_id = 2;
     oneof attributes {
-        StartWorkflowTaskAttributes start_workflow = 4;
-        UnblockTimerTaskAttributes unblock_timer = 5;
+        // could literally be attributes from events -- maybe we don't need our own types
+        StartWorkflowTaskAttributes start_workflow = 3;
+        UnblockTimerTaskAttributes unblock_timer = 4;
     }
 }
 
