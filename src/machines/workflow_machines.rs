@@ -126,7 +126,6 @@ impl WorkflowMachines {
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
-        dbg!(&event);
         if event.is_command_event() {
             self.handle_command_event(event)?;
             return Ok(());

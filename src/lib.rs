@@ -105,6 +105,7 @@ impl<WP> Core for CoreSDK<WP>
 where
     WP: WorkProvider,
 {
+    #[instrument(skip(self))]
     fn poll_task(&self) -> Result<Task, CoreError> {
         // This will block forever in the event there is no work from the server
         let work = self.work_provider.get_work("TODO: Real task queue")?;
@@ -126,7 +127,6 @@ where
         // Will need to change a bit once we impl caching.
         let hist_info = HistoryInfo::new_from_history(&history, None)?;
         let activation = if let Some(mut machines) = self.workflow_machines.get_mut(workflow_id) {
-            // TODO -- Here, we want to get workflow activations back out
             hist_info.apply_history_events(&mut machines.value_mut().0)?;
             machines.0.get_wf_activation()
         } else {
@@ -140,6 +140,7 @@ where
         })
     }
 
+    #[instrument(skip(self))]
     fn complete_task(&self, req: CompleteTaskReq) -> Result<(), CoreError> {
         match req.completion {
             Some(Completion::Workflow(WfActivationCompletion {
@@ -185,18 +186,18 @@ impl WorkflowBridge {
 }
 
 impl DrivenWorkflow for WorkflowBridge {
+    #[instrument]
     fn start(
         &mut self,
         attribs: WorkflowExecutionStartedEventAttributes,
     ) -> Result<Vec<WFCommand>, Error> {
-        dbg!("wb start");
         self.started_attrs = Some(attribs);
         // TODO: Need to actually tell the workflow to... start, that's what outgoing was for lol
         Ok(vec![])
     }
 
+    #[instrument]
     fn iterate_wf(&mut self) -> Result<Vec<WFCommand>, Error> {
-        dbg!("wb iter");
         Ok(self
             .incoming_commands
             .try_recv()
@@ -234,20 +235,39 @@ pub enum CoreError {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::protos::coresdk::{task, wf_activation, WfActivation};
-    use crate::protos::temporal::api::command::v1::CompleteWorkflowExecutionCommandAttributes;
     use crate::{
         machines::test_help::TestHistoryBuilder,
-        protos::temporal::api::{
-            command::v1::StartTimerCommandAttributes,
-            enums::v1::EventType,
-            history::v1::{history_event, History, TimerFiredEventAttributes},
+        protos::{
+            coresdk::{task, wf_activation, WfActivation},
+            temporal::api::{
+                command::v1::{
+                    CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
+                },
+                enums::v1::EventType,
+                history::v1::{history_event, History, TimerFiredEventAttributes},
+            },
         },
     };
     use std::collections::VecDeque;
+    use tracing::Level;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
 
     #[test]
     fn workflow_bridge() {
+        let (tracer, _uninstall) = opentelemetry_jaeger::new_pipeline()
+            .with_service_name("report_example")
+            .install()
+            .unwrap();
+        let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        tracing_subscriber::registry()
+            .with(opentelemetry)
+            .try_init()
+            .unwrap();
+
+        let s = span!(Level::DEBUG, "Test start");
+        let _enter = s.enter();
+
         let wfid = "fake_wf_id";
         let timer_id = "fake_timer";
 

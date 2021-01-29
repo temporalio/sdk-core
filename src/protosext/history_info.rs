@@ -1,4 +1,4 @@
-use crate::machines::{MachineCommand, WFMachinesError, WorkflowMachines};
+use crate::machines::{WFMachinesError, WorkflowMachines};
 use crate::protos::temporal::api::enums::v1::EventType;
 use crate::protos::temporal::api::history::v1::{History, HistoryEvent};
 
@@ -95,16 +95,6 @@ impl HistoryInfo {
         Self::new_from_events(&h.events, to_wf_task_num)
     }
 
-    /// Handle workflow task(s) using the provided [WorkflowMachines]. Will process as many workflow
-    /// tasks as you provided in the `to_wf_task_num` parameter to the constructor.
-    pub(crate) fn apply_history_take_cmds(
-        &self,
-        wf_machines: &mut WorkflowMachines,
-    ) -> Result<Vec<MachineCommand>> {
-        self.apply_history_events(wf_machines)?;
-        Ok(wf_machines.get_commands())
-    }
-
     /// Apply events from history to workflow machines. Remember that only the events that exist
     /// in this instance will be applied, which is determined by `to_wf_task_num` passed into the
     /// constructor.
@@ -160,43 +150,6 @@ impl HistoryInfo {
         }
 
         Ok(())
-    }
-
-    /// Counts the number of whole workflow tasks in this history info. Looks for WFTaskStarted
-    /// followed by WFTaskCompleted, adding one to the count for every match. It will additionally
-    /// count a WFTaskStarted at the end of the event list.
-    ///
-    /// If `up_to_event_id` is provided, the count will be returned as soon as processing advances
-    /// past that id.
-    pub(crate) fn get_workflow_task_count(&self, up_to_event_id: Option<i64>) -> Result<usize> {
-        let mut last_wf_started_id = 0;
-        let mut count = 0;
-        let mut history = self.events.iter().peekable();
-        while let Some(event) = history.next() {
-            let next_event = history.peek();
-            if let Some(upto) = up_to_event_id {
-                if event.event_id > upto {
-                    return Ok(count);
-                }
-            }
-            let next_is_completed = next_event.map_or(false, |ne| {
-                ne.event_type == EventType::WorkflowTaskCompleted as i32
-            });
-            if event.event_type == EventType::WorkflowTaskStarted as i32
-                && (next_event.is_none() || next_is_completed)
-            {
-                last_wf_started_id = event.event_id;
-                count += 1;
-            }
-
-            if next_event.is_none() {
-                if last_wf_started_id != event.event_id {
-                    return Err(HistoryInfoError::HistoryEndsUnexpectedly);
-                }
-                return Ok(count);
-            }
-        }
-        Ok(count)
     }
 }
 
