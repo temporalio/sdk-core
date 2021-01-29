@@ -1,5 +1,7 @@
 #[macro_use]
 extern crate tracing;
+#[macro_use]
+extern crate assert_matches;
 
 mod machines;
 mod pollers;
@@ -8,14 +10,13 @@ mod protosext;
 
 pub use protosext::HistoryInfo;
 
-use crate::protos::coresdk::WorkflowTaskSuccess;
 use crate::protosext::HistoryInfoError;
 use crate::{
     machines::{DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines},
     protos::{
         coresdk::{
-            complete_task_req::Completion, workflow_task_completion::Status, CompleteTaskReq, Task,
-            WorkflowTaskCompletion,
+            complete_task_req::Completion, wf_activation_completion::Status, CompleteTaskReq, Task,
+            WfActivationCompletion, WfActivationSuccess,
         },
         temporal::api::{
             common::v1::WorkflowExecution,
@@ -75,7 +76,7 @@ where
     }
 
     /// Feed commands from the lang sdk into the appropriate workflow bridge
-    fn push_lang_commands(&self, success: WorkflowTaskSuccess) -> Result<(), CoreError> {
+    fn push_lang_commands(&self, success: WfActivationSuccess) -> Result<(), CoreError> {
         // Convert to wf commands
         let cmds = success
             .commands
@@ -121,25 +122,27 @@ where
         } else {
             return Err(CoreError::BadDataFromWorkProvider(work));
         };
-        // TODO: Apply history to machines, get commands out, convert them to task
-        // TODO: How to get appropriate wf task number?
+        // We pass none since we want to apply all the history we just got.
+        // Will need to change a bit once we impl caching.
         let hist_info = HistoryInfo::new_from_history(&history, None)?;
-        if let Some(mut machines) = self.workflow_machines.get_mut(workflow_id) {
-            let cmds = hist_info.apply_history_take_cmds(&mut machines.value_mut().0)?;
-            dbg!(cmds);
+        let activation = if let Some(mut machines) = self.workflow_machines.get_mut(workflow_id) {
+            // TODO -- Here, we want to get workflow activations back out
+            hist_info.apply_history_events(&mut machines.value_mut().0)?;
+            machines.0.get_wf_activation()
         } else {
             //err
-        }
+            unimplemented!()
+        };
 
         Ok(Task {
             task_token: work.task_token,
-            variant: None,
+            variant: activation.map(Into::into),
         })
     }
 
     fn complete_task(&self, req: CompleteTaskReq) -> Result<(), CoreError> {
         match req.completion {
-            Some(Completion::Workflow(WorkflowTaskCompletion {
+            Some(Completion::Workflow(WfActivationCompletion {
                 status: Some(wfstatus),
             })) => {
                 match wfstatus {
@@ -153,6 +156,7 @@ where
             }
             _ => Err(CoreError::MalformedCompletion(req)),
         }
+        // TODO: Get fsm commands and send them to server
     }
 }
 
@@ -196,7 +200,7 @@ impl DrivenWorkflow for WorkflowBridge {
         Ok(self
             .incoming_commands
             .try_recv()
-            .unwrap_or(vec![WFCommand::NoCommandsFromLang]))
+            .unwrap_or_else(|_| vec![WFCommand::NoCommandsFromLang]))
     }
 
     fn signal(&mut self, _attribs: WorkflowExecutionSignaledEventAttributes) -> Result<(), Error> {
@@ -230,6 +234,7 @@ pub enum CoreError {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::protos::coresdk::{task, wf_activation, WfActivation};
     use crate::protos::temporal::api::command::v1::CompleteWorkflowExecutionCommandAttributes;
     use crate::{
         machines::test_help::TestHistoryBuilder,
@@ -304,33 +309,10 @@ mod test {
             work_provider: mock_provider,
         };
 
-        // TODO: These are what poll_task should end up returning
-        //             SdkwfTask {
-        //                 timestamp: None,
-        //                 workflow_id: wfid.to_string(),
-        //                 task: Some(
-        //                     StartWorkflowTaskAttributes {
-        //                         namespace: "namespace".to_string(),
-        //                         name: "wf name?".to_string(),
-        //                         arguments: None,
-        //                     }
-        //                         .into(),
-        //                 ),
-        //             }
-        //                 .into(),
-        //             SdkwfTask {
-        //                 timestamp: None,
-        //                 workflow_id: wfid.to_string(),
-        //                 task: Some(
-        //                     UnblockTimerTaskAttibutes {
-        //                         timer_id: timer_id.to_string(),
-        //                     }
-        //                         .into(),
-        //                 ),
-        //             }
-        //                 .into(),
-
         let res = dbg!(core.poll_task().unwrap());
+        // TODO: uggo
+        assert_matches!(res, Task {variant: Some(task::Variant::Workflow(WfActivation {
+                        attributes: Some(wf_activation::Attributes::StartWorkflow(_)), ..})), ..});
         assert!(core.workflow_machines.get(wfid).is_some());
 
         let task_tok = res.task_token;
@@ -346,6 +328,9 @@ mod test {
         dbg!("sent completion w/ start timer");
 
         let res = dbg!(core.poll_task().unwrap());
+        // TODO: uggo
+        assert_matches!(res, Task {variant: Some(task::Variant::Workflow(WfActivation {
+                        attributes: Some(wf_activation::Attributes::UnblockTimer(_)), ..})), ..});
         let task_tok = res.task_token;
         core.complete_task(CompleteTaskReq::ok_from_api_attrs(
             CompleteWorkflowExecutionCommandAttributes { result: None }.into(),

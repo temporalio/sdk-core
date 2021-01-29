@@ -29,7 +29,7 @@ message PollTaskReq {
 message Task {
     bytes task_token = 1;
     oneof variant {
-        WorkflowTask workflow = 2;
+        WFActivation workflow = 2;
         ActivityTask activity = 3;
     }
 }
@@ -47,8 +47,7 @@ message UnblockTimerTaskAttributes {
     string timer_id = 1;
 }
 
-// TODO: Rename - Activation, iteration, wakeup?
-message WorkflowTask {
+message WFActivation {
     google.protobuf.Timestamp timestamp = 1 [(gogoproto.stdtime) = true];
     string run_id = 2;
     oneof attributes {
@@ -67,15 +66,15 @@ message ActivityTask {
 message CompleteTaskReq {
     bytes task_token = 1;
     oneof completion {
-        WorkflowTaskCompletion workflow = 2;
+        WFActivationCompletion workflow = 2;
         ActivityTaskCompletion activity = 3;
     }
 }
 
-message WorkflowTaskCompletion {
+message WFActivationCompletion {
     oneof status {
-        WorkflowTaskSuccess successful = 1;
-        WorkflowTaskFailure failed = 2;
+        WFActivationSuccess successful = 1;
+        WFActivationFailure failed = 2;
     }
 }
 
@@ -97,12 +96,12 @@ message Command {
     }
 }
 
-message WorkflowTaskSuccess {
+message WFActivationSuccess {
     repeated Command commands = 1;
     // Other bits from RespondWorkflowTaskCompletedRequest as needed
 }
 
-message WorkflowTaskFailure {
+message WFActivationFailure {
     temporal.api.enums.v1.WorkflowTaskFailedCause cause = 1;
     temporal.api.failure.v1.Failure failure = 2;
     // Other bits from RespondWorkflowTaskFailedRequest as needed

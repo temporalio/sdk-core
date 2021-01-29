@@ -9,7 +9,7 @@ pub mod coresdk {
     pub type HistoryEventId = i64;
 
     impl Task {
-        pub fn from_wf_task(task_token: Vec<u8>, t: WorkflowTask) -> Self {
+        pub fn from_wf_task(task_token: Vec<u8>, t: WfActivation) -> Self {
             Task {
                 task_token,
                 variant: Some(t.into()),
@@ -17,9 +17,9 @@ pub mod coresdk {
         }
     }
 
-    impl From<Vec<ApiCommand>> for WorkflowTaskSuccess {
+    impl From<Vec<ApiCommand>> for WfActivationSuccess {
         fn from(v: Vec<ApiCommand>) -> Self {
-            WorkflowTaskSuccess {
+            WfActivationSuccess {
                 commands: v
                     .into_iter()
                     .map(|cmd| Command {
@@ -37,11 +37,11 @@ pub mod coresdk {
             task_token: Vec<u8>,
         ) -> Self {
             let cmd: ApiCommand = cmd.into();
-            let success: WorkflowTaskSuccess = vec![cmd].into();
+            let success: WfActivationSuccess = vec![cmd].into();
             CompleteTaskReq {
                 task_token,
-                completion: Some(Completion::Workflow(WorkflowTaskCompletion {
-                    status: Some(workflow_task_completion::Status::Successful(success)),
+                completion: Some(Completion::Workflow(WfActivationCompletion {
+                    status: Some(wf_activation_completion::Status::Successful(success)),
                 })),
             }
         }

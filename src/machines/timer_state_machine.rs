@@ -1,5 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
+use crate::protos::coresdk::{wf_activation, UnblockTimerTaskAttributes, WfActivation};
 use crate::{
     machines::{
         workflow_machines::WFMachinesError, workflow_machines::WorkflowMachines, AddCommand,
@@ -228,12 +229,19 @@ impl WFMachinesAdapter for TimerMachine {
             }
             // Fire the completion
             TimerMachineCommand::Complete(_event) => {
+                // TODO: Remove atomic bool nonsense -- kept for now to keep test here passing
                 if let Some(a) = wf_machines
                     .timer_notifiers
                     .remove(&self.shared_state.timer_attributes.timer_id)
                 {
                     a.store(true, Ordering::SeqCst)
                 };
+                wf_machines.outgoing_wf_actications.push_back(
+                    UnblockTimerTaskAttributes {
+                        timer_id: self.shared_state.timer_attributes.timer_id.clone(),
+                    }
+                    .into(),
+                );
             }
         }
         Ok(())
