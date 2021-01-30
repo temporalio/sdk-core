@@ -1,5 +1,6 @@
 #[macro_use]
 extern crate tracing;
+#[cfg(test)]
 #[macro_use]
 extern crate assert_matches;
 
@@ -10,7 +11,6 @@ mod protosext;
 
 pub use protosext::HistoryInfo;
 
-use crate::protosext::HistoryInfoError;
 use crate::{
     machines::{DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines},
     protos::{
@@ -27,6 +27,7 @@ use crate::{
             workflowservice::v1::PollWorkflowTaskQueueResponse,
         },
     },
+    protosext::HistoryInfoError,
 };
 use anyhow::Error;
 use dashmap::DashMap;
@@ -56,49 +57,12 @@ pub fn init(_opts: CoreInitOptions) -> Result<Box<dyn Core>> {
 }
 
 pub struct CoreSDK<WP> {
+    /// Provides work in the form of responses the server would send from polling task Qs
     work_provider: WP,
-    /// Key is workflow id TODO: Make it run ID
+    /// Key is run id
     workflow_machines: DashMap<String, (WorkflowMachines, Sender<Vec<WFCommand>>)>,
-}
-
-impl<WP> CoreSDK<WP>
-where
-    WP: WorkProvider,
-{
-    fn instantiate_workflow_if_needed(&self, id: String) {
-        if self.workflow_machines.contains_key(&id) {
-            return;
-        }
-        let (wfb, cmd_sink) = WorkflowBridge::new();
-        let state_machines = WorkflowMachines::new(Box::new(wfb));
-        self.workflow_machines
-            .insert(id, (state_machines, cmd_sink));
-    }
-
-    /// Feed commands from the lang sdk into the appropriate workflow bridge
-    fn push_lang_commands(&self, success: WfActivationSuccess) -> Result<(), CoreError> {
-        // Convert to wf commands
-        let cmds = success
-            .commands
-            .into_iter()
-            .map(|c| c.try_into().map_err(Into::into))
-            .collect::<Result<Vec<_>>>()?;
-        // TODO: Need to use run id here
-        self.workflow_machines
-            .get_mut("fake_wf_id")
-            .unwrap()
-            .1
-            .send(cmds)?;
-        Ok(())
-    }
-}
-
-/// Implementors can provide new work to the SDK. The connection to the server is the real
-/// implementor.
-#[cfg_attr(test, mockall::automock)]
-pub trait WorkProvider {
-    /// Fetch new work. Should block indefinitely if there is no work.
-    fn get_work(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
+    /// Maps task tokens to workflow run ids
+    workflow_task_tokens: DashMap<Vec<u8>, String>,
 }
 
 impl<WP> Core for CoreSDK<WP>
@@ -109,11 +73,10 @@ where
     fn poll_task(&self) -> Result<Task, CoreError> {
         // This will block forever in the event there is no work from the server
         let work = self.work_provider.get_work("TODO: Real task queue")?;
-        let workflow_id = match &work.workflow_execution {
-            Some(WorkflowExecution { workflow_id, .. }) => {
-                // TODO: Use run id
-                self.instantiate_workflow_if_needed(workflow_id.to_string());
-                workflow_id
+        let run_id = match &work.workflow_execution {
+            Some(WorkflowExecution { run_id, .. }) => {
+                self.instantiate_workflow_if_needed(run_id.to_string());
+                run_id
             }
             // TODO: Appropriate error
             None => return Err(CoreError::Unknown),
@@ -123,10 +86,15 @@ where
         } else {
             return Err(CoreError::BadDataFromWorkProvider(work));
         };
+
+        // Correlate task token w/ run ID
+        self.workflow_task_tokens
+            .insert(work.task_token.clone(), run_id.clone());
+
         // We pass none since we want to apply all the history we just got.
         // Will need to change a bit once we impl caching.
         let hist_info = HistoryInfo::new_from_history(&history, None)?;
-        let activation = if let Some(mut machines) = self.workflow_machines.get_mut(workflow_id) {
+        let activation = if let Some(mut machines) = self.workflow_machines.get_mut(run_id) {
             hist_info.apply_history_events(&mut machines.value_mut().0)?;
             machines.0.get_wf_activation()
         } else {
@@ -142,23 +110,78 @@ where
 
     #[instrument(skip(self))]
     fn complete_task(&self, req: CompleteTaskReq) -> Result<(), CoreError> {
-        match req.completion {
-            Some(Completion::Workflow(WfActivationCompletion {
-                status: Some(wfstatus),
-            })) => {
+        match req {
+            CompleteTaskReq {
+                task_token,
+                completion:
+                    Some(Completion::Workflow(WfActivationCompletion {
+                        status: Some(wfstatus),
+                    })),
+            } => {
+                let wf_run_id = self
+                    .workflow_task_tokens
+                    .get(&task_token)
+                    .map(|x| x.value().clone())
+                    .ok_or(CoreError::NothingFoundForTaskToken(task_token))?;
                 match wfstatus {
-                    Status::Successful(success) => self.push_lang_commands(success)?,
+                    Status::Successful(success) => self.push_lang_commands(&wf_run_id, success)?,
                     Status::Failed(_) => {}
                 }
                 Ok(())
             }
-            Some(Completion::Activity(_)) => {
+            CompleteTaskReq {
+                completion: Some(Completion::Activity(_)),
+                ..
+            } => {
                 unimplemented!()
             }
             _ => Err(CoreError::MalformedCompletion(req)),
         }
         // TODO: Get fsm commands and send them to server
     }
+}
+
+impl<WP> CoreSDK<WP>
+where
+    WP: WorkProvider,
+{
+    fn instantiate_workflow_if_needed(&self, run_id: String) {
+        if self.workflow_machines.contains_key(&run_id) {
+            return;
+        }
+        let (wfb, cmd_sink) = WorkflowBridge::new();
+        let state_machines = WorkflowMachines::new(Box::new(wfb));
+        self.workflow_machines
+            .insert(run_id, (state_machines, cmd_sink));
+    }
+
+    /// Feed commands from the lang sdk into the appropriate workflow bridge
+    fn push_lang_commands(
+        &self,
+        run_id: &str,
+        success: WfActivationSuccess,
+    ) -> Result<(), CoreError> {
+        // Convert to wf commands
+        let cmds = success
+            .commands
+            .into_iter()
+            .map(|c| c.try_into().map_err(Into::into))
+            .collect::<Result<Vec<_>>>()?;
+        self.workflow_machines
+            .get_mut(run_id)
+            .unwrap()
+            .1
+            .send(cmds)?;
+        Ok(())
+    }
+}
+
+/// Implementors can provide new work to the SDK. The connection to the server is the real
+/// implementor.
+#[cfg_attr(test, mockall::automock)]
+pub trait WorkProvider {
+    /// Fetch new work. Should block indefinitely if there is no work.
+    fn get_work(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
 }
 
 /// The [DrivenWorkflow] trait expects to be called to make progress, but the [CoreSDKService]
@@ -230,6 +253,8 @@ pub enum CoreError {
     UninterprableCommand(#[from] InconvertibleCommandError),
     #[error("Underlying error in history processing")]
     UnderlyingHistError(#[from] HistoryInfoError),
+    #[error("Task token had nothing associated with it: {0:?}")]
+    NothingFoundForTaskToken(Vec<u8>),
 }
 
 #[cfg(test)]
@@ -250,25 +275,14 @@ mod test {
     };
     use std::collections::VecDeque;
     use tracing::Level;
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
 
     #[test]
     fn workflow_bridge() {
-        let (tracer, _uninstall) = opentelemetry_jaeger::new_pipeline()
-            .with_service_name("report_example")
-            .install()
-            .unwrap();
-        let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-        tracing_subscriber::registry()
-            .with(opentelemetry)
-            .try_init()
-            .unwrap();
-
         let s = span!(Level::DEBUG, "Test start");
         let _enter = s.enter();
 
         let wfid = "fake_wf_id";
+        let run_id = "fake_run_id";
         let timer_id = "fake_timer";
 
         let mut t = TestHistoryBuilder::default();
@@ -299,7 +313,7 @@ mod test {
         let events_first_batch = t.get_history_info(1).unwrap().events;
         let wf = Some(WorkflowExecution {
             workflow_id: wfid.to_string(),
-            run_id: "".to_string(),
+            run_id: run_id.to_string(),
         });
         let first_response = PollWorkflowTaskQueueResponse {
             history: Some(History {
@@ -325,15 +339,24 @@ mod test {
             .returning(move |_| Ok(tasks.pop_front().unwrap()));
 
         let core = CoreSDK {
-            workflow_machines: DashMap::new(),
             work_provider: mock_provider,
+            workflow_machines: DashMap::new(),
+            workflow_task_tokens: DashMap::new(),
         };
 
         let res = dbg!(core.poll_task().unwrap());
         // TODO: uggo
-        assert_matches!(res, Task {variant: Some(task::Variant::Workflow(WfActivation {
-                        attributes: Some(wf_activation::Attributes::StartWorkflow(_)), ..})), ..});
-        assert!(core.workflow_machines.get(wfid).is_some());
+        assert_matches!(
+            res,
+            Task {
+                variant: Some(task::Variant::Workflow(WfActivation {
+                    attributes: Some(wf_activation::Attributes::StartWorkflow(_)),
+                    ..
+                })),
+                ..
+            }
+        );
+        assert!(core.workflow_machines.get(run_id).is_some());
 
         let task_tok = res.task_token;
         core.complete_task(CompleteTaskReq::ok_from_api_attrs(
@@ -349,8 +372,16 @@ mod test {
 
         let res = dbg!(core.poll_task().unwrap());
         // TODO: uggo
-        assert_matches!(res, Task {variant: Some(task::Variant::Workflow(WfActivation {
-                        attributes: Some(wf_activation::Attributes::UnblockTimer(_)), ..})), ..});
+        assert_matches!(
+            res,
+            Task {
+                variant: Some(task::Variant::Workflow(WfActivation {
+                    attributes: Some(wf_activation::Attributes::UnblockTimer(_)),
+                    ..
+                })),
+                ..
+            }
+        );
         let task_tok = res.task_token;
         core.complete_task(CompleteTaskReq::ok_from_api_attrs(
             CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
