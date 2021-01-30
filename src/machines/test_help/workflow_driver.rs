@@ -62,19 +62,19 @@ where
 
 impl<F, Fut> DrivenWorkflow for TestWorkflowDriver<F>
 where
-    F: Fn(CommandSender) -> Fut,
+    F: Fn(CommandSender) -> Fut + Send + Sync,
     Fut: Future<Output = ()>,
 {
     #[instrument(skip(self))]
     fn start(
-        &self,
+        &mut self,
         _attribs: WorkflowExecutionStartedEventAttributes,
     ) -> Result<Vec<WFCommand>, anyhow::Error> {
         Ok(vec![])
     }
 
     #[instrument(skip(self))]
-    fn iterate_wf(&self) -> Result<Vec<WFCommand>, anyhow::Error> {
+    fn iterate_wf(&mut self) -> Result<Vec<WFCommand>, anyhow::Error> {
         let (sender, receiver) = CommandSender::new(self.timers.clone());
         // Call the closure that produces the workflow future
         let wf_future = (self.wf_function)(sender);
@@ -106,14 +106,14 @@ where
     }
 
     fn signal(
-        &self,
+        &mut self,
         _attribs: WorkflowExecutionSignaledEventAttributes,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
 
     fn cancel(
-        &self,
+        &mut self,
         _attribs: WorkflowExecutionCanceledEventAttributes,
     ) -> Result<(), anyhow::Error> {
         Ok(())

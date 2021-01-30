@@ -1,5 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
+use crate::protos::coresdk::{wf_activation, UnblockTimerTaskAttributes, WfActivation};
 use crate::{
     machines::{
         workflow_machines::WFMachinesError, workflow_machines::WorkflowMachines, AddCommand,
@@ -228,12 +229,19 @@ impl WFMachinesAdapter for TimerMachine {
             }
             // Fire the completion
             TimerMachineCommand::Complete(_event) => {
+                // TODO: Remove atomic bool nonsense -- kept for now to keep test here passing
                 if let Some(a) = wf_machines
                     .timer_notifiers
                     .remove(&self.shared_state.timer_attributes.timer_id)
                 {
                     a.store(true, Ordering::SeqCst)
                 };
+                wf_machines.outgoing_wf_actications.push_back(
+                    UnblockTimerTaskAttributes {
+                        timer_id: self.shared_state.timer_attributes.timer_id.clone(),
+                    }
+                    .into(),
+                );
             }
         }
         Ok(())
@@ -327,6 +335,7 @@ mod test {
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
             .unwrap();
+        dbg!(&commands);
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
         let commands = t
@@ -341,16 +350,6 @@ mod test {
 
     #[rstest]
     fn test_fire_happy_path_full(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let (tracer, _uninstall) = opentelemetry_jaeger::new_pipeline()
-            .with_service_name("report_example")
-            .install()
-            .unwrap();
-        let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-        tracing_subscriber::registry()
-            .with(opentelemetry)
-            .try_init()
-            .unwrap();
-
         let s = span!(Level::DEBUG, "Test start", t = "full");
         let _enter = s.enter();
 

@@ -14,6 +14,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "temporal.api.command.v1.Command.attributes",
             "#[derive(::derive_more::From)]",
         )
+        .type_attribute("coresdk.Command.variant", "#[derive(::derive_more::From)]")
+        .type_attribute(
+            "coresdk.WFActivation.attributes",
+            "#[derive(::derive_more::From)]",
+        )
+        .type_attribute(
+            "coresdk.WorkflowTask.attributes",
+            "#[derive(::derive_more::From)]",
+        )
+        .type_attribute("coresdk.Task.variant", "#[derive(::derive_more::From)]")
         .compile(
             &[
                 "protos/local/core_interface.proto",

@@ -33,19 +33,21 @@ mod version_state_machine;
 mod workflow_task_state_machine;
 
 #[cfg(test)]
-mod test_help;
+pub(crate) mod test_help;
 
-use crate::{
-    machines::workflow_machines::{WFMachinesError, WorkflowMachines},
-    protos::temporal::api::{
-        command::v1::{
-            Command, CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
-        },
-        enums::v1::CommandType,
-        history::v1::{
-            HistoryEvent, WorkflowExecutionCanceledEventAttributes,
-            WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
-        },
+pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
+
+use crate::protos::coresdk;
+use crate::protos::coresdk::command::Variant;
+use crate::protos::temporal::api::command::v1::command::Attributes;
+use crate::protos::temporal::api::{
+    command::v1::{
+        Command, CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
+    },
+    enums::v1::CommandType,
+    history::v1::{
+        HistoryEvent, WorkflowExecutionCanceledEventAttributes,
+        WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
     },
 };
 use prost::alloc::fmt::Formatter;
@@ -60,30 +62,30 @@ use std::{
 use tracing::Level;
 
 //  TODO: May need to be our SDKWFCommand type
-type MachineCommand = Command;
+pub(crate) type MachineCommand = Command;
 
 /// Implementors of this trait represent something that can (eventually) call into a workflow to
 /// drive it, start it, signal it, cancel it, etc.
-trait DrivenWorkflow {
+pub(crate) trait DrivenWorkflow: Send {
     /// Start the workflow
     fn start(
-        &self,
+        &mut self,
         attribs: WorkflowExecutionStartedEventAttributes,
     ) -> Result<Vec<WFCommand>, anyhow::Error>;
 
     /// Iterate the workflow. The workflow driver should execute workflow code until there is
     /// nothing left to do. EX: Awaiting an activity/timer, workflow completion.
-    fn iterate_wf(&self) -> Result<Vec<WFCommand>, anyhow::Error>;
+    fn iterate_wf(&mut self) -> Result<Vec<WFCommand>, anyhow::Error>;
 
     /// Signal the workflow
     fn signal(
-        &self,
+        &mut self,
         attribs: WorkflowExecutionSignaledEventAttributes,
     ) -> Result<(), anyhow::Error>;
 
     /// Cancel the workflow
     fn cancel(
-        &self,
+        &mut self,
         attribs: WorkflowExecutionCanceledEventAttributes,
     ) -> Result<(), anyhow::Error>;
 }
@@ -99,8 +101,40 @@ pub(crate) struct AddCommand {
 /// EX: Create a new timer, complete the workflow, etc.
 #[derive(Debug, derive_more::From)]
 pub enum WFCommand {
+    /// Returned when we need to wait for the lang sdk to send us something
+    NoCommandsFromLang,
     AddTimer(StartTimerCommandAttributes, Arc<AtomicBool>),
     CompleteWorkflow(CompleteWorkflowExecutionCommandAttributes),
+}
+
+#[derive(thiserror::Error, Debug, derive_more::From)]
+#[error("Couldn't convert <lang> command")]
+pub struct InconvertibleCommandError(pub coresdk::Command);
+
+impl TryFrom<coresdk::Command> for WFCommand {
+    type Error = InconvertibleCommandError;
+
+    fn try_from(c: coresdk::Command) -> Result<Self, Self::Error> {
+        // TODO: Return error without cloning
+        match c.variant.clone() {
+            Some(a) => match a {
+                Variant::Api(Command {
+                    attributes: Some(attrs),
+                    ..
+                }) => match attrs {
+                    Attributes::StartTimerCommandAttributes(s) => {
+                        Ok(WFCommand::AddTimer(s, Arc::new(AtomicBool::new(false))))
+                    }
+                    Attributes::CompleteWorkflowExecutionCommandAttributes(c) => {
+                        Ok(WFCommand::CompleteWorkflow(c))
+                    }
+                    _ => unimplemented!(),
+                },
+                _ => Err(c.into()),
+            },
+            None => Err(c.into()),
+        }
+    }
 }
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
