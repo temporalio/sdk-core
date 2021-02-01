@@ -151,7 +151,6 @@ impl Created {
 pub(super) struct CancelTimerCommandCreated {}
 impl CancelTimerCommandCreated {
     pub(super) fn on_command_cancel_timer(self, dat: SharedState) -> TimerMachineTransition {
-        // TODO: Think we need to produce a completion command here
         TimerMachineTransition::ok(
             vec![dat.into_timer_canceled_event_command()],
             Canceled::default(),
@@ -251,11 +250,10 @@ impl WFMachinesAdapter for TimerMachine {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::machines::test_help::CommandSender;
     use crate::{
         machines::{
             complete_workflow_state_machine::complete_workflow,
-            test_help::{TestHistoryBuilder, TestWFCommand, TestWorkflowDriver},
+            test_help::{CommandSender, TestHistoryBuilder, TestWFCommand, TestWorkflowDriver},
             workflow_machines::WorkflowMachines,
             DrivenWorkflow, WFCommand,
         },
@@ -267,8 +265,7 @@ mod test {
             },
         },
     };
-    use futures::channel::mpsc::Sender;
-    use futures::{FutureExt, SinkExt};
+    use futures::{channel::mpsc::Sender, FutureExt, SinkExt};
     use rstest::{fixture, rstest};
     use std::{error::Error, time::Duration};
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -307,7 +304,8 @@ mod test {
         });
 
         let mut t = TestHistoryBuilder::default();
-        let mut state_machines = WorkflowMachines::new(Box::new(twd));
+        let mut state_machines =
+            WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
 
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_workflow_task();

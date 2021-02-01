@@ -192,7 +192,6 @@ impl StateMachineDefinition {
 }
 
 impl Parse for StateMachineDefinition {
-    // TODO: Pub keyword
     fn parse(input: ParseStream) -> Result<Self> {
         // Parse visibility if present
         let visibility = input.parse()?;
@@ -255,13 +254,8 @@ struct Transition {
 
 impl Parse for Transition {
     fn parse(input: ParseStream) -> Result<Self> {
-        // TODO: Use keywords instead of implicit placement, or other better arg-passing method
-        //  maybe `enum MachineName<Command, Error>`
-        //  and need start state
         // TODO: Currently the handlers are not required to transition to the state they claimed
         //   they would. It would be great to find a way to fix that.
-        // TODO: It is desirable to be able to define immutable state the machine is initialized
-        //   with and is accessible from all states.
         // Parse the initial state name
         let from: Ident = input.parse()?;
         // Parse at least one dash

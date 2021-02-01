@@ -25,6 +25,9 @@ use tracing::Level;
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
+/// Handles all the logic for driving a workflow. It orchestrates many state machines that together
+/// comprise the logic of an executing workflow. One instance will exist per currently executing
+/// (or cached) workflow on the worker.
 pub(crate) struct WorkflowMachines {
     /// The event id of the last wf task started event in the history which is expected to be
     /// [current_started_event_id] except during replay.
@@ -35,8 +38,10 @@ pub(crate) struct WorkflowMachines {
     previous_started_event_id: i64,
     /// True if the workflow is replaying from history
     replaying: bool,
+    /// Workflow identifier
+    workflow_id: String,
     /// Identifies the current run and is used as a seed for faux-randomness.
-    current_run_id: Option<String>,
+    current_run_id: String,
     /// The current workflow time if it has been established
     current_wf_time: Option<SystemTime>,
 
@@ -72,21 +77,25 @@ pub enum WFMachinesError {
     #[error("No command was scheduled for event {0:?}")]
     NoCommandScheduledForEvent(HistoryEvent),
 
-    // TODO: This may not be the best thing to do here, tbd.
     #[error("Underlying error {0:?}")]
     Underlying(#[from] anyhow::Error),
 }
 
 impl WorkflowMachines {
-    pub(crate) fn new(driven_wf: Box<dyn DrivenWorkflow>) -> Self {
+    pub(crate) fn new(
+        workflow_id: String,
+        run_id: String,
+        driven_wf: Box<dyn DrivenWorkflow>,
+    ) -> Self {
         Self {
+            workflow_id,
             drive_me: driven_wf,
             // In an ideal world one could say ..Default::default() here and it'd still work.
             workflow_task_started_event_id: 0,
             current_started_event_id: 0,
             previous_started_event_id: 0,
             replaying: false,
-            current_run_id: None,
+            current_run_id: run_id,
             current_wf_time: None,
             machines_by_id: Default::default(),
             commands: Default::default(),
@@ -273,14 +282,14 @@ impl WorkflowMachines {
                     attrs,
                 )) = &event.attributes
                 {
-                    self.current_run_id = Some(attrs.original_execution_run_id.clone());
-                    // TODO: Actual values -- not entirely sure this is the right spot
+                    self.current_run_id = attrs.original_execution_run_id.clone();
+                    // We need to notify the lang sdk that it's time to kick off a workflow
                     self.outgoing_wf_actications.push_back(
                         StartWorkflowTaskAttributes {
-                            namespace: "".to_string(),
-                            workflow_id: "".to_string(),
-                            name: "".to_string(),
-                            arguments: None,
+                            // TODO: This needs to be set during init
+                            lookup_name: "".to_string(),
+                            workflow_id: self.workflow_id.clone(),
+                            arguments: attrs.input.clone(),
                         }
                         .into(),
                     );
@@ -333,8 +342,7 @@ impl WorkflowMachines {
             .map(|attrs| WfActivation {
                 // todo wat ?
                 timestamp: None,
-                // TODO: fix unwrap
-                run_id: self.current_run_id.clone().unwrap(),
+                run_id: self.current_run_id.clone(),
                 attributes: attrs.into(),
             })
     }

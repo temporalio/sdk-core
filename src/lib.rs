@@ -74,9 +74,9 @@ where
         // This will block forever in the event there is no work from the server
         let work = self.work_provider.get_work("TODO: Real task queue")?;
         let run_id = match &work.workflow_execution {
-            Some(WorkflowExecution { run_id, .. }) => {
-                self.instantiate_workflow_if_needed(run_id.to_string());
-                run_id
+            Some(we) => {
+                self.instantiate_workflow_if_needed(we);
+                we.run_id.clone()
             }
             // TODO: Appropriate error
             None => return Err(CoreError::Unknown),
@@ -94,7 +94,7 @@ where
         // We pass none since we want to apply all the history we just got.
         // Will need to change a bit once we impl caching.
         let hist_info = HistoryInfo::new_from_history(&history, None)?;
-        let activation = if let Some(mut machines) = self.workflow_machines.get_mut(run_id) {
+        let activation = if let Some(mut machines) = self.workflow_machines.get_mut(&run_id) {
             hist_info.apply_history_events(&mut machines.value_mut().0)?;
             machines.0.get_wf_activation()
         } else {
@@ -137,7 +137,7 @@ where
             }
             _ => Err(CoreError::MalformedCompletion(req)),
         }
-        // TODO: Get fsm commands and send them to server
+        // TODO: Get fsm commands and send them to server (get_commands)
     }
 }
 
@@ -145,14 +145,23 @@ impl<WP> CoreSDK<WP>
 where
     WP: WorkProvider,
 {
-    fn instantiate_workflow_if_needed(&self, run_id: String) {
-        if self.workflow_machines.contains_key(&run_id) {
+    fn instantiate_workflow_if_needed(&self, workflow_execution: &WorkflowExecution) {
+        if self
+            .workflow_machines
+            .contains_key(&workflow_execution.run_id)
+        {
             return;
         }
         let (wfb, cmd_sink) = WorkflowBridge::new();
-        let state_machines = WorkflowMachines::new(Box::new(wfb));
-        self.workflow_machines
-            .insert(run_id, (state_machines, cmd_sink));
+        let state_machines = WorkflowMachines::new(
+            workflow_execution.workflow_id.clone(),
+            workflow_execution.run_id.clone(),
+            Box::new(wfb),
+        );
+        self.workflow_machines.insert(
+            workflow_execution.run_id.clone(),
+            (state_machines, cmd_sink),
+        );
     }
 
     /// Feed commands from the lang sdk into the appropriate workflow bridge
