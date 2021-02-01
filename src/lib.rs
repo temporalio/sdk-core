@@ -35,6 +35,7 @@ use std::{
     convert::TryInto,
     sync::mpsc::{self, Receiver, SendError, Sender},
 };
+use url::Url;
 
 pub type Result<T, E = CoreError> = std::result::Result<T, E>;
 
@@ -49,11 +50,19 @@ pub trait Core {
 }
 
 pub struct CoreInitOptions {
+    temporal_server: Url,
     _queue_name: String,
 }
 
 pub fn init(_opts: CoreInitOptions) -> Result<Box<dyn Core>> {
-    Err(CoreError::Unknown {})
+    // Initialize server client
+    let work_provider = unimplemented!();
+
+    Ok(Box::new(CoreSDK {
+        work_provider,
+        workflow_machines: Default::default(),
+        workflow_task_tokens: Default::default(),
+    }))
 }
 
 pub struct CoreSDK<WP> {
@@ -224,7 +233,6 @@ impl DrivenWorkflow for WorkflowBridge {
         attribs: WorkflowExecutionStartedEventAttributes,
     ) -> Result<Vec<WFCommand>, Error> {
         self.started_attrs = Some(attribs);
-        // TODO: Need to actually tell the workflow to... start, that's what outgoing was for lol
         Ok(vec![])
     }
 

@@ -1,15 +1,20 @@
-use crate::protos::coresdk::{wf_activation, StartWorkflowTaskAttributes, WfActivation};
 use crate::{
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
         workflow_task_state_machine::WorkflowTaskMachine, CancellableCommand, DrivenWorkflow,
         MachineCommand, TemporalStateMachine, WFCommand,
     },
-    protos::temporal::api::{
-        command::v1::StartTimerCommandAttributes,
-        enums::v1::{CommandType, EventType},
-        history::v1::{history_event, HistoryEvent},
-    },
+    protos::{
+        coresdk::{wf_activation, StartWorkflowTaskAttributes, WfActivation},
+        temporal::{
+            api::{
+                command::v1::StartTimerCommandAttributes,
+                enums::v1::{CommandType, EventType},
+                history::v1::{history_event, HistoryEvent},
+                common::v1::WorkflowExecution
+            }
+        }
+    }
 };
 use futures::Future;
 use rustfsm::StateMachine;
@@ -41,7 +46,7 @@ pub(crate) struct WorkflowMachines {
     /// Workflow identifier
     workflow_id: String,
     /// Identifies the current run and is used as a seed for faux-randomness.
-    current_run_id: String,
+    run_id: String,
     /// The current workflow time if it has been established
     current_wf_time: Option<SystemTime>,
 
@@ -89,13 +94,13 @@ impl WorkflowMachines {
     ) -> Self {
         Self {
             workflow_id,
+            run_id,
             drive_me: driven_wf,
             // In an ideal world one could say ..Default::default() here and it'd still work.
             workflow_task_started_event_id: 0,
             current_started_event_id: 0,
             previous_started_event_id: 0,
             replaying: false,
-            current_run_id: run_id,
             current_wf_time: None,
             machines_by_id: Default::default(),
             commands: Default::default(),
@@ -282,12 +287,12 @@ impl WorkflowMachines {
                     attrs,
                 )) = &event.attributes
                 {
-                    self.current_run_id = attrs.original_execution_run_id.clone();
+                    self.run_id = attrs.original_execution_run_id.clone();
                     // We need to notify the lang sdk that it's time to kick off a workflow
                     self.outgoing_wf_actications.push_back(
                         StartWorkflowTaskAttributes {
                             // TODO: This needs to be set during init
-                            lookup_name: "".to_string(),
+                            workflow_type: "".to_string(),
                             workflow_id: self.workflow_id.clone(),
                             arguments: attrs.input.clone(),
                         }
@@ -342,7 +347,7 @@ impl WorkflowMachines {
             .map(|attrs| WfActivation {
                 // todo wat ?
                 timestamp: None,
-                run_id: self.current_run_id.clone(),
+                run_id: self.run_id.clone(),
                 attributes: attrs.into(),
             })
     }
