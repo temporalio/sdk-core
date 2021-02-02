@@ -8,25 +8,38 @@ use crate::Result;
 use crate::WorkflowTaskProvider;
 use url::Url;
 
+#[derive(Clone)]
+pub(crate) struct ServerGatewayOptions {
+    pub namespace: String,
+    pub identity: String,
+    pub binary_checksum: String,
+}
+
+impl ServerGatewayOptions {
+    pub(crate) async fn connect(&self, target_url: Url) -> Result<ServerGateway> {
+        let service = WorkflowServiceClient::connect(target_url.to_string()).await?;
+        Ok(ServerGateway {
+            service,
+            opts: self.clone(),
+        })
+    }
+}
 /// Provides
 pub(crate) struct ServerGateway {
     service: WorkflowServiceClient<tonic::transport::Channel>,
-    namespace: String,
-    task_queue: String,
-    identity: String,
-    binary_checksum: String,
+    opts: ServerGatewayOptions,
 }
 
 impl ServerGateway {
-    async fn poll(&self) -> Result<PollWorkflowTaskQueueResponse> {
+    async fn poll(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse> {
         let request = tonic::Request::new(PollWorkflowTaskQueueRequest {
-            namespace: self.namespace.to_string(),
+            namespace: self.opts.namespace.to_string(),
             task_queue: Some(TaskQueue {
-                name: self.task_queue.to_string(),
+                name: task_queue.to_string(),
                 kind: TaskQueueKind::Unspecified as i32,
             }),
-            identity: self.identity.to_string(),
-            binary_checksum: self.binary_checksum.to_string(),
+            identity: self.opts.identity.to_string(),
+            binary_checksum: self.opts.binary_checksum.to_string(),
         });
 
         Ok(self
@@ -36,22 +49,11 @@ impl ServerGateway {
             .await?
             .into_inner())
     }
-
-    pub(crate) async fn connect(target_url: Url, task_queue: String) -> Result<Self> {
-        let service = WorkflowServiceClient::connect(target_url.to_string()).await?;
-        Ok(Self {
-            service,
-            namespace: "".to_string(),
-            task_queue,
-            identity: "".to_string(),
-            binary_checksum: "".to_string(),
-        })
-    }
 }
 
 #[async_trait::async_trait]
 impl WorkflowTaskProvider for ServerGateway {
     async fn get_work(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse> {
-        self.poll().await
+        self.poll(task_queue).await
     }
 }

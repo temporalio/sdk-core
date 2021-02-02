@@ -11,7 +11,7 @@ mod protosext;
 
 pub use protosext::HistoryInfo;
 
-use crate::pollers::ServerGateway;
+use crate::pollers::{ServerGatewayOptions};
 use crate::{
     machines::{DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines},
     protos::{
@@ -53,16 +53,23 @@ pub trait Core {
 
 pub struct CoreInitOptions {
     target_url: Url,
-    task_queue: String,
+    namespace: String,
+    task_queue: Vec<String>,
+    identity: String,
+    binary_checksum: String,
 }
 
 /// Initializes instance of the core sdk and establishes connection to the temporal server.
 /// Creates tokio runtime that will be used for all client-server interactions.  
 pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
     let runtime = Runtime::new().map_err(CoreError::TokioInitError)?;
+    let gateway_opts = ServerGatewayOptions {
+        namespace: opts.namespace,
+        identity: opts.identity,
+        binary_checksum: opts.binary_checksum,
+    };
     // Initialize server client
-    let work_provider =
-        runtime.block_on(ServerGateway::connect(opts.target_url, opts.task_queue))?;
+    let work_provider = runtime.block_on(gateway_opts.connect(opts.target_url))?;
 
     Ok(CoreSDK {
         runtime,
