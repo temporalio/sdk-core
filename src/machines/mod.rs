@@ -37,18 +37,21 @@ pub(crate) mod test_help;
 
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
-use crate::machines::workflow_machines::WorkflowTrigger;
-use crate::protos::{
-    coresdk::{self, command::Variant},
-    temporal::api::{
-        command::v1::{
-            command::Attributes, Command, CompleteWorkflowExecutionCommandAttributes,
-            StartTimerCommandAttributes,
-        },
-        enums::v1::CommandType,
-        history::v1::{
-            HistoryEvent, WorkflowExecutionCanceledEventAttributes,
-            WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
+use crate::{
+    machines::workflow_machines::WorkflowTrigger,
+    protos::coresdk::wf_activation,
+    protos::{
+        coresdk::{self, command::Variant},
+        temporal::api::{
+            command::v1::{
+                command::Attributes, Command, CompleteWorkflowExecutionCommandAttributes,
+                StartTimerCommandAttributes,
+            },
+            enums::v1::CommandType,
+            history::v1::{
+                HistoryEvent, WorkflowExecutionCanceledEventAttributes,
+                WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
+            },
         },
     },
 };
@@ -66,7 +69,7 @@ pub(crate) type ProtoCommand = Command;
 
 /// Implementors of this trait represent something that can (eventually) call into a workflow to
 /// drive it, start it, signal it, cancel it, etc.
-pub(crate) trait DrivenWorkflow: Send {
+pub(crate) trait DrivenWorkflow: ActivationListener + Send {
     /// Start the workflow
     fn start(
         &mut self,
@@ -88,6 +91,12 @@ pub(crate) trait DrivenWorkflow: Send {
         &mut self,
         attribs: WorkflowExecutionCanceledEventAttributes,
     ) -> Result<(), anyhow::Error>;
+}
+
+/// Allows observers to listen to newly generated outgoing activations. Used for testing, where
+/// some activations must be handled before outgoing commands are issued to avoid deadlocking.
+pub(crate) trait ActivationListener {
+    fn on_activation(&mut self, _activation: &wf_activation::Attributes) {}
 }
 
 /// The struct for [WFCommand::AddCommand]

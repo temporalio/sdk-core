@@ -1,11 +1,14 @@
 use super::Result;
 use crate::{
-    machines::{DrivenWorkflow, WFCommand},
-    protos::temporal::api::{
-        command::v1::StartTimerCommandAttributes,
-        history::v1::{
-            WorkflowExecutionCanceledEventAttributes, WorkflowExecutionSignaledEventAttributes,
-            WorkflowExecutionStartedEventAttributes,
+    machines::{ActivationListener, DrivenWorkflow, WFCommand},
+    protos::{
+        coresdk::{wf_activation::Attributes, UnblockTimerTaskAttributes},
+        temporal::api::{
+            command::v1::StartTimerCommandAttributes,
+            history::v1::{
+                WorkflowExecutionCanceledEventAttributes, WorkflowExecutionSignaledEventAttributes,
+                WorkflowExecutionStartedEventAttributes,
+            },
         },
     },
 };
@@ -33,9 +36,6 @@ pub(in crate::machines) struct TestWorkflowDriver<F> {
     /// Holds status for timers so we don't recreate them by accident. Key is timer id, value is
     /// true if it is complete.
     ///
-    /// I don't love that this is pretty duplicative of workflow machines, nor the nasty sync
-    /// involved. Would be good to eliminate.
-    ///
     /// It can and should be eliminated by not recreating CommandSender on every iteration, which
     /// means keeping the workflow suspended in a future somewhere. I tried this and it was hard,
     /// but ultimately it's how real workflows will need to work.
@@ -56,6 +56,21 @@ where
         Self {
             wf_function: workflow_fn,
             timers: Arc::new(RwLock::new(HashMap::default())),
+        }
+    }
+}
+
+impl<F> ActivationListener for TestWorkflowDriver<F> {
+    fn on_activation(&mut self, activation: &Attributes) {
+        match activation {
+            Attributes::UnblockTimer(UnblockTimerTaskAttributes { timer_id }) => self
+                .timers
+                .write()
+                .unwrap()
+                .get(timer_id)
+                .unwrap()
+                .store(true, Ordering::SeqCst),
+            _ => (),
         }
     }
 }
@@ -145,7 +160,6 @@ impl<'a> CommandSender {
         let finished = match self.timer_map.write().unwrap().entry(a.timer_id.clone()) {
             hash_map::Entry::Occupied(existing) => existing.get().load(Ordering::SeqCst),
             hash_map::Entry::Vacant(v) => {
-                // TODO: hmm
                 let atomic = Arc::new(AtomicBool::new(false));
 
                 let c = WFCommand::AddTimer(a);

@@ -11,9 +11,11 @@ mod protosext;
 
 pub use protosext::HistoryInfo;
 
-use crate::pollers::ServerGatewayOptions;
 use crate::{
-    machines::{DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines},
+    machines::{
+        ActivationListener, DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines,
+    },
+    pollers::ServerGatewayOptions,
     protos::{
         coresdk::{
             complete_task_req::Completion, wf_activation_completion::Status, CompleteTaskReq, Task,
@@ -270,6 +272,9 @@ impl DrivenWorkflow for WorkflowBridge {
         unimplemented!()
     }
 }
+
+// Real bridge doesn't actually need to listen
+impl ActivationListener for WorkflowBridge {}
 
 #[derive(thiserror::Error, Debug)]
 #[allow(clippy::large_enum_variant)]

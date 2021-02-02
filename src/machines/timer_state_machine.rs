@@ -255,6 +255,7 @@ mod test {
     };
     use futures::{channel::mpsc::Sender, FutureExt, SinkExt};
     use rstest::{fixture, rstest};
+    use std::sync::Arc;
     use std::{error::Error, time::Duration};
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 

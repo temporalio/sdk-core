@@ -1,3 +1,4 @@
+use crate::machines::ActivationListener;
 use crate::{
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
@@ -16,6 +17,7 @@ use crate::{
 };
 use futures::Future;
 use rustfsm::StateMachine;
+use std::collections::HashSet;
 use std::ops::DerefMut;
 use std::{
     borrow::BorrowMut,
@@ -61,7 +63,7 @@ pub(crate) struct WorkflowMachines {
     /// iterating over already added commands.
     current_wf_task_commands: VecDeque<CancellableCommand>,
     /// Outgoing activations that need to be sent to the lang sdk
-    outgoing_wf_actications: VecDeque<wf_activation::Attributes>,
+    outgoing_wf_activations: VecDeque<wf_activation::Attributes>,
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: Box<dyn DrivenWorkflow + 'static>,
@@ -112,7 +114,7 @@ impl WorkflowMachines {
             machines_by_id: Default::default(),
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
-            outgoing_wf_actications: Default::default(),
+            outgoing_wf_activations: Default::default(),
         }
     }
 
@@ -285,7 +287,7 @@ impl WorkflowMachines {
                 {
                     self.run_id = attrs.original_execution_run_id.clone();
                     // We need to notify the lang sdk that it's time to kick off a workflow
-                    self.outgoing_wf_actications.push_back(
+                    self.outgoing_wf_activations.push_back(
                         StartWorkflowTaskAttributes {
                             // TODO: This needs to be set during init
                             workflow_type: "".to_string(),
@@ -342,7 +344,7 @@ impl WorkflowMachines {
     /// Returns the next activation that needs to be performed by the lang sdk. Things like unblock
     /// timer, etc.
     pub(crate) fn get_wf_activation(&mut self) -> Option<WfActivation> {
-        self.outgoing_wf_actications
+        self.outgoing_wf_activations
             .pop_front()
             .map(|attrs| WfActivation {
                 // todo wat ?
@@ -393,7 +395,8 @@ impl WorkflowMachines {
         for trigger in triggers {
             match trigger {
                 WorkflowTrigger::PushWFActivation(a) => {
-                    self.outgoing_wf_actications.push_back(a);
+                    self.drive_me.on_activation(&a);
+                    self.outgoing_wf_activations.push_back(a);
                 }
                 WorkflowTrigger::TriggerWFTaskStarted {
                     task_started_event_id,
