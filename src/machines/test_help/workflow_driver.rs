@@ -12,34 +12,31 @@ use crate::{
         },
     },
 };
+use dashmap::DashMap;
 use futures::Future;
-use std::{
-    collections::{hash_map, HashMap},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, Sender},
-        Arc, RwLock,
-    },
+use std::sync::{
+    mpsc::{self, Receiver, Sender},
+    Arc,
 };
 use tracing::Level;
-
-type TimerMap = HashMap<String, Arc<AtomicBool>>;
 
 /// This is a test only implementation of a [DrivenWorkflow] which has finer-grained control
 /// over when commands are returned than a normal workflow would.
 ///
 /// It replaces "TestEnitityTestListenerBase" in java which is pretty hard to follow.
-#[derive(Debug)]
 pub(in crate::machines) struct TestWorkflowDriver<F> {
     wf_function: F,
+    cache: Arc<TestWfDriverCache>,
+}
 
-    /// Holds status for timers so we don't recreate them by accident. Key is timer id, value is
-    /// true if it is complete.
+#[derive(Default, Debug)]
+pub(in crate::machines) struct TestWfDriverCache {
+    /// Holds a mapping of timer id -> is finished
     ///
     /// It can and should be eliminated by not recreating CommandSender on every iteration, which
     /// means keeping the workflow suspended in a future somewhere. I tried this and it was hard,
     /// but ultimately it's how real workflows will need to work.
-    timers: Arc<RwLock<TimerMap>>,
+    unblocked_timers: DashMap<String, bool>,
 }
 
 impl<F, Fut> TestWorkflowDriver<F>
@@ -55,22 +52,18 @@ where
     pub(in crate::machines) fn new(workflow_fn: F) -> Self {
         Self {
             wf_function: workflow_fn,
-            timers: Arc::new(RwLock::new(HashMap::default())),
+            cache: Default::default(),
         }
     }
 }
 
 impl<F> ActivationListener for TestWorkflowDriver<F> {
     fn on_activation(&mut self, activation: &Attributes) {
-        match activation {
-            Attributes::UnblockTimer(UnblockTimerTaskAttributes { timer_id }) => self
-                .timers
-                .write()
+        if let Attributes::UnblockTimer(UnblockTimerTaskAttributes { timer_id }) = activation {
+            Arc::get_mut(&mut self.cache)
                 .unwrap()
-                .get(timer_id)
-                .unwrap()
-                .store(true, Ordering::SeqCst),
-            _ => (),
+                .unblocked_timers
+                .insert(timer_id.clone(), true);
         }
     }
 }
@@ -90,7 +83,7 @@ where
 
     #[instrument(skip(self))]
     fn iterate_wf(&mut self) -> Result<Vec<WFCommand>, anyhow::Error> {
-        let (sender, receiver) = CommandSender::new(self.timers.clone());
+        let (sender, receiver) = CommandSender::new(self.cache.clone());
         // Call the closure that produces the workflow future
         let wf_future = (self.wf_function)(sender);
 
@@ -146,26 +139,23 @@ pub enum TestWFCommand {
 
 pub struct CommandSender {
     chan: Sender<TestWFCommand>,
-    timer_map: Arc<RwLock<TimerMap>>,
+    twd_cache: Arc<TestWfDriverCache>,
 }
 
-impl<'a> CommandSender {
-    fn new(timer_map: Arc<RwLock<TimerMap>>) -> (Self, Receiver<TestWFCommand>) {
+impl CommandSender {
+    fn new(twd_cache: Arc<TestWfDriverCache>) -> (Self, Receiver<TestWFCommand>) {
         let (chan, rx) = mpsc::channel();
-        (Self { chan, timer_map }, rx)
+        (Self { chan, twd_cache }, rx)
     }
 
     /// Request to create a timer, returning future which resolves when the timer completes
     pub fn timer(&mut self, a: StartTimerCommandAttributes) -> impl Future + '_ {
-        let finished = match self.timer_map.write().unwrap().entry(a.timer_id.clone()) {
-            hash_map::Entry::Occupied(existing) => existing.get().load(Ordering::SeqCst),
-            hash_map::Entry::Vacant(v) => {
-                let atomic = Arc::new(AtomicBool::new(false));
-
+        let finished = match self.twd_cache.unblocked_timers.entry(a.timer_id.clone()) {
+            dashmap::mapref::entry::Entry::Occupied(existing) => *existing.get(),
+            dashmap::mapref::entry::Entry::Vacant(v) => {
                 let c = WFCommand::AddTimer(a);
-                // In theory we should send this in both branches
                 self.chan.send(c.into()).unwrap();
-                v.insert(atomic);
+                v.insert(false);
                 false
             }
         };
