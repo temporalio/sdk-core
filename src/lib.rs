@@ -11,6 +11,7 @@ mod protosext;
 
 pub use protosext::HistoryInfo;
 
+use crate::pollers::ServerGatewayOptions;
 use crate::{
     machines::{DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines},
     protos::{
@@ -35,6 +36,8 @@ use std::{
     convert::TryInto,
     sync::mpsc::{self, Receiver, SendError, Sender},
 };
+use tokio::runtime::Runtime;
+use url::Url;
 
 pub type Result<T, E = CoreError> = std::result::Result<T, E>;
 
@@ -49,14 +52,35 @@ pub trait Core {
 }
 
 pub struct CoreInitOptions {
-    _queue_name: String,
+    target_url: Url,
+    namespace: String,
+    _task_queue: Vec<String>,
+    identity: String,
+    binary_checksum: String,
 }
 
-pub fn init(_opts: CoreInitOptions) -> Result<Box<dyn Core>> {
-    Err(CoreError::Unknown {})
+/// Initializes instance of the core sdk and establishes connection to the temporal server.
+/// Creates tokio runtime that will be used for all client-server interactions.  
+pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
+    let runtime = Runtime::new().map_err(CoreError::TokioInitError)?;
+    let gateway_opts = ServerGatewayOptions {
+        namespace: opts.namespace,
+        identity: opts.identity,
+        binary_checksum: opts.binary_checksum,
+    };
+    // Initialize server client
+    let work_provider = runtime.block_on(gateway_opts.connect(opts.target_url))?;
+
+    Ok(CoreSDK {
+        runtime,
+        work_provider,
+        workflow_machines: Default::default(),
+        workflow_task_tokens: Default::default(),
+    })
 }
 
 pub struct CoreSDK<WP> {
+    runtime: Runtime,
     /// Provides work in the form of responses the server would send from polling task Qs
     work_provider: WP,
     /// Key is run id
@@ -67,16 +91,18 @@ pub struct CoreSDK<WP> {
 
 impl<WP> Core for CoreSDK<WP>
 where
-    WP: WorkProvider,
+    WP: WorkflowTaskProvider,
 {
     #[instrument(skip(self))]
     fn poll_task(&self) -> Result<Task, CoreError> {
         // This will block forever in the event there is no work from the server
-        let work = self.work_provider.get_work("TODO: Real task queue")?;
+        let work = self
+            .runtime
+            .block_on(self.work_provider.get_work("TODO: Real task queue"))?;
         let run_id = match &work.workflow_execution {
-            Some(WorkflowExecution { run_id, .. }) => {
-                self.instantiate_workflow_if_needed(run_id.to_string());
-                run_id
+            Some(we) => {
+                self.instantiate_workflow_if_needed(we);
+                we.run_id.clone()
             }
             // TODO: Appropriate error
             None => return Err(CoreError::Unknown),
@@ -94,7 +120,7 @@ where
         // We pass none since we want to apply all the history we just got.
         // Will need to change a bit once we impl caching.
         let hist_info = HistoryInfo::new_from_history(&history, None)?;
-        let activation = if let Some(mut machines) = self.workflow_machines.get_mut(run_id) {
+        let activation = if let Some(mut machines) = self.workflow_machines.get_mut(&run_id) {
             hist_info.apply_history_events(&mut machines.value_mut().0)?;
             machines.0.get_wf_activation()
         } else {
@@ -137,22 +163,31 @@ where
             }
             _ => Err(CoreError::MalformedCompletion(req)),
         }
-        // TODO: Get fsm commands and send them to server
+        // TODO: Get fsm commands and send them to server (get_commands)
     }
 }
 
 impl<WP> CoreSDK<WP>
 where
-    WP: WorkProvider,
+    WP: WorkflowTaskProvider,
 {
-    fn instantiate_workflow_if_needed(&self, run_id: String) {
-        if self.workflow_machines.contains_key(&run_id) {
+    fn instantiate_workflow_if_needed(&self, workflow_execution: &WorkflowExecution) {
+        if self
+            .workflow_machines
+            .contains_key(&workflow_execution.run_id)
+        {
             return;
         }
         let (wfb, cmd_sink) = WorkflowBridge::new();
-        let state_machines = WorkflowMachines::new(Box::new(wfb));
-        self.workflow_machines
-            .insert(run_id, (state_machines, cmd_sink));
+        let state_machines = WorkflowMachines::new(
+            workflow_execution.workflow_id.clone(),
+            workflow_execution.run_id.clone(),
+            Box::new(wfb),
+        );
+        self.workflow_machines.insert(
+            workflow_execution.run_id.clone(),
+            (state_machines, cmd_sink),
+        );
     }
 
     /// Feed commands from the lang sdk into the appropriate workflow bridge
@@ -179,9 +214,10 @@ where
 /// Implementors can provide new work to the SDK. The connection to the server is the real
 /// implementor.
 #[cfg_attr(test, mockall::automock)]
-pub trait WorkProvider {
+#[async_trait::async_trait]
+pub trait WorkflowTaskProvider {
     /// Fetch new work. Should block indefinitely if there is no work.
-    fn get_work(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
+    async fn get_work(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
 }
 
 /// The [DrivenWorkflow] trait expects to be called to make progress, but the [CoreSDKService]
@@ -215,7 +251,6 @@ impl DrivenWorkflow for WorkflowBridge {
         attribs: WorkflowExecutionStartedEventAttributes,
     ) -> Result<Vec<WFCommand>, Error> {
         self.started_attrs = Some(attribs);
-        // TODO: Need to actually tell the workflow to... start, that's what outgoing was for lol
         Ok(vec![])
     }
 
@@ -255,6 +290,12 @@ pub enum CoreError {
     UnderlyingHistError(#[from] HistoryInfoError),
     #[error("Task token had nothing associated with it: {0:?}")]
     NothingFoundForTaskToken(Vec<u8>),
+    #[error("Error calling the service: {0:?}")]
+    TonicError(#[from] tonic::Status),
+    #[error("Server connection error: {0:?}")]
+    TonicTransportError(#[from] tonic::transport::Error),
+    #[error("Failed to initialize tokio runtime: {0:?}")]
+    TokioInitError(std::io::Error),
 }
 
 #[cfg(test)]
@@ -333,12 +374,14 @@ mod test {
         let responses = vec![first_response, second_response];
 
         let mut tasks = VecDeque::from(responses);
-        let mut mock_provider = MockWorkProvider::new();
+        let mut mock_provider = MockWorkflowTaskProvider::new();
         mock_provider
             .expect_get_work()
             .returning(move |_| Ok(tasks.pop_front().unwrap()));
 
+        let runtime = Runtime::new().unwrap();
         let core = CoreSDK {
+            runtime,
             work_provider: mock_provider,
             workflow_machines: DashMap::new(),
             workflow_task_tokens: DashMap::new(),

@@ -151,6 +151,7 @@ trait TemporalStateMachine: CheckStateMachineInFinal {
         &mut self,
         event: &HistoryEvent,
         has_next_event: bool,
+        // TODO: Don't pass this all in, rather use responses.
         wf_machines: &mut WorkflowMachines,
     ) -> Result<(), WFMachinesError>;
 }

@@ -35,10 +35,15 @@ message Task {
 }
 
 message StartWorkflowTaskAttributes {
-    string namespace = 1;
-    string workflow_id = 3;
-    string name = 4;
-    temporal.api.common.v1.Payloads arguments = 5;
+    // The identifier the lang-specific sdk uses to execute workflow code
+    string workflow_type = 1;
+    // The workflow id used on the temporal server
+    string workflow_id = 2;
+    // Input to the workflow code
+    temporal.api.common.v1.Payloads arguments = 3;
+
+    // TODO: Do we need namespace here, or should that just be fetchable easily?
+
     // will be others - workflow exe started attrs, etc
 }
 
