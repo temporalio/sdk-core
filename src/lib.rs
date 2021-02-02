@@ -11,6 +11,7 @@ mod protosext;
 
 pub use protosext::HistoryInfo;
 
+use crate::pollers::ServerGateway;
 use crate::{
     machines::{DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines},
     protos::{
@@ -35,6 +36,7 @@ use std::{
     convert::TryInto,
     sync::mpsc::{self, Receiver, SendError, Sender},
 };
+use tokio::runtime::Runtime;
 use url::Url;
 
 pub type Result<T, E = CoreError> = std::result::Result<T, E>;
@@ -50,22 +52,28 @@ pub trait Core {
 }
 
 pub struct CoreInitOptions {
-    temporal_server: Url,
-    _queue_name: String,
+    target_url: Url,
+    task_queue: String,
 }
 
-pub fn init(_opts: CoreInitOptions) -> Result<Box<dyn Core>> {
+/// Initializes instance of the core sdk and establishes connection to the temporal server.
+/// Creates tokio runtime that will be used for all client-server interactions.  
+pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
+    let runtime = Runtime::new().map_err(CoreError::TokioInitError)?;
     // Initialize server client
-    let work_provider = unimplemented!();
+    let work_provider =
+        runtime.block_on(ServerGateway::connect(opts.target_url, opts.task_queue))?;
 
-    Ok(Box::new(CoreSDK {
+    Ok(CoreSDK {
+        runtime,
         work_provider,
         workflow_machines: Default::default(),
         workflow_task_tokens: Default::default(),
-    }))
+    })
 }
 
 pub struct CoreSDK<WP> {
+    runtime: Runtime,
     /// Provides work in the form of responses the server would send from polling task Qs
     work_provider: WP,
     /// Key is run id
@@ -76,12 +84,14 @@ pub struct CoreSDK<WP> {
 
 impl<WP> Core for CoreSDK<WP>
 where
-    WP: WorkProvider,
+    WP: WorkflowTaskProvider,
 {
     #[instrument(skip(self))]
     fn poll_task(&self) -> Result<Task, CoreError> {
         // This will block forever in the event there is no work from the server
-        let work = self.work_provider.get_work("TODO: Real task queue")?;
+        let work = self
+            .runtime
+            .block_on(self.work_provider.get_work("TODO: Real task queue"))?;
         let run_id = match &work.workflow_execution {
             Some(we) => {
                 self.instantiate_workflow_if_needed(we);
@@ -152,7 +162,7 @@ where
 
 impl<WP> CoreSDK<WP>
 where
-    WP: WorkProvider,
+    WP: WorkflowTaskProvider,
 {
     fn instantiate_workflow_if_needed(&self, workflow_execution: &WorkflowExecution) {
         if self
@@ -197,9 +207,10 @@ where
 /// Implementors can provide new work to the SDK. The connection to the server is the real
 /// implementor.
 #[cfg_attr(test, mockall::automock)]
-pub trait WorkProvider {
+#[async_trait::async_trait]
+pub trait WorkflowTaskProvider {
     /// Fetch new work. Should block indefinitely if there is no work.
-    fn get_work(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
+    async fn get_work(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
 }
 
 /// The [DrivenWorkflow] trait expects to be called to make progress, but the [CoreSDKService]
@@ -272,6 +283,12 @@ pub enum CoreError {
     UnderlyingHistError(#[from] HistoryInfoError),
     #[error("Task token had nothing associated with it: {0:?}")]
     NothingFoundForTaskToken(Vec<u8>),
+    #[error("Error calling the service: {0:?}")]
+    TonicError(#[from] tonic::Status),
+    #[error("Server connection error: {0:?}")]
+    TonicTransportError(#[from] tonic::transport::Error),
+    #[error("Failed to initialize tokio runtime: {0:?}")]
+    TokioInitError(std::io::Error),
 }
 
 #[cfg(test)]
@@ -350,12 +367,14 @@ mod test {
         let responses = vec![first_response, second_response];
 
         let mut tasks = VecDeque::from(responses);
-        let mut mock_provider = MockWorkProvider::new();
+        let mut mock_provider = MockWorkflowTaskProvider::new();
         mock_provider
             .expect_get_work()
             .returning(move |_| Ok(tasks.pop_front().unwrap()));
 
+        let runtime = Runtime::new().unwrap();
         let core = CoreSDK {
+            runtime,
             work_provider: mock_provider,
             workflow_machines: DashMap::new(),
             workflow_task_tokens: DashMap::new(),
