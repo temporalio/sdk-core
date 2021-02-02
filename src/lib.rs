@@ -11,7 +11,7 @@ mod protosext;
 
 pub use protosext::HistoryInfo;
 
-use crate::pollers::{ServerGatewayOptions};
+use crate::pollers::ServerGatewayOptions;
 use crate::{
     machines::{DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines},
     protos::{
