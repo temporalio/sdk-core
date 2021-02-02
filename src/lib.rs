@@ -54,7 +54,7 @@ pub trait Core {
 pub struct CoreInitOptions {
     target_url: Url,
     namespace: String,
-    task_queue: Vec<String>,
+    _task_queue: Vec<String>,
     identity: String,
     binary_checksum: String,
 }
