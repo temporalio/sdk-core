@@ -183,7 +183,6 @@ mod tests {
             history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
                 started_event_id: timer_started_event_id,
                 timer_id: "timer1".to_string(),
-                ..Default::default()
             }),
         );
         t.add_workflow_task_scheduled_and_started();

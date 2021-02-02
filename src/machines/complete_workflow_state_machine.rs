@@ -1,3 +1,4 @@
+use crate::machines::workflow_machines::WorkflowTrigger;
 use crate::{
     machines::{
         workflow_machines::WorkflowMachines, AddCommand, CancellableCommand, WFCommand,
@@ -123,11 +124,10 @@ impl From<CompleteWorkflowCommandCreated> for CompleteWorkflowCommandRecorded {
 impl WFMachinesAdapter for CompleteWorkflowMachine {
     fn adapt_response(
         &self,
-        _wf_machines: &mut WorkflowMachines,
         _event: &HistoryEvent,
         _has_next_event: bool,
         _my_command: CompleteWFCommand,
-    ) -> Result<(), WFMachinesError> {
-        Ok(())
+    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError> {
+        Ok(vec![])
     }
 }

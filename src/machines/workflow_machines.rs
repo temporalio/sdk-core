@@ -2,7 +2,7 @@ use crate::{
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
         workflow_task_state_machine::WorkflowTaskMachine, CancellableCommand, DrivenWorkflow,
-        MachineCommand, TemporalStateMachine, WFCommand,
+        ProtoCommand, TemporalStateMachine, WFCommand,
     },
     protos::{
         coresdk::{wf_activation, StartWorkflowTaskAttributes, WfActivation},
@@ -16,6 +16,7 @@ use crate::{
 };
 use futures::Future;
 use rustfsm::StateMachine;
+use std::ops::DerefMut;
 use std::{
     borrow::BorrowMut,
     cell::RefCell,
@@ -60,13 +61,21 @@ pub(crate) struct WorkflowMachines {
     /// iterating over already added commands.
     current_wf_task_commands: VecDeque<CancellableCommand>,
     /// Outgoing activations that need to be sent to the lang sdk
-    pub(super) outgoing_wf_actications: VecDeque<wf_activation::Attributes>,
+    outgoing_wf_actications: VecDeque<wf_activation::Attributes>,
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: Box<dyn DrivenWorkflow + 'static>,
+}
 
-    /// Holds atomics for completing timers. Key is the ID of the timer.
-    pub(super) timer_notifiers: HashMap<String, Arc<AtomicBool>>,
+/// Returned by [TemporalStateMachine]s when handling events
+#[derive(Debug, derive_more::From)]
+#[must_use]
+pub(super) enum WorkflowTrigger {
+    PushWFActivation(#[from(forward)] wf_activation::Attributes),
+    TriggerWFTaskStarted {
+        task_started_event_id: i64,
+        time: SystemTime,
+    },
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -103,7 +112,6 @@ impl WorkflowMachines {
             machines_by_id: Default::default(),
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
-            timer_notifiers: Default::default(),
             outgoing_wf_actications: Default::default(),
         }
     }
@@ -112,15 +120,8 @@ impl WorkflowMachines {
     /// is sent `true` when the timer completes.
     ///
     /// Returns the command and a future that will resolve when the timer completes
-    pub(super) fn new_timer(
-        &mut self,
-        attribs: StartTimerCommandAttributes,
-        completion_flag: Arc<AtomicBool>,
-    ) -> CancellableCommand {
-        let timer_id = attribs.timer_id.clone();
-        let timer = new_timer(attribs);
-        self.timer_notifiers.insert(timer_id, completion_flag);
-        timer
+    pub(super) fn new_timer(&mut self, attribs: StartTimerCommandAttributes) -> CancellableCommand {
+        new_timer(attribs)
     }
 
     /// Returns the id of the last seen WorkflowTaskStarted event
@@ -156,9 +157,10 @@ impl WorkflowMachines {
         match event.get_initial_command_event_id() {
             Some(initial_cmd_id) => {
                 if let Some(sm) = self.machines_by_id.get(&initial_cmd_id) {
-                    (*sm.clone())
-                        .borrow_mut()
-                        .handle_event(event, has_next_event, self)?;
+                    // TODO: Don't like the rc stuff
+                    let fsm_rc = sm.clone();
+                    let fsm_ref = (*fsm_rc).borrow_mut();
+                    self.submachine_handle_event(fsm_ref, event, has_next_event)?;
                 } else {
                     event!(
                         Level::ERROR,
@@ -245,16 +247,12 @@ impl WorkflowMachines {
             // Feed the machine the event
             let mut break_later = false;
             if let CancellableCommand::Active { mut machine, .. } = command.clone() {
-                let out_commands = (*machine).borrow_mut().handle_event(event, true, self)?;
+                self.submachine_handle_event((*machine).borrow_mut(), event, true)?;
+
                 // TODO: Handle invalid event errors
                 //  * More special handling for version machine - see java
                 //  * Command/machine supposed to have cancelled itself
 
-                event!(
-                    Level::DEBUG,
-                    msg = "Machine produced commands",
-                    ?out_commands
-                );
                 break_later = true;
             }
 
@@ -308,7 +306,11 @@ impl WorkflowMachines {
             }
             Some(EventType::WorkflowTaskScheduled) => {
                 let mut wf_task_sm = WorkflowTaskMachine::new(self.workflow_task_started_event_id);
-                wf_task_sm.handle_event(event, has_next_event, self)?;
+                self.submachine_handle_event(
+                    &mut wf_task_sm as &mut dyn TemporalStateMachine,
+                    event,
+                    has_next_event,
+                )?;
                 self.machines_by_id
                     .insert(event.event_id, Rc::new(RefCell::new(wf_task_sm)));
             }
@@ -324,7 +326,7 @@ impl WorkflowMachines {
     }
 
     /// Fetches commands ready for processing from the state machines
-    pub(crate) fn get_commands(&mut self) -> Vec<MachineCommand> {
+    pub(crate) fn get_commands(&mut self) -> Vec<ProtoCommand> {
         self.commands
             .iter()
             .filter_map(|c| {
@@ -378,12 +380,38 @@ impl WorkflowMachines {
         Ok(())
     }
 
+    /// Wrapper for calling [TemporalStateMachine::handle_event] which appropriately takes action
+    /// on the returned triggers
+    fn submachine_handle_event<TSM: DerefMut<Target = dyn TemporalStateMachine>>(
+        &mut self,
+        mut sm: TSM,
+        event: &HistoryEvent,
+        has_next_event: bool,
+    ) -> Result<()> {
+        let triggers = sm.handle_event(event, has_next_event)?;
+        event!(Level::DEBUG, msg = "Machine produced triggers", ?triggers);
+        for trigger in triggers {
+            match trigger {
+                WorkflowTrigger::PushWFActivation(a) => {
+                    self.outgoing_wf_actications.push_back(a);
+                }
+                WorkflowTrigger::TriggerWFTaskStarted {
+                    task_started_event_id,
+                    time,
+                } => {
+                    self.task_started(task_started_event_id, time)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn handle_driven_results(&mut self, results: Vec<WFCommand>) {
         for cmd in results {
             // I don't love how boilerplatey this is
             match cmd {
-                WFCommand::AddTimer(attrs, completion_flag) => {
-                    let timer = self.new_timer(attrs, completion_flag);
+                WFCommand::AddTimer(attrs) => {
+                    let timer = self.new_timer(attrs);
                     self.current_wf_task_commands.push_back(timer);
                 }
                 WFCommand::CompleteWorkflow(attrs) => {

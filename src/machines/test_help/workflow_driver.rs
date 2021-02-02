@@ -145,9 +145,10 @@ impl<'a> CommandSender {
         let finished = match self.timer_map.write().unwrap().entry(a.timer_id.clone()) {
             hash_map::Entry::Occupied(existing) => existing.get().load(Ordering::SeqCst),
             hash_map::Entry::Vacant(v) => {
+                // TODO: hmm
                 let atomic = Arc::new(AtomicBool::new(false));
 
-                let c = WFCommand::AddTimer(a, atomic.clone());
+                let c = WFCommand::AddTimer(a);
                 // In theory we should send this in both branches
                 self.chan.send(c.into()).unwrap();
                 v.insert(atomic);

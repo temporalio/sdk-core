@@ -37,17 +37,19 @@ pub(crate) mod test_help;
 
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
-use crate::protos::coresdk;
-use crate::protos::coresdk::command::Variant;
-use crate::protos::temporal::api::command::v1::command::Attributes;
-use crate::protos::temporal::api::{
-    command::v1::{
-        Command, CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
-    },
-    enums::v1::CommandType,
-    history::v1::{
-        HistoryEvent, WorkflowExecutionCanceledEventAttributes,
-        WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
+use crate::machines::workflow_machines::WorkflowTrigger;
+use crate::protos::{
+    coresdk::{self, command::Variant},
+    temporal::api::{
+        command::v1::{
+            command::Attributes, Command, CompleteWorkflowExecutionCommandAttributes,
+            StartTimerCommandAttributes,
+        },
+        enums::v1::CommandType,
+        history::v1::{
+            HistoryEvent, WorkflowExecutionCanceledEventAttributes,
+            WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
+        },
     },
 };
 use prost::alloc::fmt::Formatter;
@@ -57,12 +59,10 @@ use std::{
     convert::{TryFrom, TryInto},
     fmt::Debug,
     rc::Rc,
-    sync::{atomic::AtomicBool, Arc},
 };
 use tracing::Level;
 
-//  TODO: May need to be our SDKWFCommand type
-pub(crate) type MachineCommand = Command;
+pub(crate) type ProtoCommand = Command;
 
 /// Implementors of this trait represent something that can (eventually) call into a workflow to
 /// drive it, start it, signal it, cancel it, etc.
@@ -103,7 +103,7 @@ pub(crate) struct AddCommand {
 pub enum WFCommand {
     /// Returned when we need to wait for the lang sdk to send us something
     NoCommandsFromLang,
-    AddTimer(StartTimerCommandAttributes, Arc<AtomicBool>),
+    AddTimer(StartTimerCommandAttributes),
     CompleteWorkflow(CompleteWorkflowExecutionCommandAttributes),
 }
 
@@ -122,9 +122,7 @@ impl TryFrom<coresdk::Command> for WFCommand {
                     attributes: Some(attrs),
                     ..
                 }) => match attrs {
-                    Attributes::StartTimerCommandAttributes(s) => {
-                        Ok(WFCommand::AddTimer(s, Arc::new(AtomicBool::new(false))))
-                    }
+                    Attributes::StartTimerCommandAttributes(s) => Ok(WFCommand::AddTimer(s)),
                     Attributes::CompleteWorkflowExecutionCommandAttributes(c) => {
                         Ok(WFCommand::CompleteWorkflow(c))
                     }
@@ -144,16 +142,13 @@ trait TemporalStateMachine: CheckStateMachineInFinal {
     fn name(&self) -> &str;
     fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError>;
 
-    /// Tell the state machine to handle some event. The [WorkflowMachines] instance calling this
-    /// function passes a reference to itself in so that the [WFMachinesAdapter] trait can use
-    /// the machines' specific type information while also manipulating [WorkflowMachines]
+    /// Tell the state machine to handle some event. Returns a list of triggers that can be used
+    /// to update the overall state of the workflow. EX: To issue outgoing WF activations.
     fn handle_event(
         &mut self,
         event: &HistoryEvent,
         has_next_event: bool,
-        // TODO: Don't pass this all in, rather use responses.
-        wf_machines: &mut WorkflowMachines,
-    ) -> Result<(), WFMachinesError>;
+    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError>;
 }
 
 impl<SM> TemporalStateMachine for SM
@@ -192,8 +187,7 @@ where
         &mut self,
         event: &HistoryEvent,
         has_next_event: bool,
-        wf_machines: &mut WorkflowMachines,
-    ) -> Result<(), WFMachinesError> {
+    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError> {
         event!(
             Level::DEBUG,
             msg = "handling event",
@@ -204,10 +198,11 @@ where
             match self.on_event_mut(converted_event) {
                 Ok(c) => {
                     event!(Level::DEBUG, msg = "Machine produced commands", ?c);
+                    let mut triggers = vec![];
                     for cmd in c {
-                        self.adapt_response(wf_machines, event, has_next_event, cmd)?;
+                        triggers.extend(self.adapt_response(event, has_next_event, cmd)?);
                     }
-                    Ok(())
+                    Ok(triggers)
                 }
                 Err(MachineError::InvalidTransition) => {
                     Err(WFMachinesError::UnexpectedEvent(event.clone()))
@@ -238,17 +233,16 @@ where
 
 /// This trait exists to bridge [StateMachine]s and the [WorkflowMachines] instance. It has access
 /// to the machine's concrete types while hiding those details from [WorkflowMachines]
-pub(super) trait WFMachinesAdapter: StateMachine {
-    /// Given a reference to [WorkflowMachines], the event being processed, and a command that this
-    /// [StateMachine] instance just produced, perform any handling that needs access to the
-    /// [WorkflowMachines] instance in response to that command.
+trait WFMachinesAdapter: StateMachine {
+    /// Given a the event being processed, and a command that this [StateMachine] instance just
+    /// produced, perform any handling that needs inform the [WorkflowMachines] instance of some
+    /// action to be taken in response to that command.
     fn adapt_response(
         &self,
-        _wf_machines: &mut WorkflowMachines,
-        _event: &HistoryEvent,
-        _has_next_event: bool,
-        _my_command: Self::Command,
-    ) -> Result<(), WFMachinesError>;
+        event: &HistoryEvent,
+        has_next_event: bool,
+        my_command: Self::Command,
+    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError>;
 }
 
 /// A command which can be cancelled, associated with some state machine that produced it
@@ -260,7 +254,7 @@ enum CancellableCommand {
     Cancelled,
     Active {
         /// The inner protobuf command, if None, command has been cancelled
-        command: MachineCommand,
+        command: ProtoCommand,
         machine: Rc<RefCell<dyn TemporalStateMachine>>,
     },
 }
