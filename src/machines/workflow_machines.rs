@@ -6,15 +6,13 @@ use crate::{
     },
     protos::{
         coresdk::{wf_activation, StartWorkflowTaskAttributes, WfActivation},
-        temporal::{
-            api::{
-                command::v1::StartTimerCommandAttributes,
-                enums::v1::{CommandType, EventType},
-                history::v1::{history_event, HistoryEvent},
-                common::v1::WorkflowExecution
-            }
-        }
-    }
+        temporal::api::{
+            command::v1::StartTimerCommandAttributes,
+            common::v1::WorkflowExecution,
+            enums::v1::{CommandType, EventType},
+            history::v1::{history_event, HistoryEvent},
+        },
+    },
 };
 use futures::Future;
 use rustfsm::StateMachine;
