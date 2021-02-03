@@ -32,7 +32,9 @@ tower = "0.4.4"
 
 [dependencies.tonic]
 version = "0.4"
-path = "../tonic/tonic"
+#path = "../tonic/tonic"
+# Using our fork for now which fixes grpc-timeout header getting stripped
+git = "https://github.com/temporalio/tonic"
 
 [dependencies.rustfsm]
 path = "fsm"

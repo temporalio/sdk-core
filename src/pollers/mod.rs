@@ -41,7 +41,7 @@ impl ServerGatewayOptions {
 fn intercept(mut req: Request<()>) -> Result<Request<()>, Status> {
     // TODO convert error
     let metadata = req.metadata_mut();
-    metadata.insert("grpc-timeout", "500m".parse().unwrap());
+    metadata.insert("grpc-timeout", "50000m".parse().unwrap());
     metadata.insert("client-name", "core-sdk".parse().unwrap());
     println!("Intercepting request: {:?}", req);
     Ok(req)
