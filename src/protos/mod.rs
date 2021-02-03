@@ -12,6 +12,7 @@ pub mod coresdk {
     use super::temporal::api::command::v1 as api_command;
     use super::temporal::api::command::v1::Command as ApiCommand;
     use crate::protos::coresdk::complete_task_req::Completion;
+    use crate::protos::coresdk::wf_activation_job::Attributes;
     use command::Variant;
 
     pub type HistoryEventId = i64;
@@ -21,6 +22,24 @@ pub mod coresdk {
             Task {
                 task_token,
                 variant: Some(t.into()),
+            }
+        }
+
+        /// Returns any contained jobs if this task was a wf activation and it had some
+        #[cfg(test)]
+        pub fn get_wf_jobs(&self) -> Vec<WfActivationJob> {
+            if let Some(task::Variant::Workflow(a)) = &self.variant {
+                a.jobs.clone()
+            } else {
+                vec![]
+            }
+        }
+    }
+
+    impl From<wf_activation_job::Attributes> for WfActivationJob {
+        fn from(a: Attributes) -> Self {
+            WfActivationJob {
+                attributes: Some(a),
             }
         }
     }

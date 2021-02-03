@@ -38,19 +38,24 @@ message Task {
 }
 
 // An instruction to the lang sdk to run some workflow code, whether for the first time or from
-// a cached state
+// a cached state.
 message WFActivation {
-    // Time the activation was requested
+    // Time the activation(s) were requested
     google.protobuf.Timestamp timestamp = 1 [(gogoproto.stdtime) = true];
     // The id of the currently active run of the workflow
     string run_id = 2;
+    // The things to do upon activating the workflow
+    repeated WFActivationJob jobs = 3;
+}
+
+message WFActivationJob {
     oneof attributes {
         // TODO could literally be attributes from events? -- maybe we don't need our own types
 
         // Begin a workflow for the first time
-        StartWorkflowTaskAttributes start_workflow = 3;
-        // A timer has fired, allowing whatever was waiting on it
-        TimerFiredTaskAttributes unblock_timer = 4;
+        StartWorkflowTaskAttributes start_workflow = 1;
+        // A timer has fired, allowing whatever was waiting on it (if anything) to proceed
+        TimerFiredTaskAttributes timer_fired = 2;
     }
 }
 
