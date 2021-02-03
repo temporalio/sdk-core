@@ -5,6 +5,8 @@ services:
     build:
       context: ../../
       dockerfile: .buildkite/docker/Dockerfile
+    security_opt:
+      - seccomp:unconfined
     command: /bin/sh -c ".buildkite/docker/build.sh"
     environment:
       - "USER=unittest"
