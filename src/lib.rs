@@ -10,6 +10,7 @@ pub mod protos;
 mod protosext;
 
 pub use protosext::HistoryInfo;
+pub use url::Url;
 
 use crate::{
     machines::{
@@ -34,31 +35,31 @@ use crate::{
 };
 use anyhow::Error;
 use dashmap::DashMap;
+use std::time::Duration;
 use std::{
     convert::TryInto,
     sync::mpsc::{self, Receiver, SendError, Sender},
 };
 use tokio::runtime::Runtime;
-use url::Url;
+use tonic::codegen::http::uri::InvalidUri;
 
 pub type Result<T, E = CoreError> = std::result::Result<T, E>;
-
+const DEFAULT_LONG_POLL_TIMEOUT: u64 = 60;
 // TODO: Do we actually need this to be send+sync? Probably, but there's also no reason to have
 //   any given WorfklowMachines instance accessed on more than one thread. Ideally this trait can
 //   be accessed from many threads, but each workflow is pinned to one thread (possibly with many
 //   sharing the same thread). IE: WorkflowMachines should be Send but not Sync, and this should
 //   be both, ideally.
 pub trait Core {
-    fn poll_task(&self) -> Result<Task>;
+    fn poll_task(&self, task_queue: &str) -> Result<Task>;
     fn complete_task(&self, req: CompleteTaskReq) -> Result<()>;
 }
 
 pub struct CoreInitOptions {
-    target_url: Url,
-    namespace: String,
-    _task_queue: Vec<String>,
-    identity: String,
-    binary_checksum: String,
+    pub target_url: Url,
+    pub namespace: String,
+    pub identity: String,
+    pub binary_checksum: String,
 }
 
 /// Initializes instance of the core sdk and establishes connection to the temporal server.
@@ -69,6 +70,7 @@ pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
         namespace: opts.namespace,
         identity: opts.identity,
         binary_checksum: opts.binary_checksum,
+        long_poll_timeout: Duration::from_secs(DEFAULT_LONG_POLL_TIMEOUT),
     };
     // Initialize server client
     let work_provider = runtime.block_on(gateway_opts.connect(opts.target_url))?;
@@ -79,6 +81,11 @@ pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
         workflow_machines: Default::default(),
         workflow_task_tokens: Default::default(),
     })
+}
+
+pub enum TaskQueue {
+    Workflow(String),
+    _Activity(String),
 }
 
 pub struct CoreSDK<WP> {
@@ -96,11 +103,11 @@ where
     WP: WorkflowTaskProvider,
 {
     #[instrument(skip(self))]
-    fn poll_task(&self) -> Result<Task, CoreError> {
+    fn poll_task(&self, task_queue: &str) -> Result<Task, CoreError> {
         // This will block forever in the event there is no work from the server
         let work = self
             .runtime
-            .block_on(self.work_provider.get_work("TODO: Real task queue"))?;
+            .block_on(self.work_provider.get_work(task_queue))?;
         let run_id = match &work.workflow_execution {
             Some(we) => {
                 self.instantiate_workflow_if_needed(we);
@@ -301,6 +308,8 @@ pub enum CoreError {
     TonicTransportError(#[from] tonic::transport::Error),
     #[error("Failed to initialize tokio runtime: {0:?}")]
     TokioInitError(std::io::Error),
+    #[error("Invalid URI: {0:?}")]
+    InvalidUri(#[from] InvalidUri),
 }
 
 #[cfg(test)]
@@ -391,7 +400,7 @@ mod test {
             workflow_task_tokens: DashMap::new(),
         };
 
-        let res = dbg!(core.poll_task().unwrap());
+        let res = dbg!(core.poll_task("test-task-queue").unwrap());
         // TODO: uggo
         assert_matches!(
             res,
@@ -417,7 +426,7 @@ mod test {
         .unwrap();
         dbg!("sent completion w/ start timer");
 
-        let res = dbg!(core.poll_task().unwrap());
+        let res = dbg!(core.poll_task("test-task-queue").unwrap());
         // TODO: uggo
         assert_matches!(
             res,
