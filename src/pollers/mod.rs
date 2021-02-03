@@ -12,7 +12,7 @@ use url::Url;
 pub(crate) struct ServerGatewayOptions {
     pub namespace: String,
     pub identity: String,
-    pub binary_checksum: String,
+    pub worker_binary_id: String,
 }
 
 impl ServerGatewayOptions {
@@ -39,7 +39,7 @@ impl ServerGateway {
                 kind: TaskQueueKind::Unspecified as i32,
             }),
             identity: self.opts.identity.to_string(),
-            binary_checksum: self.opts.binary_checksum.to_string(),
+            binary_checksum: self.opts.worker_binary_id.to_string(),
         });
 
         Ok(self

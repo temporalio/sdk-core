@@ -16,21 +16,41 @@ import "temporal/api/failure/v1/message.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/command/v1/message.proto";
 
-service Core {
-    rpc PollTask (PollTaskReq) returns (Task) {}
-    rpc CompleteTask (CompleteTaskReq) returns (google.protobuf.Empty) {}
-}
-
+// A request as given to [crate::Core::poll_task]
 message PollTaskReq {
+    // If true, poll for workflow tasks
     bool workflows = 1;
+    // If true, poll for activity tasks
     bool activities = 2;
 }
 
+// An instruction to perform work from core->lang sdk
 message Task {
+    // A unique identifier for this task
     bytes task_token = 1;
+    // The type of task to be performed
     oneof variant {
+        // Wake up a workflow
         WFActivation workflow = 2;
+        // Run an activity
         ActivityTask activity = 3;
+    }
+}
+
+// An instruction to the lang sdk to run some workflow code, whether for the first time or from
+// a cached state
+message WFActivation {
+    // Time the activation was requested
+    google.protobuf.Timestamp timestamp = 1 [(gogoproto.stdtime) = true];
+    // The id of the currently active run of the workflow
+    string run_id = 2;
+    oneof attributes {
+        // TODO could literally be attributes from events? -- maybe we don't need our own types
+
+        // Begin a workflow for the first time
+        StartWorkflowTaskAttributes start_workflow = 3;
+        // A timer has fired, allowing whatever was waiting on it
+        TimerFiredTaskAttributes unblock_timer = 4;
     }
 }
 
@@ -43,23 +63,11 @@ message StartWorkflowTaskAttributes {
     temporal.api.common.v1.Payloads arguments = 3;
 
     // TODO: Do we need namespace here, or should that just be fetchable easily?
-
-    // will be others - workflow exe started attrs, etc
+    //   will be others - workflow exe started attrs, etc
 }
 
-// maybe we just go back to timer fired to keep consistent
-message UnblockTimerTaskAttributes {
+message TimerFiredTaskAttributes {
     string timer_id = 1;
-}
-
-message WFActivation {
-    google.protobuf.Timestamp timestamp = 1 [(gogoproto.stdtime) = true];
-    string run_id = 2;
-    oneof attributes {
-        // could literally be attributes from events -- maybe we don't need our own types
-        StartWorkflowTaskAttributes start_workflow = 3;
-        UnblockTimerTaskAttributes unblock_timer = 4;
-    }
 }
 
 message ActivityTask {
@@ -68,10 +76,14 @@ message ActivityTask {
 }
 
 
+// Sent from lang side to core when calling [crate::Core::complete_task]
 message CompleteTaskReq {
+    // The id from the [Task] being completed
     bytes task_token = 1;
     oneof completion {
+        // Complete a workflow task
         WFActivationCompletion workflow = 2;
+        // Complete an activity task
         ActivityTaskCompletion activity = 3;
     }
 }
@@ -94,6 +106,7 @@ message CoreCommand {
     // Reserved for  specific commands
 }
 
+// Included in successful [WfActivationCompletion]s, indicates what the workflow wishes to do next
 message Command {
     oneof variant {
         temporal.api.command.v1.Command api = 1;
@@ -102,13 +115,16 @@ message Command {
 }
 
 message WFActivationSuccess {
+    // A list of commands to send back to the temporal server
     repeated Command commands = 1;
+
     // Other bits from RespondWorkflowTaskCompletedRequest as needed
 }
 
 message WFActivationFailure {
     temporal.api.enums.v1.WorkflowTaskFailedCause cause = 1;
     temporal.api.failure.v1.Failure failure = 2;
+
     // Other bits from RespondWorkflowTaskFailedRequest as needed
 }
 

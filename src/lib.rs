@@ -1,15 +1,19 @@
+#![warn(missing_docs)] // error if there are missing docs
+
+//! This crate provides a basis for creating new Temporal SDKs without completely starting from
+//! scratch
+
 #[macro_use]
 extern crate tracing;
 #[cfg(test)]
 #[macro_use]
 extern crate assert_matches;
 
+pub mod protos;
+
 mod machines;
 mod pollers;
-pub mod protos;
 mod protosext;
-
-pub use protosext::HistoryInfo;
 
 use crate::{
     machines::{
@@ -30,7 +34,7 @@ use crate::{
             workflowservice::v1::PollWorkflowTaskQueueResponse,
         },
     },
-    protosext::HistoryInfoError,
+    protosext::{HistoryInfo, HistoryInfoError},
 };
 use anyhow::Error;
 use dashmap::DashMap;
@@ -41,34 +45,51 @@ use std::{
 use tokio::runtime::Runtime;
 use url::Url;
 
+/// A result alias having [CoreError] as the error type
 pub type Result<T, E = CoreError> = std::result::Result<T, E>;
 
-// TODO: Do we actually need this to be send+sync? Probably, but there's also no reason to have
-//   any given WorfklowMachines instance accessed on more than one thread. Ideally this trait can
-//   be accessed from many threads, but each workflow is pinned to one thread (possibly with many
-//   sharing the same thread). IE: WorkflowMachines should be Send but not Sync, and this should
-//   be both, ideally.
+/// This trait is the primary way by which language specific SDKs interact with the core SDK. It is
+/// expected that only one instance of an implementation will exist for the lifetime of the
+/// worker(s) using it.
 pub trait Core {
+    /// Ask the core for some work, returning a [Task], which will eventually contain either a
+    /// [protos::coresdk::WfActivation] or an [protos::coresdk::ActivityTask]. It is then the
+    /// language SDK's responsibility to call the appropriate code with the provided inputs.
+    ///
+    /// TODO: Examples
     fn poll_task(&self) -> Result<Task>;
+
+    /// Tell the core that some work has been completed - whether as a result of running workflow
+    /// code or executing an activity.
     fn complete_task(&self, req: CompleteTaskReq) -> Result<()>;
 }
 
+/// Holds various configuration information required to call [init]
 pub struct CoreInitOptions {
-    target_url: Url,
-    namespace: String,
-    _task_queue: Vec<String>,
-    identity: String,
-    binary_checksum: String,
+    /// The URL of the Temporal server to connect to
+    pub target_url: Url,
+
+    /// The namespace on the server your worker will be using
+    pub namespace: String,
+
+    /// A human-readable string that can identify your worker
+    ///
+    /// TODO: Probably belongs in future worker abstraction
+    pub identity: String,
+
+    /// A string that should be unique to the exact worker code/binary being executed
+    pub worker_binary_id: String,
 }
 
-/// Initializes instance of the core sdk and establishes connection to the temporal server.
-/// Creates tokio runtime that will be used for all client-server interactions.  
+/// Initializes an instance of the core sdk and establishes a connection to the temporal server.
+///
+/// Note: Also creates tokio runtime that will be used for all client-server interactions.  
 pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
     let runtime = Runtime::new().map_err(CoreError::TokioInitError)?;
     let gateway_opts = ServerGatewayOptions {
         namespace: opts.namespace,
         identity: opts.identity,
-        binary_checksum: opts.binary_checksum,
+        worker_binary_id: opts.worker_binary_id,
     };
     // Initialize server client
     let work_provider = runtime.block_on(gateway_opts.connect(opts.target_url))?;
@@ -81,7 +102,7 @@ pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
     })
 }
 
-pub struct CoreSDK<WP> {
+struct CoreSDK<WP> {
     runtime: Runtime,
     /// Provides work in the form of responses the server would send from polling task Qs
     work_provider: WP,
@@ -226,7 +247,7 @@ pub trait WorkflowTaskProvider {
 /// expects to be polled by the lang sdk. This struct acts as the bridge between the two, buffering
 /// output from calls to [DrivenWorkflow] and offering them to [CoreSDKService]
 #[derive(Debug)]
-pub struct WorkflowBridge {
+pub(crate) struct WorkflowBridge {
     // does wf id belong in here?
     started_attrs: Option<WorkflowExecutionStartedEventAttributes>,
     incoming_commands: Receiver<Vec<WFCommand>>,
@@ -276,30 +297,32 @@ impl DrivenWorkflow for WorkflowBridge {
 // Real bridge doesn't actually need to listen
 impl ActivationListener for WorkflowBridge {}
 
-#[derive(thiserror::Error, Debug)]
+/// The error type returned by interactions with [Core]
+#[derive(thiserror::Error, Debug, displaydoc::Display)]
 #[allow(clippy::large_enum_variant)]
+// NOTE: Docstrings take the place of #[error("xxxx")] here b/c of displaydoc
 pub enum CoreError {
-    #[error("Unknown service error")]
+    /// Unknown service error
     Unknown,
-    #[error("No tasks to perform for now")]
+    /// No tasks to perform for now
     NoWork,
-    #[error("Poll response from server was malformed: {0:?}")]
+    /// Poll response from server was malformed: {0:?}
     BadDataFromWorkProvider(PollWorkflowTaskQueueResponse),
-    #[error("Lang SDK sent us a malformed completion: {0:?}")]
+    /// Lang SDK sent us a malformed completion: {0:?}
     MalformedCompletion(CompleteTaskReq),
-    #[error("Error buffering commands")]
+    /// Error buffering commands
     CantSendCommands(#[from] SendError<Vec<WFCommand>>),
-    #[error("Couldn't interpret command from <lang>")]
+    /// Couldn't interpret command from <lang>
     UninterprableCommand(#[from] InconvertibleCommandError),
-    #[error("Underlying error in history processing")]
+    /// Underlying error in history processing
     UnderlyingHistError(#[from] HistoryInfoError),
-    #[error("Task token had nothing associated with it: {0:?}")]
+    /// Task token had nothing associated with it: {0:?}
     NothingFoundForTaskToken(Vec<u8>),
-    #[error("Error calling the service: {0:?}")]
+    /// Error calling the service: {0:?}
     TonicError(#[from] tonic::Status),
-    #[error("Server connection error: {0:?}")]
+    /// Server connection error: {0:?}
     TonicTransportError(#[from] tonic::transport::Error),
-    #[error("Failed to initialize tokio runtime: {0:?}")]
+    /// Failed to initialize tokio runtime: {0:?}
     TokioInitError(std::io::Error),
 }
 
