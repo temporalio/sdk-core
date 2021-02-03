@@ -1,5 +1,6 @@
 #![allow(clippy::enum_variant_names)]
 
+use crate::machines::workflow_machines::WorkflowTrigger;
 use crate::{
     machines::{
         workflow_machines::{WFMachinesError, WorkflowMachines},
@@ -53,11 +54,10 @@ pub(super) enum WFTaskMachineCommand {
 impl WFMachinesAdapter for WorkflowTaskMachine {
     fn adapt_response(
         &self,
-        wf_machines: &mut WorkflowMachines,
         event: &HistoryEvent,
         has_next_event: bool,
         my_command: WFTaskMachineCommand,
-    ) -> Result<(), WFMachinesError> {
+    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError> {
         match my_command {
             WFTaskMachineCommand::WFTaskStartedTrigger {
                 task_started_event_id,
@@ -71,12 +71,14 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
                 {
                     // Last event in history is a task started event, so we don't
                     // want to iterate.
-                    return Ok(());
+                    return Ok(vec![]);
                 }
-                wf_machines.task_started(task_started_event_id, time)?;
+                Ok(vec![WorkflowTrigger::TriggerWFTaskStarted {
+                    task_started_event_id,
+                    time,
+                }])
             }
         }
-        Ok(())
     }
 }
 
