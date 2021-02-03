@@ -15,6 +15,9 @@ mod machines;
 mod pollers;
 mod protosext;
 
+pub use protosext::HistoryInfo;
+pub use url::Url;
+
 use crate::{
     machines::{
         ActivationListener, DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines,
@@ -38,15 +41,17 @@ use crate::{
 };
 use anyhow::Error;
 use dashmap::DashMap;
+use std::time::Duration;
 use std::{
     convert::TryInto,
     sync::mpsc::{self, Receiver, SendError, Sender},
 };
 use tokio::runtime::Runtime;
-use url::Url;
+use tonic::codegen::http::uri::InvalidUri;
 
 /// A result alias having [CoreError] as the error type
 pub type Result<T, E = CoreError> = std::result::Result<T, E>;
+const DEFAULT_LONG_POLL_TIMEOUT: u64 = 60;
 
 /// This trait is the primary way by which language specific SDKs interact with the core SDK. It is
 /// expected that only one instance of an implementation will exist for the lifetime of the
@@ -57,7 +62,7 @@ pub trait Core {
     /// language SDK's responsibility to call the appropriate code with the provided inputs.
     ///
     /// TODO: Examples
-    fn poll_task(&self) -> Result<Task>;
+    fn poll_task(&self, task_queue: &str) -> Result<Task>;
 
     /// Tell the core that some work has been completed - whether as a result of running workflow
     /// code or executing an activity.
@@ -90,6 +95,7 @@ pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
         namespace: opts.namespace,
         identity: opts.identity,
         worker_binary_id: opts.worker_binary_id,
+        long_poll_timeout: Duration::from_secs(DEFAULT_LONG_POLL_TIMEOUT),
     };
     // Initialize server client
     let work_provider = runtime.block_on(gateway_opts.connect(opts.target_url))?;
@@ -100,6 +106,11 @@ pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
         workflow_machines: Default::default(),
         workflow_task_tokens: Default::default(),
     })
+}
+
+pub enum TaskQueue {
+    Workflow(String),
+    _Activity(String),
 }
 
 struct CoreSDK<WP> {
@@ -117,11 +128,11 @@ where
     WP: WorkflowTaskProvider,
 {
     #[instrument(skip(self))]
-    fn poll_task(&self) -> Result<Task, CoreError> {
+    fn poll_task(&self, task_queue: &str) -> Result<Task, CoreError> {
         // This will block forever in the event there is no work from the server
         let work = self
             .runtime
-            .block_on(self.work_provider.get_work("TODO: Real task queue"))?;
+            .block_on(self.work_provider.get_work(task_queue))?;
         let run_id = match &work.workflow_execution {
             Some(we) => {
                 self.instantiate_workflow_if_needed(we);
@@ -324,6 +335,8 @@ pub enum CoreError {
     TonicTransportError(#[from] tonic::transport::Error),
     /// Failed to initialize tokio runtime: {0:?}
     TokioInitError(std::io::Error),
+    #[error("Invalid URI: {0:?}")]
+    InvalidUri(#[from] InvalidUri),
 }
 
 #[cfg(test)]
@@ -414,7 +427,7 @@ mod test {
             workflow_task_tokens: DashMap::new(),
         };
 
-        let res = dbg!(core.poll_task().unwrap());
+        let res = dbg!(core.poll_task("test-task-queue").unwrap());
         // TODO: uggo
         assert_matches!(
             res.get_wf_jobs().as_slice(),
@@ -436,7 +449,7 @@ mod test {
         .unwrap();
         dbg!("sent completion w/ start timer");
 
-        let res = dbg!(core.poll_task().unwrap());
+        let res = dbg!(core.poll_task("test-task-queue").unwrap());
         // TODO: uggo
         assert_matches!(
             res.get_wf_jobs().as_slice(),
