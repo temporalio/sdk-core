@@ -1,6 +1,6 @@
 use super::Result;
 use crate::{
-    machines::{workflow_machines::WorkflowMachines, MachineCommand},
+    machines::{workflow_machines::WorkflowMachines, ProtoCommand},
     protos::temporal::api::{
         enums::v1::EventType,
         history::v1::{
@@ -35,7 +35,7 @@ impl TestHistoryBuilder {
     pub fn add_by_type(&mut self, event_type: EventType) {
         let attribs =
             default_attribs(event_type).expect("Couldn't make default attributes in test builder");
-        self.build_and_push_event(event_type.clone(), attribs);
+        self.build_and_push_event(event_type, attribs);
     }
 
     /// Adds an event, returning the ID that was assigned to it
@@ -133,7 +133,7 @@ impl TestHistoryBuilder {
         &self,
         wf_machines: &mut WorkflowMachines,
         to_wf_task_num: Option<usize>,
-    ) -> Result<Vec<MachineCommand>> {
+    ) -> Result<Vec<ProtoCommand>> {
         self.handle_workflow_task(wf_machines, to_wf_task_num)?;
         Ok(wf_machines.get_commands())
     }

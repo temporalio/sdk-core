@@ -1,5 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
+use crate::machines::workflow_machines::WorkflowTrigger;
 use crate::protos::coresdk::{wf_activation, UnblockTimerTaskAttributes, WfActivation};
 use crate::{
     machines::{
@@ -217,33 +218,20 @@ impl StartCommandRecorded {
 impl WFMachinesAdapter for TimerMachine {
     fn adapt_response(
         &self,
-        wf_machines: &mut WorkflowMachines,
         _event: &HistoryEvent,
         _has_next_event: bool,
         my_command: TimerMachineCommand,
-    ) -> Result<(), WFMachinesError> {
+    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError> {
         match my_command {
+            // Fire the completion
+            TimerMachineCommand::Complete(_event) => Ok(vec![UnblockTimerTaskAttributes {
+                timer_id: self.shared_state.timer_attributes.timer_id.clone(),
+            }
+            .into()]),
             TimerMachineCommand::AddCommand(_) => {
                 unreachable!()
             }
-            // Fire the completion
-            TimerMachineCommand::Complete(_event) => {
-                // TODO: Remove atomic bool nonsense -- kept for now to keep test here passing
-                if let Some(a) = wf_machines
-                    .timer_notifiers
-                    .remove(&self.shared_state.timer_attributes.timer_id)
-                {
-                    a.store(true, Ordering::SeqCst)
-                };
-                wf_machines.outgoing_wf_actications.push_back(
-                    UnblockTimerTaskAttributes {
-                        timer_id: self.shared_state.timer_attributes.timer_id.clone(),
-                    }
-                    .into(),
-                );
-            }
         }
-        Ok(())
     }
 }
 
@@ -267,6 +255,7 @@ mod test {
     };
     use futures::{channel::mpsc::Sender, FutureExt, SinkExt};
     use rstest::{fixture, rstest};
+    use std::sync::Arc;
     use std::{error::Error, time::Duration};
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -295,7 +284,6 @@ mod test {
             let timer = StartTimerCommandAttributes {
                 timer_id: "Sometimer".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
-                ..Default::default()
             };
             command_sink.timer(timer).await;
 
@@ -315,7 +303,6 @@ mod test {
             history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
                 started_event_id: timer_started_event_id,
                 timer_id: "timer1".to_string(),
-                ..Default::default()
             }),
         );
         t.add_workflow_task_scheduled_and_started();
@@ -334,11 +321,13 @@ mod test {
             .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
             .unwrap();
         dbg!(&commands);
+        dbg!(state_machines.get_wf_activation());
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
             .unwrap();
+        dbg!(state_machines.get_wf_activation());
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
