@@ -4,10 +4,6 @@ version = "0.1.0"
 authors = ["Spencer Judge <spencer@temporal.io>", "Vitaly Arbuzov <vitaly@temporal.io>"]
 edition = "2018"
 
-[features]
-default = []
-integ_tests = []
-
 [lib]
 
 # TODO: Feature flag opentelem stuff
@@ -51,6 +47,8 @@ tonic-build = "0.4"
 members = [".", "fsm"]
 
 [[test]]
-name = "poller_test"
-path = "tests/poller_test.rs"
-required-features = ["integ_tests"]
+name = "integ_tests"
+path = "tests/main.rs"
+# Prevents autodiscovery, and hence these getting run with `cargo test`. Run with
+# `cargo test --test integ_tests`
+test = false

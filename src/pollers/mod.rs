@@ -1,18 +1,16 @@
 use std::time::Duration;
 
-use tonic::metadata::MetadataValue;
-use tonic::transport::Channel;
-use tonic::{Request, Status};
-use url::Url;
-
-use crate::protos::temporal::api::enums::v1::TaskQueueKind;
-use crate::protos::temporal::api::taskqueue::v1::TaskQueue;
-use crate::protos::temporal::api::workflowservice::v1::workflow_service_client::WorkflowServiceClient;
-use crate::protos::temporal::api::workflowservice::v1::{
-    PollWorkflowTaskQueueRequest, PollWorkflowTaskQueueResponse,
+use crate::{
+    protos::temporal::api::enums::v1::TaskQueueKind,
+    protos::temporal::api::taskqueue::v1::TaskQueue,
+    protos::temporal::api::workflowservice::v1::workflow_service_client::WorkflowServiceClient,
+    protos::temporal::api::workflowservice::v1::{
+        PollWorkflowTaskQueueRequest, PollWorkflowTaskQueueResponse,
+    },
+    Result, WorkflowTaskProvider,
 };
-use crate::Result;
-use crate::WorkflowTaskProvider;
+use tonic::{transport::Channel, Request, Status};
+use url::Url;
 
 #[derive(Clone)]
 pub(crate) struct ServerGatewayOptions {
