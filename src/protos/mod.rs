@@ -23,6 +23,16 @@ pub mod coresdk {
                 variant: Some(t.into()),
             }
         }
+
+        /// Returns any contained jobs if this task was a wf activation and it had some
+        #[cfg(test)]
+        pub fn get_wf_jobs(&self) -> Vec<WfActivationJob> {
+            if let Some(task::Variant::Workflow(a)) = &self.variant {
+                a.jobs.clone()
+            } else {
+                vec![]
+            }
+        }
     }
 
     impl From<Vec<ApiCommand>> for WfActivationSuccess {

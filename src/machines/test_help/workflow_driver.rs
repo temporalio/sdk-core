@@ -2,7 +2,7 @@ use super::Result;
 use crate::{
     machines::{ActivationListener, DrivenWorkflow, WFCommand},
     protos::{
-        coresdk::{wf_activation::Attributes, TimerFiredTaskAttributes},
+        coresdk::{wf_activation_job::Attributes, TimerFiredTaskAttributes},
         temporal::api::{
             command::v1::StartTimerCommandAttributes,
             history::v1::{
@@ -58,8 +58,8 @@ where
 }
 
 impl<F> ActivationListener for TestWorkflowDriver<F> {
-    fn on_activation(&mut self, activation: &Attributes) {
-        if let Attributes::UnblockTimer(TimerFiredTaskAttributes { timer_id }) = activation {
+    fn on_activation_job(&mut self, activation: &Attributes) {
+        if let Attributes::TimerFired(TimerFiredTaskAttributes { timer_id }) = activation {
             Arc::get_mut(&mut self.cache)
                 .unwrap()
                 .unblocked_timers

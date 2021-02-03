@@ -39,9 +39,8 @@ pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
 use crate::{
     machines::workflow_machines::WorkflowTrigger,
-    protos::coresdk::wf_activation,
     protos::{
-        coresdk::{self, command::Variant},
+        coresdk::{self, command::Variant, wf_activation_job},
         temporal::api::{
             command::v1::{
                 command::Attributes, Command, CompleteWorkflowExecutionCommandAttributes,
@@ -93,10 +92,10 @@ pub(crate) trait DrivenWorkflow: ActivationListener + Send {
     ) -> Result<(), anyhow::Error>;
 }
 
-/// Allows observers to listen to newly generated outgoing activations. Used for testing, where
+/// Allows observers to listen to newly generated outgoing activation jobs. Used for testing, where
 /// some activations must be handled before outgoing commands are issued to avoid deadlocking.
 pub(crate) trait ActivationListener {
-    fn on_activation(&mut self, _activation: &wf_activation::Attributes) {}
+    fn on_activation_job(&mut self, _activation: &wf_activation_job::Attributes) {}
 }
 
 /// The struct for [WFCommand::AddCommand]

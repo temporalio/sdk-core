@@ -1,4 +1,5 @@
 use crate::machines::ActivationListener;
+use crate::protos::coresdk::WfActivationJob;
 use crate::{
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
@@ -6,7 +7,7 @@ use crate::{
         ProtoCommand, TemporalStateMachine, WFCommand,
     },
     protos::{
-        coresdk::{wf_activation, StartWorkflowTaskAttributes, WfActivation},
+        coresdk::{wf_activation_job, StartWorkflowTaskAttributes, WfActivation},
         temporal::api::{
             command::v1::StartTimerCommandAttributes,
             common::v1::WorkflowExecution,
@@ -62,8 +63,8 @@ pub(crate) struct WorkflowMachines {
     /// Old note: It is a queue as commands can be added (due to marker based commands) while
     /// iterating over already added commands.
     current_wf_task_commands: VecDeque<CancellableCommand>,
-    /// Outgoing activations that need to be sent to the lang sdk
-    outgoing_wf_activations: VecDeque<wf_activation::Attributes>,
+    /// Outgoing activation jobs that need to be sent to the lang sdk
+    outgoing_wf_activation_jobs: VecDeque<wf_activation_job::Attributes>,
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: Box<dyn DrivenWorkflow + 'static>,
@@ -73,7 +74,7 @@ pub(crate) struct WorkflowMachines {
 #[derive(Debug, derive_more::From)]
 #[must_use]
 pub(super) enum WorkflowTrigger {
-    PushWFActivation(#[from(forward)] wf_activation::Attributes),
+    PushWFJob(#[from(forward)] wf_activation_job::Attributes),
     TriggerWFTaskStarted {
         task_started_event_id: i64,
         time: SystemTime,
@@ -114,7 +115,7 @@ impl WorkflowMachines {
             machines_by_id: Default::default(),
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
-            outgoing_wf_activations: Default::default(),
+            outgoing_wf_activation_jobs: Default::default(),
         }
     }
 
@@ -287,7 +288,7 @@ impl WorkflowMachines {
                 {
                     self.run_id = attrs.original_execution_run_id.clone();
                     // We need to notify the lang sdk that it's time to kick off a workflow
-                    self.outgoing_wf_activations.push_back(
+                    self.outgoing_wf_activation_jobs.push_back(
                         StartWorkflowTaskAttributes {
                             // TODO: This needs to be set during init
                             workflow_type: "".to_string(),
@@ -344,14 +345,23 @@ impl WorkflowMachines {
     /// Returns the next activation that needs to be performed by the lang sdk. Things like unblock
     /// timer, etc.
     pub(crate) fn get_wf_activation(&mut self) -> Option<WfActivation> {
-        self.outgoing_wf_activations
-            .pop_front()
-            .map(|attrs| WfActivation {
-                // todo wat ?
+        if self.outgoing_wf_activation_jobs.is_empty() {
+            None
+        } else {
+            let jobs = self
+                .outgoing_wf_activation_jobs
+                .drain(..)
+                .map(|x| WfActivationJob {
+                    attributes: Some(x.into()),
+                })
+                .collect();
+            Some(WfActivation {
+                // todo How should this timestamp be set?
                 timestamp: None,
                 run_id: self.run_id.clone(),
-                attributes: attrs.into(),
+                jobs,
             })
+        }
     }
 
     /// Given an event id (possibly zero) of the last successfully executed workflow task and an
@@ -394,9 +404,9 @@ impl WorkflowMachines {
         event!(Level::DEBUG, msg = "Machine produced triggers", ?triggers);
         for trigger in triggers {
             match trigger {
-                WorkflowTrigger::PushWFActivation(a) => {
-                    self.drive_me.on_activation(&a);
-                    self.outgoing_wf_activations.push_back(a);
+                WorkflowTrigger::PushWFJob(a) => {
+                    self.drive_me.on_activation_job(&a);
+                    self.outgoing_wf_activation_jobs.push_back(a);
                 }
                 WorkflowTrigger::TriggerWFTaskStarted {
                     task_started_event_id,

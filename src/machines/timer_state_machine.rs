@@ -6,7 +6,7 @@ use crate::{
         AddCommand, CancellableCommand, WFCommand, WFMachinesAdapter,
     },
     protos::{
-        coresdk::{wf_activation, HistoryEventId, TimerFiredTaskAttributes, WfActivation},
+        coresdk::{HistoryEventId, TimerFiredTaskAttributes, WfActivation},
         temporal::api::{
             command::v1::{
                 command::Attributes, CancelTimerCommandAttributes, Command,

@@ -332,7 +332,7 @@ mod test {
     use crate::{
         machines::test_help::TestHistoryBuilder,
         protos::{
-            coresdk::{task, wf_activation, WfActivation},
+            coresdk::{wf_activation_job, WfActivationJob},
             temporal::api::{
                 command::v1::{
                     CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
@@ -417,14 +417,10 @@ mod test {
         let res = dbg!(core.poll_task().unwrap());
         // TODO: uggo
         assert_matches!(
-            res,
-            Task {
-                variant: Some(task::Variant::Workflow(WfActivation {
-                    attributes: Some(wf_activation::Attributes::StartWorkflow(_)),
-                    ..
-                })),
-                ..
-            }
+            res.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
+            }]
         );
         assert!(core.workflow_machines.get(run_id).is_some());
 
@@ -443,14 +439,10 @@ mod test {
         let res = dbg!(core.poll_task().unwrap());
         // TODO: uggo
         assert_matches!(
-            res,
-            Task {
-                variant: Some(task::Variant::Workflow(WfActivation {
-                    attributes: Some(wf_activation::Attributes::UnblockTimer(_)),
-                    ..
-                })),
-                ..
-            }
+            res.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                attributes: Some(wf_activation_job::Attributes::TimerFired(_)),
+            }]
         );
         let task_tok = res.task_token;
         core.complete_task(CompleteTaskReq::ok_from_api_attrs(
