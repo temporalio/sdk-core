@@ -1,9 +1,18 @@
+//! Contains the protobuf definitions used as arguments to and return values from interactions with
+//! [super::Core]. Language SDK authors can generate structs using the proto definitions that will match
+//! the generated structs in this module.
+
 #[allow(clippy::large_enum_variant)]
+// I'd prefer not to do this, but there are some generated things that just don't need it.
+#[allow(missing_docs)]
 pub mod coresdk {
+    //! Contains all protobufs relating to communication between core and lang-specific SDKs
+
     include!("coresdk.rs");
     use super::temporal::api::command::v1 as api_command;
     use super::temporal::api::command::v1::Command as ApiCommand;
     use crate::protos::coresdk::complete_task_req::Completion;
+    use crate::protos::coresdk::wf_activation_job::Attributes;
     use command::Variant;
 
     pub type HistoryEventId = i64;
@@ -13,6 +22,24 @@ pub mod coresdk {
             Task {
                 task_token,
                 variant: Some(t.into()),
+            }
+        }
+
+        /// Returns any contained jobs if this task was a wf activation and it had some
+        #[cfg(test)]
+        pub fn get_wf_jobs(&self) -> Vec<WfActivationJob> {
+            if let Some(task::Variant::Workflow(a)) = &self.variant {
+                a.jobs.clone()
+            } else {
+                vec![]
+            }
+        }
+    }
+
+    impl From<wf_activation_job::Attributes> for WfActivationJob {
+        fn from(a: Attributes) -> Self {
+            WfActivationJob {
+                attributes: Some(a),
             }
         }
     }
@@ -50,6 +77,7 @@ pub mod coresdk {
 
 // No need to lint these
 #[allow(clippy::all)]
+#[allow(missing_docs)]
 // This is disgusting, but unclear to me how to avoid it. TODO: Discuss w/ prost maintainer
 pub mod temporal {
     pub mod api {

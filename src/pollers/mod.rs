@@ -1,29 +1,50 @@
-use crate::protos::temporal::api::enums::v1::TaskQueueKind;
-use crate::protos::temporal::api::taskqueue::v1::TaskQueue;
-use crate::protos::temporal::api::workflowservice::v1::workflow_service_client::WorkflowServiceClient;
-use crate::protos::temporal::api::workflowservice::v1::{
-    PollWorkflowTaskQueueRequest, PollWorkflowTaskQueueResponse,
+use std::time::Duration;
+
+use crate::{
+    protos::temporal::api::enums::v1::TaskQueueKind,
+    protos::temporal::api::taskqueue::v1::TaskQueue,
+    protos::temporal::api::workflowservice::v1::workflow_service_client::WorkflowServiceClient,
+    protos::temporal::api::workflowservice::v1::{
+        PollWorkflowTaskQueueRequest, PollWorkflowTaskQueueResponse,
+    },
+    Result, WorkflowTaskProvider,
 };
-use crate::Result;
-use crate::WorkflowTaskProvider;
+use tonic::{transport::Channel, Request, Status};
 use url::Url;
 
 #[derive(Clone)]
 pub(crate) struct ServerGatewayOptions {
     pub namespace: String,
     pub identity: String,
-    pub binary_checksum: String,
+    pub worker_binary_id: String,
+    pub long_poll_timeout: Duration,
 }
 
 impl ServerGatewayOptions {
     pub(crate) async fn connect(&self, target_url: Url) -> Result<ServerGateway> {
-        let service = WorkflowServiceClient::connect(target_url.to_string()).await?;
+        let channel = Channel::from_shared(target_url.to_string())?
+            .connect()
+            .await?;
+        let service = WorkflowServiceClient::with_interceptor(channel, intercept);
         Ok(ServerGateway {
             service,
             opts: self.clone(),
         })
     }
 }
+
+/// This function will get called on each outbound request. Returning a
+/// `Status` here will cancel the request and have that status returned to
+/// the caller.
+fn intercept(mut req: Request<()>) -> Result<Request<()>, Status> {
+    // TODO convert error
+    let metadata = req.metadata_mut();
+    metadata.insert("grpc-timeout", "50000m".parse().unwrap());
+    metadata.insert("client-name", "core-sdk".parse().unwrap());
+    println!("Intercepting request: {:?}", req);
+    Ok(req)
+}
+
 /// Provides
 pub(crate) struct ServerGateway {
     service: WorkflowServiceClient<tonic::transport::Channel>,
@@ -39,7 +60,7 @@ impl ServerGateway {
                 kind: TaskQueueKind::Unspecified as i32,
             }),
             identity: self.opts.identity.to_string(),
-            binary_checksum: self.opts.binary_checksum.to_string(),
+            binary_checksum: self.opts.worker_binary_id.to_string(),
         });
 
         Ok(self
