@@ -351,13 +351,10 @@ impl WorkflowMachines {
             let jobs = self
                 .outgoing_wf_activation_jobs
                 .drain(..)
-                .map(|x| WfActivationJob {
-                    attributes: Some(x.into()),
-                })
+                .map(Into::into)
                 .collect();
             Some(WfActivation {
-                // todo How should this timestamp be set?
-                timestamp: None,
+                timestamp: self.current_wf_time.map(Into::into),
                 run_id: self.run_id.clone(),
                 jobs,
             })
