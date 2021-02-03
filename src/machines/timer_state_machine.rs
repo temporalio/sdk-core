@@ -1,14 +1,12 @@
 #![allow(clippy::large_enum_variant)]
 
-use crate::machines::workflow_machines::WorkflowTrigger;
-use crate::protos::coresdk::{wf_activation, UnblockTimerTaskAttributes, WfActivation};
 use crate::{
     machines::{
-        workflow_machines::WFMachinesError, workflow_machines::WorkflowMachines, AddCommand,
-        CancellableCommand, WFCommand, WFMachinesAdapter,
+        workflow_machines::{WFMachinesError, WorkflowMachines, WorkflowTrigger},
+        AddCommand, CancellableCommand, WFCommand, WFMachinesAdapter,
     },
     protos::{
-        coresdk::HistoryEventId,
+        coresdk::{wf_activation, HistoryEventId, TimerFiredTaskAttributes, WfActivation},
         temporal::api::{
             command::v1::{
                 command::Attributes, CancelTimerCommandAttributes, Command,
@@ -224,7 +222,7 @@ impl WFMachinesAdapter for TimerMachine {
     ) -> Result<Vec<WorkflowTrigger>, WFMachinesError> {
         match my_command {
             // Fire the completion
-            TimerMachineCommand::Complete(_event) => Ok(vec![UnblockTimerTaskAttributes {
+            TimerMachineCommand::Complete(_event) => Ok(vec![TimerFiredTaskAttributes {
                 timer_id: self.shared_state.timer_attributes.timer_id.clone(),
             }
             .into()]),

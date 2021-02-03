@@ -1,5 +1,13 @@
+//! Contains the protobuf definitions used as arguments to and return values from interactions with
+//! [super::Core]. Language SDK authors can generate structs using the proto definitions that will match
+//! the generated structs in this module.
+
 #[allow(clippy::large_enum_variant)]
+// I'd prefer not to do this, but there are some generated things that just don't need it.
+#[allow(missing_docs)]
 pub mod coresdk {
+    //! Contains all protobufs relating to communication between core and lang-specific SDKs
+
     include!("coresdk.rs");
     use super::temporal::api::command::v1 as api_command;
     use super::temporal::api::command::v1::Command as ApiCommand;
@@ -50,6 +58,7 @@ pub mod coresdk {
 
 // No need to lint these
 #[allow(clippy::all)]
+#[allow(missing_docs)]
 // This is disgusting, but unclear to me how to avoid it. TODO: Discuss w/ prost maintainer
 pub mod temporal {
     pub mod api {

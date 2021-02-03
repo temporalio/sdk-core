@@ -1,9 +1,11 @@
-use crate::machines::{WFMachinesError, WorkflowMachines};
-use crate::protos::temporal::api::enums::v1::EventType;
-use crate::protos::temporal::api::history::v1::{History, HistoryEvent};
+use crate::{
+    machines::{WFMachinesError, WorkflowMachines},
+    protos::temporal::api::enums::v1::EventType,
+    protos::temporal::api::history::v1::{History, HistoryEvent},
+};
 
 #[derive(Clone, Debug, derive_more::Constructor, PartialEq)]
-pub struct HistoryInfo {
+pub(crate) struct HistoryInfo {
     pub previous_started_event_id: i64,
     pub workflow_task_started_event_id: i64,
     pub events: Vec<HistoryEvent>,
@@ -25,6 +27,7 @@ pub enum HistoryInfoError {
     #[error("Underlying error in workflow machine")]
     UnderlyingMachineError(#[from] WFMachinesError),
 }
+
 impl HistoryInfo {
     /// Constructs a new instance, retaining only enough events to reach the provided workflow
     /// task number. If not provided, all events are retained.
