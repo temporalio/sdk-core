@@ -8,6 +8,8 @@
 pub extern crate assert_matches;
 #[macro_use]
 extern crate tracing;
+#[macro_use]
+extern crate mockall;
 
 mod machines;
 mod pollers;
@@ -388,8 +390,19 @@ mod test {
         },
     };
 
-    use super::*;
+    mock! {
+        ServerGateway {}
+        #[async_trait::async_trait]
+        impl PollWorkflowTaskQueueApi for ServerGateway {
+            async fn poll(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
+        }
+        #[async_trait::async_trait]
+        impl RespondWorkflowTaskCompletedApi for ServerGateway {
+            async fn complete(&self, task_token: Vec<u8>, commands: Vec<ProtoCommand>) -> Result<RespondWorkflowTaskCompletedResponse>;
+        }
+    }
 
+    use super::*;
     #[test]
     fn workflow_bridge() {
         let s = span!(Level::DEBUG, "Test start");
@@ -398,6 +411,7 @@ mod test {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
         let timer_id = "fake_timer";
+        let task_queue = "test-task-queue";
 
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -446,9 +460,9 @@ mod test {
         let responses = vec![first_response, second_response];
 
         let mut tasks = VecDeque::from(responses);
-        let mut mock_provider = MockWorkflowTaskProvider::new();
+        let mut mock_provider = MockServerGateway::new();
         mock_provider
-            .expect_get_work()
+            .expect_poll()
             .returning(move |_| Ok(tasks.pop_front().unwrap()));
 
         let runtime = Runtime::new().unwrap();
@@ -459,7 +473,7 @@ mod test {
             workflow_task_tokens: DashMap::new(),
         };
 
-        let res = dbg!(core.poll_task("test-task-queue").unwrap());
+        let res = dbg!(core.poll_task(task_queue).unwrap());
         // TODO: uggo
         assert_matches!(
             res.get_wf_jobs().as_slice(),
@@ -481,7 +495,7 @@ mod test {
         .unwrap();
         dbg!("sent completion w/ start timer");
 
-        let res = dbg!(core.poll_task("test-task-queue").unwrap());
+        let res = dbg!(core.poll_task(task_queue).unwrap());
         // TODO: uggo
         assert_matches!(
             res.get_wf_jobs().as_slice(),
