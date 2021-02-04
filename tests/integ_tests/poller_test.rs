@@ -7,8 +7,6 @@ use temporal_sdk_core::{
             CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
         },
         temporal::api::common::v1::WorkflowType,
-        temporal::api::enums::v1::EventType,
-        temporal::api::history::v1::{history_event, TimerFiredEventAttributes},
         temporal::api::taskqueue::v1::TaskQueue,
         temporal::api::workflowservice::v1::StartWorkflowExecutionRequest,
     },

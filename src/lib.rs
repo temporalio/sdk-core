@@ -8,6 +8,7 @@
 pub extern crate assert_matches;
 #[macro_use]
 extern crate tracing;
+#[cfg(test)]
 #[macro_use]
 extern crate mockall;
 
@@ -19,10 +20,6 @@ mod protosext;
 pub use pollers::{ServerGateway, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::machines::ProtoCommand;
-use crate::protos::temporal::api::workflowservice::v1::{
-    RespondWorkflowTaskCompletedRequest, RespondWorkflowTaskCompletedResponse,
-};
 use crate::{
     machines::{
         ActivationListener, DrivenWorkflow, InconvertibleCommandError, ProtoCommand, WFCommand,
@@ -39,8 +36,8 @@ use crate::{
                 WorkflowExecutionCanceledEventAttributes, WorkflowExecutionSignaledEventAttributes,
                 WorkflowExecutionStartedEventAttributes,
             },
-            workflowservice::{
-                v1::PollWorkflowTaskQueueResponse, v1::RespondWorkflowTaskCompletedResponse,
+            workflowservice::v1::{
+                PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
             },
         },
     },
@@ -204,7 +201,8 @@ where
                         self.push_lang_commands(&run_id, success)?;
                         if let Some(mut machines) = self.workflow_machines.get_mut(&run_id) {
                             let commands = machines.0.get_commands();
-                            self.server_gateway.complete(task_token, commands);
+                            self.runtime
+                                .block_on(self.server_gateway.complete(task_token, commands))?;
                         }
                     }
                     Status::Failed(_) => {}
