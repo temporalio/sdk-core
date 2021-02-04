@@ -43,7 +43,6 @@ use crate::{
     },
     protosext::{HistoryInfo, HistoryInfoError},
 };
-use anyhow::Error;
 use dashmap::DashMap;
 use std::{
     convert::TryInto,
@@ -228,24 +227,18 @@ where
         run_id: &str,
         success: WfActivationSuccess,
     ) -> Result<(), CoreError> {
-        // TODO: No unwraps
         // Convert to wf commands
         let cmds = success
             .commands
             .into_iter()
             .map(|c| c.try_into().map_err(Into::into))
             .collect::<Result<Vec<_>>>()?;
-        self.workflow_machines
-            .get_mut(run_id)
-            .unwrap()
-            .1
-            .send(cmds)?;
-        self.workflow_machines
-            .get_mut(run_id)
-            .unwrap()
-            .0
-            .event_loop()
-            .unwrap();
+        if let Some(mut machine) = self.workflow_machines.get_mut(run_id) {
+            machine.1.send(cmds)?;
+            machine.0.event_loop();
+        } else {
+            // TODO: Error
+        }
         Ok(())
     }
 }
@@ -300,27 +293,23 @@ impl WorkflowBridge {
 
 impl DrivenWorkflow for WorkflowBridge {
     #[instrument]
-    fn start(
-        &mut self,
-        attribs: WorkflowExecutionStartedEventAttributes,
-    ) -> Result<Vec<WFCommand>, Error> {
+    fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes) -> Vec<WFCommand> {
         self.started_attrs = Some(attribs);
-        Ok(vec![])
+        vec![]
     }
 
     #[instrument]
-    fn iterate_wf(&mut self) -> Result<Vec<WFCommand>, Error> {
-        Ok(self
-            .incoming_commands
+    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
+        self.incoming_commands
             .try_recv()
-            .unwrap_or_else(|_| vec![WFCommand::NoCommandsFromLang]))
+            .unwrap_or_else(|_| vec![WFCommand::NoCommandsFromLang])
     }
 
-    fn signal(&mut self, _attribs: WorkflowExecutionSignaledEventAttributes) -> Result<(), Error> {
+    fn signal(&mut self, _attribs: WorkflowExecutionSignaledEventAttributes) {
         unimplemented!()
     }
 
-    fn cancel(&mut self, _attribs: WorkflowExecutionCanceledEventAttributes) -> Result<(), Error> {
+    fn cancel(&mut self, _attribs: WorkflowExecutionCanceledEventAttributes) {
         unimplemented!()
     }
 }
