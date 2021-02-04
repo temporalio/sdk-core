@@ -2,7 +2,15 @@ use rand;
 use rand::Rng;
 use std::convert::TryFrom;
 use std::time::Duration;
+use temporal_sdk_core::protos::coresdk::CompleteTaskReq;
+use temporal_sdk_core::protos::temporal::api::command::v1::{
+    CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
+};
 use temporal_sdk_core::protos::temporal::api::common::v1::WorkflowType;
+use temporal_sdk_core::protos::temporal::api::enums::v1::EventType;
+use temporal_sdk_core::protos::temporal::api::history::v1::{
+    history_event, TimerFiredEventAttributes,
+};
 use temporal_sdk_core::protos::temporal::api::taskqueue::v1::TaskQueue;
 use temporal_sdk_core::protos::temporal::api::workflowservice::v1::StartWorkflowExecutionRequest;
 use temporal_sdk_core::{Core, CoreInitOptions, ServerGatewayOptions, Url};
@@ -14,10 +22,10 @@ const TARGET_URI: &'static str = "http://localhost:7233";
 
 // TODO try to consolidate this into the SDK code so we don't need to create another runtime.
 #[tokio::main]
-async fn create_workflow() {
+async fn create_workflow() -> (String, String) {
     let mut rng = rand::thread_rng();
-    let workflow_id: u8 = rng.gen();
-    let request_id: u8 = rng.gen();
+    let workflow_id: u32 = rng.gen();
+    let request_id: u32 = rng.gen();
     let gateway_opts = ServerGatewayOptions {
         namespace: NAMESPACE.to_string(),
         identity: "none".to_string(),
@@ -28,7 +36,7 @@ async fn create_workflow() {
         .connect(Url::try_from(TARGET_URI).unwrap())
         .await
         .unwrap();
-    gateway
+    let response = gateway
         .service
         .start_workflow_execution(StartWorkflowExecutionRequest {
             namespace: NAMESPACE.to_string(),
@@ -45,11 +53,12 @@ async fn create_workflow() {
         })
         .await
         .unwrap();
+    (workflow_id.to_string(), response.into_inner().run_id)
 }
 
 #[test]
-fn empty_poll() {
-    create_workflow();
+fn timer_workflow() {
+    let (workflow_id, run_id) = create_workflow();
     let core = temporal_sdk_core::init(CoreInitOptions {
         target_url: Url::try_from(TARGET_URI).unwrap(),
         namespace: NAMESPACE.to_string(),
@@ -58,6 +67,30 @@ fn empty_poll() {
         runtime: None,
     })
     .unwrap();
-
-    dbg!(core.poll_task(TASK_QUEUE).unwrap());
+    let mut rng = rand::thread_rng();
+    let timer_id: String = rng.gen::<u32>().to_string();
+    let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
+    // TODO verify
+    core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+        StartTimerCommandAttributes {
+            timer_id: timer_id.to_string(),
+            ..Default::default()
+        }
+        .into(),
+        task.task_token,
+    ))
+    .unwrap();
+    dbg!("sent completion w/ start timer");
+    let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
+    // TODO verify
+    core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+        CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
+        task.task_token,
+    ))
+    .unwrap();
+    dbg!(
+        "sent workflow done, completed workflow",
+        workflow_id,
+        run_id
+    );
 }

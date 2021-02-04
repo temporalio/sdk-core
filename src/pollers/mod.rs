@@ -1,5 +1,9 @@
 use std::time::Duration;
 
+use crate::machines::ProtoCommand;
+use crate::protos::temporal::api::workflowservice::v1::{
+    RespondWorkflowTaskCompletedRequest, RespondWorkflowTaskCompletedResponse,
+};
 use crate::{
     protos::temporal::api::enums::v1::TaskQueueKind,
     protos::temporal::api::taskqueue::v1::TaskQueue,
@@ -7,7 +11,7 @@ use crate::{
     protos::temporal::api::workflowservice::v1::{
         PollWorkflowTaskQueueRequest, PollWorkflowTaskQueueResponse,
     },
-    Result, WorkflowTaskProvider,
+    PollWorkflowTaskQueueApi, RespondWorkflowTaskCompletedApi, Result,
 };
 use tonic::{transport::Channel, Request, Status};
 use url::Url;
@@ -51,9 +55,10 @@ pub struct ServerGateway {
     pub opts: ServerGatewayOptions,
 }
 
-impl ServerGateway {
+#[async_trait::async_trait]
+impl PollWorkflowTaskQueueApi for ServerGateway {
     async fn poll(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse> {
-        let request = tonic::Request::new(PollWorkflowTaskQueueRequest {
+        let request = PollWorkflowTaskQueueRequest {
             namespace: self.opts.namespace.to_string(),
             task_queue: Some(TaskQueue {
                 name: task_queue.to_string(),
@@ -61,7 +66,7 @@ impl ServerGateway {
             }),
             identity: self.opts.identity.to_string(),
             binary_checksum: self.opts.worker_binary_id.to_string(),
-        });
+        };
 
         Ok(self
             .service
@@ -73,8 +78,25 @@ impl ServerGateway {
 }
 
 #[async_trait::async_trait]
-impl WorkflowTaskProvider for ServerGateway {
-    async fn get_work(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse> {
-        self.poll(task_queue).await
+impl RespondWorkflowTaskCompletedApi for ServerGateway {
+    async fn complete(
+        &self,
+        task_token: Vec<u8>,
+        commands: Vec<ProtoCommand>,
+    ) -> Result<RespondWorkflowTaskCompletedResponse> {
+        let request = RespondWorkflowTaskCompletedRequest {
+            task_token,
+            commands,
+            identity: self.opts.identity.to_string(),
+            binary_checksum: self.opts.worker_binary_id.to_string(),
+            namespace: self.opts.namespace.to_string(),
+            ..Default::default()
+        };
+        Ok(self
+            .service
+            .clone()
+            .respond_workflow_task_completed(request)
+            .await?
+            .into_inner())
     }
 }
