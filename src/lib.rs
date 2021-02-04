@@ -9,13 +9,18 @@ extern crate assert_matches;
 #[macro_use]
 extern crate tracing;
 
+mod machines;
+mod pollers;
+pub mod protos;
+mod protosext;
+
+pub use pollers::{ServerGateway, ServerGatewayOptions};
 pub use url::Url;
 
 use crate::{
     machines::{
         ActivationListener, DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines,
     },
-    pollers::ServerGatewayOptions,
     protos::{
         coresdk::{
             complete_task_req::Completion, wf_activation_completion::Status, CompleteTaskReq, Task,
@@ -41,12 +46,6 @@ use std::{
 };
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
-
-pub mod protos;
-
-mod machines;
-mod pollers;
-mod protosext;
 
 /// A result alias having [CoreError] as the error type
 pub type Result<T, E = CoreError> = std::result::Result<T, E>;
@@ -83,13 +82,19 @@ pub struct CoreInitOptions {
 
     /// A string that should be unique to the exact worker code/binary being executed
     pub worker_binary_id: String,
+
+    /// Optional tokio runtime
+    pub runtime: Option<Runtime>,
 }
 
 /// Initializes an instance of the core sdk and establishes a connection to the temporal server.
 ///
 /// Note: Also creates tokio runtime that will be used for all client-server interactions.  
 pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
-    let runtime = Runtime::new().map_err(CoreError::TokioInitError)?;
+    let runtime = opts
+        .runtime
+        .map(Ok)
+        .unwrap_or_else(|| Runtime::new().map_err(CoreError::TokioInitError))?;
     let gateway_opts = ServerGatewayOptions {
         namespace: opts.namespace,
         identity: opts.identity,
