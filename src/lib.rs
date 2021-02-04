@@ -8,7 +8,6 @@
 pub extern crate assert_matches;
 #[macro_use]
 extern crate tracing;
-#[cfg(test)]
 #[macro_use]
 extern crate mockall;
 
@@ -20,6 +19,10 @@ mod protosext;
 pub use pollers::{ServerGateway, ServerGatewayOptions};
 pub use url::Url;
 
+use crate::machines::ProtoCommand;
+use crate::protos::temporal::api::workflowservice::v1::{
+    RespondWorkflowTaskCompletedRequest, RespondWorkflowTaskCompletedResponse,
+};
 use crate::{
     machines::{
         ActivationListener, DrivenWorkflow, InconvertibleCommandError, ProtoCommand, WFCommand,
