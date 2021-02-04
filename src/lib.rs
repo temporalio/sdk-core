@@ -8,9 +8,6 @@
 pub extern crate assert_matches;
 #[macro_use]
 extern crate tracing;
-#[cfg(test)]
-#[macro_use]
-extern crate mockall;
 
 mod machines;
 mod pollers;
@@ -350,12 +347,10 @@ pub enum CoreError {
 
 #[cfg(test)]
 mod test {
-    use std::collections::VecDeque;
-
-    use tracing::Level;
-
+    use super::*;
     use crate::{
         machines::test_help::TestHistoryBuilder,
+        pollers::MockServerGateway,
         protos::{
             coresdk::{wf_activation_job, WfActivationJob},
             temporal::api::{
@@ -367,20 +362,9 @@ mod test {
             },
         },
     };
+    use std::collections::VecDeque;
+    use tracing::Level;
 
-    mock! {
-        ServerGateway {}
-        #[async_trait::async_trait]
-        impl PollWorkflowTaskQueueApi for ServerGateway {
-            async fn poll(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
-        }
-        #[async_trait::async_trait]
-        impl RespondWorkflowTaskCompletedApi for ServerGateway {
-            async fn complete(&self, task_token: Vec<u8>, commands: Vec<ProtoCommand>) -> Result<RespondWorkflowTaskCompletedResponse>;
-        }
-    }
-
-    use super::*;
     #[test]
     fn workflow_bridge() {
         let s = span!(Level::DEBUG, "Test start");

@@ -121,3 +121,16 @@ impl RespondWorkflowTaskCompletedApi for ServerGateway {
             .into_inner())
     }
 }
+
+#[cfg(test)]
+mockall::mock! {
+    pub(crate) ServerGateway {}
+    #[async_trait::async_trait]
+    impl PollWorkflowTaskQueueApi for ServerGateway {
+        async fn poll(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
+    }
+    #[async_trait::async_trait]
+    impl RespondWorkflowTaskCompletedApi for ServerGateway {
+        async fn complete(&self, task_token: Vec<u8>, commands: Vec<ProtoCommand>) -> Result<RespondWorkflowTaskCompletedResponse>;
+    }
+}
