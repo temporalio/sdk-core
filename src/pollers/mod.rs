@@ -1,5 +1,9 @@
 use std::time::Duration;
 
+use crate::machines::ProtoCommand;
+use crate::protos::temporal::api::workflowservice::v1::{
+    RespondWorkflowTaskCompletedRequest, RespondWorkflowTaskCompletedResponse,
+};
 use crate::{
     protos::temporal::api::enums::v1::TaskQueueKind,
     protos::temporal::api::taskqueue::v1::TaskQueue,
@@ -7,21 +11,21 @@ use crate::{
     protos::temporal::api::workflowservice::v1::{
         PollWorkflowTaskQueueRequest, PollWorkflowTaskQueueResponse,
     },
-    Result, WorkflowTaskProvider,
+    PollWorkflowTaskQueueApi, RespondWorkflowTaskCompletedApi, Result,
 };
 use tonic::{transport::Channel, Request, Status};
 use url::Url;
 
 #[derive(Clone)]
-pub(crate) struct ServerGatewayOptions {
+pub struct ServerGatewayOptions {
     pub namespace: String,
     pub identity: String,
-    pub binary_checksum: String,
+    pub worker_binary_id: String,
     pub long_poll_timeout: Duration,
 }
 
 impl ServerGatewayOptions {
-    pub(crate) async fn connect(&self, target_url: Url) -> Result<ServerGateway> {
+    pub async fn connect(&self, target_url: Url) -> Result<ServerGateway> {
         let channel = Channel::from_shared(target_url.to_string())?
             .connect()
             .await?;
@@ -46,22 +50,23 @@ fn intercept(mut req: Request<()>) -> Result<Request<()>, Status> {
 }
 
 /// Provides
-pub(crate) struct ServerGateway {
-    service: WorkflowServiceClient<tonic::transport::Channel>,
-    opts: ServerGatewayOptions,
+pub struct ServerGateway {
+    pub service: WorkflowServiceClient<tonic::transport::Channel>,
+    pub opts: ServerGatewayOptions,
 }
 
-impl ServerGateway {
+#[async_trait::async_trait]
+impl PollWorkflowTaskQueueApi for ServerGateway {
     async fn poll(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse> {
-        let request = tonic::Request::new(PollWorkflowTaskQueueRequest {
+        let request = PollWorkflowTaskQueueRequest {
             namespace: self.opts.namespace.to_string(),
             task_queue: Some(TaskQueue {
                 name: task_queue.to_string(),
                 kind: TaskQueueKind::Unspecified as i32,
             }),
             identity: self.opts.identity.to_string(),
-            binary_checksum: self.opts.binary_checksum.to_string(),
-        });
+            binary_checksum: self.opts.worker_binary_id.to_string(),
+        };
 
         Ok(self
             .service
@@ -73,8 +78,25 @@ impl ServerGateway {
 }
 
 #[async_trait::async_trait]
-impl WorkflowTaskProvider for ServerGateway {
-    async fn get_work(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse> {
-        self.poll(task_queue).await
+impl RespondWorkflowTaskCompletedApi for ServerGateway {
+    async fn complete(
+        &self,
+        task_token: Vec<u8>,
+        commands: Vec<ProtoCommand>,
+    ) -> Result<RespondWorkflowTaskCompletedResponse> {
+        let request = RespondWorkflowTaskCompletedRequest {
+            task_token,
+            commands,
+            identity: self.opts.identity.to_string(),
+            binary_checksum: self.opts.worker_binary_id.to_string(),
+            namespace: self.opts.namespace.to_string(),
+            ..Default::default()
+        };
+        Ok(self
+            .service
+            .clone()
+            .respond_workflow_task_completed(request)
+            .await?
+            .into_inner())
     }
 }
