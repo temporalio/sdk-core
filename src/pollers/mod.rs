@@ -16,17 +16,31 @@ use crate::{
 use tonic::{transport::Channel, Request, Status};
 use url::Url;
 
-#[derive(Clone)]
+/// Options for the connection to the temporal server
+#[derive(Clone, Debug)]
 pub struct ServerGatewayOptions {
+    /// The URL of the Temporal server to connect to
+    pub target_url: Url,
+
+    /// What namespace will we operate under
     pub namespace: String,
+
+    /// A human-readable string that can identify your worker
+    ///
+    /// TODO: Probably belongs in future worker abstraction
     pub identity: String,
+
+    /// A string that should be unique to the exact worker code/binary being executed
     pub worker_binary_id: String,
+
+    /// Timeout for long polls (polling of task queues)
     pub long_poll_timeout: Duration,
 }
 
 impl ServerGatewayOptions {
-    pub async fn connect(&self, target_url: Url) -> Result<ServerGateway> {
-        let channel = Channel::from_shared(target_url.to_string())?
+    /// Attempt to establish a connection to the Temporal server
+    pub async fn connect(&self) -> Result<ServerGateway> {
+        let channel = Channel::from_shared(self.target_url.to_string())?
             .connect()
             .await?;
         let service = WorkflowServiceClient::with_interceptor(channel, intercept);
@@ -49,9 +63,11 @@ fn intercept(mut req: Request<()>) -> Result<Request<()>, Status> {
     Ok(req)
 }
 
-/// Provides
+/// Contains an instance of a client for interacting with the temporal server
 pub struct ServerGateway {
+    /// Client for interacting with workflow service
     pub service: WorkflowServiceClient<tonic::transport::Channel>,
+    /// Options gateway was initialized with
     pub opts: ServerGatewayOptions,
 }
 

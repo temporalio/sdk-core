@@ -48,14 +48,12 @@ use dashmap::DashMap;
 use std::{
     convert::TryInto,
     sync::mpsc::{self, Receiver, SendError, Sender},
-    time::Duration,
 };
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
 
 /// A result alias having [CoreError] as the error type
 pub type Result<T, E = CoreError> = std::result::Result<T, E>;
-const DEFAULT_LONG_POLL_TIMEOUT: u64 = 60;
 
 /// This trait is the primary way by which language specific SDKs interact with the core SDK. It is
 /// expected that only one instance of an implementation will exist for the lifetime of the
@@ -75,40 +73,21 @@ pub trait Core {
 
 /// Holds various configuration information required to call [init]
 pub struct CoreInitOptions {
-    /// The URL of the Temporal server to connect to
-    pub target_url: Url,
-
-    /// The namespace on the server your worker will be using
-    pub namespace: String,
-
-    /// A human-readable string that can identify your worker
-    ///
-    /// TODO: Probably belongs in future worker abstraction
-    pub identity: String,
-
-    /// A string that should be unique to the exact worker code/binary being executed
-    pub worker_binary_id: String,
-
-    /// Optional tokio runtime
-    pub runtime: Option<Runtime>,
+    /// Options for the connection to the temporal server
+    pub gateway_opts: ServerGatewayOptions,
 }
 
 /// Initializes an instance of the core sdk and establishes a connection to the temporal server.
 ///
-/// Note: Also creates tokio runtime that will be used for all client-server interactions.  
+/// Note: Also creates a tokio runtime that will be used for all client-server interactions.  
+///
+/// # Panics
+/// * Will panic if called from within an async context, as it will construct a runtime and you
+///   cannot construct a runtime from within a runtime.
 pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
-    let runtime = opts
-        .runtime
-        .map(Ok)
-        .unwrap_or_else(|| Runtime::new().map_err(CoreError::TokioInitError))?;
-    let gateway_opts = ServerGatewayOptions {
-        namespace: opts.namespace,
-        identity: opts.identity,
-        worker_binary_id: opts.worker_binary_id,
-        long_poll_timeout: Duration::from_secs(DEFAULT_LONG_POLL_TIMEOUT),
-    };
+    let runtime = Runtime::new().map_err(CoreError::TokioInitError)?;
     // Initialize server client
-    let work_provider = runtime.block_on(gateway_opts.connect(opts.target_url))?;
+    let work_provider = runtime.block_on(opts.gateway_opts.connect())?;
 
     Ok(CoreSDK {
         runtime,
@@ -195,7 +174,7 @@ where
                     .workflow_task_tokens
                     .get(&task_token)
                     .map(|x| x.value().clone())
-                    .ok_or(CoreError::NothingFoundForTaskToken(task_token.clone()))?;
+                    .ok_or_else(|| CoreError::NothingFoundForTaskToken(task_token.clone()))?;
                 match wfstatus {
                     Status::Successful(success) => {
                         self.push_lang_commands(&run_id, success)?;
@@ -249,6 +228,7 @@ where
         run_id: &str,
         success: WfActivationSuccess,
     ) -> Result<(), CoreError> {
+        // TODO: No unwraps
         // Convert to wf commands
         let cmds = success
             .commands
@@ -264,7 +244,8 @@ where
             .get_mut(run_id)
             .unwrap()
             .0
-            .event_loop();
+            .event_loop()
+            .unwrap();
         Ok(())
     }
 }
@@ -466,15 +447,19 @@ mod test {
         let responses = vec![first_response, second_response];
 
         let mut tasks = VecDeque::from(responses);
-        let mut mock_provider = MockServerGateway::new();
-        mock_provider
+        let mut mock_gateway = MockServerGateway::new();
+        mock_gateway
             .expect_poll()
             .returning(move |_| Ok(tasks.pop_front().unwrap()));
+        // Response not really important here
+        mock_gateway
+            .expect_complete()
+            .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
 
         let runtime = Runtime::new().unwrap();
         let core = CoreSDK {
             runtime,
-            server_gateway: mock_provider,
+            server_gateway: mock_gateway,
             workflow_machines: DashMap::new(),
             workflow_task_tokens: DashMap::new(),
         };

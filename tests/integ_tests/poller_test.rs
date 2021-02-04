@@ -20,8 +20,9 @@ const TARGET_URI: &'static str = "http://localhost:7233";
 
 // TODO try to consolidate this into the SDK code so we don't need to create another runtime.
 #[tokio::main]
-async fn create_workflow() -> (String, String) {
+async fn create_workflow() -> (String, String, ServerGatewayOptions) {
     let mut rng = rand::thread_rng();
+    let url = Url::try_from(TARGET_URI).unwrap();
     let workflow_id: u32 = rng.gen();
     let request_id: u32 = rng.gen();
     let gateway_opts = ServerGatewayOptions {
@@ -29,11 +30,9 @@ async fn create_workflow() -> (String, String) {
         identity: "none".to_string(),
         worker_binary_id: "".to_string(),
         long_poll_timeout: Duration::from_secs(60),
+        target_url: url,
     };
-    let mut gateway = gateway_opts
-        .connect(Url::try_from(TARGET_URI).unwrap())
-        .await
-        .unwrap();
+    let mut gateway = gateway_opts.connect().await.unwrap();
     let response = gateway
         .service
         .start_workflow_execution(StartWorkflowExecutionRequest {
@@ -51,20 +50,17 @@ async fn create_workflow() -> (String, String) {
         })
         .await
         .unwrap();
-    (workflow_id.to_string(), response.into_inner().run_id)
+    (
+        workflow_id.to_string(),
+        response.into_inner().run_id,
+        gateway_opts,
+    )
 }
 
 #[test]
 fn timer_workflow() {
-    let (workflow_id, run_id) = dbg!(create_workflow());
-    let core = temporal_sdk_core::init(CoreInitOptions {
-        target_url: Url::try_from(TARGET_URI).unwrap(),
-        namespace: NAMESPACE.to_string(),
-        identity: "none".to_string(),
-        worker_binary_id: "".to_string(),
-        runtime: None,
-    })
-    .unwrap();
+    let (workflow_id, run_id, gateway_opts) = dbg!(create_workflow());
+    let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
     let mut rng = rand::thread_rng();
     let timer_id: String = rng.gen::<u32>().to_string();
     let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
