@@ -13,7 +13,7 @@ use tonic::{transport::Channel, Request, Status};
 use url::Url;
 
 #[derive(Clone)]
-pub(crate) struct ServerGatewayOptions {
+pub struct ServerGatewayOptions {
     pub namespace: String,
     pub identity: String,
     pub worker_binary_id: String,
@@ -21,7 +21,7 @@ pub(crate) struct ServerGatewayOptions {
 }
 
 impl ServerGatewayOptions {
-    pub(crate) async fn connect(&self, target_url: Url) -> Result<ServerGateway> {
+    pub async fn connect(&self, target_url: Url) -> Result<ServerGateway> {
         let channel = Channel::from_shared(target_url.to_string())?
             .connect()
             .await?;
@@ -46,9 +46,9 @@ fn intercept(mut req: Request<()>) -> Result<Request<()>, Status> {
 }
 
 /// Provides
-pub(crate) struct ServerGateway {
-    service: WorkflowServiceClient<tonic::transport::Channel>,
-    opts: ServerGatewayOptions,
+pub struct ServerGateway {
+    pub service: WorkflowServiceClient<tonic::transport::Channel>,
+    pub opts: ServerGatewayOptions,
 }
 
 impl ServerGateway {
