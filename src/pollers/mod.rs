@@ -55,11 +55,15 @@ impl ServerGatewayOptions {
 /// `Status` here will cancel the request and have that status returned to
 /// the caller.
 fn intercept(mut req: Request<()>) -> Result<Request<()>, Status> {
-    // TODO convert error
     let metadata = req.metadata_mut();
-    metadata.insert("grpc-timeout", "50000m".parse().unwrap());
-    metadata.insert("client-name", "core-sdk".parse().unwrap());
-    println!("Intercepting request: {:?}", req);
+    metadata.insert(
+        "grpc-timeout",
+        "50000m".parse().expect("Static value is parsable"),
+    );
+    metadata.insert(
+        "client-name",
+        "core-sdk".parse().expect("Static value is parsable"),
+    );
     Ok(req)
 }
 

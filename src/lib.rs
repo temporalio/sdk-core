@@ -254,17 +254,19 @@ where
 /// implementor.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
-pub trait PollWorkflowTaskQueueApi {
+pub(crate) trait PollWorkflowTaskQueueApi {
     /// Fetch new work. Should block indefinitely if there is no work.
     async fn poll(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
 }
 
-/// Implementors can provide new work to the SDK. The connection to the server is the real
-/// implementor.
+/// Implementors can complete tasks as would've been issued by [Core::poll]. The real implementor
+/// sends the completed tasks to the server.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
-pub trait RespondWorkflowTaskCompletedApi {
-    /// Fetch new work. Should block indefinitely if there is no work.
+pub(crate) trait RespondWorkflowTaskCompletedApi {
+    /// Complete a task by sending it to the server. `task_token` is the task token that would've
+    /// been received from [PollWorkflowTaskQueueApi::poll]. `commands` is a list of new commands
+    /// to send to the server, such as starting a timer.
     async fn complete(
         &self,
         task_token: Vec<u8>,
