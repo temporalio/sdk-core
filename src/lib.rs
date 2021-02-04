@@ -5,7 +5,7 @@
 
 #[cfg(test)]
 #[macro_use]
-extern crate assert_matches;
+pub extern crate assert_matches;
 #[macro_use]
 extern crate tracing;
 
@@ -17,6 +17,10 @@ mod protosext;
 pub use pollers::{ServerGateway, ServerGatewayOptions};
 pub use url::Url;
 
+use crate::machines::ProtoCommand;
+use crate::protos::temporal::api::workflowservice::v1::{
+    RespondWorkflowTaskCompletedRequest, RespondWorkflowTaskCompletedResponse,
+};
 use crate::{
     machines::{
         ActivationListener, DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines,
@@ -106,7 +110,7 @@ pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
 
     Ok(CoreSDK {
         runtime,
-        work_provider,
+        server_gateway: work_provider,
         workflow_machines: Default::default(),
         workflow_task_tokens: Default::default(),
     })
@@ -123,7 +127,7 @@ pub enum TaskQueue {
 struct CoreSDK<WP> {
     runtime: Runtime,
     /// Provides work in the form of responses the server would send from polling task Qs
-    work_provider: WP,
+    server_gateway: WP,
     /// Key is run id
     workflow_machines: DashMap<String, (WorkflowMachines, Sender<Vec<WFCommand>>)>,
     /// Maps task tokens to workflow run ids
@@ -132,14 +136,14 @@ struct CoreSDK<WP> {
 
 impl<WP> Core for CoreSDK<WP>
 where
-    WP: WorkflowTaskProvider,
+    WP: PollWorkflowTaskQueueApi + RespondWorkflowTaskCompletedApi,
 {
     #[instrument(skip(self))]
     fn poll_task(&self, task_queue: &str) -> Result<Task, CoreError> {
         // This will block forever in the event there is no work from the server
         let work = self
             .runtime
-            .block_on(self.work_provider.get_work(task_queue))?;
+            .block_on(self.server_gateway.poll(task_queue))?;
         let run_id = match &work.workflow_execution {
             Some(we) => {
                 self.instantiate_workflow_if_needed(we);
@@ -185,13 +189,19 @@ where
                         status: Some(wfstatus),
                     })),
             } => {
-                let wf_run_id = self
+                let run_id = self
                     .workflow_task_tokens
                     .get(&task_token)
                     .map(|x| x.value().clone())
-                    .ok_or(CoreError::NothingFoundForTaskToken(task_token))?;
+                    .ok_or(CoreError::NothingFoundForTaskToken(task_token.clone()))?;
                 match wfstatus {
-                    Status::Successful(success) => self.push_lang_commands(&wf_run_id, success)?,
+                    Status::Successful(success) => {
+                        self.push_lang_commands(&run_id, success)?;
+                        if let Some(mut machines) = self.workflow_machines.get_mut(&run_id) {
+                            let commands = machines.0.get_commands();
+                            self.server_gateway.complete(task_token, commands);
+                        }
+                    }
                     Status::Failed(_) => {}
                 }
                 Ok(())
@@ -204,13 +214,12 @@ where
             }
             _ => Err(CoreError::MalformedCompletion(req)),
         }
-        // TODO: Get fsm commands and send them to server (get_commands)
     }
 }
 
 impl<WP> CoreSDK<WP>
 where
-    WP: WorkflowTaskProvider,
+    WP: PollWorkflowTaskQueueApi,
 {
     fn instantiate_workflow_if_needed(&self, workflow_execution: &WorkflowExecution) {
         if self
@@ -256,9 +265,22 @@ where
 /// implementor.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
-pub trait WorkflowTaskProvider {
+pub trait PollWorkflowTaskQueueApi {
     /// Fetch new work. Should block indefinitely if there is no work.
-    async fn get_work(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
+    async fn poll(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
+}
+
+/// Implementors can provide new work to the SDK. The connection to the server is the real
+/// implementor.
+#[cfg_attr(test, mockall::automock)]
+#[async_trait::async_trait]
+pub trait RespondWorkflowTaskCompletedApi {
+    /// Fetch new work. Should block indefinitely if there is no work.
+    async fn complete(
+        &self,
+        task_token: Vec<u8>,
+        commands: Vec<ProtoCommand>,
+    ) -> Result<RespondWorkflowTaskCompletedResponse>;
 }
 
 /// The [DrivenWorkflow] trait expects to be called to make progress, but the [CoreSDKService]
@@ -432,7 +454,7 @@ mod test {
         let runtime = Runtime::new().unwrap();
         let core = CoreSDK {
             runtime,
-            work_provider: mock_provider,
+            server_gateway: mock_provider,
             workflow_machines: DashMap::new(),
             workflow_task_tokens: DashMap::new(),
         };
