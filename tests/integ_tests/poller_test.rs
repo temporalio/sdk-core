@@ -1,19 +1,19 @@
-use rand;
-use rand::Rng;
-use std::convert::TryFrom;
-use std::time::Duration;
-use temporal_sdk_core::protos::coresdk::CompleteTaskReq;
-use temporal_sdk_core::protos::temporal::api::command::v1::{
-    CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
+use rand::{self, Rng};
+use std::{convert::TryFrom, time::Duration};
+use temporal_sdk_core::{
+    protos::{
+        coresdk::CompleteTaskReq,
+        temporal::api::command::v1::{
+            CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
+        },
+        temporal::api::common::v1::WorkflowType,
+        temporal::api::enums::v1::EventType,
+        temporal::api::history::v1::{history_event, TimerFiredEventAttributes},
+        temporal::api::taskqueue::v1::TaskQueue,
+        temporal::api::workflowservice::v1::StartWorkflowExecutionRequest,
+    },
+    Core, CoreInitOptions, ServerGatewayOptions, Url,
 };
-use temporal_sdk_core::protos::temporal::api::common::v1::WorkflowType;
-use temporal_sdk_core::protos::temporal::api::enums::v1::EventType;
-use temporal_sdk_core::protos::temporal::api::history::v1::{
-    history_event, TimerFiredEventAttributes,
-};
-use temporal_sdk_core::protos::temporal::api::taskqueue::v1::TaskQueue;
-use temporal_sdk_core::protos::temporal::api::workflowservice::v1::StartWorkflowExecutionRequest;
-use temporal_sdk_core::{Core, CoreInitOptions, ServerGatewayOptions, Url};
 
 const TASK_QUEUE: &str = "test-tq";
 const NAMESPACE: &str = "default";
