@@ -56,6 +56,7 @@ impl ServerGatewayOptions {
 /// the caller.
 fn intercept(mut req: Request<()>) -> Result<Request<()>, Status> {
     let metadata = req.metadata_mut();
+    // TODO: Only apply this to long poll requests
     metadata.insert(
         "grpc-timeout",
         "50000m".parse().expect("Static value is parsable"),
