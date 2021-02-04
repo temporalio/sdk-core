@@ -56,7 +56,7 @@ async fn create_workflow() -> (String, String) {
 
 #[test]
 fn timer_workflow() {
-    let (workflow_id, run_id) = create_workflow();
+    let (workflow_id, run_id) = dbg!(create_workflow());
     let core = temporal_sdk_core::init(CoreInitOptions {
         target_url: Url::try_from(TARGET_URI).unwrap(),
         namespace: NAMESPACE.to_string(),
@@ -72,6 +72,7 @@ fn timer_workflow() {
     core.complete_task(CompleteTaskReq::ok_from_api_attrs(
         StartTimerCommandAttributes {
             timer_id: timer_id.to_string(),
+            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
             ..Default::default()
         }
         .into(),

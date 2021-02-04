@@ -260,6 +260,11 @@ where
             .unwrap()
             .1
             .send(cmds)?;
+        self.workflow_machines
+            .get_mut(run_id)
+            .unwrap()
+            .0
+            .event_loop();
         Ok(())
     }
 }

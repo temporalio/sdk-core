@@ -381,7 +381,7 @@ impl WorkflowMachines {
             .expect("We have just ensured this is populated")
     }
 
-    fn event_loop(&mut self) -> Result<()> {
+    pub fn event_loop(&mut self) -> Result<()> {
         let results = self.drive_me.iterate_wf()?;
         self.handle_driven_results(results);
 
