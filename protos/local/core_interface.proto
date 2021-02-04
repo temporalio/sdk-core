@@ -15,6 +15,7 @@ import "temporal/api/enums/v1/failed_cause.proto";
 import "temporal/api/failure/v1/message.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/command/v1/message.proto";
+import "temporal/api/query/v1/message.proto";
 
 // A request as given to [crate::Core::poll_task]
 message PollTaskReq {
@@ -62,6 +63,8 @@ message WFActivationJob {
         StartWorkflowTaskAttributes start_workflow = 1;
         // A timer has fired, allowing whatever was waiting on it (if anything) to proceed
         TimerFiredTaskAttributes timer_fired = 2;
+
+        QueryWorkflowJob query_workflow = 3;
     }
 }
 
@@ -79,6 +82,10 @@ message StartWorkflowTaskAttributes {
 
 message TimerFiredTaskAttributes {
     string timer_id = 1;
+}
+
+message QueryWorkflowJob {
+    temporal.api.query.v1.WorkflowQuery query = 1;
 }
 
 message ActivityTask {
@@ -114,7 +121,9 @@ message ActivityTaskCompletion {
 }
 
 message CoreCommand {
-    // Reserved for  specific commands
+    oneof variant {
+        temporal.api.query.v1.WorkflowQueryResult query_result = 1;
+    }
 }
 
 // Included in successful [WfActivationCompletion]s, indicates what the workflow wishes to do next
