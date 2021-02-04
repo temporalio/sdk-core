@@ -7,7 +7,7 @@ fn empty_poll() {
         target_url: Url::try_from("http://localhost:7233").unwrap(),
         namespace: "default".to_string(),
         identity: "none".to_string(),
-        binary_checksum: "".to_string(),
+        worker_binary_id: "".to_string(),
     })
     .unwrap();
 

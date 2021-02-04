@@ -3,19 +3,12 @@
 //! This crate provides a basis for creating new Temporal SDKs without completely starting from
 //! scratch
 
-#[macro_use]
-extern crate tracing;
 #[cfg(test)]
 #[macro_use]
 extern crate assert_matches;
+#[macro_use]
+extern crate tracing;
 
-pub mod protos;
-
-mod machines;
-mod pollers;
-mod protosext;
-
-pub use protosext::HistoryInfo;
 pub use url::Url;
 
 use crate::{
@@ -41,13 +34,19 @@ use crate::{
 };
 use anyhow::Error;
 use dashmap::DashMap;
-use std::time::Duration;
 use std::{
     convert::TryInto,
     sync::mpsc::{self, Receiver, SendError, Sender},
+    time::Duration,
 };
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
+
+pub mod protos;
+
+mod machines;
+mod pollers;
+mod protosext;
 
 /// A result alias having [CoreError] as the error type
 pub type Result<T, E = CoreError> = std::result::Result<T, E>;
@@ -108,8 +107,11 @@ pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
     })
 }
 
+/// Type of task queue to poll.
 pub enum TaskQueue {
+    /// Workflow task
     Workflow(String),
+    /// Activity task
     _Activity(String),
 }
 
@@ -335,13 +337,16 @@ pub enum CoreError {
     TonicTransportError(#[from] tonic::transport::Error),
     /// Failed to initialize tokio runtime: {0:?}
     TokioInitError(std::io::Error),
-    #[error("Invalid URI: {0:?}")]
+    /// Invalid URI: {0:?}
     InvalidUri(#[from] InvalidUri),
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use std::collections::VecDeque;
+
+    use tracing::Level;
+
     use crate::{
         machines::test_help::TestHistoryBuilder,
         protos::{
@@ -355,8 +360,8 @@ mod test {
             },
         },
     };
-    use std::collections::VecDeque;
-    use tracing::Level;
+
+    use super::*;
 
     #[test]
     fn workflow_bridge() {
