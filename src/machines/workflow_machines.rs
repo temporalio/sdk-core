@@ -217,7 +217,7 @@ impl WorkflowMachines {
 
         self.current_started_event_id = task_started_event_id;
         self.set_current_time(time);
-        self.event_loop()?;
+        self.event_loop();
         Ok(())
     }
 
@@ -297,7 +297,7 @@ impl WorkflowMachines {
                         }
                         .into(),
                     );
-                    let results = self.drive_me.start(attrs.clone())?;
+                    let results = self.drive_me.start(attrs.clone());
                     self.handle_driven_results(results);
                 } else {
                     return Err(WFMachinesError::MalformedEvent(
@@ -381,12 +381,13 @@ impl WorkflowMachines {
             .expect("We have just ensured this is populated")
     }
 
-    fn event_loop(&mut self) -> Result<()> {
-        let results = self.drive_me.iterate_wf()?;
+    /// Runs the event loop, which consists of grabbing any pending outgoing commands from the
+    /// workflow, handling them, and preparing them to be sent off to the server.
+    pub(crate) fn event_loop(&mut self) {
+        let results = self.drive_me.fetch_workflow_iteration_output();
         self.handle_driven_results(results);
 
         self.prepare_commands();
-        Ok(())
     }
 
     /// Wrapper for calling [TemporalStateMachine::handle_event] which appropriately takes action

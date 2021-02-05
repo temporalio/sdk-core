@@ -3,23 +3,25 @@
 //! This crate provides a basis for creating new Temporal SDKs without completely starting from
 //! scratch
 
-#[macro_use]
-extern crate tracing;
 #[cfg(test)]
 #[macro_use]
-extern crate assert_matches;
-
-pub mod protos;
+pub extern crate assert_matches;
+#[macro_use]
+extern crate tracing;
 
 mod machines;
 mod pollers;
+pub mod protos;
 mod protosext;
+
+pub use pollers::{ServerGateway, ServerGatewayOptions};
+pub use url::Url;
 
 use crate::{
     machines::{
-        ActivationListener, DrivenWorkflow, InconvertibleCommandError, WFCommand, WorkflowMachines,
+        ActivationListener, DrivenWorkflow, InconvertibleCommandError, ProtoCommand, WFCommand,
+        WorkflowMachines,
     },
-    pollers::ServerGatewayOptions,
     protos::{
         coresdk::{
             complete_task_req::Completion, wf_activation_completion::Status, CompleteTaskReq, Task,
@@ -31,19 +33,20 @@ use crate::{
                 WorkflowExecutionCanceledEventAttributes, WorkflowExecutionSignaledEventAttributes,
                 WorkflowExecutionStartedEventAttributes,
             },
-            workflowservice::v1::PollWorkflowTaskQueueResponse,
+            workflowservice::v1::{
+                PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
+            },
         },
     },
     protosext::{HistoryInfo, HistoryInfoError},
 };
-use anyhow::Error;
 use dashmap::DashMap;
 use std::{
     convert::TryInto,
     sync::mpsc::{self, Receiver, SendError, Sender},
 };
 use tokio::runtime::Runtime;
-use url::Url;
+use tonic::codegen::http::uri::InvalidUri;
 
 /// A result alias having [CoreError] as the error type
 pub type Result<T, E = CoreError> = std::result::Result<T, E>;
@@ -57,7 +60,7 @@ pub trait Core {
     /// language SDK's responsibility to call the appropriate code with the provided inputs.
     ///
     /// TODO: Examples
-    fn poll_task(&self) -> Result<Task>;
+    fn poll_task(&self, task_queue: &str) -> Result<Task>;
 
     /// Tell the core that some work has been completed - whether as a result of running workflow
     /// code or executing an activity.
@@ -66,46 +69,42 @@ pub trait Core {
 
 /// Holds various configuration information required to call [init]
 pub struct CoreInitOptions {
-    /// The URL of the Temporal server to connect to
-    pub target_url: Url,
-
-    /// The namespace on the server your worker will be using
-    pub namespace: String,
-
-    /// A human-readable string that can identify your worker
-    ///
-    /// TODO: Probably belongs in future worker abstraction
-    pub identity: String,
-
-    /// A string that should be unique to the exact worker code/binary being executed
-    pub worker_binary_id: String,
+    /// Options for the connection to the temporal server
+    pub gateway_opts: ServerGatewayOptions,
 }
 
 /// Initializes an instance of the core sdk and establishes a connection to the temporal server.
 ///
-/// Note: Also creates tokio runtime that will be used for all client-server interactions.  
+/// Note: Also creates a tokio runtime that will be used for all client-server interactions.  
+///
+/// # Panics
+/// * Will panic if called from within an async context, as it will construct a runtime and you
+///   cannot construct a runtime from within a runtime.
 pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
     let runtime = Runtime::new().map_err(CoreError::TokioInitError)?;
-    let gateway_opts = ServerGatewayOptions {
-        namespace: opts.namespace,
-        identity: opts.identity,
-        worker_binary_id: opts.worker_binary_id,
-    };
     // Initialize server client
-    let work_provider = runtime.block_on(gateway_opts.connect(opts.target_url))?;
+    let work_provider = runtime.block_on(opts.gateway_opts.connect())?;
 
     Ok(CoreSDK {
         runtime,
-        work_provider,
+        server_gateway: work_provider,
         workflow_machines: Default::default(),
         workflow_task_tokens: Default::default(),
     })
 }
 
+/// Type of task queue to poll.
+pub enum TaskQueue {
+    /// Workflow task
+    Workflow(String),
+    /// Activity task
+    _Activity(String),
+}
+
 struct CoreSDK<WP> {
     runtime: Runtime,
     /// Provides work in the form of responses the server would send from polling task Qs
-    work_provider: WP,
+    server_gateway: WP,
     /// Key is run id
     workflow_machines: DashMap<String, (WorkflowMachines, Sender<Vec<WFCommand>>)>,
     /// Maps task tokens to workflow run ids
@@ -114,14 +113,14 @@ struct CoreSDK<WP> {
 
 impl<WP> Core for CoreSDK<WP>
 where
-    WP: WorkflowTaskProvider,
+    WP: PollWorkflowTaskQueueApi + RespondWorkflowTaskCompletedApi,
 {
     #[instrument(skip(self))]
-    fn poll_task(&self) -> Result<Task, CoreError> {
+    fn poll_task(&self, task_queue: &str) -> Result<Task, CoreError> {
         // This will block forever in the event there is no work from the server
         let work = self
             .runtime
-            .block_on(self.work_provider.get_work("TODO: Real task queue"))?;
+            .block_on(self.server_gateway.poll(task_queue))?;
         let run_id = match &work.workflow_execution {
             Some(we) => {
                 self.instantiate_workflow_if_needed(we);
@@ -167,13 +166,20 @@ where
                         status: Some(wfstatus),
                     })),
             } => {
-                let wf_run_id = self
+                let run_id = self
                     .workflow_task_tokens
                     .get(&task_token)
                     .map(|x| x.value().clone())
-                    .ok_or(CoreError::NothingFoundForTaskToken(task_token))?;
+                    .ok_or_else(|| CoreError::NothingFoundForTaskToken(task_token.clone()))?;
                 match wfstatus {
-                    Status::Successful(success) => self.push_lang_commands(&wf_run_id, success)?,
+                    Status::Successful(success) => {
+                        self.push_lang_commands(&run_id, success)?;
+                        if let Some(mut machines) = self.workflow_machines.get_mut(&run_id) {
+                            let commands = machines.0.get_commands();
+                            self.runtime
+                                .block_on(self.server_gateway.complete(task_token, commands))?;
+                        }
+                    }
                     Status::Failed(_) => {}
                 }
                 Ok(())
@@ -186,13 +192,12 @@ where
             }
             _ => Err(CoreError::MalformedCompletion(req)),
         }
-        // TODO: Get fsm commands and send them to server (get_commands)
     }
 }
 
 impl<WP> CoreSDK<WP>
 where
-    WP: WorkflowTaskProvider,
+    WP: PollWorkflowTaskQueueApi,
 {
     fn instantiate_workflow_if_needed(&self, workflow_execution: &WorkflowExecution) {
         if self
@@ -225,11 +230,12 @@ where
             .into_iter()
             .map(|c| c.try_into().map_err(Into::into))
             .collect::<Result<Vec<_>>>()?;
-        self.workflow_machines
-            .get_mut(run_id)
-            .unwrap()
-            .1
-            .send(cmds)?;
+        if let Some(mut machine) = self.workflow_machines.get_mut(run_id) {
+            machine.1.send(cmds)?;
+            machine.0.event_loop();
+        } else {
+            // TODO: Error
+        }
         Ok(())
     }
 }
@@ -238,9 +244,24 @@ where
 /// implementor.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
-pub trait WorkflowTaskProvider {
+pub(crate) trait PollWorkflowTaskQueueApi {
     /// Fetch new work. Should block indefinitely if there is no work.
-    async fn get_work(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
+    async fn poll(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
+}
+
+/// Implementors can complete tasks as would've been issued by [Core::poll]. The real implementor
+/// sends the completed tasks to the server.
+#[cfg_attr(test, mockall::automock)]
+#[async_trait::async_trait]
+pub(crate) trait RespondWorkflowTaskCompletedApi {
+    /// Complete a task by sending it to the server. `task_token` is the task token that would've
+    /// been received from [PollWorkflowTaskQueueApi::poll]. `commands` is a list of new commands
+    /// to send to the server, such as starting a timer.
+    async fn complete(
+        &self,
+        task_token: Vec<u8>,
+        commands: Vec<ProtoCommand>,
+    ) -> Result<RespondWorkflowTaskCompletedResponse>;
 }
 
 /// The [DrivenWorkflow] trait expects to be called to make progress, but the [CoreSDKService]
@@ -269,27 +290,23 @@ impl WorkflowBridge {
 
 impl DrivenWorkflow for WorkflowBridge {
     #[instrument]
-    fn start(
-        &mut self,
-        attribs: WorkflowExecutionStartedEventAttributes,
-    ) -> Result<Vec<WFCommand>, Error> {
+    fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes) -> Vec<WFCommand> {
         self.started_attrs = Some(attribs);
-        Ok(vec![])
+        vec![]
     }
 
     #[instrument]
-    fn iterate_wf(&mut self) -> Result<Vec<WFCommand>, Error> {
-        Ok(self
-            .incoming_commands
+    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
+        self.incoming_commands
             .try_recv()
-            .unwrap_or_else(|_| vec![WFCommand::NoCommandsFromLang]))
+            .unwrap_or_else(|_| vec![WFCommand::NoCommandsFromLang])
     }
 
-    fn signal(&mut self, _attribs: WorkflowExecutionSignaledEventAttributes) -> Result<(), Error> {
+    fn signal(&mut self, _attribs: WorkflowExecutionSignaledEventAttributes) {
         unimplemented!()
     }
 
-    fn cancel(&mut self, _attribs: WorkflowExecutionCanceledEventAttributes) -> Result<(), Error> {
+    fn cancel(&mut self, _attribs: WorkflowExecutionCanceledEventAttributes) {
         unimplemented!()
     }
 }
@@ -324,6 +341,8 @@ pub enum CoreError {
     TonicTransportError(#[from] tonic::transport::Error),
     /// Failed to initialize tokio runtime: {0:?}
     TokioInitError(std::io::Error),
+    /// Invalid URI: {0:?}
+    InvalidUri(#[from] InvalidUri),
 }
 
 #[cfg(test)]
@@ -331,6 +350,7 @@ mod test {
     use super::*;
     use crate::{
         machines::test_help::TestHistoryBuilder,
+        pollers::MockServerGateway,
         protos::{
             coresdk::{wf_activation_job, WfActivationJob},
             temporal::api::{
@@ -353,6 +373,7 @@ mod test {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
         let timer_id = "fake_timer";
+        let task_queue = "test-task-queue";
 
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -401,20 +422,24 @@ mod test {
         let responses = vec![first_response, second_response];
 
         let mut tasks = VecDeque::from(responses);
-        let mut mock_provider = MockWorkflowTaskProvider::new();
-        mock_provider
-            .expect_get_work()
+        let mut mock_gateway = MockServerGateway::new();
+        mock_gateway
+            .expect_poll()
             .returning(move |_| Ok(tasks.pop_front().unwrap()));
+        // Response not really important here
+        mock_gateway
+            .expect_complete()
+            .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
 
         let runtime = Runtime::new().unwrap();
         let core = CoreSDK {
             runtime,
-            work_provider: mock_provider,
+            server_gateway: mock_gateway,
             workflow_machines: DashMap::new(),
             workflow_task_tokens: DashMap::new(),
         };
 
-        let res = dbg!(core.poll_task().unwrap());
+        let res = dbg!(core.poll_task(task_queue).unwrap());
         // TODO: uggo
         assert_matches!(
             res.get_wf_jobs().as_slice(),
@@ -436,7 +461,7 @@ mod test {
         .unwrap();
         dbg!("sent completion w/ start timer");
 
-        let res = dbg!(core.poll_task().unwrap());
+        let res = dbg!(core.poll_task(task_queue).unwrap());
         // TODO: uggo
         assert_matches!(
             res.get_wf_jobs().as_slice(),

@@ -21,11 +21,17 @@ prost = "0.7"
 prost-types = "0.7"
 thiserror = "1.0"
 tokio = { version = "1.1", features = ["rt", "rt-multi-thread"] }
-tonic = "0.4"
 tracing = { version = "0.1", features = ["log"] }
-tracing-opentelemetry = "0.10"
+tracing-opentelemetry = "0.11"
 tracing-subscriber = "0.2"
 url = "2.2"
+rand = "0.8.3"
+
+[dependencies.tonic]
+version = "0.4"
+#path = "../tonic/tonic"
+# Using our fork for now which fixes grpc-timeout header getting stripped
+git = "https://github.com/temporalio/tonic"
 
 [dependencies.rustfsm]
 path = "fsm"
@@ -40,3 +46,10 @@ tonic-build = "0.4"
 
 [workspace]
 members = [".", "fsm"]
+
+[[test]]
+name = "integ_tests"
+path = "tests/main.rs"
+# Prevents autodiscovery, and hence these getting run with `cargo test`. Run with
+# `cargo test --test integ_tests`
+test = false

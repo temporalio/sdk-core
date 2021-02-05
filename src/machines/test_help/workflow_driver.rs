@@ -1,4 +1,3 @@
-use super::Result;
 use crate::{
     machines::{ActivationListener, DrivenWorkflow, WFCommand},
     protos::{
@@ -74,15 +73,12 @@ where
     Fut: Future<Output = ()>,
 {
     #[instrument(skip(self))]
-    fn start(
-        &mut self,
-        _attribs: WorkflowExecutionStartedEventAttributes,
-    ) -> Result<Vec<WFCommand>, anyhow::Error> {
-        Ok(vec![])
+    fn start(&mut self, _attribs: WorkflowExecutionStartedEventAttributes) -> Vec<WFCommand> {
+        vec![]
     }
 
     #[instrument(skip(self))]
-    fn iterate_wf(&mut self) -> Result<Vec<WFCommand>, anyhow::Error> {
+    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
         let (sender, receiver) = CommandSender::new(self.cache.clone());
         // Call the closure that produces the workflow future
         let wf_future = (self.wf_function)(sender);
@@ -106,26 +102,16 @@ where
         }
 
         // Return only the last command, since that's what would've been yielded in a real wf
-        Ok(if let Some(c) = last_cmd {
+        if let Some(c) = last_cmd {
             vec![c]
         } else {
             vec![]
-        })
+        }
     }
 
-    fn signal(
-        &mut self,
-        _attribs: WorkflowExecutionSignaledEventAttributes,
-    ) -> Result<(), anyhow::Error> {
-        Ok(())
-    }
+    fn signal(&mut self, _attribs: WorkflowExecutionSignaledEventAttributes) {}
 
-    fn cancel(
-        &mut self,
-        _attribs: WorkflowExecutionCanceledEventAttributes,
-    ) -> Result<(), anyhow::Error> {
-        Ok(())
-    }
+    fn cancel(&mut self, _attribs: WorkflowExecutionCanceledEventAttributes) {}
 }
 
 #[derive(Debug, derive_more::From)]

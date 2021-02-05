@@ -70,26 +70,23 @@ pub(crate) type ProtoCommand = Command;
 /// drive it, start it, signal it, cancel it, etc.
 pub(crate) trait DrivenWorkflow: ActivationListener + Send {
     /// Start the workflow
-    fn start(
-        &mut self,
-        attribs: WorkflowExecutionStartedEventAttributes,
-    ) -> Result<Vec<WFCommand>, anyhow::Error>;
+    fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes) -> Vec<WFCommand>;
 
-    /// Iterate the workflow. The workflow driver should execute workflow code until there is
-    /// nothing left to do. EX: Awaiting an activity/timer, workflow completion.
-    fn iterate_wf(&mut self) -> Result<Vec<WFCommand>, anyhow::Error>;
+    /// Obtain any output from the workflow's recent execution(s). Because the lang sdk is
+    /// responsible for calling workflow code as a result of receiving tasks from
+    /// [crate::Core::poll_task], we cannot directly iterate it here. Thus implementations of this
+    /// trait are expected to either buffer output or otherwise produce it on demand when this
+    /// function is called.
+    ///
+    /// In the case of the real [WorkflowBridge] implementation, commands are simply pulled from
+    /// a buffer that the language side sinks into when it calls [crate::Core::complete_task]
+    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand>;
 
     /// Signal the workflow
-    fn signal(
-        &mut self,
-        attribs: WorkflowExecutionSignaledEventAttributes,
-    ) -> Result<(), anyhow::Error>;
+    fn signal(&mut self, attribs: WorkflowExecutionSignaledEventAttributes);
 
     /// Cancel the workflow
-    fn cancel(
-        &mut self,
-        attribs: WorkflowExecutionCanceledEventAttributes,
-    ) -> Result<(), anyhow::Error>;
+    fn cancel(&mut self, attribs: WorkflowExecutionCanceledEventAttributes);
 }
 
 /// Allows observers to listen to newly generated outgoing activation jobs. Used for testing, where

@@ -19,10 +19,16 @@ import "temporal/api/query/v1/message.proto";
 
 // A request as given to [crate::Core::poll_task]
 message PollTaskReq {
-    // If true, poll for workflow tasks
-    bool workflows = 1;
-    // If true, poll for activity tasks
-    bool activities = 2;
+    // What type of task to poll for
+    enum TaskType {
+        // Poll for workflows
+        WORKFLOWS = 0;
+        // Poll for activities
+        ACTIVITIES = 1;
+    }
+
+    // A list of task types to poll for
+    repeated TaskType types = 1;
 }
 
 // An instruction to perform work from core->lang sdk
@@ -41,7 +47,7 @@ message Task {
 // An instruction to the lang sdk to run some workflow code, whether for the first time or from
 // a cached state.
 message WFActivation {
-    // Time the activation(s) were requested
+    // The current time as understood by the workflow, which is set by workflow task started events
     google.protobuf.Timestamp timestamp = 1 [(gogoproto.stdtime) = true];
     // The id of the currently active run of the workflow
     string run_id = 2;
