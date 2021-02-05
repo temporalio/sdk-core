@@ -43,7 +43,7 @@ fn timer_workflow() {
     let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    let run_id = dbg!(create_workflow(&core, &*workflow_id.to_string()));
+    let run_id = dbg!(create_workflow(&core, &workflow_id.to_string()));
     let timer_id: String = rng.gen::<u32>().to_string();
     let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
     core.complete_task(CompleteTaskReq::ok_from_api_attrs(
