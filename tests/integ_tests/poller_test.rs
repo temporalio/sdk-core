@@ -1,5 +1,5 @@
 use rand::{self, Rng};
-use std::{convert::TryFrom, time::Duration};
+use std::{convert::TryFrom, env, time::Duration};
 use temporal_sdk_core::{
     protos::{
         coresdk::CompleteTaskReq,
@@ -16,13 +16,16 @@ use temporal_sdk_core::{
 const TASK_QUEUE: &str = "test-tq";
 const NAMESPACE: &str = "default";
 
-const TARGET_URI: &'static str = "http://localhost:7233";
-
 // TODO try to consolidate this into the SDK code so we don't need to create another runtime.
 #[tokio::main]
 async fn create_workflow() -> (String, String, ServerGatewayOptions) {
+    let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
+        Ok(addr) => addr,
+        Err(_) => "http://localhost:7233".to_owned(),
+    };
+
     let mut rng = rand::thread_rng();
-    let url = Url::try_from(TARGET_URI).unwrap();
+    let url = Url::try_from(&*temporal_server_address).unwrap();
     let workflow_id: u32 = rng.gen();
     let request_id: u32 = rng.gen();
     let gateway_opts = ServerGatewayOptions {
