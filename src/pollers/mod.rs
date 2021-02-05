@@ -169,18 +169,18 @@ impl StartWorkflowExecutionApi for ServerGateway {
 
 #[cfg(test)]
 mockall::mock! {
-    pub(crate) ServerGateway {}
+    pub ServerGateway {}
     #[async_trait::async_trait]
     impl PollWorkflowTaskQueueApi for ServerGateway {
-        async fn poll(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
+        async fn poll_workflow_task(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
     }
     #[async_trait::async_trait]
     impl RespondWorkflowTaskCompletedApi for ServerGateway {
-        async fn complete(&self, task_token: Vec<u8>, commands: Vec<ProtoCommand>) -> Result<RespondWorkflowTaskCompletedResponse>;
+        async fn complete_workflow_task(&self, task_token: Vec<u8>, commands: Vec<ProtoCommand>) -> Result<RespondWorkflowTaskCompletedResponse>;
     }
     #[async_trait::async_trait]
     impl StartWorkflowExecutionApi for ServerGateway {
-        async fn start(
+        async fn start_workflow(
             &self,
             namespace: &str,
             task_queue: &str,

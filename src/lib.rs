@@ -450,11 +450,11 @@ mod test {
         let mut tasks = VecDeque::from(responses);
         let mut mock_gateway = MockServerGateway::new();
         mock_gateway
-            .expect_poll()
+            .expect_poll_workflow_task()
             .returning(move |_| Ok(tasks.pop_front().unwrap()));
         // Response not really important here
         mock_gateway
-            .expect_complete()
+            .expect_complete_workflow_task()
             .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
 
         let runtime = Runtime::new().unwrap();
