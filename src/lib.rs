@@ -280,6 +280,7 @@ pub trait RespondWorkflowTaskCompletedApi {
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
 pub trait StartWorkflowExecutionApi {
+    /// Starts workflow execution.
     async fn start_workflow(
         &self,
         namespace: &str,
