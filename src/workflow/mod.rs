@@ -10,7 +10,7 @@ use crate::{
             PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
-    Result,
+    CoreError, Result,
 };
 use std::{
     ops::DerefMut,
@@ -65,9 +65,14 @@ impl WorkflowManager {
         }
     }
 
-    pub fn lock(&self) -> impl DerefMut<Target = WfManagerProtected> + '_ {
-        // TODO: Result
-        self.data.lock().unwrap()
+    pub fn lock(&self) -> Result<impl DerefMut<Target = WfManagerProtected> + '_> {
+        Ok(self.data.lock().map_err(|_| {
+            CoreError::LockPoisoned(
+                "A workflow manager lock was poisoned. This should be impossible since they \
+                are run on one thread."
+                    .to_string(),
+            )
+        })?)
     }
 }
 

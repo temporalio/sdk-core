@@ -34,7 +34,7 @@ use crate::{
     workflow::{PollWorkflowTaskQueueApi, RespondWorkflowTaskCompletedApi, WorkflowManager},
 };
 use dashmap::DashMap;
-use std::{convert::TryInto, ops::DerefMut, sync::mpsc::SendError};
+use std::{convert::TryInto, sync::mpsc::SendError};
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
 
@@ -106,7 +106,7 @@ where
     WP: PollWorkflowTaskQueueApi + RespondWorkflowTaskCompletedApi + Send + Sync,
 {
     #[instrument(skip(self))]
-    fn poll_task(&self, task_queue: &str) -> Result<Task, CoreError> {
+    fn poll_task(&self, task_queue: &str) -> Result<Task> {
         // This will block forever in the event there is no work from the server
         let work = self
             .runtime
@@ -116,8 +116,7 @@ where
                 self.instantiate_workflow_if_needed(we);
                 we.run_id.clone()
             }
-            // TODO: Appropriate error
-            None => return Err(CoreError::Unknown),
+            None => return Err(CoreError::BadDataFromWorkProvider(work)),
         };
         let history = if let Some(hist) = work.history {
             hist
@@ -133,13 +132,12 @@ where
         // Will need to change a bit once we impl caching.
         let hist_info = HistoryInfo::new_from_history(&history, None)?;
         let activation = if let Some(mut machines) = self.workflow_machines.get_mut(&run_id) {
-            let mut mgr = machines.value_mut().lock();
-            let machines = &mut mgr.deref_mut().machines;
+            let mut mgr = machines.value_mut().lock()?;
+            let machines = &mut mgr.machines;
             hist_info.apply_history_events(machines)?;
             machines.get_wf_activation()
         } else {
-            //err
-            unimplemented!()
+            return Err(CoreError::MissingMachines(run_id));
         };
 
         Ok(Task {
@@ -149,7 +147,7 @@ where
     }
 
     #[instrument(skip(self))]
-    fn complete_task(&self, req: CompleteTaskReq) -> Result<(), CoreError> {
+    fn complete_task(&self, req: CompleteTaskReq) -> Result<()> {
         match req {
             CompleteTaskReq {
                 task_token,
@@ -167,8 +165,8 @@ where
                     Status::Successful(success) => {
                         self.push_lang_commands(&run_id, success)?;
                         if let Some(mut machines) = self.workflow_machines.get_mut(&run_id) {
-                            let mut mgr = machines.value_mut().lock();
-                            let machines = &mut mgr.deref_mut().machines;
+                            let mut mgr = machines.value_mut().lock()?;
+                            let machines = &mut mgr.machines;
                             let commands = machines.get_commands();
                             self.runtime
                                 .block_on(self.server_gateway.complete(task_token, commands))?;
@@ -219,9 +217,9 @@ where
             .map(|c| c.try_into().map_err(Into::into))
             .collect::<Result<Vec<_>>>()?;
         if let Some(mut machines) = self.workflow_machines.get_mut(run_id) {
-            let mut mgr = machines.value_mut().lock();
-            mgr.deref_mut().command_sink.send(cmds)?;
-            mgr.deref_mut().machines.event_loop();
+            let mut mgr = machines.value_mut().lock()?;
+            mgr.command_sink.send(cmds)?;
+            mgr.machines.event_loop();
         } else {
             // TODO: Error
         }
@@ -258,6 +256,10 @@ pub enum CoreError {
     TokioInitError(std::io::Error),
     /// Invalid URI: {0:?}
     InvalidUri(#[from] InvalidUri),
+    /// A mutex was poisoned: {0:?}
+    LockPoisoned(String),
+    /// State machines are missing for the workflow with run id {0}!
+    MissingMachines(String),
 }
 
 #[cfg(test)]
