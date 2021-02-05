@@ -17,6 +17,8 @@ mod protosext;
 pub use pollers::{ServerGateway, ServerGatewayOptions};
 pub use url::Url;
 
+use crate::pollers::ServerGatewayApis;
+use crate::protos::temporal::api::workflowservice::v1::StartWorkflowExecutionResponse;
 use crate::{
     machines::{
         ActivationListener, DrivenWorkflow, InconvertibleCommandError, ProtoCommand, WFCommand,
@@ -41,6 +43,7 @@ use crate::{
     protosext::{HistoryInfo, HistoryInfoError},
 };
 use dashmap::DashMap;
+use std::sync::Arc;
 use std::{
     convert::TryInto,
     sync::mpsc::{self, Receiver, SendError, Sender},
@@ -65,6 +68,9 @@ pub trait Core {
     /// Tell the core that some work has been completed - whether as a result of running workflow
     /// code or executing an activity.
     fn complete_task(&self, req: CompleteTaskReq) -> Result<()>;
+
+    /// Returns an instance of ServerGateway.
+    fn server_gateway(&self) -> Result<Arc<dyn ServerGatewayApis>>;
 }
 
 /// Holds various configuration information required to call [init]
@@ -87,7 +93,7 @@ pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
 
     Ok(CoreSDK {
         runtime,
-        server_gateway: work_provider,
+        server_gateway: Arc::new(work_provider),
         workflow_machines: Default::default(),
         workflow_task_tokens: Default::default(),
     })
@@ -101,10 +107,13 @@ pub enum TaskQueue {
     _Activity(String),
 }
 
-struct CoreSDK<WP> {
+struct CoreSDK<WP>
+where
+    WP: ServerGatewayApis + 'static,
+{
     runtime: Runtime,
     /// Provides work in the form of responses the server would send from polling task Qs
-    server_gateway: WP,
+    server_gateway: Arc<WP>,
     /// Key is run id
     workflow_machines: DashMap<String, (WorkflowMachines, Sender<Vec<WFCommand>>)>,
     /// Maps task tokens to workflow run ids
@@ -113,14 +122,14 @@ struct CoreSDK<WP> {
 
 impl<WP> Core for CoreSDK<WP>
 where
-    WP: PollWorkflowTaskQueueApi + RespondWorkflowTaskCompletedApi,
+    WP: ServerGatewayApis,
 {
     #[instrument(skip(self))]
     fn poll_task(&self, task_queue: &str) -> Result<Task, CoreError> {
         // This will block forever in the event there is no work from the server
         let work = self
             .runtime
-            .block_on(self.server_gateway.poll(task_queue))?;
+            .block_on(self.server_gateway.poll_workflow_task(task_queue))?;
         let run_id = match &work.workflow_execution {
             Some(we) => {
                 self.instantiate_workflow_if_needed(we);
@@ -176,8 +185,10 @@ where
                         self.push_lang_commands(&run_id, success)?;
                         if let Some(mut machines) = self.workflow_machines.get_mut(&run_id) {
                             let commands = machines.0.get_commands();
-                            self.runtime
-                                .block_on(self.server_gateway.complete(task_token, commands))?;
+                            self.runtime.block_on(
+                                self.server_gateway
+                                    .complete_workflow_task(task_token, commands),
+                            )?;
                         }
                     }
                     Status::Failed(_) => {}
@@ -193,12 +204,13 @@ where
             _ => Err(CoreError::MalformedCompletion(req)),
         }
     }
+
+    fn server_gateway(&self) -> Result<Arc<dyn ServerGatewayApis>> {
+        Ok(self.server_gateway.clone())
+    }
 }
 
-impl<WP> CoreSDK<WP>
-where
-    WP: PollWorkflowTaskQueueApi,
-{
+impl<WP: ServerGatewayApis> CoreSDK<WP> {
     fn instantiate_workflow_if_needed(&self, workflow_execution: &WorkflowExecution) {
         if self
             .workflow_machines
@@ -244,24 +256,37 @@ where
 /// implementor.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
-pub(crate) trait PollWorkflowTaskQueueApi {
+pub trait PollWorkflowTaskQueueApi {
     /// Fetch new work. Should block indefinitely if there is no work.
-    async fn poll(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
+    async fn poll_workflow_task(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
 }
 
 /// Implementors can complete tasks as would've been issued by [Core::poll]. The real implementor
 /// sends the completed tasks to the server.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
-pub(crate) trait RespondWorkflowTaskCompletedApi {
+pub trait RespondWorkflowTaskCompletedApi {
     /// Complete a task by sending it to the server. `task_token` is the task token that would've
     /// been received from [PollWorkflowTaskQueueApi::poll]. `commands` is a list of new commands
     /// to send to the server, such as starting a timer.
-    async fn complete(
+    async fn complete_workflow_task(
         &self,
         task_token: Vec<u8>,
         commands: Vec<ProtoCommand>,
     ) -> Result<RespondWorkflowTaskCompletedResponse>;
+}
+
+/// Implementors should send StartWorkflowExecutionRequest to the server and pass the response back.
+#[cfg_attr(test, mockall::automock)]
+#[async_trait::async_trait]
+pub trait StartWorkflowExecutionApi {
+    async fn start_workflow(
+        &self,
+        namespace: &str,
+        task_queue: &str,
+        workflow_id: &str,
+        workflow_type: &str,
+    ) -> Result<StartWorkflowExecutionResponse>;
 }
 
 /// The [DrivenWorkflow] trait expects to be called to make progress, but the [CoreSDKService]
@@ -434,7 +459,7 @@ mod test {
         let runtime = Runtime::new().unwrap();
         let core = CoreSDK {
             runtime,
-            server_gateway: mock_gateway,
+            server_gateway: Arc::new(mock_gateway),
             workflow_machines: DashMap::new(),
             workflow_task_tokens: DashMap::new(),
         };
