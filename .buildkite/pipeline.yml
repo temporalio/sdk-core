@@ -39,6 +39,6 @@ steps:
     timeout_in_minutes: 15
     plugins:
       - docker-compose#v3.0.0:
-          run: unit-test
+          run: integ-test
           config: .buildkite/docker/docker-compose.yaml
   - wait
