@@ -1,11 +1,10 @@
-use crate::machines::ActivationListener;
-use crate::protos::coresdk::WfActivationJob;
 use crate::{
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
-        workflow_task_state_machine::WorkflowTaskMachine, CancellableCommand, DrivenWorkflow,
-        ProtoCommand, TemporalStateMachine, WFCommand,
+        workflow_task_state_machine::WorkflowTaskMachine, ActivationListener, CancellableCommand,
+        DrivenWorkflow, ProtoCommand, TemporalStateMachine, WFCommand,
     },
+    protos::coresdk::WfActivationJob,
     protos::{
         coresdk::{wf_activation_job, StartWorkflowTaskAttributes, WfActivation},
         temporal::api::{
@@ -18,12 +17,11 @@ use crate::{
 };
 use futures::Future;
 use rustfsm::StateMachine;
-use std::collections::HashSet;
-use std::ops::DerefMut;
 use std::{
     borrow::BorrowMut,
     cell::RefCell,
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
+    ops::DerefMut,
     rc::Rc,
     sync::{atomic::AtomicBool, Arc},
     time::SystemTime,

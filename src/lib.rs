@@ -9,42 +9,32 @@ pub extern crate assert_matches;
 #[macro_use]
 extern crate tracing;
 
+pub mod protos;
+
 mod machines;
 mod pollers;
-pub mod protos;
 mod protosext;
+mod workflow;
 
 pub use pollers::{ServerGateway, ServerGatewayOptions};
 pub use url::Url;
 
 use crate::{
-    machines::{
-        ActivationListener, DrivenWorkflow, InconvertibleCommandError, ProtoCommand, WFCommand,
-        WorkflowMachines,
-    },
+    machines::{InconvertibleCommandError, WFCommand},
     protos::{
         coresdk::{
             complete_task_req::Completion, wf_activation_completion::Status, CompleteTaskReq, Task,
             WfActivationCompletion, WfActivationSuccess,
         },
         temporal::api::{
-            common::v1::WorkflowExecution,
-            history::v1::{
-                WorkflowExecutionCanceledEventAttributes, WorkflowExecutionSignaledEventAttributes,
-                WorkflowExecutionStartedEventAttributes,
-            },
-            workflowservice::v1::{
-                PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
-            },
+            common::v1::WorkflowExecution, workflowservice::v1::PollWorkflowTaskQueueResponse,
         },
     },
     protosext::{HistoryInfo, HistoryInfoError},
+    workflow::{PollWorkflowTaskQueueApi, RespondWorkflowTaskCompletedApi, WorkflowManager},
 };
 use dashmap::DashMap;
-use std::{
-    convert::TryInto,
-    sync::mpsc::{self, Receiver, SendError, Sender},
-};
+use std::{convert::TryInto, sync::mpsc::SendError};
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
 
@@ -54,7 +44,7 @@ pub type Result<T, E = CoreError> = std::result::Result<T, E>;
 /// This trait is the primary way by which language specific SDKs interact with the core SDK. It is
 /// expected that only one instance of an implementation will exist for the lifetime of the
 /// worker(s) using it.
-pub trait Core {
+pub trait Core: Send + Sync {
     /// Ask the core for some work, returning a [Task], which will eventually contain either a
     /// [protos::coresdk::WfActivation] or an [protos::coresdk::ActivityTask]. It is then the
     /// language SDK's responsibility to call the appropriate code with the provided inputs.
@@ -106,14 +96,14 @@ struct CoreSDK<WP> {
     /// Provides work in the form of responses the server would send from polling task Qs
     server_gateway: WP,
     /// Key is run id
-    workflow_machines: DashMap<String, (WorkflowMachines, Sender<Vec<WFCommand>>)>,
+    workflow_machines: DashMap<String, WorkflowManager>,
     /// Maps task tokens to workflow run ids
     workflow_task_tokens: DashMap<Vec<u8>, String>,
 }
 
 impl<WP> Core for CoreSDK<WP>
 where
-    WP: PollWorkflowTaskQueueApi + RespondWorkflowTaskCompletedApi,
+    WP: PollWorkflowTaskQueueApi + RespondWorkflowTaskCompletedApi + Send + Sync,
 {
     #[instrument(skip(self))]
     fn poll_task(&self, task_queue: &str) -> Result<Task, CoreError> {
@@ -206,15 +196,9 @@ where
         {
             return;
         }
-        let (wfb, cmd_sink) = WorkflowBridge::new();
-        let state_machines = WorkflowMachines::new(
-            workflow_execution.workflow_id.clone(),
-            workflow_execution.run_id.clone(),
-            Box::new(wfb),
-        );
         self.workflow_machines.insert(
             workflow_execution.run_id.clone(),
-            (state_machines, cmd_sink),
+            WorkflowManager::new(workflow_execution),
         );
     }
 
@@ -239,80 +223,6 @@ where
         Ok(())
     }
 }
-
-/// Implementors can provide new work to the SDK. The connection to the server is the real
-/// implementor.
-#[cfg_attr(test, mockall::automock)]
-#[async_trait::async_trait]
-pub(crate) trait PollWorkflowTaskQueueApi {
-    /// Fetch new work. Should block indefinitely if there is no work.
-    async fn poll(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
-}
-
-/// Implementors can complete tasks as would've been issued by [Core::poll]. The real implementor
-/// sends the completed tasks to the server.
-#[cfg_attr(test, mockall::automock)]
-#[async_trait::async_trait]
-pub(crate) trait RespondWorkflowTaskCompletedApi {
-    /// Complete a task by sending it to the server. `task_token` is the task token that would've
-    /// been received from [PollWorkflowTaskQueueApi::poll]. `commands` is a list of new commands
-    /// to send to the server, such as starting a timer.
-    async fn complete(
-        &self,
-        task_token: Vec<u8>,
-        commands: Vec<ProtoCommand>,
-    ) -> Result<RespondWorkflowTaskCompletedResponse>;
-}
-
-/// The [DrivenWorkflow] trait expects to be called to make progress, but the [CoreSDKService]
-/// expects to be polled by the lang sdk. This struct acts as the bridge between the two, buffering
-/// output from calls to [DrivenWorkflow] and offering them to [CoreSDKService]
-#[derive(Debug)]
-pub(crate) struct WorkflowBridge {
-    // does wf id belong in here?
-    started_attrs: Option<WorkflowExecutionStartedEventAttributes>,
-    incoming_commands: Receiver<Vec<WFCommand>>,
-}
-
-impl WorkflowBridge {
-    /// Create a new bridge, returning it and the sink used to send commands to it.
-    pub(crate) fn new() -> (Self, Sender<Vec<WFCommand>>) {
-        let (tx, rx) = mpsc::channel();
-        (
-            Self {
-                started_attrs: None,
-                incoming_commands: rx,
-            },
-            tx,
-        )
-    }
-}
-
-impl DrivenWorkflow for WorkflowBridge {
-    #[instrument]
-    fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes) -> Vec<WFCommand> {
-        self.started_attrs = Some(attribs);
-        vec![]
-    }
-
-    #[instrument]
-    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
-        self.incoming_commands
-            .try_recv()
-            .unwrap_or_else(|_| vec![WFCommand::NoCommandsFromLang])
-    }
-
-    fn signal(&mut self, _attribs: WorkflowExecutionSignaledEventAttributes) {
-        unimplemented!()
-    }
-
-    fn cancel(&mut self, _attribs: WorkflowExecutionCanceledEventAttributes) {
-        unimplemented!()
-    }
-}
-
-// Real bridge doesn't actually need to listen
-impl ActivationListener for WorkflowBridge {}
 
 /// The error type returned by interactions with [Core]
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
@@ -359,6 +269,7 @@ mod test {
                 },
                 enums::v1::EventType,
                 history::v1::{history_event, History, TimerFiredEventAttributes},
+                workflowservice::v1::RespondWorkflowTaskCompletedResponse,
             },
         },
     };
