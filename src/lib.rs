@@ -19,6 +19,7 @@ mod workflow;
 pub use pollers::{ServerGateway, ServerGatewayOptions};
 pub use url::Url;
 
+use crate::workflow::WfManagerProtected;
 use crate::{
     machines::{InconvertibleCommandError, WFCommand},
     protos::{
@@ -131,14 +132,11 @@ where
         // We pass none since we want to apply all the history we just got.
         // Will need to change a bit once we impl caching.
         let hist_info = HistoryInfo::new_from_history(&history, None)?;
-        let activation = if let Some(mut machines) = self.workflow_machines.get_mut(&run_id) {
-            let mut mgr = machines.value_mut().lock()?;
+        let activation = self.access_machine(&run_id, |mgr| {
             let machines = &mut mgr.machines;
             hist_info.apply_history_events(machines)?;
-            machines.get_wf_activation()
-        } else {
-            return Err(CoreError::MissingMachines(run_id));
-        };
+            Ok(machines.get_wf_activation())
+        })?;
 
         Ok(Task {
             task_token: work.task_token,
@@ -164,13 +162,11 @@ where
                 match wfstatus {
                     Status::Successful(success) => {
                         self.push_lang_commands(&run_id, success)?;
-                        if let Some(mut machines) = self.workflow_machines.get_mut(&run_id) {
-                            let mut mgr = machines.value_mut().lock()?;
-                            let machines = &mut mgr.machines;
-                            let commands = machines.get_commands();
+                        self.access_machine(&run_id, |mgr| {
+                            let commands = mgr.machines.get_commands();
                             self.runtime
-                                .block_on(self.server_gateway.complete(task_token, commands))?;
-                        }
+                                .block_on(self.server_gateway.complete(task_token, commands))
+                        })?;
                     }
                     Status::Failed(_) => {}
                 }
@@ -187,10 +183,7 @@ where
     }
 }
 
-impl<WP> CoreSDK<WP>
-where
-    WP: PollWorkflowTaskQueueApi,
-{
+impl<WP> CoreSDK<WP> {
     fn instantiate_workflow_if_needed(&self, workflow_execution: &WorkflowExecution) {
         if self
             .workflow_machines
@@ -205,25 +198,33 @@ where
     }
 
     /// Feed commands from the lang sdk into the appropriate workflow bridge
-    fn push_lang_commands(
-        &self,
-        run_id: &str,
-        success: WfActivationSuccess,
-    ) -> Result<(), CoreError> {
+    fn push_lang_commands(&self, run_id: &str, success: WfActivationSuccess) -> Result<()> {
         // Convert to wf commands
         let cmds = success
             .commands
             .into_iter()
             .map(|c| c.try_into().map_err(Into::into))
             .collect::<Result<Vec<_>>>()?;
-        if let Some(mut machines) = self.workflow_machines.get_mut(run_id) {
-            let mut mgr = machines.value_mut().lock()?;
+        self.access_machine(run_id, |mgr| {
             mgr.command_sink.send(cmds)?;
             mgr.machines.event_loop();
-        } else {
-            // TODO: Error
-        }
+            Ok(())
+        })?;
         Ok(())
+    }
+
+    /// Use a closure to access the machines for a workflow run, handles locking and missing
+    /// machines.
+    fn access_machine<F, Fout>(&self, run_id: &str, mutator: F) -> Result<Fout>
+    where
+        F: FnOnce(&mut WfManagerProtected) -> Result<Fout>,
+    {
+        if let Some(mut machines) = self.workflow_machines.get_mut(run_id) {
+            let mut mgr = machines.value_mut().lock()?;
+            mutator(&mut mgr)
+        } else {
+            Err(CoreError::MissingMachines(run_id.to_string()))
+        }
     }
 }
 
