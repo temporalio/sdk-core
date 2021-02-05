@@ -4,15 +4,18 @@ pub(crate) use bridge::WorkflowBridge;
 
 use crate::{
     machines::{ProtoCommand, WFCommand, WorkflowMachines},
-    protos::temporal::{
-        api::common::v1::WorkflowExecution,
-        api::workflowservice::v1::{
+    protos::temporal::api::{
+        common::v1::WorkflowExecution,
+        workflowservice::v1::{
             PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
     Result,
 };
-use std::sync::{mpsc::Sender, Arc, Mutex};
+use std::{
+    ops::DerefMut,
+    sync::{mpsc::Sender, Arc, Mutex},
+};
 
 /// Implementors can provide new workflow tasks to the SDK. The connection to the server is the real
 /// implementor.
@@ -43,9 +46,9 @@ pub(crate) struct WorkflowManager {
     data: Arc<Mutex<WfManagerProtected>>,
 }
 /// Inner data for [WorkflowManager]
-struct WfManagerProtected {
-    machines: WorkflowMachines,
-    command_sink: Sender<Vec<WFCommand>>,
+pub(crate) struct WfManagerProtected {
+    pub machines: WorkflowMachines,
+    pub command_sink: Sender<Vec<WFCommand>>,
 }
 
 impl WorkflowManager {
@@ -60,6 +63,11 @@ impl WorkflowManager {
         Self {
             data: Arc::new(Mutex::new(protected)),
         }
+    }
+
+    pub fn lock(&self) -> impl DerefMut<Target = WfManagerProtected> + '_ {
+        // TODO: Result
+        self.data.lock().unwrap()
     }
 }
 

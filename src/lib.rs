@@ -34,7 +34,7 @@ use crate::{
     workflow::{PollWorkflowTaskQueueApi, RespondWorkflowTaskCompletedApi, WorkflowManager},
 };
 use dashmap::DashMap;
-use std::{convert::TryInto, sync::mpsc::SendError};
+use std::{convert::TryInto, ops::DerefMut, sync::mpsc::SendError};
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
 
@@ -133,8 +133,10 @@ where
         // Will need to change a bit once we impl caching.
         let hist_info = HistoryInfo::new_from_history(&history, None)?;
         let activation = if let Some(mut machines) = self.workflow_machines.get_mut(&run_id) {
-            hist_info.apply_history_events(&mut machines.value_mut().0)?;
-            machines.0.get_wf_activation()
+            let mut mgr = machines.value_mut().lock();
+            let machines = &mut mgr.deref_mut().machines;
+            hist_info.apply_history_events(machines)?;
+            machines.get_wf_activation()
         } else {
             //err
             unimplemented!()
@@ -165,7 +167,9 @@ where
                     Status::Successful(success) => {
                         self.push_lang_commands(&run_id, success)?;
                         if let Some(mut machines) = self.workflow_machines.get_mut(&run_id) {
-                            let commands = machines.0.get_commands();
+                            let mut mgr = machines.value_mut().lock();
+                            let machines = &mut mgr.deref_mut().machines;
+                            let commands = machines.get_commands();
                             self.runtime
                                 .block_on(self.server_gateway.complete(task_token, commands))?;
                         }
@@ -214,9 +218,10 @@ where
             .into_iter()
             .map(|c| c.try_into().map_err(Into::into))
             .collect::<Result<Vec<_>>>()?;
-        if let Some(mut machine) = self.workflow_machines.get_mut(run_id) {
-            machine.1.send(cmds)?;
-            machine.0.event_loop();
+        if let Some(mut machines) = self.workflow_machines.get_mut(run_id) {
+            let mut mgr = machines.value_mut().lock();
+            mgr.deref_mut().command_sink.send(cmds)?;
+            mgr.deref_mut().machines.event_loop();
         } else {
             // TODO: Error
         }
