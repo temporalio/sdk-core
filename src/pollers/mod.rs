@@ -1,19 +1,22 @@
 use std::time::Duration;
 
-use crate::machines::ProtoCommand;
-use crate::protos::temporal::api::common::v1::WorkflowType;
-use crate::protos::temporal::api::workflowservice::v1::{
-    RespondWorkflowTaskCompletedRequest, RespondWorkflowTaskCompletedResponse,
-    StartWorkflowExecutionRequest, StartWorkflowExecutionResponse,
-};
 use crate::{
-    protos::temporal::api::enums::v1::TaskQueueKind,
-    protos::temporal::api::taskqueue::v1::TaskQueue,
-    protos::temporal::api::workflowservice::v1::workflow_service_client::WorkflowServiceClient,
-    protos::temporal::api::workflowservice::v1::{
-        PollWorkflowTaskQueueRequest, PollWorkflowTaskQueueResponse,
+    machines::ProtoCommand,
+    protos::temporal::api::{
+        common::v1::WorkflowType,
+        enums::v1::TaskQueueKind,
+        taskqueue::v1::TaskQueue,
+        workflowservice::v1::{
+            workflow_service_client::WorkflowServiceClient, PollWorkflowTaskQueueRequest,
+            PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedRequest,
+            RespondWorkflowTaskCompletedResponse,
+        },
+        workflowservice::v1::{StartWorkflowExecutionRequest, StartWorkflowExecutionResponse},
     },
-    PollWorkflowTaskQueueApi, RespondWorkflowTaskCompletedApi, Result, StartWorkflowExecutionApi,
+    workflow::{
+        PollWorkflowTaskQueueApi, RespondWorkflowTaskCompletedApi, StartWorkflowExecutionApi,
+    },
+    Result,
 };
 use tonic::{transport::Channel, Request, Status};
 use url::Url;

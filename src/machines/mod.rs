@@ -57,10 +57,8 @@ use crate::{
 use prost::alloc::fmt::Formatter;
 use rustfsm::{MachineError, StateMachine};
 use std::{
-    cell::RefCell,
     convert::{TryFrom, TryInto},
     fmt::Debug,
-    rc::Rc,
 };
 use tracing::Level;
 
@@ -143,7 +141,7 @@ impl TryFrom<coresdk::Command> for WFCommand {
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
 ///
 /// Formerly known as `EntityStateMachine` in Java.
-trait TemporalStateMachine: CheckStateMachineInFinal {
+trait TemporalStateMachine: CheckStateMachineInFinal + Send {
     fn name(&self) -> &str;
     fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError>;
 
@@ -158,7 +156,7 @@ trait TemporalStateMachine: CheckStateMachineInFinal {
 
 impl<SM> TemporalStateMachine for SM
 where
-    SM: StateMachine + CheckStateMachineInFinal + WFMachinesAdapter + Clone,
+    SM: StateMachine + CheckStateMachineInFinal + WFMachinesAdapter + Clone + Send,
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
     <SM as StateMachine>::Command: Debug,
@@ -250,8 +248,8 @@ trait WFMachinesAdapter: StateMachine {
     ) -> Result<Vec<WorkflowTrigger>, WFMachinesError>;
 }
 
-/// A command which can be cancelled, associated with some state machine that produced it
-#[derive(Debug, Clone)]
+/// A command which can be cancelled, associated with the state machine that produced it
+#[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 enum CancellableCommand {
     // TODO: You'll be used soon, friend.
@@ -260,7 +258,7 @@ enum CancellableCommand {
     Active {
         /// The inner protobuf command, if None, command has been cancelled
         command: ProtoCommand,
-        machine: Rc<RefCell<dyn TemporalStateMachine>>,
+        machine: Box<dyn TemporalStateMachine>,
     },
 }
 
