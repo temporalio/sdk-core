@@ -16,12 +16,11 @@ mod pollers;
 mod protosext;
 mod workflow;
 
-pub use pollers::{ServerGateway, ServerGatewayOptions};
+pub use pollers::{ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
 use crate::{
     machines::{InconvertibleCommandError, WFCommand},
-    pollers::ServerGatewayApis,
     protos::{
         coresdk::{
             complete_task_req::Completion, wf_activation_completion::Status, CompleteTaskReq, Task,
