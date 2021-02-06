@@ -6,9 +6,6 @@ use temporal_sdk_core::{
         temporal::api::command::v1::{
             CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
         },
-        temporal::api::common::v1::WorkflowType,
-        temporal::api::taskqueue::v1::TaskQueue,
-        temporal::api::workflowservice::v1::StartWorkflowExecutionRequest,
     },
     Core, CoreInitOptions, ServerGatewayOptions, Url,
 };

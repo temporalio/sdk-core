@@ -133,7 +133,7 @@ impl WorkflowMachines {
     /// is the last event in the history.
     ///
     /// TODO: Describe what actually happens in here
-    #[instrument(skip(self))]
+    #[instrument(level = "debug", skip(self))]
     pub(crate) fn handle_event(
         &mut self,
         event: &HistoryEvent,

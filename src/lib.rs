@@ -37,6 +37,7 @@ use dashmap::DashMap;
 use std::{convert::TryInto, sync::mpsc::SendError, sync::Arc};
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
+use tracing::Level;
 
 /// A result alias having [CoreError] as the error type
 pub type Result<T, E = CoreError> = std::result::Result<T, E>;
@@ -74,6 +75,7 @@ pub struct CoreInitOptions {
 /// * Will panic if called from within an async context, as it will construct a runtime and you
 ///   cannot construct a runtime from within a runtime.
 pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
+    let _ = env_logger::try_init();
     let runtime = Runtime::new().map_err(CoreError::TokioInitError)?;
     // Initialize server client
     let work_provider = runtime.block_on(opts.gateway_opts.connect())?;
@@ -129,6 +131,12 @@ where
         } else {
             return Err(CoreError::BadDataFromWorkProvider(work));
         };
+
+        event!(
+            Level::DEBUG,
+            msg = "Received workflow task",
+            ?work.task_token
+        );
 
         // Correlate task token w/ run ID
         self.workflow_task_tokens
