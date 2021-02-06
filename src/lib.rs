@@ -19,9 +19,9 @@ mod workflow;
 pub use pollers::{ServerGateway, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::workflow::WfManagerProtected;
 use crate::{
     machines::{InconvertibleCommandError, WFCommand},
+    pollers::ServerGatewayApis,
     protos::{
         coresdk::{
             complete_task_req::Completion, wf_activation_completion::Status, CompleteTaskReq, Task,
@@ -32,10 +32,10 @@ use crate::{
         },
     },
     protosext::{HistoryInfo, HistoryInfoError},
-    workflow::{PollWorkflowTaskQueueApi, RespondWorkflowTaskCompletedApi, WorkflowManager},
+    workflow::{WfManagerProtected, WorkflowManager},
 };
 use dashmap::DashMap;
-use std::{convert::TryInto, sync::mpsc::SendError};
+use std::{convert::TryInto, sync::mpsc::SendError, sync::Arc};
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
 
@@ -56,6 +56,9 @@ pub trait Core: Send + Sync {
     /// Tell the core that some work has been completed - whether as a result of running workflow
     /// code or executing an activity.
     fn complete_task(&self, req: CompleteTaskReq) -> Result<()>;
+
+    /// Returns an instance of ServerGateway.
+    fn server_gateway(&self) -> Result<Arc<dyn ServerGatewayApis>>;
 }
 
 /// Holds various configuration information required to call [init]
@@ -78,7 +81,7 @@ pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
 
     Ok(CoreSDK {
         runtime,
-        server_gateway: work_provider,
+        server_gateway: Arc::new(work_provider),
         workflow_machines: Default::default(),
         workflow_task_tokens: Default::default(),
     })
@@ -92,10 +95,13 @@ pub enum TaskQueue {
     _Activity(String),
 }
 
-struct CoreSDK<WP> {
+struct CoreSDK<WP>
+where
+    WP: ServerGatewayApis + 'static,
+{
     runtime: Runtime,
     /// Provides work in the form of responses the server would send from polling task Qs
-    server_gateway: WP,
+    server_gateway: Arc<WP>,
     /// Key is run id
     workflow_machines: DashMap<String, WorkflowManager>,
     /// Maps task tokens to workflow run ids
@@ -104,14 +110,14 @@ struct CoreSDK<WP> {
 
 impl<WP> Core for CoreSDK<WP>
 where
-    WP: PollWorkflowTaskQueueApi + RespondWorkflowTaskCompletedApi + Send + Sync,
+    WP: ServerGatewayApis + Send + Sync,
 {
     #[instrument(skip(self))]
     fn poll_task(&self, task_queue: &str) -> Result<Task> {
         // This will block forever in the event there is no work from the server
         let work = self
             .runtime
-            .block_on(self.server_gateway.poll(task_queue))?;
+            .block_on(self.server_gateway.poll_workflow_task(task_queue))?;
         let run_id = match &work.workflow_execution {
             Some(we) => {
                 self.instantiate_workflow_if_needed(we);
@@ -164,8 +170,10 @@ where
                         self.push_lang_commands(&run_id, success)?;
                         self.access_machine(&run_id, |mgr| {
                             let commands = mgr.machines.get_commands();
-                            self.runtime
-                                .block_on(self.server_gateway.complete(task_token, commands))
+                            self.runtime.block_on(
+                                self.server_gateway
+                                    .complete_workflow_task(task_token, commands),
+                            )
                         })?;
                     }
                     Status::Failed(_) => {}
@@ -181,9 +189,13 @@ where
             _ => Err(CoreError::MalformedCompletion(req)),
         }
     }
+
+    fn server_gateway(&self) -> Result<Arc<dyn ServerGatewayApis>> {
+        Ok(self.server_gateway.clone())
+    }
 }
 
-impl<WP> CoreSDK<WP> {
+impl<WP: ServerGatewayApis> CoreSDK<WP> {
     fn instantiate_workflow_if_needed(&self, workflow_execution: &WorkflowExecution) {
         if self
             .workflow_machines
@@ -343,17 +355,17 @@ mod test {
         let mut tasks = VecDeque::from(responses);
         let mut mock_gateway = MockServerGateway::new();
         mock_gateway
-            .expect_poll()
+            .expect_poll_workflow_task()
             .returning(move |_| Ok(tasks.pop_front().unwrap()));
         // Response not really important here
         mock_gateway
-            .expect_complete()
+            .expect_complete_workflow_task()
             .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
 
         let runtime = Runtime::new().unwrap();
         let core = CoreSDK {
             runtime,
-            server_gateway: mock_gateway,
+            server_gateway: Arc::new(mock_gateway),
             workflow_machines: DashMap::new(),
             workflow_task_tokens: DashMap::new(),
         };

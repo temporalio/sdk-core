@@ -3,6 +3,7 @@ use std::time::Duration;
 use crate::{
     machines::ProtoCommand,
     protos::temporal::api::{
+        common::v1::WorkflowType,
         enums::v1::TaskQueueKind,
         taskqueue::v1::TaskQueue,
         workflowservice::v1::{
@@ -10,12 +11,16 @@ use crate::{
             PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedRequest,
             RespondWorkflowTaskCompletedResponse,
         },
+        workflowservice::v1::{StartWorkflowExecutionRequest, StartWorkflowExecutionResponse},
     },
-    workflow::{PollWorkflowTaskQueueApi, RespondWorkflowTaskCompletedApi},
+    workflow::{
+        PollWorkflowTaskQueueApi, RespondWorkflowTaskCompletedApi, StartWorkflowExecutionApi,
+    },
     Result,
 };
 use tonic::{transport::Channel, Request, Status};
 use url::Url;
+use uuid::Uuid;
 
 /// Options for the connection to the temporal server
 #[derive(Clone, Debug)]
@@ -77,9 +82,19 @@ pub struct ServerGateway {
     pub opts: ServerGatewayOptions,
 }
 
+pub trait ServerGatewayApis:
+    PollWorkflowTaskQueueApi + RespondWorkflowTaskCompletedApi + StartWorkflowExecutionApi
+{
+}
+
+impl<T> ServerGatewayApis for T where
+    T: PollWorkflowTaskQueueApi + RespondWorkflowTaskCompletedApi + StartWorkflowExecutionApi
+{
+}
+
 #[async_trait::async_trait]
 impl PollWorkflowTaskQueueApi for ServerGateway {
-    async fn poll(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse> {
+    async fn poll_workflow_task(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse> {
         let request = PollWorkflowTaskQueueRequest {
             namespace: self.opts.namespace.to_string(),
             task_queue: Some(TaskQueue {
@@ -101,7 +116,7 @@ impl PollWorkflowTaskQueueApi for ServerGateway {
 
 #[async_trait::async_trait]
 impl RespondWorkflowTaskCompletedApi for ServerGateway {
-    async fn complete(
+    async fn complete_workflow_task(
         &self,
         task_token: Vec<u8>,
         commands: Vec<ProtoCommand>,
@@ -123,15 +138,57 @@ impl RespondWorkflowTaskCompletedApi for ServerGateway {
     }
 }
 
+#[async_trait::async_trait]
+impl StartWorkflowExecutionApi for ServerGateway {
+    async fn start_workflow(
+        &self,
+        namespace: &str,
+        task_queue: &str,
+        workflow_id: &str,
+        workflow_type: &str,
+    ) -> Result<StartWorkflowExecutionResponse> {
+        let request_id = Uuid::new_v4().to_string();
+
+        Ok(self
+            .service
+            .clone()
+            .start_workflow_execution(StartWorkflowExecutionRequest {
+                namespace: namespace.to_string(),
+                workflow_id: workflow_id.to_string(),
+                workflow_type: Some(WorkflowType {
+                    name: workflow_type.to_string(),
+                }),
+                task_queue: Some(TaskQueue {
+                    name: task_queue.to_string(),
+                    kind: 0,
+                }),
+                request_id,
+                ..Default::default()
+            })
+            .await?
+            .into_inner())
+    }
+}
+
 #[cfg(test)]
 mockall::mock! {
-    pub(crate) ServerGateway {}
+    pub ServerGateway {}
     #[async_trait::async_trait]
     impl PollWorkflowTaskQueueApi for ServerGateway {
-        async fn poll(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
+        async fn poll_workflow_task(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
     }
     #[async_trait::async_trait]
     impl RespondWorkflowTaskCompletedApi for ServerGateway {
-        async fn complete(&self, task_token: Vec<u8>, commands: Vec<ProtoCommand>) -> Result<RespondWorkflowTaskCompletedResponse>;
+        async fn complete_workflow_task(&self, task_token: Vec<u8>, commands: Vec<ProtoCommand>) -> Result<RespondWorkflowTaskCompletedResponse>;
+    }
+    #[async_trait::async_trait]
+    impl StartWorkflowExecutionApi for ServerGateway {
+        async fn start_workflow(
+            &self,
+            namespace: &str,
+            task_queue: &str,
+            workflow_id: &str,
+            workflow_type: &str,
+        ) -> Result<StartWorkflowExecutionResponse>;
     }
 }
