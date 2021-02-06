@@ -290,8 +290,11 @@ impl WorkflowMachines {
                     // We need to notify the lang sdk that it's time to kick off a workflow
                     self.outgoing_wf_activation_jobs.push_back(
                         StartWorkflowTaskAttributes {
-                            // TODO: This needs to be set during init
-                            workflow_type: "".to_string(),
+                            workflow_type: attrs
+                                .workflow_type
+                                .as_ref()
+                                .map(|wt| wt.name.clone())
+                                .unwrap_or_default(),
                             workflow_id: self.workflow_id.clone(),
                             arguments: attrs.input.clone(),
                         }
