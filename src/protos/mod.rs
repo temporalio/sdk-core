@@ -11,7 +11,7 @@ pub mod coresdk {
     include!("coresdk.rs");
     use super::temporal::api::command::v1 as api_command;
     use super::temporal::api::command::v1::Command as ApiCommand;
-    use crate::protos::coresdk::complete_task_req::Completion;
+    use crate::protos::coresdk::task_completion::Completion;
     use crate::protos::coresdk::wf_activation_job::Attributes;
     use command::Variant;
 
@@ -57,7 +57,7 @@ pub mod coresdk {
         }
     }
 
-    impl CompleteTaskReq {
+    impl TaskCompletion {
         /// Build a successful completion from some api command attributes and a task token
         pub fn ok_from_api_attrs(
             cmd: api_command::command::Attributes,
@@ -65,7 +65,7 @@ pub mod coresdk {
         ) -> Self {
             let cmd: ApiCommand = cmd.into();
             let success: WfActivationSuccess = vec![cmd].into();
-            CompleteTaskReq {
+            TaskCompletion {
                 task_token,
                 completion: Some(Completion::Workflow(WfActivationCompletion {
                     status: Some(wf_activation_completion::Status::Successful(success)),

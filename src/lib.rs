@@ -24,7 +24,7 @@ use crate::{
     pollers::ServerGatewayApis,
     protos::{
         coresdk::{
-            complete_task_req::Completion, wf_activation_completion::Status, CompleteTaskReq, Task,
+            task_completion::Completion, wf_activation_completion::Status, Task, TaskCompletion,
             WfActivationCompletion, WfActivationSuccess,
         },
         temporal::api::{
@@ -55,7 +55,7 @@ pub trait Core: Send + Sync {
 
     /// Tell the core that some work has been completed - whether as a result of running workflow
     /// code or executing an activity.
-    fn complete_task(&self, req: CompleteTaskReq) -> Result<()>;
+    fn complete_task(&self, req: TaskCompletion) -> Result<()>;
 
     /// Returns an instance of ServerGateway.
     fn server_gateway(&self) -> Result<Arc<dyn ServerGatewayApis>>;
@@ -151,9 +151,9 @@ where
     }
 
     #[instrument(skip(self))]
-    fn complete_task(&self, req: CompleteTaskReq) -> Result<()> {
+    fn complete_task(&self, req: TaskCompletion) -> Result<()> {
         match req {
-            CompleteTaskReq {
+            TaskCompletion {
                 task_token,
                 completion:
                     Some(Completion::Workflow(WfActivationCompletion {
@@ -180,7 +180,7 @@ where
                 }
                 Ok(())
             }
-            CompleteTaskReq {
+            TaskCompletion {
                 completion: Some(Completion::Activity(_)),
                 ..
             } => {
@@ -252,7 +252,7 @@ pub enum CoreError {
     /// Poll response from server was malformed: {0:?}
     BadDataFromWorkProvider(PollWorkflowTaskQueueResponse),
     /// Lang SDK sent us a malformed completion: {0:?}
-    MalformedCompletion(CompleteTaskReq),
+    MalformedCompletion(TaskCompletion),
     /// Error buffering commands
     CantSendCommands(#[from] SendError<Vec<WFCommand>>),
     /// Couldn't interpret command from <lang>
@@ -381,7 +381,7 @@ mod test {
         assert!(core.workflow_machines.get(run_id).is_some());
 
         let task_tok = res.task_token;
-        core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
             StartTimerCommandAttributes {
                 timer_id: timer_id.to_string(),
                 ..Default::default()
@@ -401,7 +401,7 @@ mod test {
             }]
         );
         let task_tok = res.task_token;
-        core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
             CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
             task_tok,
         ))
