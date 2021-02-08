@@ -5,6 +5,7 @@ use crate::{
     protos::temporal::api::history::v1::WorkflowExecutionStartedEventAttributes,
 };
 use std::sync::mpsc::{self, Receiver, Sender};
+use tracing::Level;
 
 /// The [DrivenWorkflow] trait expects to be called to make progress, but the [CoreSDKService]
 /// expects to be polled by the lang sdk. This struct acts as the bridge between the two, buffering
@@ -31,17 +32,22 @@ impl WorkflowBridge {
 }
 
 impl DrivenWorkflow for WorkflowBridge {
-    #[instrument]
     fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes) -> Vec<WFCommand> {
+        event!(Level::DEBUG, msg = "Workflow bridge start called", ?attribs);
         self.started_attrs = Some(attribs);
         vec![]
     }
 
-    #[instrument]
     fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
-        self.incoming_commands
-            .try_recv()
-            .unwrap_or_else(|_| vec![WFCommand::NoCommandsFromLang])
+        let in_cmds = self.incoming_commands.try_recv();
+
+        event!(
+            Level::DEBUG,
+            msg = "Workflow bridge iteration fetch",
+            ?in_cmds
+        );
+
+        in_cmds.unwrap_or_else(|_| vec![WFCommand::NoCommandsFromLang])
     }
 
     fn signal(&mut self, _attribs: WorkflowExecutionSignaledEventAttributes) {
