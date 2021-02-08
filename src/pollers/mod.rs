@@ -82,6 +82,7 @@ pub struct ServerGateway {
     pub opts: ServerGatewayOptions,
 }
 
+/// This trait provides ways to call the temporal server itself
 pub trait ServerGatewayApis:
     PollWorkflowTaskQueueApi + RespondWorkflowTaskCompletedApi + StartWorkflowExecutionApi
 {
