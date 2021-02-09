@@ -285,23 +285,19 @@ pub enum CoreError {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::protos::coresdk::TimerFiredTaskAttributes;
     use crate::{
-        machines::test_help::TestHistoryBuilder,
-        pollers::MockServerGateway,
+        machines::test_help::{build_fake_core, TestHistoryBuilder},
         protos::{
-            coresdk::{wf_activation_job, WfActivationJob},
+            coresdk::{wf_activation_job, TimerFiredTaskAttributes, WfActivationJob},
             temporal::api::{
                 command::v1::{
                     CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
                 },
                 enums::v1::EventType,
-                history::v1::{history_event, History, TimerFiredEventAttributes},
-                workflowservice::v1::RespondWorkflowTaskCompletedResponse,
+                history::v1::{history_event, TimerFiredEventAttributes},
             },
         },
     };
-    use std::collections::VecDeque;
     use tracing::Level;
 
     #[test]
@@ -311,7 +307,7 @@ mod test {
 
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
-        let timer_id = "fake_timer";
+        let timer_id = "fake_timer".to_string();
         let task_queue = "test-task-queue";
 
         let mut t = TestHistoryBuilder::default();
@@ -322,7 +318,7 @@ mod test {
             EventType::TimerFired,
             history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
                 started_event_id: timer_started_event_id,
-                timer_id: "timer1".to_string(),
+                timer_id: timer_id.clone(),
             }),
         );
         t.add_workflow_task_scheduled_and_started();
@@ -338,47 +334,9 @@ mod test {
            8: EVENT_TYPE_WORKFLOW_TASK_STARTED
            ---
         */
-        let events_first_batch = t.get_history_info(1).unwrap().events;
-        let wf = Some(WorkflowExecution {
-            workflow_id: wfid.to_string(),
-            run_id: run_id.to_string(),
-        });
-        let first_response = PollWorkflowTaskQueueResponse {
-            history: Some(History {
-                events: events_first_batch,
-            }),
-            workflow_execution: wf.clone(),
-            ..Default::default()
-        };
-        let events_second_batch = t.get_history_info(2).unwrap().events;
-        let second_response = PollWorkflowTaskQueueResponse {
-            history: Some(History {
-                events: events_second_batch,
-            }),
-            workflow_execution: wf,
-            ..Default::default()
-        };
-        let responses = vec![first_response, second_response];
+        let core = build_fake_core(wfid, run_id, &mut t);
 
-        let mut tasks = VecDeque::from(responses);
-        let mut mock_gateway = MockServerGateway::new();
-        mock_gateway
-            .expect_poll_workflow_task()
-            .returning(move |_| Ok(tasks.pop_front().unwrap()));
-        // Response not really important here
-        mock_gateway
-            .expect_complete_workflow_task()
-            .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
-
-        let runtime = Runtime::new().unwrap();
-        let core = CoreSDK {
-            runtime,
-            server_gateway: Arc::new(mock_gateway),
-            workflow_machines: DashMap::new(),
-            workflow_task_tokens: DashMap::new(),
-        };
-
-        let res = dbg!(core.poll_task(task_queue).unwrap());
+        let res = core.poll_task(task_queue).unwrap();
         // TODO: uggo
         assert_matches!(
             res.get_wf_jobs().as_slice(),
@@ -391,7 +349,7 @@ mod test {
         let task_tok = res.task_token;
         core.complete_task(CompleteTaskReq::ok_from_api_attrs(
             vec![StartTimerCommandAttributes {
-                timer_id: timer_id.to_string(),
+                timer_id,
                 ..Default::default()
             }
             .into()],
@@ -399,7 +357,7 @@ mod test {
         ))
         .unwrap();
 
-        let res = dbg!(core.poll_task(task_queue).unwrap());
+        let res = core.poll_task(task_queue).unwrap();
         // TODO: uggo
         assert_matches!(
             res.get_wf_jobs().as_slice(),
@@ -460,45 +418,7 @@ mod test {
            10: EVENT_TYPE_WORKFLOW_TASK_STARTED
            ---
         */
-        let events_first_batch = t.get_history_info(1).unwrap().events;
-        let wf = Some(WorkflowExecution {
-            workflow_id: wfid.to_string(),
-            run_id: run_id.to_string(),
-        });
-        let first_response = PollWorkflowTaskQueueResponse {
-            history: Some(History {
-                events: events_first_batch,
-            }),
-            workflow_execution: wf.clone(),
-            ..Default::default()
-        };
-        let events_second_batch = t.get_history_info(2).unwrap().events;
-        let second_response = PollWorkflowTaskQueueResponse {
-            history: Some(History {
-                events: events_second_batch,
-            }),
-            workflow_execution: wf,
-            ..Default::default()
-        };
-        let responses = vec![first_response, second_response];
-
-        let mut tasks = VecDeque::from(responses);
-        let mut mock_gateway = MockServerGateway::new();
-        mock_gateway
-            .expect_poll_workflow_task()
-            .returning(move |_| Ok(tasks.pop_front().unwrap()));
-        // Response not really important here
-        mock_gateway
-            .expect_complete_workflow_task()
-            .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
-
-        let runtime = Runtime::new().unwrap();
-        let core = CoreSDK {
-            runtime,
-            server_gateway: Arc::new(mock_gateway),
-            workflow_machines: DashMap::new(),
-            workflow_task_tokens: DashMap::new(),
-        };
+        let core = build_fake_core(wfid, run_id, &mut t);
 
         let res = core.poll_task(task_queue).unwrap();
         // TODO: uggo
@@ -544,8 +464,8 @@ mod test {
                     )),
                 }
             ] => {
-            assert_eq!(t1_id, &timer_1_id);
-            assert_eq!(t2_id, &timer_2_id);
+                assert_eq!(t1_id, &timer_1_id);
+                assert_eq!(t2_id, &timer_2_id);
             }
         );
         let task_tok = res.task_token;
