@@ -285,6 +285,7 @@ pub enum CoreError {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::protos::coresdk::TimerFiredTaskAttributes;
     use crate::{
         machines::test_help::TestHistoryBuilder,
         pollers::MockServerGateway,
@@ -304,7 +305,7 @@ mod test {
     use tracing::Level;
 
     #[test]
-    fn workflow_bridge() {
+    fn timer_test_accross_wf_bridge() {
         let s = span!(Level::DEBUG, "Test start");
         let _enter = s.enter();
 
@@ -389,15 +390,14 @@ mod test {
 
         let task_tok = res.task_token;
         core.complete_task(CompleteTaskReq::ok_from_api_attrs(
-            StartTimerCommandAttributes {
+            vec![StartTimerCommandAttributes {
                 timer_id: timer_id.to_string(),
                 ..Default::default()
             }
-            .into(),
+            .into()],
             task_tok,
         ))
         .unwrap();
-        dbg!("sent completion w/ start timer");
 
         let res = dbg!(core.poll_task(task_queue).unwrap());
         // TODO: uggo
@@ -409,10 +409,150 @@ mod test {
         );
         let task_tok = res.task_token;
         core.complete_task(CompleteTaskReq::ok_from_api_attrs(
-            CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
+            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
             task_tok,
         ))
         .unwrap();
-        dbg!("sent workflow done");
+    }
+
+    #[test]
+    fn parallel_timer_test_accross_wf_bridge() {
+        let s = span!(Level::DEBUG, "Test start");
+        let _enter = s.enter();
+
+        let wfid = "fake_wf_id";
+        let run_id = "fake_run_id";
+        let timer_1_id = "timer1".to_string();
+        let timer_2_id = "timer2".to_string();
+        let task_queue = "test-task-queue";
+
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_workflow_task();
+        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        let timer_2_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        t.add(
+            EventType::TimerFired,
+            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                started_event_id: timer_started_event_id,
+                timer_id: timer_1_id.clone(),
+            }),
+        );
+        t.add(
+            EventType::TimerFired,
+            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                started_event_id: timer_2_started_event_id,
+                timer_id: timer_2_id.clone(),
+            }),
+        );
+        t.add_workflow_task_scheduled_and_started();
+        /*
+           1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+           2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+           3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+           ---
+           4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+           5: EVENT_TYPE_TIMER_STARTED
+           6: EVENT_TYPE_TIMER_STARTED
+           7: EVENT_TYPE_TIMER_FIRED
+           8: EVENT_TYPE_TIMER_FIRED
+           9: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+           10: EVENT_TYPE_WORKFLOW_TASK_STARTED
+           ---
+        */
+        let events_first_batch = t.get_history_info(1).unwrap().events;
+        let wf = Some(WorkflowExecution {
+            workflow_id: wfid.to_string(),
+            run_id: run_id.to_string(),
+        });
+        let first_response = PollWorkflowTaskQueueResponse {
+            history: Some(History {
+                events: events_first_batch,
+            }),
+            workflow_execution: wf.clone(),
+            ..Default::default()
+        };
+        let events_second_batch = t.get_history_info(2).unwrap().events;
+        let second_response = PollWorkflowTaskQueueResponse {
+            history: Some(History {
+                events: events_second_batch,
+            }),
+            workflow_execution: wf,
+            ..Default::default()
+        };
+        let responses = vec![first_response, second_response];
+
+        let mut tasks = VecDeque::from(responses);
+        let mut mock_gateway = MockServerGateway::new();
+        mock_gateway
+            .expect_poll_workflow_task()
+            .returning(move |_| Ok(tasks.pop_front().unwrap()));
+        // Response not really important here
+        mock_gateway
+            .expect_complete_workflow_task()
+            .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
+
+        let runtime = Runtime::new().unwrap();
+        let core = CoreSDK {
+            runtime,
+            server_gateway: Arc::new(mock_gateway),
+            workflow_machines: DashMap::new(),
+            workflow_task_tokens: DashMap::new(),
+        };
+
+        let res = core.poll_task(task_queue).unwrap();
+        // TODO: uggo
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
+            }]
+        );
+        assert!(core.workflow_machines.get(run_id).is_some());
+
+        let task_tok = res.task_token;
+        core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+            vec![
+                StartTimerCommandAttributes {
+                    timer_id: timer_1_id.clone(),
+                    ..Default::default()
+                }
+                .into(),
+                StartTimerCommandAttributes {
+                    timer_id: timer_2_id.clone(),
+                    ..Default::default()
+                }
+                .into(),
+            ],
+            task_tok,
+        ))
+        .unwrap();
+
+        let res = core.poll_task(task_queue).unwrap();
+        // TODO: uggo
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [
+                WfActivationJob {
+                    attributes: Some(wf_activation_job::Attributes::TimerFired(
+                        TimerFiredTaskAttributes { timer_id: t1_id }
+                    )),
+                },
+                WfActivationJob {
+                    attributes: Some(wf_activation_job::Attributes::TimerFired(
+                        TimerFiredTaskAttributes { timer_id: t2_id }
+                    )),
+                }
+            ] => {
+            assert_eq!(t1_id, &timer_1_id);
+            assert_eq!(t2_id, &timer_2_id);
+            }
+        );
+        let task_tok = res.task_token;
+        core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            task_tok,
+        ))
+        .unwrap();
     }
 }

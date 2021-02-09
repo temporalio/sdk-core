@@ -60,11 +60,11 @@ pub mod coresdk {
     impl CompleteTaskReq {
         /// Build a successful completion from some api command attributes and a task token
         pub fn ok_from_api_attrs(
-            cmd: api_command::command::Attributes,
+            cmds: Vec<api_command::command::Attributes>,
             task_token: Vec<u8>,
         ) -> Self {
-            let cmd: ApiCommand = cmd.into();
-            let success: WfActivationSuccess = vec![cmd].into();
+            let cmds: Vec<ApiCommand> = cmds.into_iter().map(Into::into).collect();
+            let success: WfActivationSuccess = cmds.into();
             CompleteTaskReq {
                 task_token,
                 completion: Some(Completion::Workflow(WfActivationCompletion {
