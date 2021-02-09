@@ -298,6 +298,8 @@ mod test {
             },
         },
     };
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
 
     #[test]
     fn timer_test_across_wf_bridge() {
@@ -461,6 +463,58 @@ mod test {
                 assert_eq!(t2_id, &timer_2_id);
             }
         );
+        let task_tok = res.task_token;
+        core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            task_tok,
+        ))
+        .unwrap();
+    }
+
+    #[test]
+    fn single_timer_whole_replay_test_across_wf_bridge() {
+        let (tracer, _uninstall) = opentelemetry_jaeger::new_pipeline()
+            .with_service_name("report_example")
+            .install()
+            .unwrap();
+        let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        tracing_subscriber::registry()
+            .with(opentelemetry)
+            .try_init()
+            .unwrap();
+
+        let s = span!(Level::DEBUG, "Test start", t = "bridge");
+        let _enter = s.enter();
+
+        let wfid = "fake_wf_id";
+        let run_id = "fake_run_id";
+        let timer_1_id = "timer1".to_string();
+        let task_queue = "test-task-queue";
+
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_workflow_task();
+        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        t.add(
+            EventType::TimerFired,
+            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                started_event_id: timer_started_event_id,
+                timer_id: timer_1_id.clone(),
+            }),
+        );
+        t.add_workflow_task_scheduled_and_started();
+        let core = build_fake_core(wfid, run_id, &mut t, &[2]);
+
+        let res = core.poll_task(task_queue).unwrap();
+        // TODO: Not the right expectation -- is timer fired?
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
+            }]
+        );
+        assert!(core.workflow_machines.get(run_id).is_some());
+
         let task_tok = res.task_token;
         core.complete_task(CompleteTaskReq::ok_from_api_attrs(
             vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],

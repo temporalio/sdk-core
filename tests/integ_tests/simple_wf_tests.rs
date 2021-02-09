@@ -67,6 +67,7 @@ fn timer_workflow() {
     );
 }
 
+// TODO: Actually make this different
 #[test]
 fn parallel_timer_workflow() {
     let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
