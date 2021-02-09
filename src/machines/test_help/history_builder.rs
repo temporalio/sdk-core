@@ -148,7 +148,8 @@ impl TestHistoryBuilder {
         Ok(())
     }
 
-    /// Iterates over the events in this builder to return a [HistoryInfo] of the n-th workflow task.
+    /// Iterates over the events in this builder to return a [HistoryInfo] including events up to
+    /// the provided `to_wf_task_num`
     pub(crate) fn get_history_info(
         &self,
         to_wf_task_num: usize,

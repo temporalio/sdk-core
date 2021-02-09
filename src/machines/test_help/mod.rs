@@ -21,32 +21,32 @@ use tokio::runtime::Runtime;
 
 /// Given identifiers for a workflow/run, and a test history builder, construct an instance of
 /// the core SDK with a mock server gateway that will produce the responses as appropriate.
+///
+/// `response_batches` is used to control the fake [PollWorkflowTaskQueueResponse]s returned.
+/// For each number in the input list, a fake response will be prepared which includes history
+/// up to the workflow task with that number, as in [TestHistoryBuilder::get_history_info].
 pub(crate) fn build_fake_core(
-    wfid: &str,
+    wf_id: &str,
     run_id: &str,
     t: &mut TestHistoryBuilder,
+    response_batches: &[usize],
 ) -> CoreSDK<MockServerGateway> {
-    let events_first_batch = t.get_history_info(1).unwrap().events;
     let wf = Some(WorkflowExecution {
-        workflow_id: wfid.to_string(),
+        workflow_id: wf_id.to_string(),
         run_id: run_id.to_string(),
     });
-    let first_response = PollWorkflowTaskQueueResponse {
-        history: Some(History {
-            events: events_first_batch,
-        }),
-        workflow_execution: wf.clone(),
-        ..Default::default()
-    };
-    let events_second_batch = t.get_history_info(2).unwrap().events;
-    let second_response = PollWorkflowTaskQueueResponse {
-        history: Some(History {
-            events: events_second_batch,
-        }),
-        workflow_execution: wf,
-        ..Default::default()
-    };
-    let responses = vec![first_response, second_response];
+
+    let responses: Vec<_> = response_batches
+        .iter()
+        .map(|to_task_num| {
+            let batch = t.get_history_info(*to_task_num).unwrap().events;
+            PollWorkflowTaskQueueResponse {
+                history: Some(History { events: batch }),
+                workflow_execution: wf.clone(),
+                ..Default::default()
+            }
+        })
+        .collect();
 
     let mut tasks = VecDeque::from(responses);
     let mut mock_gateway = MockServerGateway::new();
@@ -59,11 +59,10 @@ pub(crate) fn build_fake_core(
         .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
 
     let runtime = Runtime::new().unwrap();
-    let core = CoreSDK {
+    CoreSDK {
         runtime,
         server_gateway: Arc::new(mock_gateway),
         workflow_machines: DashMap::new(),
         workflow_task_tokens: DashMap::new(),
-    };
-    core
+    }
 }

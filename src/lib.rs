@@ -298,13 +298,9 @@ mod test {
             },
         },
     };
-    use tracing::Level;
 
     #[test]
-    fn timer_test_accross_wf_bridge() {
-        let s = span!(Level::DEBUG, "Test start");
-        let _enter = s.enter();
-
+    fn timer_test_across_wf_bridge() {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
         let timer_id = "fake_timer".to_string();
@@ -334,7 +330,7 @@ mod test {
            8: EVENT_TYPE_WORKFLOW_TASK_STARTED
            ---
         */
-        let core = build_fake_core(wfid, run_id, &mut t);
+        let core = build_fake_core(wfid, run_id, &mut t, &[1, 2]);
 
         let res = core.poll_task(task_queue).unwrap();
         // TODO: uggo
@@ -374,10 +370,7 @@ mod test {
     }
 
     #[test]
-    fn parallel_timer_test_accross_wf_bridge() {
-        let s = span!(Level::DEBUG, "Test start");
-        let _enter = s.enter();
-
+    fn parallel_timer_test_across_wf_bridge() {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
         let timer_1_id = "timer1".to_string();
@@ -418,7 +411,7 @@ mod test {
            10: EVENT_TYPE_WORKFLOW_TASK_STARTED
            ---
         */
-        let core = build_fake_core(wfid, run_id, &mut t);
+        let core = build_fake_core(wfid, run_id, &mut t, &[1, 2]);
 
         let res = core.poll_task(task_queue).unwrap();
         // TODO: uggo
