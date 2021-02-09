@@ -1,11 +1,10 @@
-use crate::machines::ActivationListener;
-use crate::protos::coresdk::WfActivationJob;
 use crate::{
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
-        workflow_task_state_machine::WorkflowTaskMachine, CancellableCommand, DrivenWorkflow,
-        ProtoCommand, TemporalStateMachine, WFCommand,
+        workflow_task_state_machine::WorkflowTaskMachine, ActivationListener, CancellableCommand,
+        DrivenWorkflow, ProtoCommand, TemporalStateMachine, WFCommand,
     },
+    protos::coresdk::WfActivationJob,
     protos::{
         coresdk::{wf_activation_job, StartWorkflowTaskAttributes, WfActivation},
         temporal::api::{
@@ -18,13 +17,11 @@ use crate::{
 };
 use futures::Future;
 use rustfsm::StateMachine;
-use std::collections::HashSet;
-use std::ops::DerefMut;
 use std::{
     borrow::BorrowMut,
     cell::RefCell,
-    collections::{HashMap, VecDeque},
-    rc::Rc,
+    collections::{HashMap, HashSet, VecDeque},
+    ops::DerefMut,
     sync::{atomic::AtomicBool, Arc},
     time::SystemTime,
 };
@@ -54,7 +51,7 @@ pub(crate) struct WorkflowMachines {
 
     /// A mapping for accessing all the machines, where the key is the id of the initiating event
     /// for that machine.
-    machines_by_id: HashMap<i64, Rc<RefCell<dyn TemporalStateMachine>>>,
+    machines_by_id: HashMap<i64, Box<dyn TemporalStateMachine>>,
 
     /// Queued commands which have been produced by machines and await processing
     commands: VecDeque<CancellableCommand>,
@@ -136,7 +133,7 @@ impl WorkflowMachines {
     /// is the last event in the history.
     ///
     /// TODO: Describe what actually happens in here
-    #[instrument(skip(self))]
+    #[instrument(level = "debug", skip(self))]
     pub(crate) fn handle_event(
         &mut self,
         event: &HistoryEvent,
@@ -159,11 +156,11 @@ impl WorkflowMachines {
 
         match event.get_initial_command_event_id() {
             Some(initial_cmd_id) => {
-                if let Some(sm) = self.machines_by_id.get(&initial_cmd_id) {
-                    // TODO: Don't like the rc stuff
-                    let fsm_rc = sm.clone();
-                    let fsm_ref = (*fsm_rc).borrow_mut();
-                    self.submachine_handle_event(fsm_ref, event, has_next_event)?;
+                // We remove the machine while we it handles events, then return it, to avoid
+                // borrowing from ourself mutably.
+                let mut maybe_machine = self.machines_by_id.remove(&initial_cmd_id);
+                if let Some(mut sm) = maybe_machine.as_mut() {
+                    self.submachine_handle_event((*sm).borrow_mut(), event, has_next_event)?;
                 } else {
                     event!(
                         Level::ERROR,
@@ -173,10 +170,10 @@ impl WorkflowMachines {
                     );
                 }
 
-                // Have to fetch machine again here to avoid borrowing self mutably twice
-                if let Some(sm) = self.machines_by_id.get_mut(&initial_cmd_id) {
-                    if sm.borrow().is_final_state() {
-                        self.machines_by_id.remove(&initial_cmd_id);
+                // Restore machine if not in it's final state
+                if let Some(sm) = maybe_machine {
+                    if !sm.is_final_state() {
+                        self.machines_by_id.insert(initial_cmd_id, sm);
                     }
                 }
             }
@@ -241,7 +238,7 @@ impl WorkflowMachines {
             // In this case we don't want to consume a command. -- we will need to replace it back
             // to the front when implementing, or something better
             let maybe_command = self.commands.pop_front();
-            let command = if let Some(c) = maybe_command {
+            let mut command = if let Some(c) = maybe_command {
                 c
             } else {
                 return Err(WFMachinesError::NoCommandScheduledForEvent(event.clone()));
@@ -249,7 +246,10 @@ impl WorkflowMachines {
 
             // Feed the machine the event
             let mut break_later = false;
-            if let CancellableCommand::Active { mut machine, .. } = command.clone() {
+            if let CancellableCommand::Active {
+                ref mut machine, ..
+            } = &mut command
+            {
                 self.submachine_handle_event((*machine).borrow_mut(), event, true)?;
 
                 // TODO: Handle invalid event errors
@@ -267,7 +267,7 @@ impl WorkflowMachines {
         // TODO: validate command
 
         if let CancellableCommand::Active { machine, .. } = consumed_cmd {
-            if !machine.borrow().is_final_state() {
+            if !machine.is_final_state() {
                 self.machines_by_id.insert(event.event_id, machine);
             }
         }
@@ -290,8 +290,11 @@ impl WorkflowMachines {
                     // We need to notify the lang sdk that it's time to kick off a workflow
                     self.outgoing_wf_activation_jobs.push_back(
                         StartWorkflowTaskAttributes {
-                            // TODO: This needs to be set during init
-                            workflow_type: "".to_string(),
+                            workflow_type: attrs
+                                .workflow_type
+                                .as_ref()
+                                .map(|wt| wt.name.clone())
+                                .unwrap_or_default(),
                             workflow_id: self.workflow_id.clone(),
                             arguments: attrs.input.clone(),
                         }
@@ -315,7 +318,7 @@ impl WorkflowMachines {
                     has_next_event,
                 )?;
                 self.machines_by_id
-                    .insert(event.event_id, Rc::new(RefCell::new(wf_task_sm)));
+                    .insert(event.event_id, Box::new(wf_task_sm));
             }
             Some(EventType::WorkflowExecutionSignaled) => {
                 // TODO: Signal callbacks

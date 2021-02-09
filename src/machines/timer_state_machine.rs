@@ -18,6 +18,7 @@ use crate::{
     },
 };
 use rustfsm::{fsm, StateMachine, TransitionResult};
+use std::sync::Arc;
 use std::{cell::RefCell, convert::TryFrom, rc::Rc, sync::atomic::Ordering};
 use tracing::Level;
 
@@ -54,7 +55,7 @@ pub(super) fn new_timer(attribs: StartTimerCommandAttributes) -> CancellableComm
     let (timer, add_cmd) = TimerMachine::new_scheduled(attribs);
     CancellableCommand::Active {
         command: add_cmd.command,
-        machine: Rc::new(RefCell::new(timer)),
+        machine: Box::new(timer),
     }
 }
 

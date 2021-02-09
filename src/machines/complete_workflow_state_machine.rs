@@ -41,7 +41,7 @@ pub(super) fn complete_workflow(
     let (machine, add_cmd) = CompleteWorkflowMachine::new_scheduled(attribs);
     CancellableCommand::Active {
         command: add_cmd.command,
-        machine: Rc::new(RefCell::new(machine)),
+        machine: Box::new(machine),
     }
 }
 
