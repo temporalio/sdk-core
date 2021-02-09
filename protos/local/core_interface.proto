@@ -98,7 +98,7 @@ message ActivityTask {
 message TaskCompletion {
     // The id from the [Task] being completed
     bytes task_token = 1;
-    oneof completion {
+    oneof variant {
         // Complete a workflow task
         WFActivationCompletion workflow = 2;
         // Complete an activity task

@@ -23,7 +23,7 @@ use crate::{
     machines::{InconvertibleCommandError, WFCommand},
     protos::{
         coresdk::{
-            task_completion::Completion, wf_activation_completion::Status, Task, TaskCompletion,
+            task_completion, wf_activation_completion::Status, Task, TaskCompletion,
             WfActivationCompletion, WfActivationSuccess,
         },
         temporal::api::{
@@ -162,8 +162,8 @@ where
         match req {
             TaskCompletion {
                 task_token,
-                completion:
-                    Some(Completion::Workflow(WfActivationCompletion {
+                variant:
+                    Some(task_completion::Variant::Workflow(WfActivationCompletion {
                         status: Some(wfstatus),
                     })),
             } => {
@@ -188,7 +188,7 @@ where
                 Ok(())
             }
             TaskCompletion {
-                completion: Some(Completion::Activity(_)),
+                variant: Some(task_completion::Variant::Activity(_)),
                 ..
             } => {
                 unimplemented!()

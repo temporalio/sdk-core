@@ -11,7 +11,6 @@ pub mod coresdk {
     include!("coresdk.rs");
     use super::temporal::api::command::v1 as api_command;
     use super::temporal::api::command::v1::Command as ApiCommand;
-    use crate::protos::coresdk::task_completion::Completion;
     use crate::protos::coresdk::wf_activation_job::Attributes;
     use command::Variant;
 
@@ -67,7 +66,7 @@ pub mod coresdk {
             let success: WfActivationSuccess = vec![cmd].into();
             TaskCompletion {
                 task_token,
-                completion: Some(Completion::Workflow(WfActivationCompletion {
+                variant: Some(task_completion::Variant::Workflow(WfActivationCompletion {
                     status: Some(wf_activation_completion::Status::Successful(success)),
                 })),
             }
