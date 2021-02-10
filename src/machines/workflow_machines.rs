@@ -439,7 +439,6 @@ impl WorkflowMachines {
 
     fn prepare_commands(&mut self) {
         while let Some(c) = self.current_wf_task_commands.pop_front() {
-            dbg!(&c);
             // TODO - some special case stuff that can maybe be managed differently?
             //   handleCommand should be called even on canceled ones to support mutableSideEffect
             //   command.handleCommand(command.getCommandType());

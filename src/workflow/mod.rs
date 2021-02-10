@@ -2,24 +2,27 @@ mod bridge;
 
 pub(crate) use bridge::WorkflowBridge;
 
-use crate::protos::coresdk::WfActivation;
-use crate::protos::temporal::api::history::v1::History;
-use crate::protosext::HistoryInfo;
 use crate::{
     machines::{ProtoCommand, WFCommand, WorkflowMachines},
-    protos::temporal::api::workflowservice::v1::StartWorkflowExecutionResponse,
-    protos::temporal::api::{
-        common::v1::WorkflowExecution,
-        workflowservice::v1::{
-            PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
+    protos::{
+        coresdk::WfActivation,
+        temporal::api::{
+            common::v1::WorkflowExecution,
+            history::v1::History,
+            workflowservice::v1::{
+                PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
+                StartWorkflowExecutionResponse,
+            },
         },
     },
+    protosext::HistoryInfo,
     CoreError, Result,
 };
 use std::{
     ops::DerefMut,
     sync::{mpsc::Sender, Arc, Mutex},
 };
+use tracing::Level;
 
 /// Implementors can provide new workflow tasks to the SDK. The connection to the server is the real
 /// implementor.
@@ -111,6 +114,7 @@ impl WfManagerProtected {
     /// Should only be called when a workflow has caught up on replay. It will return a workflow
     /// activation if one is needed, as well as a bool indicating if there are more workflow tasks
     /// that need to be performed to replay the remaining history.
+    #[instrument(skip(self))]
     pub fn feed_history_from_server(
         &mut self,
         hist: History,
@@ -122,6 +126,10 @@ impl WfManagerProtected {
         task_hist.apply_history_events(&mut self.machines)?;
         let activation = self.machines.get_wf_activation();
         let more_activations_needed = task_ct > self.current_wf_task_num;
+
+        if more_activations_needed {
+            event!(Level::DEBUG, msg = "More activations needed");
+        }
 
         self.current_wf_task_num += 1;
         Ok((activation, more_activations_needed))

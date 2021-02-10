@@ -112,7 +112,13 @@ where
 
     /// Workflows that are currently under replay will queue their run ID here, indicating that
     /// there are more workflow tasks / activations to be performed.
-    pending_activations: SegQueue<String>,
+    pending_activations: SegQueue<PendingActivation>,
+}
+
+#[derive(Debug)]
+struct PendingActivation {
+    run_id: String,
+    task_token: Vec<u8>,
 }
 
 impl<WP> Core for CoreSDK<WP>
@@ -123,16 +129,16 @@ where
     fn poll_task(&self, task_queue: &str) -> Result<Task> {
         // We must first check if there are pending workflow tasks for workflows that are currently
         // replaying
-        if let Some(run_id) = self.pending_activations.pop() {
-            dbg!(&run_id);
+        if let Some(pa) = self.pending_activations.pop() {
+            event!(Level::DEBUG, msg = "Applying pending activations", ?pa);
             let (activation, more_tasks) =
-                self.access_machine(&run_id, |mgr| mgr.get_next_activation())?;
+                self.access_machine(&pa.run_id, |mgr| mgr.get_next_activation())?;
+            let task_token = pa.task_token.clone();
             if more_tasks {
-                self.pending_activations.push(run_id);
+                self.pending_activations.push(pa);
             }
             return Ok(Task {
-                // TODO: Set this properly
-                task_token: vec![],
+                task_token,
                 variant: activation.map(Into::into),
             });
         }
@@ -168,8 +174,10 @@ where
             self.access_machine(&run_id, |mgr| mgr.feed_history_from_server(history))?;
 
         if more_tasks {
-            dbg!("More tasks!");
-            self.pending_activations.push(run_id);
+            self.pending_activations.push(PendingActivation {
+                run_id,
+                task_token: work.task_token.clone(),
+            });
         }
 
         Ok(Task {
@@ -374,7 +382,6 @@ mod test {
         ))
         .unwrap();
 
-        dbg!("Second poll");
         let res = core.poll_task(task_queue).unwrap();
         // TODO: uggo
         assert_matches!(
@@ -518,7 +525,6 @@ mod test {
         let core = build_fake_core(wfid, run_id, &mut t, &[2]);
 
         let res = core.poll_task(task_queue).unwrap();
-        // TODO: Not the right expectation -- is timer fired?
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {

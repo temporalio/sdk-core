@@ -16,6 +16,7 @@ use crate::{
     CoreSDK,
 };
 use dashmap::DashMap;
+use rand::{thread_rng, Rng};
 use std::{collections::VecDeque, sync::Arc};
 use tokio::runtime::Runtime;
 
@@ -40,9 +41,11 @@ pub(crate) fn build_fake_core(
         .iter()
         .map(|to_task_num| {
             let batch = t.get_history_info(*to_task_num).unwrap().events;
+            let task_token: [u8; 16] = thread_rng().gen();
             PollWorkflowTaskQueueResponse {
                 history: Some(History { events: batch }),
                 workflow_execution: wf.clone(),
+                task_token: task_token.to_vec(),
                 ..Default::default()
             }
         })
