@@ -305,7 +305,7 @@ mod test {
             }),
         );
         t.add_workflow_task_scheduled_and_started();
-        assert_eq!(2, t.get_workflow_task_count(None).unwrap());
+        assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
         (t, state_machines)
     }
 
@@ -336,16 +336,6 @@ mod test {
 
     #[rstest]
     fn test_fire_happy_path_full(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let (tracer, _uninstall) = opentelemetry_jaeger::new_pipeline()
-            .with_service_name("report_example")
-            .install()
-            .unwrap();
-        let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-        tracing_subscriber::registry()
-            .with(opentelemetry)
-            .try_init()
-            .unwrap();
-
         let s = span!(Level::DEBUG, "Test start", t = "full");
         let _enter = s.enter();
 

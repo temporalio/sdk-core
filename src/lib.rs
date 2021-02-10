@@ -30,9 +30,10 @@ use crate::{
             common::v1::WorkflowExecution, workflowservice::v1::PollWorkflowTaskQueueResponse,
         },
     },
-    protosext::{HistoryInfo, HistoryInfoError},
+    protosext::HistoryInfoError,
     workflow::{WfManagerProtected, WorkflowManager},
 };
+use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
 use std::{convert::TryInto, sync::mpsc::SendError, sync::Arc};
 use tokio::runtime::Runtime;
@@ -85,6 +86,7 @@ pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
         server_gateway: Arc::new(work_provider),
         workflow_machines: Default::default(),
         workflow_task_tokens: Default::default(),
+        pending_activations: Default::default(),
     })
 }
 
@@ -107,6 +109,10 @@ where
     workflow_machines: DashMap<String, WorkflowManager>,
     /// Maps task tokens to workflow run ids
     workflow_task_tokens: DashMap<Vec<u8>, String>,
+
+    /// Workflows that are currently under replay will queue their run ID here, indicating that
+    /// there are more workflow tasks / activations to be performed.
+    pending_activations: SegQueue<String>,
 }
 
 impl<WP> Core for CoreSDK<WP>
@@ -115,6 +121,22 @@ where
 {
     #[instrument(skip(self))]
     fn poll_task(&self, task_queue: &str) -> Result<Task> {
+        // We must first check if there are pending workflow tasks for workflows that are currently
+        // replaying
+        if let Some(run_id) = self.pending_activations.pop() {
+            dbg!(&run_id);
+            let (activation, more_tasks) =
+                self.access_machine(&run_id, |mgr| mgr.get_next_activation())?;
+            if more_tasks {
+                self.pending_activations.push(run_id);
+            }
+            return Ok(Task {
+                // TODO: Set this properly
+                task_token: vec![],
+                variant: activation.map(Into::into),
+            });
+        }
+
         // This will block forever in the event there is no work from the server
         let work = self
             .runtime
@@ -134,7 +156,7 @@ where
 
         event!(
             Level::DEBUG,
-            msg = "Received workflow task",
+            msg = "Received workflow task from server",
             ?work.task_token
         );
 
@@ -142,14 +164,13 @@ where
         self.workflow_task_tokens
             .insert(work.task_token.clone(), run_id.clone());
 
-        // We pass none since we want to apply all the history we just got.
-        // Will need to change a bit once we impl caching.
-        let hist_info = HistoryInfo::new_from_history(&history, None)?;
-        let activation = self.access_machine(&run_id, |mgr| {
-            let machines = &mut mgr.machines;
-            hist_info.apply_history_events(machines)?;
-            Ok(machines.get_wf_activation())
-        })?;
+        let (activation, more_tasks) =
+            self.access_machine(&run_id, |mgr| mgr.feed_history_from_server(history))?;
+
+        if more_tasks {
+            dbg!("More tasks!");
+            self.pending_activations.push(run_id);
+        }
 
         Ok(Task {
             task_token: work.task_token,
@@ -298,8 +319,6 @@ mod test {
             },
         },
     };
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
 
     #[test]
     fn timer_test_across_wf_bridge() {
@@ -355,6 +374,7 @@ mod test {
         ))
         .unwrap();
 
+        dbg!("Second poll");
         let res = core.poll_task(task_queue).unwrap();
         // TODO: uggo
         assert_matches!(
@@ -473,16 +493,6 @@ mod test {
 
     #[test]
     fn single_timer_whole_replay_test_across_wf_bridge() {
-        let (tracer, _uninstall) = opentelemetry_jaeger::new_pipeline()
-            .with_service_name("report_example")
-            .install()
-            .unwrap();
-        let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-        tracing_subscriber::registry()
-            .with(opentelemetry)
-            .try_init()
-            .unwrap();
-
         let s = span!(Level::DEBUG, "Test start", t = "bridge");
         let _enter = s.enter();
 
@@ -503,6 +513,8 @@ mod test {
             }),
         );
         t.add_workflow_task_scheduled_and_started();
+        // NOTE! What makes this a replay test is the server only responds with *one* batch here.
+        // So, server is polled once, but lang->core interactions look just like non-replay test.
         let core = build_fake_core(wfid, run_id, &mut t, &[2]);
 
         let res = core.poll_task(task_queue).unwrap();
@@ -515,6 +527,25 @@ mod test {
         );
         assert!(core.workflow_machines.get(run_id).is_some());
 
+        let task_tok = res.task_token;
+        core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+            vec![StartTimerCommandAttributes {
+                timer_id: timer_1_id,
+                ..Default::default()
+            }
+            .into()],
+            task_tok,
+        ))
+        .unwrap();
+
+        let res = core.poll_task(task_queue).unwrap();
+        // TODO: uggo
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                attributes: Some(wf_activation_job::Attributes::TimerFired(_)),
+            }]
+        );
         let task_tok = res.task_token;
         core.complete_task(CompleteTaskReq::ok_from_api_attrs(
             vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],

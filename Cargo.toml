@@ -10,6 +10,7 @@ edition = "2018"
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
+crossbeam = "0.8"
 dashmap = "4.0"
 derive_more = "0.99"
 displaydoc = "0.1"

@@ -52,6 +52,7 @@ pub(crate) fn build_fake_core(
     let mut mock_gateway = MockServerGateway::new();
     mock_gateway
         .expect_poll_workflow_task()
+        .times(response_batches.len())
         .returning(move |_| Ok(tasks.pop_front().unwrap()));
     // Response not really important here
     mock_gateway
@@ -64,5 +65,6 @@ pub(crate) fn build_fake_core(
         server_gateway: Arc::new(mock_gateway),
         workflow_machines: DashMap::new(),
         workflow_task_tokens: DashMap::new(),
+        pending_activations: Default::default(),
     }
 }

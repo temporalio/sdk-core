@@ -67,7 +67,7 @@ fn timer_workflow() {
     );
 }
 
-// TODO: Actually make this different
+// TODO: Actually make this different from serial
 #[test]
 fn parallel_timer_workflow() {
     let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
