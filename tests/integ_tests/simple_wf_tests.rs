@@ -1,8 +1,9 @@
+use assert_matches::assert_matches;
 use rand::{self, Rng};
 use std::{convert::TryFrom, env, time::Duration};
 use temporal_sdk_core::{
     protos::{
-        coresdk::CompleteTaskReq,
+        coresdk::{wf_activation_job, CompleteTaskReq, TimerFiredTaskAttributes, WfActivationJob},
         temporal::api::command::v1::{
             CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
         },
@@ -40,9 +41,9 @@ fn timer_workflow() {
     let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    let run_id = dbg!(create_workflow(&core, &workflow_id.to_string()));
+    dbg!(create_workflow(&core, &workflow_id.to_string()));
     let timer_id: String = rng.gen::<u32>().to_string();
-    let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
+    let task = core.poll_task(TASK_QUEUE).unwrap();
     core.complete_task(CompleteTaskReq::ok_from_api_attrs(
         vec![StartTimerCommandAttributes {
             timer_id: timer_id.to_string(),
@@ -53,21 +54,14 @@ fn timer_workflow() {
         task.task_token,
     ))
     .unwrap();
-    dbg!("sent completion w/ start timer");
     let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
     core.complete_task(CompleteTaskReq::ok_from_api_attrs(
         vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
         task.task_token,
     ))
     .unwrap();
-    dbg!(
-        "sent workflow done, completed workflow",
-        workflow_id,
-        run_id
-    );
 }
 
-// TODO: Actually make this different from serial
 #[test]
 fn parallel_timer_workflow() {
     let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
@@ -86,28 +80,51 @@ fn parallel_timer_workflow() {
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
     let run_id = dbg!(create_workflow(&core, &workflow_id.to_string()));
-    let timer_id: String = rng.gen::<u32>().to_string();
+    let timer_id = "timer 1".to_string();
+    let timer_2_id = "timer 2".to_string();
     let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
     core.complete_task(CompleteTaskReq::ok_from_api_attrs(
-        vec![StartTimerCommandAttributes {
-            timer_id: timer_id.to_string(),
-            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-            ..Default::default()
-        }
-        .into()],
+        vec![
+            StartTimerCommandAttributes {
+                timer_id: timer_id.clone(),
+                start_to_fire_timeout: Some(Duration::from_millis(100).into()),
+                ..Default::default()
+            }
+            .into(),
+            StartTimerCommandAttributes {
+                timer_id: timer_2_id.clone(),
+                start_to_fire_timeout: Some(Duration::from_millis(200).into()),
+                ..Default::default()
+            }
+            .into(),
+        ],
         task.task_token,
     ))
     .unwrap();
-    dbg!("sent completion w/ start timer");
-    let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
+    // Wait long enough for both timers to complete
+    std::thread::sleep(Duration::from_millis(400));
+    let task = core.poll_task(TASK_QUEUE).unwrap();
+    assert_matches!(
+        task.get_wf_jobs().as_slice(),
+        [
+            WfActivationJob {
+                attributes: Some(wf_activation_job::Attributes::TimerFired(
+                    TimerFiredTaskAttributes { timer_id: t1_id }
+                )),
+            },
+            WfActivationJob {
+                attributes: Some(wf_activation_job::Attributes::TimerFired(
+                    TimerFiredTaskAttributes { timer_id: t2_id }
+                )),
+            }
+        ] => {
+            assert_eq!(t1_id, &timer_id);
+            assert_eq!(t2_id, &timer_2_id);
+        }
+    );
     core.complete_task(CompleteTaskReq::ok_from_api_attrs(
         vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
         task.task_token,
     ))
     .unwrap();
-    dbg!(
-        "sent workflow done, completed workflow",
-        workflow_id,
-        run_id
-    );
 }
