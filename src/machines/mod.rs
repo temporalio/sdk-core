@@ -118,8 +118,7 @@ impl TryFrom<coresdk::Command> for WFCommand {
     type Error = InconvertibleCommandError;
 
     fn try_from(c: coresdk::Command) -> Result<Self, Self::Error> {
-        // TODO: Return error without cloning
-        match c.variant.clone() {
+        match c.variant {
             Some(Variant::Api(Command {
                 attributes: Some(attrs),
                 ..
