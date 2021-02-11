@@ -329,7 +329,9 @@ mod test {
     use crate::{
         machines::test_help::{build_fake_core, TestHistoryBuilder},
         protos::{
-            coresdk::{wf_activation_job, TimerFiredTaskAttributes, WfActivationJob},
+            coresdk::{
+                wf_activation_job, TaskCompletion, TimerFiredTaskAttributes, WfActivationJob,
+            },
             temporal::api::{
                 command::v1::{
                     CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
@@ -384,7 +386,7 @@ mod test {
         assert!(core.workflow_machines.get(run_id).is_some());
 
         let task_tok = res.task_token;
-        core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![StartTimerCommandAttributes {
                 timer_id,
                 ..Default::default()
@@ -403,7 +405,7 @@ mod test {
             }]
         );
         let task_tok = res.task_token;
-        core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
             task_tok,
         ))
@@ -503,7 +505,7 @@ mod test {
             }
         );
         let task_tok = res.task_token;
-        core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
             task_tok,
         ))
@@ -546,7 +548,7 @@ mod test {
         assert!(core.workflow_machines.get(run_id).is_some());
 
         let task_tok = res.task_token;
-        core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![StartTimerCommandAttributes {
                 timer_id: timer_1_id,
                 ..Default::default()
