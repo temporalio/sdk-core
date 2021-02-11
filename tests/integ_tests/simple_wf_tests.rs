@@ -11,14 +11,17 @@ use temporal_sdk_core::{
     Core, CoreInitOptions, ServerGatewayOptions, Url,
 };
 
-const TASK_QUEUE: &str = "test-tq";
+// TODO: These tests can get broken permanently if they break one time and the server is not
+//  restarted, because pulling from the same task queue produces tasks for the previous failed
+//  workflows. Fix that.
+
 const NAMESPACE: &str = "default";
 
 #[tokio::main]
-async fn create_workflow(core: &dyn Core, workflow_id: &str) -> String {
+async fn create_workflow(core: &dyn Core, task_q: &str, workflow_id: &str) -> String {
     core.server_gateway()
         .unwrap()
-        .start_workflow(NAMESPACE, TASK_QUEUE, workflow_id, "test-workflow")
+        .start_workflow(NAMESPACE, task_q, workflow_id, "test-workflow")
         .await
         .unwrap()
         .run_id
@@ -26,6 +29,7 @@ async fn create_workflow(core: &dyn Core, workflow_id: &str) -> String {
 
 #[test]
 fn timer_workflow() {
+    let task_q = "timer_workflow";
     let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
         Ok(addr) => addr,
         Err(_) => "http://localhost:7233".to_owned(),
@@ -41,9 +45,9 @@ fn timer_workflow() {
     let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    dbg!(create_workflow(&core, &workflow_id.to_string()));
+    dbg!(create_workflow(&core, task_q, &workflow_id.to_string()));
     let timer_id: String = rng.gen::<u32>().to_string();
-    let task = core.poll_task(TASK_QUEUE).unwrap();
+    let task = core.poll_task(task_q).unwrap();
     core.complete_task(TaskCompletion::ok_from_api_attrs(
         vec![StartTimerCommandAttributes {
             timer_id: timer_id.to_string(),
@@ -54,7 +58,7 @@ fn timer_workflow() {
         task.task_token,
     ))
     .unwrap();
-    let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
+    let task = dbg!(core.poll_task(task_q).unwrap());
     core.complete_task(TaskCompletion::ok_from_api_attrs(
         vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
         task.task_token,
@@ -64,6 +68,7 @@ fn timer_workflow() {
 
 #[test]
 fn parallel_timer_workflow() {
+    let task_q = "parallel_timer_workflow";
     let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
         Ok(addr) => addr,
         Err(_) => "http://localhost:7233".to_owned(),
@@ -79,21 +84,21 @@ fn parallel_timer_workflow() {
     let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    dbg!(create_workflow(&core, &workflow_id.to_string()));
+    dbg!(create_workflow(&core, task_q, &workflow_id.to_string()));
     let timer_id = "timer 1".to_string();
     let timer_2_id = "timer 2".to_string();
-    let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
+    let task = dbg!(core.poll_task(task_q).unwrap());
     core.complete_task(TaskCompletion::ok_from_api_attrs(
         vec![
             StartTimerCommandAttributes {
                 timer_id: timer_id.clone(),
-                start_to_fire_timeout: Some(Duration::from_millis(100).into()),
+                start_to_fire_timeout: Some(Duration::from_millis(50).into()),
                 ..Default::default()
             }
             .into(),
             StartTimerCommandAttributes {
                 timer_id: timer_2_id.clone(),
-                start_to_fire_timeout: Some(Duration::from_millis(200).into()),
+                start_to_fire_timeout: Some(Duration::from_millis(100).into()),
                 ..Default::default()
             }
             .into(),
@@ -103,7 +108,7 @@ fn parallel_timer_workflow() {
     .unwrap();
     // Wait long enough for both timers to complete
     std::thread::sleep(Duration::from_millis(400));
-    let task = core.poll_task(TASK_QUEUE).unwrap();
+    let task = core.poll_task(task_q).unwrap();
     assert_matches!(
         task.get_wf_jobs().as_slice(),
         [
