@@ -23,7 +23,7 @@ use crate::{
     machines::{InconvertibleCommandError, WFCommand},
     protos::{
         coresdk::{
-            complete_task_req::Completion, wf_activation_completion::Status, CompleteTaskReq, Task,
+            task_completion, wf_activation_completion::Status, Task, TaskCompletion,
             WfActivationCompletion, WfActivationSuccess,
         },
         temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
@@ -54,7 +54,7 @@ pub trait Core: Send + Sync {
 
     /// Tell the core that some work has been completed - whether as a result of running workflow
     /// code or executing an activity.
-    fn complete_task(&self, req: CompleteTaskReq) -> Result<()>;
+    fn complete_task(&self, req: TaskCompletion) -> Result<()>;
 
     /// Returns an instance of ServerGateway.
     fn server_gateway(&self) -> Result<Arc<dyn ServerGatewayApis>>;
@@ -168,12 +168,12 @@ where
     }
 
     #[instrument(skip(self))]
-    fn complete_task(&self, req: CompleteTaskReq) -> Result<()> {
+    fn complete_task(&self, req: TaskCompletion) -> Result<()> {
         match req {
-            CompleteTaskReq {
+            TaskCompletion {
                 task_token,
-                completion:
-                    Some(Completion::Workflow(WfActivationCompletion {
+                variant:
+                    Some(task_completion::Variant::Workflow(WfActivationCompletion {
                         status: Some(wfstatus),
                     })),
             } => {
@@ -197,8 +197,8 @@ where
                 }
                 Ok(())
             }
-            CompleteTaskReq {
-                completion: Some(Completion::Activity(_)),
+            TaskCompletion {
+                variant: Some(task_completion::Variant::Activity(_)),
                 ..
             } => {
                 unimplemented!()
@@ -300,7 +300,7 @@ pub enum CoreError {
     /// Poll response from server was malformed: {0:?}
     BadDataFromWorkProvider(PollWorkflowTaskQueueResponse),
     /// Lang SDK sent us a malformed completion: {0:?}
-    MalformedCompletion(CompleteTaskReq),
+    MalformedCompletion(TaskCompletion),
     /// Error buffering commands
     CantSendCommands(#[from] SendError<Vec<WFCommand>>),
     /// Couldn't interpret command from <lang>
@@ -465,7 +465,7 @@ mod test {
         assert!(core.workflow_machines.get(run_id).is_some());
 
         let task_tok = res.task_token;
-        core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![
                 StartTimerCommandAttributes {
                     timer_id: timer_1_id.clone(),
@@ -565,7 +565,7 @@ mod test {
             }]
         );
         let task_tok = res.task_token;
-        core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
             task_tok,
         ))

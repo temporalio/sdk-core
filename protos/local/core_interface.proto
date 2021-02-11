@@ -95,10 +95,10 @@ message ActivityTask {
 
 
 // Sent from lang side to core when calling [crate::Core::complete_task]
-message CompleteTaskReq {
+message TaskCompletion {
     // The id from the [Task] being completed
     bytes task_token = 1;
-    oneof completion {
+    oneof variant {
         // Complete a workflow task
         WFActivationCompletion workflow = 2;
         // Complete an activity task
