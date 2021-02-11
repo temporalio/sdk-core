@@ -17,6 +17,7 @@ use crate::{
 };
 use dashmap::DashMap;
 use rand::{thread_rng, Rng};
+use std::sync::atomic::AtomicBool;
 use std::{collections::VecDeque, sync::Arc};
 use tokio::runtime::Runtime;
 
@@ -69,5 +70,6 @@ pub(crate) fn build_fake_core(
         workflow_machines: DashMap::new(),
         workflow_task_tokens: DashMap::new(),
         pending_activations: Default::default(),
+        shutdown_requested: AtomicBool::new(false),
     }
 }
