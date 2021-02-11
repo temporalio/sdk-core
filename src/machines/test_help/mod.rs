@@ -21,6 +21,8 @@ use std::sync::atomic::AtomicBool;
 use std::{collections::VecDeque, sync::Arc};
 use tokio::runtime::Runtime;
 
+pub(crate) type FakeCore = CoreSDK<MockServerGateway>;
+
 /// Given identifiers for a workflow/run, and a test history builder, construct an instance of
 /// the core SDK with a mock server gateway that will produce the responses as appropriate.
 ///
@@ -32,7 +34,7 @@ pub(crate) fn build_fake_core(
     run_id: &str,
     t: &mut TestHistoryBuilder,
     response_batches: &[usize],
-) -> CoreSDK<MockServerGateway> {
+) -> FakeCore {
     let wf = Some(WorkflowExecution {
         workflow_id: wf_id.to_string(),
         run_id: run_id.to_string(),

@@ -33,8 +33,14 @@ use crate::{
 };
 use crossbeam::queue::SegQueue;
 use dashmap::{mapref::entry::Entry, DashMap};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::{convert::TryInto, sync::mpsc::SendError, sync::Arc};
+use std::{
+    convert::TryInto,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::SendError,
+        Arc,
+    },
+};
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
 use tracing::Level;
@@ -60,11 +66,11 @@ pub trait Core: Send + Sync {
     /// Returns an instance of ServerGateway.
     fn server_gateway(&self) -> Result<Arc<dyn ServerGatewayApis>>;
 
-    /// Eventually closes the connection to the server and ceases all polling. [Core::poll_task]
-    /// should be called until it returns [CoreError::ConnectionClosed] to ensure that any workflows
-    /// which are still undergoing replay have an opportunity to finish. This means that the lang
-    /// sdk will need to call [Core::complete_task] for those workflows until they are done. At
-    /// that point, the connection will be closed and/or the lang SDK can end the process.
+    /// Eventually ceases all polling of the server. [Core::poll_task] should be called until it
+    /// returns [CoreError::ShuttingDown] to ensure that any workflows which are still undergoing
+    /// replay have an opportunity to finish. This means that the lang sdk will need to call
+    /// [Core::complete_task] for those workflows until they are done. At that point, the lang
+    /// SDK can end the process, or drop the [Core] instance, which will close the connection.
     fn shutdown(&self) -> Result<()>;
 }
 
@@ -348,6 +354,7 @@ pub enum CoreError {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::machines::test_help::FakeCore;
     use crate::{
         machines::test_help::{build_fake_core, TestHistoryBuilder},
         protos::{
@@ -363,6 +370,7 @@ mod test {
             },
         },
     };
+    use rstest::{fixture, rstest};
 
     #[test]
     fn timer_test_across_wf_bridge() {
@@ -530,11 +538,8 @@ mod test {
         .unwrap();
     }
 
-    #[test]
-    fn single_timer_whole_replay_test_across_wf_bridge() {
-        let s = span!(Level::DEBUG, "Test start", t = "bridge");
-        let _enter = s.enter();
-
+    #[fixture]
+    fn single_timer_whole_replay() -> FakeCore {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
         let timer_1_id = "timer1".to_string();
@@ -589,5 +594,22 @@ mod test {
             task_tok,
         ))
         .unwrap();
+        core
+    }
+
+    #[rstest]
+    fn single_timer_whole_replay_test_across_wf_bridge(_single_timer_whole_replay: FakeCore) {
+        // Nothing to do here -- whole real test is in fixture. Rstest properly handles leading `_`
+    }
+
+    #[rstest]
+    fn after_shutdown_server_is_not_polled(single_timer_whole_replay: FakeCore) {
+        single_timer_whole_replay.shutdown().unwrap();
+        assert_matches!(
+            single_timer_whole_replay
+                .poll_task("irrelevant")
+                .unwrap_err(),
+            CoreError::ShuttingDown
+        );
     }
 }
