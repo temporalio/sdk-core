@@ -26,15 +26,13 @@ use crate::{
             complete_task_req::Completion, wf_activation_completion::Status, CompleteTaskReq, Task,
             WfActivationCompletion, WfActivationSuccess,
         },
-        temporal::api::{
-            common::v1::WorkflowExecution, workflowservice::v1::PollWorkflowTaskQueueResponse,
-        },
+        temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
     },
     protosext::HistoryInfoError,
-    workflow::{WfManagerProtected, WorkflowManager},
+    workflow::{NextWfActivation, WfManagerProtected, WorkflowManager},
 };
 use crossbeam::queue::SegQueue;
-use dashmap::DashMap;
+use dashmap::{mapref::entry::Entry, DashMap};
 use std::{convert::TryInto, sync::mpsc::SendError, sync::Arc};
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
@@ -128,18 +126,18 @@ where
     #[instrument(skip(self))]
     fn poll_task(&self, task_queue: &str) -> Result<Task> {
         // We must first check if there are pending workflow tasks for workflows that are currently
-        // replaying
+        // replaying, and issue those tasks before bothering the server.
         if let Some(pa) = self.pending_activations.pop() {
             event!(Level::DEBUG, msg = "Applying pending activations", ?pa);
-            let (activation, more_tasks) =
+            let next_activation =
                 self.access_machine(&pa.run_id, |mgr| mgr.get_next_activation())?;
             let task_token = pa.task_token.clone();
-            if more_tasks {
+            if next_activation.more_activations_needed {
                 self.pending_activations.push(pa);
             }
             return Ok(Task {
                 task_token,
-                variant: activation.map(Into::into),
+                variant: next_activation.activation.map(Into::into),
             });
         }
 
@@ -147,42 +145,25 @@ where
         let work = self
             .runtime
             .block_on(self.server_gateway.poll_workflow_task(task_queue))?;
-        let run_id = match &work.workflow_execution {
-            Some(we) => {
-                self.instantiate_workflow_if_needed(we);
-                we.run_id.clone()
-            }
-            None => return Err(CoreError::BadDataFromWorkProvider(work)),
-        };
-        let history = if let Some(hist) = work.history {
-            hist
-        } else {
-            return Err(CoreError::BadDataFromWorkProvider(work));
-        };
-
+        let task_token = work.task_token.clone();
         event!(
             Level::DEBUG,
             msg = "Received workflow task from server",
-            ?work.task_token
+            ?task_token
         );
 
-        // Correlate task token w/ run ID
-        self.workflow_task_tokens
-            .insert(work.task_token.clone(), run_id.clone());
+        let (next_activation, run_id) = self.instantiate_or_update_workflow(work)?;
 
-        let (activation, more_tasks) =
-            self.access_machine(&run_id, |mgr| mgr.feed_history_from_server(history))?;
-
-        if more_tasks {
+        if next_activation.more_activations_needed {
             self.pending_activations.push(PendingActivation {
                 run_id,
-                task_token: work.task_token.clone(),
+                task_token: task_token.clone(),
             });
         }
 
         Ok(Task {
-            task_token: work.task_token,
-            variant: activation.map(Into::into),
+            task_token,
+            variant: next_activation.activation.map(Into::into),
         })
     }
 
@@ -232,17 +213,50 @@ where
 }
 
 impl<WP: ServerGatewayApis> CoreSDK<WP> {
-    fn instantiate_workflow_if_needed(&self, workflow_execution: &WorkflowExecution) {
-        if self
-            .workflow_machines
-            .contains_key(&workflow_execution.run_id)
+    /// Will create a new workflow manager if needed for the workflow task, if not, it will
+    /// feed the existing manager the updated history we received from the server.
+    ///
+    /// Also updates [CoreSDK::workflow_task_tokens] and validates the
+    /// [PollWorkflowTaskQueueResponse]
+    ///
+    /// Returns the next workflow activation and the workflow's run id
+    fn instantiate_or_update_workflow(
+        &self,
+        poll_wf_resp: PollWorkflowTaskQueueResponse,
+    ) -> Result<(NextWfActivation, String)> {
+        if let PollWorkflowTaskQueueResponse {
+            task_token,
+            workflow_execution: Some(workflow_execution),
+            ..
+        } = &poll_wf_resp
         {
-            return;
+            let run_id = workflow_execution.run_id.clone();
+            // Correlate task token w/ run ID
+            self.workflow_task_tokens
+                .insert(task_token.clone(), run_id.clone());
+
+            match self.workflow_machines.entry(run_id.clone()) {
+                Entry::Occupied(mut existing) => {
+                    if let Some(history) = poll_wf_resp.history {
+                        let activation = existing
+                            .get_mut()
+                            .lock()?
+                            .feed_history_from_server(history)?;
+                        Ok((activation, run_id))
+                    } else {
+                        Err(CoreError::BadDataFromWorkProvider(poll_wf_resp))
+                    }
+                }
+                Entry::Vacant(vacant) => {
+                    let wfm = WorkflowManager::new(poll_wf_resp)?;
+                    let activation = wfm.lock()?.get_next_activation()?;
+                    vacant.insert(wfm);
+                    Ok((activation, run_id))
+                }
+            }
+        } else {
+            Err(CoreError::BadDataFromWorkProvider(poll_wf_resp))
         }
-        self.workflow_machines.insert(
-            workflow_execution.run_id.clone(),
-            WorkflowManager::new(workflow_execution),
-        );
     }
 
     /// Feed commands from the lang sdk into the appropriate workflow bridge
@@ -281,8 +295,6 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 #[allow(clippy::large_enum_variant)]
 // NOTE: Docstrings take the place of #[error("xxxx")] here b/c of displaydoc
 pub enum CoreError {
-    /// Unknown service error
-    Unknown,
     /// No tasks to perform for now
     NoWork,
     /// Poll response from server was malformed: {0:?}
@@ -292,7 +304,7 @@ pub enum CoreError {
     /// Error buffering commands
     CantSendCommands(#[from] SendError<Vec<WFCommand>>),
     /// Couldn't interpret command from <lang>
-    UninterprableCommand(#[from] InconvertibleCommandError),
+    UninterpretableCommand(#[from] InconvertibleCommandError),
     /// Underlying error in history processing
     UnderlyingHistError(#[from] HistoryInfoError),
     /// Task token had nothing associated with it: {0:?}

@@ -43,9 +43,9 @@ pub(crate) struct WorkflowMachines {
     /// True if the workflow is replaying from history
     replaying: bool,
     /// Workflow identifier
-    workflow_id: String,
+    pub workflow_id: String,
     /// Identifies the current run and is used as a seed for faux-randomness.
-    run_id: String,
+    pub run_id: String,
     /// The current workflow time if it has been established
     current_wf_time: Option<SystemTime>,
 

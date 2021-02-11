@@ -44,19 +44,19 @@ fn timer_workflow() {
     let timer_id: String = rng.gen::<u32>().to_string();
     let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
     core.complete_task(CompleteTaskReq::ok_from_api_attrs(
-        StartTimerCommandAttributes {
+        vec![StartTimerCommandAttributes {
             timer_id: timer_id.to_string(),
             start_to_fire_timeout: Some(Duration::from_secs(1).into()),
             ..Default::default()
         }
-        .into(),
+        .into()],
         task.task_token,
     ))
     .unwrap();
     dbg!("sent completion w/ start timer");
     let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
     core.complete_task(CompleteTaskReq::ok_from_api_attrs(
-        CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
+        vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
         task.task_token,
     ))
     .unwrap();
@@ -89,19 +89,19 @@ fn parallel_timer_workflow() {
     let timer_id: String = rng.gen::<u32>().to_string();
     let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
     core.complete_task(CompleteTaskReq::ok_from_api_attrs(
-        StartTimerCommandAttributes {
+        vec![StartTimerCommandAttributes {
             timer_id: timer_id.to_string(),
             start_to_fire_timeout: Some(Duration::from_secs(1).into()),
             ..Default::default()
         }
-        .into(),
+        .into()],
         task.task_token,
     ))
     .unwrap();
     dbg!("sent completion w/ start timer");
     let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
     core.complete_task(CompleteTaskReq::ok_from_api_attrs(
-        CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
+        vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
         task.task_token,
     ))
     .unwrap();
