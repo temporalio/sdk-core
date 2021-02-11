@@ -2,7 +2,7 @@ use rand::{self, Rng};
 use std::{convert::TryFrom, env, time::Duration};
 use temporal_sdk_core::{
     protos::{
-        coresdk::CompleteTaskReq,
+        coresdk::TaskCompletion,
         temporal::api::command::v1::{
             CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
         },
@@ -43,7 +43,7 @@ fn timer_workflow() {
     let run_id = dbg!(create_workflow(&core, &workflow_id.to_string()));
     let timer_id: String = rng.gen::<u32>().to_string();
     let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
-    core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
         StartTimerCommandAttributes {
             timer_id: timer_id.to_string(),
             start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -55,7 +55,7 @@ fn timer_workflow() {
     .unwrap();
     dbg!("sent completion w/ start timer");
     let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
-    core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
         CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
         task.task_token,
     ))
