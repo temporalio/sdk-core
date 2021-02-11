@@ -3,7 +3,7 @@ use rand::{self, Rng};
 use std::{convert::TryFrom, env, time::Duration};
 use temporal_sdk_core::{
     protos::{
-        coresdk::{wf_activation_job, CompleteTaskReq, TimerFiredTaskAttributes, WfActivationJob},
+        coresdk::{wf_activation_job, TaskCompletion, TimerFiredTaskAttributes, WfActivationJob},
         temporal::api::command::v1::{
             CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
         },
@@ -44,7 +44,7 @@ fn timer_workflow() {
     dbg!(create_workflow(&core, &workflow_id.to_string()));
     let timer_id: String = rng.gen::<u32>().to_string();
     let task = core.poll_task(TASK_QUEUE).unwrap();
-    core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
         vec![StartTimerCommandAttributes {
             timer_id: timer_id.to_string(),
             start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -55,7 +55,7 @@ fn timer_workflow() {
     ))
     .unwrap();
     let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
-    core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
         vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
         task.task_token,
     ))
@@ -79,11 +79,11 @@ fn parallel_timer_workflow() {
     let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    let run_id = dbg!(create_workflow(&core, &workflow_id.to_string()));
+    dbg!(create_workflow(&core, &workflow_id.to_string()));
     let timer_id = "timer 1".to_string();
     let timer_2_id = "timer 2".to_string();
     let task = dbg!(core.poll_task(TASK_QUEUE).unwrap());
-    core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
         vec![
             StartTimerCommandAttributes {
                 timer_id: timer_id.clone(),
@@ -122,7 +122,7 @@ fn parallel_timer_workflow() {
             assert_eq!(t2_id, &timer_2_id);
         }
     );
-    core.complete_task(CompleteTaskReq::ok_from_api_attrs(
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
         vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
         task.task_token,
     ))
