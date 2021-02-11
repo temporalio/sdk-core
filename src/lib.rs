@@ -376,7 +376,6 @@ mod test {
         let core = build_fake_core(wfid, run_id, &mut t, &[1, 2]);
 
         let res = core.poll_task(task_queue).unwrap();
-        // TODO: uggo
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {
@@ -397,7 +396,6 @@ mod test {
         .unwrap();
 
         let res = core.poll_task(task_queue).unwrap();
-        // TODO: uggo
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {
@@ -457,7 +455,6 @@ mod test {
         let core = build_fake_core(wfid, run_id, &mut t, &[1, 2]);
 
         let res = core.poll_task(task_queue).unwrap();
-        // TODO: uggo
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {
@@ -485,7 +482,6 @@ mod test {
         .unwrap();
 
         let res = core.poll_task(task_queue).unwrap();
-        // TODO: uggo
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [
@@ -559,7 +555,6 @@ mod test {
         .unwrap();
 
         let res = core.poll_task(task_queue).unwrap();
-        // TODO: uggo
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {
