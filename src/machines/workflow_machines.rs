@@ -400,7 +400,13 @@ impl WorkflowMachines {
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
-        let triggers = sm.handle_event(event, has_next_event)?;
+        let triggers = sm.handle_event(event, has_next_event).map_err(|e| {
+            if let WFMachinesError::MalformedEventDetail(s) = e {
+                WFMachinesError::MalformedEvent(event.clone(), s)
+            } else {
+                e
+            }
+        })?;
         event!(Level::DEBUG, msg = "Machine produced triggers", ?triggers);
         for trigger in triggers {
             match trigger {
