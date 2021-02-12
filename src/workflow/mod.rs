@@ -4,19 +4,24 @@ pub(crate) use bridge::WorkflowBridge;
 
 use crate::{
     machines::{ProtoCommand, WFCommand, WorkflowMachines},
-    protos::temporal::api::workflowservice::v1::StartWorkflowExecutionResponse,
-    protos::temporal::api::{
-        common::v1::WorkflowExecution,
-        workflowservice::v1::{
-            PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
+    protos::{
+        coresdk::WfActivation,
+        temporal::api::{
+            history::v1::History,
+            workflowservice::v1::{
+                PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
+                StartWorkflowExecutionResponse,
+            },
         },
     },
+    protosext::HistoryInfo,
     CoreError, Result,
 };
 use std::{
     ops::DerefMut,
     sync::{mpsc::Sender, Arc, Mutex},
 };
+use tracing::Level;
 
 /// Implementors can provide new workflow tasks to the SDK. The connection to the server is the real
 /// implementor.
@@ -56,7 +61,8 @@ pub trait StartWorkflowExecutionApi {
     ) -> Result<StartWorkflowExecutionResponse>;
 }
 
-/// Manages concurrent access to an instance of a [WorkflowMachines], which is not thread-safe.
+/// Manages concurrent access to an instance of a [WorkflowMachines], which is not thread-safe,
+/// as well as other data associated with that specific workflow run.
 pub(crate) struct WorkflowManager {
     data: Arc<Mutex<WfManagerProtected>>,
 }
@@ -64,20 +70,41 @@ pub(crate) struct WorkflowManager {
 pub(crate) struct WfManagerProtected {
     pub machines: WorkflowMachines,
     pub command_sink: Sender<Vec<WFCommand>>,
+    /// The last recorded history we received from the server for this workflow run. This must be
+    /// kept because the lang side polls & completes for every workflow task, but we do not need
+    /// to poll the server that often during replay.
+    pub last_history_from_server: History,
+    pub last_history_task_count: usize,
+    /// The current workflow task number this run is on. Starts at one and monotonically increases.
+    pub current_wf_task_num: usize,
 }
 
 impl WorkflowManager {
-    pub fn new(we: &WorkflowExecution) -> Self {
+    /// Create a new workflow manager from a server workflow task queue response.
+    pub fn new(poll_resp: PollWorkflowTaskQueueResponse) -> Result<Self> {
+        let (history, we) = if let PollWorkflowTaskQueueResponse {
+            workflow_execution: Some(we),
+            history: Some(hist),
+            ..
+        } = poll_resp
+        {
+            (hist, we)
+        } else {
+            return Err(CoreError::BadDataFromWorkProvider(poll_resp.clone()));
+        };
+
         let (wfb, cmd_sink) = WorkflowBridge::new();
-        let state_machines =
-            WorkflowMachines::new(we.workflow_id.clone(), we.run_id.clone(), Box::new(wfb));
+        let state_machines = WorkflowMachines::new(we.workflow_id, we.run_id, Box::new(wfb));
         let protected = WfManagerProtected {
             machines: state_machines,
             command_sink: cmd_sink,
+            last_history_task_count: history.get_workflow_task_count(None)?,
+            last_history_from_server: history,
+            current_wf_task_num: 1,
         };
-        Self {
+        Ok(Self {
             data: Arc::new(Mutex::new(protected)),
-        }
+        })
     }
 
     pub fn lock(&self) -> Result<impl DerefMut<Target = WfManagerProtected> + '_> {
@@ -91,15 +118,64 @@ impl WorkflowManager {
     }
 }
 
+pub(crate) struct NextWfActivation {
+    pub activation: Option<WfActivation>,
+    pub more_activations_needed: bool,
+}
+
+impl WfManagerProtected {
+    /// Given history that was just obtained from the server, pipe it into this workflow's machines.
+    ///
+    /// Should only be called when a workflow has caught up on replay. It will return a workflow
+    /// activation if one is needed, as well as a bool indicating if there are more workflow tasks
+    /// that need to be performed to replay the remaining history.
+    #[instrument(skip(self))]
+    pub fn feed_history_from_server(&mut self, hist: History) -> Result<NextWfActivation> {
+        let task_hist = HistoryInfo::new_from_history(&hist, Some(self.current_wf_task_num))?;
+        let task_ct = hist.get_workflow_task_count(None)?;
+        self.last_history_task_count = task_ct;
+        self.last_history_from_server = hist;
+        task_hist.apply_history_events(&mut self.machines)?;
+        let activation = self.machines.get_wf_activation();
+        let more_activations_needed = task_ct > self.current_wf_task_num;
+
+        if more_activations_needed {
+            event!(Level::DEBUG, msg = "More activations needed");
+        }
+
+        self.current_wf_task_num += 1;
+
+        Ok(NextWfActivation {
+            activation,
+            more_activations_needed,
+        })
+    }
+
+    pub fn get_next_activation(&mut self) -> Result<NextWfActivation> {
+        let hist = &self.last_history_from_server;
+        let task_hist = HistoryInfo::new_from_history(hist, Some(self.current_wf_task_num))?;
+        task_hist.apply_history_events(&mut self.machines)?;
+        let activation = self.machines.get_wf_activation();
+
+        self.current_wf_task_num += 1;
+        let more_activations_needed = self.current_wf_task_num <= self.last_history_task_count;
+
+        Ok(NextWfActivation {
+            activation,
+            more_activations_needed,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // Enforce thread-safeness of wf manager
     fn enforcer<W: Send + Sync>(_: W) {}
 
+    // Enforce thread-safeness of wf manager
     #[test]
     fn is_threadsafe() {
-        enforcer(WorkflowManager::new(&Default::default()));
+        enforcer(WorkflowManager::new(Default::default()));
     }
 }

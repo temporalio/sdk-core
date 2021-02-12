@@ -72,12 +72,11 @@ where
     F: Fn(CommandSender) -> Fut + Send + Sync,
     Fut: Future<Output = ()>,
 {
-    #[instrument(skip(self))]
     fn start(&mut self, _attribs: WorkflowExecutionStartedEventAttributes) -> Vec<WFCommand> {
+        event!(Level::DEBUG, msg = "Test WF driver start called");
         vec![]
     }
 
-    #[instrument(skip(self))]
     fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
         let (sender, receiver) = CommandSender::new(self.cache.clone());
         // Call the closure that produces the workflow future
@@ -88,7 +87,6 @@ where
         rt.block_on(wf_future);
 
         let cmds = receiver.into_iter();
-        event!(Level::DEBUG, msg = "Test wf driver emitting", ?cmds);
 
         let mut last_cmd = None;
         for cmd in cmds {
@@ -100,6 +98,8 @@ where
                 }
             }
         }
+
+        event!(Level::DEBUG, msg = "Test wf driver emitting", ?last_cmd);
 
         // Return only the last command, since that's what would've been yielded in a real wf
         if let Some(c) = last_cmd {

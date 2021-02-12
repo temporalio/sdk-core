@@ -60,6 +60,7 @@ impl ServerGatewayOptions {
 /// This function will get called on each outbound request. Returning a
 /// `Status` here will cancel the request and have that status returned to
 /// the caller.
+#[allow(clippy::unnecessary_wraps)] // Clippy lies because we need to pass to `with_interceptor`
 fn intercept(mut req: Request<()>) -> Result<Request<()>, Status> {
     let metadata = req.metadata_mut();
     // TODO: Only apply this to long poll requests

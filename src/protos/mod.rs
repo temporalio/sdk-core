@@ -25,7 +25,6 @@ pub mod coresdk {
         }
 
         /// Returns any contained jobs if this task was a wf activation and it had some
-        #[cfg(test)]
         pub fn get_wf_jobs(&self) -> Vec<WfActivationJob> {
             if let Some(task::Variant::Workflow(a)) = &self.variant {
                 a.jobs.clone()
@@ -59,11 +58,11 @@ pub mod coresdk {
     impl TaskCompletion {
         /// Build a successful completion from some api command attributes and a task token
         pub fn ok_from_api_attrs(
-            cmd: api_command::command::Attributes,
+            cmds: Vec<api_command::command::Attributes>,
             task_token: Vec<u8>,
         ) -> Self {
-            let cmd: ApiCommand = cmd.into();
-            let success: WfActivationSuccess = vec![cmd].into();
+            let cmds: Vec<ApiCommand> = cmds.into_iter().map(Into::into).collect();
+            let success: WfActivationSuccess = cmds.into();
             TaskCompletion {
                 task_token,
                 variant: Some(task_completion::Variant::Workflow(WfActivationCompletion {
@@ -128,10 +127,53 @@ pub mod temporal {
                 use crate::protos::temporal::api::{
                     enums::v1::EventType, history::v1::history_event::Attributes,
                 };
+                use crate::protosext::HistoryInfoError;
                 use prost::alloc::fmt::Formatter;
                 use std::fmt::Display;
 
                 include!("temporal.api.history.v1.rs");
+
+                impl History {
+                    /// Counts the number of whole workflow tasks. Looks for WFTaskStarted followed
+                    /// by WFTaskCompleted, adding one to the count for every match. It will
+                    /// additionally count a WFTaskStarted at the end of the event list.
+                    ///
+                    /// If `up_to_event_id` is provided, the count will be returned as soon as
+                    /// processing advances past that id.
+                    pub fn get_workflow_task_count(
+                        &self,
+                        up_to_event_id: Option<i64>,
+                    ) -> Result<usize, HistoryInfoError> {
+                        let mut last_wf_started_id = 0;
+                        let mut count = 0;
+                        let mut history = self.events.iter().peekable();
+                        while let Some(event) = history.next() {
+                            let next_event = history.peek();
+                            if let Some(upto) = up_to_event_id {
+                                if event.event_id > upto {
+                                    return Ok(count);
+                                }
+                            }
+                            let next_is_completed = next_event.map_or(false, |ne| {
+                                ne.event_type == EventType::WorkflowTaskCompleted as i32
+                            });
+                            if event.event_type == EventType::WorkflowTaskStarted as i32
+                                && (next_event.is_none() || next_is_completed)
+                            {
+                                last_wf_started_id = event.event_id;
+                                count += 1;
+                            }
+
+                            if next_event.is_none() {
+                                if last_wf_started_id != event.event_id {
+                                    return Err(HistoryInfoError::HistoryEndsUnexpectedly);
+                                }
+                                return Ok(count);
+                            }
+                        }
+                        Ok(count)
+                    }
+                }
 
                 impl HistoryEvent {
                     /// Returns true if this is an event created to mirror a command

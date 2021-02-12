@@ -43,9 +43,9 @@ pub(crate) struct WorkflowMachines {
     /// True if the workflow is replaying from history
     replaying: bool,
     /// Workflow identifier
-    workflow_id: String,
+    pub workflow_id: String,
     /// Identifies the current run and is used as a seed for faux-randomness.
-    run_id: String,
+    pub run_id: String,
     /// The current workflow time if it has been established
     current_wf_time: Option<SystemTime>,
 
@@ -185,11 +185,7 @@ impl WorkflowMachines {
 
     /// Called when we want to run the event loop because a workflow task started event has
     /// triggered
-    pub(super) fn task_started(
-        &mut self,
-        task_started_event_id: i64,
-        time: SystemTime,
-    ) -> Result<()> {
+    pub(super) fn task_started(&mut self, task_started_event_id: i64, time: SystemTime) {
         let s = span!(Level::DEBUG, "Task started trigger");
         let _enter = s.enter();
 
@@ -215,7 +211,6 @@ impl WorkflowMachines {
         self.current_started_event_id = task_started_event_id;
         self.set_current_time(time);
         self.event_loop();
-        Ok(())
     }
 
     /// A command event is an event which is generated from a command emitted by a past decision.
@@ -413,7 +408,7 @@ impl WorkflowMachines {
                     task_started_event_id,
                     time,
                 } => {
-                    self.task_started(task_started_event_id, time)?;
+                    self.task_started(task_started_event_id, time);
                 }
             }
         }

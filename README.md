@@ -3,6 +3,9 @@
 Core SDK that can be used as a base for all other Temporal SDKs.
 
 # Getting started
+
+See the [Architecture](ARCHITECTURE.md) doc for some high-level information.
+
 This repo uses a submodule for upstream protobuf files. The path `protos/api_upstream` is a 
 submodule -- when checking out the repo for the first time make sure you've run 
 `git submodule update --init --recursive`. TODO: Makefile.

@@ -305,7 +305,7 @@ mod test {
             }),
         );
         t.add_workflow_task_scheduled_and_started();
-        assert_eq!(2, t.get_workflow_task_count(None).unwrap());
+        assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
         (t, state_machines)
     }
 
@@ -343,7 +343,6 @@ mod test {
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
             .unwrap();
-        dbg!(&commands);
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,

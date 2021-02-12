@@ -26,14 +26,13 @@ use crate::{
             task_completion, wf_activation_completion::Status, Task, TaskCompletion,
             WfActivationCompletion, WfActivationSuccess,
         },
-        temporal::api::{
-            common::v1::WorkflowExecution, workflowservice::v1::PollWorkflowTaskQueueResponse,
-        },
+        temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
     },
-    protosext::{HistoryInfo, HistoryInfoError},
-    workflow::{WfManagerProtected, WorkflowManager},
+    protosext::HistoryInfoError,
+    workflow::{NextWfActivation, WfManagerProtected, WorkflowManager},
 };
-use dashmap::DashMap;
+use crossbeam::queue::SegQueue;
+use dashmap::{mapref::entry::Entry, DashMap};
 use std::{convert::TryInto, sync::mpsc::SendError, sync::Arc};
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
@@ -85,6 +84,7 @@ pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
         server_gateway: Arc::new(work_provider),
         workflow_machines: Default::default(),
         workflow_task_tokens: Default::default(),
+        pending_activations: Default::default(),
     })
 }
 
@@ -107,6 +107,16 @@ where
     workflow_machines: DashMap<String, WorkflowManager>,
     /// Maps task tokens to workflow run ids
     workflow_task_tokens: DashMap<Vec<u8>, String>,
+
+    /// Workflows that are currently under replay will queue their run ID here, indicating that
+    /// there are more workflow tasks / activations to be performed.
+    pending_activations: SegQueue<PendingActivation>,
+}
+
+#[derive(Debug)]
+struct PendingActivation {
+    run_id: String,
+    task_token: Vec<u8>,
 }
 
 impl<WP> Core for CoreSDK<WP>
@@ -115,45 +125,45 @@ where
 {
     #[instrument(skip(self))]
     fn poll_task(&self, task_queue: &str) -> Result<Task> {
+        // We must first check if there are pending workflow tasks for workflows that are currently
+        // replaying, and issue those tasks before bothering the server.
+        if let Some(pa) = self.pending_activations.pop() {
+            event!(Level::DEBUG, msg = "Applying pending activations", ?pa);
+            let next_activation =
+                self.access_machine(&pa.run_id, |mgr| mgr.get_next_activation())?;
+            let task_token = pa.task_token.clone();
+            if next_activation.more_activations_needed {
+                self.pending_activations.push(pa);
+            }
+            return Ok(Task {
+                task_token,
+                variant: next_activation.activation.map(Into::into),
+            });
+        }
+
         // This will block forever in the event there is no work from the server
         let work = self
             .runtime
             .block_on(self.server_gateway.poll_workflow_task(task_queue))?;
-        let run_id = match &work.workflow_execution {
-            Some(we) => {
-                self.instantiate_workflow_if_needed(we);
-                we.run_id.clone()
-            }
-            None => return Err(CoreError::BadDataFromWorkProvider(work)),
-        };
-        let history = if let Some(hist) = work.history {
-            hist
-        } else {
-            return Err(CoreError::BadDataFromWorkProvider(work));
-        };
-
+        let task_token = work.task_token.clone();
         event!(
             Level::DEBUG,
-            msg = "Received workflow task",
-            ?work.task_token
+            msg = "Received workflow task from server",
+            ?task_token
         );
 
-        // Correlate task token w/ run ID
-        self.workflow_task_tokens
-            .insert(work.task_token.clone(), run_id.clone());
+        let (next_activation, run_id) = self.instantiate_or_update_workflow(work)?;
 
-        // We pass none since we want to apply all the history we just got.
-        // Will need to change a bit once we impl caching.
-        let hist_info = HistoryInfo::new_from_history(&history, None)?;
-        let activation = self.access_machine(&run_id, |mgr| {
-            let machines = &mut mgr.machines;
-            hist_info.apply_history_events(machines)?;
-            Ok(machines.get_wf_activation())
-        })?;
+        if next_activation.more_activations_needed {
+            self.pending_activations.push(PendingActivation {
+                run_id,
+                task_token: task_token.clone(),
+            });
+        }
 
         Ok(Task {
-            task_token: work.task_token,
-            variant: activation.map(Into::into),
+            task_token,
+            variant: next_activation.activation.map(Into::into),
         })
     }
 
@@ -203,17 +213,50 @@ where
 }
 
 impl<WP: ServerGatewayApis> CoreSDK<WP> {
-    fn instantiate_workflow_if_needed(&self, workflow_execution: &WorkflowExecution) {
-        if self
-            .workflow_machines
-            .contains_key(&workflow_execution.run_id)
+    /// Will create a new workflow manager if needed for the workflow task, if not, it will
+    /// feed the existing manager the updated history we received from the server.
+    ///
+    /// Also updates [CoreSDK::workflow_task_tokens] and validates the
+    /// [PollWorkflowTaskQueueResponse]
+    ///
+    /// Returns the next workflow activation and the workflow's run id
+    fn instantiate_or_update_workflow(
+        &self,
+        poll_wf_resp: PollWorkflowTaskQueueResponse,
+    ) -> Result<(NextWfActivation, String)> {
+        if let PollWorkflowTaskQueueResponse {
+            task_token,
+            workflow_execution: Some(workflow_execution),
+            ..
+        } = &poll_wf_resp
         {
-            return;
+            let run_id = workflow_execution.run_id.clone();
+            // Correlate task token w/ run ID
+            self.workflow_task_tokens
+                .insert(task_token.clone(), run_id.clone());
+
+            match self.workflow_machines.entry(run_id.clone()) {
+                Entry::Occupied(mut existing) => {
+                    if let Some(history) = poll_wf_resp.history {
+                        let activation = existing
+                            .get_mut()
+                            .lock()?
+                            .feed_history_from_server(history)?;
+                        Ok((activation, run_id))
+                    } else {
+                        Err(CoreError::BadDataFromWorkProvider(poll_wf_resp))
+                    }
+                }
+                Entry::Vacant(vacant) => {
+                    let wfm = WorkflowManager::new(poll_wf_resp)?;
+                    let activation = wfm.lock()?.get_next_activation()?;
+                    vacant.insert(wfm);
+                    Ok((activation, run_id))
+                }
+            }
+        } else {
+            Err(CoreError::BadDataFromWorkProvider(poll_wf_resp))
         }
-        self.workflow_machines.insert(
-            workflow_execution.run_id.clone(),
-            WorkflowManager::new(workflow_execution),
-        );
     }
 
     /// Feed commands from the lang sdk into the appropriate workflow bridge
@@ -252,8 +295,6 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 #[allow(clippy::large_enum_variant)]
 // NOTE: Docstrings take the place of #[error("xxxx")] here b/c of displaydoc
 pub enum CoreError {
-    /// Unknown service error
-    Unknown,
     /// No tasks to perform for now
     NoWork,
     /// Poll response from server was malformed: {0:?}
@@ -263,7 +304,7 @@ pub enum CoreError {
     /// Error buffering commands
     CantSendCommands(#[from] SendError<Vec<WFCommand>>),
     /// Couldn't interpret command from <lang>
-    UninterprableCommand(#[from] InconvertibleCommandError),
+    UninterpretableCommand(#[from] InconvertibleCommandError),
     /// Underlying error in history processing
     UnderlyingHistError(#[from] HistoryInfoError),
     /// Task token had nothing associated with it: {0:?}
@@ -286,31 +327,26 @@ pub enum CoreError {
 mod test {
     use super::*;
     use crate::{
-        machines::test_help::TestHistoryBuilder,
-        pollers::MockServerGateway,
+        machines::test_help::{build_fake_core, TestHistoryBuilder},
         protos::{
-            coresdk::{wf_activation_job, WfActivationJob},
+            coresdk::{
+                wf_activation_job, TaskCompletion, TimerFiredTaskAttributes, WfActivationJob,
+            },
             temporal::api::{
                 command::v1::{
                     CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
                 },
                 enums::v1::EventType,
-                history::v1::{history_event, History, TimerFiredEventAttributes},
-                workflowservice::v1::RespondWorkflowTaskCompletedResponse,
+                history::v1::{history_event, TimerFiredEventAttributes},
             },
         },
     };
-    use std::collections::VecDeque;
-    use tracing::Level;
 
     #[test]
-    fn workflow_bridge() {
-        let s = span!(Level::DEBUG, "Test start");
-        let _enter = s.enter();
-
+    fn timer_test_across_wf_bridge() {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
-        let timer_id = "fake_timer";
+        let timer_id = "fake_timer".to_string();
         let task_queue = "test-task-queue";
 
         let mut t = TestHistoryBuilder::default();
@@ -321,7 +357,7 @@ mod test {
             EventType::TimerFired,
             history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
                 started_event_id: timer_started_event_id,
-                timer_id: "timer1".to_string(),
+                timer_id: timer_id.clone(),
             }),
         );
         t.add_workflow_task_scheduled_and_started();
@@ -337,48 +373,9 @@ mod test {
            8: EVENT_TYPE_WORKFLOW_TASK_STARTED
            ---
         */
-        let events_first_batch = t.get_history_info(1).unwrap().events;
-        let wf = Some(WorkflowExecution {
-            workflow_id: wfid.to_string(),
-            run_id: run_id.to_string(),
-        });
-        let first_response = PollWorkflowTaskQueueResponse {
-            history: Some(History {
-                events: events_first_batch,
-            }),
-            workflow_execution: wf.clone(),
-            ..Default::default()
-        };
-        let events_second_batch = t.get_history_info(2).unwrap().events;
-        let second_response = PollWorkflowTaskQueueResponse {
-            history: Some(History {
-                events: events_second_batch,
-            }),
-            workflow_execution: wf,
-            ..Default::default()
-        };
-        let responses = vec![first_response, second_response];
+        let core = build_fake_core(wfid, run_id, &mut t, &[1, 2]);
 
-        let mut tasks = VecDeque::from(responses);
-        let mut mock_gateway = MockServerGateway::new();
-        mock_gateway
-            .expect_poll_workflow_task()
-            .returning(move |_| Ok(tasks.pop_front().unwrap()));
-        // Response not really important here
-        mock_gateway
-            .expect_complete_workflow_task()
-            .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
-
-        let runtime = Runtime::new().unwrap();
-        let core = CoreSDK {
-            runtime,
-            server_gateway: Arc::new(mock_gateway),
-            workflow_machines: DashMap::new(),
-            workflow_task_tokens: DashMap::new(),
-        };
-
-        let res = dbg!(core.poll_task(task_queue).unwrap());
-        // TODO: uggo
+        let res = core.poll_task(task_queue).unwrap();
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {
@@ -389,18 +386,16 @@ mod test {
 
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            StartTimerCommandAttributes {
-                timer_id: timer_id.to_string(),
+            vec![StartTimerCommandAttributes {
+                timer_id,
                 ..Default::default()
             }
-            .into(),
+            .into()],
             task_tok,
         ))
         .unwrap();
-        dbg!("sent completion w/ start timer");
 
-        let res = dbg!(core.poll_task(task_queue).unwrap());
-        // TODO: uggo
+        let res = core.poll_task(task_queue).unwrap();
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {
@@ -409,10 +404,168 @@ mod test {
         );
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
+            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
             task_tok,
         ))
         .unwrap();
-        dbg!("sent workflow done");
+    }
+
+    #[test]
+    fn parallel_timer_test_across_wf_bridge() {
+        let wfid = "fake_wf_id";
+        let run_id = "fake_run_id";
+        let timer_1_id = "timer1".to_string();
+        let timer_2_id = "timer2".to_string();
+        let task_queue = "test-task-queue";
+
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_workflow_task();
+        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        let timer_2_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        t.add(
+            EventType::TimerFired,
+            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                started_event_id: timer_started_event_id,
+                timer_id: timer_1_id.clone(),
+            }),
+        );
+        t.add(
+            EventType::TimerFired,
+            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                started_event_id: timer_2_started_event_id,
+                timer_id: timer_2_id.clone(),
+            }),
+        );
+        t.add_workflow_task_scheduled_and_started();
+        /*
+           1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+           2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+           3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+           ---
+           4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+           5: EVENT_TYPE_TIMER_STARTED
+           6: EVENT_TYPE_TIMER_STARTED
+           7: EVENT_TYPE_TIMER_FIRED
+           8: EVENT_TYPE_TIMER_FIRED
+           9: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+           10: EVENT_TYPE_WORKFLOW_TASK_STARTED
+           ---
+        */
+        let core = build_fake_core(wfid, run_id, &mut t, &[1, 2]);
+
+        let res = core.poll_task(task_queue).unwrap();
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
+            }]
+        );
+        assert!(core.workflow_machines.get(run_id).is_some());
+
+        let task_tok = res.task_token;
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![
+                StartTimerCommandAttributes {
+                    timer_id: timer_1_id.clone(),
+                    ..Default::default()
+                }
+                .into(),
+                StartTimerCommandAttributes {
+                    timer_id: timer_2_id.clone(),
+                    ..Default::default()
+                }
+                .into(),
+            ],
+            task_tok,
+        ))
+        .unwrap();
+
+        let res = core.poll_task(task_queue).unwrap();
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [
+                WfActivationJob {
+                    attributes: Some(wf_activation_job::Attributes::TimerFired(
+                        TimerFiredTaskAttributes { timer_id: t1_id }
+                    )),
+                },
+                WfActivationJob {
+                    attributes: Some(wf_activation_job::Attributes::TimerFired(
+                        TimerFiredTaskAttributes { timer_id: t2_id }
+                    )),
+                }
+            ] => {
+                assert_eq!(t1_id, &timer_1_id);
+                assert_eq!(t2_id, &timer_2_id);
+            }
+        );
+        let task_tok = res.task_token;
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            task_tok,
+        ))
+        .unwrap();
+    }
+
+    #[test]
+    fn single_timer_whole_replay_test_across_wf_bridge() {
+        let s = span!(Level::DEBUG, "Test start", t = "bridge");
+        let _enter = s.enter();
+
+        let wfid = "fake_wf_id";
+        let run_id = "fake_run_id";
+        let timer_1_id = "timer1".to_string();
+        let task_queue = "test-task-queue";
+
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_workflow_task();
+        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        t.add(
+            EventType::TimerFired,
+            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                started_event_id: timer_started_event_id,
+                timer_id: timer_1_id.clone(),
+            }),
+        );
+        t.add_workflow_task_scheduled_and_started();
+        // NOTE! What makes this a replay test is the server only responds with *one* batch here.
+        // So, server is polled once, but lang->core interactions look just like non-replay test.
+        let core = build_fake_core(wfid, run_id, &mut t, &[2]);
+
+        let res = core.poll_task(task_queue).unwrap();
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
+            }]
+        );
+        assert!(core.workflow_machines.get(run_id).is_some());
+
+        let task_tok = res.task_token;
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![StartTimerCommandAttributes {
+                timer_id: timer_1_id,
+                ..Default::default()
+            }
+            .into()],
+            task_tok,
+        ))
+        .unwrap();
+
+        let res = core.poll_task(task_queue).unwrap();
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                attributes: Some(wf_activation_job::Attributes::TimerFired(_)),
+            }]
+        );
+        let task_tok = res.task_token;
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            task_tok,
+        ))
+        .unwrap();
     }
 }

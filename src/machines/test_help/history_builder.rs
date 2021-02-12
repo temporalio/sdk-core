@@ -1,4 +1,5 @@
 use super::Result;
+use crate::protos::temporal::api::history::v1::History;
 use crate::{
     machines::{workflow_machines::WorkflowMachines, ProtoCommand},
     protos::temporal::api::{
@@ -87,41 +88,10 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowTaskCompleted, attrs.into());
     }
 
-    /// Counts the number of whole workflow tasks. Looks for WFTaskStarted followed by
-    /// WFTaskCompleted, adding one to the count for every match. It will additionally count
-    /// a WFTaskStarted at the end of the event list.
-    ///
-    /// If `up_to_event_id` is provided, the count will be returned as soon as processing advances
-    /// past that id.
-    pub fn get_workflow_task_count(&self, up_to_event_id: Option<i64>) -> Result<usize> {
-        let mut last_wf_started_id = 0;
-        let mut count = 0;
-        let mut history = self.events.iter().peekable();
-        while let Some(event) = history.next() {
-            let next_event = history.peek();
-            if let Some(upto) = up_to_event_id {
-                if event.event_id > upto {
-                    return Ok(count);
-                }
-            }
-            let next_is_completed = next_event.map_or(false, |ne| {
-                ne.event_type == EventType::WorkflowTaskCompleted as i32
-            });
-            if event.event_type == EventType::WorkflowTaskStarted as i32
-                && (next_event.is_none() || next_is_completed)
-            {
-                last_wf_started_id = event.event_id;
-                count += 1;
-            }
-
-            if next_event.is_none() {
-                if last_wf_started_id != event.event_id {
-                    bail!("Last item in history wasn't WorkflowTaskStarted")
-                }
-                return Ok(count);
-            }
+    pub fn as_history(&self) -> History {
+        History {
+            events: self.events.clone(),
         }
-        Ok(count)
     }
 
     /// Handle workflow task(s) using the provided [WorkflowMachines]. Will process as many workflow
@@ -148,7 +118,8 @@ impl TestHistoryBuilder {
         Ok(())
     }
 
-    /// Iterates over the events in this builder to return a [HistoryInfo] of the n-th workflow task.
+    /// Iterates over the events in this builder to return a [HistoryInfo] including events up to
+    /// the provided `to_wf_task_num`
     pub(crate) fn get_history_info(
         &self,
         to_wf_task_num: usize,

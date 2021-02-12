@@ -118,22 +118,18 @@ impl TryFrom<coresdk::Command> for WFCommand {
     type Error = InconvertibleCommandError;
 
     fn try_from(c: coresdk::Command) -> Result<Self, Self::Error> {
-        // TODO: Return error without cloning
-        match c.variant.clone() {
-            Some(a) => match a {
-                Variant::Api(Command {
-                    attributes: Some(attrs),
-                    ..
-                }) => match attrs {
-                    Attributes::StartTimerCommandAttributes(s) => Ok(WFCommand::AddTimer(s)),
-                    Attributes::CompleteWorkflowExecutionCommandAttributes(c) => {
-                        Ok(WFCommand::CompleteWorkflow(c))
-                    }
-                    _ => unimplemented!(),
-                },
-                _ => Err(c.into()),
+        match c.variant {
+            Some(Variant::Api(Command {
+                attributes: Some(attrs),
+                ..
+            })) => match attrs {
+                Attributes::StartTimerCommandAttributes(s) => Ok(WFCommand::AddTimer(s)),
+                Attributes::CompleteWorkflowExecutionCommandAttributes(c) => {
+                    Ok(WFCommand::CompleteWorkflow(c))
+                }
+                _ => unimplemented!(),
             },
-            None => Err(c.into()),
+            _ => Err(c.into()),
         }
     }
 }
