@@ -63,8 +63,10 @@ message WFActivationJob {
         StartWorkflowTaskAttributes start_workflow = 1;
         // A timer has fired, allowing whatever was waiting on it (if anything) to proceed
         TimerFiredTaskAttributes timer_fired = 2;
+        // A timer was canceled
+        TimerCanceledTaskAttributes timer_canceled = 3;
 
-        QueryWorkflowJob query_workflow = 3;
+        QueryWorkflowJob query_workflow = 4;
     }
 }
 
@@ -81,6 +83,10 @@ message StartWorkflowTaskAttributes {
 }
 
 message TimerFiredTaskAttributes {
+    string timer_id = 1;
+}
+
+message TimerCanceledTaskAttributes {
     string timer_id = 1;
 }
 

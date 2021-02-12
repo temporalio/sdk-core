@@ -84,6 +84,10 @@ pub enum WFMachinesError {
     UnexpectedEvent(HistoryEvent),
     #[error("Event {0:?} was malformed: {1}")]
     MalformedEvent(HistoryEvent, String),
+    // Expected to be transformed into a `MalformedEvent` with the full event by workflow machines,
+    // when emitted by a sub-machine
+    #[error("{0}")]
+    MalformedEventDetail(String),
     #[error("Command type {0:?} was not expected")]
     UnexpectedCommand(CommandType),
     #[error("No command was scheduled for event {0:?}")]

@@ -23,6 +23,11 @@ use tracing::Level;
 /// over when commands are returned than a normal workflow would.
 ///
 /// It replaces "TestEnitityTestListenerBase" in java which is pretty hard to follow.
+///
+/// It is important to understand that this driver doesn't work like a real workflow in the sense
+/// that nothing in it ever blocks, or ever should block. Every workflow task will run through the
+/// *entire* workflow, but any commands given to the sink after a `Waiting` command are simply
+/// ignored, allowing you to simulate blocking without ever actually blocking.
 pub(in crate::machines) struct TestWorkflowDriver<F> {
     wf_function: F,
     cache: Arc<TestWfDriverCache>,
@@ -59,6 +64,7 @@ where
 impl<F> ActivationListener for TestWorkflowDriver<F> {
     fn on_activation_job(&mut self, activation: &Attributes) {
         if let Attributes::TimerFired(TimerFiredTaskAttributes { timer_id }) = activation {
+            dbg!(&timer_id);
             Arc::get_mut(&mut self.cache)
                 .unwrap()
                 .unblocked_timers
@@ -82,6 +88,8 @@ where
         // Call the closure that produces the workflow future
         let wf_future = (self.wf_function)(sender);
 
+        // TODO: This is pointless right now -- either actually use async and suspend on awaits
+        //   or just remove it.
         // Create a tokio runtime to block on the future
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(wf_future);
@@ -134,8 +142,10 @@ impl CommandSender {
         (Self { chan, twd_cache }, rx)
     }
 
-    /// Request to create a timer, returning future which resolves when the timer completes
-    pub fn timer(&mut self, a: StartTimerCommandAttributes) -> impl Future + '_ {
+    /// Request to create a timer. Returns true if the timer has fired, false if it hasn't yet.
+    ///
+    /// If `do_wait` is true, issue a waiting command if the timer is not finished.
+    pub fn timer(&mut self, a: StartTimerCommandAttributes, do_wait: bool) -> bool {
         let finished = match self.twd_cache.unblocked_timers.entry(a.timer_id.clone()) {
             dashmap::mapref::entry::Entry::Occupied(existing) => *existing.get(),
             dashmap::mapref::entry::Entry::Vacant(v) => {
@@ -145,10 +155,10 @@ impl CommandSender {
                 false
             }
         };
-        if !finished {
+        if !finished && do_wait {
             self.chan.send(TestWFCommand::Waiting).unwrap();
         }
-        futures::future::ready(())
+        finished
     }
 
     pub fn send(&mut self, c: WFCommand) {

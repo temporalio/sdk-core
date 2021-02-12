@@ -1,5 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
+use crate::protos::coresdk::TimerCanceledTaskAttributes;
 use crate::{
     machines::{
         workflow_machines::{WFMachinesError, WorkflowMachines, WorkflowTrigger},
@@ -13,7 +14,10 @@ use crate::{
                 StartTimerCommandAttributes,
             },
             enums::v1::{CommandType, EventType},
-            history::v1::{history_event, HistoryEvent, TimerCanceledEventAttributes},
+            history::v1::{
+                history_event, HistoryEvent, TimerCanceledEventAttributes,
+                TimerFiredEventAttributes,
+            },
         },
     },
 };
@@ -32,14 +36,14 @@ fsm! {
 
     StartCommandCreated --(CommandStartTimer) --> StartCommandCreated;
     StartCommandCreated --(TimerStarted(HistoryEventId), on_timer_started) --> StartCommandRecorded;
-    StartCommandCreated --(Cancel, shared on_cancel) --> Canceled;
+    StartCommandCreated --(Cancel, on_cancel) --> Canceled;
 
-    StartCommandRecorded --(TimerFired(HistoryEvent), on_timer_fired) --> Fired;
+    StartCommandRecorded --(TimerFired(TimerFiredEventAttributes), shared on_timer_fired) --> Fired;
     StartCommandRecorded --(Cancel, shared on_cancel) --> CancelTimerCommandCreated;
 
     CancelTimerCommandCreated --(Cancel) --> CancelTimerCommandCreated;
     CancelTimerCommandCreated
-        --(CommandCancelTimer, shared on_command_cancel_timer) --> CancelTimerCommandSent;
+        --(CommandCancelTimer, on_command_cancel_timer) --> CancelTimerCommandSent;
 
     CancelTimerCommandSent --(TimerCanceled) --> Canceled;
 }
@@ -47,7 +51,8 @@ fsm! {
 #[derive(Debug)]
 pub(super) enum TimerMachineCommand {
     AddCommand(AddCommand),
-    Complete(HistoryEvent),
+    Complete,
+    Canceled,
 }
 
 /// Creates a new, scheduled, timer as a [CancellableCommand]
@@ -77,9 +82,7 @@ impl TimerMachine {
     fn new(attribs: StartTimerCommandAttributes) -> Self {
         Self {
             state: Created {}.into(),
-            shared_state: SharedState {
-                timer_attributes: attribs,
-            },
+            shared_state: SharedState { attrs: attribs },
         }
     }
 }
@@ -91,7 +94,15 @@ impl TryFrom<HistoryEvent> for TimerMachineEvents {
         Ok(match EventType::from_i32(e.event_type) {
             Some(EventType::TimerStarted) => Self::TimerStarted(e.event_id),
             Some(EventType::TimerCanceled) => Self::TimerCanceled,
-            Some(EventType::TimerFired) => Self::TimerFired(e),
+            Some(EventType::TimerFired) => {
+                if let Some(history_event::Attributes::TimerFiredEventAttributes(attrs)) =
+                    e.attributes
+                {
+                    Self::TimerFired(attrs)
+                } else {
+                    return Err(());
+                }
+            }
             _ => return Err(()),
         })
     }
@@ -111,25 +122,7 @@ impl TryFrom<CommandType> for TimerMachineEvents {
 
 #[derive(Default, Clone)]
 pub(super) struct SharedState {
-    timer_attributes: StartTimerCommandAttributes,
-}
-
-impl SharedState {
-    fn into_timer_canceled_event_command(self) -> TimerMachineCommand {
-        let attrs = TimerCanceledEventAttributes {
-            identity: "workflow".to_string(),
-            timer_id: self.timer_attributes.timer_id,
-            ..Default::default()
-        };
-        let event = HistoryEvent {
-            event_type: EventType::TimerCanceled as i32,
-            attributes: Some(history_event::Attributes::TimerCanceledEventAttributes(
-                attrs,
-            )),
-            ..Default::default()
-        };
-        TimerMachineCommand::Complete(event)
-    }
+    attrs: StartTimerCommandAttributes,
 }
 
 #[derive(Default, Clone)]
@@ -139,7 +132,7 @@ impl Created {
     pub(super) fn on_schedule(self, dat: SharedState) -> TimerMachineTransition {
         let cmd = Command {
             command_type: CommandType::StartTimer as i32,
-            attributes: Some(dat.timer_attributes.into()),
+            attributes: Some(dat.attrs.into()),
         };
         TimerMachineTransition::commands::<_, StartCommandCreated>(vec![
             TimerMachineCommand::AddCommand(cmd.into()),
@@ -150,11 +143,8 @@ impl Created {
 #[derive(Default, Clone)]
 pub(super) struct CancelTimerCommandCreated {}
 impl CancelTimerCommandCreated {
-    pub(super) fn on_command_cancel_timer(self, dat: SharedState) -> TimerMachineTransition {
-        TimerMachineTransition::ok(
-            vec![dat.into_timer_canceled_event_command()],
-            Canceled::default(),
-        )
+    pub(super) fn on_command_cancel_timer(self) -> TimerMachineTransition {
+        TimerMachineTransition::ok(vec![TimerMachineCommand::Canceled], Canceled::default())
     }
 }
 
@@ -180,13 +170,8 @@ impl StartCommandCreated {
         // TODO: Java recorded an initial event ID, but it seemingly was never used.
         TimerMachineTransition::default::<StartCommandRecorded>()
     }
-    pub(super) fn on_cancel(mut self, dat: SharedState) -> TimerMachineTransition {
-        // Cancel the initial command - which just sets a "canceled" flag in a wrapper of a
-        // proto command. TODO: Does this make any sense? - no - propagate up
-        TimerMachineTransition::ok(
-            vec![dat.into_timer_canceled_event_command()],
-            Canceled::default(),
-        )
+    pub(super) fn on_cancel(mut self) -> TimerMachineTransition {
+        TimerMachineTransition::ok(vec![TimerMachineCommand::Canceled], Canceled::default())
     }
 }
 
@@ -194,15 +179,26 @@ impl StartCommandCreated {
 pub(super) struct StartCommandRecorded {}
 
 impl StartCommandRecorded {
-    pub(super) fn on_timer_fired(self, event: HistoryEvent) -> TimerMachineTransition {
-        TimerMachineTransition::ok(vec![TimerMachineCommand::Complete(event)], Fired::default())
+    pub(super) fn on_timer_fired(
+        self,
+        dat: SharedState,
+        attrs: TimerFiredEventAttributes,
+    ) -> TimerMachineTransition {
+        if dat.attrs.timer_id != attrs.timer_id {
+            TimerMachineTransition::Err(WFMachinesError::MalformedEventDetail(format!(
+                "Timer fired event did not have expected timer id {}!",
+                dat.attrs.timer_id
+            )))
+        } else {
+            TimerMachineTransition::ok(vec![TimerMachineCommand::Complete], Fired::default())
+        }
     }
     pub(super) fn on_cancel(self, dat: SharedState) -> TimerMachineTransition {
         let cmd = Command {
             command_type: CommandType::CancelTimer as i32,
             attributes: Some(
                 CancelTimerCommandAttributes {
-                    timer_id: dat.timer_attributes.timer_id,
+                    timer_id: dat.attrs.timer_id,
                 }
                 .into(),
             ),
@@ -223,8 +219,12 @@ impl WFMachinesAdapter for TimerMachine {
     ) -> Result<Vec<WorkflowTrigger>, WFMachinesError> {
         match my_command {
             // Fire the completion
-            TimerMachineCommand::Complete(_event) => Ok(vec![TimerFiredTaskAttributes {
-                timer_id: self.shared_state.timer_attributes.timer_id.clone(),
+            TimerMachineCommand::Complete => Ok(vec![TimerFiredTaskAttributes {
+                timer_id: self.shared_state.attrs.timer_id.clone(),
+            }
+            .into()]),
+            TimerMachineCommand::Canceled => Ok(vec![TimerCanceledTaskAttributes {
+                timer_id: self.shared_state.attrs.timer_id.clone(),
             }
             .into()]),
             TimerMachineCommand::AddCommand(_) => {
@@ -254,8 +254,7 @@ mod test {
     };
     use futures::{channel::mpsc::Sender, FutureExt, SinkExt};
     use rstest::{fixture, rstest};
-    use std::sync::Arc;
-    use std::{error::Error, time::Duration};
+    use std::{error::Error, sync::Arc, time::Duration};
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     #[fixture]
@@ -281,10 +280,10 @@ mod test {
         */
         let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
             let timer = StartTimerCommandAttributes {
-                timer_id: "Sometimer".to_string(),
+                timer_id: "timer1".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
             };
-            command_sink.timer(timer).await;
+            command_sink.timer(timer, true);
 
             let complete = CompleteWorkflowExecutionCommandAttributes::default();
             command_sink.send(complete.into());
@@ -348,5 +347,42 @@ mod test {
             commands[0].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
+    }
+
+    #[test]
+    fn cancellation() {
+        let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
+            let timer = StartTimerCommandAttributes {
+                timer_id: "timer1".to_string(),
+                start_to_fire_timeout: Some(Duration::from_secs(5).into()),
+            };
+            let cancel_timer = StartTimerCommandAttributes {
+                timer_id: "cancel_timer".to_string(),
+                start_to_fire_timeout: Some(Duration::from_secs(500).into()),
+            };
+            let cancel_this = command_sink.timer(cancel_timer, false);
+            command_sink.timer(timer, true);
+            // cancel_this.cancel();
+
+            let complete = CompleteWorkflowExecutionCommandAttributes::default();
+            command_sink.send(complete.into());
+        });
+
+        let mut t = TestHistoryBuilder::default();
+        let mut state_machines =
+            WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
+
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_workflow_task();
+        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        t.add(
+            EventType::TimerFired,
+            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                started_event_id: timer_started_event_id,
+                timer_id: "timer1".to_string(),
+            }),
+        );
+        t.add_workflow_task_scheduled_and_started();
+        assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
     }
 }
