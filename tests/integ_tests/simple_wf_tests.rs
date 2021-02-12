@@ -107,7 +107,7 @@ fn parallel_timer_workflow() {
     ))
     .unwrap();
     // Wait long enough for both timers to complete
-    std::thread::sleep(Duration::from_millis(800));
+    std::thread::sleep(Duration::from_millis(1000));
     let task = core.poll_task(task_q).unwrap();
     assert_matches!(
         task.get_wf_jobs().as_slice(),
