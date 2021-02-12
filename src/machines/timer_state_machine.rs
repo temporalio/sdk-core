@@ -350,6 +350,38 @@ mod test {
     }
 
     #[test]
+    fn mismatched_timer_ids_errors() {
+        let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
+            let timer = StartTimerCommandAttributes {
+                timer_id: "realid".to_string(),
+                start_to_fire_timeout: Some(Duration::from_secs(5).into()),
+            };
+            command_sink.timer(timer, true);
+        });
+
+        let mut t = TestHistoryBuilder::default();
+        let mut state_machines =
+            WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
+
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_workflow_task();
+        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        t.add(
+            EventType::TimerFired,
+            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                started_event_id: timer_started_event_id,
+                timer_id: "badid".to_string(),
+            }),
+        );
+        t.add_workflow_task_scheduled_and_started();
+        assert!(t
+            .handle_workflow_task_take_cmds(&mut state_machines, None)
+            .unwrap_err()
+            .to_string()
+            .contains("Timer fired event did not have expected timer id realid!"))
+    }
+
+    #[test]
     fn cancellation() {
         let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
             let timer = StartTimerCommandAttributes {

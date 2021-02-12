@@ -24,7 +24,7 @@ pub enum HistoryInfoError {
     FailedOrTimeout(HistoryEvent),
     #[error("Last item in history wasn't WorkflowTaskStarted")]
     HistoryEndsUnexpectedly,
-    #[error("Underlying error in workflow machine")]
+    #[error("Underlying error in workflow machine: {0:?}")]
     UnderlyingMachineError(#[from] WFMachinesError),
 }
 
