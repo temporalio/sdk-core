@@ -3,6 +3,8 @@ name = "rustfsm"
 version = "0.1.0"
 authors = ["Spencer Judge <sjudge@hey.com>"]
 edition = "2018"
+license = "MIT"
+license-file = "LICENSE.txt"
 
 [dependencies]
 thiserror = "1.0"
