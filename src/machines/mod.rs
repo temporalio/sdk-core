@@ -155,6 +155,7 @@ where
     SM: StateMachine + CheckStateMachineInFinal + WFMachinesAdapter + Clone + Send,
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
+    WFMachinesError: From<<<SM as StateMachine>::Event as TryFrom<HistoryEvent>>::Error>,
     <SM as StateMachine>::Command: Debug,
     <SM as StateMachine>::Error: Into<WFMachinesError> + 'static + Send + Sync,
 {
@@ -193,23 +194,21 @@ where
             %event,
             machine_name = %self.name()
         );
-        if let Ok(converted_event) = event.clone().try_into() {
-            match self.on_event_mut(converted_event) {
-                Ok(c) => {
-                    event!(Level::DEBUG, msg = "Machine produced commands", ?c);
-                    let mut triggers = vec![];
-                    for cmd in c {
-                        triggers.extend(self.adapt_response(event, has_next_event, cmd)?);
-                    }
-                    Ok(triggers)
+        let converted_event = event.clone().try_into()?;
+        match self.on_event_mut(converted_event) {
+            Ok(c) => {
+                event!(Level::DEBUG, msg = "Machine produced commands", ?c);
+                let mut triggers = vec![];
+                for cmd in c {
+                    triggers.extend(self.adapt_response(event, has_next_event, cmd)?);
                 }
-                Err(MachineError::InvalidTransition) => {
-                    Err(WFMachinesError::UnexpectedEvent(event.clone()))
-                }
-                Err(MachineError::Underlying(e)) => Err(e.into()),
+                Ok(triggers)
             }
-        } else {
-            Err(WFMachinesError::UnexpectedEvent(event.clone()))
+            Err(MachineError::InvalidTransition) => Err(WFMachinesError::UnexpectedEvent(
+                event.clone(),
+                "The handling machine says the transition is invalid",
+            )),
+            Err(MachineError::Underlying(e)) => Err(e.into()),
         }
     }
 }

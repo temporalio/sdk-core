@@ -63,8 +63,12 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
                 task_started_event_id,
                 time,
             } => {
-                let event_type = EventType::from_i32(event.event_type)
-                    .ok_or_else(|| WFMachinesError::UnexpectedEvent(event.clone()))?;
+                let event_type = EventType::from_i32(event.event_type).ok_or_else(|| {
+                    WFMachinesError::UnexpectedEvent(
+                        event.clone(),
+                        "WfTask machine could not interpret event type",
+                    )
+                })?;
                 let cur_event_past_or_at_start = event.event_id >= task_started_event_id;
                 if event_type == EventType::WorkflowTaskStarted
                     && (!cur_event_past_or_at_start || has_next_event)
@@ -100,7 +104,12 @@ impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
             Some(EventType::WorkflowTaskTimedOut) => Self::WorkflowTaskTimedOut,
             Some(EventType::WorkflowTaskCompleted) => Self::WorkflowTaskCompleted,
             Some(EventType::WorkflowTaskFailed) => Self::WorkflowTaskFailed,
-            _ => return Err(WFMachinesError::UnexpectedEvent(e)),
+            _ => {
+                return Err(WFMachinesError::UnexpectedEvent(
+                    e,
+                    "Event does not apply to a wf task machine",
+                ))
+            }
         })
     }
 }

@@ -88,7 +88,7 @@ impl TimerMachine {
 }
 
 impl TryFrom<HistoryEvent> for TimerMachineEvents {
-    type Error = ();
+    type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
         Ok(match EventType::from_i32(e.event_type) {
@@ -100,10 +100,18 @@ impl TryFrom<HistoryEvent> for TimerMachineEvents {
                 {
                     Self::TimerFired(attrs)
                 } else {
-                    return Err(());
+                    return Err(WFMachinesError::MalformedEvent(
+                        e,
+                        "Timer fired attribs were unset".to_string(),
+                    ));
                 }
             }
-            _ => return Err(()),
+            _ => {
+                return Err(WFMachinesError::UnexpectedEvent(
+                    e,
+                    "Timer machine does not handle this event",
+                ))
+            }
         })
     }
 }

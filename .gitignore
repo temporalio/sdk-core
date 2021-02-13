@@ -10,3 +10,4 @@ Cargo.lock
 # Ignore generated protobuf files
 src/protos/*.rs
 !src/protos/mod.rs
+/tarpaulin-report.html

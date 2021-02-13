@@ -67,12 +67,17 @@ impl CompleteWorkflowMachine {
 }
 
 impl TryFrom<HistoryEvent> for CompleteWorkflowMachineEvents {
-    type Error = ();
+    type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
         Ok(match EventType::from_i32(e.event_type) {
             Some(EventType::WorkflowExecutionCompleted) => Self::WorkflowExecutionCompleted,
-            _ => return Err(()),
+            _ => {
+                return Err(WFMachinesError::UnexpectedEvent(
+                    e,
+                    "Complete workflow machine does not handle this event",
+                ))
+            }
         })
     }
 }

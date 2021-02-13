@@ -80,8 +80,8 @@ pub(super) enum WorkflowTrigger {
 
 #[derive(thiserror::Error, Debug)]
 pub enum WFMachinesError {
-    #[error("Event {0:?} was not expected")]
-    UnexpectedEvent(HistoryEvent),
+    #[error("Event {0:?} was not expected: {1}")]
+    UnexpectedEvent(HistoryEvent, &'static str),
     #[error("Event {0:?} was malformed: {1}")]
     MalformedEvent(HistoryEvent, String),
     // Expected to be transformed into a `MalformedEvent` with the full event by workflow machines,
@@ -147,8 +147,9 @@ impl WorkflowMachines {
             self.handle_command_event(event)?;
             return Ok(());
         }
-        let event_type = EventType::from_i32(event.event_type)
-            .ok_or_else(|| WFMachinesError::UnexpectedEvent(event.clone()))?;
+        let event_type = EventType::from_i32(event.event_type).ok_or_else(|| {
+            WFMachinesError::UnexpectedEvent(event.clone(), "The event type is unknown")
+        })?;
 
         if self.replaying
             && self.current_started_event_id >= self.previous_started_event_id
@@ -325,7 +326,12 @@ impl WorkflowMachines {
             Some(EventType::WorkflowExecutionCancelRequested) => {
                 // TODO: Cancel callbacks
             }
-            _ => return Err(WFMachinesError::UnexpectedEvent(event.clone())),
+            _ => {
+                return Err(WFMachinesError::UnexpectedEvent(
+                    event.clone(),
+                    "The event is non a non-stateful event, but we tried to handle it as one",
+                ))
+            }
         }
         Ok(())
     }
