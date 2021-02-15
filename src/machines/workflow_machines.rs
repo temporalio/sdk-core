@@ -76,6 +76,9 @@ pub(super) enum WorkflowTrigger {
         task_started_event_id: i64,
         time: SystemTime,
     },
+    UpdateRunIdOnWorkflowReset {
+        run_id: String,
+    },
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -409,6 +412,9 @@ impl WorkflowMachines {
                     time,
                 } => {
                     self.task_started(task_started_event_id, time);
+                }
+                WorkflowTrigger::UpdateRunIdOnWorkflowReset { run_id: new_run_id } => {
+                    self.run_id = new_run_id;
                 }
             }
         }

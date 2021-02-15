@@ -14,6 +14,7 @@ use crate::{
 use rustfsm::{fsm, TransitionResult};
 use std::{convert::TryFrom, time::SystemTime};
 use tracing::Level;
+use crate::protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes;
 
 fsm! {
     pub(super) name WorkflowTaskMachine;
@@ -27,7 +28,7 @@ fsm! {
     Scheduled --(WorkflowTaskTimedOut) --> TimedOut;
 
     Started --(WorkflowTaskCompleted, on_workflow_task_completed) --> Completed;
-    Started --(WorkflowTaskFailed, on_workflow_task_failed) --> Failed;
+    Started --(WorkflowTaskFailed(WFTFailedDat), on_workflow_task_failed) --> Failed;
     Started --(WorkflowTaskTimedOut) --> TimedOut;
 }
 
@@ -48,6 +49,9 @@ pub(super) enum WFTaskMachineCommand {
     WFTaskStartedTrigger {
         task_started_event_id: i64,
         time: SystemTime,
+    },
+    RunIdOnWorkflowResetUpdate {
+        run_id: String,
     },
 }
 
@@ -78,6 +82,9 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
                     time,
                 }])
             }
+            WFTaskMachineCommand::RunIdOnWorkflowResetUpdate { run_id } => {
+                Ok(vec![WorkflowTrigger::UpdateRunIdOnWorkflowReset { run_id }])
+            }
         }
     }
 }
@@ -99,7 +106,23 @@ impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
             }),
             Some(EventType::WorkflowTaskTimedOut) => Self::WorkflowTaskTimedOut,
             Some(EventType::WorkflowTaskCompleted) => Self::WorkflowTaskCompleted,
-            Some(EventType::WorkflowTaskFailed) => Self::WorkflowTaskFailed,
+            Some(EventType::WorkflowTaskFailed) => Self::WorkflowTaskFailed(WFTFailedDat {
+                // TODO(maxim): How to avoid clone of attributes. We need to borrow e for the
+                // MalformedEvent down there. But forcing clone just for that doesn't make sense.
+                new_run_id: e.attributes.clone().ok_or_else(|| {
+                    WFMachinesError::MalformedEvent(
+                        e,
+                        "Workflow task failed missing attributes".to_string(),
+                    )
+                }).map(|attr| match attr {
+                    WorkflowTaskFailedEventAttributes(a) =>
+                        match a.cause {
+                            workflow_task_failed_cause_reset_workflow => Some(a.new_run_id),
+                            _ => None
+                        }
+                    _ => None
+                })?
+            }),
             _ => return Err(WFMachinesError::UnexpectedEvent(e)),
         })
     }
@@ -134,6 +157,11 @@ pub(super) struct WFTStartedDat {
     current_time_millis: SystemTime,
     started_event_id: i64,
 }
+
+pub(super) struct WFTFailedDat {
+    new_run_id: Option<String>,
+}
+
 impl Scheduled {
     pub(super) fn on_workflow_task_started(
         self,
@@ -179,8 +207,12 @@ impl Started {
             },
         ])
     }
-    pub(super) fn on_workflow_task_failed(self) -> WorkflowTaskMachineTransition {
-        unimplemented!()
+    pub(super) fn on_workflow_task_failed(self, data: WFTFailedDat) -> WorkflowTaskMachineTransition {
+        let commands = match data.new_run_id {
+            Some(run_id) => vec![WFTaskMachineCommand::RunIdOnWorkflowResetUpdate { run_id }],
+            None => vec![],
+        };
+        WorkflowTaskMachineTransition::commands::<_, Completed>(commands)
     }
 }
 
