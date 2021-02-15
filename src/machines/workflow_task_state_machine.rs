@@ -7,7 +7,7 @@ use crate::{
         WFMachinesAdapter,
     },
     protos::temporal::api::{
-        enums::v1::{CommandType, EventType},
+        enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
         history::v1::HistoryEvent,
     },
 };
@@ -112,15 +112,19 @@ impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
                 new_run_id: e.attributes.clone().ok_or_else(|| {
                     WFMachinesError::MalformedEvent(
                         e,
-                        "Workflow task failed missing attributes".to_string(),
+                        "Workflow task failed is missing attributes".to_string(),
                     )
-                }).map(|attr| match attr {
-                    WorkflowTaskFailedEventAttributes(a) =>
-                        match a.cause {
-                            workflow_task_failed_cause_reset_workflow => Some(a.new_run_id),
-                            _ => None
+                }).map(|attr| {
+                    match attr {
+                        WorkflowTaskFailedEventAttributes(a) => {
+                            let cause = WorkflowTaskFailedCause::from_i32(a.cause);
+                            match cause {
+                                Some(WorkflowTaskFailedCause::ResetWorkflow) => Some(a.new_run_id),
+                                _ => None
+                            }
                         }
-                    _ => None
+                        _ => None
+                    }
                 })?
             }),
             _ => return Err(WFMachinesError::UnexpectedEvent(e)),
@@ -218,11 +222,13 @@ impl Started {
 
 #[derive(Default, Clone)]
 pub(super) struct TimedOut {}
+
 impl From<Scheduled> for TimedOut {
     fn from(_: Scheduled) -> Self {
         Self::default()
     }
 }
+
 impl From<Started> for TimedOut {
     fn from(_: Started) -> Self {
         Self::default()
