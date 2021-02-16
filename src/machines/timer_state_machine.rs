@@ -237,7 +237,6 @@ impl WFMachinesAdapter for TimerMachine {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
     use crate::{
         machines::{
             complete_workflow_state_machine::complete_workflow,
@@ -247,6 +246,7 @@ mod test {
         },
         protos::temporal::api::{
             command::v1::CompleteWorkflowExecutionCommandAttributes,
+            enums::v1::WorkflowTaskFailedCause,
             history::v1::{
                 TimerFiredEventAttributes, WorkflowExecutionCanceledEventAttributes,
                 WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
@@ -322,6 +322,7 @@ mod test {
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
             .unwrap();
+        dbg!(state_machines.get_wf_activation());
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -407,6 +408,7 @@ mod test {
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
             .unwrap();
+
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -427,11 +429,14 @@ mod test {
             .unwrap();
         dbg!(&commands);
         dbg!(state_machines.get_wf_activation());
+
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
             .unwrap();
+        dbg!(state_machines.get_wf_activation());
+
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
