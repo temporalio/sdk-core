@@ -1,6 +1,7 @@
 #![allow(clippy::enum_variant_names)]
 
 use crate::machines::workflow_machines::WorkflowTrigger;
+use crate::protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes;
 use crate::{
     machines::{
         workflow_machines::{WFMachinesError, WorkflowMachines},
@@ -14,7 +15,6 @@ use crate::{
 use rustfsm::{fsm, TransitionResult};
 use std::{convert::TryFrom, time::SystemTime};
 use tracing::Level;
-use crate::protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes;
 
 fsm! {
     pub(super) name WorkflowTaskMachine;
@@ -109,23 +109,25 @@ impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
             Some(EventType::WorkflowTaskFailed) => Self::WorkflowTaskFailed(WFTFailedDat {
                 // TODO(maxim): How to avoid clone of attributes. We need to borrow e for the
                 // MalformedEvent down there. But forcing clone just for that doesn't make sense.
-                new_run_id: e.attributes.clone().ok_or_else(|| {
-                    WFMachinesError::MalformedEvent(
-                        e,
-                        "Workflow task failed is missing attributes".to_string(),
-                    )
-                }).map(|attr| {
-                    match attr {
+                new_run_id: e
+                    .attributes
+                    .clone()
+                    .ok_or_else(|| {
+                        WFMachinesError::MalformedEvent(
+                            e,
+                            "Workflow task failed is missing attributes".to_string(),
+                        )
+                    })
+                    .map(|attr| match attr {
                         WorkflowTaskFailedEventAttributes(a) => {
                             let cause = WorkflowTaskFailedCause::from_i32(a.cause);
                             match cause {
                                 Some(WorkflowTaskFailedCause::ResetWorkflow) => Some(a.new_run_id),
-                                _ => None
+                                _ => None,
                             }
                         }
-                        _ => None
-                    }
-                })?
+                        _ => None,
+                    })?,
             }),
             _ => return Err(WFMachinesError::UnexpectedEvent(e)),
         })
@@ -211,7 +213,10 @@ impl Started {
             },
         ])
     }
-    pub(super) fn on_workflow_task_failed(self, data: WFTFailedDat) -> WorkflowTaskMachineTransition {
+    pub(super) fn on_workflow_task_failed(
+        self,
+        data: WFTFailedDat,
+    ) -> WorkflowTaskMachineTransition {
         let commands = match data.new_run_id {
             Some(run_id) => vec![WFTaskMachineCommand::RunIdOnWorkflowResetUpdate { run_id }],
             None => vec![],

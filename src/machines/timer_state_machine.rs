@@ -227,9 +227,7 @@ impl WFMachinesAdapter for TimerMachine {
                 timer_id: self.shared_state.timer_attributes.timer_id.clone(),
             }
             .into()]),
-            TimerMachineCommand::AddCommand(_) => {
-                unreachable!()
-            }
+            TimerMachineCommand::AddCommand(_) => unreachable!(),
         }
     }
 }

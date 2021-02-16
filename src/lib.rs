@@ -200,9 +200,7 @@ where
             TaskCompletion {
                 variant: Some(task_completion::Variant::Activity(_)),
                 ..
-            } => {
-                unimplemented!()
-            }
+            } => unimplemented!(),
             _ => Err(CoreError::MalformedCompletion(req)),
         }
     }
