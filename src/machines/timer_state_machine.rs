@@ -149,6 +149,7 @@ impl Created {
 
 #[derive(Default, Clone)]
 pub(super) struct CancelTimerCommandCreated {}
+
 impl CancelTimerCommandCreated {
     pub(super) fn on_command_cancel_timer(self, dat: SharedState) -> TimerMachineTransition {
         TimerMachineTransition::ok(
@@ -163,6 +164,7 @@ pub(super) struct CancelTimerCommandSent {}
 
 #[derive(Default, Clone)]
 pub(super) struct Canceled {}
+
 impl From<CancelTimerCommandSent> for Canceled {
     fn from(_: CancelTimerCommandSent) -> Self {
         Self::default()
@@ -235,6 +237,7 @@ impl WFMachinesAdapter for TimerMachine {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
     use crate::{
         machines::{
             complete_workflow_state_machine::complete_workflow,
@@ -269,13 +272,8 @@ mod test {
             8: EVENT_TYPE_WORKFLOW_TASK_STARTED
 
             We have two versions of this test, one which processes the history in two calls,
-            and one which replays all of it in one go. The former will run the event loop three
-            times total, and the latter two.
-
-            There are two workflow tasks, so it seems we should only loop two times, but the reason
-            for the extra iteration in the incremental version is that we need to "wait" for the
-            timer to fire. In the all-in-one-go test, the timer is created and resolved in the same
-            task, hence no extra loop.
+            and one which replays all of it in one go. Both versions must produce the same number
+            of activations.
         */
         let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
             let timer = StartTimerCommandAttributes {
@@ -324,7 +322,6 @@ mod test {
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
             .unwrap();
-        dbg!(state_machines.get_wf_activation());
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -346,5 +343,100 @@ mod test {
             commands[0].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
+    }
+
+    #[fixture]
+    fn workflow_reset_hist() -> (TestHistoryBuilder, WorkflowMachines) {
+        /*
+            1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+            2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+            3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+            4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+            5: EVENT_TYPE_TIMER_STARTED
+            6: EVENT_TYPE_TIMER_FIRED
+            7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+            8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+            9: EVENT_TYPE_WORKFLOW_TASK_FAILED
+            10: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+            11: EVENT_TYPE_WORKFLOW_TASK_STARTED
+
+            We have two versions of this test, one which processes the history in two calls,
+            and one which replays all of it in one go. Both versions must produce the same number
+            of activations.
+        */
+        let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
+            let timer = StartTimerCommandAttributes {
+                timer_id: "Sometimer".to_string(),
+                start_to_fire_timeout: Some(Duration::from_secs(5).into()),
+            };
+            command_sink.timer(timer).await;
+
+            let complete = CompleteWorkflowExecutionCommandAttributes::default();
+            command_sink.send(complete.into());
+        });
+
+        let mut t = TestHistoryBuilder::default();
+        let mut state_machines =
+            WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
+
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_workflow_task();
+        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        t.add(
+            EventType::TimerFired,
+            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                started_event_id: timer_started_event_id,
+                timer_id: "timer1".to_string(),
+            }),
+        );
+        t.add_workflow_task_scheduled_and_started();
+        t.add_workflow_task_failed(WorkflowTaskFailedCause::ResetWorkflow, "runId2");
+
+        t.add_workflow_task_scheduled_and_started();
+
+        assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
+        (t, state_machines)
+    }
+
+    #[rstest]
+    fn test_reset_workflow_path_full(workflow_reset_hist: (TestHistoryBuilder, WorkflowMachines)) {
+        let s = span!(Level::DEBUG, "Test start", t = "full");
+        let _enter = s.enter();
+
+        let (t, mut state_machines) = workflow_reset_hist;
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
+            .unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].command_type,
+            CommandType::CompleteWorkflowExecution as i32
+        );
+        assert_eq!("runId2", state_machines.run_id);
+    }
+
+    #[rstest]
+    fn test_reset_workflow_inc(workflow_reset_hist: (TestHistoryBuilder, WorkflowMachines)) {
+        let s = span!(Level::DEBUG, "Test start", t = "inc");
+        let _enter = s.enter();
+
+        let (t, mut state_machines) = workflow_reset_hist;
+
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
+            .unwrap();
+        dbg!(&commands);
+        dbg!(state_machines.get_wf_activation());
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
+            .unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].command_type,
+            CommandType::CompleteWorkflowExecution as i32
+        );
+        assert_eq!("runId2", state_machines.run_id);
     }
 }

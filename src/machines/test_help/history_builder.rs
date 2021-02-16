@@ -1,5 +1,6 @@
 use super::Result;
-use crate::protos::temporal::api::history::v1::History;
+use crate::protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
+use crate::protos::temporal::api::history::v1::{History, WorkflowTaskFailedEventAttributes};
 use crate::{
     machines::{workflow_machines::WorkflowMachines, ProtoCommand},
     protos::temporal::api::{
@@ -86,6 +87,16 @@ impl TestHistoryBuilder {
             ..Default::default()
         };
         self.build_and_push_event(EventType::WorkflowTaskCompleted, attrs.into());
+    }
+
+    pub fn add_workflow_task_failed(&mut self, cause: WorkflowTaskFailedCause, new_run_id: &str) {
+        let attrs = WorkflowTaskFailedEventAttributes {
+            scheduled_event_id: self.workflow_task_scheduled_event_id,
+            cause: cause.into(),
+            new_run_id: new_run_id.into(),
+            ..Default::default()
+        };
+        self.build_and_push_event(EventType::WorkflowTaskFailed, attrs.into());
     }
 
     pub fn as_history(&self) -> History {
