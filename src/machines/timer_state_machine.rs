@@ -3,7 +3,7 @@
 use crate::protos::coresdk::TimerCanceledTaskAttributes;
 use crate::{
     machines::{
-        workflow_machines::{WFMachinesError, WorkflowMachines, WorkflowTrigger},
+        workflow_machines::{MachineResponse, WFMachinesError, WorkflowMachines},
         AddCommand, CancellableCommand, WFCommand, WFMachinesAdapter,
     },
     protos::{
@@ -224,7 +224,7 @@ impl WFMachinesAdapter for TimerMachine {
         _event: &HistoryEvent,
         _has_next_event: bool,
         my_command: TimerMachineCommand,
-    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError> {
+    ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         match my_command {
             // Fire the completion
             TimerMachineCommand::Complete => Ok(vec![TimerFiredTaskAttributes {

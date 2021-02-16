@@ -70,7 +70,7 @@ pub(crate) struct WorkflowMachines {
 /// Returned by [TemporalStateMachine]s when handling events
 #[derive(Debug, derive_more::From)]
 #[must_use]
-pub(super) enum WorkflowTrigger {
+pub(super) enum MachineResponse {
     PushWFJob(#[from(forward)] wf_activation_job::Attributes),
     TriggerWFTaskStarted {
         task_started_event_id: i64,
@@ -416,11 +416,11 @@ impl WorkflowMachines {
         event!(Level::DEBUG, msg = "Machine produced triggers", ?triggers);
         for trigger in triggers {
             match trigger {
-                WorkflowTrigger::PushWFJob(a) => {
+                MachineResponse::PushWFJob(a) => {
                     self.drive_me.on_activation_job(&a);
                     self.outgoing_wf_activation_jobs.push_back(a);
                 }
-                WorkflowTrigger::TriggerWFTaskStarted {
+                MachineResponse::TriggerWFTaskStarted {
                     task_started_event_id,
                     time,
                 } => {

@@ -38,7 +38,7 @@ pub(crate) mod test_help;
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
 use crate::{
-    machines::workflow_machines::WorkflowTrigger,
+    machines::workflow_machines::MachineResponse,
     protos::{
         coresdk::{self, command::Variant, wf_activation_job},
         temporal::api::{
@@ -147,7 +147,7 @@ trait TemporalStateMachine: CheckStateMachineInFinal + Send {
         &mut self,
         event: &HistoryEvent,
         has_next_event: bool,
-    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError>;
+    ) -> Result<Vec<MachineResponse>, WFMachinesError>;
 }
 
 impl<SM> TemporalStateMachine for SM
@@ -187,7 +187,7 @@ where
         &mut self,
         event: &HistoryEvent,
         has_next_event: bool,
-    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError> {
+    ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         event!(
             Level::DEBUG,
             msg = "handling event",
@@ -240,7 +240,7 @@ trait WFMachinesAdapter: StateMachine {
         event: &HistoryEvent,
         has_next_event: bool,
         my_command: Self::Command,
-    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError>;
+    ) -> Result<Vec<MachineResponse>, WFMachinesError>;
 }
 
 /// A command which can be cancelled, associated with the state machine that produced it

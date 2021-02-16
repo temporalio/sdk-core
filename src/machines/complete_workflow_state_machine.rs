@@ -1,4 +1,4 @@
-use crate::machines::workflow_machines::WorkflowTrigger;
+use crate::machines::workflow_machines::MachineResponse;
 use crate::{
     machines::{
         workflow_machines::WorkflowMachines, AddCommand, CancellableCommand, WFCommand,
@@ -132,7 +132,7 @@ impl WFMachinesAdapter for CompleteWorkflowMachine {
         _event: &HistoryEvent,
         _has_next_event: bool,
         _my_command: CompleteWFCommand,
-    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError> {
+    ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(vec![])
     }
 }

@@ -1,6 +1,6 @@
 #![allow(clippy::enum_variant_names)]
 
-use crate::machines::workflow_machines::WorkflowTrigger;
+use crate::machines::workflow_machines::MachineResponse;
 use crate::{
     machines::{
         workflow_machines::{WFMachinesError, WorkflowMachines},
@@ -57,7 +57,7 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
         event: &HistoryEvent,
         has_next_event: bool,
         my_command: WFTaskMachineCommand,
-    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError> {
+    ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         match my_command {
             WFTaskMachineCommand::WFTaskStartedTrigger {
                 task_started_event_id,
@@ -77,7 +77,7 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
                     // want to iterate.
                     return Ok(vec![]);
                 }
-                Ok(vec![WorkflowTrigger::TriggerWFTaskStarted {
+                Ok(vec![MachineResponse::TriggerWFTaskStarted {
                     task_started_event_id,
                     time,
                 }])
