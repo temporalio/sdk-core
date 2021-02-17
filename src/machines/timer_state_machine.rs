@@ -287,8 +287,11 @@ mod test {
         });
 
         let mut t = TestHistoryBuilder::default();
-        let mut state_machines =
-            WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
+        let mut state_machines = WorkflowMachines::new(
+            "wfid".to_string(),
+            "54619485-18AC-4970-9BF2-D24F875F7816".to_string(),
+            Box::new(twd),
+        );
 
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_workflow_task();
@@ -346,6 +349,8 @@ mod test {
         );
     }
 
+    const NEW_RUN_ID: &'static str = "86E39A5F-AE31-4626-BDFE-398EE072D156";
+
     #[fixture]
     fn workflow_reset_hist() -> (TestHistoryBuilder, WorkflowMachines) {
         /*
@@ -377,8 +382,11 @@ mod test {
         });
 
         let mut t = TestHistoryBuilder::default();
-        let mut state_machines =
-            WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
+        let mut state_machines = WorkflowMachines::new(
+            "wfid".to_string(),
+            "54619485-18AC-4970-9BF2-D24F875F7816".to_string(),
+            Box::new(twd),
+        );
 
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_workflow_task();
@@ -391,7 +399,7 @@ mod test {
             }),
         );
         t.add_workflow_task_scheduled_and_started();
-        t.add_workflow_task_failed(WorkflowTaskFailedCause::ResetWorkflow, "runId2");
+        t.add_workflow_task_failed(WorkflowTaskFailedCause::ResetWorkflow, NEW_RUN_ID);
 
         t.add_workflow_task_scheduled_and_started();
 
@@ -405,6 +413,8 @@ mod test {
         let _enter = s.enter();
 
         let (t, mut state_machines) = workflow_reset_hist;
+        let initial_seed = state_machines.randomness_seed;
+        assert!(initial_seed > 0);
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
             .unwrap();
@@ -414,7 +424,7 @@ mod test {
             commands[0].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
-        assert_eq!("runId2", state_machines.run_id);
+        assert_ne!(initial_seed, state_machines.randomness_seed);
     }
 
     #[rstest]
@@ -423,7 +433,7 @@ mod test {
         let _enter = s.enter();
 
         let (t, mut state_machines) = workflow_reset_hist;
-
+        let initial_seed = state_machines.randomness_seed;
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
             .unwrap();
@@ -442,6 +452,6 @@ mod test {
             commands[0].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
-        assert_eq!("runId2", state_machines.run_id);
+        assert_ne!(initial_seed, state_machines.randomness_seed);
     }
 }

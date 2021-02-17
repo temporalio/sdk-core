@@ -343,7 +343,7 @@ mod test {
     #[test]
     fn timer_test_across_wf_bridge() {
         let wfid = "fake_wf_id";
-        let run_id = "fake_run_id";
+        let run_id = "58CE65AC-1C8C-413C-B525-6D3C5EAD62D7";
         let timer_id = "fake_timer".to_string();
         let task_queue = "test-task-queue";
 
@@ -411,7 +411,7 @@ mod test {
     #[test]
     fn parallel_timer_test_across_wf_bridge() {
         let wfid = "fake_wf_id";
-        let run_id = "fake_run_id";
+        let run_id = "9895E53E-D0A2-4E8A-A478-E6221ED2ACEB";
         let timer_1_id = "timer1".to_string();
         let timer_2_id = "timer2".to_string();
         let task_queue = "test-task-queue";
@@ -512,7 +512,7 @@ mod test {
         let _enter = s.enter();
 
         let wfid = "fake_wf_id";
-        let run_id = "fake_run_id";
+        let run_id = "CA733AB0-8133-45F6-A4C1-8D375F61AE8B";
         let timer_1_id = "timer1".to_string();
         let task_queue = "test-task-queue";
 

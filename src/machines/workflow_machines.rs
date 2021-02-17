@@ -26,6 +26,7 @@ use std::{
     time::SystemTime,
 };
 use tracing::Level;
+use uuid::Uuid;
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
@@ -44,10 +45,12 @@ pub(crate) struct WorkflowMachines {
     replaying: bool,
     /// Workflow identifier
     pub workflow_id: String,
-    /// Identifies the current run and is used as a seed for faux-randomness.
+    /// Identifies the current run
     pub run_id: String,
     /// The current workflow time if it has been established
     current_wf_time: Option<SystemTime>,
+    /// Seed for faux-randomness
+    pub randomness_seed: i64,
 
     /// A mapping for accessing all the machines, where the key is the id of the initiating event
     /// for that machine.
@@ -104,6 +107,7 @@ impl WorkflowMachines {
     ) -> Self {
         Self {
             workflow_id,
+            randomness_seed: uuid_to_randomness_seed(&run_id),
             run_id,
             drive_me: driven_wf,
             // In an ideal world one could say ..Default::default() here and it'd still work.
@@ -414,7 +418,7 @@ impl WorkflowMachines {
                     self.task_started(task_started_event_id, time);
                 }
                 WorkflowTrigger::UpdateRunIdOnWorkflowReset { run_id: new_run_id } => {
-                    self.run_id = new_run_id;
+                    self.randomness_seed = uuid_to_randomness_seed(&new_run_id);
                 }
             }
         }
@@ -446,4 +450,14 @@ impl WorkflowMachines {
             self.commands.push_back(c);
         }
     }
+}
+
+fn uuid_to_randomness_seed(run_id: &str) -> i64 {
+    let uuid = Uuid::parse_str(run_id).unwrap();
+    let fields = uuid.as_fields();
+    let b0 = fields.0 as i64;
+    let b32 = fields.1 as i64 >> 32;
+    let b48 = fields.2 as i64 >> 48;
+    let seed: i64 = b0 + b32 + b48;
+    seed
 }

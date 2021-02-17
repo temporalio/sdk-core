@@ -13,8 +13,10 @@ use crate::{
     },
 };
 use rustfsm::{fsm, TransitionResult};
+use std::panic::resume_unwind;
 use std::{convert::TryFrom, time::SystemTime};
 use tracing::Level;
+use uuid::Uuid;
 
 fsm! {
     pub(super) name WorkflowTaskMachine;
