@@ -6,7 +6,10 @@ use crate::{
     },
     protos::coresdk::WfActivationJob,
     protos::{
-        coresdk::{wf_activation_job, StartWorkflowTaskAttributes, WfActivation},
+        coresdk::{
+            wf_activation_job, wf_activation_job::Attributes::RandomSeedUpdated,
+            RandomSeedUpdatedAttributes, StartWorkflowTaskAttributes, WfActivation,
+        },
         temporal::api::{
             command::v1::StartTimerCommandAttributes,
             common::v1::WorkflowExecution,
@@ -49,8 +52,6 @@ pub(crate) struct WorkflowMachines {
     pub run_id: String,
     /// The current workflow time if it has been established
     current_wf_time: Option<SystemTime>,
-    /// Seed for faux-randomness
-    pub randomness_seed: i64,
 
     /// A mapping for accessing all the machines, where the key is the id of the initiating event
     /// for that machine.
@@ -107,7 +108,6 @@ impl WorkflowMachines {
     ) -> Self {
         Self {
             workflow_id,
-            randomness_seed: uuid_to_randomness_seed(&run_id),
             run_id,
             drive_me: driven_wf,
             // In an ideal world one could say ..Default::default() here and it'd still work.
@@ -299,6 +299,9 @@ impl WorkflowMachines {
                                 .unwrap_or_default(),
                             workflow_id: self.workflow_id.clone(),
                             arguments: attrs.input.clone(),
+                            randomness_seed: uuid_to_randomness_seed(
+                                &attrs.original_execution_run_id,
+                            ),
                         }
                         .into(),
                     );
@@ -418,7 +421,13 @@ impl WorkflowMachines {
                     self.task_started(task_started_event_id, time);
                 }
                 WorkflowTrigger::UpdateRunIdOnWorkflowReset { run_id: new_run_id } => {
-                    self.randomness_seed = uuid_to_randomness_seed(&new_run_id);
+                    self.outgoing_wf_activation_jobs.push_back(
+                        wf_activation_job::Attributes::RandomSeedUpdated(
+                            RandomSeedUpdatedAttributes {
+                                randomness_seed: uuid_to_randomness_seed(&new_run_id),
+                            },
+                        ),
+                    );
                 }
             }
         }

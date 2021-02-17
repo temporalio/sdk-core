@@ -413,8 +413,6 @@ mod test {
         let _enter = s.enter();
 
         let (t, mut state_machines) = workflow_reset_hist;
-        let initial_seed = state_machines.randomness_seed;
-        assert!(initial_seed > 0);
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
             .unwrap();
@@ -424,7 +422,6 @@ mod test {
             commands[0].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
-        assert_ne!(initial_seed, state_machines.randomness_seed);
     }
 
     #[rstest]
@@ -433,7 +430,6 @@ mod test {
         let _enter = s.enter();
 
         let (t, mut state_machines) = workflow_reset_hist;
-        let initial_seed = state_machines.randomness_seed;
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
             .unwrap();
@@ -452,6 +448,5 @@ mod test {
             commands[0].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
-        assert_ne!(initial_seed, state_machines.randomness_seed);
     }
 }

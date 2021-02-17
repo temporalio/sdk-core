@@ -15,6 +15,7 @@ use crate::{
 };
 use anyhow::bail;
 use std::time::SystemTime;
+use uuid::Uuid;
 
 #[derive(Default, Debug)]
 pub struct TestHistoryBuilder {
@@ -153,9 +154,11 @@ impl TestHistoryBuilder {
 
 fn default_attribs(et: EventType) -> Result<Attributes> {
     Ok(match et {
-        EventType::WorkflowExecutionStarted => {
-            WorkflowExecutionStartedEventAttributes::default().into()
+        EventType::WorkflowExecutionStarted => WorkflowExecutionStartedEventAttributes {
+            original_execution_run_id: Uuid::new_v4().to_string(),
+            ..Default::default()
         }
+        .into(),
         EventType::WorkflowTaskScheduled => WorkflowTaskScheduledEventAttributes::default().into(),
         EventType::TimerStarted => TimerStartedEventAttributes::default().into(),
         _ => bail!("Don't know how to construct default attrs for {:?}", et),
