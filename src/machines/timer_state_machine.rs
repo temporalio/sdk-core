@@ -406,47 +406,4 @@ mod test {
         assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
         (t, state_machines)
     }
-
-    #[rstest]
-    fn test_reset_workflow_path_full(workflow_reset_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let s = span!(Level::DEBUG, "Test start", t = "full");
-        let _enter = s.enter();
-
-        let (t, mut state_machines) = workflow_reset_hist;
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
-            .unwrap();
-
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::CompleteWorkflowExecution as i32
-        );
-    }
-
-    #[rstest]
-    fn test_reset_workflow_inc(workflow_reset_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let s = span!(Level::DEBUG, "Test start", t = "inc");
-        let _enter = s.enter();
-
-        let (t, mut state_machines) = workflow_reset_hist;
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
-            .unwrap();
-        dbg!(&commands);
-        dbg!(state_machines.get_wf_activation());
-
-        assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
-            .unwrap();
-        dbg!(state_machines.get_wf_activation());
-
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::CompleteWorkflowExecution as i32
-        );
-    }
 }
