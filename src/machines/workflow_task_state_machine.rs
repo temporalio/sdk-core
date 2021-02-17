@@ -106,29 +106,31 @@ impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
             }),
             Some(EventType::WorkflowTaskTimedOut) => Self::WorkflowTaskTimedOut,
             Some(EventType::WorkflowTaskCompleted) => Self::WorkflowTaskCompleted,
-            Some(EventType::WorkflowTaskFailed) => Self::WorkflowTaskFailed(WFTFailedDat {
-                // TODO(maxim): How to avoid clone of attributes. We need to borrow e for the
-                // MalformedEvent down there. But forcing clone just for that doesn't make sense.
-                new_run_id: e
-                    .attributes
-                    .clone()
-                    .ok_or_else(|| {
-                        WFMachinesError::MalformedEvent(
-                            e,
-                            "Workflow task failed is missing attributes".to_string(),
-                        )
-                    })
-                    .map(|attr| match attr {
+            Some(EventType::WorkflowTaskFailed) => {
+                let attributes = e.attributes.as_ref().ok_or_else(|| {
+                    WFMachinesError::MalformedEvent(
+                        e.clone(),
+                        "Workflow task failed is missing attributes".to_string(),
+                    )
+                })?;
+
+                Self::WorkflowTaskFailed(WFTFailedDat {
+                    // TODO(maxim): How to avoid clone of attributes. We need to borrow e for the
+                    // MalformedEvent down there. But forcing clone just for that doesn't make sense.
+                    new_run_id: match attributes {
                         WorkflowTaskFailedEventAttributes(a) => {
                             let cause = WorkflowTaskFailedCause::from_i32(a.cause);
                             match cause {
-                                Some(WorkflowTaskFailedCause::ResetWorkflow) => Some(a.new_run_id),
+                                Some(WorkflowTaskFailedCause::ResetWorkflow) => {
+                                    Some(a.new_run_id.clone())
+                                }
                                 _ => None,
                             }
                         }
                         _ => None,
-                    })?,
-            }),
+                    },
+                })
+            }
             _ => return Err(WFMachinesError::UnexpectedEvent(e)),
         })
     }
