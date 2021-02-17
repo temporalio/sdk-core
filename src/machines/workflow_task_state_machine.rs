@@ -107,27 +107,27 @@ impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
             Some(EventType::WorkflowTaskTimedOut) => Self::WorkflowTaskTimedOut,
             Some(EventType::WorkflowTaskCompleted) => Self::WorkflowTaskCompleted,
             Some(EventType::WorkflowTaskFailed) => {
-                let attributes = e.attributes.as_ref().ok_or_else(|| {
-                    WFMachinesError::MalformedEvent(
-                        e.clone(),
-                        "Workflow task failed is missing attributes".to_string(),
-                    )
-                })?;
-
-                Self::WorkflowTaskFailed(WFTFailedDat {
-                    new_run_id: match attributes {
-                        WorkflowTaskFailedEventAttributes(a) => {
-                            let cause = WorkflowTaskFailedCause::from_i32(a.cause);
-                            match cause {
-                                Some(WorkflowTaskFailedCause::ResetWorkflow) => {
-                                    Some(a.new_run_id.clone())
+                if let Some(attributes) = e.attributes {
+                    Self::WorkflowTaskFailed(WFTFailedDat {
+                        new_run_id: match attributes {
+                            WorkflowTaskFailedEventAttributes(a) => {
+                                let cause = WorkflowTaskFailedCause::from_i32(a.cause);
+                                match cause {
+                                    Some(WorkflowTaskFailedCause::ResetWorkflow) => {
+                                        Some(a.new_run_id)
+                                    }
+                                    _ => None,
                                 }
-                                _ => None,
                             }
-                        }
-                        _ => None,
-                    },
-                })
+                            _ => None,
+                        },
+                    })
+                } else {
+                    return Err(WFMachinesError::MalformedEvent(
+                        e,
+                        "Workflow task failed is missing attributes".to_string(),
+                    ));
+                }
             }
             _ => return Err(WFMachinesError::UnexpectedEvent(e)),
         })
