@@ -19,7 +19,7 @@ mod workflow;
 pub use pollers::{ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::workflow::WorkflowConcurrencyManager;
+use crate::workflow::{WorkflowConcurrencyManager, WorkflowManager};
 use crate::{
     machines::{InconvertibleCommandError, WFCommand},
     protos::{
@@ -30,10 +30,11 @@ use crate::{
         temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
     },
     protosext::HistoryInfoError,
-    workflow::{NextWfActivation, WfManagerProtected, WorkflowManager},
+    workflow::NextWfActivation,
 };
 use crossbeam::queue::SegQueue;
-use dashmap::{mapref::entry::Entry, DashMap};
+use dashmap::DashMap;
+use std::fmt::Debug;
 use std::{convert::TryInto, sync::mpsc::SendError, sync::Arc};
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
@@ -83,7 +84,7 @@ pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
     Ok(CoreSDK {
         runtime,
         server_gateway: Arc::new(work_provider),
-        workflow_machines: Default::default(),
+        workflow_machines: WorkflowConcurrencyManager::new(),
         workflow_task_tokens: Default::default(),
         pending_activations: Default::default(),
     })
@@ -235,25 +236,10 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             self.workflow_task_tokens
                 .insert(task_token.clone(), run_id.clone());
 
-            match self.workflow_machines.entry(run_id.clone()) {
-                Entry::Occupied(mut existing) => {
-                    if let Some(history) = poll_wf_resp.history {
-                        let activation = existing
-                            .get_mut()
-                            .lock()?
-                            .feed_history_from_server(history)?;
-                        Ok((activation, run_id))
-                    } else {
-                        Err(CoreError::BadDataFromWorkProvider(poll_wf_resp))
-                    }
-                }
-                Entry::Vacant(vacant) => {
-                    let wfm = WorkflowManager::new(poll_wf_resp)?;
-                    let activation = wfm.lock()?.get_next_activation()?;
-                    vacant.insert(wfm);
-                    Ok((activation, run_id))
-                }
-            }
+            let activation = self
+                .workflow_machines
+                .create_or_update(&run_id, poll_wf_resp)?;
+            Ok((activation, run_id))
         } else {
             Err(CoreError::BadDataFromWorkProvider(poll_wf_resp))
         }
@@ -279,14 +265,10 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
     /// machines.
     fn access_machine<F, Fout>(&self, run_id: &str, mutator: F) -> Result<Fout>
     where
-        F: FnOnce(&mut WfManagerProtected) -> Result<Fout>,
+        F: FnOnce(&mut WorkflowManager) -> Result<Fout> + Send + 'static,
+        Fout: Send + Debug + 'static,
     {
-        if let Some(mut machines) = self.workflow_machines.get_mut(run_id) {
-            let mut mgr = machines.value_mut().lock()?;
-            mutator(&mut mgr)
-        } else {
-            Err(CoreError::MissingMachines(run_id.to_string()))
-        }
+        self.workflow_machines.access(run_id, mutator)
     }
 }
 
@@ -343,7 +325,7 @@ mod test {
     };
 
     #[test]
-    fn timer_test_across_wf_bridge() {
+    fn single_timer_test_across_wf_bridge() {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
         let timer_id = "fake_timer".to_string();
@@ -408,6 +390,7 @@ mod test {
             task_tok,
         ))
         .unwrap();
+        dbg!("Done!!!!");
     }
 
     #[test]

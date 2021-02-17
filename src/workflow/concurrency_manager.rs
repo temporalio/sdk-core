@@ -1,51 +1,165 @@
 use crate::{
-    machines::ProtoCommand,
-    workflow::{NextWfActivation, WfManagerProtected, WorkflowManager},
+    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
+    workflow::{NextWfActivation, WorkflowManager},
     CoreError, Result,
 };
-use crossbeam::channel::Sender;
-use dashmap::DashMap;
+use crossbeam::channel::{bounded, unbounded, Select, Sender, TryRecvError};
+use dashmap::{mapref::entry::Entry, DashMap};
+use std::fmt::Debug;
+use std::time::Duration;
+use std::{thread, thread::JoinHandle};
 
-type MachineSender = Sender<Box<dyn FnOnce(&mut WfManagerProtected) -> Result<()> + Send>>;
+type MachineSender = Sender<Box<dyn FnOnce(&mut WorkflowManager) + Send>>;
+type MachineCreatorMsg = (
+    PollWorkflowTaskQueueResponse,
+    Sender<MachineCreatorResponseMsg>,
+);
+type MachineCreatorResponseMsg = Result<(NextWfActivation, MachineSender)>;
 
-// TODO: If can't be totally generic, could do enum of Fn's with defined responses
-/// Responses that workflow machines can respond with from their thread
-enum WfMgrResponse {
-    Nothing,
-    Activation(NextWfActivation),
-    Commands(Vec<ProtoCommand>),
-}
-
-#[derive(Default)]
 pub(crate) struct WorkflowConcurrencyManager {
     machines: DashMap<String, MachineSender>,
+    wf_thread: JoinHandle<()>,
+    machine_creator: Sender<MachineCreatorMsg>,
 }
 
 impl WorkflowConcurrencyManager {
+    pub fn new() -> Self {
+        let (machine_creator, create_rcv) = unbounded::<MachineCreatorMsg>();
+
+        let wf_thread = thread::spawn(move || {
+            let mut machine_rcvs = vec![];
+            loop {
+                // If there's a message ready on the creation channel, make a new machine
+                // and put it's receiver into the list, replying with the machine's activation and
+                // a channel to send requests to it, or an error otherwise.
+                // TODO: handle disconnected / other channel errors
+                match create_rcv.try_recv() {
+                    Ok((pwtqr, resp_chan)) => match WorkflowManager::new(pwtqr)
+                        .and_then(|mut wfm| Ok((wfm.get_next_activation()?, wfm)))
+                    {
+                        Ok((activation, wfm)) => {
+                            dbg!("Creating machine");
+                            let (machine_sender, machine_rcv) = unbounded();
+                            machine_rcvs.push((machine_rcv, wfm));
+                            resp_chan.send(Ok((activation, machine_sender))).unwrap();
+                        }
+                        Err(e) => {
+                            resp_chan.send(Err(e)).unwrap();
+                        }
+                    },
+                    Err(TryRecvError::Disconnected) => {
+                        dbg!("Channel disconnected!");
+                        break;
+                    }
+                    Err(TryRecvError::Empty) => {}
+                }
+
+                // Having created any new machines, we now check if there are any pending requests
+                // to interact with the machines. If multiple requests are pending they are dealt
+                // with in random order.
+                let mut sel = Select::new();
+                for (rcv, _) in machine_rcvs.iter() {
+                    sel.recv(rcv);
+                }
+                match sel.try_ready() {
+                    Ok(index) => match machine_rcvs[index].0.try_recv() {
+                        Ok(func) => {
+                            dbg!("Blorgp");
+                            // Recall that calling this function also sends the response
+                            func(&mut machine_rcvs[index].1);
+                        }
+                        Err(_) => {}
+                    },
+                    Err(_) => {}
+                }
+                // TODO: remove probably
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+
+        Self {
+            machines: Default::default(),
+            wf_thread,
+            machine_creator,
+        }
+    }
+
     pub fn exists(&self, run_id: &str) -> bool {
         self.machines.contains_key(run_id)
     }
 
-    pub fn create_or_update(&self, run_id: &str) -> Result<NextWfActivation> {
-        unimplemented!()
+    pub fn create_or_update(
+        &self,
+        run_id: &str,
+        poll_wf_resp: PollWorkflowTaskQueueResponse,
+    ) -> Result<NextWfActivation> {
+        match self.machines.entry(run_id.to_string()) {
+            Entry::Occupied(_existing) => {
+                dbg!("Existing machine");
+                if let Some(history) = poll_wf_resp.history {
+                    // TODO: Sort of dumb to use entry here now
+                    let activation = self.access(run_id, |wfm: &mut WorkflowManager| {
+                        wfm.feed_history_from_server(history)
+                    })?;
+                    dbg!("Past access");
+                    Ok(activation)
+                } else {
+                    Err(CoreError::BadDataFromWorkProvider(poll_wf_resp))
+                }
+            }
+            Entry::Vacant(vacant) => {
+                dbg!("Create machine");
+                // Creates a channel for the response to attempting to create the machine, sends
+                // the task q response, and waits for the result of machine creation along with
+                // the activation
+                let (resp_send, resp_rcv) = bounded(1);
+                self.machine_creator
+                    .send((poll_wf_resp, resp_send))
+                    .unwrap();
+                let (activation, machine_sender) = resp_rcv.recv().unwrap()?;
+                vacant.insert(machine_sender);
+                Ok(activation)
+            }
+        }
     }
 
-    /// Access a workflow manager to do something with it. Ideally, the return type could be generic
-    /// but in practice I couldn't find a way to do it. If we need more and more response types,
-    /// it's worth trying again.
     pub fn access<F, Fout>(&self, run_id: &str, mutator: F) -> Result<Fout>
     where
-        F: FnOnce(&mut WfManagerProtected) -> Result<Fout>,
-        F: Send,
+        F: FnOnce(&mut WorkflowManager) -> Result<Fout> + Send + 'static,
+        Fout: Send + Debug + 'static,
     {
-        if let Some(m) = self.machines.get(run_id) {
-            // m.value().send(Box::new(mutator)).unwrap();
-            unimplemented!()
-        } else {
-            Err(CoreError::MissingMachines(run_id.to_string()))
-        }
+        dbg!("Machines get in access");
+        let m = self
+            .machines
+            .get(run_id)
+            .ok_or_else(|| CoreError::MissingMachines(run_id.to_string()))?;
+        dbg!("completed Machines get in access");
+
+        // This code fetches the channel for a workflow manager and sends it a modified version of
+        // of closure the caller provided which includes a channel for the response, and sends
+        // the result of the user-provided closure down that response channel.
+        let (sender, receiver) = bounded(1);
+        let f = move |x: &mut WorkflowManager| {
+            dbg!("Trying to send response");
+            let _ = sender.send(dbg!(mutator(x)));
+            dbg!("sent it");
+        };
+        // TODO: Clean up unwraps
+        m.send(Box::new(f)).unwrap();
+        receiver.recv().unwrap()
+    }
+}
+
+impl Drop for WorkflowConcurrencyManager {
+    fn drop(&mut self) {
+        dbg!("Droppin bruh");
     }
 }
 
 trait BeSendSync: Send + Sync {}
 impl BeSendSync for WorkflowConcurrencyManager {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+}
