@@ -4,10 +4,12 @@ use crate::{
     CoreError, Result,
 };
 use crossbeam::channel::{bounded, unbounded, Select, Sender, TryRecvError};
-use dashmap::{mapref::entry::Entry, DashMap};
-use std::fmt::Debug;
-use std::time::Duration;
-use std::{thread, thread::JoinHandle};
+use dashmap::DashMap;
+use std::{
+    fmt::Debug,
+    thread::{self, JoinHandle},
+    time::Duration,
+};
 
 type MachineSender = Sender<Box<dyn FnOnce(&mut WorkflowManager) + Send>>;
 type MachineCreatorMsg = (
@@ -38,7 +40,6 @@ impl WorkflowConcurrencyManager {
                         .and_then(|mut wfm| Ok((wfm.get_next_activation()?, wfm)))
                     {
                         Ok((activation, wfm)) => {
-                            dbg!("Creating machine");
                             let (machine_sender, machine_rcv) = unbounded();
                             machine_rcvs.push((machine_rcv, wfm));
                             resp_chan.send(Ok((activation, machine_sender))).unwrap();
@@ -93,33 +94,27 @@ impl WorkflowConcurrencyManager {
         run_id: &str,
         poll_wf_resp: PollWorkflowTaskQueueResponse,
     ) -> Result<NextWfActivation> {
-        match self.machines.entry(run_id.to_string()) {
-            Entry::Occupied(_existing) => {
-                dbg!("Existing machine");
-                if let Some(history) = poll_wf_resp.history {
-                    // TODO: Sort of dumb to use entry here now
-                    let activation = self.access(run_id, |wfm: &mut WorkflowManager| {
-                        wfm.feed_history_from_server(history)
-                    })?;
-                    dbg!("Past access");
-                    Ok(activation)
-                } else {
-                    Err(CoreError::BadDataFromWorkProvider(poll_wf_resp))
-                }
-            }
-            Entry::Vacant(vacant) => {
-                dbg!("Create machine");
-                // Creates a channel for the response to attempting to create the machine, sends
-                // the task q response, and waits for the result of machine creation along with
-                // the activation
-                let (resp_send, resp_rcv) = bounded(1);
-                self.machine_creator
-                    .send((poll_wf_resp, resp_send))
-                    .unwrap();
-                let (activation, machine_sender) = resp_rcv.recv().unwrap()?;
-                vacant.insert(machine_sender);
+        if self.exists(run_id) {
+            if let Some(history) = poll_wf_resp.history {
+                // TODO: Sort of dumb to use entry here now
+                let activation = self.access(run_id, |wfm: &mut WorkflowManager| {
+                    wfm.feed_history_from_server(history)
+                })?;
                 Ok(activation)
+            } else {
+                Err(CoreError::BadDataFromWorkProvider(poll_wf_resp))
             }
+        } else {
+            // Creates a channel for the response to attempting to create the machine, sends
+            // the task q response, and waits for the result of machine creation along with
+            // the activation
+            let (resp_send, resp_rcv) = bounded(1);
+            self.machine_creator
+                .send((poll_wf_resp, resp_send))
+                .unwrap();
+            let (activation, machine_sender) = resp_rcv.recv().unwrap()?;
+            self.machines.insert(run_id.to_string(), machine_sender);
+            Ok(activation)
         }
     }
 
@@ -128,31 +123,31 @@ impl WorkflowConcurrencyManager {
         F: FnOnce(&mut WorkflowManager) -> Result<Fout> + Send + 'static,
         Fout: Send + Debug + 'static,
     {
-        dbg!("Machines get in access");
         let m = self
             .machines
             .get(run_id)
             .ok_or_else(|| CoreError::MissingMachines(run_id.to_string()))?;
-        dbg!("completed Machines get in access");
 
         // This code fetches the channel for a workflow manager and sends it a modified version of
         // of closure the caller provided which includes a channel for the response, and sends
         // the result of the user-provided closure down that response channel.
         let (sender, receiver) = bounded(1);
         let f = move |x: &mut WorkflowManager| {
-            dbg!("Trying to send response");
             let _ = sender.send(dbg!(mutator(x)));
-            dbg!("sent it");
         };
         // TODO: Clean up unwraps
         m.send(Box::new(f)).unwrap();
         receiver.recv().unwrap()
     }
-}
 
-impl Drop for WorkflowConcurrencyManager {
-    fn drop(&mut self) {
-        dbg!("Droppin bruh");
+    /// Attempt to join the thread where the workflow machines live.
+    ///
+    /// # Panics
+    /// If the workflow machine thread panicked
+    pub fn shutdown(self) {
+        self.wf_thread
+            .join()
+            .expect("Workflow manager thread should shut down cleanly");
     }
 }
 
