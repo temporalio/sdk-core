@@ -19,6 +19,7 @@ mod workflow;
 pub use pollers::{ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
+use crate::workflow::WorkflowConcurrencyManager;
 use crate::{
     machines::{InconvertibleCommandError, WFCommand},
     protos::{
@@ -104,7 +105,7 @@ where
     /// Provides work in the form of responses the server would send from polling task Qs
     server_gateway: Arc<WP>,
     /// Key is run id
-    workflow_machines: DashMap<String, WorkflowManager>,
+    workflow_machines: WorkflowConcurrencyManager,
     /// Maps task tokens to workflow run ids
     workflow_task_tokens: DashMap<Vec<u8>, String>,
 
@@ -185,13 +186,12 @@ where
                 match wfstatus {
                     Status::Successful(success) => {
                         self.push_lang_commands(&run_id, success)?;
-                        self.access_machine(&run_id, |mgr| {
-                            let commands = mgr.machines.get_commands();
-                            self.runtime.block_on(
-                                self.server_gateway
-                                    .complete_workflow_task(task_token, commands),
-                            )
-                        })?;
+                        let commands =
+                            self.access_machine(&run_id, |mgr| Ok(mgr.machines.get_commands()))?;
+                        self.runtime.block_on(
+                            self.server_gateway
+                                .complete_workflow_task(task_token, commands),
+                        )?;
                     }
                     Status::Failed(_) => {}
                 }
@@ -382,7 +382,7 @@ mod test {
                 attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
             }]
         );
-        assert!(core.workflow_machines.get(run_id).is_some());
+        assert!(core.workflow_machines.exists(run_id));
 
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
@@ -461,7 +461,7 @@ mod test {
                 attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
             }]
         );
-        assert!(core.workflow_machines.get(run_id).is_some());
+        assert!(core.workflow_machines.exists(run_id));
 
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
@@ -541,7 +541,7 @@ mod test {
                 attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
             }]
         );
-        assert!(core.workflow_machines.get(run_id).is_some());
+        assert!(core.workflow_machines.exists(run_id));
 
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(

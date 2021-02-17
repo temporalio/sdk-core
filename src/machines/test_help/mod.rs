@@ -66,8 +66,8 @@ pub(crate) fn build_fake_core(
     CoreSDK {
         runtime,
         server_gateway: Arc::new(mock_gateway),
-        workflow_machines: DashMap::new(),
-        workflow_task_tokens: DashMap::new(),
+        workflow_machines: Default::default(),
+        workflow_task_tokens: Default::default(),
         pending_activations: Default::default(),
     }
 }

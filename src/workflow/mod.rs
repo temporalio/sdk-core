@@ -1,6 +1,8 @@
 mod bridge;
+mod concurrency_manager;
 
 pub(crate) use bridge::WorkflowBridge;
+pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
 
 use crate::{
     machines::{ProtoCommand, WFCommand, WorkflowMachines},
@@ -73,10 +75,12 @@ pub(crate) struct WfManagerProtected {
     /// The last recorded history we received from the server for this workflow run. This must be
     /// kept because the lang side polls & completes for every workflow task, but we do not need
     /// to poll the server that often during replay.
-    pub last_history_from_server: History,
-    pub last_history_task_count: usize,
+    last_history_from_server: History,
+    last_history_task_count: usize,
     /// The current workflow task number this run is on. Starts at one and monotonically increases.
-    pub current_wf_task_num: usize,
+    current_wf_task_num: usize,
+
+    _temp: std::rc::Rc<u8>,
 }
 
 impl WorkflowManager {
@@ -101,6 +105,7 @@ impl WorkflowManager {
             last_history_task_count: history.get_workflow_task_count(None)?,
             last_history_from_server: history,
             current_wf_task_num: 1,
+            _temp: std::rc::Rc::new(8),
         };
         Ok(Self {
             data: Arc::new(Mutex::new(protected)),
@@ -164,18 +169,5 @@ impl WfManagerProtected {
             activation,
             more_activations_needed,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn enforcer<W: Send + Sync>(_: W) {}
-
-    // Enforce thread-safeness of wf manager
-    #[test]
-    fn is_threadsafe() {
-        enforcer(WorkflowManager::new(Default::default()));
     }
 }
