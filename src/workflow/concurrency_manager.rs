@@ -179,6 +179,7 @@ impl WorkflowConcurrencyManager {
     ///
     /// # Panics
     /// If the workflow machine thread panicked
+    #[allow(unused)] // TODO: Will be used when other shutdown PR is merged
     pub fn shutdown(self) {
         self.shutdown_flag.store(true, Ordering::Relaxed);
         self.wf_thread
