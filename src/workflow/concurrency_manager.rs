@@ -10,10 +10,6 @@ use crossbeam::channel::{bounded, unbounded, Receiver, Select, Sender, TryRecvEr
 use dashmap::DashMap;
 use std::{
     fmt::Debug,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
     thread::{self, JoinHandle},
 };
 use tracing::Level;
@@ -28,7 +24,7 @@ pub(crate) struct WorkflowConcurrencyManager {
     machines: DashMap<String, MachineMutationSender>,
     wf_thread: JoinHandle<()>,
     machine_creator: Sender<MachineCreatorMsg>,
-    shutdown_flag: Arc<AtomicBool>,
+    shutdown_chan: Sender<bool>,
 }
 
 /// The tx side of a channel which accepts closures to mutably operate on a workflow manager
@@ -47,18 +43,17 @@ type MachineCreatorResponseMsg = Result<(NextWfActivation, MachineMutationSender
 impl WorkflowConcurrencyManager {
     pub fn new() -> Self {
         let (machine_creator, create_rcv) = unbounded::<MachineCreatorMsg>();
-        let shutdown_flag = Arc::new(AtomicBool::new(false));
-        let shutdown_flag_for_thread = shutdown_flag.clone();
+        let (shutdown_chan, shutdown_rx) = bounded(1);
 
         let wf_thread = thread::spawn(move || {
-            WorkflowConcurrencyManager::workflow_thread(create_rcv, shutdown_flag_for_thread)
+            WorkflowConcurrencyManager::workflow_thread(create_rcv, shutdown_rx)
         });
 
         Self {
             machines: Default::default(),
             wf_thread,
             machine_creator,
-            shutdown_flag,
+            shutdown_chan,
         }
     }
 
@@ -126,72 +121,53 @@ impl WorkflowConcurrencyManager {
     /// If the workflow machine thread panicked
     #[allow(unused)] // TODO: Will be used when other shutdown PR is merged
     pub fn shutdown(self) {
-        self.shutdown_flag.store(true, Ordering::Relaxed);
+        let _ = self.shutdown_chan.send(true);
         self.wf_thread
             .join()
             .expect("Workflow manager thread should shut down cleanly");
     }
 
     /// The implementation of the dedicated thread workflow managers live on
-    fn workflow_thread(
-        create_rcv: Receiver<MachineCreatorMsg>,
-        shutdown_flag_for_thread: Arc<AtomicBool>,
-    ) {
+    fn workflow_thread(create_rcv: Receiver<MachineCreatorMsg>, shutdown_rx: Receiver<bool>) {
         let mut machine_rcvs: Vec<(MachineMutationReceiver, WorkflowManager)> = vec![];
         loop {
-            if shutdown_flag_for_thread.load(Ordering::Relaxed) {
-                break;
-            }
-            // If there's a message ready on the creation channel, make a new machine
-            // and put it's receiver into the list, replying with the machine's activation and
-            // a channel to send requests to it, or an error otherwise.
-            let maybe_create_chan_msg = create_rcv.try_recv();
-            let should_break = WorkflowConcurrencyManager::handle_creation_message(
-                &mut machine_rcvs,
-                maybe_create_chan_msg,
-            );
-            if should_break {
-                break;
-            }
+            // To avoid needing to busy loop, we want to block until either a creation message
+            // arrives, or any machine access request arrives, so we cram all of them into a big
+            // select. If multiple messages are ready at once they're handled in random order. This
+            // is OK because they all go to independent workflows.
 
-            // Having created any new machines, we now check if there are any pending requests
-            // to interact with the machines. If multiple requests are pending they are dealt
-            // with in random order.
+            // **IMPORTANT** the first operation in the select is always reading from the shutdown
+            //   channel, and the second is always reading from the creation channel.
             let mut sel = Select::new();
+            sel.recv(&shutdown_rx);
+            sel.recv(&create_rcv);
             for (rcv, _) in machine_rcvs.iter() {
                 sel.recv(rcv);
             }
-            if let Ok(index) = sel.try_ready() {
-                WorkflowConcurrencyManager::handle_access_msg(index, &mut machine_rcvs)
-            }
-        }
-    }
 
-    /// Handles requests to access/mutate a workflow manager. The passed in index indicates which
-    /// machine in the `machine_rcvs` vec is ready to be read from.
-    fn handle_access_msg(
-        index: usize,
-        machine_rcvs: &mut Vec<(MachineMutationReceiver, WorkflowManager)>,
-    ) {
-        match machine_rcvs[index].0.try_recv() {
-            Ok(func) => {
-                // Recall that calling this function also sends the response
-                func(&mut machine_rcvs[index].1);
-            }
-            Err(TryRecvError::Disconnected) => {
-                // This is expected when core is done with a workflow manager. IE: is
-                // ready to remove it from the cache. It dropping the send side from the
-                // concurrency manager is the signal to this thread that the workflow
-                // manager can be dropped.
-                let wfid = &machine_rcvs[index].1.machines.workflow_id;
-                event!(
-                    Level::DEBUG,
-                    "Workflow manager thread done with workflow id {}",
-                    wfid
+            let index = sel.ready();
+            if index == 0 {
+                // Shutdown seen
+                break;
+            } else if index == 1 {
+                // If there's a message ready on the creation channel, make a new machine
+                // and put it's receiver into the list, replying with the machine's activation and
+                // a channel to send requests to it, or an error otherwise.
+                let maybe_create_chan_msg = create_rcv.try_recv();
+                let should_break = WorkflowConcurrencyManager::handle_creation_message(
+                    &mut machine_rcvs,
+                    maybe_create_chan_msg,
                 );
-                machine_rcvs.remove(index);
+                if should_break {
+                    break;
+                }
+            } else {
+                // If there's a message ready on the creation channel, make a new machine
+
+                // We must subtract two to account for the shutdown and creation channels reads
+                // being the first two operations in the select
+                WorkflowConcurrencyManager::handle_access_msg(index - 2, &mut machine_rcvs)
             }
-            Err(TryRecvError::Empty) => {}
         }
     }
 
@@ -230,6 +206,34 @@ impl WorkflowConcurrencyManager {
             Err(TryRecvError::Empty) => {}
         }
         false
+    }
+
+    /// Handles requests to access/mutate a workflow manager. The passed in index indicates which
+    /// machine in the `machine_rcvs` vec is ready to be read from.
+    fn handle_access_msg(
+        index: usize,
+        machine_rcvs: &mut Vec<(MachineMutationReceiver, WorkflowManager)>,
+    ) {
+        match machine_rcvs[index].0.try_recv() {
+            Ok(func) => {
+                // Recall that calling this function also sends the response
+                func(&mut machine_rcvs[index].1);
+            }
+            Err(TryRecvError::Disconnected) => {
+                // This is expected when core is done with a workflow manager. IE: is
+                // ready to remove it from the cache. It dropping the send side from the
+                // concurrency manager is the signal to this thread that the workflow
+                // manager can be dropped.
+                let wfid = &machine_rcvs[index].1.machines.workflow_id;
+                event!(
+                    Level::DEBUG,
+                    "Workflow manager thread done with workflow id {}",
+                    wfid
+                );
+                machine_rcvs.remove(index);
+            }
+            Err(TryRecvError::Empty) => {}
+        }
     }
 }
 
