@@ -379,7 +379,7 @@ impl WorkflowMachines {
             .expect("We have just ensured this is populated")
     }
 
-    /// Iterate the state machines,, which consists of grabbing any pending outgoing commands from
+    /// Iterate the state machines, which consists of grabbing any pending outgoing commands from
     /// the workflow, handling them, and preparing them to be sent off to the server.
     pub(crate) fn iterate_machines(&mut self) {
         let results = self.drive_me.fetch_workflow_iteration_output();
