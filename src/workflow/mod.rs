@@ -72,8 +72,6 @@ pub(crate) struct WorkflowManager {
     last_history_task_count: usize,
     /// The current workflow task number this run is on. Starts at one and monotonically increases.
     current_wf_task_num: usize,
-
-    _temp: std::rc::Rc<u8>,
 }
 
 impl WorkflowManager {
@@ -98,7 +96,6 @@ impl WorkflowManager {
             last_history_task_count: history.get_workflow_task_count(None)?,
             last_history_from_server: history,
             current_wf_task_num: 1,
-            _temp: std::rc::Rc::new(8),
         })
     }
 }
