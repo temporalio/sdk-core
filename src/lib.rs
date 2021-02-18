@@ -259,7 +259,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             .collect::<Result<Vec<_>>>()?;
         self.workflow_machines.access(run_id, |mgr| {
             mgr.command_sink.send(cmds)?;
-            mgr.machines.event_loop();
+            mgr.machines.iterate_machines();
             Ok(())
         })?;
         Ok(())
