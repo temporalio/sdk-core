@@ -6,7 +6,7 @@ use crate::{
     workflow::{NextWfActivation, WorkflowManager},
     CoreError, Result,
 };
-use crossbeam::channel::{bounded, unbounded, Select, Sender, TryRecvError};
+use crossbeam::channel::{bounded, unbounded, Receiver, Select, Sender, TryRecvError};
 use dashmap::DashMap;
 use std::{
     fmt::Debug,
@@ -23,6 +23,9 @@ use tracing::Level;
 /// managed by this struct. We could make this generic for any collection of things which need
 /// to live on one thread, if desired.
 pub(crate) struct WorkflowConcurrencyManager {
+    // TODO: We need to remove things from here at some point, but that wasn't implemented
+    //  in core SDK yet either - once we're ready to remove things, they can be removed from this
+    //  map and the wfm thread will drop the machines.
     machines: DashMap<String, MachineMutationSender>,
     wf_thread: JoinHandle<()>,
     machine_creator: Sender<MachineCreatorMsg>,
@@ -31,11 +34,15 @@ pub(crate) struct WorkflowConcurrencyManager {
 
 /// The tx side of a channel which accepts closures to mutably operate on a workflow manager
 type MachineMutationSender = Sender<Box<dyn FnOnce(&mut WorkflowManager) + Send>>;
-/// This is
+type MachineMutationReceiver = Receiver<Box<dyn FnOnce(&mut WorkflowManager) + Send>>;
+/// This is the message sent from the concurrency manager to the dedicated thread in order to
+/// instantiate a new workflow manager
 type MachineCreatorMsg = (
     PollWorkflowTaskQueueResponse,
     Sender<MachineCreatorResponseMsg>,
 );
+/// The response to [MachineCreatorMsg], which includes the wf activation and the channel to
+/// send requests to the newly instantiated workflow manager.
 type MachineCreatorResponseMsg = Result<(NextWfActivation, MachineMutationSender)>;
 
 impl WorkflowConcurrencyManager {
@@ -45,10 +52,7 @@ impl WorkflowConcurrencyManager {
         let shutdown_flag_for_thread = shutdown_flag.clone();
 
         let wf_thread = thread::spawn(move || {
-            // TODO: We need to remove things from here at some point, but that wasn't implemented
-            //  in core SDK yet either - once we're ready to remove things it should be simple to
-            //  add a removal method.
-            let mut machine_rcvs = vec![];
+            let mut machine_rcvs: Vec<(MachineMutationReceiver, WorkflowManager)> = vec![];
             loop {
                 if shutdown_flag_for_thread.load(Ordering::Relaxed) {
                     break;
@@ -99,7 +103,17 @@ impl WorkflowConcurrencyManager {
                             func(&mut machine_rcvs[index].1);
                         }
                         Err(TryRecvError::Disconnected) => {
-                            panic!("Individual workflow machine channels should never be dropped");
+                            // This is expected when core is done with a workflow manager. IE: is
+                            // ready to remove it from the cache. It dropping the send side from the
+                            // concurrency manager is the signal to this thread that the workflow
+                            // manager can be dropped.
+                            let wfid = &machine_rcvs[index].1.machines.workflow_id;
+                            event!(
+                                Level::DEBUG,
+                                "Workflow manager thread done with workflow id {}",
+                                wfid
+                            );
+                            machine_rcvs.remove(index);
                         }
                         Err(TryRecvError::Empty) => {}
                     }
