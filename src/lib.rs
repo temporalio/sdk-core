@@ -33,8 +33,11 @@ use crate::{
 };
 use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
-use std::fmt::Debug;
-use std::{convert::TryInto, sync::mpsc::SendError, sync::Arc};
+use std::{
+    convert::TryInto,
+    fmt::Debug,
+    sync::{mpsc::SendError, Arc},
+};
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
 use tracing::Level;
@@ -381,7 +384,6 @@ mod test {
             task_tok,
         ))
         .unwrap();
-        dbg!("Done!!!!");
     }
 
     #[test]

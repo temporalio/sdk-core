@@ -45,6 +45,9 @@ impl WorkflowConcurrencyManager {
         let shutdown_flag_for_thread = shutdown_flag.clone();
 
         let wf_thread = thread::spawn(move || {
+            // TODO: We need to remove things from here at some point, but that wasn't implemented
+            //  in core SDK yet either - once we're ready to remove things it should be simple to
+            //  add a removal method.
             let mut machine_rcvs = vec![];
             loop {
                 if shutdown_flag_for_thread.load(Ordering::Relaxed) {
@@ -60,10 +63,14 @@ impl WorkflowConcurrencyManager {
                         Ok((activation, wfm)) => {
                             let (machine_sender, machine_rcv) = unbounded();
                             machine_rcvs.push((machine_rcv, wfm));
-                            resp_chan.send(Ok((activation, machine_sender))).unwrap();
+                            resp_chan
+                                .send(Ok((activation, machine_sender)))
+                                .expect("wfm create resp rx side can't be dropped");
                         }
                         Err(e) => {
-                            resp_chan.send(Err(e)).unwrap();
+                            resp_chan
+                                .send(Err(e))
+                                .expect("wfm create resp rx side can't be dropped");
                         }
                     },
                     Err(TryRecvError::Disconnected) => {
@@ -135,8 +142,10 @@ impl WorkflowConcurrencyManager {
             let (resp_send, resp_rcv) = bounded(1);
             self.machine_creator
                 .send((poll_wf_resp, resp_send))
-                .unwrap();
-            let (activation, machine_sender) = resp_rcv.recv().unwrap()?;
+                .expect("wfm creation channel can't be dropped if we are inside this method");
+            let (activation, machine_sender) = resp_rcv
+                .recv()
+                .expect("wfm create resp channel can't be dropped, it is in this stackframe")?;
             self.machines.insert(run_id.to_string(), machine_sender);
             Ok(activation)
         }
@@ -155,13 +164,15 @@ impl WorkflowConcurrencyManager {
         // This code fetches the channel for a workflow manager and sends it a modified version of
         // of closure the caller provided which includes a channel for the response, and sends
         // the result of the user-provided closure down that response channel.
-        let (sender, receiver) = bounded(1);
+        let (resp_tx, resp_rx) = bounded(1);
         let f = move |x: &mut WorkflowManager| {
-            let _ = sender.send(dbg!(mutator(x)));
+            let _ = resp_tx.send(mutator(x));
         };
-        // TODO: Clean up unwraps
-        m.send(Box::new(f)).unwrap();
-        receiver.recv().unwrap()
+        m.send(Box::new(f))
+            .expect("wfm mutation send can't fail, if it does a wfm is missing from their thread");
+        resp_rx
+            .recv()
+            .expect("wfm access resp channel can't be dropped, it is in this stackframe")
     }
 
     /// Attempt to join the thread where the workflow machines live.
