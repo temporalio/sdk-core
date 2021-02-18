@@ -1,4 +1,4 @@
-//! Ultimately it would be nice to make this generic and push it out into it's own crate but
+//! Ultimately it would be nice to make this generic and push it out into its own crate but
 //! doing so is nontrivial
 
 use crate::{
@@ -151,7 +151,7 @@ impl WorkflowConcurrencyManager {
                 break;
             } else if index == 1 {
                 // If there's a message ready on the creation channel, make a new machine
-                // and put it's receiver into the list, replying with the machine's activation and
+                // and put its receiver into the list, replying with the machine's activation and
                 // a channel to send requests to it, or an error otherwise.
                 let maybe_create_chan_msg = create_rcv.try_recv();
                 let should_break = WorkflowConcurrencyManager::handle_creation_message(
@@ -162,7 +162,7 @@ impl WorkflowConcurrencyManager {
                     break;
                 }
             } else {
-                // If there's a message ready on the creation channel, make a new machine
+                // If we're here, a request to access a workflow manager is ready.
 
                 // We must subtract two to account for the shutdown and creation channels reads
                 // being the first two operations in the select
