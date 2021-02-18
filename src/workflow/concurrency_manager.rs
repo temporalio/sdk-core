@@ -1,3 +1,6 @@
+//! Ultimately it would be nice to make this generic and push it out into it's own crate but
+//! doing so is nontrivial
+
 use crate::{
     protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
     workflow::{NextWfActivation, WorkflowManager},
@@ -7,34 +10,49 @@ use crossbeam::channel::{bounded, unbounded, Select, Sender, TryRecvError};
 use dashmap::DashMap;
 use std::{
     fmt::Debug,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     thread::{self, JoinHandle},
     time::Duration,
 };
+use tracing::Level;
 
-type MachineSender = Sender<Box<dyn FnOnce(&mut WorkflowManager) + Send>>;
+/// Provides a thread-safe way to access workflow machines which live exclusively on one thread
+/// managed by this struct. We could make this generic for any collection of things which need
+/// to live on one thread, if desired.
+pub(crate) struct WorkflowConcurrencyManager {
+    machines: DashMap<String, MachineMutationSender>,
+    wf_thread: JoinHandle<()>,
+    machine_creator: Sender<MachineCreatorMsg>,
+    shutdown_flag: Arc<AtomicBool>,
+}
+
+/// The tx side of a channel which accepts closures to mutably operate on a workflow manager
+type MachineMutationSender = Sender<Box<dyn FnOnce(&mut WorkflowManager) + Send>>;
+/// This is
 type MachineCreatorMsg = (
     PollWorkflowTaskQueueResponse,
     Sender<MachineCreatorResponseMsg>,
 );
-type MachineCreatorResponseMsg = Result<(NextWfActivation, MachineSender)>;
-
-pub(crate) struct WorkflowConcurrencyManager {
-    machines: DashMap<String, MachineSender>,
-    wf_thread: JoinHandle<()>,
-    machine_creator: Sender<MachineCreatorMsg>,
-}
+type MachineCreatorResponseMsg = Result<(NextWfActivation, MachineMutationSender)>;
 
 impl WorkflowConcurrencyManager {
     pub fn new() -> Self {
         let (machine_creator, create_rcv) = unbounded::<MachineCreatorMsg>();
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+        let shutdown_flag_for_thread = shutdown_flag.clone();
 
         let wf_thread = thread::spawn(move || {
             let mut machine_rcvs = vec![];
             loop {
+                if shutdown_flag_for_thread.load(Ordering::Relaxed) {
+                    break;
+                }
                 // If there's a message ready on the creation channel, make a new machine
                 // and put it's receiver into the list, replying with the machine's activation and
                 // a channel to send requests to it, or an error otherwise.
-                // TODO: handle disconnected / other channel errors
                 match create_rcv.try_recv() {
                     Ok((pwtqr, resp_chan)) => match WorkflowManager::new(pwtqr)
                         .and_then(|mut wfm| Ok((wfm.get_next_activation()?, wfm)))
@@ -49,7 +67,12 @@ impl WorkflowConcurrencyManager {
                         }
                     },
                     Err(TryRecvError::Disconnected) => {
-                        dbg!("Channel disconnected!");
+                        event!(
+                            Level::WARN,
+                            "Sending side of workflow machine creator was dropped. Likely the \
+                            WorkflowConcurrencyManager was dropped. This indicates a failure to \
+                            call shutdown."
+                        );
                         break;
                     }
                     Err(TryRecvError::Empty) => {}
@@ -62,16 +85,17 @@ impl WorkflowConcurrencyManager {
                 for (rcv, _) in machine_rcvs.iter() {
                     sel.recv(rcv);
                 }
-                match sel.try_ready() {
-                    Ok(index) => match machine_rcvs[index].0.try_recv() {
+                if let Ok(index) = sel.try_ready() {
+                    match machine_rcvs[index].0.try_recv() {
                         Ok(func) => {
-                            dbg!("Blorgp");
                             // Recall that calling this function also sends the response
                             func(&mut machine_rcvs[index].1);
                         }
-                        Err(_) => {}
-                    },
-                    Err(_) => {}
+                        Err(TryRecvError::Disconnected) => {
+                            panic!("Individual workflow machine channels should never be dropped");
+                        }
+                        Err(TryRecvError::Empty) => {}
+                    }
                 }
                 // TODO: remove probably
                 std::thread::sleep(Duration::from_millis(10));
@@ -82,6 +106,7 @@ impl WorkflowConcurrencyManager {
             machines: Default::default(),
             wf_thread,
             machine_creator,
+            shutdown_flag,
         }
     }
 
@@ -96,7 +121,6 @@ impl WorkflowConcurrencyManager {
     ) -> Result<NextWfActivation> {
         if self.exists(run_id) {
             if let Some(history) = poll_wf_resp.history {
-                // TODO: Sort of dumb to use entry here now
                 let activation = self.access(run_id, |wfm: &mut WorkflowManager| {
                     wfm.feed_history_from_server(history)
                 })?;
@@ -145,6 +169,7 @@ impl WorkflowConcurrencyManager {
     /// # Panics
     /// If the workflow machine thread panicked
     pub fn shutdown(self) {
+        self.shutdown_flag.store(true, Ordering::Relaxed);
         self.wf_thread
             .join()
             .expect("Workflow manager thread should shut down cleanly");
@@ -157,4 +182,48 @@ impl BeSendSync for WorkflowConcurrencyManager {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::machines::test_help::TestHistoryBuilder;
+    use crate::protos::temporal::api::common::v1::WorkflowExecution;
+    use crate::protos::temporal::api::enums::v1::EventType;
+    use crate::protos::temporal::api::history::v1::History;
+
+    // We test mostly error paths here since the happy paths are well covered by the tests of the
+    // core sdk itself, and setting up the fake data is onerous here. If we make the concurrency
+    // manager generic, testing the happy path is simpler.
+
+    #[test]
+    fn can_shutdown_after_creating_machine() {
+        let mgr = WorkflowConcurrencyManager::new();
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_workflow_task();
+
+        let activation = mgr
+            .create_or_update(
+                "some_run_id",
+                PollWorkflowTaskQueueResponse {
+                    history: Some(History {
+                        events: t.get_history_info(1).unwrap().events,
+                    }),
+                    workflow_execution: Some(WorkflowExecution {
+                        workflow_id: "wid".to_string(),
+                        run_id: "rid".to_string(),
+                    }),
+                    task_token: vec![1],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(activation.activation.is_some());
+
+        mgr.shutdown();
+    }
+
+    #[test]
+    fn returns_errors_on_creation() {
+        let mgr = WorkflowConcurrencyManager::new();
+        let res = mgr.create_or_update("some_run_id", PollWorkflowTaskQueueResponse::default());
+        // Should whine that we didn't provide history
+        assert_matches!(res.unwrap_err(), CoreError::BadDataFromWorkProvider(_))
+    }
 }

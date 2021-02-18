@@ -19,7 +19,6 @@ mod workflow;
 pub use pollers::{ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::workflow::{WorkflowConcurrencyManager, WorkflowManager};
 use crate::{
     machines::{InconvertibleCommandError, WFCommand},
     protos::{
@@ -30,7 +29,7 @@ use crate::{
         temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
     },
     protosext::HistoryInfoError,
-    workflow::NextWfActivation,
+    workflow::{NextWfActivation, WorkflowConcurrencyManager},
 };
 use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
@@ -131,8 +130,9 @@ where
         // replaying, and issue those tasks before bothering the server.
         if let Some(pa) = self.pending_activations.pop() {
             event!(Level::DEBUG, msg = "Applying pending activations", ?pa);
-            let next_activation =
-                self.access_machine(&pa.run_id, |mgr| mgr.get_next_activation())?;
+            let next_activation = self
+                .workflow_machines
+                .access(&pa.run_id, |mgr| mgr.get_next_activation())?;
             let task_token = pa.task_token.clone();
             if next_activation.more_activations_needed {
                 self.pending_activations.push(pa);
@@ -187,8 +187,9 @@ where
                 match wfstatus {
                     Status::Successful(success) => {
                         self.push_lang_commands(&run_id, success)?;
-                        let commands =
-                            self.access_machine(&run_id, |mgr| Ok(mgr.machines.get_commands()))?;
+                        let commands = self
+                            .workflow_machines
+                            .access(&run_id, |mgr| Ok(mgr.machines.get_commands()))?;
                         self.runtime.block_on(
                             self.server_gateway
                                 .complete_workflow_task(task_token, commands),
@@ -253,22 +254,12 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             .into_iter()
             .map(|c| c.try_into().map_err(Into::into))
             .collect::<Result<Vec<_>>>()?;
-        self.access_machine(run_id, |mgr| {
+        self.workflow_machines.access(run_id, |mgr| {
             mgr.command_sink.send(cmds)?;
             mgr.machines.event_loop();
             Ok(())
         })?;
         Ok(())
-    }
-
-    /// Use a closure to access the machines for a workflow run, handles locking and missing
-    /// machines.
-    fn access_machine<F, Fout>(&self, run_id: &str, mutator: F) -> Result<Fout>
-    where
-        F: FnOnce(&mut WorkflowManager) -> Result<Fout> + Send + 'static,
-        Fout: Send + Debug + 'static,
-    {
-        self.workflow_machines.access(run_id, mutator)
     }
 }
 
