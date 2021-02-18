@@ -6,6 +6,7 @@ mod workflow_driver;
 pub(crate) use history_builder::TestHistoryBuilder;
 pub(super) use workflow_driver::{CommandSender, TestWFCommand, TestWorkflowDriver};
 
+use crate::workflow::WorkflowConcurrencyManager;
 use crate::{
     pollers::MockServerGateway,
     protos::temporal::api::common::v1::WorkflowExecution,
@@ -15,7 +16,6 @@ use crate::{
     },
     CoreSDK,
 };
-use dashmap::DashMap;
 use rand::{thread_rng, Rng};
 use std::{collections::VecDeque, sync::Arc};
 use tokio::runtime::Runtime;
@@ -66,8 +66,8 @@ pub(crate) fn build_fake_core(
     CoreSDK {
         runtime,
         server_gateway: Arc::new(mock_gateway),
-        workflow_machines: DashMap::new(),
-        workflow_task_tokens: DashMap::new(),
+        workflow_machines: WorkflowConcurrencyManager::new(),
+        workflow_task_tokens: Default::default(),
         pending_activations: Default::default(),
     }
 }
