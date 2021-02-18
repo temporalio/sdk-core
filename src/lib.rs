@@ -317,6 +317,7 @@ mod test {
             },
         },
     };
+    use std::time::Duration;
 
     #[test]
     fn single_timer_test_across_wf_bridge() {
@@ -544,4 +545,30 @@ mod test {
         ))
         .unwrap();
     }
+
+    // #[test]
+    // fn test_cpu() {
+    //     let wfid = "fake_wf_id";
+    //     let run_id = "fake_run_id";
+    //     let timer_1_id = "timer1".to_string();
+    //     let task_queue = "test-task-queue";
+    //
+    //     let mut t = TestHistoryBuilder::default();
+    //     t.add_by_type(EventType::WorkflowExecutionStarted);
+    //     t.add_workflow_task();
+    //     let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    //     t.add(
+    //         EventType::TimerFired,
+    //         history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+    //             started_event_id: timer_started_event_id,
+    //             timer_id: timer_1_id.clone(),
+    //         }),
+    //     );
+    //     t.add_workflow_task_scheduled_and_started();
+    //     // NOTE! What makes this a replay test is the server only responds with *one* batch here.
+    //     // So, server is polled once, but lang->core interactions look just like non-replay test.
+    //     let core = build_fake_core(wfid, run_id, &mut t, &[2]);
+    //
+    //     std::thread::sleep(Duration::from_secs(10000000));
+    // }
 }
