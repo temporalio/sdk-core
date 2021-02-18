@@ -145,33 +145,13 @@ impl WorkflowConcurrencyManager {
             // If there's a message ready on the creation channel, make a new machine
             // and put it's receiver into the list, replying with the machine's activation and
             // a channel to send requests to it, or an error otherwise.
-            match create_rcv.try_recv() {
-                Ok((pwtqr, resp_chan)) => match WorkflowManager::new(pwtqr)
-                    .and_then(|mut wfm| Ok((wfm.get_next_activation()?, wfm)))
-                {
-                    Ok((activation, wfm)) => {
-                        let (machine_sender, machine_rcv) = unbounded();
-                        machine_rcvs.push((machine_rcv, wfm));
-                        resp_chan
-                            .send(Ok((activation, machine_sender)))
-                            .expect("wfm create resp rx side can't be dropped");
-                    }
-                    Err(e) => {
-                        resp_chan
-                            .send(Err(e))
-                            .expect("wfm create resp rx side can't be dropped");
-                    }
-                },
-                Err(TryRecvError::Disconnected) => {
-                    event!(
-                        Level::WARN,
-                        "Sending side of workflow machine creator was dropped. Likely the \
-                            WorkflowConcurrencyManager was dropped. This indicates a failure to \
-                            call shutdown."
-                    );
-                    break;
-                }
-                Err(TryRecvError::Empty) => {}
+            let maybe_create_chan_msg = create_rcv.try_recv();
+            let should_break = WorkflowConcurrencyManager::handle_creation_message(
+                &mut machine_rcvs,
+                maybe_create_chan_msg,
+            );
+            if should_break {
+                break;
             }
 
             // Having created any new machines, we now check if there are any pending requests
@@ -182,33 +162,76 @@ impl WorkflowConcurrencyManager {
                 sel.recv(rcv);
             }
             if let Ok(index) = sel.try_ready() {
-                match machine_rcvs[index].0.try_recv() {
-                    Ok(func) => {
-                        // Recall that calling this function also sends the response
-                        func(&mut machine_rcvs[index].1);
-                    }
-                    Err(TryRecvError::Disconnected) => {
-                        // This is expected when core is done with a workflow manager. IE: is
-                        // ready to remove it from the cache. It dropping the send side from the
-                        // concurrency manager is the signal to this thread that the workflow
-                        // manager can be dropped.
-                        let wfid = &machine_rcvs[index].1.machines.workflow_id;
-                        event!(
-                            Level::DEBUG,
-                            "Workflow manager thread done with workflow id {}",
-                            wfid
-                        );
-                        machine_rcvs.remove(index);
-                    }
-                    Err(TryRecvError::Empty) => {}
-                }
+                WorkflowConcurrencyManager::handle_access_msg(index, &mut machine_rcvs)
             }
         }
     }
-}
 
-trait BeSendSync: Send + Sync {}
-impl BeSendSync for WorkflowConcurrencyManager {}
+    /// Handles requests to access/mutate a workflow manager. The passed in index indicates which
+    /// machine in the `machine_rcvs` vec is ready to be read from.
+    fn handle_access_msg(
+        index: usize,
+        machine_rcvs: &mut Vec<(MachineMutationReceiver, WorkflowManager)>,
+    ) {
+        match machine_rcvs[index].0.try_recv() {
+            Ok(func) => {
+                // Recall that calling this function also sends the response
+                func(&mut machine_rcvs[index].1);
+            }
+            Err(TryRecvError::Disconnected) => {
+                // This is expected when core is done with a workflow manager. IE: is
+                // ready to remove it from the cache. It dropping the send side from the
+                // concurrency manager is the signal to this thread that the workflow
+                // manager can be dropped.
+                let wfid = &machine_rcvs[index].1.machines.workflow_id;
+                event!(
+                    Level::DEBUG,
+                    "Workflow manager thread done with workflow id {}",
+                    wfid
+                );
+                machine_rcvs.remove(index);
+            }
+            Err(TryRecvError::Empty) => {}
+        }
+    }
+
+    /// Handle requests to create new workflow managers. Returns true if the creation channel
+    /// was dropped and dedicated thread loop should be exited.
+    fn handle_creation_message(
+        machine_rcvs: &mut Vec<(MachineMutationReceiver, WorkflowManager)>,
+        maybe_create_chan_msg: Result<MachineCreatorMsg, TryRecvError>,
+    ) -> bool {
+        match maybe_create_chan_msg {
+            Ok((pwtqr, resp_chan)) => match WorkflowManager::new(pwtqr)
+                .and_then(|mut wfm| Ok((wfm.get_next_activation()?, wfm)))
+            {
+                Ok((activation, wfm)) => {
+                    let (machine_sender, machine_rcv) = unbounded();
+                    machine_rcvs.push((machine_rcv, wfm));
+                    resp_chan
+                        .send(Ok((activation, machine_sender)))
+                        .expect("wfm create resp rx side can't be dropped");
+                }
+                Err(e) => {
+                    resp_chan
+                        .send(Err(e))
+                        .expect("wfm create resp rx side can't be dropped");
+                }
+            },
+            Err(TryRecvError::Disconnected) => {
+                event!(
+                    Level::WARN,
+                    "Sending side of workflow machine creator was dropped. Likely the \
+                            WorkflowConcurrencyManager was dropped. This indicates a failure to \
+                            call shutdown."
+                );
+                return true;
+            }
+            Err(TryRecvError::Empty) => {}
+        }
+        false
+    }
+}
 
 #[cfg(test)]
 mod tests {
