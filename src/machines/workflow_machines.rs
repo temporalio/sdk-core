@@ -461,7 +461,7 @@ impl WorkflowMachines {
     }
 }
 
-pub(super) fn uuid_to_randomness_seed(run_id: &str) -> Result<i64> {
+fn uuid_to_randomness_seed(run_id: &str) -> Result<i64> {
     let uuid = Uuid::parse_str(run_id).map_err(|e| WFMachinesError::Underlying(e.into()))?;
     let fields = uuid.as_fields();
     let b0 = fields.0 as i64;

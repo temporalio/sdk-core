@@ -344,7 +344,7 @@ mod test {
     #[test]
     fn timer_test_across_wf_bridge() {
         let wfid = "fake_wf_id";
-        let run_id = "58CE65AC-1C8C-413C-B525-6D3C5EAD62D7";
+        let run_id = "fake_run_id";
         let timer_id = "fake_timer".to_string();
         let task_queue = "test-task-queue";
 
@@ -412,7 +412,7 @@ mod test {
     #[test]
     fn parallel_timer_test_across_wf_bridge() {
         let wfid = "fake_wf_id";
-        let run_id = "9895E53E-D0A2-4E8A-A478-E6221ED2ACEB";
+        let run_id = "fake_run_id";
         let timer_1_id = "timer1".to_string();
         let timer_2_id = "timer2".to_string();
         let task_queue = "test-task-queue";
@@ -513,7 +513,7 @@ mod test {
         let _enter = s.enter();
 
         let wfid = "fake_wf_id";
-        let run_id = "CA733AB0-8133-45F6-A4C1-8D375F61AE8B";
+        let run_id = "fake_run_id";
         let timer_1_id = "timer1".to_string();
         let task_queue = "test-task-queue";
 
@@ -568,15 +568,14 @@ mod test {
         .unwrap();
     }
 
-    const NEW_RUN_ID: &'static str = "86E39A5F-AE31-4626-BDFE-398EE072D156";
-
     #[test]
-    fn workflow_reset_whole_replay_test_across_wf_bridge() {
+    fn workflow_update_random_seed_on_workflow_reset() {
         let s = span!(Level::DEBUG, "Test start", t = "bridge");
         let _enter = s.enter();
 
         let wfid = "fake_wf_id";
         let run_id = "CA733AB0-8133-45F6-A4C1-8D375F61AE8B";
+        let original_run_id = "86E39A5F-AE31-4626-BDFE-398EE072D156";
         let timer_1_id = "timer1".to_string();
         let task_queue = "test-task-queue";
 
@@ -605,7 +604,7 @@ mod test {
             }),
         );
         t.add_workflow_task_scheduled_and_started();
-        t.add_workflow_task_failed(WorkflowTaskFailedCause::ResetWorkflow, NEW_RUN_ID);
+        t.add_workflow_task_failed(WorkflowTaskFailedCause::ResetWorkflow, original_run_id);
 
         t.add_workflow_task_scheduled_and_started();
 
