@@ -29,11 +29,15 @@ use crate::{
         temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
     },
     protosext::HistoryInfoError,
-    workflow::{NextWfActivation, WfManagerProtected, WorkflowManager},
+    workflow::{NextWfActivation, WorkflowConcurrencyManager},
 };
 use crossbeam::queue::SegQueue;
-use dashmap::{mapref::entry::Entry, DashMap};
-use std::{convert::TryInto, sync::mpsc::SendError, sync::Arc};
+use dashmap::DashMap;
+use std::{
+    convert::TryInto,
+    fmt::Debug,
+    sync::{mpsc::SendError, Arc},
+};
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
 use tracing::Level;
@@ -82,7 +86,7 @@ pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
     Ok(CoreSDK {
         runtime,
         server_gateway: Arc::new(work_provider),
-        workflow_machines: Default::default(),
+        workflow_machines: WorkflowConcurrencyManager::new(),
         workflow_task_tokens: Default::default(),
         pending_activations: Default::default(),
     })
@@ -104,7 +108,7 @@ where
     /// Provides work in the form of responses the server would send from polling task Qs
     server_gateway: Arc<WP>,
     /// Key is run id
-    workflow_machines: DashMap<String, WorkflowManager>,
+    workflow_machines: WorkflowConcurrencyManager,
     /// Maps task tokens to workflow run ids
     workflow_task_tokens: DashMap<Vec<u8>, String>,
 
@@ -129,8 +133,9 @@ where
         // replaying, and issue those tasks before bothering the server.
         if let Some(pa) = self.pending_activations.pop() {
             event!(Level::DEBUG, msg = "Applying pending activations", ?pa);
-            let next_activation =
-                self.access_machine(&pa.run_id, |mgr| mgr.get_next_activation())?;
+            let next_activation = self
+                .workflow_machines
+                .access(&pa.run_id, |mgr| mgr.get_next_activation())?;
             let task_token = pa.task_token.clone();
             if next_activation.more_activations_needed {
                 self.pending_activations.push(pa);
@@ -185,13 +190,13 @@ where
                 match wfstatus {
                     Status::Successful(success) => {
                         self.push_lang_commands(&run_id, success)?;
-                        self.access_machine(&run_id, |mgr| {
-                            let commands = mgr.machines.get_commands();
-                            self.runtime.block_on(
-                                self.server_gateway
-                                    .complete_workflow_task(task_token, commands),
-                            )
-                        })?;
+                        let commands = self
+                            .workflow_machines
+                            .access(&run_id, |mgr| Ok(mgr.machines.get_commands()))?;
+                        self.runtime.block_on(
+                            self.server_gateway
+                                .complete_workflow_task(task_token, commands),
+                        )?;
                     }
                     Status::Failed(_) => {}
                 }
@@ -235,25 +240,10 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             self.workflow_task_tokens
                 .insert(task_token.clone(), run_id.clone());
 
-            match self.workflow_machines.entry(run_id.clone()) {
-                Entry::Occupied(mut existing) => {
-                    if let Some(history) = poll_wf_resp.history {
-                        let activation = existing
-                            .get_mut()
-                            .lock()?
-                            .feed_history_from_server(history)?;
-                        Ok((activation, run_id))
-                    } else {
-                        Err(CoreError::BadDataFromWorkProvider(poll_wf_resp))
-                    }
-                }
-                Entry::Vacant(vacant) => {
-                    let wfm = WorkflowManager::new(poll_wf_resp)?;
-                    let activation = wfm.lock()?.get_next_activation()?;
-                    vacant.insert(wfm);
-                    Ok((activation, run_id))
-                }
-            }
+            let activation = self
+                .workflow_machines
+                .create_or_update(&run_id, poll_wf_resp)?;
+            Ok((activation, run_id))
         } else {
             Err(CoreError::BadDataFromWorkProvider(poll_wf_resp))
         }
@@ -267,26 +257,12 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             .into_iter()
             .map(|c| c.try_into().map_err(Into::into))
             .collect::<Result<Vec<_>>>()?;
-        self.access_machine(run_id, |mgr| {
+        self.workflow_machines.access(run_id, |mgr| {
             mgr.command_sink.send(cmds)?;
             mgr.machines.event_loop();
             Ok(())
         })?;
         Ok(())
-    }
-
-    /// Use a closure to access the machines for a workflow run, handles locking and missing
-    /// machines.
-    fn access_machine<F, Fout>(&self, run_id: &str, mutator: F) -> Result<Fout>
-    where
-        F: FnOnce(&mut WfManagerProtected) -> Result<Fout>,
-    {
-        if let Some(mut machines) = self.workflow_machines.get_mut(run_id) {
-            let mut mgr = machines.value_mut().lock()?;
-            mutator(&mut mgr)
-        } else {
-            Err(CoreError::MissingMachines(run_id.to_string()))
-        }
     }
 }
 
@@ -343,7 +319,7 @@ mod test {
     };
 
     #[test]
-    fn timer_test_across_wf_bridge() {
+    fn single_timer_test_across_wf_bridge() {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
         let timer_id = "fake_timer".to_string();
@@ -382,7 +358,7 @@ mod test {
                 attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
             }]
         );
-        assert!(core.workflow_machines.get(run_id).is_some());
+        assert!(core.workflow_machines.exists(run_id));
 
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
@@ -461,7 +437,7 @@ mod test {
                 attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
             }]
         );
-        assert!(core.workflow_machines.get(run_id).is_some());
+        assert!(core.workflow_machines.exists(run_id));
 
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
@@ -541,7 +517,7 @@ mod test {
                 attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
             }]
         );
-        assert!(core.workflow_machines.get(run_id).is_some());
+        assert!(core.workflow_machines.exists(run_id));
 
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(

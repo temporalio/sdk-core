@@ -106,8 +106,9 @@ fn parallel_timer_workflow() {
         task.task_token,
     ))
     .unwrap();
-    // Wait long enough for both timers to complete
-    std::thread::sleep(Duration::from_millis(1000));
+    // Wait long enough for both timers to complete. Server seems to be a bit weird about actually
+    // sending both of these in one go, so we need to wait longer than you would expect.
+    std::thread::sleep(Duration::from_millis(1500));
     let task = core.poll_task(task_q).unwrap();
     assert_matches!(
         task.get_wf_jobs().as_slice(),

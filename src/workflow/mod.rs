@@ -1,6 +1,8 @@
 mod bridge;
+mod concurrency_manager;
 
 pub(crate) use bridge::WorkflowBridge;
+pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
 
 use crate::{
     machines::{ProtoCommand, WFCommand, WorkflowMachines},
@@ -17,10 +19,7 @@ use crate::{
     protosext::HistoryInfo,
     CoreError, Result,
 };
-use std::{
-    ops::DerefMut,
-    sync::{mpsc::Sender, Arc, Mutex},
-};
+use std::sync::mpsc::Sender;
 use tracing::Level;
 
 /// Implementors can provide new workflow tasks to the SDK. The connection to the server is the real
@@ -61,22 +60,18 @@ pub trait StartWorkflowExecutionApi {
     ) -> Result<StartWorkflowExecutionResponse>;
 }
 
-/// Manages concurrent access to an instance of a [WorkflowMachines], which is not thread-safe,
-/// as well as other data associated with that specific workflow run.
+/// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
+/// associated with that specific workflow run.
 pub(crate) struct WorkflowManager {
-    data: Arc<Mutex<WfManagerProtected>>,
-}
-/// Inner data for [WorkflowManager]
-pub(crate) struct WfManagerProtected {
     pub machines: WorkflowMachines,
     pub command_sink: Sender<Vec<WFCommand>>,
     /// The last recorded history we received from the server for this workflow run. This must be
     /// kept because the lang side polls & completes for every workflow task, but we do not need
     /// to poll the server that often during replay.
-    pub last_history_from_server: History,
-    pub last_history_task_count: usize,
+    last_history_from_server: History,
+    last_history_task_count: usize,
     /// The current workflow task number this run is on. Starts at one and monotonically increases.
-    pub current_wf_task_num: usize,
+    current_wf_task_num: usize,
 }
 
 impl WorkflowManager {
@@ -95,35 +90,23 @@ impl WorkflowManager {
 
         let (wfb, cmd_sink) = WorkflowBridge::new();
         let state_machines = WorkflowMachines::new(we.workflow_id, we.run_id, Box::new(wfb));
-        let protected = WfManagerProtected {
+        Ok(Self {
             machines: state_machines,
             command_sink: cmd_sink,
             last_history_task_count: history.get_workflow_task_count(None)?,
             last_history_from_server: history,
             current_wf_task_num: 1,
-        };
-        Ok(Self {
-            data: Arc::new(Mutex::new(protected)),
         })
-    }
-
-    pub fn lock(&self) -> Result<impl DerefMut<Target = WfManagerProtected> + '_> {
-        Ok(self.data.lock().map_err(|_| {
-            CoreError::LockPoisoned(
-                "A workflow manager lock was poisoned. This should be impossible since they \
-                are run on one thread."
-                    .to_string(),
-            )
-        })?)
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct NextWfActivation {
     pub activation: Option<WfActivation>,
     pub more_activations_needed: bool,
 }
 
-impl WfManagerProtected {
+impl WorkflowManager {
     /// Given history that was just obtained from the server, pipe it into this workflow's machines.
     ///
     /// Should only be called when a workflow has caught up on replay. It will return a workflow
@@ -164,18 +147,5 @@ impl WfManagerProtected {
             activation,
             more_activations_needed,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn enforcer<W: Send + Sync>(_: W) {}
-
-    // Enforce thread-safeness of wf manager
-    #[test]
-    fn is_threadsafe() {
-        enforcer(WorkflowManager::new(Default::default()));
     }
 }
