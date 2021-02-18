@@ -210,7 +210,7 @@ impl WorkflowMachines {
 
         self.current_started_event_id = task_started_event_id;
         self.set_current_time(time);
-        self.event_loop();
+        self.iterate_machines();
     }
 
     /// A command event is an event which is generated from a command emitted by a past decision.
@@ -379,9 +379,9 @@ impl WorkflowMachines {
             .expect("We have just ensured this is populated")
     }
 
-    /// Runs the event loop, which consists of grabbing any pending outgoing commands from the
-    /// workflow, handling them, and preparing them to be sent off to the server.
-    pub(crate) fn event_loop(&mut self) {
+    /// Iterate the state machines,, which consists of grabbing any pending outgoing commands from
+    /// the workflow, handling them, and preparing them to be sent off to the server.
+    pub(crate) fn iterate_machines(&mut self) {
         let results = self.drive_me.fetch_workflow_iteration_output();
         self.handle_driven_results(results);
 
