@@ -58,6 +58,7 @@ use crate::{
 use prost::alloc::fmt::Formatter;
 use rustfsm::{MachineError, StateMachine};
 use std::cell::RefCell;
+use std::fmt::Display;
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::{
@@ -158,6 +159,7 @@ where
     <SM as StateMachine>::Event: TryFrom<CommandType>,
     WFMachinesError: From<<<SM as StateMachine>::Event as TryFrom<HistoryEvent>>::Error>,
     <SM as StateMachine>::Command: Debug,
+    <SM as StateMachine>::State: Display,
     <SM as StateMachine>::Error: Into<WFMachinesError> + 'static + Send + Sync,
 {
     fn name(&self) -> &str {
@@ -205,10 +207,16 @@ where
                 }
                 Ok(triggers)
             }
-            Err(MachineError::InvalidTransition) => Err(WFMachinesError::UnexpectedEvent(
-                event.clone(),
-                "The handling machine says the transition is invalid",
-            )),
+            Err(MachineError::InvalidTransition) => {
+                Err(WFMachinesError::InvalidTransitionDuringEvent(
+                    event.clone(),
+                    format!(
+                        "{} in state {} says the transition is invalid",
+                        self.name(),
+                        self.state()
+                    ),
+                ))
+            }
             Err(MachineError::Underlying(e)) => Err(e.into()),
         }
     }

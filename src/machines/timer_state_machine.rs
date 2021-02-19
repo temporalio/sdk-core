@@ -463,7 +463,15 @@ mod test {
         t.add_workflow_task_scheduled_and_started();
         // dbg!(t.as_history());
         let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, None)
+            .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
             .unwrap();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+        assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
+            .unwrap();
+        dbg!(&commands);
+        assert_eq!(commands.len(), 2);
     }
 }

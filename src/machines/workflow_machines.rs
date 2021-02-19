@@ -94,6 +94,8 @@ pub(super) enum MachineResponse {
 pub enum WFMachinesError {
     #[error("Event {0:?} was not expected: {1}")]
     UnexpectedEvent(HistoryEvent, &'static str),
+    #[error("Event {0:?} was not expected: {1}")]
+    InvalidTransitionDuringEvent(HistoryEvent, String),
     #[error("Event {0:?} was malformed: {1}")]
     MalformedEvent(HistoryEvent, String),
     // Expected to be transformed into a `MalformedEvent` with the full event by workflow machines,
