@@ -57,13 +57,11 @@ use crate::{
 };
 use prost::alloc::fmt::Formatter;
 use rustfsm::{MachineError, StateMachine};
-use std::cell::RefCell;
-use std::fmt::Display;
-use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
 use std::{
+    cell::RefCell,
     convert::{TryFrom, TryInto},
-    fmt::Debug,
+    fmt::{Debug, Display},
+    rc::Rc,
 };
 use tracing::Level;
 
@@ -73,7 +71,7 @@ pub(crate) type ProtoCommand = Command;
 /// drive it, start it, signal it, cancel it, etc.
 pub(crate) trait DrivenWorkflow: ActivationListener + Send {
     /// Start the workflow
-    fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes) -> Vec<WFCommand>;
+    fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes);
 
     /// Obtain any output from the workflow's recent execution(s). Because the lang sdk is
     /// responsible for calling workflow code as a result of receiving tasks from
@@ -150,6 +148,10 @@ trait TemporalStateMachine: CheckStateMachineInFinal + Send {
 
     /// Attempt to cancel the command associated with this state machine, if it is cancellable
     fn cancel(&mut self) -> Result<MachineResponse, WFMachinesError>;
+
+    /// Should return true if the command was cancelled before we sent it to the server. Always
+    /// returns false for non-cancellable machines
+    fn was_cancelled_before_sent_to_server(&self) -> bool;
 }
 
 impl<SM> TemporalStateMachine for SM
@@ -171,7 +173,8 @@ where
             Level::DEBUG,
             msg = "handling command",
             ?command_type,
-            machine_name = %self.name()
+            machine_name = %self.name(),
+            state = %self.state()
         );
         if let Ok(converted_command) = command_type.try_into() {
             match self.on_event_mut(converted_command) {
@@ -195,12 +198,15 @@ where
             Level::DEBUG,
             msg = "handling event",
             %event,
-            machine_name = %self.name()
+            machine_name = %self.name(),
+            state = %self.state()
         );
         let converted_event = event.clone().try_into()?;
         match self.on_event_mut(converted_event) {
             Ok(c) => {
-                event!(Level::DEBUG, msg = "Machine produced commands", ?c);
+                if !c.is_empty() {
+                    event!(Level::DEBUG, msg = "Machine produced commands", ?c, state = %self.state());
+                }
                 let mut triggers = vec![];
                 for cmd in c {
                     triggers.extend(self.adapt_response(event, has_next_event, cmd)?);
@@ -223,13 +229,16 @@ where
 
     fn cancel(&mut self) -> Result<MachineResponse, WFMachinesError> {
         let res = self.cancel();
-        dbg!(&res);
         res.map_err(|e| match e {
             MachineError::InvalidTransition => {
                 WFMachinesError::InvalidTransition("while attempting to cancel")
             }
             MachineError::Underlying(e) => e.into(),
         })
+    }
+
+    fn was_cancelled_before_sent_to_server(&self) -> bool {
+        self.was_cancelled_before_sent_to_server()
     }
 }
 
@@ -274,38 +283,14 @@ trait Cancellable: StateMachine {
         // be cancelled TODO: Result instead?
         panic!(format!("This type of machine cannot be cancelled"))
     }
-}
 
-// TODO: Distinction is maybe unimportant
-#[derive(Debug)]
-enum NewOrExistingCommand {
-    New(CommandAndMachine),
-    Existing(CommandAndMachine),
-}
-
-impl NewOrExistingCommand {
-    fn machine(&self) -> impl Deref<Target = dyn TemporalStateMachine> + '_ {
-        match self {
-            NewOrExistingCommand::New(n) => n.machine.borrow(),
-            NewOrExistingCommand::Existing(e) => e.machine.borrow(),
-        }
-    }
-    fn machine_mut(&mut self) -> impl DerefMut<Target = dyn TemporalStateMachine> + '_ {
-        match self {
-            NewOrExistingCommand::New(n) => n.machine.borrow_mut(),
-            NewOrExistingCommand::Existing(e) => e.machine.borrow_mut(),
-        }
-    }
-    fn command(&self) -> &ProtoCommand {
-        match self {
-            NewOrExistingCommand::New(n) => &n.command,
-            NewOrExistingCommand::Existing(e) => &e.command,
-        }
+    /// Should return true if the command was cancelled before we sent it to the server
+    fn was_cancelled_before_sent_to_server(&self) -> bool {
+        false
     }
 }
 
 type MachineRef = Rc<RefCell<dyn TemporalStateMachine>>;
-
 #[derive(Debug)]
 struct CommandAndMachine {
     command: ProtoCommand,

@@ -149,14 +149,23 @@ pub mod temporal {
                         let mut history = self.events.iter().peekable();
                         while let Some(event) = history.next() {
                             let next_event = history.peek();
+
+                            if event.is_final_wf_execution_event() {
+                                // If the workflow is complete, we're done.
+                                // TODO: Should we throw err if next event is populated?
+                                return Ok(count);
+                            }
+
                             if let Some(upto) = up_to_event_id {
                                 if event.event_id > upto {
                                     return Ok(count);
                                 }
                             }
+
                             let next_is_completed = next_event.map_or(false, |ne| {
                                 ne.event_type == EventType::WorkflowTaskCompleted as i32
                             });
+
                             if event.event_type == EventType::WorkflowTaskStarted as i32
                                 && (next_event.is_none() || next_is_completed)
                             {

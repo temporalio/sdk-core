@@ -23,6 +23,7 @@ use crate::{
         },
     },
 };
+use futures::FutureExt;
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::{
     cell::RefCell,
@@ -42,7 +43,7 @@ fsm! {
 
     StartCommandCreated --(CommandStartTimer) --> StartCommandCreated;
     StartCommandCreated --(TimerStarted(HistoryEventId), on_timer_started) --> StartCommandRecorded;
-    StartCommandCreated --(Cancel, on_cancel) --> Canceled;
+    StartCommandCreated --(Cancel, shared on_cancel) --> Canceled;
 
     StartCommandRecorded --(TimerFired(TimerFiredEventAttributes), shared on_timer_fired) --> Fired;
     StartCommandRecorded --(Cancel, shared on_cancel) --> CancelTimerCommandCreated;
@@ -91,7 +92,10 @@ impl TimerMachine {
     fn new(attribs: StartTimerCommandAttributes) -> Self {
         Self {
             state: Created {}.into(),
-            shared_state: SharedState { attrs: attribs },
+            shared_state: SharedState {
+                attrs: attribs,
+                cancelled_before_sent: false,
+            },
         }
     }
 }
@@ -140,6 +144,7 @@ impl TryFrom<CommandType> for TimerMachineEvents {
 #[derive(Default, Clone)]
 pub(super) struct SharedState {
     attrs: StartTimerCommandAttributes,
+    cancelled_before_sent: bool,
 }
 
 #[derive(Default, Clone)]
@@ -161,7 +166,10 @@ impl Created {
 pub(super) struct CancelTimerCommandCreated {}
 impl CancelTimerCommandCreated {
     pub(super) fn on_command_cancel_timer(self) -> TimerMachineTransition {
-        TimerMachineTransition::ok(vec![TimerMachineCommand::Canceled], Canceled::default())
+        TimerMachineTransition::ok(
+            vec![TimerMachineCommand::Canceled],
+            CancelTimerCommandSent::default(),
+        )
     }
 }
 
@@ -187,8 +195,15 @@ impl StartCommandCreated {
         // TODO: Java recorded an initial event ID, but it seemingly was never used.
         TimerMachineTransition::default::<StartCommandRecorded>()
     }
-    pub(super) fn on_cancel(mut self) -> TimerMachineTransition {
-        TimerMachineTransition::ok(vec![TimerMachineCommand::Canceled], Canceled::default())
+    pub(super) fn on_cancel(mut self, dat: SharedState) -> TimerMachineTransition {
+        TimerMachineTransition::ok_shared(
+            vec![TimerMachineCommand::Canceled],
+            Canceled::default(),
+            SharedState {
+                cancelled_before_sent: true,
+                ..dat
+            },
+        )
     }
 }
 
@@ -212,6 +227,7 @@ impl StartCommandRecorded {
     }
 
     pub(super) fn on_cancel(self, dat: SharedState) -> TimerMachineTransition {
+        dbg!("On cancel!");
         let cmd = Command {
             command_type: CommandType::CancelTimer as i32,
             attributes: Some(
@@ -259,8 +275,12 @@ impl Cancellable for TimerMachine {
             Some(TimerMachineCommand::IssueCancelCmd(cmd)) => {
                 Ok(MachineResponse::IssueNewCommand(cmd))
             }
-            _ => panic!("Invalid cancel event response"),
+            x => panic!(format!("Invalid cancel event response {:?}", x)),
         }
+    }
+
+    fn was_cancelled_before_sent_to_server(&self) -> bool {
+        self.shared_state().cancelled_before_sent
     }
 }
 
@@ -286,10 +306,10 @@ mod test {
     use rstest::{fixture, rstest};
     use rustfsm::MachineError;
     use std::{error::Error, sync::Arc, time::Duration};
-    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     #[fixture]
     fn fire_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
+        crate::core_tracing::tracing_init();
         /*
             1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
             2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
@@ -341,7 +361,7 @@ mod test {
 
     #[rstest]
     fn test_fire_happy_path_inc(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let s = span!(Level::DEBUG, "Test start", t = "inc");
+        let s = span!(Level::DEBUG, "Test start", t = "happy_inc");
         let _enter = s.enter();
 
         let (t, mut state_machines) = fire_happy_hist;
@@ -366,12 +386,12 @@ mod test {
 
     #[rstest]
     fn test_fire_happy_path_full(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let s = span!(Level::DEBUG, "Test start", t = "full");
+        let s = span!(Level::DEBUG, "Test start", t = "happy_full");
         let _enter = s.enter();
 
         let (t, mut state_machines) = fire_happy_hist;
         let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
+            .handle_workflow_task_take_cmds(&mut state_machines, None)
             .unwrap();
         assert_eq!(commands.len(), 1);
         assert_eq!(
@@ -412,8 +432,10 @@ mod test {
             .contains("Timer fired event did not have expected timer id realid!"))
     }
 
-    #[test]
-    fn cancellation() {
+    #[fixture]
+    fn cancellation_setup() -> (TestHistoryBuilder, WorkflowMachines) {
+        crate::core_tracing::tracing_init();
+
         let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
             let cancel_this = cmd_sink.timer(
                 StartTimerCommandAttributes {
@@ -451,7 +473,9 @@ mod test {
                 timer_id: "wait_timer".to_string(),
             }),
         );
+        // 8
         t.add_full_wf_task();
+        // 11
         t.add(
             EventType::TimerCanceled,
             history_event::Attributes::TimerCanceledEventAttributes(TimerCanceledEventAttributes {
@@ -460,8 +484,17 @@ mod test {
                 ..Default::default()
             }),
         );
-        t.add_workflow_task_scheduled_and_started();
-        // dbg!(t.as_history());
+        // 12
+        t.add_workflow_execution_completed();
+        (t, state_machines)
+    }
+
+    #[rstest]
+    fn incremental_cancellation(cancellation_setup: (TestHistoryBuilder, WorkflowMachines)) {
+        let s = span!(Level::DEBUG, "Test start", t = "cancel_inc");
+        let _enter = s.enter();
+
+        let (t, mut state_machines) = cancellation_setup;
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
             .unwrap();
@@ -471,7 +504,34 @@ mod test {
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
             .unwrap();
-        dbg!(&commands);
         assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].command_type, CommandType::CancelTimer as i32);
+        assert_eq!(
+            commands[1].command_type,
+            CommandType::CompleteWorkflowExecution as i32
+        );
+        // TODO in Java no commands are prepared or anything for 11 and 12
+        //  but I'm screwing up on event 10, the last WFTC.
+        //  Problem seems to be timer machine's cancel gets called a second time, when it shouldn't
+        //  be, which might really just be a problem with the way the test is driven, as it looks
+        //  like no commands should be emitted on last (4th) iteration of wf. Think that's it.
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, None)
+            .unwrap();
+        // There should be no commands - the wf completed at the same time the timer was cancelled
+        assert_eq!(commands.len(), 0);
+    }
+
+    #[rstest]
+    fn full_cancellation(cancellation_setup: (TestHistoryBuilder, WorkflowMachines)) {
+        let s = span!(Level::DEBUG, "Test start", t = "cancel_full");
+        let _enter = s.enter();
+
+        let (t, mut state_machines) = cancellation_setup;
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, None)
+            .unwrap();
+        // There should be no commands - the wf completed at the same time the timer was cancelled
+        assert_eq!(commands.len(), 0);
     }
 }

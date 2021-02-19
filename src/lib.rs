@@ -11,6 +11,7 @@ extern crate tracing;
 
 pub mod protos;
 
+pub(crate) mod core_tracing;
 mod machines;
 mod pollers;
 mod protosext;

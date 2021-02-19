@@ -32,6 +32,8 @@ use tracing::Level;
 pub(in crate::machines) struct TestWorkflowDriver<F> {
     wf_function: F,
     cache: Arc<TestWfDriverCache>,
+    /// Set to true if a workflow execution completed/failed/cancelled/etc has been issued
+    sent_final_execution: bool,
 }
 
 #[derive(Default, Debug)]
@@ -58,6 +60,7 @@ where
         Self {
             wf_function: workflow_fn,
             cache: Default::default(),
+            sent_final_execution: false,
         }
     }
 }
@@ -78,12 +81,17 @@ where
     F: Fn(CommandSender) -> Fut + Send + Sync,
     Fut: Future<Output = ()>,
 {
-    fn start(&mut self, _attribs: WorkflowExecutionStartedEventAttributes) -> Vec<WFCommand> {
+    fn start(&mut self, _attribs: WorkflowExecutionStartedEventAttributes) {
         event!(Level::DEBUG, msg = "Test WF driver start called");
-        vec![]
     }
 
     fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
+        // If we have already sent the command to complete the workflow, we don't want
+        // to re-run the worfklow again.
+        if self.sent_final_execution {
+            return vec![];
+        }
+
         let (sender, receiver) = CommandSender::new(self.cache.clone());
         // Call the closure that produces the workflow future
         let wf_future = (self.wf_function)(sender);
@@ -99,7 +107,12 @@ where
         let mut emit_these = vec![];
         for cmd in cmds {
             match cmd {
-                TestWFCommand::WFCommand(c) => emit_these.push(c),
+                TestWFCommand::WFCommand(c) => {
+                    if let WFCommand::CompleteWorkflow(_) = &c {
+                        self.sent_final_execution = true;
+                    }
+                    emit_these.push(c);
+                }
                 TestWFCommand::Waiting => {
                     // Ignore further commands since we're waiting on something
                     break;

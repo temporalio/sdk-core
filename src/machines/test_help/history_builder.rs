@@ -1,5 +1,7 @@
 use super::Result;
-use crate::protos::temporal::api::history::v1::History;
+use crate::protos::temporal::api::history::v1::{
+    History, WorkflowExecutionCompletedEventAttributes,
+};
 use crate::{
     machines::{workflow_machines::WorkflowMachines, ProtoCommand},
     protos::temporal::api::{
@@ -23,6 +25,7 @@ pub struct TestHistoryBuilder {
     current_event_id: i64,
     workflow_task_scheduled_event_id: i64,
     previous_started_event_id: i64,
+    previous_task_completed_id: i64,
 }
 
 impl TestHistoryBuilder {
@@ -85,7 +88,16 @@ impl TestHistoryBuilder {
             scheduled_event_id: self.workflow_task_scheduled_event_id,
             ..Default::default()
         };
-        self.build_and_push_event(EventType::WorkflowTaskCompleted, attrs.into());
+        let id = self.add_get_event_id(EventType::WorkflowTaskCompleted, Some(attrs.into()));
+        self.previous_task_completed_id = id;
+    }
+
+    pub fn add_workflow_execution_completed(&mut self) {
+        let attrs = WorkflowExecutionCompletedEventAttributes {
+            workflow_task_completed_event_id: self.previous_task_completed_id,
+            ..Default::default()
+        };
+        self.build_and_push_event(EventType::WorkflowExecutionCompleted, attrs.into());
     }
 
     pub fn as_history(&self) -> History {
