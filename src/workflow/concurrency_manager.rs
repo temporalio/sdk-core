@@ -254,7 +254,7 @@ mod tests {
         let mgr = WorkflowConcurrencyManager::new();
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_workflow_task();
+        t.add_full_wf_task();
 
         let activation = mgr
             .create_or_update(

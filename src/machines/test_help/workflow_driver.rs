@@ -1,3 +1,4 @@
+use crate::protos::temporal::api::command::v1::CancelTimerCommandAttributes;
 use crate::{
     machines::{ActivationListener, DrivenWorkflow, WFCommand},
     protos::{
@@ -64,7 +65,6 @@ where
 impl<F> ActivationListener for TestWorkflowDriver<F> {
     fn on_activation_job(&mut self, activation: &Attributes) {
         if let Attributes::TimerFired(TimerFiredTaskAttributes { timer_id }) = activation {
-            dbg!(&timer_id);
             Arc::get_mut(&mut self.cache)
                 .unwrap()
                 .unblocked_timers
@@ -96,10 +96,10 @@ where
 
         let cmds = receiver.into_iter();
 
-        let mut last_cmd = None;
+        let mut emit_these = vec![];
         for cmd in cmds {
             match cmd {
-                TestWFCommand::WFCommand(c) => last_cmd = Some(c),
+                TestWFCommand::WFCommand(c) => emit_these.push(c),
                 TestWFCommand::Waiting => {
                     // Ignore further commands since we're waiting on something
                     break;
@@ -107,14 +107,9 @@ where
             }
         }
 
-        event!(Level::DEBUG, msg = "Test wf driver emitting", ?last_cmd);
+        event!(Level::DEBUG, msg = "Test wf driver emitting", ?emit_these);
 
-        // Return only the last command, since that's what would've been yielded in a real wf
-        if let Some(c) = last_cmd {
-            vec![c]
-        } else {
-            vec![]
-        }
+        emit_these
     }
 
     fn signal(&mut self, _attribs: WorkflowExecutionSignaledEventAttributes) {}
@@ -159,6 +154,13 @@ impl CommandSender {
             self.chan.send(TestWFCommand::Waiting).unwrap();
         }
         finished
+    }
+
+    pub fn cancel_timer(&mut self, timer_id: &str) {
+        let c = WFCommand::CancelTimer(CancelTimerCommandAttributes {
+            timer_id: timer_id.to_string(),
+        });
+        self.chan.send(c.into()).unwrap();
     }
 
     pub fn send(&mut self, c: WFCommand) {

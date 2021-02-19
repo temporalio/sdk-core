@@ -1,6 +1,7 @@
 #![allow(clippy::enum_variant_names)]
 
 use crate::machines::workflow_machines::MachineResponse;
+use crate::machines::Cancellable;
 use crate::{
     machines::{
         workflow_machines::{WFMachinesError, WorkflowMachines},
@@ -121,6 +122,8 @@ impl TryFrom<CommandType> for WorkflowTaskMachineEvents {
         Err(())
     }
 }
+
+impl Cancellable for WorkflowTaskMachine {}
 
 #[derive(Debug, Clone)]
 pub(super) struct SharedState {

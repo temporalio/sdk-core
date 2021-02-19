@@ -55,7 +55,7 @@ impl TestHistoryBuilder {
     /// EVENT_TYPE_WORKFLOW_TASK_STARTED
     /// EVENT_TYPE_WORKFLOW_TASK_COMPLETED
     /// ```
-    pub fn add_workflow_task(&mut self) {
+    pub fn add_full_wf_task(&mut self) {
         self.add_workflow_task_scheduled_and_started();
         self.add_workflow_task_completed();
     }

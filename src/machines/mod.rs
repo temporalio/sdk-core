@@ -1,6 +1,7 @@
 #[allow(unused)]
 mod workflow_machines;
 
+// TODO: Move all these inside a submachines module
 #[allow(unused)]
 mod activity_state_machine;
 #[allow(unused)]
@@ -43,8 +44,8 @@ use crate::{
         coresdk::{self, command::Variant, wf_activation_job},
         temporal::api::{
             command::v1::{
-                command::Attributes, Command, CompleteWorkflowExecutionCommandAttributes,
-                StartTimerCommandAttributes,
+                command::Attributes, CancelTimerCommandAttributes, Command,
+                CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
             },
             enums::v1::CommandType,
             history::v1::{
@@ -56,6 +57,7 @@ use crate::{
 };
 use prost::alloc::fmt::Formatter;
 use rustfsm::{MachineError, StateMachine};
+use std::rc::Rc;
 use std::{
     convert::{TryFrom, TryInto},
     fmt::Debug,
@@ -93,13 +95,6 @@ pub(crate) trait ActivationListener {
     fn on_activation_job(&mut self, _activation: &wf_activation_job::Attributes) {}
 }
 
-/// The struct for [WFCommand::AddCommand]
-#[derive(Debug, derive_more::From)]
-pub(crate) struct AddCommand {
-    /// The protobuf command
-    pub(crate) command: Command,
-}
-
 /// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
 /// EX: Create a new timer, complete the workflow, etc.
 #[derive(Debug, derive_more::From)]
@@ -107,6 +102,7 @@ pub enum WFCommand {
     /// Returned when we need to wait for the lang sdk to send us something
     NoCommandsFromLang,
     AddTimer(StartTimerCommandAttributes),
+    CancelTimer(CancelTimerCommandAttributes),
     CompleteWorkflow(CompleteWorkflowExecutionCommandAttributes),
 }
 
@@ -148,11 +144,14 @@ trait TemporalStateMachine: CheckStateMachineInFinal + Send {
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<Vec<MachineResponse>, WFMachinesError>;
+
+    /// Attempt to cancel the command associated with this state machine, if it is cancellable
+    fn cancel(&mut self) -> Result<MachineResponse, WFMachinesError>;
 }
 
 impl<SM> TemporalStateMachine for SM
 where
-    SM: StateMachine + CheckStateMachineInFinal + WFMachinesAdapter + Clone + Send,
+    SM: StateMachine + CheckStateMachineInFinal + WFMachinesAdapter + Cancellable + Clone + Send,
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
     WFMachinesError: From<<<SM as StateMachine>::Event as TryFrom<HistoryEvent>>::Error>,
@@ -211,6 +210,17 @@ where
             Err(MachineError::Underlying(e)) => Err(e.into()),
         }
     }
+
+    fn cancel(&mut self) -> Result<MachineResponse, WFMachinesError> {
+        let res = self.cancel();
+        dbg!(&res);
+        res.map_err(|e| match e {
+            MachineError::InvalidTransition => {
+                WFMachinesError::InvalidTransition("while attempting to cancel")
+            }
+            MachineError::Underlying(e) => e.into(),
+        })
+    }
 }
 
 /// Exists purely to allow generic implementation of `is_final_state` for all [StateMachine]
@@ -243,25 +253,52 @@ trait WFMachinesAdapter: StateMachine {
     ) -> Result<Vec<MachineResponse>, WFMachinesError>;
 }
 
-/// A command which can be cancelled, associated with the state machine that produced it
-#[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
-enum CancellableCommand {
-    // TODO: You'll be used soon, friend.
-    #[allow(dead_code)]
-    Cancelled,
-    Active {
-        /// The inner protobuf command, if None, command has been cancelled
-        command: ProtoCommand,
-        machine: Box<dyn TemporalStateMachine>,
-    },
+trait Cancellable: StateMachine {
+    /// Cancel the machine / the command represented by the machine.
+    ///
+    /// # Panics
+    /// * If the machine is not cancellable. It's a logic error on our part to call it on such
+    ///   machines.
+    fn cancel(&mut self) -> Result<MachineResponse, MachineError<Self::Error>> {
+        // It's a logic error on our part if this is ever called on a machine that can't actually
+        // be cancelled TODO: Result instead?
+        panic!(format!("This type of machine cannot be cancelled"))
+    }
 }
 
-impl CancellableCommand {
-    #[allow(dead_code)] // TODO: Use
-    pub(super) fn cancel(&mut self) {
-        *self = CancellableCommand::Cancelled;
+// TODO: Distinction is maybe unimportant
+#[derive(Debug)]
+enum NewOrExistingCommand {
+    New(CommandAndMachine),
+    Existing(CommandAndMachine),
+}
+
+impl NewOrExistingCommand {
+    fn machine(&self) -> &dyn TemporalStateMachine {
+        match self {
+            NewOrExistingCommand::New(n) => &*n.machine,
+            NewOrExistingCommand::Existing(e) => &*e.machine,
+        }
     }
+    fn machine_mut(&mut self) -> &mut dyn TemporalStateMachine {
+        match self {
+            // TODO: Not this
+            NewOrExistingCommand::New(n) => Rc::get_mut(&mut n.machine).unwrap(),
+            NewOrExistingCommand::Existing(e) => Rc::get_mut(&mut e.machine).unwrap(),
+        }
+    }
+    fn command(&self) -> &ProtoCommand {
+        match self {
+            NewOrExistingCommand::New(n) => &n.command,
+            NewOrExistingCommand::Existing(e) => &e.command,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CommandAndMachine {
+    command: ProtoCommand,
+    machine: Rc<dyn TemporalStateMachine>,
 }
 
 impl Debug for dyn TemporalStateMachine {

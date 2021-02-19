@@ -1,8 +1,8 @@
-use crate::machines::workflow_machines::MachineResponse;
+use crate::machines::CommandAndMachine;
 use crate::{
     machines::{
-        workflow_machines::WorkflowMachines, AddCommand, CancellableCommand, WFCommand,
-        WFMachinesAdapter, WFMachinesError,
+        workflow_machines::MachineResponse, workflow_machines::WorkflowMachines, Cancellable,
+        WFCommand, WFMachinesAdapter, WFMachinesError,
     },
     protos::temporal::api::{
         command::v1::{Command, CompleteWorkflowExecutionCommandAttributes},
@@ -11,7 +11,6 @@ use crate::{
     },
 };
 use rustfsm::{fsm, StateMachine, TransitionResult};
-use std::cell::RefCell;
 use std::{convert::TryFrom, rc::Rc};
 
 fsm! {
@@ -31,17 +30,17 @@ fsm! {
 
 #[derive(Debug)]
 pub(super) enum CompleteWFCommand {
-    AddCommand(AddCommand),
+    AddCommand(Command),
 }
 
 /// Complete a workflow
 pub(super) fn complete_workflow(
     attribs: CompleteWorkflowExecutionCommandAttributes,
-) -> CancellableCommand {
+) -> CommandAndMachine {
     let (machine, add_cmd) = CompleteWorkflowMachine::new_scheduled(attribs);
-    CancellableCommand::Active {
-        command: add_cmd.command,
-        machine: Box::new(machine),
+    CommandAndMachine {
+        command: add_cmd,
+        machine: Rc::new(machine),
     }
 }
 
@@ -49,7 +48,7 @@ impl CompleteWorkflowMachine {
     /// Create a new WF machine and schedule it
     pub(crate) fn new_scheduled(
         attribs: CompleteWorkflowExecutionCommandAttributes,
-    ) -> (Self, AddCommand) {
+    ) -> (Self, Command) {
         let mut s = Self {
             state: Created {}.into(),
             shared_state: attribs,
@@ -136,3 +135,5 @@ impl WFMachinesAdapter for CompleteWorkflowMachine {
         Ok(vec![])
     }
 }
+
+impl Cancellable for CompleteWorkflowMachine {}
