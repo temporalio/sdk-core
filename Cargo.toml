@@ -3,7 +3,6 @@ name = "temporal-sdk-core"
 version = "0.1.0"
 authors = ["Spencer Judge <spencer@temporal.io>", "Vitaly Arbuzov <vitaly@temporal.io>"]
 edition = "2018"
-license = "MIT"
 license-file = "LICENSE.txt"
 
 [lib]
