@@ -57,6 +57,8 @@ use crate::{
 };
 use prost::alloc::fmt::Formatter;
 use rustfsm::{MachineError, StateMachine};
+use std::cell::RefCell;
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::{
     convert::{TryFrom, TryInto},
@@ -274,17 +276,16 @@ enum NewOrExistingCommand {
 }
 
 impl NewOrExistingCommand {
-    fn machine(&self) -> &dyn TemporalStateMachine {
+    fn machine(&self) -> impl Deref<Target = dyn TemporalStateMachine> + '_ {
         match self {
-            NewOrExistingCommand::New(n) => &*n.machine,
-            NewOrExistingCommand::Existing(e) => &*e.machine,
+            NewOrExistingCommand::New(n) => n.machine.borrow(),
+            NewOrExistingCommand::Existing(e) => e.machine.borrow(),
         }
     }
-    fn machine_mut(&mut self) -> &mut dyn TemporalStateMachine {
+    fn machine_mut(&mut self) -> impl DerefMut<Target = dyn TemporalStateMachine> + '_ {
         match self {
-            // TODO: Not this
-            NewOrExistingCommand::New(n) => Rc::get_mut(&mut n.machine).unwrap(),
-            NewOrExistingCommand::Existing(e) => Rc::get_mut(&mut e.machine).unwrap(),
+            NewOrExistingCommand::New(n) => n.machine.borrow_mut(),
+            NewOrExistingCommand::Existing(e) => e.machine.borrow_mut(),
         }
     }
     fn command(&self) -> &ProtoCommand {
@@ -295,10 +296,12 @@ impl NewOrExistingCommand {
     }
 }
 
+type MachineRef = Rc<RefCell<dyn TemporalStateMachine>>;
+
 #[derive(Debug)]
 struct CommandAndMachine {
     command: ProtoCommand,
-    machine: Rc<dyn TemporalStateMachine>,
+    machine: MachineRef,
 }
 
 impl Debug for dyn TemporalStateMachine {

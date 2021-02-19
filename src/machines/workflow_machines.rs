@@ -1,4 +1,4 @@
-use crate::machines::{CommandAndMachine, NewOrExistingCommand};
+use crate::machines::{CommandAndMachine, MachineRef, NewOrExistingCommand};
 use crate::protos::temporal::api::command::v1::Command;
 use crate::{
     machines::{
@@ -19,6 +19,7 @@ use crate::{
 };
 use futures::Future;
 use rustfsm::{MachineError, StateMachine};
+use std::cell::RefCell;
 use std::{
     borrow::BorrowMut,
     collections::{HashMap, HashSet, VecDeque},
@@ -53,7 +54,7 @@ pub(crate) struct WorkflowMachines {
 
     /// A mapping for accessing all the machines, where the key is the id of the initiating event
     /// for that machine.
-    machines_by_id: HashMap<i64, Rc<dyn TemporalStateMachine>>,
+    machines_by_id: HashMap<i64, MachineRef>,
 
     /// Maps timer ids as created by workflow authors to their initiating event IDs. There is no
     /// reason to force the lang side to track event IDs, so we do it for them.
@@ -172,12 +173,8 @@ impl WorkflowMachines {
                 // We remove the machine while we it handles events, then return it, to avoid
                 // borrowing from ourself mutably.
                 let mut maybe_machine = self.machines_by_id.remove(&initial_cmd_id);
-                if let Some(mut sm) = maybe_machine.as_mut() {
-                    self.submachine_handle_event(
-                        Rc::get_mut(sm).expect("TODO: Fix"),
-                        event,
-                        has_next_event,
-                    )?;
+                if let Some(sm) = maybe_machine.as_ref() {
+                    self.submachine_handle_event((**sm).borrow_mut(), event, has_next_event)?;
                 } else {
                     event!(
                         Level::ERROR,
@@ -189,7 +186,7 @@ impl WorkflowMachines {
 
                 // Restore machine if not in it's final state
                 if let Some(sm) = maybe_machine {
-                    if !sm.is_final_state() {
+                    if !sm.borrow().is_final_state() {
                         self.machines_by_id.insert(initial_cmd_id, sm);
                     }
                 }
@@ -281,7 +278,7 @@ impl WorkflowMachines {
         match consumed_cmd {
             // TODO: If new/existing distinction does not matter that lines up with this
             NewOrExistingCommand::New(CommandAndMachine { command, machine }) => {
-                if !machine.is_final_state() {
+                if !machine.borrow().is_final_state() {
                     self.machines_by_id.insert(event.event_id, machine);
                     // Additionally, some command types have user-created identifiers that may need to
                     // be associated with the event id, so that when (ex) a request to cancel them is
@@ -353,7 +350,7 @@ impl WorkflowMachines {
                     has_next_event,
                 )?;
                 self.machines_by_id
-                    .insert(event.event_id, Rc::new(wf_task_sm));
+                    .insert(event.event_id, Rc::new(RefCell::new(wf_task_sm)));
             }
             Some(EventType::WorkflowExecutionSignaled) => {
                 // TODO: Signal callbacks
@@ -439,7 +436,7 @@ impl WorkflowMachines {
     /// on the returned triggers
     fn submachine_handle_event(
         &mut self,
-        sm: &mut dyn TemporalStateMachine,
+        mut sm: impl DerefMut<Target = dyn TemporalStateMachine>,
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
@@ -483,10 +480,10 @@ impl WorkflowMachines {
                 WFCommand::CancelTimer(attrs) => {
                     // TODO: real errors
                     if let Some(event_id) = self.timer_id_to_initiating_event.get(&attrs.timer_id) {
-                        let machine = self.machines_by_id.get_mut(event_id);
+                        let machine = self.machines_by_id.get(event_id);
                         if let Some(machine) = machine {
                             // TODO: Fix this all up
-                            let res = dbg!(Rc::get_mut(machine).unwrap().cancel());
+                            let res = dbg!((**machine).borrow_mut().cancel());
                             if let Ok(MachineResponse::IssueNewCommand(c)) = res {
                                 self.current_wf_task_commands.push_back(
                                     NewOrExistingCommand::Existing(CommandAndMachine {

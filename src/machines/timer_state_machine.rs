@@ -68,7 +68,7 @@ pub(super) fn new_timer(attribs: StartTimerCommandAttributes) -> CommandAndMachi
     let (timer, add_cmd) = TimerMachine::new_scheduled(attribs);
     CommandAndMachine {
         command: add_cmd,
-        machine: Rc::new(timer),
+        machine: Rc::new(RefCell::new(timer)),
     }
 }
 

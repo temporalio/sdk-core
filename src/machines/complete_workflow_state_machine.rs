@@ -11,6 +11,7 @@ use crate::{
     },
 };
 use rustfsm::{fsm, StateMachine, TransitionResult};
+use std::cell::RefCell;
 use std::{convert::TryFrom, rc::Rc};
 
 fsm! {
@@ -40,7 +41,7 @@ pub(super) fn complete_workflow(
     let (machine, add_cmd) = CompleteWorkflowMachine::new_scheduled(attribs);
     CommandAndMachine {
         command: add_cmd,
-        machine: Rc::new(machine),
+        machine: Rc::new(RefCell::new(machine)),
     }
 }
 
