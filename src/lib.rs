@@ -79,7 +79,7 @@ pub struct CoreInitOptions {
 /// * Will panic if called from within an async context, as it will construct a runtime and you
 ///   cannot construct a runtime from within a runtime.
 pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
-    let _ = env_logger::try_init();
+    core_tracing::tracing_init();
     let runtime = Runtime::new().map_err(CoreError::TokioInitError)?;
     // Initialize server client
     let work_provider = runtime.block_on(opts.gateway_opts.connect())?;
