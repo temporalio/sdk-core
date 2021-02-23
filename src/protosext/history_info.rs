@@ -1,5 +1,5 @@
 use crate::{
-    machines::{WFMachinesError, WorkflowMachines},
+    machines::WorkflowMachines,
     protos::temporal::api::enums::v1::EventType,
     protos::temporal::api::history::v1::{History, HistoryEvent},
 };
@@ -24,8 +24,10 @@ pub enum HistoryInfoError {
     FailedOrTimeout(HistoryEvent),
     #[error("Last item in history wasn't WorkflowTaskStarted")]
     HistoryEndsUnexpectedly,
+
+    // We erase the underlying error type here to keep from leaking it into public
     #[error("Underlying error in workflow machine: {0:?}")]
-    UnderlyingMachineError(#[from] WFMachinesError),
+    UnderlyingMachineError(#[from] anyhow::Error),
 }
 
 impl HistoryInfo {
@@ -128,7 +130,9 @@ impl HistoryInfo {
                 if next_event.is_none() || next_is_completed {
                     started_id = event.event_id;
                     if next_event.is_none() {
-                        wf_machines.handle_event(event, false)?;
+                        wf_machines
+                            .handle_event(event, false)
+                            .map_err(anyhow::Error::from)?;
                         return Ok(());
                     }
                 } else if next_event.is_some() && !next_is_failed_or_timeout {
@@ -136,7 +140,9 @@ impl HistoryInfo {
                 }
             }
 
-            wf_machines.handle_event(event, next_event.is_some())?;
+            wf_machines
+                .handle_event(event, next_event.is_some())
+                .map_err(anyhow::Error::from)?;
 
             if next_event.is_none() {
                 if event.is_final_wf_execution_event() {

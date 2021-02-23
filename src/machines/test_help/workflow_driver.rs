@@ -87,7 +87,9 @@ where
 
     fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
         // If we have already sent the command to complete the workflow, we don't want
-        // to re-run the worfklow again.
+        // to re-run the workflow again.
+        // TODO: This would be better to solve by actually pausing the workflow properly rather
+        //   than doing the re-run the whole thing every time deal.
         if self.sent_final_execution {
             return vec![];
         }

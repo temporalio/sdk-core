@@ -59,8 +59,7 @@ pub(crate) struct WorkflowMachines {
     /// Maps timer ids as created by workflow authors to their initiating event IDs. There is no
     /// reason to force the lang side to track event IDs, so we do it for them.
     /// TODO: Make this apply to *all* cancellable things
-    /// TODO: Rc (Weak, really?) to machine, rather than this map-to-map nonsense
-    timer_id_to_initiating_event: HashMap<String, i64>,
+    timer_id_to_machine: HashMap<String, MachineRef>,
 
     /// Queued commands which have been produced by machines and await processing / being sent to
     /// the server.
@@ -81,7 +80,7 @@ pub(crate) struct WorkflowMachines {
 /// Returned by [TemporalStateMachine]s when handling events
 #[derive(Debug, derive_more::From)]
 #[must_use]
-pub(super) enum MachineResponse {
+pub(crate) enum MachineResponse {
     PushWFJob(#[from(forward)] wf_activation_job::Attributes),
     IssueNewCommand(Command),
     TriggerWFTaskStarted {
@@ -91,7 +90,7 @@ pub(super) enum MachineResponse {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum WFMachinesError {
+pub(crate) enum WFMachinesError {
     #[error("Event {0:?} was not expected: {1}")]
     UnexpectedEvent(HistoryEvent, &'static str),
     #[error("Event {0:?} was not expected: {1}")]
@@ -106,6 +105,10 @@ pub enum WFMachinesError {
     UnexpectedCommand(CommandType),
     #[error("No command was scheduled for event {0:?}")]
     NoCommandScheduledForEvent(HistoryEvent),
+    #[error("Machine response {0:?} was not expected: {1}")]
+    UnexpectedMachineResponse(MachineResponse, &'static str),
+    #[error("Command was missing its associated machine: {0}")]
+    MissingAssociatedMachine(String),
 
     #[error("Machine encountered an invalid transition: {0}")]
     InvalidTransition(&'static str),
@@ -132,7 +135,7 @@ impl WorkflowMachines {
             replaying: false,
             current_wf_time: None,
             machines_by_id: Default::default(),
-            timer_id_to_initiating_event: Default::default(),
+            timer_id_to_machine: Default::default(),
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
             outgoing_wf_activation_jobs: Default::default(),
@@ -265,12 +268,6 @@ impl WorkflowMachines {
             //  * More special handling for version machine - see java
             //  * Commands cancelled this iteration are allowed to not match the event?
 
-            // TODO: In java this is `if !command.isCancelled()`, using the old `CancellableCommand`
-            //  Weirdly, a timer machine being in `CANCELED` does *not* count as `isCancelled`, and
-            //  it specifically seems to mean that `cancel` was called this iteration on the
-            //  cancellable command, so really this is some weird edge case about handling commands
-            //  which were cancelled in this iteration differently -- recalling that `isCancelled`
-            //  really only applies to "cancelled before we sent it to the server"
             if !(*command.machine)
                 .borrow()
                 .was_cancelled_before_sent_to_server()
@@ -287,7 +284,7 @@ impl WorkflowMachines {
 
         if !consumed_cmd.machine.borrow().is_final_state() {
             self.machines_by_id
-                .insert(event.event_id, consumed_cmd.machine);
+                .insert(event.event_id, consumed_cmd.machine.clone());
             // Additionally, some command types have user-created identifiers that may need to
             // be associated with the event id, so that when (ex) a request to cancel them is
             // issued we can identify them.
@@ -299,8 +296,8 @@ impl WorkflowMachines {
                         )),
                     ..
                 } => {
-                    self.timer_id_to_initiating_event
-                        .insert(timer_id, event.event_id);
+                    self.timer_id_to_machine
+                        .insert(timer_id, consumed_cmd.machine);
                 }
                 _ => (),
             }
@@ -470,7 +467,7 @@ impl WorkflowMachines {
         Ok(())
     }
 
-    fn handle_driven_results(&mut self, results: Vec<WFCommand>) {
+    fn handle_driven_results(&mut self, results: Vec<WFCommand>) -> Result<()> {
         for cmd in results {
             // I don't love how boilerplate this is for just pushing new commands, and how
             // weird it feels for cancels.
@@ -480,31 +477,27 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(timer);
                 }
                 WFCommand::CancelTimer(attrs) => {
-                    // TODO: real errors
-                    if let Some(event_id) = self.timer_id_to_initiating_event.get(&attrs.timer_id) {
-                        let machine = self.machines_by_id.get(event_id);
-                        if let Some(machine) = machine {
-                            // TODO: Fix this all up
-                            let res = (**machine).borrow_mut().cancel();
-                            match res {
-                                Ok(MachineResponse::IssueNewCommand(c)) => {
-                                    self.current_wf_task_commands.push_back(CommandAndMachine {
-                                        command: c,
-                                        machine: machine.clone(),
-                                    })
-                                }
-                                Ok(v) => {
-                                    dbg!(v);
-                                }
-                                Err(e) => {
-                                    panic!(format!("Cancel timer error {:?}", e));
-                                }
+                    if let Some(machine) = self.timer_id_to_machine.get(&attrs.timer_id) {
+                        let res = (**machine).borrow_mut().cancel()?;
+                        match res {
+                            MachineResponse::IssueNewCommand(c) => {
+                                self.current_wf_task_commands.push_back(CommandAndMachine {
+                                    command: c,
+                                    machine: machine.clone(),
+                                })
                             }
-                        } else {
-                            panic!("Ahh no associated timer machine")
+                            v => {
+                                return Err(WFMachinesError::UnexpectedMachineResponse(
+                                    v,
+                                    "When cancelling timer",
+                                ))
+                            }
                         }
                     } else {
-                        panic!("Ahh no associated timer")
+                        return Err(WFMachinesError::MissingAssociatedMachine(format!(
+                            "Timer with id {} was missing associated machine",
+                            attrs.timer_id
+                        )));
                     }
                 }
                 WFCommand::CompleteWorkflow(attrs) => {
@@ -514,6 +507,7 @@ impl WorkflowMachines {
                 WFCommand::NoCommandsFromLang => (),
             }
         }
+        Ok(())
     }
 
     /// Transfer commands from `current_wf_task_commands` to `commands`, so they may be sent off

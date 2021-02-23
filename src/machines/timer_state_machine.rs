@@ -227,7 +227,6 @@ impl StartCommandRecorded {
     }
 
     pub(super) fn on_cancel(self, dat: SharedState) -> TimerMachineTransition {
-        dbg!("On cancel!");
         let cmd = Command {
             command_type: CommandType::CancelTimer as i32,
             attributes: Some(

@@ -140,7 +140,7 @@ pub mod temporal {
                     ///
                     /// If `up_to_event_id` is provided, the count will be returned as soon as
                     /// processing advances past that id.
-                    pub fn get_workflow_task_count(
+                    pub(crate) fn get_workflow_task_count(
                         &self,
                         up_to_event_id: Option<i64>,
                     ) -> Result<usize, HistoryInfoError> {
