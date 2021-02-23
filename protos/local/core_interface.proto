@@ -65,6 +65,7 @@ message WFActivationJob {
         TimerFiredTaskAttributes timer_fired = 2;
 
         QueryWorkflowJob query_workflow = 3;
+        CancelWorkflowTaskAttributes cancel_workflow = 4;
     }
 }
 
@@ -78,6 +79,10 @@ message StartWorkflowTaskAttributes {
 
     // TODO: Do we need namespace here, or should that just be fetchable easily?
     //   will be others - workflow exe started attrs, etc
+}
+
+message CancelWorkflowTaskAttributes {
+    // TODO: add attributes here
 }
 
 message TimerFiredTaskAttributes {
