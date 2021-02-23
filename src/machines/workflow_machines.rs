@@ -1,3 +1,4 @@
+use crate::machines::workflow_machines::WFMachinesError::MalformedEvent;
 use crate::{
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
@@ -301,7 +302,16 @@ impl WorkflowMachines {
                             arguments: attrs.input.clone(),
                             randomness_seed: uuid_to_randomness_seed(
                                 &attrs.original_execution_run_id,
-                            )?,
+                            )
+                            .map_err(|e| {
+                                MalformedEvent(
+                                    event.clone(),
+                                    format!(
+                                        "Bad uuid in run id: {}",
+                                        attrs.original_execution_run_id
+                                    ),
+                                )
+                            })?,
                         }
                         .into(),
                     );
@@ -424,7 +434,14 @@ impl WorkflowMachines {
                     self.outgoing_wf_activation_jobs.push_back(
                         wf_activation_job::Attributes::RandomSeedUpdated(
                             RandomSeedUpdatedAttributes {
-                                randomness_seed: uuid_to_randomness_seed(&new_run_id)?,
+                                randomness_seed: uuid_to_randomness_seed(&new_run_id).map_err(
+                                    |e| {
+                                        MalformedEvent(
+                                            event.clone(),
+                                            format!("Bad uuid in run id: {}", new_run_id),
+                                        )
+                                    },
+                                )?,
                             },
                         ),
                     );
@@ -461,8 +478,8 @@ impl WorkflowMachines {
     }
 }
 
-fn uuid_to_randomness_seed(run_id: &str) -> Result<i64> {
-    let uuid = Uuid::parse_str(run_id).map_err(|e| WFMachinesError::Underlying(e.into()))?;
+fn uuid_to_randomness_seed(run_id: &str) -> std::result::Result<i64, uuid::Error> {
+    let uuid = Uuid::parse_str(run_id)?;
     let fields = uuid.as_fields();
     let b0 = fields.0 as i64;
     let b32 = fields.1 as i64 >> 32;
