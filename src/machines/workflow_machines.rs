@@ -80,6 +80,7 @@ pub(crate) struct WorkflowMachines {
 /// Returned by [TemporalStateMachine]s when handling events
 #[derive(Debug, derive_more::From)]
 #[must_use]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum MachineResponse {
     PushWFJob(#[from(forward)] wf_activation_job::Attributes),
     IssueNewCommand(Command),
@@ -288,18 +289,16 @@ impl WorkflowMachines {
             // Additionally, some command types have user-created identifiers that may need to
             // be associated with the event id, so that when (ex) a request to cancel them is
             // issued we can identify them.
-            match consumed_cmd.command {
-                Command {
-                    attributes:
-                        Some(command::Attributes::StartTimerCommandAttributes(
-                            StartTimerCommandAttributes { timer_id, .. },
-                        )),
-                    ..
-                } => {
-                    self.timer_id_to_machine
-                        .insert(timer_id, consumed_cmd.machine);
-                }
-                _ => (),
+            if let Command {
+                attributes:
+                    Some(command::Attributes::StartTimerCommandAttributes(
+                        StartTimerCommandAttributes { timer_id, .. },
+                    )),
+                ..
+            } = consumed_cmd.command
+            {
+                self.timer_id_to_machine
+                    .insert(timer_id, consumed_cmd.machine);
             }
         }
 

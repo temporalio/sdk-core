@@ -14,6 +14,7 @@ pub(crate) struct HistoryInfo {
 type Result<T, E = HistoryInfoError> = std::result::Result<T, E>;
 
 #[derive(thiserror::Error, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum HistoryInfoError {
     #[error("Latest wf started id and previous one are equal! ${previous_started_event_id:?}")]
     UnexpectedEventId {

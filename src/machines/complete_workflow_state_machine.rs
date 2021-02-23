@@ -106,7 +106,7 @@ impl Created {
             attributes: Some(dat.into()),
         };
         TransitionResult::commands::<_, CompleteWorkflowCommandCreated>(vec![
-            CompleteWFCommand::AddCommand(cmd.into()),
+            CompleteWFCommand::AddCommand(cmd),
         ])
     }
 }

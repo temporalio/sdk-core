@@ -157,7 +157,7 @@ impl Created {
             attributes: Some(dat.attrs.into()),
         };
         TimerMachineTransition::commands::<_, StartCommandCreated>(vec![
-            TimerMachineCommand::AddCommand(cmd.into()),
+            TimerMachineCommand::AddCommand(cmd),
         ])
     }
 }
