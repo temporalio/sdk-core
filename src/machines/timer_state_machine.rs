@@ -139,6 +139,7 @@ impl Created {
 
 #[derive(Default, Clone)]
 pub(super) struct CancelTimerCommandCreated {}
+
 impl CancelTimerCommandCreated {
     pub(super) fn on_command_cancel_timer(self) -> TimerMachineTransition {
         TimerMachineTransition::ok(
@@ -153,6 +154,7 @@ pub(super) struct CancelTimerCommandSent {}
 
 #[derive(Default, Clone)]
 pub(super) struct Canceled {}
+
 impl From<CancelTimerCommandSent> for Canceled {
     fn from(_: CancelTimerCommandSent) -> Self {
         Self::default()
@@ -275,13 +277,8 @@ mod test {
         crate::core_tracing::tracing_init();
         /*
             We have two versions of this test, one which processes the history in two calls,
-            and one which replays all of it in one go. The former will run the event loop three
-            times total, and the latter two.
-
-            There are two workflow tasks, so it seems we should only loop two times, but the reason
-            for the extra iteration in the incremental version is that we need to "wait" for the
-            timer to fire. In the all-in-one-go test, the timer is created and resolved in the same
-            task, hence no extra loop.
+            and one which replays all of it in one go. Both versions must produce the same
+            two activations.
         */
         let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
             let timer = StartTimerCommandAttributes {

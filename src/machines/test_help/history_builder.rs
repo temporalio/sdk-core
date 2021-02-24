@@ -1,7 +1,9 @@
 use super::Result;
+use crate::protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
 use crate::protos::temporal::api::history::v1::{
     History, WorkflowExecutionCompletedEventAttributes,
 };
+use crate::protos::temporal::api::history::v1::{History, WorkflowTaskFailedEventAttributes};
 use crate::{
     machines::{workflow_machines::WorkflowMachines, ProtoCommand},
     protos::temporal::api::{
@@ -16,6 +18,7 @@ use crate::{
 };
 use anyhow::bail;
 use std::time::SystemTime;
+use uuid::Uuid;
 
 #[derive(Default, Debug)]
 pub struct TestHistoryBuilder {
@@ -100,6 +103,16 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowExecutionCompleted, attrs.into());
     }
 
+    pub fn add_workflow_task_failed(&mut self, cause: WorkflowTaskFailedCause, new_run_id: &str) {
+        let attrs = WorkflowTaskFailedEventAttributes {
+            scheduled_event_id: self.workflow_task_scheduled_event_id,
+            cause: cause.into(),
+            new_run_id: new_run_id.into(),
+            ..Default::default()
+        };
+        self.build_and_push_event(EventType::WorkflowTaskFailed, attrs.into());
+    }
+
     pub fn as_history(&self) -> History {
         History {
             events: self.events.clone(),
@@ -154,9 +167,11 @@ impl TestHistoryBuilder {
 
 fn default_attribs(et: EventType) -> Result<Attributes> {
     Ok(match et {
-        EventType::WorkflowExecutionStarted => {
-            WorkflowExecutionStartedEventAttributes::default().into()
+        EventType::WorkflowExecutionStarted => WorkflowExecutionStartedEventAttributes {
+            original_execution_run_id: Uuid::new_v4().to_string(),
+            ..Default::default()
         }
+        .into(),
         EventType::WorkflowTaskScheduled => WorkflowTaskScheduledEventAttributes::default().into(),
         EventType::TimerStarted => TimerStartedEventAttributes::default().into(),
         _ => bail!("Don't know how to construct default attrs for {:?}", et),

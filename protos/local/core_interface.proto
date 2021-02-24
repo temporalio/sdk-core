@@ -65,9 +65,11 @@ message WFActivationJob {
         TimerFiredTaskAttributes timer_fired = 2;
         // A timer was canceled
         TimerCanceledTaskAttributes timer_canceled = 3;
+        // Workflow was reset. The randomness seed must be updated.
+        RandomSeedUpdatedAttributes random_seed_updated = 4;
 
-        QueryWorkflowJob query_workflow = 4;
-        CancelWorkflowTaskAttributes cancel_workflow = 5;
+        QueryWorkflowJob query_workflow = 5;
+        CancelWorkflowTaskAttributes cancel_workflow = 6;
     }
 }
 
@@ -78,6 +80,9 @@ message StartWorkflowTaskAttributes {
     string workflow_id = 2;
     // Input to the workflow code
     temporal.api.common.v1.Payloads arguments = 3;
+    // The seed must be used to initialize the random generator used by SDK.
+    // RandomSeedUpdatedAttributes are used to deliver seed updates.
+    uint64 randomness_seed = 4;
 
     // TODO: Do we need namespace here, or should that just be fetchable easily?
     //   will be others - workflow exe started attrs, etc
@@ -93,6 +98,10 @@ message TimerFiredTaskAttributes {
 
 message TimerCanceledTaskAttributes {
     string timer_id = 1;
+}
+
+message RandomSeedUpdatedAttributes {
+    uint64 randomness_seed = 1;
 }
 
 message QueryWorkflowJob {

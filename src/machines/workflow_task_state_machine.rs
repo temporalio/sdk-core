@@ -2,15 +2,19 @@
 
 use crate::machines::workflow_machines::MachineResponse;
 use crate::machines::Cancellable;
+use crate::protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes;
 use crate::{
     machines::{workflow_machines::WFMachinesError, WFMachinesAdapter},
     protos::temporal::api::{
-        enums::v1::{CommandType, EventType},
+        enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
         history::v1::HistoryEvent,
     },
 };
 use rustfsm::{fsm, TransitionResult};
+use std::panic::resume_unwind;
 use std::{convert::TryFrom, time::SystemTime};
+use tracing::Level;
+use uuid::Uuid;
 
 fsm! {
     pub(super) name WorkflowTaskMachine;
@@ -24,7 +28,7 @@ fsm! {
     Scheduled --(WorkflowTaskTimedOut) --> TimedOut;
 
     Started --(WorkflowTaskCompleted, on_workflow_task_completed) --> Completed;
-    Started --(WorkflowTaskFailed, on_workflow_task_failed) --> Failed;
+    Started --(WorkflowTaskFailed(WFTFailedDat), on_workflow_task_failed) --> Failed;
     Started --(WorkflowTaskTimedOut) --> TimedOut;
 }
 
@@ -45,6 +49,9 @@ pub(super) enum WFTaskMachineCommand {
     WFTaskStartedTrigger {
         task_started_event_id: i64,
         time: SystemTime,
+    },
+    RunIdOnWorkflowResetUpdate {
+        run_id: String,
     },
 }
 
@@ -79,6 +86,9 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
                     time,
                 }])
             }
+            WFTaskMachineCommand::RunIdOnWorkflowResetUpdate { run_id } => {
+                Ok(vec![WorkflowTrigger::UpdateRunIdOnWorkflowReset { run_id }])
+            }
         }
     }
 }
@@ -100,7 +110,29 @@ impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
             }),
             Some(EventType::WorkflowTaskTimedOut) => Self::WorkflowTaskTimedOut,
             Some(EventType::WorkflowTaskCompleted) => Self::WorkflowTaskCompleted,
-            Some(EventType::WorkflowTaskFailed) => Self::WorkflowTaskFailed,
+            Some(EventType::WorkflowTaskFailed) => {
+                if let Some(attributes) = e.attributes {
+                    Self::WorkflowTaskFailed(WFTFailedDat {
+                        new_run_id: match attributes {
+                            WorkflowTaskFailedEventAttributes(a) => {
+                                let cause = WorkflowTaskFailedCause::from_i32(a.cause);
+                                match cause {
+                                    Some(WorkflowTaskFailedCause::ResetWorkflow) => {
+                                        Some(a.new_run_id)
+                                    }
+                                    _ => None,
+                                }
+                            }
+                            _ => None,
+                        },
+                    })
+                } else {
+                    return Err(WFMachinesError::MalformedEvent(
+                        e,
+                        "Workflow task failed is missing attributes".to_string(),
+                    ));
+                }
+            }
             _ => {
                 return Err(WFMachinesError::UnexpectedEvent(
                     e,
@@ -142,6 +174,11 @@ pub(super) struct WFTStartedDat {
     current_time_millis: SystemTime,
     started_event_id: i64,
 }
+
+pub(super) struct WFTFailedDat {
+    new_run_id: Option<String>,
+}
+
 impl Scheduled {
     pub(super) fn on_workflow_task_started(
         self,
@@ -187,18 +224,27 @@ impl Started {
             },
         ])
     }
-    pub(super) fn on_workflow_task_failed(self) -> WorkflowTaskMachineTransition {
-        unimplemented!()
+    pub(super) fn on_workflow_task_failed(
+        self,
+        data: WFTFailedDat,
+    ) -> WorkflowTaskMachineTransition {
+        let commands = match data.new_run_id {
+            Some(run_id) => vec![WFTaskMachineCommand::RunIdOnWorkflowResetUpdate { run_id }],
+            None => vec![],
+        };
+        WorkflowTaskMachineTransition::commands::<_, Completed>(commands)
     }
 }
 
 #[derive(Default, Clone)]
 pub(super) struct TimedOut {}
+
 impl From<Scheduled> for TimedOut {
     fn from(_: Scheduled) -> Self {
         Self::default()
     }
 }
+
 impl From<Started> for TimedOut {
     fn from(_: Started) -> Self {
         Self::default()
