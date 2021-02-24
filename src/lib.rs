@@ -17,6 +17,9 @@ mod pollers;
 mod protosext;
 mod workflow;
 
+#[cfg(test)]
+mod test_help;
+
 pub use pollers::{ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
@@ -333,21 +336,17 @@ pub enum CoreError {
 mod test {
     use super::*;
     use crate::{
-        machines::test_help::{build_fake_core, FakeCore, TestHistoryBuilder},
+        machines::test_help::{build_fake_core, FakeCore},
         protos::{
             coresdk::{
                 wf_activation_job, TaskCompletion, TimerFiredTaskAttributes, WfActivationJob,
             },
-            temporal::api::{
-                command::v1::{
-                    CancelTimerCommandAttributes, CompleteWorkflowExecutionCommandAttributes,
-                    StartTimerCommandAttributes,
-                },
-                enums::v1::EventType,
-                history::v1::TimerCanceledEventAttributes,
-                history::v1::{history_event, TimerFiredEventAttributes},
+            temporal::api::command::v1::{
+                CancelTimerCommandAttributes, CompleteWorkflowExecutionCommandAttributes,
+                StartTimerCommandAttributes,
             },
         },
+        test_help::canned_histories,
     };
     use rstest::{fixture, rstest};
 
@@ -357,32 +356,8 @@ mod test {
     #[fixture(hist_batches=&[])]
     fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
         let wfid = "fake_wf_id";
-        let timer_id = "fake_timer".to_string();
 
-        let mut t = TestHistoryBuilder::default();
-        t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_full_wf_task();
-        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-        t.add(
-            EventType::TimerFired,
-            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: timer_started_event_id,
-                timer_id,
-            }),
-        );
-        t.add_workflow_task_scheduled_and_started();
-        /*
-           1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
-           2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-           3: EVENT_TYPE_WORKFLOW_TASK_STARTED
-           ---
-           4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
-           5: EVENT_TYPE_TIMER_STARTED
-           6: EVENT_TYPE_TIMER_FIRED
-           7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-           8: EVENT_TYPE_WORKFLOW_TASK_STARTED
-           ---
-        */
+        let mut t = canned_histories::single_timer("fake_timer");
         let core = build_fake_core(wfid, RUN_ID, &mut t, hist_batches);
         core
     }
@@ -431,44 +406,11 @@ mod test {
     fn parallel_timer_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
-        let timer_1_id = "timer1".to_string();
-        let timer_2_id = "timer2".to_string();
+        let timer_1_id = "timer1";
+        let timer_2_id = "timer2";
         let task_queue = "test-task-queue";
 
-        let mut t = TestHistoryBuilder::default();
-        t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_full_wf_task();
-        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-        let timer_2_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-        t.add(
-            EventType::TimerFired,
-            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: timer_started_event_id,
-                timer_id: timer_1_id.clone(),
-            }),
-        );
-        t.add(
-            EventType::TimerFired,
-            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: timer_2_started_event_id,
-                timer_id: timer_2_id.clone(),
-            }),
-        );
-        t.add_workflow_task_scheduled_and_started();
-        /*
-           1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
-           2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-           3: EVENT_TYPE_WORKFLOW_TASK_STARTED
-           ---
-           4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
-           5: EVENT_TYPE_TIMER_STARTED
-           6: EVENT_TYPE_TIMER_STARTED
-           7: EVENT_TYPE_TIMER_FIRED
-           8: EVENT_TYPE_TIMER_FIRED
-           9: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-           10: EVENT_TYPE_WORKFLOW_TASK_STARTED
-           ---
-        */
+        let mut t = canned_histories::parallel_timer(timer_1_id, timer_2_id);
         let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
 
         let res = core.poll_task(task_queue).unwrap();
@@ -484,12 +426,12 @@ mod test {
         core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![
                 StartTimerCommandAttributes {
-                    timer_id: timer_1_id.clone(),
+                    timer_id: timer_1_id.to_string(),
                     ..Default::default()
                 }
                 .into(),
                 StartTimerCommandAttributes {
-                    timer_id: timer_2_id.clone(),
+                    timer_id: timer_2_id.to_string(),
                     ..Default::default()
                 }
                 .into(),
@@ -529,35 +471,11 @@ mod test {
     fn timer_cancel_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
-        let timer_id = "wait_timer".to_string();
-        let cancel_timer_id = "cancel_timer".to_string();
+        let timer_id = "wait_timer";
+        let cancel_timer_id = "cancel_timer";
         let task_queue = "test-task-queue";
 
-        let mut t = TestHistoryBuilder::default();
-        t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_full_wf_task();
-        let wait_timer_started_id = t.add_get_event_id(EventType::TimerStarted, None);
-        let cancel_timer_started_id = t.add_get_event_id(EventType::TimerStarted, None);
-        t.add(
-            EventType::TimerFired,
-            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: wait_timer_started_id,
-                timer_id: timer_id.clone(),
-            }),
-        );
-        // 8
-        t.add_full_wf_task();
-        // 11
-        t.add(
-            EventType::TimerCanceled,
-            history_event::Attributes::TimerCanceledEventAttributes(TimerCanceledEventAttributes {
-                started_event_id: cancel_timer_started_id,
-                timer_id: cancel_timer_id.clone(),
-                ..Default::default()
-            }),
-        );
-        // 12
-        t.add_workflow_execution_completed();
+        let mut t = canned_histories::cancel_timer(timer_id, cancel_timer_id);
         let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
 
         let res = core.poll_task(task_queue).unwrap();
@@ -573,12 +491,12 @@ mod test {
         core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![
                 StartTimerCommandAttributes {
-                    timer_id,
+                    timer_id: cancel_timer_id.to_string(),
                     ..Default::default()
                 }
                 .into(),
                 StartTimerCommandAttributes {
-                    timer_id: cancel_timer_id.clone(),
+                    timer_id: timer_id.to_string(),
                     ..Default::default()
                 }
                 .into(),
@@ -598,7 +516,7 @@ mod test {
         core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![
                 CancelTimerCommandAttributes {
-                    timer_id: cancel_timer_id,
+                    timer_id: cancel_timer_id.to_string(),
                 }
                 .into(),
                 CompleteWorkflowExecutionCommandAttributes { result: None }.into(),

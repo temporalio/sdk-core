@@ -382,7 +382,8 @@ impl WorkflowMachines {
     }
 
     /// Returns the next activation that needs to be performed by the lang sdk. Things like unblock
-    /// timer, etc.
+    /// timer, etc. This does *not* cause any advancement of the state machines, it merely drains
+    /// from the outgoing queue of activation jobs.
     pub(crate) fn get_wf_activation(&mut self) -> Option<WfActivation> {
         if self.outgoing_wf_activation_jobs.is_empty() {
             None

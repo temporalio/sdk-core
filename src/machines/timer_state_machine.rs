@@ -263,10 +263,8 @@ mod test {
             test_help::{CommandSender, TestHistoryBuilder, TestWorkflowDriver},
             workflow_machines::WorkflowMachines,
         },
-        protos::temporal::api::{
-            command::v1::CompleteWorkflowExecutionCommandAttributes,
-            history::v1::{TimerCanceledEventAttributes, TimerFiredEventAttributes},
-        },
+        protos::temporal::api::command::v1::CompleteWorkflowExecutionCommandAttributes,
+        test_help::canned_histories,
     };
     use rstest::{fixture, rstest};
     use std::time::Duration;
@@ -276,15 +274,6 @@ mod test {
     fn fire_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
         crate::core_tracing::tracing_init();
         /*
-            1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
-            2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-            3: EVENT_TYPE_WORKFLOW_TASK_STARTED
-            4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
-            5: EVENT_TYPE_TIMER_STARTED
-            6: EVENT_TYPE_TIMER_FIRED
-            7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-            8: EVENT_TYPE_WORKFLOW_TASK_STARTED
-
             We have two versions of this test, one which processes the history in two calls,
             and one which replays all of it in one go. The former will run the event loop three
             times total, and the latter two.
@@ -305,21 +294,10 @@ mod test {
             command_sink.send(complete.into());
         });
 
-        let mut t = TestHistoryBuilder::default();
+        let t = canned_histories::single_timer("timer1");
         let state_machines =
             WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
 
-        t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_full_wf_task();
-        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-        t.add(
-            EventType::TimerFired,
-            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: timer_started_event_id,
-                timer_id: "timer1".to_string(),
-            }),
-        );
-        t.add_workflow_task_scheduled_and_started();
         assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
         (t, state_machines)
     }
@@ -374,21 +352,10 @@ mod test {
             command_sink.timer(timer, true);
         });
 
-        let mut t = TestHistoryBuilder::default();
+        let t = canned_histories::single_timer("badid");
         let mut state_machines =
             WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
 
-        t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_full_wf_task();
-        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-        t.add(
-            EventType::TimerFired,
-            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: timer_started_event_id,
-                timer_id: "badid".to_string(),
-            }),
-        );
-        t.add_workflow_task_scheduled_and_started();
         assert!(t
             .handle_workflow_task_take_cmds(&mut state_machines, None)
             .unwrap_err()
@@ -422,34 +389,9 @@ mod test {
             cmd_sink.send(complete.into());
         });
 
-        let mut t = TestHistoryBuilder::default();
+        let t = canned_histories::cancel_timer("wait_timer", "cancel_timer");
         let state_machines =
             WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
-
-        t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_full_wf_task();
-        let cancel_timer_started_id = t.add_get_event_id(EventType::TimerStarted, None);
-        let wait_timer_started_id = t.add_get_event_id(EventType::TimerStarted, None);
-        t.add(
-            EventType::TimerFired,
-            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: wait_timer_started_id,
-                timer_id: "wait_timer".to_string(),
-            }),
-        );
-        // 8
-        t.add_full_wf_task();
-        // 11
-        t.add(
-            EventType::TimerCanceled,
-            history_event::Attributes::TimerCanceledEventAttributes(TimerCanceledEventAttributes {
-                started_event_id: cancel_timer_started_id,
-                timer_id: "cancel_timer".to_string(),
-                ..Default::default()
-            }),
-        );
-        // 12
-        t.add_workflow_execution_completed();
         (t, state_machines)
     }
 

@@ -165,37 +165,12 @@ impl HistoryInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        machines::test_help::TestHistoryBuilder,
-        protos::temporal::api::history::v1::{history_event, TimerFiredEventAttributes},
-    };
+    use crate::test_help::canned_histories;
 
     #[test]
     fn history_info_constructs_properly() {
-        /*
-            1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
-            2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-            3: EVENT_TYPE_WORKFLOW_TASK_STARTED
-            4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
-            5: EVENT_TYPE_TIMER_STARTED
-            6: EVENT_TYPE_TIMER_FIRED
-            7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-            8: EVENT_TYPE_WORKFLOW_TASK_STARTED
-        */
-        let mut t = TestHistoryBuilder::default();
+        let t = canned_histories::single_timer("timer1");
 
-        t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_full_wf_task();
-        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-        t.add(
-            EventType::TimerFired,
-            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: timer_started_event_id,
-                timer_id: "timer1".to_string(),
-            }),
-        );
-        t.add_workflow_task_scheduled_and_started();
         let history_info = t.get_history_info(1).unwrap();
         assert_eq!(3, history_info.events.len());
         let history_info = t.get_history_info(2).unwrap();
