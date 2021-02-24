@@ -1,4 +1,3 @@
-use crate::machines::workflow_machines::WFMachinesError::MalformedEvent;
 use crate::{
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
@@ -7,8 +6,8 @@ use crate::{
     },
     protos::{
         coresdk::{
-            wf_activation_job, wf_activation_job::Attributes::RandomSeedUpdated,
-            RandomSeedUpdatedAttributes, StartWorkflowTaskAttributes, WfActivation,
+            wf_activation_job, RandomSeedUpdatedAttributes, StartWorkflowTaskAttributes,
+            WfActivation,
         },
         temporal::api::{
             command::v1::{command, StartTimerCommandAttributes},
@@ -20,11 +19,11 @@ use crate::{
 use slotmap::SlotMap;
 use std::{
     borrow::{Borrow, BorrowMut},
-    collections::{HashMap, VecDeque},
+    collections::{hash_map::DefaultHasher, HashMap, VecDeque},
+    hash::{Hash, Hasher},
     time::SystemTime,
 };
 use tracing::Level;
-use uuid::Uuid;
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
@@ -476,7 +475,7 @@ impl WorkflowMachines {
                 } => {
                     self.task_started(task_started_event_id, time)?;
                 }
-                WorkflowTrigger::UpdateRunIdOnWorkflowReset { run_id: new_run_id } => {
+                MachineResponse::UpdateRunIdOnWorkflowReset { run_id: new_run_id } => {
                     self.outgoing_wf_activation_jobs.push_back(
                         wf_activation_job::Attributes::RandomSeedUpdated(
                             RandomSeedUpdatedAttributes {
@@ -484,6 +483,9 @@ impl WorkflowMachines {
                             },
                         ),
                     );
+                }
+                MachineResponse::IssueNewCommand(_) => {
+                    panic!("Issue new command machine response not expected here")
                 }
             }
         }

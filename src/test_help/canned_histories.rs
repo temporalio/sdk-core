@@ -1,5 +1,5 @@
 use crate::machines::test_help::TestHistoryBuilder;
-use crate::protos::temporal::api::enums::v1::EventType;
+use crate::protos::temporal::api::enums::v1::{EventType, WorkflowTaskFailedCause};
 use crate::protos::temporal::api::history::v1::{
     history_event, TimerCanceledEventAttributes, TimerFiredEventAttributes,
 };
@@ -99,6 +99,36 @@ pub fn parallel_timer(timer1: &str, timer2: &str) -> TestHistoryBuilder {
             timer_id: timer2.to_string(),
         }),
     );
+    t.add_workflow_task_scheduled_and_started();
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_TIMER_STARTED
+///  6: EVENT_TYPE_TIMER_FIRED
+///  7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  9: EVENT_TYPE_WORKFLOW_TASK_FAILED
+/// 10: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 11: EVENT_TYPE_WORKFLOW_TASK_STARTED
+pub fn workflow_fails_after_timer(timer_id: &str, original_run_id: &str) -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add(
+        EventType::TimerFired,
+        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+            started_event_id: timer_started_event_id,
+            timer_id: timer_id.to_string(),
+        }),
+    );
+    t.add_workflow_task_scheduled_and_started();
+    t.add_workflow_task_failed(WorkflowTaskFailedCause::ResetWorkflow, original_run_id);
+
     t.add_workflow_task_scheduled_and_started();
     t
 }

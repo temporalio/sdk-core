@@ -1,16 +1,12 @@
 use super::Result;
-use crate::protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
-use crate::protos::temporal::api::history::v1::{
-    History, WorkflowExecutionCompletedEventAttributes,
-};
-use crate::protos::temporal::api::history::v1::{History, WorkflowTaskFailedEventAttributes};
 use crate::{
     machines::{workflow_machines::WorkflowMachines, ProtoCommand},
     protos::temporal::api::{
-        enums::v1::EventType,
+        enums::v1::{EventType, WorkflowTaskFailedCause},
         history::v1::{
-            history_event::Attributes, HistoryEvent, TimerStartedEventAttributes,
-            WorkflowExecutionStartedEventAttributes, WorkflowTaskCompletedEventAttributes,
+            history_event::Attributes, History, HistoryEvent, TimerStartedEventAttributes,
+            WorkflowExecutionCompletedEventAttributes, WorkflowExecutionStartedEventAttributes,
+            WorkflowTaskCompletedEventAttributes, WorkflowTaskFailedEventAttributes,
             WorkflowTaskScheduledEventAttributes, WorkflowTaskStartedEventAttributes,
         },
     },

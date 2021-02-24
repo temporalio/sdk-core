@@ -276,9 +276,15 @@ mod test {
     fn fire_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
         crate::core_tracing::tracing_init();
         /*
-            We have two versions of this test, one which processes the history in two calls,
-            and one which replays all of it in one go. Both versions must produce the same
-            two activations.
+            We have two versions of this test, one which processes the history in two calls, and one
+            which replays all of it in one go. Both versions must produce the same two activations.
+            However, The former will iterate the machines three times and the latter will iterate
+            them twice.
+
+            There are two workflow tasks, so it seems we should iterate two times, but the reason
+            for the extra iteration in the incremental version is that we need to "wait" for the
+            timer to fire. In the all-in-one-go test, the timer is created and resolved in the same
+            task, hence no extra loop.
         */
         let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
             let timer = StartTimerCommandAttributes {

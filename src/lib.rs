@@ -545,40 +545,10 @@ mod test {
         let wfid = "fake_wf_id";
         let run_id = "CA733AB0-8133-45F6-A4C1-8D375F61AE8B";
         let original_run_id = "86E39A5F-AE31-4626-BDFE-398EE072D156";
-        let timer_1_id = "timer1".to_string();
+        let timer_1_id = "timer1";
         let task_queue = "test-task-queue";
 
-        /*
-            1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
-            2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-            3: EVENT_TYPE_WORKFLOW_TASK_STARTED
-            4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
-            5: EVENT_TYPE_TIMER_STARTED
-            6: EVENT_TYPE_TIMER_FIRED
-            7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-            8: EVENT_TYPE_WORKFLOW_TASK_STARTED
-            9: EVENT_TYPE_WORKFLOW_TASK_FAILED
-            10: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-            11: EVENT_TYPE_WORKFLOW_TASK_STARTED
-        */
-        let mut t = TestHistoryBuilder::default();
-        t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_workflow_task();
-        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-        t.add(
-            EventType::TimerFired,
-            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: timer_started_event_id,
-                timer_id: timer_1_id.clone(),
-            }),
-        );
-        t.add_workflow_task_scheduled_and_started();
-        t.add_workflow_task_failed(WorkflowTaskFailedCause::ResetWorkflow, original_run_id);
-
-        t.add_workflow_task_scheduled_and_started();
-
-        // NOTE! What makes this a replay test is the server only responds with *one* batch here.
-        // So, server is polled once, but lang->core interactions look just like non-replay test.
+        let mut t = canned_histories::workflow_fails_after_timer(timer_1_id, original_run_id);
         let core = build_fake_core(wfid, run_id, &mut t, &[2]);
 
         let res = core.poll_task(task_queue).unwrap();
@@ -598,7 +568,7 @@ mod test {
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![StartTimerCommandAttributes {
-                timer_id: timer_1_id,
+                timer_id: timer_1_id.to_string(),
                 ..Default::default()
             }
             .into()],
