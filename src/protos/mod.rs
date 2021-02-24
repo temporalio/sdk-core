@@ -156,7 +156,6 @@ pub mod temporal {
 
                             if event.is_final_wf_execution_event() {
                                 // If the workflow is complete, we're done.
-                                // TODO: Should we throw err if next event is populated?
                                 return Ok(count);
                             }
 
