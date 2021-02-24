@@ -58,10 +58,8 @@ use crate::{
 use prost::alloc::fmt::Formatter;
 use rustfsm::{MachineError, StateMachine};
 use std::{
-    cell::RefCell,
     convert::{TryFrom, TryInto},
     fmt::{Debug, Display},
-    rc::Rc,
 };
 use tracing::Level;
 
@@ -290,11 +288,10 @@ trait Cancellable: StateMachine {
     }
 }
 
-type MachineRef = Rc<RefCell<dyn TemporalStateMachine>>;
 #[derive(Debug)]
-struct CommandAndMachine {
+struct NewMachineWithCommand<T: TemporalStateMachine> {
     command: ProtoCommand,
-    machine: MachineRef,
+    machine: T,
 }
 
 impl Debug for dyn TemporalStateMachine {

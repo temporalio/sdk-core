@@ -1,14 +1,11 @@
-use crate::machines::{CommandAndMachine, MachineRef};
-use crate::protos::temporal::api::command::v1::Command;
 use crate::{
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
         workflow_task_state_machine::WorkflowTaskMachine, ActivationListener, DrivenWorkflow,
-        ProtoCommand, TemporalStateMachine, WFCommand,
+        NewMachineWithCommand, ProtoCommand, TemporalStateMachine, WFCommand,
     },
-    protos::coresdk::WfActivationJob,
     protos::{
-        coresdk::{wf_activation_job, StartWorkflowTaskAttributes, WfActivation},
+        coresdk::{wf_activation_job, StartWorkflowTaskAttributes, WfActivation, WfActivationJob},
         temporal::api::{
             command::v1::{command, StartTimerCommandAttributes},
             common::v1::WorkflowExecution,
@@ -19,12 +16,11 @@ use crate::{
 };
 use futures::Future;
 use rustfsm::{MachineError, StateMachine};
-use std::cell::RefCell;
+use slotmap::{DefaultKey, SlotMap};
 use std::{
-    borrow::BorrowMut,
+    borrow::{Borrow, BorrowMut},
     collections::{HashMap, HashSet, VecDeque},
     ops::DerefMut,
-    rc::Rc,
     sync::{atomic::AtomicBool, Arc},
     time::SystemTime,
 };
@@ -52,14 +48,15 @@ pub(crate) struct WorkflowMachines {
     /// The current workflow time if it has been established
     current_wf_time: Option<SystemTime>,
 
+    all_machines: SlotMap<MachineKey, Box<dyn TemporalStateMachine + 'static>>,
+
     /// A mapping for accessing all the machines, where the key is the id of the initiating event
     /// for that machine.
-    machines_by_id: HashMap<i64, MachineRef>,
+    machines_by_event_id: HashMap<i64, MachineKey>,
 
-    /// Maps timer ids as created by workflow authors to their initiating event IDs. There is no
-    /// reason to force the lang side to track event IDs, so we do it for them.
-    /// TODO: Make this apply to *all* cancellable things
-    timer_id_to_machine: HashMap<String, MachineRef>,
+    /// Maps timer ids as created by workflow authors to their associated machines
+    /// TODO: Make this apply to *all* cancellable things, once we've added more. Key can be enum.
+    timer_id_to_machine: HashMap<String, MachineKey>,
 
     /// Queued commands which have been produced by machines and await processing / being sent to
     /// the server.
@@ -77,13 +74,20 @@ pub(crate) struct WorkflowMachines {
     drive_me: Box<dyn DrivenWorkflow + 'static>,
 }
 
+slotmap::new_key_type! { struct MachineKey; }
+#[derive(Debug)]
+struct CommandAndMachine {
+    command: ProtoCommand,
+    machine: MachineKey,
+}
+
 /// Returned by [TemporalStateMachine]s when handling events
 #[derive(Debug, derive_more::From)]
 #[must_use]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum MachineResponse {
     PushWFJob(#[from(forward)] wf_activation_job::Attributes),
-    IssueNewCommand(Command),
+    IssueNewCommand(ProtoCommand),
     TriggerWFTaskStarted {
         task_started_event_id: i64,
         time: SystemTime,
@@ -135,7 +139,8 @@ impl WorkflowMachines {
             previous_started_event_id: 0,
             replaying: false,
             current_wf_time: None,
-            machines_by_id: Default::default(),
+            all_machines: Default::default(),
+            machines_by_event_id: Default::default(),
             timer_id_to_machine: Default::default(),
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
@@ -178,9 +183,9 @@ impl WorkflowMachines {
             Some(initial_cmd_id) => {
                 // We remove the machine while we it handles events, then return it, to avoid
                 // borrowing from ourself mutably.
-                let mut maybe_machine = self.machines_by_id.remove(&initial_cmd_id);
-                if let Some(sm) = maybe_machine.as_ref() {
-                    self.submachine_handle_event((**sm).borrow_mut(), event, has_next_event)?;
+                let mut maybe_machine = self.machines_by_event_id.remove(&initial_cmd_id);
+                if let Some(sm) = maybe_machine {
+                    self.submachine_handle_event(sm, event, has_next_event)?;
                 } else {
                     event!(
                         Level::ERROR,
@@ -192,8 +197,8 @@ impl WorkflowMachines {
 
                 // Restore machine if not in it's final state
                 if let Some(sm) = maybe_machine {
-                    if !sm.borrow().is_final_state() {
-                        self.machines_by_id.insert(initial_cmd_id, sm);
+                    if !self.machine(sm).is_final_state() {
+                        self.machines_by_event_id.insert(initial_cmd_id, sm);
                     }
                 }
             }
@@ -263,14 +268,14 @@ impl WorkflowMachines {
             // Feed the machine the event
             let mut break_later = false;
 
-            self.submachine_handle_event((*command.machine).borrow_mut(), event, true)?;
+            self.submachine_handle_event(command.machine, event, true)?;
 
             // TODO:
             //  * More special handling for version machine - see java
             //  * Commands cancelled this iteration are allowed to not match the event?
 
-            if !(*command.machine)
-                .borrow()
+            if !self
+                .machine(command.machine)
                 .was_cancelled_before_sent_to_server()
             {
                 break_later = true;
@@ -283,13 +288,13 @@ impl WorkflowMachines {
 
         // TODO: validate command
 
-        if !consumed_cmd.machine.borrow().is_final_state() {
-            self.machines_by_id
-                .insert(event.event_id, consumed_cmd.machine.clone());
+        if !self.machine(consumed_cmd.machine).is_final_state() {
+            self.machines_by_event_id
+                .insert(event.event_id, consumed_cmd.machine);
             // Additionally, some command types have user-created identifiers that may need to
             // be associated with the event id, so that when (ex) a request to cancel them is
             // issued we can identify them.
-            if let Command {
+            if let ProtoCommand {
                 attributes:
                     Some(command::Attributes::StartTimerCommandAttributes(
                         StartTimerCommandAttributes { timer_id, .. },
@@ -341,13 +346,9 @@ impl WorkflowMachines {
             }
             Some(EventType::WorkflowTaskScheduled) => {
                 let mut wf_task_sm = WorkflowTaskMachine::new(self.workflow_task_started_event_id);
-                self.submachine_handle_event(
-                    &mut wf_task_sm as &mut dyn TemporalStateMachine,
-                    event,
-                    has_next_event,
-                )?;
-                self.machines_by_id
-                    .insert(event.event_id, Rc::new(RefCell::new(wf_task_sm)));
+                let key = self.all_machines.insert(Box::new(wf_task_sm));
+                self.submachine_handle_event(key, event, has_next_event)?;
+                self.machines_by_event_id.insert(event.event_id, key);
             }
             Some(EventType::WorkflowExecutionSignaled) => {
                 // TODO: Signal callbacks
@@ -372,10 +373,9 @@ impl WorkflowMachines {
         self.commands
             .iter()
             .filter_map(|c| {
-                if !(*c.machine).borrow().is_final_state() {
+                if !self.machine(c.machine).is_final_state() {
                     Some(c.command.clone())
                 } else {
-                    dbg!("Final state!!!!!");
                     None
                 }
             })
@@ -434,10 +434,11 @@ impl WorkflowMachines {
     /// on the returned triggers
     fn submachine_handle_event(
         &mut self,
-        mut sm: impl DerefMut<Target = dyn TemporalStateMachine>,
+        sm: MachineKey,
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
+        let mut sm = self.all_machines.get_mut(sm).expect("Machine must exist");
         let triggers = sm.handle_event(event, has_next_event).map_err(|e| {
             if let WFMachinesError::MalformedEventDetail(s) = e {
                 WFMachinesError::MalformedEvent(event.clone(), s)
@@ -472,36 +473,38 @@ impl WorkflowMachines {
             // weird it feels for cancels.
             match cmd {
                 WFCommand::AddTimer(attrs) => {
-                    let timer = new_timer(attrs);
+                    let timer = self.add_new_machine(new_timer(attrs));
                     self.current_wf_task_commands.push_back(timer);
                 }
                 WFCommand::CancelTimer(attrs) => {
-                    if let Some(machine) = self.timer_id_to_machine.get(&attrs.timer_id) {
-                        let res = (**machine).borrow_mut().cancel()?;
-                        match res {
-                            MachineResponse::IssueNewCommand(c) => {
-                                self.current_wf_task_commands.push_back(CommandAndMachine {
-                                    command: c,
-                                    machine: machine.clone(),
-                                })
-                            }
-                            v => {
-                                return Err(WFMachinesError::UnexpectedMachineResponse(
-                                    v,
-                                    "When cancelling timer",
-                                ))
-                            }
+                    let mkey = *self
+                        .timer_id_to_machine
+                        .get(&attrs.timer_id)
+                        .ok_or_else(|| {
+                            WFMachinesError::MissingAssociatedMachine(format!(
+                                "Missing associated machine for cancelling timer {}",
+                                &attrs.timer_id
+                            ))
+                        })?;
+                    let res = self.machine_mut(mkey).cancel()?;
+                    match res {
+                        MachineResponse::IssueNewCommand(c) => {
+                            self.current_wf_task_commands.push_back(CommandAndMachine {
+                                command: c,
+                                machine: mkey,
+                            })
                         }
-                    } else {
-                        return Err(WFMachinesError::MissingAssociatedMachine(format!(
-                            "Timer with id {} was missing associated machine",
-                            attrs.timer_id
-                        )));
+                        v => {
+                            return Err(WFMachinesError::UnexpectedMachineResponse(
+                                v,
+                                "When cancelling timer",
+                            ))
+                        }
                     }
                 }
                 WFCommand::CompleteWorkflow(attrs) => {
-                    self.current_wf_task_commands
-                        .push_back(complete_workflow(attrs));
+                    let cwfm = self.add_new_machine(complete_workflow(attrs));
+                    self.current_wf_task_commands.push_back(cwfm);
                 }
                 WFCommand::NoCommandsFromLang => (),
             }
@@ -519,9 +522,34 @@ impl WorkflowMachines {
         while let Some(mut c) = self.current_wf_task_commands.pop_front() {
             // TODO: This conversion sux -- probably add to NewOrExistingCommand
             let cmd_type = CommandType::from_i32(c.command.command_type).unwrap();
-            (*c.machine).borrow_mut().handle_command(cmd_type);
+            self.machine_mut(c.machine).handle_command(cmd_type);
             self.commands.push_back(c);
         }
         event!(Level::DEBUG, msg = "end prepare_commands", commands = ?self.commands);
+    }
+
+    fn add_new_machine<T: TemporalStateMachine + 'static>(
+        &mut self,
+        machine: NewMachineWithCommand<T>,
+    ) -> CommandAndMachine {
+        let k = self.all_machines.insert(Box::new(machine.machine));
+        CommandAndMachine {
+            command: machine.command,
+            machine: k,
+        }
+    }
+
+    fn machine(&self, m: MachineKey) -> &dyn TemporalStateMachine {
+        self.all_machines
+            .get(m)
+            .expect("Machine must exist")
+            .borrow()
+    }
+
+    fn machine_mut(&mut self, m: MachineKey) -> &mut (dyn TemporalStateMachine + 'static) {
+        self.all_machines
+            .get_mut(m)
+            .expect("Machine must exist")
+            .borrow_mut()
     }
 }

@@ -1,8 +1,7 @@
-use crate::machines::CommandAndMachine;
 use crate::{
     machines::{
-        workflow_machines::MachineResponse, workflow_machines::WorkflowMachines, Cancellable,
-        WFCommand, WFMachinesAdapter, WFMachinesError,
+        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, WFCommand,
+        WFMachinesAdapter, WFMachinesError,
     },
     protos::temporal::api::{
         command::v1::{Command, CompleteWorkflowExecutionCommandAttributes},
@@ -37,11 +36,11 @@ pub(super) enum CompleteWFCommand {
 /// Complete a workflow
 pub(super) fn complete_workflow(
     attribs: CompleteWorkflowExecutionCommandAttributes,
-) -> CommandAndMachine {
+) -> NewMachineWithCommand<CompleteWorkflowMachine> {
     let (machine, add_cmd) = CompleteWorkflowMachine::new_scheduled(attribs);
-    CommandAndMachine {
+    NewMachineWithCommand {
         command: add_cmd,
-        machine: Rc::new(RefCell::new(machine)),
+        machine,
     }
 }
 

@@ -23,6 +23,7 @@ opentelemetry-jaeger = "0.11"
 opentelemetry = "0.12"
 prost = "0.7"
 prost-types = "0.7"
+slotmap = "1.0"
 thiserror = "1.0"
 tokio = { version = "1.1", features = ["rt", "rt-multi-thread"] }
 tracing = { version = "0.1", features = ["log"] }

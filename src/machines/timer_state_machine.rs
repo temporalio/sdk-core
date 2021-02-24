@@ -1,6 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
-use crate::machines::CommandAndMachine;
+use crate::machines::NewMachineWithCommand;
 use crate::{
     machines::{
         workflow_machines::{MachineResponse, WFMachinesError, WorkflowMachines},
@@ -65,11 +65,13 @@ pub(super) enum TimerMachineCommand {
 }
 
 /// Creates a new, scheduled, timer as a [CancellableCommand]
-pub(super) fn new_timer(attribs: StartTimerCommandAttributes) -> CommandAndMachine {
+pub(super) fn new_timer(
+    attribs: StartTimerCommandAttributes,
+) -> NewMachineWithCommand<TimerMachine> {
     let (timer, add_cmd) = TimerMachine::new_scheduled(attribs);
-    CommandAndMachine {
+    NewMachineWithCommand {
         command: add_cmd,
-        machine: Rc::new(RefCell::new(timer)),
+        machine: timer,
     }
 }
 
