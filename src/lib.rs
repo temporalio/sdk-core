@@ -38,7 +38,11 @@ use dashmap::DashMap;
 use std::{
     convert::TryInto,
     fmt::Debug,
-    sync::{mpsc::SendError, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::SendError,
+        Arc,
+    },
 };
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
@@ -64,6 +68,13 @@ pub trait Core: Send + Sync {
 
     /// Returns an instance of ServerGateway.
     fn server_gateway(&self) -> Result<Arc<dyn ServerGatewayApis>>;
+
+    /// Eventually ceases all polling of the server. [Core::poll_task] should be called until it
+    /// returns [CoreError::ShuttingDown] to ensure that any workflows which are still undergoing
+    /// replay have an opportunity to finish. This means that the lang sdk will need to call
+    /// [Core::complete_task] for those workflows until they are done. At that point, the lang
+    /// SDK can end the process, or drop the [Core] instance, which will close the connection.
+    fn shutdown(&self) -> Result<()>;
 }
 
 /// Holds various configuration information required to call [init]
@@ -91,6 +102,7 @@ pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
         workflow_machines: WorkflowConcurrencyManager::new(),
         workflow_task_tokens: Default::default(),
         pending_activations: Default::default(),
+        shutdown_requested: AtomicBool::new(false),
     })
 }
 
@@ -117,6 +129,9 @@ where
     /// Workflows that are currently under replay will queue their run ID here, indicating that
     /// there are more workflow tasks / activations to be performed.
     pending_activations: SegQueue<PendingActivation>,
+
+    /// Has shutdown been called?
+    shutdown_requested: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -146,6 +161,10 @@ where
                 task_token,
                 variant: next_activation.activation.map(Into::into),
             });
+        }
+
+        if self.shutdown_requested.load(Ordering::SeqCst) {
+            return Err(CoreError::ShuttingDown);
         }
 
         // This will block forever in the event there is no work from the server
@@ -217,6 +236,11 @@ where
     fn server_gateway(&self) -> Result<Arc<dyn ServerGatewayApis>> {
         Ok(self.server_gateway.clone())
     }
+
+    fn shutdown(&self) -> Result<(), CoreError> {
+        self.shutdown_requested.store(true, Ordering::SeqCst);
+        Ok(())
+    }
 }
 
 impl<WP: ServerGatewayApis> CoreSDK<WP> {
@@ -273,8 +297,9 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 #[allow(clippy::large_enum_variant)]
 // NOTE: Docstrings take the place of #[error("xxxx")] here b/c of displaydoc
 pub enum CoreError {
-    /// No tasks to perform for now
-    NoWork,
+    /// [Core::shutdown] was called, and there are no more replay tasks to be handled. You must
+    /// call [Core::complete_task] for any remaining tasks, and then may exit.
+    ShuttingDown,
     /// Poll response from server was malformed: {0:?}
     BadDataFromWorkProvider(PollWorkflowTaskQueueResponse),
     /// Lang SDK sent us a malformed completion: {0:?}
@@ -306,6 +331,7 @@ pub enum CoreError {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::machines::test_help::FakeCore;
     use crate::{
         machines::test_help::{build_fake_core, TestHistoryBuilder},
         protos::{
@@ -572,5 +598,22 @@ mod test {
             task_tok,
         ))
         .unwrap();
+        core
+    }
+
+    #[rstest]
+    fn single_timer_whole_replay_test_across_wf_bridge(_single_timer_whole_replay: FakeCore) {
+        // Nothing to do here -- whole real test is in fixture. Rstest properly handles leading `_`
+    }
+
+    #[rstest]
+    fn after_shutdown_server_is_not_polled(single_timer_whole_replay: FakeCore) {
+        single_timer_whole_replay.shutdown().unwrap();
+        assert_matches!(
+            single_timer_whole_replay
+                .poll_task("irrelevant")
+                .unwrap_err(),
+            CoreError::ShuttingDown
+        );
     }
 }
