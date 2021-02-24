@@ -4,7 +4,7 @@ mod history_builder;
 mod workflow_driver;
 
 pub(crate) use history_builder::TestHistoryBuilder;
-pub(super) use workflow_driver::{CommandSender, TestWFCommand, TestWorkflowDriver};
+pub(super) use workflow_driver::{CommandSender, TestWorkflowDriver};
 
 use crate::workflow::WorkflowConcurrencyManager;
 use crate::{

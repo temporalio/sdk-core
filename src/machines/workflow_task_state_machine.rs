@@ -3,10 +3,7 @@
 use crate::machines::workflow_machines::MachineResponse;
 use crate::machines::Cancellable;
 use crate::{
-    machines::{
-        workflow_machines::{WFMachinesError, WorkflowMachines},
-        WFMachinesAdapter,
-    },
+    machines::{workflow_machines::WFMachinesError, WFMachinesAdapter},
     protos::temporal::api::{
         enums::v1::{CommandType, EventType},
         history::v1::HistoryEvent,
@@ -14,7 +11,6 @@ use crate::{
 };
 use rustfsm::{fsm, TransitionResult};
 use std::{convert::TryFrom, time::SystemTime};
-use tracing::Level;
 
 fsm! {
     pub(super) name WorkflowTaskMachine;

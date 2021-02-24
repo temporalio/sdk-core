@@ -1,37 +1,21 @@
 #![allow(clippy::large_enum_variant)]
 
-use crate::machines::NewMachineWithCommand;
 use crate::{
     machines::{
-        workflow_machines::{MachineResponse, WFMachinesError, WorkflowMachines},
-        Cancellable, TemporalStateMachine, WFCommand, WFMachinesAdapter,
+        workflow_machines::{MachineResponse, WFMachinesError},
+        Cancellable, NewMachineWithCommand, WFMachinesAdapter,
     },
     protos::{
-        coresdk::{
-            HistoryEventId, TimerCanceledTaskAttributes, TimerFiredTaskAttributes, WfActivation,
-        },
+        coresdk::{HistoryEventId, TimerCanceledTaskAttributes, TimerFiredTaskAttributes},
         temporal::api::{
-            command::v1::{
-                command::Attributes, CancelTimerCommandAttributes, Command,
-                StartTimerCommandAttributes,
-            },
+            command::v1::{CancelTimerCommandAttributes, Command, StartTimerCommandAttributes},
             enums::v1::{CommandType, EventType},
-            history::v1::{
-                history_event, HistoryEvent, TimerCanceledEventAttributes,
-                TimerFiredEventAttributes,
-            },
+            history::v1::{history_event, HistoryEvent, TimerFiredEventAttributes},
         },
     },
 };
-use futures::FutureExt;
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
-use std::{
-    cell::RefCell,
-    convert::TryFrom,
-    rc::Rc,
-    sync::{atomic::Ordering, Arc},
-};
-use tracing::Level;
+use std::convert::TryFrom;
 
 fsm! {
     pub(super) name TimerMachine;
@@ -39,7 +23,7 @@ fsm! {
     error WFMachinesError;
     shared_state SharedState;
 
-    Created --(Schedule, shared on_schedule) --> StartCommandCreated;
+    Created --(Schedule, on_schedule) --> StartCommandCreated;
 
     StartCommandCreated --(CommandStartTimer) --> StartCommandCreated;
     StartCommandCreated --(TimerStarted(HistoryEventId), on_timer_started) --> StartCommandRecorded;
@@ -57,11 +41,15 @@ fsm! {
 
 #[derive(Debug)]
 pub(super) enum TimerMachineCommand {
-    // TODO: Perhaps just remove this
-    AddCommand(Command),
     Complete,
     Canceled,
     IssueCancelCmd(Command),
+}
+
+#[derive(Default, Clone)]
+pub(super) struct SharedState {
+    attrs: StartTimerCommandAttributes,
+    cancelled_before_sent: bool,
 }
 
 /// Creates a new, scheduled, timer as a [CancellableCommand]
@@ -79,14 +67,11 @@ impl TimerMachine {
     /// Create a new timer and immediately schedule it
     pub(crate) fn new_scheduled(attribs: StartTimerCommandAttributes) -> (Self, Command) {
         let mut s = Self::new(attribs);
-        let cmd = match s
-            .on_event_mut(TimerMachineEvents::Schedule)
-            .expect("Scheduling timers doesn't fail")
-            .pop()
-        {
-            // TODO: This seems silly - why bother with the command at all?
-            Some(TimerMachineCommand::AddCommand(c)) => c,
-            _ => panic!("Timer on_schedule must produce command"),
+        s.on_event_mut(TimerMachineEvents::Schedule)
+            .expect("Scheduling timers doesn't fail");
+        let cmd = Command {
+            command_type: CommandType::StartTimer as i32,
+            attributes: Some(s.shared_state().attrs.clone().into()),
         };
         (s, cmd)
     }
@@ -144,23 +129,11 @@ impl TryFrom<CommandType> for TimerMachineEvents {
 }
 
 #[derive(Default, Clone)]
-pub(super) struct SharedState {
-    attrs: StartTimerCommandAttributes,
-    cancelled_before_sent: bool,
-}
-
-#[derive(Default, Clone)]
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_schedule(self, dat: SharedState) -> TimerMachineTransition {
-        let cmd = Command {
-            command_type: CommandType::StartTimer as i32,
-            attributes: Some(dat.attrs.into()),
-        };
-        TimerMachineTransition::commands::<_, StartCommandCreated>(vec![
-            TimerMachineCommand::AddCommand(cmd),
-        ])
+    pub(super) fn on_schedule(self) -> TimerMachineTransition {
+        TimerMachineTransition::default::<StartCommandCreated>()
     }
 }
 
@@ -197,7 +170,7 @@ impl StartCommandCreated {
         // TODO: Java recorded an initial event ID, but it seemingly was never used.
         TimerMachineTransition::default::<StartCommandRecorded>()
     }
-    pub(super) fn on_cancel(mut self, dat: SharedState) -> TimerMachineTransition {
+    pub(super) fn on_cancel(self, dat: SharedState) -> TimerMachineTransition {
         TimerMachineTransition::ok_shared(
             vec![TimerMachineCommand::Canceled],
             Canceled::default(),
@@ -263,9 +236,6 @@ impl WFMachinesAdapter for TimerMachine {
             }
             .into()],
             TimerMachineCommand::IssueCancelCmd(c) => vec![MachineResponse::IssueNewCommand(c)],
-            TimerMachineCommand::AddCommand(_) => {
-                unreachable!()
-            }
         })
     }
 }
@@ -290,23 +260,17 @@ mod test {
     use super::*;
     use crate::{
         machines::{
-            complete_workflow_state_machine::complete_workflow,
-            test_help::{CommandSender, TestHistoryBuilder, TestWFCommand, TestWorkflowDriver},
+            test_help::{CommandSender, TestHistoryBuilder, TestWorkflowDriver},
             workflow_machines::WorkflowMachines,
-            DrivenWorkflow, WFCommand,
         },
         protos::temporal::api::{
             command::v1::CompleteWorkflowExecutionCommandAttributes,
-            history::v1::{
-                TimerFiredEventAttributes, WorkflowExecutionCanceledEventAttributes,
-                WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
-            },
+            history::v1::{TimerCanceledEventAttributes, TimerFiredEventAttributes},
         },
     };
-    use futures::{channel::mpsc::Sender, FutureExt, SinkExt};
     use rstest::{fixture, rstest};
-    use rustfsm::MachineError;
-    use std::{error::Error, sync::Arc, time::Duration};
+    use std::time::Duration;
+    use tracing::Level;
 
     #[fixture]
     fn fire_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
@@ -342,7 +306,7 @@ mod test {
         });
 
         let mut t = TestHistoryBuilder::default();
-        let mut state_machines =
+        let state_machines =
             WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
 
         t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -437,7 +401,7 @@ mod test {
         crate::core_tracing::tracing_init();
 
         let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
-            let cancel_this = cmd_sink.timer(
+            let _cancel_this = cmd_sink.timer(
                 StartTimerCommandAttributes {
                     timer_id: "cancel_timer".to_string(),
                     start_to_fire_timeout: Some(Duration::from_secs(500).into()),
@@ -459,7 +423,7 @@ mod test {
         });
 
         let mut t = TestHistoryBuilder::default();
-        let mut state_machines =
+        let state_machines =
             WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
 
         t.add_by_type(EventType::WorkflowExecutionStarted);

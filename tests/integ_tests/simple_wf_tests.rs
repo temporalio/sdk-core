@@ -16,6 +16,9 @@ use temporal_sdk_core::{
 //  restarted, because pulling from the same task queue produces tasks for the previous failed
 //  workflows. Fix that.
 
+// TODO: We should also get expected histories for these tests and confirm that the history
+//   at the end matches.
+
 const NAMESPACE: &str = "default";
 
 #[tokio::main]

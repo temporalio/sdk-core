@@ -1,4 +1,3 @@
-#[allow(unused)]
 mod workflow_machines;
 
 // TODO: Move all these inside a submachines module
@@ -10,7 +9,6 @@ mod cancel_external_state_machine;
 mod cancel_workflow_state_machine;
 #[allow(unused)]
 mod child_workflow_state_machine;
-#[allow(unused)]
 mod complete_workflow_state_machine;
 #[allow(unused)]
 mod continue_as_new_workflow_state_machine;
@@ -24,13 +22,11 @@ mod mutable_side_effect_state_machine;
 mod side_effect_state_machine;
 #[allow(unused)]
 mod signal_external_state_machine;
-#[allow(unused)]
 mod timer_state_machine;
 #[allow(unused)]
 mod upsert_search_attributes_state_machine;
 #[allow(unused)]
 mod version_state_machine;
-#[allow(unused)]
 mod workflow_task_state_machine;
 
 #[cfg(test)]
@@ -137,7 +133,7 @@ trait TemporalStateMachine: CheckStateMachineInFinal + Send {
     fn name(&self) -> &str;
     fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError>;
 
-    /// Tell the state machine to handle some event. Returns a list of triggers that can be used
+    /// Tell the state machine to handle some event. Returns a list of responses that can be used
     /// to update the overall state of the workflow. EX: To issue outgoing WF activations.
     fn handle_event(
         &mut self,
@@ -206,11 +202,11 @@ where
                 if !c.is_empty() {
                     event!(Level::DEBUG, msg = "Machine produced commands", ?c, state = %self.state());
                 }
-                let mut triggers = vec![];
+                let mut machine_responses = vec![];
                 for cmd in c {
-                    triggers.extend(self.adapt_response(event, has_next_event, cmd)?);
+                    machine_responses.extend(self.adapt_response(event, has_next_event, cmd)?);
                 }
-                Ok(triggers)
+                Ok(machine_responses)
             }
             Err(MachineError::InvalidTransition) => {
                 Err(WFMachinesError::InvalidTransitionDuringEvent(

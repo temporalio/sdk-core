@@ -1,7 +1,7 @@
 use crate::{
     machines::{
-        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, WFCommand,
-        WFMachinesAdapter, WFMachinesError,
+        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, WFMachinesAdapter,
+        WFMachinesError,
     },
     protos::temporal::api::{
         command::v1::{Command, CompleteWorkflowExecutionCommandAttributes},
@@ -10,8 +10,7 @@ use crate::{
     },
 };
 use rustfsm::{fsm, StateMachine, TransitionResult};
-use std::cell::RefCell;
-use std::{convert::TryFrom, rc::Rc};
+use std::convert::TryFrom;
 
 fsm! {
     pub(super)

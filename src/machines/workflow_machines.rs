@@ -1,27 +1,22 @@
 use crate::{
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
-        workflow_task_state_machine::WorkflowTaskMachine, ActivationListener, DrivenWorkflow,
-        NewMachineWithCommand, ProtoCommand, TemporalStateMachine, WFCommand,
+        workflow_task_state_machine::WorkflowTaskMachine, DrivenWorkflow, NewMachineWithCommand,
+        ProtoCommand, TemporalStateMachine, WFCommand,
     },
     protos::{
-        coresdk::{wf_activation_job, StartWorkflowTaskAttributes, WfActivation, WfActivationJob},
+        coresdk::{wf_activation_job, StartWorkflowTaskAttributes, WfActivation},
         temporal::api::{
             command::v1::{command, StartTimerCommandAttributes},
-            common::v1::WorkflowExecution,
             enums::v1::{CommandType, EventType},
             history::v1::{history_event, HistoryEvent},
         },
     },
 };
-use futures::Future;
-use rustfsm::{MachineError, StateMachine};
-use slotmap::{DefaultKey, SlotMap};
+use slotmap::SlotMap;
 use std::{
     borrow::{Borrow, BorrowMut},
-    collections::{HashMap, HashSet, VecDeque},
-    ops::DerefMut,
-    sync::{atomic::AtomicBool, Arc},
+    collections::{HashMap, VecDeque},
     time::SystemTime,
 };
 use tracing::Level;
@@ -85,7 +80,7 @@ struct CommandAndMachine {
 #[derive(Debug, derive_more::From)]
 #[must_use]
 #[allow(clippy::large_enum_variant)]
-pub(crate) enum MachineResponse {
+pub enum MachineResponse {
     PushWFJob(#[from(forward)] wf_activation_job::Attributes),
     IssueNewCommand(ProtoCommand),
     TriggerWFTaskStarted {
@@ -95,7 +90,8 @@ pub(crate) enum MachineResponse {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub(crate) enum WFMachinesError {
+// TODO: Some of these are redundant with MachineError -- we should try to dedupe / simplify
+pub enum WFMachinesError {
     #[error("Event {0:?} was not expected: {1}")]
     UnexpectedEvent(HistoryEvent, &'static str),
     #[error("Event {0:?} was not expected: {1}")]
@@ -108,6 +104,8 @@ pub(crate) enum WFMachinesError {
     MalformedEventDetail(String),
     #[error("Command type {0:?} was not expected")]
     UnexpectedCommand(CommandType),
+    #[error("Command type {0} is not known")]
+    UnknownCommandType(i32),
     #[error("No command was scheduled for event {0:?}")]
     NoCommandScheduledForEvent(HistoryEvent),
     #[error("Machine response {0:?} was not expected: {1}")]
@@ -117,10 +115,6 @@ pub(crate) enum WFMachinesError {
 
     #[error("Machine encountered an invalid transition: {0}")]
     InvalidTransition(&'static str),
-
-    // TODO: Don't really need anyhow here?
-    #[error("Underlying error {0:?}")]
-    Underlying(#[from] anyhow::Error),
 }
 
 impl WorkflowMachines {
@@ -183,7 +177,7 @@ impl WorkflowMachines {
             Some(initial_cmd_id) => {
                 // We remove the machine while we it handles events, then return it, to avoid
                 // borrowing from ourself mutably.
-                let mut maybe_machine = self.machines_by_event_id.remove(&initial_cmd_id);
+                let maybe_machine = self.machines_by_event_id.remove(&initial_cmd_id);
                 if let Some(sm) = maybe_machine {
                     self.submachine_handle_event(sm, event, has_next_event)?;
                 } else {
@@ -210,7 +204,11 @@ impl WorkflowMachines {
 
     /// Called when we want to run the event loop because a workflow task started event has
     /// triggered
-    pub(super) fn task_started(&mut self, task_started_event_id: i64, time: SystemTime) {
+    pub(super) fn task_started(
+        &mut self,
+        task_started_event_id: i64,
+        time: SystemTime,
+    ) -> Result<()> {
         let s = span!(Level::DEBUG, "Task started trigger");
         let _enter = s.enter();
 
@@ -235,7 +233,8 @@ impl WorkflowMachines {
 
         self.current_started_event_id = task_started_event_id;
         self.set_current_time(time);
-        self.iterate_machines();
+        self.iterate_machines()?;
+        Ok(())
     }
 
     /// A command event is an event which is generated from a command emitted as a result of
@@ -254,12 +253,12 @@ impl WorkflowMachines {
         //     }
         event!(Level::DEBUG, msg = "handling command event", current_commands = ?self.commands);
 
-        let mut consumed_cmd = loop {
+        let consumed_cmd = loop {
             // handleVersionMarker can skip a marker event if the getVersion call was removed.
             // In this case we don't want to consume a command. -- we will need to replace it back
             // to the front when implementing, or something better
             let maybe_command = self.commands.pop_front();
-            let mut command = if let Some(c) = maybe_command {
+            let command = if let Some(c) = maybe_command {
                 c
             } else {
                 return Err(WFMachinesError::NoCommandScheduledForEvent(event.clone()));
@@ -345,7 +344,7 @@ impl WorkflowMachines {
                 }
             }
             Some(EventType::WorkflowTaskScheduled) => {
-                let mut wf_task_sm = WorkflowTaskMachine::new(self.workflow_task_started_event_id);
+                let wf_task_sm = WorkflowTaskMachine::new(self.workflow_task_started_event_id);
                 let key = self.all_machines.insert(Box::new(wf_task_sm));
                 self.submachine_handle_event(key, event, has_next_event)?;
                 self.machines_by_event_id.insert(event.event_id, key);
@@ -423,34 +422,38 @@ impl WorkflowMachines {
 
     /// Iterate the state machines, which consists of grabbing any pending outgoing commands from
     /// the workflow, handling them, and preparing them to be sent off to the server.
-    pub(crate) fn iterate_machines(&mut self) {
+    pub(crate) fn iterate_machines(&mut self) -> Result<()> {
         let results = self.drive_me.fetch_workflow_iteration_output();
-        self.handle_driven_results(results);
-
-        self.prepare_commands();
+        self.handle_driven_results(results)?;
+        self.prepare_commands()?;
+        Ok(())
     }
 
     /// Wrapper for calling [TemporalStateMachine::handle_event] which appropriately takes action
-    /// on the returned triggers
+    /// on the returned machine responses
     fn submachine_handle_event(
         &mut self,
         sm: MachineKey,
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
-        let mut sm = self.all_machines.get_mut(sm).expect("Machine must exist");
-        let triggers = sm.handle_event(event, has_next_event).map_err(|e| {
+        let sm = self.all_machines.get_mut(sm).expect("Machine must exist");
+        let machine_responses = sm.handle_event(event, has_next_event).map_err(|e| {
             if let WFMachinesError::MalformedEventDetail(s) = e {
                 WFMachinesError::MalformedEvent(event.clone(), s)
             } else {
                 e
             }
         })?;
-        if !triggers.is_empty() {
-            event!(Level::DEBUG, msg = "Machine produced triggers", ?triggers);
+        if !machine_responses.is_empty() {
+            event!(
+                Level::DEBUG,
+                msg = "Machine produced responses",
+                ?machine_responses
+            );
         }
-        for trigger in triggers {
-            match trigger {
+        for response in machine_responses {
+            match response {
                 MachineResponse::PushWFJob(a) => {
                     self.drive_me.on_activation_job(&a);
                     self.outgoing_wf_activation_jobs.push_back(a);
@@ -459,7 +462,7 @@ impl WorkflowMachines {
                     task_started_event_id,
                     time,
                 } => {
-                    self.task_started(task_started_event_id, time);
+                    self.task_started(task_started_event_id, time)?;
                 }
                 _ => panic!("TODO: Should anything else be possible here? Probably?"),
             }
@@ -516,16 +519,17 @@ impl WorkflowMachines {
     /// to the server. While doing so, [TemporalStateMachine::handle_command] is called on the
     /// machine associated with the command.
     #[instrument(level = "debug", skip(self))]
-    fn prepare_commands(&mut self) {
+    fn prepare_commands(&mut self) -> Result<()> {
         event!(Level::DEBUG, msg = "start prepare_commands",
                cur_wf_task_cmds = ?self.current_wf_task_commands);
-        while let Some(mut c) = self.current_wf_task_commands.pop_front() {
-            // TODO: This conversion sux -- probably add to NewOrExistingCommand
-            let cmd_type = CommandType::from_i32(c.command.command_type).unwrap();
-            self.machine_mut(c.machine).handle_command(cmd_type);
+        while let Some(c) = self.current_wf_task_commands.pop_front() {
+            let cmd_type = CommandType::from_i32(c.command.command_type)
+                .ok_or(WFMachinesError::UnknownCommandType(c.command.command_type))?;
+            self.machine_mut(c.machine).handle_command(cmd_type)?;
             self.commands.push_back(c);
         }
         event!(Level::DEBUG, msg = "end prepare_commands", commands = ?self.commands);
+        Ok(())
     }
 
     fn add_new_machine<T: TemporalStateMachine + 'static>(

@@ -20,6 +20,7 @@ mod workflow;
 pub use pollers::{ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
+use crate::machines::WFMachinesError;
 use crate::{
     machines::{InconvertibleCommandError, WFCommand},
     protos::{
@@ -260,7 +261,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             .collect::<Result<Vec<_>>>()?;
         self.workflow_machines.access(run_id, |mgr| {
             mgr.command_sink.send(cmds)?;
-            mgr.machines.iterate_machines();
+            mgr.machines.iterate_machines()?;
             Ok(())
         })?;
         Ok(())
@@ -284,6 +285,8 @@ pub enum CoreError {
     UninterpretableCommand(#[from] InconvertibleCommandError),
     /// Underlying error in history processing
     UnderlyingHistError(#[from] HistoryInfoError),
+    /// Underlying error in state machines
+    UnderlyingMachinesError(#[from] WFMachinesError),
     /// Task token had nothing associated with it: {0:?}
     NothingFoundForTaskToken(Vec<u8>),
     /// Error calling the service: {0:?}
