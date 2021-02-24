@@ -589,7 +589,7 @@ mod test {
         let core = build_fake_core(wfid, run_id, &mut t, &[2]);
 
         let res = core.poll_task(task_queue).unwrap();
-        let randomness_seed_from_start: i64;
+        let randomness_seed_from_start: u64;
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {

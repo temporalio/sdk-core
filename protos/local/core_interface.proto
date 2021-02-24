@@ -80,7 +80,7 @@ message StartWorkflowTaskAttributes {
     temporal.api.common.v1.Payloads arguments = 3;
     // The seed must be used to initialize the random generator used by SDK.
     // RandomSeedUpdatedAttributes are used to deliver seed updates.
-    int64 randomness_seed = 4;
+    uint64 randomness_seed = 4;
 
     // TODO: Do we need namespace here, or should that just be fetchable easily?
     //   will be others - workflow exe started attrs, etc
@@ -95,7 +95,7 @@ message TimerFiredTaskAttributes {
 }
 
 message RandomSeedUpdatedAttributes {
-    int64 randomness_seed = 1;
+    uint64 randomness_seed = 1;
 }
 
 message QueryWorkflowJob {
