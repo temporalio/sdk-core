@@ -10,6 +10,7 @@ use crossbeam::channel::{bounded, unbounded, Receiver, Select, Sender, TryRecvEr
 use dashmap::DashMap;
 use std::{
     fmt::Debug,
+    sync::Mutex,
     thread::{self, JoinHandle},
 };
 use tracing::Level;
@@ -22,7 +23,7 @@ pub(crate) struct WorkflowConcurrencyManager {
     //  in core SDK yet either - once we're ready to remove things, they can be removed from this
     //  map and the wfm thread will drop the machines.
     machines: DashMap<String, MachineMutationSender>,
-    wf_thread: JoinHandle<()>,
+    wf_thread: Mutex<Option<JoinHandle<()>>>,
     machine_creator: Sender<MachineCreatorMsg>,
     shutdown_chan: Sender<bool>,
 }
@@ -51,7 +52,7 @@ impl WorkflowConcurrencyManager {
 
         Self {
             machines: Default::default(),
-            wf_thread,
+            wf_thread: Mutex::new(Some(wf_thread)),
             machine_creator,
             shutdown_chan,
         }
@@ -119,10 +120,13 @@ impl WorkflowConcurrencyManager {
     ///
     /// # Panics
     /// If the workflow machine thread panicked
-    #[allow(unused)] // TODO: Will be used when other shutdown PR is merged
-    pub fn shutdown(self) {
+    pub fn shutdown(&self) {
         let _ = self.shutdown_chan.send(true);
         self.wf_thread
+            .lock()
+            .expect("Workflow manager thread mutex must be lockable")
+            .take()
+            .unwrap()
             .join()
             .expect("Workflow manager thread should shut down cleanly");
     }

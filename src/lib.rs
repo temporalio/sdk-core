@@ -239,6 +239,7 @@ where
 
     fn shutdown(&self) -> Result<(), CoreError> {
         self.shutdown_requested.store(true, Ordering::SeqCst);
+        self.workflow_machines.shutdown();
         Ok(())
     }
 }
@@ -331,9 +332,8 @@ pub enum CoreError {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::machines::test_help::FakeCore;
     use crate::{
-        machines::test_help::{build_fake_core, TestHistoryBuilder},
+        machines::test_help::{build_fake_core, FakeCore, TestHistoryBuilder},
         protos::{
             coresdk::{
                 wf_activation_job, TaskCompletion, TimerFiredTaskAttributes, WfActivationJob,
@@ -349,14 +349,15 @@ mod test {
             },
         },
     };
-    use rstest::rstest;
+    use rstest::{fixture, rstest};
 
-    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
-    fn single_timer_test_across_wf_bridge(hist_batches: &[usize]) {
+    const TASK_Q: &str = "test-task-queue";
+    const RUN_ID: &str = "fake_run_id";
+
+    #[fixture(hist_batches=&[])]
+    fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
         let wfid = "fake_wf_id";
-        let run_id = "fake_run_id";
         let timer_id = "fake_timer".to_string();
-        let task_queue = "test-task-queue";
 
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -366,7 +367,7 @@ mod test {
             EventType::TimerFired,
             history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
                 started_event_id: timer_started_event_id,
-                timer_id: timer_id.clone(),
+                timer_id,
             }),
         );
         t.add_workflow_task_scheduled_and_started();
@@ -382,21 +383,28 @@ mod test {
            8: EVENT_TYPE_WORKFLOW_TASK_STARTED
            ---
         */
-        let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
+        let core = build_fake_core(wfid, RUN_ID, &mut t, hist_batches);
+        core
+    }
 
-        let res = core.poll_task(task_queue).unwrap();
+    #[rstest(core,
+              case::incremental(single_timer_setup(&[1, 2])),
+              case::replay(single_timer_setup(&[2]))
+    )]
+    fn single_timer_test_across_wf_bridge(core: FakeCore) {
+        let res = core.poll_task(TASK_Q).unwrap();
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {
                 attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
             }]
         );
-        assert!(core.workflow_machines.exists(run_id));
+        assert!(core.workflow_machines.exists(RUN_ID));
 
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![StartTimerCommandAttributes {
-                timer_id,
+                timer_id: "fake_timer".to_string(),
                 ..Default::default()
             }
             .into()],
@@ -404,7 +412,7 @@ mod test {
         ))
         .unwrap();
 
-        let res = core.poll_task(task_queue).unwrap();
+        let res = core.poll_task(TASK_Q).unwrap();
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {
@@ -598,21 +606,16 @@ mod test {
             task_tok,
         ))
         .unwrap();
-        core
     }
 
-    #[rstest]
-    fn single_timer_whole_replay_test_across_wf_bridge(_single_timer_whole_replay: FakeCore) {
-        // Nothing to do here -- whole real test is in fixture. Rstest properly handles leading `_`
-    }
+    #[rstest(single_timer_setup(&[1]))]
+    fn after_shutdown_server_is_not_polled(single_timer_setup: FakeCore) {
+        let res = single_timer_setup.poll_task(TASK_Q).unwrap();
+        assert_eq!(res.get_wf_jobs().len(), 1);
 
-    #[rstest]
-    fn after_shutdown_server_is_not_polled(single_timer_whole_replay: FakeCore) {
-        single_timer_whole_replay.shutdown().unwrap();
+        single_timer_setup.shutdown().unwrap();
         assert_matches!(
-            single_timer_whole_replay
-                .poll_task("irrelevant")
-                .unwrap_err(),
+            single_timer_setup.poll_task(TASK_Q).unwrap_err(),
             CoreError::ShuttingDown
         );
     }
