@@ -36,7 +36,11 @@ use dashmap::DashMap;
 use std::{
     convert::TryInto,
     fmt::Debug,
-    sync::{mpsc::SendError, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::SendError,
+        Arc,
+    },
 };
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
