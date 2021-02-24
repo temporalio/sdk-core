@@ -1,3 +1,4 @@
+use crate::machines::workflow_machines::WFMachinesError::MalformedEvent;
 use crate::{
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
@@ -6,7 +7,10 @@ use crate::{
     },
     protos::coresdk::WfActivationJob,
     protos::{
-        coresdk::{wf_activation_job, StartWorkflowTaskAttributes, WfActivation},
+        coresdk::{
+            wf_activation_job, wf_activation_job::Attributes::RandomSeedUpdated,
+            RandomSeedUpdatedAttributes, StartWorkflowTaskAttributes, WfActivation,
+        },
         temporal::api::{
             command::v1::StartTimerCommandAttributes,
             common::v1::WorkflowExecution,
@@ -20,12 +24,16 @@ use rustfsm::StateMachine;
 use std::{
     borrow::BorrowMut,
     cell::RefCell,
+    collections::hash_map::DefaultHasher,
     collections::{HashMap, HashSet, VecDeque},
+    hash::Hash,
+    hash::Hasher,
     ops::DerefMut,
     sync::{atomic::AtomicBool, Arc},
     time::SystemTime,
 };
 use tracing::Level;
+use uuid::Uuid;
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
@@ -44,7 +52,7 @@ pub(crate) struct WorkflowMachines {
     replaying: bool,
     /// Workflow identifier
     pub workflow_id: String,
-    /// Identifies the current run and is used as a seed for faux-randomness.
+    /// Identifies the current run
     pub run_id: String,
     /// The current workflow time if it has been established
     current_wf_time: Option<SystemTime>,
@@ -75,6 +83,9 @@ pub(super) enum WorkflowTrigger {
     TriggerWFTaskStarted {
         task_started_event_id: i64,
         time: SystemTime,
+    },
+    UpdateRunIdOnWorkflowReset {
+        run_id: String,
     },
 }
 
@@ -292,6 +303,9 @@ impl WorkflowMachines {
                                 .unwrap_or_default(),
                             workflow_id: self.workflow_id.clone(),
                             arguments: attrs.input.clone(),
+                            randomness_seed: str_to_randomness_seed(
+                                &attrs.original_execution_run_id,
+                            ),
                         }
                         .into(),
                     );
@@ -410,6 +424,15 @@ impl WorkflowMachines {
                 } => {
                     self.task_started(task_started_event_id, time);
                 }
+                WorkflowTrigger::UpdateRunIdOnWorkflowReset { run_id: new_run_id } => {
+                    self.outgoing_wf_activation_jobs.push_back(
+                        wf_activation_job::Attributes::RandomSeedUpdated(
+                            RandomSeedUpdatedAttributes {
+                                randomness_seed: str_to_randomness_seed(&new_run_id),
+                            },
+                        ),
+                    );
+                }
             }
         }
         Ok(())
@@ -440,4 +463,10 @@ impl WorkflowMachines {
             self.commands.push_back(c);
         }
     }
+}
+
+fn str_to_randomness_seed(run_id: &str) -> u64 {
+    let mut s = DefaultHasher::new();
+    run_id.hash(&mut s);
+    s.finish()
 }
