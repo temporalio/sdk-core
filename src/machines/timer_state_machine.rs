@@ -370,14 +370,13 @@ mod test {
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
             .unwrap();
-        dbg!(&commands);
-        dbg!(state_machines.get_wf_activation());
+        state_machines.get_wf_activation();
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
             .unwrap();
-        dbg!(state_machines.get_wf_activation());
+        state_machines.get_wf_activation();
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,

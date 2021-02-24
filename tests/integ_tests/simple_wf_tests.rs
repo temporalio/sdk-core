@@ -1,6 +1,7 @@
 use assert_matches::assert_matches;
 use rand::{self, Rng};
 use std::{convert::TryFrom, env, time::Duration};
+use temporal_sdk_core::protos::temporal::api::command::v1::CancelTimerCommandAttributes;
 use temporal_sdk_core::{
     protos::{
         coresdk::{wf_activation_job, TaskCompletion, TimerFiredTaskAttributes, WfActivationJob},
@@ -130,6 +131,60 @@ fn parallel_timer_workflow() {
     );
     core.complete_task(TaskCompletion::ok_from_api_attrs(
         vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+        task.task_token,
+    ))
+    .unwrap();
+}
+
+#[test]
+fn timer_cancel_workflow() {
+    let task_q = "timer_cancel_workflow";
+    let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
+        Ok(addr) => addr,
+        Err(_) => "http://localhost:7233".to_owned(),
+    };
+    let url = Url::try_from(&*temporal_server_address).unwrap();
+    let gateway_opts = ServerGatewayOptions {
+        namespace: NAMESPACE.to_string(),
+        identity: "none".to_string(),
+        worker_binary_id: "".to_string(),
+        long_poll_timeout: Duration::from_secs(60),
+        target_url: url,
+    };
+    let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
+    let mut rng = rand::thread_rng();
+    let workflow_id: u32 = rng.gen();
+    dbg!(create_workflow(&core, task_q, &workflow_id.to_string()));
+    let timer_id = "wait_timer";
+    let cancel_timer_id = "cancel_timer";
+    let task = core.poll_task(task_q).unwrap();
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![
+            StartTimerCommandAttributes {
+                timer_id: timer_id.to_string(),
+                start_to_fire_timeout: Some(Duration::from_millis(50).into()),
+                ..Default::default()
+            }
+            .into(),
+            StartTimerCommandAttributes {
+                timer_id: cancel_timer_id.to_string(),
+                start_to_fire_timeout: Some(Duration::from_secs(10).into()),
+                ..Default::default()
+            }
+            .into(),
+        ],
+        task.task_token,
+    ))
+    .unwrap();
+    let task = dbg!(core.poll_task(task_q).unwrap());
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![
+            CancelTimerCommandAttributes {
+                timer_id: cancel_timer_id.to_string(),
+            }
+            .into(),
+            CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
+        ],
         task.task_token,
     ))
     .unwrap();
