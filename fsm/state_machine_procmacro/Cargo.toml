@@ -3,7 +3,6 @@ name = "state_machine_procmacro"
 version = "0.1.0"
 authors = ["Spencer Judge <sjudge@hey.com>"]
 edition = "2018"
-license = "MIT"
 license-file = "LICENSE.txt"
 
 [lib]
