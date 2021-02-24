@@ -311,16 +311,19 @@ mod test {
             },
             temporal::api::{
                 command::v1::{
-                    CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
+                    CancelTimerCommandAttributes, CompleteWorkflowExecutionCommandAttributes,
+                    StartTimerCommandAttributes,
                 },
                 enums::v1::EventType,
+                history::v1::TimerCanceledEventAttributes,
                 history::v1::{history_event, TimerFiredEventAttributes},
             },
         },
     };
+    use rstest::rstest;
 
-    #[test]
-    fn single_timer_test_across_wf_bridge() {
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
+    fn single_timer_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
         let timer_id = "fake_timer".to_string();
@@ -350,7 +353,7 @@ mod test {
            8: EVENT_TYPE_WORKFLOW_TASK_STARTED
            ---
         */
-        let core = build_fake_core(wfid, run_id, &mut t, &[1, 2]);
+        let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
 
         let res = core.poll_task(task_queue).unwrap();
         assert_matches!(
@@ -387,8 +390,8 @@ mod test {
         .unwrap();
     }
 
-    #[test]
-    fn parallel_timer_test_across_wf_bridge() {
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
+    fn parallel_timer_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
         let timer_1_id = "timer1".to_string();
@@ -429,7 +432,7 @@ mod test {
            10: EVENT_TYPE_WORKFLOW_TASK_STARTED
            ---
         */
-        let core = build_fake_core(wfid, run_id, &mut t, &[1, 2]);
+        let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
 
         let res = core.poll_task(task_queue).unwrap();
         assert_matches!(
@@ -485,31 +488,40 @@ mod test {
         .unwrap();
     }
 
-    #[test]
-    fn single_timer_whole_replay_test_across_wf_bridge() {
-        let s = span!(Level::DEBUG, "Test start", t = "bridge");
-        let _enter = s.enter();
-
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
+    fn timer_cancel_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
-        let timer_1_id = "timer1".to_string();
+        let timer_id = "wait_timer".to_string();
+        let cancel_timer_id = "cancel_timer".to_string();
         let task_queue = "test-task-queue";
 
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
-        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        let wait_timer_started_id = t.add_get_event_id(EventType::TimerStarted, None);
+        let cancel_timer_started_id = t.add_get_event_id(EventType::TimerStarted, None);
         t.add(
             EventType::TimerFired,
             history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: timer_started_event_id,
-                timer_id: timer_1_id.clone(),
+                started_event_id: wait_timer_started_id,
+                timer_id: timer_id.clone(),
             }),
         );
-        t.add_workflow_task_scheduled_and_started();
-        // NOTE! What makes this a replay test is the server only responds with *one* batch here.
-        // So, server is polled once, but lang->core interactions look just like non-replay test.
-        let core = build_fake_core(wfid, run_id, &mut t, &[2]);
+        // 8
+        t.add_full_wf_task();
+        // 11
+        t.add(
+            EventType::TimerCanceled,
+            history_event::Attributes::TimerCanceledEventAttributes(TimerCanceledEventAttributes {
+                started_event_id: cancel_timer_started_id,
+                timer_id: cancel_timer_id.clone(),
+                ..Default::default()
+            }),
+        );
+        // 12
+        t.add_workflow_execution_completed();
+        let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
 
         let res = core.poll_task(task_queue).unwrap();
         assert_matches!(
@@ -522,11 +534,18 @@ mod test {
 
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            vec![StartTimerCommandAttributes {
-                timer_id: timer_1_id,
-                ..Default::default()
-            }
-            .into()],
+            vec![
+                StartTimerCommandAttributes {
+                    timer_id,
+                    ..Default::default()
+                }
+                .into(),
+                StartTimerCommandAttributes {
+                    timer_id: cancel_timer_id.clone(),
+                    ..Default::default()
+                }
+                .into(),
+            ],
             task_tok,
         ))
         .unwrap();
@@ -540,7 +559,13 @@ mod test {
         );
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            vec![
+                CancelTimerCommandAttributes {
+                    timer_id: cancel_timer_id,
+                }
+                .into(),
+                CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
+            ],
             task_tok,
         ))
         .unwrap();

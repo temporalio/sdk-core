@@ -119,6 +119,7 @@ impl TryFrom<coresdk::Command> for WFCommand {
                 ..
             })) => match attrs {
                 Attributes::StartTimerCommandAttributes(s) => Ok(WFCommand::AddTimer(s)),
+                Attributes::CancelTimerCommandAttributes(s) => Ok(WFCommand::CancelTimer(s)),
                 Attributes::CompleteWorkflowExecutionCommandAttributes(c) => {
                     Ok(WFCommand::CompleteWorkflow(c))
                 }
