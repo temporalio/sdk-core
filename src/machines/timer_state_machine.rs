@@ -6,7 +6,7 @@ use crate::{
         AddCommand, CancellableCommand, WFCommand, WFMachinesAdapter,
     },
     protos::{
-        coresdk::{HistoryEventId, TimerFiredTaskAttributes, WfActivation},
+        coresdk::{FireTimer, HistoryEventId, WfActivation},
         temporal::api::{
             command::v1::{
                 command::Attributes, CancelTimerCommandAttributes, Command,
@@ -225,7 +225,7 @@ impl WFMachinesAdapter for TimerMachine {
     ) -> Result<Vec<WorkflowTrigger>, WFMachinesError> {
         match my_command {
             // Fire the completion
-            TimerMachineCommand::Complete(_event) => Ok(vec![TimerFiredTaskAttributes {
+            TimerMachineCommand::Complete(_event) => Ok(vec![FireTimer {
                 timer_id: self.shared_state.timer_attributes.timer_id.clone(),
             }
             .into()]),

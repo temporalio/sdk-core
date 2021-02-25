@@ -114,12 +114,12 @@ fn parallel_timer_workflow() {
         task.get_wf_jobs().as_slice(),
         [
             WfActivationJob {
-                attributes: Some(wf_activation_job::Attributes::TimerFired(
+                attributes: Some(wf_activation_job::Variant::FireTimer(
                     TimerFiredTaskAttributes { timer_id: t1_id }
                 )),
             },
             WfActivationJob {
-                attributes: Some(wf_activation_job::Attributes::TimerFired(
+                attributes: Some(wf_activation_job::Variant::FireTimer(
                     TimerFiredTaskAttributes { timer_id: t2_id }
                 )),
             }

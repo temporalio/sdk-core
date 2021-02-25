@@ -56,22 +56,21 @@ message WFActivation {
 }
 
 message WFActivationJob {
-    oneof attributes {
-        // TODO could literally be attributes from events? -- maybe we don't need our own types
-
+    oneof variant {
         // Begin a workflow for the first time
-        StartWorkflowTaskAttributes start_workflow = 1;
+        StartWorkflow start_workflow = 1;
         // A timer has fired, allowing whatever was waiting on it (if anything) to proceed
-        TimerFiredTaskAttributes timer_fired = 2;
+        FireTimer fire_timer = 2;
         // Workflow was reset. The randomness seed has to be updated.
-        RandomSeedUpdatedAttributes random_seed_updated = 3;
-
-        QueryWorkflowJob query_workflow = 4;
-        CancelWorkflowTaskAttributes cancel_workflow = 5;
+        UpdateRandomSeed update_random_seed = 3;
+        // A request to query the workflow was received.
+        QueryWorkflow query_workflow = 4;
+        // A request to cancel the workflow was received.
+        CancelWorkflow cancel_workflow = 5;
     }
 }
 
-message StartWorkflowTaskAttributes {
+message StartWorkflow {
     // The identifier the lang-specific sdk uses to execute workflow code
     string workflow_type = 1;
     // The workflow id used on the temporal server
@@ -86,19 +85,19 @@ message StartWorkflowTaskAttributes {
     //   will be others - workflow exe started attrs, etc
 }
 
-message CancelWorkflowTaskAttributes {
+message CancelWorkflow {
     // TODO: add attributes here
 }
 
-message TimerFiredTaskAttributes {
+message FireTimer {
     string timer_id = 1;
 }
 
-message RandomSeedUpdatedAttributes {
+message UpdateRandomSeed {
     uint64 randomness_seed = 1;
 }
 
-message QueryWorkflowJob {
+message QueryWorkflow {
     temporal.api.query.v1.WorkflowQuery query = 1;
 }
 

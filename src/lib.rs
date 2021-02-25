@@ -330,8 +330,8 @@ mod test {
         machines::test_help::{build_fake_core, TestHistoryBuilder},
         protos::{
             coresdk::{
-                wf_activation_job, RandomSeedUpdatedAttributes, StartWorkflowTaskAttributes,
-                TaskCompletion, TimerFiredTaskAttributes, WfActivationJob,
+                wf_activation_job, FireTimer, StartWorkflow, TaskCompletion, UpdateRandomSeed,
+                WfActivationJob,
             },
             temporal::api::{
                 command::v1::{
@@ -381,7 +381,7 @@ mod test {
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {
-                attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
+                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
             }]
         );
         assert!(core.workflow_machines.exists(run_id));
@@ -401,7 +401,7 @@ mod test {
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {
-                attributes: Some(wf_activation_job::Attributes::TimerFired(_)),
+                variant: Some(wf_activation_job::Variant::FireTimer(_)),
             }]
         );
         let task_tok = res.task_token;
@@ -460,7 +460,7 @@ mod test {
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {
-                attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
+                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
             }]
         );
         assert!(core.workflow_machines.exists(run_id));
@@ -488,13 +488,13 @@ mod test {
             res.get_wf_jobs().as_slice(),
             [
                 WfActivationJob {
-                    attributes: Some(wf_activation_job::Attributes::TimerFired(
-                        TimerFiredTaskAttributes { timer_id: t1_id }
+                    variant: Some(wf_activation_job::Variant::FireTimer(
+                        FireTimer { timer_id: t1_id }
                     )),
                 },
                 WfActivationJob {
-                    attributes: Some(wf_activation_job::Attributes::TimerFired(
-                        TimerFiredTaskAttributes { timer_id: t2_id }
+                    variant: Some(wf_activation_job::Variant::FireTimer(
+                        FireTimer { timer_id: t2_id }
                     )),
                 }
             ] => {
@@ -537,7 +537,7 @@ mod test {
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {
-                attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
+                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
             }]
         );
         assert!(core.workflow_machines.exists(run_id));
@@ -557,7 +557,7 @@ mod test {
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {
-                attributes: Some(wf_activation_job::Attributes::TimerFired(_)),
+                variant: Some(wf_activation_job::Variant::FireTimer(_)),
             }]
         );
         let task_tok = res.task_token;
@@ -634,8 +634,8 @@ mod test {
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {
-                attributes: Some(wf_activation_job::Attributes::StartWorkflow(
-                StartWorkflowTaskAttributes{randomness_seed, ..}
+                variant: Some(wf_activation_job::Variant::StartWorkflow(
+                StartWorkflow{randomness_seed, ..}
                 )),
             }] => {
             randomness_seed_from_start = *randomness_seed;
@@ -658,10 +658,10 @@ mod test {
         assert_matches!(
             res.get_wf_jobs().as_slice(),
             [WfActivationJob {
-                attributes: Some(wf_activation_job::Attributes::TimerFired(_),),
+                variant: Some(wf_activation_job::Variant::FireTimer(_),),
             },
             WfActivationJob {
-                attributes: Some(wf_activation_job::Attributes::RandomSeedUpdated(RandomSeedUpdatedAttributes{randomness_seed})),
+                variant: Some(wf_activation_job::Variant::UpdateRandomSeed(UpdateRandomSeed{randomness_seed})),
             }] => {
                 assert_ne!(randomness_seed_from_start, *randomness_seed)
             }

@@ -11,7 +11,6 @@ pub mod coresdk {
     include!("coresdk.rs");
     use super::temporal::api::command::v1 as api_command;
     use super::temporal::api::command::v1::Command as ApiCommand;
-    use crate::protos::coresdk::wf_activation_job::Attributes;
     use command::Variant;
 
     pub type HistoryEventId = i64;
@@ -34,11 +33,9 @@ pub mod coresdk {
         }
     }
 
-    impl From<wf_activation_job::Attributes> for WfActivationJob {
-        fn from(a: Attributes) -> Self {
-            WfActivationJob {
-                attributes: Some(a),
-            }
+    impl From<wf_activation_job::Variant> for WfActivationJob {
+        fn from(a: wf_activation_job::Variant) -> Self {
+            WfActivationJob { variant: Some(a) }
         }
     }
 

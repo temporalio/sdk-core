@@ -1,4 +1,5 @@
 use crate::machines::workflow_machines::WFMachinesError::MalformedEvent;
+use crate::protos::coresdk::wf_activation_job;
 use crate::{
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
@@ -7,10 +8,7 @@ use crate::{
     },
     protos::coresdk::WfActivationJob,
     protos::{
-        coresdk::{
-            wf_activation_job, wf_activation_job::Attributes::RandomSeedUpdated,
-            RandomSeedUpdatedAttributes, StartWorkflowTaskAttributes, WfActivation,
-        },
+        coresdk::{StartWorkflow, UpdateRandomSeed, WfActivation},
         temporal::api::{
             command::v1::StartTimerCommandAttributes,
             common::v1::WorkflowExecution,
@@ -69,7 +67,7 @@ pub(crate) struct WorkflowMachines {
     /// iterating over already added commands.
     current_wf_task_commands: VecDeque<CancellableCommand>,
     /// Outgoing activation jobs that need to be sent to the lang sdk
-    outgoing_wf_activation_jobs: VecDeque<wf_activation_job::Attributes>,
+    outgoing_wf_activation_jobs: VecDeque<wf_activation_job::Variant>,
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: Box<dyn DrivenWorkflow + 'static>,
@@ -79,7 +77,7 @@ pub(crate) struct WorkflowMachines {
 #[derive(Debug, derive_more::From)]
 #[must_use]
 pub(super) enum WorkflowTrigger {
-    PushWFJob(#[from(forward)] wf_activation_job::Attributes),
+    PushWFJob(#[from(forward)] wf_activation_job::Variant),
     TriggerWFTaskStarted {
         task_started_event_id: i64,
         time: SystemTime,
@@ -295,7 +293,7 @@ impl WorkflowMachines {
                     self.run_id = attrs.original_execution_run_id.clone();
                     // We need to notify the lang sdk that it's time to kick off a workflow
                     self.outgoing_wf_activation_jobs.push_back(
-                        StartWorkflowTaskAttributes {
+                        StartWorkflow {
                             workflow_type: attrs
                                 .workflow_type
                                 .as_ref()
@@ -426,11 +424,9 @@ impl WorkflowMachines {
                 }
                 WorkflowTrigger::UpdateRunIdOnWorkflowReset { run_id: new_run_id } => {
                     self.outgoing_wf_activation_jobs.push_back(
-                        wf_activation_job::Attributes::RandomSeedUpdated(
-                            RandomSeedUpdatedAttributes {
-                                randomness_seed: str_to_randomness_seed(&new_run_id),
-                            },
-                        ),
+                        wf_activation_job::Variant::UpdateRandomSeed(UpdateRandomSeed {
+                            randomness_seed: str_to_randomness_seed(&new_run_id),
+                        }),
                     );
                 }
             }

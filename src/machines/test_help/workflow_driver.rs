@@ -1,7 +1,8 @@
+use crate::protos::coresdk::wf_activation_job;
 use crate::{
     machines::{ActivationListener, DrivenWorkflow, WFCommand},
     protos::{
-        coresdk::{wf_activation_job::Attributes, TimerFiredTaskAttributes},
+        coresdk::FireTimer,
         temporal::api::{
             command::v1::StartTimerCommandAttributes,
             history::v1::{
@@ -57,8 +58,8 @@ where
 }
 
 impl<F> ActivationListener for TestWorkflowDriver<F> {
-    fn on_activation_job(&mut self, activation: &Attributes) {
-        if let Attributes::TimerFired(TimerFiredTaskAttributes { timer_id }) = activation {
+    fn on_activation_job(&mut self, activation: &wf_activation_job::Variant) {
+        if let wf_activation_job::Variant::FireTimer(FireTimer { timer_id }) = activation {
             Arc::get_mut(&mut self.cache)
                 .unwrap()
                 .unblocked_timers

@@ -90,7 +90,7 @@ pub(crate) trait DrivenWorkflow: ActivationListener + Send {
 /// Allows observers to listen to newly generated outgoing activation jobs. Used for testing, where
 /// some activations must be handled before outgoing commands are issued to avoid deadlocking.
 pub(crate) trait ActivationListener {
-    fn on_activation_job(&mut self, _activation: &wf_activation_job::Attributes) {}
+    fn on_activation_job(&mut self, _activation: &wf_activation_job::Variant) {}
 }
 
 /// The struct for [WFCommand::AddCommand]
