@@ -10,7 +10,6 @@ use crate::{
             WfActivation,
         },
         temporal::api::{
-            command::v1::{command, StartTimerCommandAttributes},
             enums::v1::{CommandType, EventType},
             history::v1::{history_event, HistoryEvent},
         },
@@ -94,6 +93,7 @@ pub enum MachineResponse {
     UpdateRunIdOnWorkflowReset {
         run_id: String,
     },
+    NoOp,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -297,20 +297,6 @@ impl WorkflowMachines {
         if !self.machine(consumed_cmd.machine).is_final_state() {
             self.machines_by_event_id
                 .insert(event.event_id, consumed_cmd.machine);
-            // Additionally, some command types have user-created identifiers that may need to
-            // be associated with the event id, so that when (ex) a request to cancel them is
-            // issued we can identify them.
-            if let ProtoCommand {
-                attributes:
-                    Some(command::Attributes::StartTimerCommandAttributes(
-                        StartTimerCommandAttributes { timer_id, .. },
-                    )),
-                ..
-            } = consumed_cmd.command
-            {
-                self.timer_id_to_machine
-                    .insert(timer_id, consumed_cmd.machine);
-            }
         }
 
         Ok(())
@@ -484,6 +470,7 @@ impl WorkflowMachines {
                         ),
                     );
                 }
+                MachineResponse::NoOp => (),
                 MachineResponse::IssueNewCommand(_) => {
                     panic!("Issue new command machine response not expected here")
                 }
@@ -494,11 +481,11 @@ impl WorkflowMachines {
 
     fn handle_driven_results(&mut self, results: Vec<WFCommand>) -> Result<()> {
         for cmd in results {
-            // I don't love how boilerplate this is for just pushing new commands, and how
-            // weird it feels for cancels.
             match cmd {
                 WFCommand::AddTimer(attrs) => {
+                    let tid = attrs.timer_id.clone();
                     let timer = self.add_new_machine(new_timer(attrs));
+                    self.timer_id_to_machine.insert(tid, timer.machine);
                     self.current_wf_task_commands.push_back(timer);
                 }
                 WFCommand::CancelTimer(attrs) => {
@@ -519,6 +506,7 @@ impl WorkflowMachines {
                                 machine: mkey,
                             })
                         }
+                        MachineResponse::NoOp => {}
                         v => {
                             return Err(WFMachinesError::UnexpectedMachineResponse(
                                 v,
@@ -547,7 +535,12 @@ impl WorkflowMachines {
         while let Some(c) = self.current_wf_task_commands.pop_front() {
             let cmd_type = CommandType::from_i32(c.command.command_type)
                 .ok_or(WFMachinesError::UnknownCommandType(c.command.command_type))?;
-            self.machine_mut(c.machine).handle_command(cmd_type)?;
+            if !self
+                .machine(c.machine)
+                .was_cancelled_before_sent_to_server()
+            {
+                self.machine_mut(c.machine).handle_command(cmd_type)?;
+            }
             self.commands.push_back(c);
         }
         event!(Level::DEBUG, msg = "end prepare_commands", commands = ?self.commands);

@@ -74,8 +74,6 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
                 if event_type == EventType::WorkflowTaskStarted
                     && (!cur_event_past_or_at_start || has_next_event)
                 {
-                    // Last event in history is a task started event, so we don't
-                    // want to iterate.
                     return Ok(vec![]);
                 }
                 Ok(vec![MachineResponse::TriggerWFTaskStarted {

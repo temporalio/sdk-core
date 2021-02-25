@@ -244,12 +244,11 @@ impl WFMachinesAdapter for TimerMachine {
 
 impl Cancellable for TimerMachine {
     fn cancel(&mut self) -> Result<MachineResponse, MachineError<Self::Error>> {
-        match self.on_event_mut(TimerMachineEvents::Cancel)?.pop() {
-            Some(TimerMachineCommand::IssueCancelCmd(cmd)) => {
-                Ok(MachineResponse::IssueNewCommand(cmd))
-            }
+        Ok(match self.on_event_mut(TimerMachineEvents::Cancel)?.pop() {
+            Some(TimerMachineCommand::IssueCancelCmd(cmd)) => MachineResponse::IssueNewCommand(cmd),
+            Some(TimerMachineCommand::Canceled) => MachineResponse::NoOp,
             x => panic!(format!("Invalid cancel event response {:?}", x)),
-        }
+        })
     }
 
     fn was_cancelled_before_sent_to_server(&self) -> bool {
@@ -419,11 +418,6 @@ mod test {
             commands[1].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
-        // TODO in Java no commands are prepared or anything for 11 and 12
-        //  but I'm screwing up on event 10, the last WFTC.
-        //  Problem seems to be timer machine's cancel gets called a second time, when it shouldn't
-        //  be, which might really just be a problem with the way the test is driven, as it looks
-        //  like no commands should be emitted on last (4th) iteration of wf. Think that's it.
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, None)
             .unwrap();
@@ -442,5 +436,42 @@ mod test {
             .unwrap();
         // There should be no commands - the wf completed at the same time the timer was cancelled
         assert_eq!(commands.len(), 0);
+    }
+
+    #[test]
+    fn cancel_before_sent_to_server() {
+        crate::core_tracing::tracing_init();
+
+        let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
+            cmd_sink.timer(
+                StartTimerCommandAttributes {
+                    timer_id: "cancel_timer".to_string(),
+                    start_to_fire_timeout: Some(Duration::from_secs(500).into()),
+                },
+                false,
+            );
+            // Immediately cancel the timer
+            cmd_sink.cancel_timer("cancel_timer");
+
+            let complete = CompleteWorkflowExecutionCommandAttributes::default();
+            cmd_sink.send(complete.into());
+        });
+
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_workflow_task_scheduled_and_started();
+
+        let mut state_machines =
+            WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
+
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, None)
+            .unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].command_type,
+            CommandType::CompleteWorkflowExecution as i32
+        );
     }
 }
