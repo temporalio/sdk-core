@@ -3,7 +3,7 @@ use rand::{self, Rng};
 use std::{convert::TryFrom, env, time::Duration};
 use temporal_sdk_core::{
     protos::{
-        coresdk::{wf_activation_job, TaskCompletion, TimerFiredTaskAttributes, WfActivationJob},
+        coresdk::{wf_activation_job, FireTimer, TaskCompletion, WfActivationJob},
         temporal::api::command::v1::{
             CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
         },
@@ -114,13 +114,13 @@ fn parallel_timer_workflow() {
         task.get_wf_jobs().as_slice(),
         [
             WfActivationJob {
-                attributes: Some(wf_activation_job::Variant::FireTimer(
-                    TimerFiredTaskAttributes { timer_id: t1_id }
+                variant: Some(wf_activation_job::Variant::FireTimer(
+                    FireTimer { timer_id: t1_id }
                 )),
             },
             WfActivationJob {
-                attributes: Some(wf_activation_job::Variant::FireTimer(
-                    TimerFiredTaskAttributes { timer_id: t2_id }
+                variant: Some(wf_activation_job::Variant::FireTimer(
+                    FireTimer { timer_id: t2_id }
                 )),
             }
         ] => {
