@@ -109,16 +109,16 @@ pub(crate) struct NextWfActivation {
 impl WorkflowManager {
     /// Given history that was just obtained from the server, pipe it into this workflow's machines.
     ///
-    /// Should only be called when a workflow has caught up on replay. It will return a workflow
-    /// activation if one is needed, as well as a bool indicating if there are more workflow tasks
-    /// that need to be performed to replay the remaining history.
+    /// Should only be called when a workflow has caught up on replay (or is just beginning). It
+    /// will return a workflow activation if one is needed, as well as a bool indicating if there
+    /// are more workflow tasks that need to be performed to replay the remaining history.
     #[instrument(skip(self))]
     pub fn feed_history_from_server(&mut self, hist: History) -> Result<NextWfActivation> {
         let task_hist = HistoryInfo::new_from_history(&hist, Some(self.current_wf_task_num))?;
         let task_ct = hist.get_workflow_task_count(None)?;
         self.last_history_task_count = task_ct;
         self.last_history_from_server = hist;
-        task_hist.apply_history_events(&mut self.machines)?;
+        self.machines.apply_history_events(&task_hist)?;
         let activation = self.machines.get_wf_activation();
         let more_activations_needed = task_ct > self.current_wf_task_num;
 
@@ -137,7 +137,7 @@ impl WorkflowManager {
     pub fn get_next_activation(&mut self) -> Result<NextWfActivation> {
         let hist = &self.last_history_from_server;
         let task_hist = HistoryInfo::new_from_history(hist, Some(self.current_wf_task_num))?;
-        task_hist.apply_history_events(&mut self.machines)?;
+        self.machines.apply_history_events(&task_hist)?;
         let activation = self.machines.get_wf_activation();
 
         self.current_wf_task_num += 1;
@@ -147,5 +147,31 @@ impl WorkflowManager {
             activation,
             more_activations_needed,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        protos::temporal::api::common::v1::WorkflowExecution, test_help::canned_histories,
+    };
+    use rand::{thread_rng, Rng};
+
+    #[test]
+    fn full_history_application() {
+        let t = canned_histories::single_timer("fake_timer");
+        let task_token: [u8; 16] = thread_rng().gen();
+        let pwtqr = PollWorkflowTaskQueueResponse {
+            history: Some(t.as_history()),
+            workflow_execution: Some(WorkflowExecution {
+                workflow_id: "wfid".to_string(),
+                run_id: "runid".to_string(),
+            }),
+            task_token: task_token.to_vec(),
+            ..Default::default()
+        };
+        let mut wfm = WorkflowManager::new(pwtqr).unwrap();
+        dbg!(wfm.get_next_activation().unwrap());
     }
 }

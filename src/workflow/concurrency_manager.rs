@@ -265,7 +265,7 @@ mod tests {
                 "some_run_id",
                 PollWorkflowTaskQueueResponse {
                     history: Some(History {
-                        events: t.get_history_info(1).unwrap().events,
+                        events: t.get_history_info(1).unwrap().events().to_vec(),
                     }),
                     workflow_execution: Some(WorkflowExecution {
                         workflow_id: "wid".to_string(),
