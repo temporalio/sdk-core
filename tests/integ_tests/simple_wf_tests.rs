@@ -192,3 +192,43 @@ fn timer_cancel_workflow() {
     ))
     .unwrap();
 }
+
+#[test]
+fn timer_immediate_cancel_workflow() {
+    let task_q = "timer_cancel_workflow";
+    let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
+        Ok(addr) => addr,
+        Err(_) => "http://localhost:7233".to_owned(),
+    };
+    let url = Url::try_from(&*temporal_server_address).unwrap();
+    let gateway_opts = ServerGatewayOptions {
+        namespace: NAMESPACE.to_string(),
+        identity: "none".to_string(),
+        worker_binary_id: "".to_string(),
+        long_poll_timeout: Duration::from_secs(60),
+        target_url: url,
+    };
+    let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
+    let mut rng = rand::thread_rng();
+    let workflow_id: u32 = rng.gen();
+    create_workflow(&core, task_q, &workflow_id.to_string());
+    let cancel_timer_id = "cancel_timer";
+    let task = core.poll_task(task_q).unwrap();
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![
+            StartTimerCommandAttributes {
+                timer_id: cancel_timer_id.to_string(),
+                ..Default::default()
+            }
+            .into(),
+            CancelTimerCommandAttributes {
+                timer_id: cancel_timer_id.to_string(),
+                ..Default::default()
+            }
+            .into(),
+            CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
+        ],
+        task.task_token,
+    ))
+    .unwrap();
+}

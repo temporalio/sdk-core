@@ -333,6 +333,8 @@ pub enum CoreError {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::machines::test_help::TestHistoryBuilder;
+    use crate::protos::temporal::api::enums::v1::EventType;
     use crate::{
         machines::test_help::{build_fake_core, FakeCore},
         protos::{
@@ -594,5 +596,49 @@ mod test {
             task_tok,
         ))
         .unwrap();
+    }
+
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
+    fn cancel_timer_before_sent_wf_bridge(hist_batches: &[usize]) {
+        let wfid = "fake_wf_id";
+        let run_id = "fake_run_id";
+        let cancel_timer_id = "cancel_timer";
+        let task_queue = "test-task-queue";
+
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_workflow_task_scheduled_and_started();
+
+        let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
+
+        let res = core.poll_task(task_queue).unwrap();
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                attributes: Some(wf_activation_job::Attributes::StartWorkflow(_)),
+            }]
+        );
+
+        let task_tok = res.task_token;
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![
+                StartTimerCommandAttributes {
+                    timer_id: cancel_timer_id.to_string(),
+                    ..Default::default()
+                }
+                .into(),
+                CancelTimerCommandAttributes {
+                    timer_id: cancel_timer_id.to_string(),
+                    ..Default::default()
+                }
+                .into(),
+                CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
+            ],
+            task_tok,
+        ))
+        .unwrap();
+        // Really only here to appease mock expectations for incremental
+        core.poll_task(task_queue).unwrap();
     }
 }
