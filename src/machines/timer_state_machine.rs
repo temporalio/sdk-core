@@ -440,6 +440,7 @@ mod test {
 
     #[test]
     fn cancel_before_sent_to_server() {
+        crate::core_tracing::tracing_init();
         let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
             cmd_sink.timer(
                 StartTimerCommandAttributes {
@@ -458,8 +459,7 @@ mod test {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
-        // TODO: Isn't working when this is completed, which should work
-        t.add_workflow_task_scheduled_and_started();
+        t.add_workflow_execution_completed();
 
         let mut state_machines =
             WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
@@ -467,10 +467,6 @@ mod test {
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, None)
             .unwrap();
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::CompleteWorkflowExecution as i32
-        );
+        assert_eq!(commands.len(), 0);
     }
 }

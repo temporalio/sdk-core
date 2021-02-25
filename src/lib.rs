@@ -608,7 +608,7 @@ mod test {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
-        t.add_workflow_task_scheduled_and_started();
+        t.add_workflow_execution_completed();
 
         let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
 
@@ -638,7 +638,8 @@ mod test {
             task_tok,
         ))
         .unwrap();
-        // Really only here to appease mock expectations for incremental
-        core.poll_task(task_queue).unwrap();
+        if hist_batches.len() > 1 {
+            core.poll_task(task_queue).unwrap();
+        }
     }
 }

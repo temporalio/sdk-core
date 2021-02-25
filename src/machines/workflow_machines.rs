@@ -273,17 +273,19 @@ impl WorkflowMachines {
 
             // Feed the machine the event
             let mut break_later = false;
+            let canceled_before_sent = self
+                .machine(command.machine)
+                .was_cancelled_before_sent_to_server();
 
-            self.submachine_handle_event(command.machine, event, true)?;
+            if !canceled_before_sent {
+                self.submachine_handle_event(command.machine, event, true)?;
+            }
 
             // TODO:
             //  * More special handling for version machine - see java
             //  * Commands cancelled this iteration are allowed to not match the event?
 
-            if !self
-                .machine(command.machine)
-                .was_cancelled_before_sent_to_server()
-            {
+            if !canceled_before_sent {
                 break_later = true;
             }
 
