@@ -1,6 +1,16 @@
 use assert_matches::assert_matches;
 use rand::{self, Rng};
-use std::{collections::HashSet, convert::TryFrom, env, time::Duration};
+use std::{
+    collections::HashMap,
+    convert::TryFrom,
+    env,
+    sync::{
+        mpsc::{channel, Receiver},
+        Arc,
+    },
+    time::Duration,
+};
+use temporal_sdk_core::protos::coresdk::Task;
 use temporal_sdk_core::{
     protos::{
         coresdk::{
@@ -219,69 +229,64 @@ fn timer_immediate_cancel_workflow() {
 fn parallel_workflows_same_queue() {
     let task_q = "parallel_workflows_same_queue";
     let core = get_integ_core();
-    let wid1 = "wf_id_1";
-    let wid2 = "wf_id_2";
-    let run_1 = dbg!(create_workflow(&core, task_q, wid1, Some("wf-type-1")));
-    let run_2 = dbg!(create_workflow(&core, task_q, wid2, Some("wf-type-2")));
+    let num_workflows = 25;
 
-    let task1 = core.poll_task(task_q).unwrap();
-    let task2 = core.poll_task(task_q).unwrap();
-    assert_matches!(
-        task1.get_wf_jobs().as_slice(),
-        [WfActivationJob {
-            attributes: Some(wf_activation_job::Attributes::StartWorkflow(
-                StartWorkflowTaskAttributes {
-                    workflow_type,
-                    ..
-                }
-            )),
-        }] => assert_eq!(&workflow_type, &"wf-type-1")
-    );
-    assert_matches!(
-        task2.get_wf_jobs().as_slice(),
-        [WfActivationJob {
-            attributes: Some(wf_activation_job::Attributes::StartWorkflow(
-                StartWorkflowTaskAttributes {
-                    workflow_type,
-                    ..
-                }
-            )),
-        }] => assert_eq!(&workflow_type, &"wf-type-2")
-    );
-    // Complete 2 first, for fun.
-    core.complete_task(TaskCompletion::ok_from_api_attrs(
-        vec![StartTimerCommandAttributes {
-            timer_id: "timer".to_string(),
-            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-            ..Default::default()
-        }
-        .into()],
-        task2.task_token,
-    ))
-    .unwrap();
-    core.complete_task(TaskCompletion::ok_from_api_attrs(
-        vec![StartTimerCommandAttributes {
-            timer_id: "timer".to_string(),
-            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-            ..Default::default()
-        }
-        .into()],
-        task1.task_token,
-    ))
-    .unwrap();
-    let task3 = core.poll_task(task_q).unwrap();
-    let task4 = core.poll_task(task_q).unwrap();
-    let mut ids_must_be_in: HashSet<String> = vec![run_1, run_2].into_iter().collect();
-    assert!(ids_must_be_in.remove(task3.get_run_id().unwrap()));
-    assert!(ids_must_be_in.remove(task4.get_run_id().unwrap()));
-    core.complete_task(TaskCompletion::ok_from_api_attrs(
-        vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
-        task3.task_token,
-    ))
-    .unwrap();
-    core.complete_task(TaskCompletion::ok_from_api_attrs(
-        vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
-        task4.task_token,
-    ))
-    .unwrap();
+    let run_ids: Vec<_> = (0..num_workflows)
+        .map(|i| create_workflow(&core, task_q, &format!("wf-id-{}", i), Some("wf-type-1")))
+        .collect();
+
+    let mut send_chans = HashMap::new();
+
+    fn wf_thread(core: Arc<dyn Core>, task_chan: Receiver<Task>) {
+        let task = task_chan.recv().unwrap();
+        assert_matches!(
+            task.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                attributes: Some(wf_activation_job::Attributes::StartWorkflow(
+                    StartWorkflowTaskAttributes {
+                        workflow_type,
+                        ..
+                    }
+                )),
+            }] => assert_eq!(&workflow_type, &"wf-type-1")
+        );
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![StartTimerCommandAttributes {
+                timer_id: "timer".to_string(),
+                start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+                ..Default::default()
+            }
+            .into()],
+            task.task_token,
+        ))
+        .unwrap();
+        let task = task_chan.recv().unwrap();
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            task.task_token,
+        ))
+        .unwrap();
+    }
+
+    let core = Arc::new(core);
+    let handles: Vec<_> = run_ids
+        .iter()
+        .map(|run_id| {
+            let (tx, rx) = channel();
+            send_chans.insert(run_id.clone(), tx);
+            let core_c = core.clone();
+            std::thread::spawn(move || wf_thread(core_c, rx))
+        })
+        .collect();
+
+    for _ in 0..num_workflows * 2 {
+        let task = core.poll_task(task_q).unwrap();
+        send_chans
+            .get(task.get_run_id().unwrap())
+            .unwrap()
+            .send(task)
+            .unwrap();
+    }
+
+    handles.into_iter().for_each(|h| h.join().unwrap());
 }
