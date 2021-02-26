@@ -32,6 +32,15 @@ pub mod coresdk {
                 vec![]
             }
         }
+
+        /// Returns the workflow run id if the task was a workflow
+        pub fn get_run_id(&self) -> Option<&str> {
+            if let Some(task::Variant::Workflow(a)) = &self.variant {
+                Some(&a.run_id)
+            } else {
+                None
+            }
+        }
     }
 
     impl From<wf_activation_job::Attributes> for WfActivationJob {

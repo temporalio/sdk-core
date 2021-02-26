@@ -1,12 +1,15 @@
 use assert_matches::assert_matches;
 use rand::{self, Rng};
-use std::{convert::TryFrom, env, time::Duration};
-use temporal_sdk_core::protos::temporal::api::command::v1::CancelTimerCommandAttributes;
+use std::{collections::HashSet, convert::TryFrom, env, time::Duration};
 use temporal_sdk_core::{
     protos::{
-        coresdk::{wf_activation_job, TaskCompletion, TimerFiredTaskAttributes, WfActivationJob},
+        coresdk::{
+            wf_activation_job, StartWorkflowTaskAttributes, TaskCompletion,
+            TimerFiredTaskAttributes, WfActivationJob,
+        },
         temporal::api::command::v1::{
-            CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
+            CancelTimerCommandAttributes, CompleteWorkflowExecutionCommandAttributes,
+            StartTimerCommandAttributes,
         },
     },
     Core, CoreInitOptions, ServerGatewayOptions, Url,
@@ -22,18 +25,26 @@ use temporal_sdk_core::{
 const NAMESPACE: &str = "default";
 
 #[tokio::main]
-async fn create_workflow(core: &dyn Core, task_q: &str, workflow_id: &str) -> String {
+async fn create_workflow(
+    core: &dyn Core,
+    task_q: &str,
+    workflow_id: &str,
+    wf_type: Option<&str>,
+) -> String {
     core.server_gateway()
         .unwrap()
-        .start_workflow(NAMESPACE, task_q, workflow_id, "test-workflow")
+        .start_workflow(
+            NAMESPACE,
+            task_q,
+            workflow_id,
+            wf_type.unwrap_or("test-workflow"),
+        )
         .await
         .unwrap()
         .run_id
 }
 
-#[test]
-fn timer_workflow() {
-    let task_q = "timer_workflow";
+fn get_integ_core() -> impl Core {
     let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
         Ok(addr) => addr,
         Err(_) => "http://localhost:7233".to_owned(),
@@ -41,15 +52,22 @@ fn timer_workflow() {
     let url = Url::try_from(&*temporal_server_address).unwrap();
     let gateway_opts = ServerGatewayOptions {
         namespace: NAMESPACE.to_string(),
-        identity: "none".to_string(),
+        identity: "integ_tester".to_string(),
         worker_binary_id: "".to_string(),
         long_poll_timeout: Duration::from_secs(60),
         target_url: url,
     };
     let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
+    core
+}
+
+#[test]
+fn timer_workflow() {
+    let task_q = "timer_workflow";
+    let core = get_integ_core();
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    dbg!(create_workflow(&core, task_q, &workflow_id.to_string()));
+    create_workflow(&core, task_q, &workflow_id.to_string(), None);
     let timer_id: String = rng.gen::<u32>().to_string();
     let task = core.poll_task(task_q).unwrap();
     core.complete_task(TaskCompletion::ok_from_api_attrs(
@@ -73,22 +91,10 @@ fn timer_workflow() {
 #[test]
 fn parallel_timer_workflow() {
     let task_q = "parallel_timer_workflow";
-    let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
-        Ok(addr) => addr,
-        Err(_) => "http://localhost:7233".to_owned(),
-    };
-    let url = Url::try_from(&*temporal_server_address).unwrap();
-    let gateway_opts = ServerGatewayOptions {
-        namespace: NAMESPACE.to_string(),
-        identity: "none".to_string(),
-        worker_binary_id: "".to_string(),
-        long_poll_timeout: Duration::from_secs(60),
-        target_url: url,
-    };
-    let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
+    let core = get_integ_core();
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    dbg!(create_workflow(&core, task_q, &workflow_id.to_string()));
+    create_workflow(&core, task_q, &workflow_id.to_string(), None);
     let timer_id = "timer 1".to_string();
     let timer_2_id = "timer 2".to_string();
     let task = dbg!(core.poll_task(task_q).unwrap());
@@ -142,22 +148,10 @@ fn parallel_timer_workflow() {
 #[test]
 fn timer_cancel_workflow() {
     let task_q = "timer_cancel_workflow";
-    let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
-        Ok(addr) => addr,
-        Err(_) => "http://localhost:7233".to_owned(),
-    };
-    let url = Url::try_from(&*temporal_server_address).unwrap();
-    let gateway_opts = ServerGatewayOptions {
-        namespace: NAMESPACE.to_string(),
-        identity: "none".to_string(),
-        worker_binary_id: "".to_string(),
-        long_poll_timeout: Duration::from_secs(60),
-        target_url: url,
-    };
-    let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
+    let core = get_integ_core();
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    dbg!(create_workflow(&core, task_q, &workflow_id.to_string()));
+    create_workflow(&core, task_q, &workflow_id.to_string(), None);
     let timer_id = "wait_timer";
     let cancel_timer_id = "cancel_timer";
     let task = core.poll_task(task_q).unwrap();
@@ -195,23 +189,11 @@ fn timer_cancel_workflow() {
 
 #[test]
 fn timer_immediate_cancel_workflow() {
-    let task_q = "timer_cancel_workflow";
-    let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
-        Ok(addr) => addr,
-        Err(_) => "http://localhost:7233".to_owned(),
-    };
-    let url = Url::try_from(&*temporal_server_address).unwrap();
-    let gateway_opts = ServerGatewayOptions {
-        namespace: NAMESPACE.to_string(),
-        identity: "none".to_string(),
-        worker_binary_id: "".to_string(),
-        long_poll_timeout: Duration::from_secs(60),
-        target_url: url,
-    };
-    let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
+    let task_q = "timer_immediate_cancel_workflow";
+    let core = get_integ_core();
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    create_workflow(&core, task_q, &workflow_id.to_string());
+    create_workflow(&core, task_q, &workflow_id.to_string(), None);
     let cancel_timer_id = "cancel_timer";
     let task = core.poll_task(task_q).unwrap();
     core.complete_task(TaskCompletion::ok_from_api_attrs(
@@ -229,6 +211,77 @@ fn timer_immediate_cancel_workflow() {
             CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
         ],
         task.task_token,
+    ))
+    .unwrap();
+}
+
+#[test]
+fn parallel_workflows_same_queue() {
+    let task_q = "parallel_workflows_same_queue";
+    let core = get_integ_core();
+    let wid1 = "wf_id_1";
+    let wid2 = "wf_id_2";
+    let run_1 = dbg!(create_workflow(&core, task_q, wid1, Some("wf-type-1")));
+    let run_2 = dbg!(create_workflow(&core, task_q, wid2, Some("wf-type-2")));
+
+    let task1 = core.poll_task(task_q).unwrap();
+    let task2 = core.poll_task(task_q).unwrap();
+    assert_matches!(
+        task1.get_wf_jobs().as_slice(),
+        [WfActivationJob {
+            attributes: Some(wf_activation_job::Attributes::StartWorkflow(
+                StartWorkflowTaskAttributes {
+                    workflow_type,
+                    ..
+                }
+            )),
+        }] => assert_eq!(&workflow_type, &"wf-type-1")
+    );
+    assert_matches!(
+        task2.get_wf_jobs().as_slice(),
+        [WfActivationJob {
+            attributes: Some(wf_activation_job::Attributes::StartWorkflow(
+                StartWorkflowTaskAttributes {
+                    workflow_type,
+                    ..
+                }
+            )),
+        }] => assert_eq!(&workflow_type, &"wf-type-2")
+    );
+    // Complete 2 first, for fun.
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![StartTimerCommandAttributes {
+            timer_id: "timer".to_string(),
+            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+            ..Default::default()
+        }
+        .into()],
+        task2.task_token,
+    ))
+    .unwrap();
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![StartTimerCommandAttributes {
+            timer_id: "timer".to_string(),
+            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+            ..Default::default()
+        }
+        .into()],
+        task1.task_token,
+    ))
+    .unwrap();
+    let task3 = core.poll_task(task_q).unwrap();
+    let task4 = core.poll_task(task_q).unwrap();
+    let mut ids_must_be_in: HashSet<String> = vec![run_1, run_2].into_iter().collect();
+    assert!(ids_must_be_in.remove(task3.get_run_id().unwrap()));
+    assert!(ids_must_be_in.remove(task4.get_run_id().unwrap()));
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+        task3.task_token,
+    ))
+    .unwrap();
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+        task4.task_token,
     ))
     .unwrap();
 }
