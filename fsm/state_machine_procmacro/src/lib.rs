@@ -329,7 +329,9 @@ impl StateMachineDefinition {
             .flat_map(|t| vec![t.from.clone(), t.to.clone()])
             .collect();
         let state_variants = states.iter().map(|s| {
+            let statestr = s.to_string();
             quote! {
+                #[display(fmt=#statestr)]
                 #s(#s)
             }
         });
@@ -349,7 +351,7 @@ impl StateMachineDefinition {
             }
         };
         let states_enum = quote! {
-            #[derive(::derive_more::From, Clone)]
+            #[derive(::derive_more::From, Clone, ::derive_more::Display)]
             #visibility enum #state_enum_name {
                 #(#state_variants),*
             }

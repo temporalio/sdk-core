@@ -92,6 +92,10 @@ pub mod temporal {
                                 command_type: CommandType::StartTimer as i32,
                                 attributes: Some(a),
                             },
+                            a @ Attributes::CancelTimerCommandAttributes(_) => Self {
+                                command_type: CommandType::CancelTimer as i32,
+                                attributes: Some(a),
+                            },
                             a @ Attributes::CompleteWorkflowExecutionCommandAttributes(_) => Self {
                                 command_type: CommandType::CompleteWorkflowExecution as i32,
                                 attributes: Some(a),
@@ -140,7 +144,7 @@ pub mod temporal {
                     ///
                     /// If `up_to_event_id` is provided, the count will be returned as soon as
                     /// processing advances past that id.
-                    pub fn get_workflow_task_count(
+                    pub(crate) fn get_workflow_task_count(
                         &self,
                         up_to_event_id: Option<i64>,
                     ) -> Result<usize, HistoryInfoError> {
@@ -149,14 +153,22 @@ pub mod temporal {
                         let mut history = self.events.iter().peekable();
                         while let Some(event) = history.next() {
                             let next_event = history.peek();
+
+                            if event.is_final_wf_execution_event() {
+                                // If the workflow is complete, we're done.
+                                return Ok(count);
+                            }
+
                             if let Some(upto) = up_to_event_id {
                                 if event.event_id > upto {
                                     return Ok(count);
                                 }
                             }
+
                             let next_is_completed = next_event.map_or(false, |ne| {
                                 ne.event_type == EventType::WorkflowTaskCompleted as i32
                             });
+
                             if event.event_type == EventType::WorkflowTaskStarted as i32
                                 && (next_event.is_none() || next_is_completed)
                             {

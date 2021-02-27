@@ -1,6 +1,6 @@
-#[allow(unused)]
 mod workflow_machines;
 
+// TODO: Move all these inside a submachines module
 #[allow(unused)]
 mod activity_state_machine;
 #[allow(unused)]
@@ -9,7 +9,6 @@ mod cancel_external_state_machine;
 mod cancel_workflow_state_machine;
 #[allow(unused)]
 mod child_workflow_state_machine;
-#[allow(unused)]
 mod complete_workflow_state_machine;
 #[allow(unused)]
 mod continue_as_new_workflow_state_machine;
@@ -23,13 +22,11 @@ mod mutable_side_effect_state_machine;
 mod side_effect_state_machine;
 #[allow(unused)]
 mod signal_external_state_machine;
-#[allow(unused)]
 mod timer_state_machine;
 #[allow(unused)]
 mod upsert_search_attributes_state_machine;
 #[allow(unused)]
 mod version_state_machine;
-#[allow(unused)]
 mod workflow_task_state_machine;
 
 #[cfg(test)]
@@ -38,13 +35,13 @@ pub(crate) mod test_help;
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
 use crate::{
-    machines::workflow_machines::WorkflowTrigger,
+    machines::workflow_machines::MachineResponse,
     protos::{
         coresdk::{self, command::Variant, wf_activation_job},
         temporal::api::{
             command::v1::{
-                command::Attributes, Command, CompleteWorkflowExecutionCommandAttributes,
-                StartTimerCommandAttributes,
+                command::Attributes, CancelTimerCommandAttributes, Command,
+                CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
             },
             enums::v1::CommandType,
             history::v1::{
@@ -58,7 +55,7 @@ use prost::alloc::fmt::Formatter;
 use rustfsm::{MachineError, StateMachine};
 use std::{
     convert::{TryFrom, TryInto},
-    fmt::Debug,
+    fmt::{Debug, Display},
 };
 use tracing::Level;
 
@@ -68,7 +65,7 @@ pub(crate) type ProtoCommand = Command;
 /// drive it, start it, signal it, cancel it, etc.
 pub(crate) trait DrivenWorkflow: ActivationListener + Send {
     /// Start the workflow
-    fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes) -> Vec<WFCommand>;
+    fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes);
 
     /// Obtain any output from the workflow's recent execution(s). Because the lang sdk is
     /// responsible for calling workflow code as a result of receiving tasks from
@@ -93,13 +90,6 @@ pub(crate) trait ActivationListener {
     fn on_activation_job(&mut self, _activation: &wf_activation_job::Attributes) {}
 }
 
-/// The struct for [WFCommand::AddCommand]
-#[derive(Debug, derive_more::From)]
-pub(crate) struct AddCommand {
-    /// The protobuf command
-    pub(crate) command: Command,
-}
-
 /// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
 /// EX: Create a new timer, complete the workflow, etc.
 #[derive(Debug, derive_more::From)]
@@ -107,6 +97,7 @@ pub enum WFCommand {
     /// Returned when we need to wait for the lang sdk to send us something
     NoCommandsFromLang,
     AddTimer(StartTimerCommandAttributes),
+    CancelTimer(CancelTimerCommandAttributes),
     CompleteWorkflow(CompleteWorkflowExecutionCommandAttributes),
 }
 
@@ -124,6 +115,7 @@ impl TryFrom<coresdk::Command> for WFCommand {
                 ..
             })) => match attrs {
                 Attributes::StartTimerCommandAttributes(s) => Ok(WFCommand::AddTimer(s)),
+                Attributes::CancelTimerCommandAttributes(s) => Ok(WFCommand::CancelTimer(s)),
                 Attributes::CompleteWorkflowExecutionCommandAttributes(c) => {
                     Ok(WFCommand::CompleteWorkflow(c))
                 }
@@ -141,21 +133,30 @@ trait TemporalStateMachine: CheckStateMachineInFinal + Send {
     fn name(&self) -> &str;
     fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError>;
 
-    /// Tell the state machine to handle some event. Returns a list of triggers that can be used
+    /// Tell the state machine to handle some event. Returns a list of responses that can be used
     /// to update the overall state of the workflow. EX: To issue outgoing WF activations.
     fn handle_event(
         &mut self,
         event: &HistoryEvent,
         has_next_event: bool,
-    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError>;
+    ) -> Result<Vec<MachineResponse>, WFMachinesError>;
+
+    /// Attempt to cancel the command associated with this state machine, if it is cancellable
+    fn cancel(&mut self) -> Result<MachineResponse, WFMachinesError>;
+
+    /// Should return true if the command was cancelled before we sent it to the server. Always
+    /// returns false for non-cancellable machines
+    fn was_cancelled_before_sent_to_server(&self) -> bool;
 }
 
 impl<SM> TemporalStateMachine for SM
 where
-    SM: StateMachine + CheckStateMachineInFinal + WFMachinesAdapter + Clone + Send,
+    SM: StateMachine + CheckStateMachineInFinal + WFMachinesAdapter + Cancellable + Clone + Send,
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
+    WFMachinesError: From<<<SM as StateMachine>::Event as TryFrom<HistoryEvent>>::Error>,
     <SM as StateMachine>::Command: Debug,
+    <SM as StateMachine>::State: Display,
     <SM as StateMachine>::Error: Into<WFMachinesError> + 'static + Send + Sync,
 {
     fn name(&self) -> &str {
@@ -167,7 +168,8 @@ where
             Level::DEBUG,
             msg = "handling command",
             ?command_type,
-            machine_name = %self.name()
+            machine_name = %self.name(),
+            state = %self.state()
         );
         if let Ok(converted_command) = command_type.try_into() {
             match self.on_event_mut(converted_command) {
@@ -186,31 +188,52 @@ where
         &mut self,
         event: &HistoryEvent,
         has_next_event: bool,
-    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError> {
+    ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         event!(
             Level::DEBUG,
             msg = "handling event",
             %event,
-            machine_name = %self.name()
+            machine_name = %self.name(),
+            state = %self.state()
         );
-        if let Ok(converted_event) = event.clone().try_into() {
-            match self.on_event_mut(converted_event) {
-                Ok(c) => {
-                    event!(Level::DEBUG, msg = "Machine produced commands", ?c);
-                    let mut triggers = vec![];
-                    for cmd in c {
-                        triggers.extend(self.adapt_response(event, has_next_event, cmd)?);
-                    }
-                    Ok(triggers)
+        let converted_event = event.clone().try_into()?;
+        match self.on_event_mut(converted_event) {
+            Ok(c) => {
+                if !c.is_empty() {
+                    event!(Level::DEBUG, msg = "Machine produced commands", ?c, state = %self.state());
                 }
-                Err(MachineError::InvalidTransition) => {
-                    Err(WFMachinesError::UnexpectedEvent(event.clone()))
+                let mut machine_responses = vec![];
+                for cmd in c {
+                    machine_responses.extend(self.adapt_response(event, has_next_event, cmd)?);
                 }
-                Err(MachineError::Underlying(e)) => Err(e.into()),
+                Ok(machine_responses)
             }
-        } else {
-            Err(WFMachinesError::UnexpectedEvent(event.clone()))
+            Err(MachineError::InvalidTransition) => {
+                Err(WFMachinesError::InvalidTransitionDuringEvent(
+                    event.clone(),
+                    format!(
+                        "{} in state {} says the transition is invalid",
+                        self.name(),
+                        self.state()
+                    ),
+                ))
+            }
+            Err(MachineError::Underlying(e)) => Err(e.into()),
         }
+    }
+
+    fn cancel(&mut self) -> Result<MachineResponse, WFMachinesError> {
+        let res = self.cancel();
+        res.map_err(|e| match e {
+            MachineError::InvalidTransition => {
+                WFMachinesError::InvalidTransition("while attempting to cancel")
+            }
+            MachineError::Underlying(e) => e.into(),
+        })
+    }
+
+    fn was_cancelled_before_sent_to_server(&self) -> bool {
+        self.was_cancelled_before_sent_to_server()
     }
 }
 
@@ -241,28 +264,31 @@ trait WFMachinesAdapter: StateMachine {
         event: &HistoryEvent,
         has_next_event: bool,
         my_command: Self::Command,
-    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError>;
+    ) -> Result<Vec<MachineResponse>, WFMachinesError>;
 }
 
-/// A command which can be cancelled, associated with the state machine that produced it
-#[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
-enum CancellableCommand {
-    // TODO: You'll be used soon, friend.
-    #[allow(dead_code)]
-    Cancelled,
-    Active {
-        /// The inner protobuf command, if None, command has been cancelled
-        command: ProtoCommand,
-        machine: Box<dyn TemporalStateMachine>,
-    },
-}
-
-impl CancellableCommand {
-    #[allow(dead_code)] // TODO: Use
-    pub(super) fn cancel(&mut self) {
-        *self = CancellableCommand::Cancelled;
+trait Cancellable: StateMachine {
+    /// Cancel the machine / the command represented by the machine.
+    ///
+    /// # Panics
+    /// * If the machine is not cancellable. It's a logic error on our part to call it on such
+    ///   machines.
+    fn cancel(&mut self) -> Result<MachineResponse, MachineError<Self::Error>> {
+        // It's a logic error on our part if this is ever called on a machine that can't actually
+        // be cancelled
+        panic!(format!("Machine {} cannot be cancelled", self.name()))
     }
+
+    /// Should return true if the command was cancelled before we sent it to the server
+    fn was_cancelled_before_sent_to_server(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug)]
+struct NewMachineWithCommand<T: TemporalStateMachine> {
+    command: ProtoCommand,
+    machine: T,
 }
 
 impl Debug for dyn TemporalStateMachine {

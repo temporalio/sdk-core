@@ -1,3 +1,4 @@
+use crate::protos::temporal::api::command::v1::CancelTimerCommandAttributes;
 use crate::{
     machines::{ActivationListener, DrivenWorkflow, WFCommand},
     protos::{
@@ -23,9 +24,16 @@ use tracing::Level;
 /// over when commands are returned than a normal workflow would.
 ///
 /// It replaces "TestEnitityTestListenerBase" in java which is pretty hard to follow.
+///
+/// It is important to understand that this driver doesn't work like a real workflow in the sense
+/// that nothing in it ever blocks, or ever should block. Every workflow task will run through the
+/// *entire* workflow, but any commands given to the sink after a `Waiting` command are simply
+/// ignored, allowing you to simulate blocking without ever actually blocking.
 pub(in crate::machines) struct TestWorkflowDriver<F> {
     wf_function: F,
     cache: Arc<TestWfDriverCache>,
+    /// Set to true if a workflow execution completed/failed/cancelled/etc has been issued
+    sent_final_execution: bool,
 }
 
 #[derive(Default, Debug)]
@@ -52,6 +60,7 @@ where
         Self {
             wf_function: workflow_fn,
             cache: Default::default(),
+            sent_final_execution: false,
         }
     }
 }
@@ -72,26 +81,40 @@ where
     F: Fn(CommandSender) -> Fut + Send + Sync,
     Fut: Future<Output = ()>,
 {
-    fn start(&mut self, _attribs: WorkflowExecutionStartedEventAttributes) -> Vec<WFCommand> {
+    fn start(&mut self, _attribs: WorkflowExecutionStartedEventAttributes) {
         event!(Level::DEBUG, msg = "Test WF driver start called");
-        vec![]
     }
 
     fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
+        // If we have already sent the command to complete the workflow, we don't want
+        // to re-run the workflow again.
+        // TODO: This would be better to solve by actually pausing the workflow properly rather
+        //   than doing the re-run the whole thing every time deal.
+        if self.sent_final_execution {
+            return vec![];
+        }
+
         let (sender, receiver) = CommandSender::new(self.cache.clone());
         // Call the closure that produces the workflow future
         let wf_future = (self.wf_function)(sender);
 
+        // TODO: This is pointless right now -- either actually use async and suspend on awaits
+        //   or just remove it.
         // Create a tokio runtime to block on the future
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(wf_future);
 
         let cmds = receiver.into_iter();
 
-        let mut last_cmd = None;
+        let mut emit_these = vec![];
         for cmd in cmds {
             match cmd {
-                TestWFCommand::WFCommand(c) => last_cmd = Some(c),
+                TestWFCommand::WFCommand(c) => {
+                    if let WFCommand::CompleteWorkflow(_) = &c {
+                        self.sent_final_execution = true;
+                    }
+                    emit_these.push(c);
+                }
                 TestWFCommand::Waiting => {
                     // Ignore further commands since we're waiting on something
                     break;
@@ -99,14 +122,9 @@ where
             }
         }
 
-        event!(Level::DEBUG, msg = "Test wf driver emitting", ?last_cmd);
+        event!(Level::DEBUG, msg = "Test wf driver emitting", ?emit_these);
 
-        // Return only the last command, since that's what would've been yielded in a real wf
-        if let Some(c) = last_cmd {
-            vec![c]
-        } else {
-            vec![]
-        }
+        emit_these
     }
 
     fn signal(&mut self, _attribs: WorkflowExecutionSignaledEventAttributes) {}
@@ -134,8 +152,10 @@ impl CommandSender {
         (Self { chan, twd_cache }, rx)
     }
 
-    /// Request to create a timer, returning future which resolves when the timer completes
-    pub fn timer(&mut self, a: StartTimerCommandAttributes) -> impl Future + '_ {
+    /// Request to create a timer. Returns true if the timer has fired, false if it hasn't yet.
+    ///
+    /// If `do_wait` is true, issue a waiting command if the timer is not finished.
+    pub fn timer(&mut self, a: StartTimerCommandAttributes, do_wait: bool) -> bool {
         let finished = match self.twd_cache.unblocked_timers.entry(a.timer_id.clone()) {
             dashmap::mapref::entry::Entry::Occupied(existing) => *existing.get(),
             dashmap::mapref::entry::Entry::Vacant(v) => {
@@ -145,10 +165,17 @@ impl CommandSender {
                 false
             }
         };
-        if !finished {
+        if !finished && do_wait {
             self.chan.send(TestWFCommand::Waiting).unwrap();
         }
-        futures::future::ready(())
+        finished
+    }
+
+    pub fn cancel_timer(&mut self, timer_id: &str) {
+        let c = WFCommand::CancelTimer(CancelTimerCommandAttributes {
+            timer_id: timer_id.to_string(),
+        });
+        self.chan.send(c.into()).unwrap();
     }
 
     pub fn send(&mut self, c: WFCommand) {
