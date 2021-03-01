@@ -1,10 +1,9 @@
-use crate::protos::coresdk::wf_activation_job;
 use crate::{
     machines::{ActivationListener, DrivenWorkflow, WFCommand},
     protos::{
-        coresdk::FireTimer,
+        coresdk::{wf_activation_job, FireTimer},
         temporal::api::{
-            command::v1::StartTimerCommandAttributes,
+            command::v1::{CancelTimerCommandAttributes, StartTimerCommandAttributes},
             history::v1::{
                 WorkflowExecutionCanceledEventAttributes, WorkflowExecutionSignaledEventAttributes,
                 WorkflowExecutionStartedEventAttributes,

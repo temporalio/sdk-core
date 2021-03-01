@@ -6,7 +6,7 @@ use crate::{
         Cancellable, NewMachineWithCommand, WFMachinesAdapter,
     },
     protos::{
-        coresdk::{FireTimer, HistoryEventId, WfActivation},
+        coresdk::{CancelTimer, FireTimer, HistoryEventId},
         temporal::api::{
             command::v1::{CancelTimerCommandAttributes, Command, StartTimerCommandAttributes},
             enums::v1::{CommandType, EventType},
@@ -233,7 +233,7 @@ impl WFMachinesAdapter for TimerMachine {
                 timer_id: self.shared_state.attrs.timer_id.clone(),
             }
             .into()],
-            TimerMachineCommand::Canceled => vec![TimerCanceledTaskAttributes {
+            TimerMachineCommand::Canceled => vec![CancelTimer {
                 timer_id: self.shared_state.attrs.timer_id.clone(),
             }
             .into()],

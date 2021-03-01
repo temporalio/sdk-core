@@ -1,4 +1,3 @@
-use crate::machines::workflow_machines::WFMachinesError::MalformedEvent;
 use crate::protos::coresdk::wf_activation_job;
 use crate::{
     machines::{
