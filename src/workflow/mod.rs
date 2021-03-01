@@ -172,6 +172,6 @@ mod tests {
             ..Default::default()
         };
         let mut wfm = WorkflowManager::new(pwtqr).unwrap();
-        dbg!(wfm.get_next_activation().unwrap());
+        wfm.get_next_activation().unwrap();
     }
 }

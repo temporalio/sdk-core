@@ -448,17 +448,9 @@ impl WorkflowMachines {
         while let Some(event) = history.next() {
             let next_event = history.peek();
 
-            if event.event_type == EventType::WorkflowTaskStarted as i32 {
-                let next_is_completed = next_event.map_or(false, |ne| {
-                    ne.event_type == EventType::WorkflowTaskCompleted as i32
-                });
-
-                if next_event.is_none() || next_is_completed {
-                    if next_event.is_none() {
-                        self.handle_event(event, false)?;
-                        return Ok(());
-                    }
-                }
+            if event.event_type == EventType::WorkflowTaskStarted as i32 && next_event.is_none() {
+                self.handle_event(event, false)?;
+                return Ok(());
             }
 
             self.handle_event(event, next_event.is_some())?;

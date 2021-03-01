@@ -1,5 +1,4 @@
 use crate::{
-    machines::WorkflowMachines,
     protos::temporal::api::enums::v1::EventType,
     protos::temporal::api::history::v1::{History, HistoryEvent},
 };
