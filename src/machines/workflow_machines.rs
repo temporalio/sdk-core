@@ -12,6 +12,7 @@ use crate::{
             history::v1::{history_event, HistoryEvent},
         },
     },
+    protosext::HistoryInfo,
 };
 use slotmap::SlotMap;
 use std::{
@@ -423,6 +424,43 @@ impl WorkflowMachines {
         let results = self.drive_me.fetch_workflow_iteration_output();
         self.handle_driven_results(results)?;
         self.prepare_commands()?;
+        Ok(())
+    }
+
+    /// Apply events from history to this machines instance
+    pub(crate) fn apply_history_events(&mut self, history_info: &HistoryInfo) -> Result<()> {
+        let (_, events) = history_info
+            .events()
+            .split_at(self.get_last_started_event_id() as usize);
+        let mut history = events.iter().peekable();
+
+        self.set_started_ids(
+            history_info.previous_started_event_id,
+            history_info.workflow_task_started_event_id,
+        );
+
+        // HistoryInfo's constructor enforces some rules about the structure of history that
+        // could be enforced here, but needn't be because they have already been guaranteed by it.
+        // See the errors that can be returned from [HistoryInfo::new_from_events] for detail.
+
+        while let Some(event) = history.next() {
+            let next_event = history.peek();
+
+            if event.event_type == EventType::WorkflowTaskStarted as i32 && next_event.is_none() {
+                self.handle_event(event, false)?;
+                return Ok(());
+            }
+
+            self.handle_event(event, next_event.is_some())?;
+
+            if next_event.is_none() {
+                if event.is_final_wf_execution_event() {
+                    return Ok(());
+                }
+                unreachable!()
+            }
+        }
+
         Ok(())
     }
 

@@ -333,10 +333,8 @@ pub enum CoreError {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::machines::test_help::TestHistoryBuilder;
-    use crate::protos::temporal::api::enums::v1::EventType;
     use crate::{
-        machines::test_help::{build_fake_core, FakeCore},
+        machines::test_help::{build_fake_core, FakeCore, TestHistoryBuilder},
         protos::{
             coresdk::{
                 wf_activation_job, FireTimer, StartWorkflow, TaskCompletion, UpdateRandomSeed,
@@ -346,6 +344,7 @@ mod test {
                 CancelTimerCommandAttributes, CompleteWorkflowExecutionCommandAttributes,
                 StartTimerCommandAttributes,
             },
+            temporal::api::enums::v1::EventType,
         },
         test_help::canned_histories,
     };

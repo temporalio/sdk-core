@@ -135,7 +135,7 @@ impl TestHistoryBuilder {
         to_wf_task_num: Option<usize>,
     ) -> Result<()> {
         let histinfo = HistoryInfo::new_from_events(&self.events, to_wf_task_num)?;
-        histinfo.apply_history_events(wf_machines)?;
+        wf_machines.apply_history_events(&histinfo)?;
         Ok(())
     }
 
