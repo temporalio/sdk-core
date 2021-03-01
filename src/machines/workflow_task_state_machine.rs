@@ -1,22 +1,17 @@
 #![allow(clippy::enum_variant_names)]
 
-use crate::machines::workflow_machines::WorkflowTrigger;
+use crate::machines::workflow_machines::MachineResponse;
+use crate::machines::Cancellable;
 use crate::protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes;
 use crate::{
-    machines::{
-        workflow_machines::{WFMachinesError, WorkflowMachines},
-        WFMachinesAdapter,
-    },
+    machines::{workflow_machines::WFMachinesError, WFMachinesAdapter},
     protos::temporal::api::{
         enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
         history::v1::HistoryEvent,
     },
 };
 use rustfsm::{fsm, TransitionResult};
-use std::panic::resume_unwind;
 use std::{convert::TryFrom, time::SystemTime};
-use tracing::Level;
-use uuid::Uuid;
 
 fsm! {
     pub(super) name WorkflowTaskMachine;
@@ -63,29 +58,31 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
         event: &HistoryEvent,
         has_next_event: bool,
         my_command: WFTaskMachineCommand,
-    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError> {
+    ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         match my_command {
             WFTaskMachineCommand::WFTaskStartedTrigger {
                 task_started_event_id,
                 time,
             } => {
-                let event_type = EventType::from_i32(event.event_type)
-                    .ok_or_else(|| WFMachinesError::UnexpectedEvent(event.clone()))?;
+                let event_type = EventType::from_i32(event.event_type).ok_or_else(|| {
+                    WFMachinesError::UnexpectedEvent(
+                        event.clone(),
+                        "WfTask machine could not interpret event type",
+                    )
+                })?;
                 let cur_event_past_or_at_start = event.event_id >= task_started_event_id;
                 if event_type == EventType::WorkflowTaskStarted
                     && (!cur_event_past_or_at_start || has_next_event)
                 {
-                    // Last event in history is a task started event, so we don't
-                    // want to iterate.
                     return Ok(vec![]);
                 }
-                Ok(vec![WorkflowTrigger::TriggerWFTaskStarted {
+                Ok(vec![MachineResponse::TriggerWFTaskStarted {
                     task_started_event_id,
                     time,
                 }])
             }
             WFTaskMachineCommand::RunIdOnWorkflowResetUpdate { run_id } => {
-                Ok(vec![WorkflowTrigger::UpdateRunIdOnWorkflowReset { run_id }])
+                Ok(vec![MachineResponse::UpdateRunIdOnWorkflowReset { run_id }])
             }
         }
     }
@@ -131,7 +128,12 @@ impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
                     ));
                 }
             }
-            _ => return Err(WFMachinesError::UnexpectedEvent(e)),
+            _ => {
+                return Err(WFMachinesError::UnexpectedEvent(
+                    e,
+                    "Event does not apply to a wf task machine",
+                ))
+            }
         })
     }
 }
@@ -143,6 +145,8 @@ impl TryFrom<CommandType> for WorkflowTaskMachineEvents {
         Err(())
     }
 }
+
+impl Cancellable for WorkflowTaskMachine {}
 
 #[derive(Debug, Clone)]
 pub(super) struct SharedState {

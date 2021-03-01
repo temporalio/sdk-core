@@ -61,12 +61,14 @@ message WFActivationJob {
         StartWorkflow start_workflow = 1;
         // A timer has fired, allowing whatever was waiting on it (if anything) to proceed
         FireTimer fire_timer = 2;
-        // Workflow was reset. The randomness seed has to be updated.
-        UpdateRandomSeed update_random_seed = 3;
+        // A timer was canceled
+        TimerCanceledTaskAttributes timer_canceled = 3;
+        // Workflow was reset. The randomness seed must be updated.
+        UpdateRandomSeed update_random_seed = 4;
         // A request to query the workflow was received.
-        QueryWorkflow query_workflow = 4;
+        QueryWorkflow query_workflow = 5;
         // A request to cancel the workflow was received.
-        CancelWorkflow cancel_workflow = 5;
+        CancelWorkflow cancel_workflow = 6;
     }
 }
 
@@ -90,6 +92,10 @@ message CancelWorkflow {
 }
 
 message FireTimer {
+    string timer_id = 1;
+}
+
+message TimerCanceledTaskAttributes {
     string timer_id = 1;
 }
 

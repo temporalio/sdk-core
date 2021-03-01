@@ -32,10 +32,9 @@ impl WorkflowBridge {
 }
 
 impl DrivenWorkflow for WorkflowBridge {
-    fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes) -> Vec<WFCommand> {
+    fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes) {
         event!(Level::DEBUG, msg = "Workflow bridge start called", ?attribs);
         self.started_attrs = Some(attribs);
-        vec![]
     }
 
     fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {

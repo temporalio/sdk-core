@@ -1,8 +1,7 @@
-use crate::machines::workflow_machines::WorkflowTrigger;
 use crate::{
     machines::{
-        workflow_machines::WorkflowMachines, AddCommand, CancellableCommand, WFCommand,
-        WFMachinesAdapter, WFMachinesError,
+        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, WFMachinesAdapter,
+        WFMachinesError,
     },
     protos::temporal::api::{
         command::v1::{Command, CompleteWorkflowExecutionCommandAttributes},
@@ -11,8 +10,7 @@ use crate::{
     },
 };
 use rustfsm::{fsm, StateMachine, TransitionResult};
-use std::cell::RefCell;
-use std::{convert::TryFrom, rc::Rc};
+use std::convert::TryFrom;
 
 fsm! {
     pub(super)
@@ -31,17 +29,17 @@ fsm! {
 
 #[derive(Debug)]
 pub(super) enum CompleteWFCommand {
-    AddCommand(AddCommand),
+    AddCommand(Command),
 }
 
 /// Complete a workflow
 pub(super) fn complete_workflow(
     attribs: CompleteWorkflowExecutionCommandAttributes,
-) -> CancellableCommand {
+) -> NewMachineWithCommand<CompleteWorkflowMachine> {
     let (machine, add_cmd) = CompleteWorkflowMachine::new_scheduled(attribs);
-    CancellableCommand::Active {
-        command: add_cmd.command,
-        machine: Box::new(machine),
+    NewMachineWithCommand {
+        command: add_cmd,
+        machine,
     }
 }
 
@@ -49,7 +47,7 @@ impl CompleteWorkflowMachine {
     /// Create a new WF machine and schedule it
     pub(crate) fn new_scheduled(
         attribs: CompleteWorkflowExecutionCommandAttributes,
-    ) -> (Self, AddCommand) {
+    ) -> (Self, Command) {
         let mut s = Self {
             state: Created {}.into(),
             shared_state: attribs,
@@ -67,12 +65,17 @@ impl CompleteWorkflowMachine {
 }
 
 impl TryFrom<HistoryEvent> for CompleteWorkflowMachineEvents {
-    type Error = ();
+    type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
         Ok(match EventType::from_i32(e.event_type) {
             Some(EventType::WorkflowExecutionCompleted) => Self::WorkflowExecutionCompleted,
-            _ => return Err(()),
+            _ => {
+                return Err(WFMachinesError::UnexpectedEvent(
+                    e,
+                    "Complete workflow machine does not handle this event",
+                ))
+            }
         })
     }
 }
@@ -101,7 +104,7 @@ impl Created {
             attributes: Some(dat.into()),
         };
         TransitionResult::commands::<_, CompleteWorkflowCommandCreated>(vec![
-            CompleteWFCommand::AddCommand(cmd.into()),
+            CompleteWFCommand::AddCommand(cmd),
         ])
     }
 }
@@ -127,7 +130,9 @@ impl WFMachinesAdapter for CompleteWorkflowMachine {
         _event: &HistoryEvent,
         _has_next_event: bool,
         _my_command: CompleteWFCommand,
-    ) -> Result<Vec<WorkflowTrigger>, WFMachinesError> {
+    ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(vec![])
     }
 }
+
+impl Cancellable for CompleteWorkflowMachine {}
