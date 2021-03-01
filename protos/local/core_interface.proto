@@ -95,10 +95,6 @@ message FireTimer {
     string timer_id = 1;
 }
 
-message TimerCanceledTaskAttributes {
-    string timer_id = 1;
-}
-
 message CancelTimer {
     string timer_id = 1;
 }
