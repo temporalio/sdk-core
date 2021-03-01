@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("coresdk.Command.variant", "#[derive(::derive_more::From)]")
         .type_attribute("coresdk.WFActivationJob", "#[derive(::derive_more::From)]")
         .type_attribute(
-            "coresdk.WFActivationJob.attributes",
+            "coresdk.WFActivationJob.variant",
             "#[derive(::derive_more::From)]",
         )
         .type_attribute("coresdk.Task.variant", "#[derive(::derive_more::From)]")
