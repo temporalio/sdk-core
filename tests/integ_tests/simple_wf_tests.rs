@@ -10,11 +10,11 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core::protos::coresdk::Task;
-use temporal_sdk_core::protos::temporal::api::command::v1::CancelTimerCommandAttributes;
 use temporal_sdk_core::{
     protos::{
-        coresdk::{wf_activation_job, FireTimer, TaskCompletion, WfActivationJob},
+        coresdk::{
+            wf_activation_job, FireTimer, StartWorkflow, Task, TaskCompletion, WfActivationJob,
+        },
         temporal::api::command::v1::{
             CancelTimerCommandAttributes, CompleteWorkflowExecutionCommandAttributes,
             StartTimerCommandAttributes,
@@ -171,7 +171,12 @@ fn timer_cancel_workflow() {
     let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    dbg!(create_workflow(&core, task_q, &workflow_id.to_string()));
+    dbg!(create_workflow(
+        &core,
+        task_q,
+        &workflow_id.to_string(),
+        None
+    ));
     let timer_id = "wait_timer";
     let cancel_timer_id = "cancel_timer";
     let task = core.poll_task(task_q).unwrap();
@@ -225,7 +230,7 @@ fn timer_immediate_cancel_workflow() {
     let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    create_workflow(&core, task_q, &workflow_id.to_string());
+    create_workflow(&core, task_q, &workflow_id.to_string(), None);
     let cancel_timer_id = "cancel_timer";
     let task = core.poll_task(task_q).unwrap();
     core.complete_task(TaskCompletion::ok_from_api_attrs(
@@ -264,8 +269,8 @@ fn parallel_workflows_same_queue() {
         assert_matches!(
             task.get_wf_jobs().as_slice(),
             [WfActivationJob {
-                attributes: Some(wf_activation_job::Attributes::StartWorkflow(
-                    StartWorkflowTaskAttributes {
+                variant: Some(wf_activation_job::Variant::StartWorkflow(
+                    StartWorkflow {
                         workflow_type,
                         ..
                     }
