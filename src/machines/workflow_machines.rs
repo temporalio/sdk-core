@@ -1,3 +1,4 @@
+use crate::protos::coresdk::wf_activation_job;
 use crate::{
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
@@ -5,15 +6,13 @@ use crate::{
         ProtoCommand, TemporalStateMachine, WFCommand,
     },
     protos::{
-        coresdk::{
-            wf_activation_job, RandomSeedUpdatedAttributes, StartWorkflowTaskAttributes,
-            WfActivation,
-        },
+        coresdk::{StartWorkflow, UpdateRandomSeed, WfActivation},
         temporal::api::{
             enums::v1::{CommandType, EventType},
             history::v1::{history_event, HistoryEvent},
         },
     },
+    protosext::HistoryInfo,
 };
 use slotmap::SlotMap;
 use std::{
@@ -66,7 +65,7 @@ pub(crate) struct WorkflowMachines {
     /// iterating over already added commands.
     current_wf_task_commands: VecDeque<CommandAndMachine>,
     /// Outgoing activation jobs that need to be sent to the lang sdk
-    outgoing_wf_activation_jobs: VecDeque<wf_activation_job::Attributes>,
+    outgoing_wf_activation_jobs: VecDeque<wf_activation_job::Variant>,
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: Box<dyn DrivenWorkflow + 'static>,
@@ -84,7 +83,7 @@ struct CommandAndMachine {
 #[must_use]
 #[allow(clippy::large_enum_variant)]
 pub enum MachineResponse {
-    PushWFJob(#[from(forward)] wf_activation_job::Attributes),
+    PushWFJob(#[from(forward)] wf_activation_job::Variant),
     IssueNewCommand(ProtoCommand),
     TriggerWFTaskStarted {
         task_started_event_id: i64,
@@ -318,7 +317,7 @@ impl WorkflowMachines {
                     self.run_id = attrs.original_execution_run_id.clone();
                     // We need to notify the lang sdk that it's time to kick off a workflow
                     self.outgoing_wf_activation_jobs.push_back(
-                        StartWorkflowTaskAttributes {
+                        StartWorkflow {
                             workflow_type: attrs
                                 .workflow_type
                                 .as_ref()
@@ -428,6 +427,43 @@ impl WorkflowMachines {
         Ok(())
     }
 
+    /// Apply events from history to this machines instance
+    pub(crate) fn apply_history_events(&mut self, history_info: &HistoryInfo) -> Result<()> {
+        let (_, events) = history_info
+            .events()
+            .split_at(self.get_last_started_event_id() as usize);
+        let mut history = events.iter().peekable();
+
+        self.set_started_ids(
+            history_info.previous_started_event_id,
+            history_info.workflow_task_started_event_id,
+        );
+
+        // HistoryInfo's constructor enforces some rules about the structure of history that
+        // could be enforced here, but needn't be because they have already been guaranteed by it.
+        // See the errors that can be returned from [HistoryInfo::new_from_events] for detail.
+
+        while let Some(event) = history.next() {
+            let next_event = history.peek();
+
+            if event.event_type == EventType::WorkflowTaskStarted as i32 && next_event.is_none() {
+                self.handle_event(event, false)?;
+                return Ok(());
+            }
+
+            self.handle_event(event, next_event.is_some())?;
+
+            if next_event.is_none() {
+                if event.is_final_wf_execution_event() {
+                    return Ok(());
+                }
+                unreachable!()
+            }
+        }
+
+        Ok(())
+    }
+
     /// Wrapper for calling [TemporalStateMachine::handle_event] which appropriately takes action
     /// on the returned machine responses
     fn submachine_handle_event(
@@ -465,11 +501,9 @@ impl WorkflowMachines {
                 }
                 MachineResponse::UpdateRunIdOnWorkflowReset { run_id: new_run_id } => {
                     self.outgoing_wf_activation_jobs.push_back(
-                        wf_activation_job::Attributes::RandomSeedUpdated(
-                            RandomSeedUpdatedAttributes {
-                                randomness_seed: str_to_randomness_seed(&new_run_id),
-                            },
-                        ),
+                        wf_activation_job::Variant::UpdateRandomSeed(UpdateRandomSeed {
+                            randomness_seed: str_to_randomness_seed(&new_run_id),
+                        }),
                     );
                 }
                 MachineResponse::NoOp => (),

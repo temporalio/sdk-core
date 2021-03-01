@@ -43,7 +43,7 @@ pub(crate) fn build_fake_core(
     let responses: Vec<_> = response_batches
         .iter()
         .map(|to_task_num| {
-            let batch = t.get_history_info(*to_task_num).unwrap().events;
+            let batch = t.get_history_info(*to_task_num).unwrap().events().to_vec();
             let task_token: [u8; 16] = thread_rng().gen();
             PollWorkflowTaskQueueResponse {
                 history: Some(History { events: batch }),

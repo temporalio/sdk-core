@@ -1,10 +1,9 @@
-use crate::protos::temporal::api::command::v1::CancelTimerCommandAttributes;
 use crate::{
     machines::{ActivationListener, DrivenWorkflow, WFCommand},
     protos::{
-        coresdk::{wf_activation_job::Attributes, TimerFiredTaskAttributes},
+        coresdk::{wf_activation_job, FireTimer},
         temporal::api::{
-            command::v1::StartTimerCommandAttributes,
+            command::v1::{CancelTimerCommandAttributes, StartTimerCommandAttributes},
             history::v1::{
                 WorkflowExecutionCanceledEventAttributes, WorkflowExecutionSignaledEventAttributes,
                 WorkflowExecutionStartedEventAttributes,
@@ -23,7 +22,7 @@ use tracing::Level;
 /// This is a test only implementation of a [DrivenWorkflow] which has finer-grained control
 /// over when commands are returned than a normal workflow would.
 ///
-/// It replaces "TestEnitityTestListenerBase" in java which is pretty hard to follow.
+/// It replaces "TestEntityTestListenerBase" in java which is pretty hard to follow.
 ///
 /// It is important to understand that this driver doesn't work like a real workflow in the sense
 /// that nothing in it ever blocks, or ever should block. Every workflow task will run through the
@@ -66,8 +65,8 @@ where
 }
 
 impl<F> ActivationListener for TestWorkflowDriver<F> {
-    fn on_activation_job(&mut self, activation: &Attributes) {
-        if let Attributes::TimerFired(TimerFiredTaskAttributes { timer_id }) = activation {
+    fn on_activation_job(&mut self, activation: &wf_activation_job::Variant) {
+        if let wf_activation_job::Variant::FireTimer(FireTimer { timer_id }) = activation {
             Arc::get_mut(&mut self.cache)
                 .unwrap()
                 .unblocked_timers

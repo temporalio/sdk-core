@@ -1,14 +1,15 @@
 use crate::{
-    machines::WorkflowMachines,
     protos::temporal::api::enums::v1::EventType,
     protos::temporal::api::history::v1::{History, HistoryEvent},
 };
 
-#[derive(Clone, Debug, derive_more::Constructor, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct HistoryInfo {
     pub previous_started_event_id: i64,
     pub workflow_task_started_event_id: i64,
-    pub events: Vec<HistoryEvent>,
+    // This needs to stay private so the struct can't be instantiated outside of the constructor,
+    // which enforces some invariants regarding history structure that need to be upheld.
+    events: Vec<HistoryEvent>,
 }
 
 type Result<T, E = HistoryInfoError> = std::result::Result<T, E>;
@@ -101,65 +102,8 @@ impl HistoryInfo {
         Self::new_from_events(&h.events, to_wf_task_num)
     }
 
-    /// Apply events from history to workflow machines. Remember that only the events that exist
-    /// in this instance will be applied, which is determined by `to_wf_task_num` passed into the
-    /// constructor.
-    pub(crate) fn apply_history_events(&self, wf_machines: &mut WorkflowMachines) -> Result<()> {
-        let (_, events) = self
-            .events
-            .split_at(wf_machines.get_last_started_event_id() as usize);
-        let mut history = events.iter().peekable();
-
-        wf_machines.set_started_ids(
-            self.previous_started_event_id,
-            self.workflow_task_started_event_id,
-        );
-        let mut started_id = self.previous_started_event_id;
-
-        while let Some(event) = history.next() {
-            let next_event = history.peek();
-
-            if event.event_type == EventType::WorkflowTaskStarted as i32 {
-                let next_is_completed = next_event.map_or(false, |ne| {
-                    ne.event_type == EventType::WorkflowTaskCompleted as i32
-                });
-                let next_is_failed_or_timeout = next_event.map_or(false, |ne| {
-                    ne.event_type == EventType::WorkflowTaskFailed as i32
-                        || ne.event_type == EventType::WorkflowTaskTimedOut as i32
-                });
-
-                if next_event.is_none() || next_is_completed {
-                    started_id = event.event_id;
-                    if next_event.is_none() {
-                        wf_machines
-                            .handle_event(event, false)
-                            .map_err(anyhow::Error::from)?;
-                        return Ok(());
-                    }
-                } else if next_event.is_some() && !next_is_failed_or_timeout {
-                    return Err(HistoryInfoError::FailedOrTimeout(event.clone()));
-                }
-            }
-
-            wf_machines
-                .handle_event(event, next_event.is_some())
-                .map_err(anyhow::Error::from)?;
-
-            if next_event.is_none() {
-                if event.is_final_wf_execution_event() {
-                    return Ok(());
-                }
-                if started_id != event.event_id {
-                    return Err(HistoryInfoError::UnexpectedEventId {
-                        previous_started_event_id: started_id,
-                        workflow_task_started_event_id: event.event_id,
-                    });
-                }
-                unreachable!()
-            }
-        }
-
-        Ok(())
+    pub(crate) fn events(&self) -> &[HistoryEvent] {
+        &self.events
     }
 }
 
