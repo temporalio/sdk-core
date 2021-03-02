@@ -22,7 +22,7 @@ use tracing::Level;
 /// This is a test only implementation of a [DrivenWorkflow] which has finer-grained control
 /// over when commands are returned than a normal workflow would.
 ///
-/// It replaces "TestEnitityTestListenerBase" in java which is pretty hard to follow.
+/// It replaces "TestEntityTestListenerBase" in java which is pretty hard to follow.
 ///
 /// It is important to understand that this driver doesn't work like a real workflow in the sense
 /// that nothing in it ever blocks, or ever should block. Every workflow task will run through the
