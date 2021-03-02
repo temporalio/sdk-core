@@ -8,9 +8,9 @@ use crate::{
 };
 use crossbeam::channel::{bounded, unbounded, Receiver, Select, Sender, TryRecvError};
 use dashmap::DashMap;
+use parking_lot::Mutex;
 use std::{
     fmt::Debug,
-    sync::Mutex,
     thread::{self, JoinHandle},
 };
 use tracing::Level;
@@ -124,7 +124,6 @@ impl WorkflowConcurrencyManager {
         let _ = self.shutdown_chan.send(true);
         self.wf_thread
             .lock()
-            .expect("Workflow manager thread mutex must be lockable")
             .take()
             .unwrap()
             .join()

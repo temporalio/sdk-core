@@ -324,8 +324,6 @@ pub enum CoreError {
     TokioInitError(std::io::Error),
     /// Invalid URI: {0:?}
     InvalidUri(#[from] InvalidUri),
-    /// A mutex was poisoned: {0:?}
-    LockPoisoned(String),
     /// State machines are missing for the workflow with run id {0}!
     MissingMachines(String),
 }
