@@ -38,6 +38,7 @@ use crate::{
 };
 use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
+use std::time::Duration;
 use std::{
     convert::TryInto,
     fmt::Debug,
@@ -171,9 +172,8 @@ where
         }
 
         // This will block forever in the event there is no work from the server
-        let work = self
-            .runtime
-            .block_on(self.server_gateway.poll_workflow_task(task_queue))?;
+        // TODO: Trap shutting down and recurse or goto top of fn
+        let work = self.poll_server(task_queue)?;
         let task_token = work.task_token.clone();
         event!(
             Level::DEBUG,
@@ -292,6 +292,28 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         })?;
         Ok(())
     }
+
+    /// Blocks polling the server until it responds, or until the shutdown flag is set (aborting
+    /// the poll)
+    fn poll_server(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse> {
+        self.runtime.block_on(async {
+            let shutdownfut = async {
+                loop {
+                    if self.shutdown_requested.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            };
+            let pollfut = self.server_gateway.poll_workflow_task(task_queue);
+            tokio::select! {
+                _ = shutdownfut => {
+                    Err(CoreError::ShuttingDown)
+                }
+                r = pollfut => r
+            }
+        })
+    }
 }
 
 /// The error type returned by interactions with [Core]
@@ -312,7 +334,7 @@ pub enum CoreError {
     UninterpretableCommand(#[from] InconvertibleCommandError),
     /// Underlying error in history processing
     UnderlyingHistError(#[from] HistoryInfoError),
-    /// Underlying error in state machines
+    /// Underlying error in state machines: {0:?}
     UnderlyingMachinesError(#[from] WFMachinesError),
     /// Task token had nothing associated with it: {0:?}
     NothingFoundForTaskToken(Vec<u8>),
@@ -525,6 +547,18 @@ mod test {
 
     #[rstest(single_timer_setup(&[1]))]
     fn after_shutdown_server_is_not_polled(single_timer_setup: FakeCore) {
+        let res = single_timer_setup.poll_task(TASK_Q).unwrap();
+        assert_eq!(res.get_wf_jobs().len(), 1);
+
+        single_timer_setup.shutdown().unwrap();
+        assert_matches!(
+            single_timer_setup.poll_task(TASK_Q).unwrap_err(),
+            CoreError::ShuttingDown
+        );
+    }
+
+    #[rstest(single_timer_setup(&[1]))]
+    fn shutdown_aborts_actively_blocked_poll(single_timer_setup: FakeCore) {
         let res = single_timer_setup.poll_task(TASK_Q).unwrap();
         assert_eq!(res.get_wf_jobs().len(), 1);
 
