@@ -20,7 +20,7 @@ use temporal_sdk_core::{
             StartTimerCommandAttributes,
         },
     },
-    Core, CoreInitOptions, ServerGatewayOptions, Url,
+    Core, CoreError, CoreInitOptions, ServerGatewayOptions, Url,
 };
 
 // TODO: These tests can get broken permanently if they break one time and the server is not
@@ -316,4 +316,21 @@ fn parallel_workflows_same_queue() {
     }
 
     handles.into_iter().for_each(|h| h.join().unwrap());
+}
+
+// Ideally this would be a unit test, but returning a pending future with mockall bloats the mock
+// code a bunch and just isn't worth it. Do it when https://github.com/asomers/mockall/issues/189 is
+// fixed.
+#[test]
+fn shutdown_aborts_actively_blocked_poll() {
+    let task_q = "shutdown_aborts_actively_blocked_poll";
+    let core = Arc::new(get_integ_core());
+    // Begin the poll, and request shutdown from another thread after a small period of time.
+    let tcore = core.clone();
+    let handle = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        tcore.shutdown().unwrap();
+    });
+    assert_matches!(core.poll_task(task_q).unwrap_err(), CoreError::ShuttingDown);
+    handle.join().unwrap();
 }

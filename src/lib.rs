@@ -23,9 +23,8 @@ mod test_help;
 pub use pollers::{ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::machines::WFMachinesError;
 use crate::{
-    machines::{InconvertibleCommandError, WFCommand},
+    machines::{InconvertibleCommandError, WFCommand, WFMachinesError},
     protos::{
         coresdk::{
             task_completion, wf_activation_completion::Status, Task, TaskCompletion,
@@ -118,10 +117,7 @@ pub enum TaskQueue {
     _Activity(String),
 }
 
-struct CoreSDK<WP>
-where
-    WP: ServerGatewayApis + 'static,
-{
+struct CoreSDK<WP> {
     runtime: Runtime,
     /// Provides work in the form of responses the server would send from polling task Qs
     server_gateway: Arc<WP>,
@@ -146,7 +142,7 @@ struct PendingActivation {
 
 impl<WP> Core for CoreSDK<WP>
 where
-    WP: ServerGatewayApis + Send + Sync,
+    WP: ServerGatewayApis + Send + Sync + 'static,
 {
     #[instrument(skip(self))]
     fn poll_task(&self, task_queue: &str) -> Result<Task> {
@@ -354,7 +350,9 @@ pub enum CoreError {
 mod test {
     use super::*;
     use crate::{
-        machines::test_help::{build_fake_core, FakeCore, TestHistoryBuilder},
+        machines::test_help::{
+            build_fake_core, fake_core_from_mock, pending_mock_poller, FakeCore, TestHistoryBuilder,
+        },
         protos::{
             coresdk::{
                 wf_activation_job, FireTimer, StartWorkflow, TaskCompletion, UpdateRandomSeed,
@@ -368,6 +366,7 @@ mod test {
         },
         test_help::canned_histories,
     };
+    use futures::FutureExt;
     use rstest::{fixture, rstest};
 
     const TASK_Q: &str = "test-task-queue";
@@ -547,18 +546,6 @@ mod test {
 
     #[rstest(single_timer_setup(&[1]))]
     fn after_shutdown_server_is_not_polled(single_timer_setup: FakeCore) {
-        let res = single_timer_setup.poll_task(TASK_Q).unwrap();
-        assert_eq!(res.get_wf_jobs().len(), 1);
-
-        single_timer_setup.shutdown().unwrap();
-        assert_matches!(
-            single_timer_setup.poll_task(TASK_Q).unwrap_err(),
-            CoreError::ShuttingDown
-        );
-    }
-
-    #[rstest(single_timer_setup(&[1]))]
-    fn shutdown_aborts_actively_blocked_poll(single_timer_setup: FakeCore) {
         let res = single_timer_setup.poll_task(TASK_Q).unwrap();
         assert_eq!(res.get_wf_jobs().len(), 1);
 
