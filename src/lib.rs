@@ -366,7 +366,7 @@ mod test {
     const TASK_Q: &str = "test-task-queue";
     const RUN_ID: &str = "fake_run_id";
 
-    #[fixture(hist_batches = & [])]
+    #[fixture(hist_batches = &[])]
     fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
         let wfid = "fake_wf_id";
 
@@ -375,8 +375,8 @@ mod test {
     }
 
     #[rstest(core,
-    case::incremental(single_timer_setup(& [1, 2])),
-    case::replay(single_timer_setup(& [2]))
+    case::incremental(single_timer_setup(&[1, 2])),
+    case::replay(single_timer_setup(&[2]))
     )]
     fn single_timer_test_across_wf_bridge(core: FakeCore) {
         let res = core.poll_task(TASK_Q).unwrap();
@@ -414,7 +414,7 @@ mod test {
         .unwrap();
     }
 
-    #[rstest(hist_batches, case::incremental(& [1, 2]), case::replay(& [2]))]
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
     fn parallel_timer_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
@@ -479,7 +479,7 @@ mod test {
         .unwrap();
     }
 
-    #[rstest(hist_batches, case::incremental(& [1, 2]), case::replay(& [2]))]
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
     fn timer_cancel_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
@@ -538,7 +538,7 @@ mod test {
         .unwrap();
     }
 
-    #[rstest(single_timer_setup(& [1]))]
+    #[rstest(single_timer_setup(&[1]))]
     fn after_shutdown_server_is_not_polled(single_timer_setup: FakeCore) {
         let res = single_timer_setup.poll_task(TASK_Q).unwrap();
         assert_eq!(res.get_wf_jobs().len(), 1);
