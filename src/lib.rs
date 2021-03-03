@@ -350,9 +350,7 @@ pub enum CoreError {
 mod test {
     use super::*;
     use crate::{
-        machines::test_help::{
-            build_fake_core, fake_core_from_mock, pending_mock_poller, FakeCore, TestHistoryBuilder,
-        },
+        machines::test_help::{build_fake_core, FakeCore, TestHistoryBuilder},
         protos::{
             coresdk::{
                 wf_activation_job, FireTimer, StartWorkflow, TaskCompletion, UpdateRandomSeed,
@@ -366,7 +364,6 @@ mod test {
         },
         test_help::canned_histories,
     };
-    use futures::FutureExt;
     use rstest::{fixture, rstest};
 
     const TASK_Q: &str = "test-task-queue";

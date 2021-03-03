@@ -6,7 +6,7 @@ mod workflow_driver;
 pub(crate) use history_builder::TestHistoryBuilder;
 pub(super) use workflow_driver::{CommandSender, TestWorkflowDriver};
 
-use crate::workflow::{PollWorkflowTaskQueueApi, WorkflowConcurrencyManager};
+use crate::workflow::WorkflowConcurrencyManager;
 use crate::{
     pollers::MockServerGateway,
     protos::temporal::api::common::v1::WorkflowExecution,
