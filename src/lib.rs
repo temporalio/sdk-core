@@ -322,7 +322,7 @@ pub enum CoreError {
     UninterpretableCommand(#[from] InconvertibleCommandError),
     /// Underlying error in history processing
     UnderlyingHistError(#[from] HistoryInfoError),
-    /// Underlying error in state machines
+    /// Underlying error in state machines: {0:?}
     UnderlyingMachinesError(#[from] WFMachinesError),
     /// Task token had nothing associated with it: {0:?}
     NothingFoundForTaskToken(Vec<u8>),
