@@ -341,6 +341,7 @@ pub enum CoreError {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::protos::temporal::api::command::v1::FailWorkflowExecutionCommandAttributes;
     use crate::{
         machines::test_help::{build_fake_core, FakeCore, TestHistoryBuilder},
         protos::{
@@ -365,7 +366,7 @@ mod test {
     const TASK_Q: &str = "test-task-queue";
     const RUN_ID: &str = "fake_run_id";
 
-    #[fixture(hist_batches=&[])]
+    #[fixture(hist_batches = & [])]
     fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
         let wfid = "fake_wf_id";
 
@@ -374,8 +375,8 @@ mod test {
     }
 
     #[rstest(core,
-              case::incremental(single_timer_setup(&[1, 2])),
-              case::replay(single_timer_setup(&[2]))
+    case::incremental(single_timer_setup(& [1, 2])),
+    case::replay(single_timer_setup(& [2]))
     )]
     fn single_timer_test_across_wf_bridge(core: FakeCore) {
         let res = core.poll_task(TASK_Q).unwrap();
@@ -413,7 +414,7 @@ mod test {
         .unwrap();
     }
 
-    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
+    #[rstest(hist_batches, case::incremental(& [1, 2]), case::replay(& [2]))]
     fn parallel_timer_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
@@ -478,7 +479,7 @@ mod test {
         .unwrap();
     }
 
-    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
+    #[rstest(hist_batches, case::incremental(& [1, 2]), case::replay(& [2]))]
     fn timer_cancel_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
@@ -537,7 +538,7 @@ mod test {
         .unwrap();
     }
 
-    #[rstest(single_timer_setup(&[1]))]
+    #[rstest(single_timer_setup(& [1]))]
     fn after_shutdown_server_is_not_polled(single_timer_setup: FakeCore) {
         let res = single_timer_setup.poll_task(TASK_Q).unwrap();
         assert_eq!(res.get_wf_jobs().len(), 1);
@@ -717,6 +718,40 @@ mod test {
         );
         core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            res.task_token,
+        ))
+        .unwrap();
+    }
+
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
+    fn simple_timer_fail_wf_execution(hist_batches: &[usize]) {
+        let wfid = "fake_wf_id";
+        let run_id = "fake_run_id";
+        let timer_id = "timer1";
+
+        let mut t = canned_histories::single_timer(timer_id);
+        let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
+
+        let res = core.poll_task(TASK_Q).unwrap();
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![StartTimerCommandAttributes {
+                timer_id: timer_id.to_string(),
+                ..Default::default()
+            }
+            .into()],
+            res.task_token,
+        ))
+        .unwrap();
+
+        let res = core.poll_task(TASK_Q).unwrap();
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![FailWorkflowExecutionCommandAttributes {
+                failure: Some(Failure {
+                    message: "I'm ded".to_string(),
+                    ..Default::default()
+                }),
+            }
+            .into()],
             res.task_token,
         ))
         .unwrap();

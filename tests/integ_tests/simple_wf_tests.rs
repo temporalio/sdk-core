@@ -10,6 +10,7 @@ use std::{
     },
     time::Duration,
 };
+use temporal_sdk_core::protos::temporal::api::command::v1::FailWorkflowExecutionCommandAttributes;
 use temporal_sdk_core::protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
 use temporal_sdk_core::protos::temporal::api::failure::v1::Failure;
 use temporal_sdk_core::{
@@ -348,6 +349,39 @@ fn fail_wf_task() {
     let task = core.poll_task(task_q).unwrap();
     core.complete_task(TaskCompletion::ok_from_api_attrs(
         vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+        task.task_token,
+    ))
+    .unwrap();
+}
+
+#[test]
+fn fail_workflow_execution() {
+    let task_q = "fail_workflow_execution";
+    let core = get_integ_core();
+    let mut rng = rand::thread_rng();
+    let workflow_id: u32 = rng.gen();
+    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+    let timer_id: String = rng.gen::<u32>().to_string();
+    let task = core.poll_task(task_q).unwrap();
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![StartTimerCommandAttributes {
+            timer_id: timer_id.to_string(),
+            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+            ..Default::default()
+        }
+        .into()],
+        task.task_token,
+    ))
+    .unwrap();
+    let task = core.poll_task(task_q).unwrap();
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![FailWorkflowExecutionCommandAttributes {
+            failure: Some(Failure {
+                message: "I'm ded".to_string(),
+                ..Default::default()
+            }),
+        }
+        .into()],
         task.task_token,
     ))
     .unwrap();

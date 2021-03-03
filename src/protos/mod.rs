@@ -122,6 +122,10 @@ pub mod temporal {
                                 command_type: CommandType::CompleteWorkflowExecution as i32,
                                 attributes: Some(a),
                             },
+                            a @ Attributes::FailWorkflowExecutionCommandAttributes(_) => Self {
+                                command_type: CommandType::FailWorkflowExecution as i32,
+                                attributes: Some(a),
+                            },
                             _ => unimplemented!(),
                         }
                     }

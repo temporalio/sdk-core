@@ -12,7 +12,6 @@ mod child_workflow_state_machine;
 mod complete_workflow_state_machine;
 #[allow(unused)]
 mod continue_as_new_workflow_state_machine;
-#[allow(unused)]
 mod fail_workflow_state_machine;
 #[allow(unused)]
 mod local_activity_state_machine;
@@ -34,6 +33,7 @@ pub(crate) mod test_help;
 
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
+use crate::protos::temporal::api::command::v1::FailWorkflowExecutionCommandAttributes;
 use crate::{
     machines::workflow_machines::MachineResponse,
     protos::{
@@ -99,6 +99,7 @@ pub enum WFCommand {
     AddTimer(StartTimerCommandAttributes),
     CancelTimer(CancelTimerCommandAttributes),
     CompleteWorkflow(CompleteWorkflowExecutionCommandAttributes),
+    FailWorkflow(FailWorkflowExecutionCommandAttributes),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
@@ -118,6 +119,9 @@ impl TryFrom<coresdk::Command> for WFCommand {
                 Attributes::CancelTimerCommandAttributes(s) => Ok(WFCommand::CancelTimer(s)),
                 Attributes::CompleteWorkflowExecutionCommandAttributes(c) => {
                     Ok(WFCommand::CompleteWorkflow(c))
+                }
+                Attributes::FailWorkflowExecutionCommandAttributes(s) => {
+                    Ok(WFCommand::FailWorkflow(s))
                 }
                 _ => unimplemented!(),
             },
