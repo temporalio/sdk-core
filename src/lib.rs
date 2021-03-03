@@ -23,16 +23,16 @@ mod test_help;
 pub use pollers::{ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::machines::WFMachinesError;
-use crate::protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
 use crate::{
-    machines::{InconvertibleCommandError, WFCommand},
+    machines::{InconvertibleCommandError, WFCommand, WFMachinesError},
     protos::{
         coresdk::{
             task_completion, wf_activation_completion::Status, Task, TaskCompletion,
             WfActivationCompletion, WfActivationSuccess,
         },
-        temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
+        temporal::api::{
+            enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
+        },
     },
     protosext::HistoryInfoError,
     workflow::{NextWfActivation, WorkflowConcurrencyManager},
@@ -138,6 +138,8 @@ where
     shutdown_requested: AtomicBool,
 }
 
+/// Tracks pending activations using an internal queue, while also allowing fast lookup of any
+/// pending activations by run ID
 #[derive(Default)]
 struct PendingActivations {
     queue: SegQueue<PendingActivation>,
@@ -736,7 +738,12 @@ mod test {
         .unwrap();
 
         let res = core.poll_task(TASK_Q).unwrap();
-        // TODO: assertions
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
+            }]
+        );
         // Need to re-issue the start timer command (we are replaying)
         core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![StartTimerCommandAttributes {
@@ -749,6 +756,12 @@ mod test {
         .unwrap();
         // Now we may complete the workflow
         let res = core.poll_task(TASK_Q).unwrap();
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::FireTimer(_)),
+            }]
+        );
         core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
             res.task_token,
