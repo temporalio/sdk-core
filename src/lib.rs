@@ -24,6 +24,7 @@ pub use pollers::{ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
 use crate::machines::WFMachinesError;
+use crate::protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
 use crate::{
     machines::{InconvertibleCommandError, WFCommand},
     protos::{
@@ -129,12 +130,44 @@ where
     /// Maps task tokens to workflow run ids
     workflow_task_tokens: DashMap<Vec<u8>, String>,
 
-    /// Workflows that are currently under replay will queue their run ID here, indicating that
-    /// there are more workflow tasks / activations to be performed.
-    pending_activations: SegQueue<PendingActivation>,
+    /// Workflows that are currently under replay will queue here, indicating that there are more
+    /// workflow tasks / activations to be performed.
+    pending_activations: PendingActivations,
 
     /// Has shutdown been called?
     shutdown_requested: AtomicBool,
+}
+
+#[derive(Default)]
+struct PendingActivations {
+    queue: SegQueue<PendingActivation>,
+    count_by_id: DashMap<String, usize>,
+}
+
+impl PendingActivations {
+    pub fn push(&self, v: PendingActivation) {
+        *self
+            .count_by_id
+            .entry(v.run_id.clone())
+            .or_insert_with(|| 0)
+            .value_mut() += 1;
+        self.queue.push(v);
+    }
+
+    pub fn pop(&self) -> Option<PendingActivation> {
+        let rme = self.queue.pop();
+        if let Some(pa) = &rme {
+            if let Some(mut c) = self.count_by_id.get_mut(&pa.run_id) {
+                *c.value_mut() -= 1
+            }
+            self.count_by_id.remove_if(&pa.run_id, |_, v| v <= &0);
+        }
+        rme
+    }
+
+    pub fn has_pending(&self, run_id: &str) -> bool {
+        self.count_by_id.contains_key(run_id)
+    }
 }
 
 #[derive(Debug)]
@@ -217,12 +250,29 @@ where
                         let commands = self
                             .workflow_machines
                             .access(&run_id, |mgr| Ok(mgr.machines.get_commands()))?;
+                        // We only actually want to send commands back to the server if there are
+                        // no more pending activations -- in other words the lang SDK has caught
+                        // up on replay.
+                        if !self.pending_activations.has_pending(&run_id) {
+                            self.runtime.block_on(
+                                self.server_gateway
+                                    .complete_workflow_task(task_token, commands),
+                            )?;
+                        }
+                    }
+                    Status::Failed(failure) => {
+                        // Blow up any cached data associated with the workflow
+                        self.evict_run(&run_id);
+
                         self.runtime.block_on(
-                            self.server_gateway
-                                .complete_workflow_task(task_token, commands),
+                            self.server_gateway.fail_workflow_task(
+                                task_token,
+                                WorkflowTaskFailedCause::from_i32(failure.cause)
+                                    .unwrap_or(WorkflowTaskFailedCause::Unspecified),
+                                failure.failure,
+                            ),
                         )?;
                     }
-                    Status::Failed(_) => {}
                 }
                 Ok(())
             }
@@ -292,6 +342,11 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         })?;
         Ok(())
     }
+
+    /// Remove a workflow run from the cache entirely
+    fn evict_run(&self, run_id: &str) {
+        self.workflow_machines.evict(run_id);
+    }
 }
 
 /// The error type returned by interactions with [Core]
@@ -338,11 +393,15 @@ mod test {
                 wf_activation_job, FireTimer, StartWorkflow, TaskCompletion, UpdateRandomSeed,
                 WfActivationJob,
             },
-            temporal::api::command::v1::{
-                CancelTimerCommandAttributes, CompleteWorkflowExecutionCommandAttributes,
-                StartTimerCommandAttributes,
+            temporal::api::{
+                command::v1::{
+                    CancelTimerCommandAttributes, CompleteWorkflowExecutionCommandAttributes,
+                    StartTimerCommandAttributes,
+                },
+                enums::v1::{EventType, WorkflowTaskFailedCause},
+                failure::v1::Failure,
+                workflowservice::v1::RespondWorkflowTaskFailedResponse,
             },
-            temporal::api::enums::v1::EventType,
         },
         test_help::canned_histories,
     };
@@ -546,7 +605,8 @@ mod test {
         let timer_1_id = "timer1";
         let task_queue = "test-task-queue";
 
-        let mut t = canned_histories::workflow_fails_after_timer(timer_1_id, original_run_id);
+        let mut t =
+            canned_histories::workflow_fails_with_reset_after_timer(timer_1_id, original_run_id);
         let core = build_fake_core(wfid, run_id, &mut t, &[2]);
 
         let res = core.poll_task(task_queue).unwrap();
@@ -636,5 +696,63 @@ mod test {
         if hist_batches.len() > 1 {
             core.poll_task(task_queue).unwrap();
         }
+    }
+
+    #[test]
+    fn complete_activation_with_failure() {
+        crate::core_tracing::tracing_init();
+        let wfid = "fake_wf_id";
+        let timer_id = "timer";
+
+        let mut t = canned_histories::workflow_fails_with_failure_after_timer(timer_id);
+        let mut core = build_fake_core(wfid, RUN_ID, &mut t, &[2, 3]);
+        // Need to create an expectation that we will call a failure completion
+        Arc::get_mut(&mut core.server_gateway)
+            .unwrap()
+            .expect_fail_workflow_task()
+            .times(1)
+            .returning(|_, _, _| Ok(RespondWorkflowTaskFailedResponse {}));
+
+        let res = core.poll_task(TASK_Q).unwrap();
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![StartTimerCommandAttributes {
+                timer_id: timer_id.to_string(),
+                ..Default::default()
+            }
+            .into()],
+            res.task_token,
+        ))
+        .unwrap();
+
+        let res = core.poll_task(TASK_Q).unwrap();
+        core.complete_task(TaskCompletion::fail(
+            res.task_token,
+            WorkflowTaskFailedCause::BadBinary,
+            Failure {
+                message: "oh noooooooo".to_string(),
+                ..Default::default()
+            },
+        ))
+        .unwrap();
+
+        let res = core.poll_task(TASK_Q).unwrap();
+        // TODO: assertions
+        // Need to re-issue the start timer command (we are replaying)
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![StartTimerCommandAttributes {
+                timer_id: timer_id.to_string(),
+                ..Default::default()
+            }
+            .into()],
+            res.task_token,
+        ))
+        .unwrap();
+        // Now we may complete the workflow
+        let res = core.poll_task(TASK_Q).unwrap();
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            res.task_token,
+        ))
+        .unwrap();
     }
 }

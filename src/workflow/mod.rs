@@ -9,10 +9,12 @@ use crate::{
     protos::{
         coresdk::WfActivation,
         temporal::api::{
+            enums::v1::WorkflowTaskFailedCause,
+            failure::v1::Failure,
             history::v1::History,
             workflowservice::v1::{
                 PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
-                StartWorkflowExecutionResponse,
+                RespondWorkflowTaskFailedResponse, StartWorkflowExecutionResponse,
             },
         },
     },
@@ -31,8 +33,8 @@ pub trait PollWorkflowTaskQueueApi {
     async fn poll_workflow_task(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
 }
 
-/// Implementors can complete tasks as would've been issued by [Core::poll]. The real implementor
-/// sends the completed tasks to the server.
+/// Implementors can complete tasks issued by [Core::poll]. The real implementor sends the completed
+/// tasks to the server.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
 pub trait RespondWorkflowTaskCompletedApi {
@@ -44,6 +46,21 @@ pub trait RespondWorkflowTaskCompletedApi {
         task_token: Vec<u8>,
         commands: Vec<ProtoCommand>,
     ) -> Result<RespondWorkflowTaskCompletedResponse>;
+}
+
+/// Implementors can fail workflow tasks issued by [Core::poll]. The real implementor sends the
+/// failed tasks to the server.
+#[cfg_attr(test, mockall::automock)]
+#[async_trait::async_trait]
+pub trait RespondWorkflowTaskFailedApi {
+    /// Fail task by sending the failure to the server. `task_token` is the task token that would've
+    /// been received from [PollWorkflowTaskQueueApi::poll].
+    async fn fail_workflow_task(
+        &self,
+        task_token: Vec<u8>,
+        cause: WorkflowTaskFailedCause,
+        failure: Option<Failure>,
+    ) -> Result<RespondWorkflowTaskFailedResponse>;
 }
 
 /// Implementors should send StartWorkflowExecutionRequest to the server and pass the response back.
@@ -90,13 +107,17 @@ impl WorkflowManager {
 
         let (wfb, cmd_sink) = WorkflowBridge::new();
         let state_machines = WorkflowMachines::new(we.workflow_id, we.run_id, Box::new(wfb));
-        Ok(Self {
+        // TODO: Combine stuff
+        let task_hist = HistoryInfo::new_from_history(&history, Some(1))?;
+        let mut retme = Self {
             machines: state_machines,
             command_sink: cmd_sink,
             last_history_task_count: history.get_workflow_task_count(None)?,
             last_history_from_server: history,
             current_wf_task_num: 1,
-        })
+        };
+        retme.machines.apply_history_events(&task_hist)?;
+        Ok(retme)
     }
 }
 
@@ -142,36 +163,13 @@ impl WorkflowManager {
 
         self.current_wf_task_num += 1;
         let more_activations_needed = self.current_wf_task_num <= self.last_history_task_count;
+        if more_activations_needed {
+            event!(Level::DEBUG, msg = "More activations needed");
+        }
 
         Ok(NextWfActivation {
             activation,
             more_activations_needed,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        protos::temporal::api::common::v1::WorkflowExecution, test_help::canned_histories,
-    };
-    use rand::{thread_rng, Rng};
-
-    #[test]
-    fn full_history_application() {
-        let t = canned_histories::single_timer("fake_timer");
-        let task_token: [u8; 16] = thread_rng().gen();
-        let pwtqr = PollWorkflowTaskQueueResponse {
-            history: Some(t.as_history()),
-            workflow_execution: Some(WorkflowExecution {
-                workflow_id: "wfid".to_string(),
-                run_id: "runid".to_string(),
-            }),
-            task_token: task_token.to_vec(),
-            ..Default::default()
-        };
-        let mut wfm = WorkflowManager::new(pwtqr).unwrap();
-        wfm.get_next_activation().unwrap();
     }
 }

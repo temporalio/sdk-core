@@ -10,6 +10,8 @@ use std::{
     },
     time::Duration,
 };
+use temporal_sdk_core::protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
+use temporal_sdk_core::protos::temporal::api::failure::v1::Failure;
 use temporal_sdk_core::{
     protos::{
         coresdk::{
@@ -156,19 +158,7 @@ fn parallel_timer_workflow() {
 #[test]
 fn timer_cancel_workflow() {
     let task_q = "timer_cancel_workflow";
-    let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
-        Ok(addr) => addr,
-        Err(_) => "http://localhost:7233".to_owned(),
-    };
-    let url = Url::try_from(&*temporal_server_address).unwrap();
-    let gateway_opts = ServerGatewayOptions {
-        namespace: NAMESPACE.to_string(),
-        identity: "none".to_string(),
-        worker_binary_id: "".to_string(),
-        long_poll_timeout: Duration::from_secs(60),
-        target_url: url,
-    };
-    let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
+    let core = get_integ_core();
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
     dbg!(create_workflow(
@@ -215,19 +205,7 @@ fn timer_cancel_workflow() {
 #[test]
 fn timer_immediate_cancel_workflow() {
     let task_q = "timer_cancel_workflow";
-    let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
-        Ok(addr) => addr,
-        Err(_) => "http://localhost:7233".to_owned(),
-    };
-    let url = Url::try_from(&*temporal_server_address).unwrap();
-    let gateway_opts = ServerGatewayOptions {
-        namespace: NAMESPACE.to_string(),
-        identity: "none".to_string(),
-        worker_binary_id: "".to_string(),
-        long_poll_timeout: Duration::from_secs(60),
-        target_url: url,
-    };
-    let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
+    let core = get_integ_core();
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
     create_workflow(&core, task_q, &workflow_id.to_string(), None);
@@ -316,4 +294,61 @@ fn parallel_workflows_same_queue() {
     }
 
     handles.into_iter().for_each(|h| h.join().unwrap());
+}
+
+#[test]
+fn fail_wf_task() {
+    let task_q = "fail_wf_task";
+    let core = get_integ_core();
+    let mut rng = rand::thread_rng();
+    let workflow_id: u32 = rng.gen();
+    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+
+    // Start with a timer
+    let task = core.poll_task(task_q).unwrap();
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![StartTimerCommandAttributes {
+            timer_id: "best-timer".to_string(),
+            start_to_fire_timeout: Some(Duration::from_millis(200).into()),
+            ..Default::default()
+        }
+        .into()],
+        task.task_token,
+    ))
+    .unwrap();
+
+    // Allow timer to fire
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Then break for whatever reason
+    let task = core.poll_task(task_q).unwrap();
+    core.complete_task(TaskCompletion::fail(
+        task.task_token,
+        WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure,
+        Failure {
+            message: "I did an oopsie".to_string(),
+            ..Default::default()
+        },
+    ))
+    .unwrap();
+
+    // The server will want to retry the task. This time we finish the workflow -- but we need
+    // to poll a couple of times as there will be more than one required workflow activation.
+    let task = core.poll_task(task_q).unwrap();
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![StartTimerCommandAttributes {
+            timer_id: "best-timer".to_string(),
+            start_to_fire_timeout: Some(Duration::from_millis(200).into()),
+            ..Default::default()
+        }
+        .into()],
+        task.task_token,
+    ))
+    .unwrap();
+    let task = core.poll_task(task_q).unwrap();
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+        task.task_token,
+    ))
+    .unwrap();
 }

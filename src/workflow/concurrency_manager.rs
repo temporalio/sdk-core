@@ -19,9 +19,6 @@ use tracing::Level;
 /// managed by this struct. We could make this generic for any collection of things which need
 /// to live on one thread, if desired.
 pub(crate) struct WorkflowConcurrencyManager {
-    // TODO: We need to remove things from here at some point, but that wasn't implemented
-    //  in core SDK yet either - once we're ready to remove things, they can be removed from this
-    //  map and the wfm thread will drop the machines.
     machines: DashMap<String, MachineMutationSender>,
     wf_thread: Mutex<Option<JoinHandle<()>>>,
     machine_creator: Sender<MachineCreatorMsg>,
@@ -128,6 +125,11 @@ impl WorkflowConcurrencyManager {
             .unwrap()
             .join()
             .expect("Workflow manager thread should shut down cleanly");
+    }
+
+    /// Remove the workflow with the provided run id from management
+    pub fn evict(&self, run_id: &str) {
+        self.machines.remove(run_id);
     }
 
     /// The implementation of the dedicated thread workflow managers live on

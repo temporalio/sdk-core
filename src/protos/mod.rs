@@ -11,6 +11,8 @@ pub mod coresdk {
     include!("coresdk.rs");
     use super::temporal::api::command::v1 as api_command;
     use super::temporal::api::command::v1::Command as ApiCommand;
+    use super::temporal::api::enums::v1::WorkflowTaskFailedCause;
+    use super::temporal::api::failure::v1::Failure;
     use command::Variant;
 
     pub type HistoryEventId = i64;
@@ -73,6 +75,20 @@ pub mod coresdk {
                 task_token,
                 variant: Some(task_completion::Variant::Workflow(WfActivationCompletion {
                     status: Some(wf_activation_completion::Status::Successful(success)),
+                })),
+            }
+        }
+
+        pub fn fail(task_token: Vec<u8>, cause: WorkflowTaskFailedCause, failure: Failure) -> Self {
+            Self {
+                task_token,
+                variant: Some(task_completion::Variant::Workflow(WfActivationCompletion {
+                    status: Some(wf_activation_completion::Status::Failed(
+                        WfActivationFailure {
+                            cause: cause as i32,
+                            failure: Some(failure),
+                        },
+                    )),
                 })),
             }
         }

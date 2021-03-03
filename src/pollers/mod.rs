@@ -4,17 +4,20 @@ use crate::{
     machines::ProtoCommand,
     protos::temporal::api::{
         common::v1::WorkflowType,
-        enums::v1::TaskQueueKind,
+        enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
+        failure::v1::Failure,
         taskqueue::v1::TaskQueue,
         workflowservice::v1::{
             workflow_service_client::WorkflowServiceClient, PollWorkflowTaskQueueRequest,
             PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedRequest,
-            RespondWorkflowTaskCompletedResponse,
+            RespondWorkflowTaskCompletedResponse, RespondWorkflowTaskFailedRequest,
+            RespondWorkflowTaskFailedResponse, StartWorkflowExecutionRequest,
+            StartWorkflowExecutionResponse,
         },
-        workflowservice::v1::{StartWorkflowExecutionRequest, StartWorkflowExecutionResponse},
     },
     workflow::{
-        PollWorkflowTaskQueueApi, RespondWorkflowTaskCompletedApi, StartWorkflowExecutionApi,
+        PollWorkflowTaskQueueApi, RespondWorkflowTaskCompletedApi, RespondWorkflowTaskFailedApi,
+        StartWorkflowExecutionApi,
     },
     Result,
 };
@@ -85,12 +88,18 @@ pub struct ServerGateway {
 
 /// This trait provides ways to call the temporal server itself
 pub trait ServerGatewayApis:
-    PollWorkflowTaskQueueApi + RespondWorkflowTaskCompletedApi + StartWorkflowExecutionApi
+    PollWorkflowTaskQueueApi
+    + RespondWorkflowTaskCompletedApi
+    + StartWorkflowExecutionApi
+    + RespondWorkflowTaskFailedApi
 {
 }
 
 impl<T> ServerGatewayApis for T where
-    T: PollWorkflowTaskQueueApi + RespondWorkflowTaskCompletedApi + StartWorkflowExecutionApi
+    T: PollWorkflowTaskQueueApi
+        + RespondWorkflowTaskCompletedApi
+        + StartWorkflowExecutionApi
+        + RespondWorkflowTaskFailedApi
 {
 }
 
@@ -141,6 +150,31 @@ impl RespondWorkflowTaskCompletedApi for ServerGateway {
 }
 
 #[async_trait::async_trait]
+impl RespondWorkflowTaskFailedApi for ServerGateway {
+    async fn fail_workflow_task(
+        &self,
+        task_token: Vec<u8>,
+        cause: WorkflowTaskFailedCause,
+        failure: Option<Failure>,
+    ) -> Result<RespondWorkflowTaskFailedResponse> {
+        let request = RespondWorkflowTaskFailedRequest {
+            task_token,
+            cause: cause as i32,
+            failure,
+            identity: self.opts.identity.to_string(),
+            binary_checksum: self.opts.worker_binary_id.to_string(),
+            namespace: self.opts.namespace.to_string(),
+        };
+        Ok(self
+            .service
+            .clone()
+            .respond_workflow_task_failed(request)
+            .await?
+            .into_inner())
+    }
+}
+
+#[async_trait::async_trait]
 impl StartWorkflowExecutionApi for ServerGateway {
     async fn start_workflow(
         &self,
@@ -183,6 +217,17 @@ mockall::mock! {
     impl RespondWorkflowTaskCompletedApi for ServerGateway {
         async fn complete_workflow_task(&self, task_token: Vec<u8>, commands: Vec<ProtoCommand>) -> Result<RespondWorkflowTaskCompletedResponse>;
     }
+
+    #[async_trait::async_trait]
+    impl RespondWorkflowTaskFailedApi for ServerGateway {
+        async fn fail_workflow_task(
+            &self,
+            task_token: Vec<u8>,
+            cause: WorkflowTaskFailedCause,
+            failure: Option<Failure>,
+        ) -> Result<RespondWorkflowTaskFailedResponse>;
+    }
+
     #[async_trait::async_trait]
     impl StartWorkflowExecutionApi for ServerGateway {
         async fn start_workflow(
