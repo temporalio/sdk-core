@@ -116,7 +116,7 @@ pub mod temporal {
                     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                         let ct = CommandType::from_i32(self.command_type)
                             .unwrap_or(CommandType::Unspecified);
-                        f.write_str(&format!("{:?}", ct))
+                        write!(f, "{:?}", ct)
                     }
                 }
             }

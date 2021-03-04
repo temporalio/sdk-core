@@ -69,6 +69,7 @@ impl WorkflowConcurrencyManager {
         poll_wf_resp: PollWorkflowTaskQueueResponse,
     ) -> Result<NextWfActivation> {
         let span = debug_span!("create_or_update machines", %run_id);
+
         if self.exists(run_id) {
             if let Some(history) = poll_wf_resp.history {
                 let activation = self.access(run_id, move |wfm: &mut WorkflowManager| {

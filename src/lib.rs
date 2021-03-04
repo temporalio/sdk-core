@@ -23,6 +23,7 @@ mod test_help;
 pub use pollers::{ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
+use crate::workflow::WorkflowManager;
 use crate::{
     machines::{InconvertibleCommandError, WFCommand, WFMachinesError},
     protos::{
@@ -162,12 +163,10 @@ where
         // We must first check if there are pending workflow tasks for workflows that are currently
         // replaying, and issue those tasks before bothering the server.
         if let Some(pa) = self.pending_activations.pop() {
-            let curspan = Span::current();
-            curspan.record("pending_activation", &format!("{}", &pa).as_str());
-            let next_activation = self.workflow_machines.access(&pa.run_id, move |mgr| {
-                let _e = curspan.enter();
-                mgr.get_next_activation()
-            })?;
+            Span::current().record("pending_activation", &format!("{}", &pa).as_str());
+
+            let next_activation =
+                self.access_wf_machine(&pa.run_id, move |mgr| mgr.get_next_activation())?;
             let task_token = pa.task_token.clone();
             if next_activation.more_activations_needed {
                 self.pending_activations.push(pa);
@@ -225,9 +224,7 @@ where
                 match wfstatus {
                     Status::Successful(success) => {
                         self.push_lang_commands(&run_id, success)?;
-                        let curspan = Span::current();
-                        let commands = self.workflow_machines.access(&run_id, move |mgr| {
-                            let _e = curspan.enter();
+                        let commands = self.access_wf_machine(&run_id, move |mgr| {
                             Ok(mgr.machines.get_commands())
                         })?;
                         self.runtime.block_on(
@@ -298,14 +295,27 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             .into_iter()
             .map(|c| c.try_into().map_err(Into::into))
             .collect::<Result<Vec<_>>>()?;
-        let curspan = Span::current();
-        self.workflow_machines.access(run_id, move |mgr| {
-            let _e = curspan.enter();
+        self.access_wf_machine(run_id, move |mgr| {
             mgr.command_sink.send(cmds)?;
             mgr.machines.iterate_machines()?;
             Ok(())
         })?;
         Ok(())
+    }
+
+    /// Wraps access to `self.workflow_machines.access`, properly passing in the current tracing
+    /// span to the wf machines thread.
+    fn access_wf_machine<F, Fout>(&self, run_id: &str, mutator: F) -> Result<Fout>
+    where
+        F: FnOnce(&mut WorkflowManager) -> Result<Fout> + Send + 'static,
+        Fout: Send + Debug + 'static,
+    {
+        let curspan = Span::current();
+        let mutator = move |wfm: &mut WorkflowManager| {
+            let _e = curspan.enter();
+            mutator(wfm)
+        };
+        self.workflow_machines.access(run_id, mutator)
     }
 }
 
@@ -552,10 +562,6 @@ mod test {
 
     #[test]
     fn workflow_update_random_seed_on_workflow_reset() {
-        core_tracing::tracing_init();
-        let s = info_span!("Test start", t = "bridge");
-        let _enter = s.enter();
-
         let wfid = "fake_wf_id";
         let run_id = "CA733AB0-8133-45F6-A4C1-8D375F61AE8B";
         let original_run_id = "86E39A5F-AE31-4626-BDFE-398EE072D156";

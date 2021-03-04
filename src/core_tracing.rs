@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use opentelemetry_jaeger::Uninstall;
 use std::collections::VecDeque;
@@ -29,7 +30,10 @@ pub(crate) fn tracing_init() {
     });
 }
 
-// TODO: Dislike this.
+/// A trait for using [Display] on the contents of vecs, etc, which don't implement it.
+///
+/// Dislike this, but, there doesn't seem to be a great alternative. Calling itertools format
+/// inline in an `event!` macro can panic because it gets evaluated twice somehow.
 pub(crate) trait VecDisplayer {
     fn display(&self) -> String;
 }
@@ -39,12 +43,7 @@ where
     T: std::fmt::Display,
 {
     fn display(&self) -> String {
-        let mut r = "[".to_string();
-        for i in self {
-            r = r + &format!("{}, ", i);
-        }
-        r += "]";
-        r
+        format!("[{}]", self.iter().format(","))
     }
 }
 
@@ -53,11 +52,6 @@ where
     T: std::fmt::Display,
 {
     fn display(&self) -> String {
-        let mut r = "[".to_string();
-        for i in self {
-            r = r + &format!("{}, ", i);
-        }
-        r += "]";
-        r
+        format!("[{}]", self.iter().format(","))
     }
 }
