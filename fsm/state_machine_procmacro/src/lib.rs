@@ -337,6 +337,12 @@ impl StateMachineDefinition {
         });
         let name = &self.name;
         let name_str = &self.name.to_string();
+
+        let transition_result_name = Ident::new(&format!("{}Transition", name), name.span());
+        let transition_type_alias = quote! {
+            type #transition_result_name<Ds, Sm = #name> = TransitionResult<Sm, Ds>;
+        };
+
         let state_enum_name = Ident::new(&format!("{}State", name), name.span());
         // If user has not defined any shared state, use the unit type.
         let shared_state_type = self
@@ -407,6 +413,10 @@ impl StateMachineDefinition {
                     let ev_variant = &ts.event.ident;
                     if let Some(ts_fn) = ts.handler.clone() {
                         let span = ts_fn.span();
+                        let to_state = &ts.to;
+                        let trans_type = quote! {
+                            #transition_result_name<#to_state>
+                        };
                         match ts.event.fields {
                             Fields::Unnamed(_) => {
                                 let arglist = if ts.mutates_shared {
@@ -416,7 +426,8 @@ impl StateMachineDefinition {
                                 };
                                 quote_spanned! {span=>
                                     #events_enum_name::#ev_variant(val) => {
-                                        state_data.#ts_fn(#arglist)
+                                        let res: #trans_type = state_data.#ts_fn(#arglist);
+                                        res.into_general()
                                     }
                                 }
                             }
@@ -428,7 +439,8 @@ impl StateMachineDefinition {
                                 };
                                 quote_spanned! {span=>
                                     #events_enum_name::#ev_variant => {
-                                        state_data.#ts_fn(#arglist)
+                                        let res: #trans_type = state_data.#ts_fn(#arglist);
+                                        res.into_general()
                                     }
                                 }
                             }
@@ -440,7 +452,7 @@ impl StateMachineDefinition {
                         let new_state = ts.to.clone();
                         let span = new_state.span();
                         let default_trans = quote_spanned! {span=>
-                            TransitionResult::from::<#from, #new_state>(state_data)
+                            TransitionResult::<_, #new_state>::from::<#from>(state_data).into_general()
                         };
                         let span = ts.event.span();
                         match ts.event.fields {
@@ -482,7 +494,7 @@ impl StateMachineDefinition {
                 }
 
                 fn on_event(self, event: #events_enum_name)
-                  -> ::rustfsm::TransitionResult<Self> {
+                  -> ::rustfsm::TransitionResult<Self, Self::State> {
                     match self.state {
                         #(#state_branches),*
                     }
@@ -509,12 +521,9 @@ impl StateMachineDefinition {
             }
         };
 
-        let transition_result_name = Ident::new(&format!("{}Transition", name), name.span());
-        let transition_type_alias = quote! {
-            type #transition_result_name = TransitionResult<#name>;
-        };
-
         let output = quote! {
+            use ::rustfsm::ATransitionResult as _HiddenATransitionResult;
+
             #transition_type_alias
             #machine_struct
             #states_enum

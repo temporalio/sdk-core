@@ -18,7 +18,9 @@ pub(super) enum UpsertSearchAttributesCommand {}
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_schedule(self) -> UpsertSearchAttributesMachineTransition {
+    pub(super) fn on_schedule(
+        self,
+    ) -> UpsertSearchAttributesMachineTransition<UpsertCommandCreated> {
         unimplemented!()
     }
 }
@@ -29,7 +31,7 @@ pub(super) struct UpsertCommandCreated {}
 impl UpsertCommandCreated {
     pub(super) fn on_upsert_workflow_search_attributes(
         self,
-    ) -> UpsertSearchAttributesMachineTransition {
+    ) -> UpsertSearchAttributesMachineTransition<UpsertCommandRecorded> {
         unimplemented!()
     }
 }

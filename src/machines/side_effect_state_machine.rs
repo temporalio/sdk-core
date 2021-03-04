@@ -3,6 +3,7 @@ use rustfsm::{fsm, TransitionResult};
 fsm! {
     pub(super) name SideEffectMachine; command SideEffectCommand; error SideEffectMachineError;
 
+    // TODO: Yet more
     Created --(Schedule, on_schedule) --> MarkerCommandCreated;
     Created --(Schedule, on_schedule) --> MarkerCommandCreatedReplaying;
 
@@ -24,7 +25,7 @@ pub(super) enum SideEffectCommand {}
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_schedule(self) -> SideEffectMachineTransition {
+    pub(super) fn on_schedule(self) -> SideEffectMachineTransition<MarkerCommandCreated> {
         unimplemented!()
     }
 }
@@ -33,7 +34,7 @@ impl Created {
 pub(super) struct MarkerCommandCreated {}
 
 impl MarkerCommandCreated {
-    pub(super) fn on_command_record_marker(self) -> SideEffectMachineTransition {
+    pub(super) fn on_command_record_marker(self) -> SideEffectMachineTransition<ResultNotified> {
         unimplemented!()
     }
 }
@@ -48,7 +49,7 @@ pub(super) struct MarkerCommandRecorded {}
 pub(super) struct ResultNotified {}
 
 impl ResultNotified {
-    pub(super) fn on_marker_recorded(self) -> SideEffectMachineTransition {
+    pub(super) fn on_marker_recorded(self) -> SideEffectMachineTransition<MarkerCommandRecorded> {
         unimplemented!()
     }
 }
@@ -57,7 +58,7 @@ impl ResultNotified {
 pub(super) struct ResultNotifiedReplaying {}
 
 impl ResultNotifiedReplaying {
-    pub(super) fn on_marker_recorded(self) -> SideEffectMachineTransition {
+    pub(super) fn on_marker_recorded(self) -> SideEffectMachineTransition<MarkerCommandRecorded> {
         unimplemented!()
     }
 }

@@ -98,14 +98,12 @@ impl Created {
     pub(super) fn on_schedule(
         self,
         dat: CompleteWorkflowExecutionCommandAttributes,
-    ) -> CompleteWorkflowMachineTransition {
+    ) -> CompleteWorkflowMachineTransition<CompleteWorkflowCommandCreated> {
         let cmd = Command {
             command_type: CommandType::CompleteWorkflowExecution as i32,
             attributes: Some(dat.into()),
         };
-        TransitionResult::commands::<_, CompleteWorkflowCommandCreated>(vec![
-            CompleteWFCommand::AddCommand(cmd),
-        ])
+        TransitionResult::commands(vec![CompleteWFCommand::AddCommand(cmd)])
     }
 }
 

@@ -182,8 +182,8 @@ impl Scheduled {
             current_time_millis,
             started_event_id,
         }: WFTStartedDat,
-    ) -> WorkflowTaskMachineTransition {
-        WorkflowTaskMachineTransition::ok(
+    ) -> WorkflowTaskMachineTransition<Started> {
+        TransitionResult::ok(
             vec![WFTaskMachineCommand::WFTaskStartedTrigger {
                 task_started_event_id: shared.wf_task_started_event_id,
                 time: current_time_millis,
@@ -211,23 +211,21 @@ pub(super) struct Started {
 }
 
 impl Started {
-    pub(super) fn on_workflow_task_completed(self) -> WorkflowTaskMachineTransition {
-        WorkflowTaskMachineTransition::commands::<_, Completed>(vec![
-            WFTaskMachineCommand::WFTaskStartedTrigger {
-                task_started_event_id: self.started_event_id,
-                time: self.current_time_millis,
-            },
-        ])
+    pub(super) fn on_workflow_task_completed(self) -> WorkflowTaskMachineTransition<Completed> {
+        TransitionResult::commands(vec![WFTaskMachineCommand::WFTaskStartedTrigger {
+            task_started_event_id: self.started_event_id,
+            time: self.current_time_millis,
+        }])
     }
     pub(super) fn on_workflow_task_failed(
         self,
         data: WFTFailedDat,
-    ) -> WorkflowTaskMachineTransition {
+    ) -> WorkflowTaskMachineTransition<Failed> {
         let commands = match data.new_run_id {
             Some(run_id) => vec![WFTaskMachineCommand::RunIdOnWorkflowResetUpdate { run_id }],
             None => vec![],
         };
-        WorkflowTaskMachineTransition::commands::<_, Completed>(commands)
+        TransitionResult::commands(commands)
     }
 }
 

@@ -18,7 +18,7 @@ pub(super) enum FailWorkflowCommand {}
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_schedule(self) -> FailWorkflowMachineTransition {
+    pub(super) fn on_schedule(self) -> FailWorkflowMachineTransition<FailWorkflowCommandCreated> {
         unimplemented!()
     }
 }
@@ -27,7 +27,9 @@ impl Created {
 pub(super) struct FailWorkflowCommandCreated {}
 
 impl FailWorkflowCommandCreated {
-    pub(super) fn on_workflow_execution_failed(self) -> FailWorkflowMachineTransition {
+    pub(super) fn on_workflow_execution_failed(
+        self,
+    ) -> FailWorkflowMachineTransition<FailWorkflowCommandRecorded> {
         unimplemented!()
     }
 }

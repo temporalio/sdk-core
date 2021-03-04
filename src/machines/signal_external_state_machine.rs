@@ -26,7 +26,9 @@ pub(super) struct Canceled {}
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_schedule(self) -> SignalExternalMachineTransition {
+    pub(super) fn on_schedule(
+        self,
+    ) -> SignalExternalMachineTransition<SignalExternalCommandCreated> {
         unimplemented!()
     }
 }
@@ -38,12 +40,12 @@ pub(super) struct Failed {}
 pub(super) struct SignalExternalCommandCreated {}
 
 impl SignalExternalCommandCreated {
-    pub(super) fn on_cancel(self) -> SignalExternalMachineTransition {
+    pub(super) fn on_cancel(self) -> SignalExternalMachineTransition<Canceled> {
         unimplemented!()
     }
     pub(super) fn on_signal_external_workflow_execution_initiated(
         self,
-    ) -> SignalExternalMachineTransition {
+    ) -> SignalExternalMachineTransition<SignalExternalCommandRecorded> {
         unimplemented!()
     }
 }
@@ -52,12 +54,14 @@ impl SignalExternalCommandCreated {
 pub(super) struct SignalExternalCommandRecorded {}
 
 impl SignalExternalCommandRecorded {
-    pub(super) fn on_external_workflow_execution_signaled(self) -> SignalExternalMachineTransition {
+    pub(super) fn on_external_workflow_execution_signaled(
+        self,
+    ) -> SignalExternalMachineTransition<Signaled> {
         unimplemented!()
     }
     pub(super) fn on_signal_external_workflow_execution_failed(
         self,
-    ) -> SignalExternalMachineTransition {
+    ) -> SignalExternalMachineTransition<Failed> {
         unimplemented!()
     }
 }

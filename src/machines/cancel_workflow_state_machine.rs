@@ -18,7 +18,9 @@ pub(super) enum CancelWorkflowCommand {}
 pub(super) struct CancelWorkflowCommandCreated {}
 
 impl CancelWorkflowCommandCreated {
-    pub(super) fn on_workflow_execution_canceled(self) -> CancelWorkflowMachineTransition {
+    pub(super) fn on_workflow_execution_canceled(
+        self,
+    ) -> CancelWorkflowMachineTransition<CancelWorkflowCommandRecorded> {
         unimplemented!()
     }
 }
@@ -30,7 +32,9 @@ pub(super) struct CancelWorkflowCommandRecorded {}
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_schedule(self) -> CancelWorkflowMachineTransition {
+    pub(super) fn on_schedule(
+        self,
+    ) -> CancelWorkflowMachineTransition<CancelWorkflowCommandCreated> {
         unimplemented!()
     }
 }

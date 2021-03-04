@@ -14,7 +14,7 @@ use crate::{
         },
     },
 };
-use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
+use rustfsm::{fsm, ATransitionResult, MachineError, StateMachine, TransitionResult};
 use std::convert::TryFrom;
 
 fsm! {
@@ -132,8 +132,9 @@ impl TryFrom<CommandType> for TimerMachineEvents {
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_schedule(self) -> TimerMachineTransition {
-        TimerMachineTransition::default::<StartCommandCreated>()
+    // TODO: Should error until I fix this back
+    pub(super) fn on_schedule(self) -> TimerMachineTransition<StartCommandCreated> {
+        TransitionResult::default()
     }
 }
 
@@ -141,8 +142,8 @@ impl Created {
 pub(super) struct CancelTimerCommandCreated {}
 
 impl CancelTimerCommandCreated {
-    pub(super) fn on_command_cancel_timer(self) -> TimerMachineTransition {
-        TimerMachineTransition::ok(
+    pub(super) fn on_command_cancel_timer(self) -> TimerMachineTransition<CancelTimerCommandSent> {
+        TransitionResult::ok(
             vec![TimerMachineCommand::Canceled],
             CancelTimerCommandSent::default(),
         )
@@ -168,12 +169,15 @@ pub(super) struct Fired {}
 pub(super) struct StartCommandCreated {}
 
 impl StartCommandCreated {
-    pub(super) fn on_timer_started(self, _id: HistoryEventId) -> TimerMachineTransition {
+    pub(super) fn on_timer_started(
+        self,
+        _id: HistoryEventId,
+    ) -> TimerMachineTransition<StartCommandRecorded> {
         // TODO: Java recorded an initial event ID, but it seemingly was never used.
-        TimerMachineTransition::default::<StartCommandRecorded>()
+        TransitionResult::default()
     }
-    pub(super) fn on_cancel(self, dat: SharedState) -> TimerMachineTransition {
-        TimerMachineTransition::ok_shared(
+    pub(super) fn on_cancel(self, dat: SharedState) -> TimerMachineTransition<Canceled> {
+        TransitionResult::ok_shared(
             vec![TimerMachineCommand::Canceled],
             Canceled::default(),
             SharedState {
@@ -192,18 +196,21 @@ impl StartCommandRecorded {
         self,
         dat: SharedState,
         attrs: TimerFiredEventAttributes,
-    ) -> TimerMachineTransition {
+    ) -> TimerMachineTransition<Fired> {
         if dat.attrs.timer_id != attrs.timer_id {
-            TimerMachineTransition::Err(WFMachinesError::MalformedEventDetail(format!(
+            TransitionResult::Err(WFMachinesError::MalformedEventDetail(format!(
                 "Timer fired event did not have expected timer id {}!",
                 dat.attrs.timer_id
             )))
         } else {
-            TimerMachineTransition::ok(vec![TimerMachineCommand::Complete], Fired::default())
+            TransitionResult::ok(vec![TimerMachineCommand::Complete], Fired::default())
         }
     }
 
-    pub(super) fn on_cancel(self, dat: SharedState) -> TimerMachineTransition {
+    pub(super) fn on_cancel(
+        self,
+        dat: SharedState,
+    ) -> TimerMachineTransition<CancelTimerCommandCreated> {
         let cmd = Command {
             command_type: CommandType::CancelTimer as i32,
             attributes: Some(
@@ -213,7 +220,7 @@ impl StartCommandRecorded {
                 .into(),
             ),
         };
-        TimerMachineTransition::ok(
+        TransitionResult::ok(
             vec![TimerMachineCommand::IssueCancelCmd(cmd)],
             CancelTimerCommandCreated::default(),
         )
