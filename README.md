@@ -40,3 +40,18 @@ Any error which is returned from a public interface should be well-typed, and we
 
 Errors returned from things only used in testing are free to use 
 [anyhow](https://github.com/dtolnay/anyhow) for less verbosity.
+
+
+## Debugging
+The crate uses [tracing](https://github.com/tokio-rs/tracing) to help with debugging. To enable
+it for a test, insert the below snippet at the start of the test. By default, tracing data is output
+to stdout in a (reasonably) pretty manner, and to a Jaeger instance if one exists.
+
+```rust
+core_tracing::tracing_init();
+let s = info_span!("Test start");
+let _enter = s.enter();
+```
+
+To run the Jaeger instance:
+`docker run --rm -p6831:6831/udp -p6832:6832/udp -p16686:16686 jaegertracing/all-in-one:latest`

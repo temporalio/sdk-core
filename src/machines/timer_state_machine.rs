@@ -39,7 +39,7 @@ fsm! {
     CancelTimerCommandSent --(TimerCanceled) --> Canceled;
 }
 
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display)]
 pub(super) enum TimerMachineCommand {
     Complete,
     Canceled,

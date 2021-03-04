@@ -20,12 +20,13 @@ mod workflow;
 #[cfg(test)]
 mod test_help;
 
+pub use core_tracing::tracing_init;
 pub use pollers::{ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::machines::WFMachinesError;
+use crate::workflow::WorkflowManager;
 use crate::{
-    machines::{InconvertibleCommandError, WFCommand},
+    machines::{InconvertibleCommandError, WFCommand, WFMachinesError},
     protos::{
         coresdk::{
             task_completion, wf_activation_completion::Status, Task, TaskCompletion,
@@ -33,11 +34,12 @@ use crate::{
         },
         temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
     },
-    protosext::HistoryInfoError,
+    protosext::{fmt_task_token, HistoryInfoError},
     workflow::{NextWfActivation, WorkflowConcurrencyManager},
 };
 use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
+use std::fmt::{Display, Formatter};
 use std::{
     convert::TryInto,
     fmt::Debug,
@@ -49,7 +51,7 @@ use std::{
 };
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
-use tracing::Level;
+use tracing::Span;
 
 /// A result alias having [CoreError] as the error type
 pub type Result<T, E = CoreError> = std::result::Result<T, E>;
@@ -94,7 +96,6 @@ pub struct CoreInitOptions {
 /// * Will panic if called from within an async context, as it will construct a runtime and you
 ///   cannot construct a runtime from within a runtime.
 pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
-    core_tracing::tracing_init();
     let runtime = Runtime::new().map_err(CoreError::TokioInitError)?;
     // Initialize server client
     let work_provider = runtime.block_on(opts.gateway_opts.connect())?;
@@ -143,19 +144,30 @@ struct PendingActivation {
     task_token: Vec<u8>,
 }
 
+impl Display for PendingActivation {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PendingActivation(run_id: {}, task_token: {})",
+            &self.run_id,
+            fmt_task_token(&self.task_token)
+        )
+    }
+}
+
 impl<WP> Core for CoreSDK<WP>
 where
     WP: ServerGatewayApis + Send + Sync,
 {
-    #[instrument(skip(self))]
+    #[instrument(skip(self), fields(pending_activation))]
     fn poll_task(&self, task_queue: &str) -> Result<Task> {
         // We must first check if there are pending workflow tasks for workflows that are currently
         // replaying, and issue those tasks before bothering the server.
         if let Some(pa) = self.pending_activations.pop() {
-            event!(Level::DEBUG, msg = "Applying pending activations", ?pa);
-            let next_activation = self
-                .workflow_machines
-                .access(&pa.run_id, |mgr| mgr.get_next_activation())?;
+            Span::current().record("pending_activation", &format!("{}", &pa).as_str());
+
+            let next_activation =
+                self.access_wf_machine(&pa.run_id, move |mgr| mgr.get_next_activation())?;
             let task_token = pa.task_token.clone();
             if next_activation.more_activations_needed {
                 self.pending_activations.push(pa);
@@ -175,10 +187,9 @@ where
             .runtime
             .block_on(self.server_gateway.poll_workflow_task(task_queue))?;
         let task_token = work.task_token.clone();
-        event!(
-            Level::DEBUG,
-            msg = "Received workflow task from server",
-            ?task_token
+        debug!(
+            task_token = %fmt_task_token(&task_token),
+            "Received workflow task from server"
         );
 
         let (next_activation, run_id) = self.instantiate_or_update_workflow(work)?;
@@ -214,9 +225,9 @@ where
                 match wfstatus {
                     Status::Successful(success) => {
                         self.push_lang_commands(&run_id, success)?;
-                        let commands = self
-                            .workflow_machines
-                            .access(&run_id, |mgr| Ok(mgr.machines.get_commands()))?;
+                        let commands = self.access_wf_machine(&run_id, move |mgr| {
+                            Ok(mgr.machines.get_commands())
+                        })?;
                         self.runtime.block_on(
                             self.server_gateway
                                 .complete_workflow_task(task_token, commands),
@@ -285,12 +296,27 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             .into_iter()
             .map(|c| c.try_into().map_err(Into::into))
             .collect::<Result<Vec<_>>>()?;
-        self.workflow_machines.access(run_id, |mgr| {
+        self.access_wf_machine(run_id, move |mgr| {
             mgr.command_sink.send(cmds)?;
             mgr.machines.iterate_machines()?;
             Ok(())
         })?;
         Ok(())
+    }
+
+    /// Wraps access to `self.workflow_machines.access`, properly passing in the current tracing
+    /// span to the wf machines thread.
+    fn access_wf_machine<F, Fout>(&self, run_id: &str, mutator: F) -> Result<Fout>
+    where
+        F: FnOnce(&mut WorkflowManager) -> Result<Fout> + Send + 'static,
+        Fout: Send + Debug + 'static,
+    {
+        let curspan = Span::current();
+        let mutator = move |wfm: &mut WorkflowManager| {
+            let _e = curspan.enter();
+            mutator(wfm)
+        };
+        self.workflow_machines.access(run_id, mutator)
     }
 }
 
@@ -537,9 +563,6 @@ mod test {
 
     #[test]
     fn workflow_update_random_seed_on_workflow_reset() {
-        let s = span!(Level::DEBUG, "Test start", t = "bridge");
-        let _enter = s.enter();
-
         let wfid = "fake_wf_id";
         let run_id = "CA733AB0-8133-45F6-A4C1-8D375F61AE8B";
         let original_run_id = "86E39A5F-AE31-4626-BDFE-398EE072D156";
