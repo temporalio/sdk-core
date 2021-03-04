@@ -13,7 +13,7 @@ use std::{
     fmt::Debug,
     thread::{self, JoinHandle},
 };
-use tracing::Level;
+use tracing::Span;
 
 /// Provides a thread-safe way to access workflow machines which live exclusively on one thread
 /// managed by this struct. We could make this generic for any collection of things which need
@@ -33,10 +33,11 @@ type MachineMutationSender = Sender<Box<dyn FnOnce(&mut WorkflowManager) + Send>
 type MachineMutationReceiver = Receiver<Box<dyn FnOnce(&mut WorkflowManager) + Send>>;
 /// This is the message sent from the concurrency manager to the dedicated thread in order to
 /// instantiate a new workflow manager
-type MachineCreatorMsg = (
-    PollWorkflowTaskQueueResponse,
-    Sender<MachineCreatorResponseMsg>,
-);
+struct MachineCreatorMsg {
+    poll_resp: PollWorkflowTaskQueueResponse,
+    resp_chan: Sender<MachineCreatorResponseMsg>,
+    span: Span,
+}
 /// The response to [MachineCreatorMsg], which includes the wf activation and the channel to
 /// send requests to the newly instantiated workflow manager.
 type MachineCreatorResponseMsg = Result<(NextWfActivation, MachineMutationSender)>;
@@ -67,9 +68,12 @@ impl WorkflowConcurrencyManager {
         run_id: &str,
         poll_wf_resp: PollWorkflowTaskQueueResponse,
     ) -> Result<NextWfActivation> {
+        let span = debug_span!("create_or_update machines", %run_id);
+
         if self.exists(run_id) {
             if let Some(history) = poll_wf_resp.history {
-                let activation = self.access(run_id, |wfm: &mut WorkflowManager| {
+                let activation = self.access(run_id, move |wfm: &mut WorkflowManager| {
+                    let _enter = span.enter();
                     wfm.feed_history_from_server(history)
                 })?;
                 Ok(activation)
@@ -82,7 +86,11 @@ impl WorkflowConcurrencyManager {
             // the activation
             let (resp_send, resp_rcv) = bounded(1);
             self.machine_creator
-                .send((poll_wf_resp, resp_send))
+                .send(MachineCreatorMsg {
+                    poll_resp: poll_wf_resp,
+                    resp_chan: resp_send,
+                    span,
+                })
                 .expect("wfm creation channel can't be dropped if we are inside this method");
             let (activation, machine_sender) = resp_rcv
                 .recv()
@@ -184,28 +192,34 @@ impl WorkflowConcurrencyManager {
         maybe_create_chan_msg: Result<MachineCreatorMsg, TryRecvError>,
     ) -> bool {
         match maybe_create_chan_msg {
-            Ok((pwtqr, resp_chan)) => match WorkflowManager::new(pwtqr)
-                .and_then(|mut wfm| Ok((wfm.get_next_activation()?, wfm)))
-            {
-                Ok((activation, wfm)) => {
-                    let (machine_sender, machine_rcv) = unbounded();
-                    machine_rcvs.push((machine_rcv, wfm));
-                    resp_chan
-                        .send(Ok((activation, machine_sender)))
-                        .expect("wfm create resp rx side can't be dropped");
+            Ok(MachineCreatorMsg {
+                poll_resp,
+                resp_chan,
+                span,
+            }) => {
+                let _e = span.enter();
+                match WorkflowManager::new(poll_resp)
+                    .and_then(|mut wfm| Ok((wfm.get_next_activation()?, wfm)))
+                {
+                    Ok((activation, wfm)) => {
+                        let (machine_sender, machine_rcv) = unbounded();
+                        machine_rcvs.push((machine_rcv, wfm));
+                        resp_chan
+                            .send(Ok((activation, machine_sender)))
+                            .expect("wfm create resp rx side can't be dropped");
+                    }
+                    Err(e) => {
+                        resp_chan
+                            .send(Err(e))
+                            .expect("wfm create resp rx side can't be dropped");
+                    }
                 }
-                Err(e) => {
-                    resp_chan
-                        .send(Err(e))
-                        .expect("wfm create resp rx side can't be dropped");
-                }
-            },
+            }
             Err(TryRecvError::Disconnected) => {
-                event!(
-                    Level::WARN,
+                warn!(
                     "Sending side of workflow machine creator was dropped. Likely the \
-                            WorkflowConcurrencyManager was dropped. This indicates a failure to \
-                            call shutdown."
+                    WorkflowConcurrencyManager was dropped. This indicates a failure to call \
+                    shutdown."
                 );
                 return true;
             }
@@ -231,11 +245,7 @@ impl WorkflowConcurrencyManager {
                 // concurrency manager is the signal to this thread that the workflow
                 // manager can be dropped.
                 let wfid = &machine_rcvs[index].1.machines.workflow_id;
-                event!(
-                    Level::DEBUG,
-                    "Workflow manager thread done with workflow id {}",
-                    wfid
-                );
+                debug!(wfid = %wfid, "Workflow manager thread done",);
                 machine_rcvs.remove(index);
             }
             Err(TryRecvError::Empty) => {}
