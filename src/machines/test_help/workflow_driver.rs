@@ -17,7 +17,6 @@ use std::sync::{
     mpsc::{self, Receiver, Sender},
     Arc,
 };
-use tracing::Level;
 
 /// This is a test only implementation of a [DrivenWorkflow] which has finer-grained control
 /// over when commands are returned than a normal workflow would.
@@ -81,7 +80,7 @@ where
     Fut: Future<Output = ()>,
 {
     fn start(&mut self, _attribs: WorkflowExecutionStartedEventAttributes) {
-        event!(Level::DEBUG, msg = "Test WF driver start called");
+        debug!("Test WF driver start called");
     }
 
     fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
@@ -121,7 +120,7 @@ where
             }
         }
 
-        event!(Level::DEBUG, msg = "Test wf driver emitting", ?emit_these);
+        debug!(emit_these = ?emit_these, "Test wf driver emitting");
 
         emit_these
     }

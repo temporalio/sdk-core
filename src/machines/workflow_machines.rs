@@ -1,12 +1,12 @@
-use crate::protos::coresdk::wf_activation_job;
 use crate::{
+    core_tracing::VecDisplayer,
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
         workflow_task_state_machine::WorkflowTaskMachine, DrivenWorkflow, NewMachineWithCommand,
         ProtoCommand, TemporalStateMachine, WFCommand,
     },
     protos::{
-        coresdk::{StartWorkflow, UpdateRandomSeed, WfActivation},
+        coresdk::{wf_activation_job, StartWorkflow, UpdateRandomSeed, WfActivation},
         temporal::api::{
             enums::v1::{CommandType, EventType},
             history::v1::{history_event, HistoryEvent},
@@ -72,23 +72,27 @@ pub(crate) struct WorkflowMachines {
 }
 
 slotmap::new_key_type! { struct MachineKey; }
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display)]
+#[display(fmt = "Cmd&Machine({})", "command")]
 struct CommandAndMachine {
     command: ProtoCommand,
     machine: MachineKey,
 }
 
 /// Returned by [TemporalStateMachine]s when handling events
-#[derive(Debug, derive_more::From)]
+#[derive(Debug, derive_more::From, derive_more::Display)]
 #[must_use]
 #[allow(clippy::large_enum_variant)]
 pub enum MachineResponse {
+    #[display(fmt = "PushWFJob")]
     PushWFJob(#[from(forward)] wf_activation_job::Variant),
     IssueNewCommand(ProtoCommand),
+    #[display(fmt = "TriggerWFTaskStarted")]
     TriggerWFTaskStarted {
         task_started_event_id: i64,
         time: SystemTime,
     },
+    #[display(fmt = "UpdateRunIdOnWorkflowReset({})", run_id)]
     UpdateRunIdOnWorkflowReset {
         run_id: String,
     },
@@ -157,7 +161,7 @@ impl WorkflowMachines {
     /// is the last event in the history.
     ///
     /// TODO: Describe what actually happens in here
-    #[instrument(level = "debug", skip(self))]
+    #[instrument(level = "debug", skip(self), fields(run_id = %self.run_id))]
     pub(crate) fn handle_event(
         &mut self,
         event: &HistoryEvent,
@@ -187,11 +191,10 @@ impl WorkflowMachines {
                 if let Some(sm) = maybe_machine {
                     self.submachine_handle_event(sm, event, has_next_event)?;
                 } else {
-                    event!(
-                        Level::ERROR,
-                        msg = "During event handling, this event had an initial command ID but \
-                     we could not find a matching state machine! Event: {:?}",
-                        ?event
+                    error!(
+                        event=?event,
+                        "During event handling, this event had an initial command ID but we could \
+                        not find a matching state machine!"
                     );
                 }
 
@@ -257,7 +260,7 @@ impl WorkflowMachines {
         //     if (handleLocalActivityMarker(event)) {
         //       return;
         //     }
-        event!(Level::DEBUG, msg = "handling command event", current_commands = ?self.commands);
+        debug!(current_commands = ?self.commands, "handling command event");
 
         let consumed_cmd = loop {
             // handleVersionMarker can skip a marker event if the getVersion call was removed.
@@ -481,11 +484,8 @@ impl WorkflowMachines {
             }
         })?;
         if !machine_responses.is_empty() {
-            event!(
-                Level::DEBUG,
-                msg = "Machine produced responses",
-                ?machine_responses
-            );
+            debug!(responses = %machine_responses.display(),
+                   "Machine produced responses");
         }
         for response in machine_responses {
             match response {
@@ -500,6 +500,8 @@ impl WorkflowMachines {
                     self.task_started(task_started_event_id, time)?;
                 }
                 MachineResponse::UpdateRunIdOnWorkflowReset { run_id: new_run_id } => {
+                    // TODO: Should this also update self.run_id? Should we track orig/current
+                    //   separately?
                     self.outgoing_wf_activation_jobs.push_back(
                         wf_activation_job::Variant::UpdateRandomSeed(UpdateRandomSeed {
                             randomness_seed: str_to_randomness_seed(&new_run_id),
@@ -566,8 +568,6 @@ impl WorkflowMachines {
     /// machine associated with the command.
     #[instrument(level = "debug", skip(self))]
     fn prepare_commands(&mut self) -> Result<()> {
-        event!(Level::DEBUG, msg = "start prepare_commands",
-               cur_wf_task_cmds = ?self.current_wf_task_commands);
         while let Some(c) = self.current_wf_task_commands.pop_front() {
             let cmd_type = CommandType::from_i32(c.command.command_type)
                 .ok_or(WFMachinesError::UnknownCommandType(c.command.command_type))?;
@@ -579,7 +579,7 @@ impl WorkflowMachines {
             }
             self.commands.push_back(c);
         }
-        event!(Level::DEBUG, msg = "end prepare_commands", commands = ?self.commands);
+        debug!(commands = %self.commands.display(), "prepared commands");
         Ok(())
     }
 
