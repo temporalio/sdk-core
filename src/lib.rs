@@ -20,6 +20,7 @@ mod workflow;
 #[cfg(test)]
 mod test_help;
 
+pub use core_tracing::tracing_init;
 pub use pollers::{ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 

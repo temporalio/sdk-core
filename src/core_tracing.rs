@@ -8,7 +8,7 @@ static TRACING_INIT: OnceCell<Uninstall> = OnceCell::new();
 
 /// Initialize tracing subscribers and output. Core will not call this itself, it exists here so
 /// that consumers and tests have an easy way to initialize tracing.
-pub(crate) fn tracing_init() {
+pub fn tracing_init() {
     TRACING_INIT.get_or_init(|| {
         let (tracer, uninstall) = opentelemetry_jaeger::new_pipeline()
             .with_service_name("coresdk")
