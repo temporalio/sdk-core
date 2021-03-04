@@ -333,4 +333,7 @@ fn shutdown_aborts_actively_blocked_poll() {
     });
     assert_matches!(core.poll_task(task_q).unwrap_err(), CoreError::ShuttingDown);
     handle.join().unwrap();
+    // Ensure double-shutdown doesn't explode
+    core.shutdown().unwrap();
+    assert_matches!(core.poll_task(task_q).unwrap_err(), CoreError::ShuttingDown);
 }
