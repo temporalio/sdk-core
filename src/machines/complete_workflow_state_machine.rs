@@ -27,7 +27,7 @@ fsm! {
         --> CompleteWorkflowCommandRecorded;
 }
 
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display)]
 pub(super) enum CompleteWFCommand {
     AddCommand(Command),
 }

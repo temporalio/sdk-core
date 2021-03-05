@@ -23,7 +23,7 @@ fsm! {
     FailWorkflowCommandCreated --(WorkflowExecutionFailed) --> FailWorkflowCommandRecorded;
 }
 
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display)]
 pub(super) enum FailWFCommand {
     AddCommand(ProtoCommand),
 }

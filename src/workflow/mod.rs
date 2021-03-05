@@ -22,7 +22,6 @@ use crate::{
     CoreError, Result,
 };
 use std::sync::mpsc::Sender;
-use tracing::Level;
 
 /// Implementors can provide new workflow tasks to the SDK. The connection to the server is the real
 /// implementor.
@@ -133,7 +132,6 @@ impl WorkflowManager {
     /// Should only be called when a workflow has caught up on replay (or is just beginning). It
     /// will return a workflow activation if one is needed, as well as a bool indicating if there
     /// are more workflow tasks that need to be performed to replay the remaining history.
-    #[instrument(skip(self))]
     pub fn feed_history_from_server(&mut self, hist: History) -> Result<NextWfActivation> {
         let task_hist = HistoryInfo::new_from_history(&hist, Some(self.current_wf_task_num))?;
         let task_ct = hist.get_workflow_task_count(None)?;
@@ -144,7 +142,7 @@ impl WorkflowManager {
         let more_activations_needed = task_ct > self.current_wf_task_num;
 
         if more_activations_needed {
-            event!(Level::DEBUG, msg = "More activations needed");
+            debug!("More activations needed");
         }
 
         self.current_wf_task_num += 1;
@@ -164,7 +162,7 @@ impl WorkflowManager {
         self.current_wf_task_num += 1;
         let more_activations_needed = self.current_wf_task_num <= self.last_history_task_count;
         if more_activations_needed {
-            event!(Level::DEBUG, msg = "More activations needed");
+            debug!("More activations needed");
         }
 
         Ok(NextWfActivation {

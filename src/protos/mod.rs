@@ -106,6 +106,7 @@ pub mod temporal {
                 include!("temporal.api.command.v1.rs");
                 use crate::protos::temporal::api::enums::v1::CommandType;
                 use command::Attributes;
+                use std::fmt::{Display, Formatter};
 
                 impl From<command::Attributes> for Command {
                     fn from(c: command::Attributes) -> Self {
@@ -128,6 +129,14 @@ pub mod temporal {
                             },
                             _ => unimplemented!(),
                         }
+                    }
+                }
+
+                impl Display for Command {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        let ct = CommandType::from_i32(self.command_type)
+                            .unwrap_or(CommandType::Unspecified);
+                        write!(f, "{:?}", ct)
                     }
                 }
             }

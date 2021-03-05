@@ -35,6 +35,7 @@ pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
 use crate::protos::temporal::api::command::v1::FailWorkflowExecutionCommandAttributes;
 use crate::{
+    core_tracing::VecDisplayer,
     machines::workflow_machines::MachineResponse,
     protos::{
         coresdk::{self, command::Variant, wf_activation_job},
@@ -57,7 +58,6 @@ use std::{
     convert::{TryFrom, TryInto},
     fmt::{Debug, Display},
 };
-use tracing::Level;
 
 pub(crate) type ProtoCommand = Command;
 
@@ -159,7 +159,7 @@ where
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
     WFMachinesError: From<<<SM as StateMachine>::Event as TryFrom<HistoryEvent>>::Error>,
-    <SM as StateMachine>::Command: Debug,
+    <SM as StateMachine>::Command: Debug + Display,
     <SM as StateMachine>::State: Display,
     <SM as StateMachine>::Error: Into<WFMachinesError> + 'static + Send + Sync,
 {
@@ -168,12 +168,11 @@ where
     }
 
     fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError> {
-        event!(
-            Level::DEBUG,
-            msg = "handling command",
-            ?command_type,
+        debug!(
+            command_type = ?command_type,
             machine_name = %self.name(),
-            state = %self.state()
+            state = %self.state(),
+            "handling command"
         );
         if let Ok(converted_command) = command_type.try_into() {
             match self.on_event_mut(converted_command) {
@@ -193,18 +192,18 @@ where
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        event!(
-            Level::DEBUG,
-            msg = "handling event",
-            %event,
+        debug!(
+            event = %event,
             machine_name = %self.name(),
-            state = %self.state()
+            state = %self.state(),
+            "handling event"
         );
         let converted_event = event.clone().try_into()?;
         match self.on_event_mut(converted_event) {
             Ok(c) => {
                 if !c.is_empty() {
-                    event!(Level::DEBUG, msg = "Machine produced commands", ?c, state = %self.state());
+                    debug!(commands = %c.display(), state = %self.state(),
+                           "Machine produced commands");
                 }
                 let mut machine_responses = vec![];
                 for cmd in c {
