@@ -1,3 +1,4 @@
+use crate::protos::coresdk::WfActivationJob;
 use crate::{
     machines::WFCommand,
     protos::coresdk::wf_activation_job,
@@ -6,13 +7,15 @@ use crate::{
         WorkflowExecutionStartedEventAttributes,
     },
 };
+use std::collections::VecDeque;
 
-/// Abstracts away the concept of an actual workflow implementation
-///
-/// TODO: More
+/// Abstracts away the concept of an actual workflow implementation, handling sending it new
+/// jobs and fetching output from it.
 pub struct DrivenWorkflow {
     started_attrs: Option<WorkflowExecutionStartedEventAttributes>,
     fetcher: Box<dyn WorkflowFetcher>,
+    /// Outgoing activation jobs that need to be sent to the lang sdk
+    outgoing_wf_activation_jobs: VecDeque<wf_activation_job::Variant>,
 }
 
 impl<WF> From<Box<WF>> for DrivenWorkflow
@@ -23,19 +26,37 @@ where
         Self {
             started_attrs: None,
             fetcher: wf,
+            outgoing_wf_activation_jobs: Default::default(),
         }
     }
 }
 
 impl DrivenWorkflow {
     /// Start the workflow
-    pub fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes) {}
+    pub fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes) {
+        debug!(run_id = %attribs.original_execution_run_id, "Driven WF start");
+        self.started_attrs = Some(attribs)
+    }
+
+    /// Enqueue a new job to be sent to the driven workflow
+    pub fn send_job(&mut self, job: wf_activation_job::Variant) {
+        self.fetcher.on_activation_job(&job);
+        self.outgoing_wf_activation_jobs.push_back(job);
+    }
+
+    /// Drain all pending jobs, so that they may be sent to the driven workflow
+    pub fn drain_jobs(&mut self) -> Vec<WfActivationJob> {
+        self.outgoing_wf_activation_jobs
+            .drain(..)
+            .map(Into::into)
+            .collect()
+    }
 
     /// Signal the workflow
-    fn signal(&mut self, attribs: WorkflowExecutionSignaledEventAttributes) {}
+    pub fn _signal(&mut self, _attribs: WorkflowExecutionSignaledEventAttributes) {}
 
     /// Cancel the workflow
-    fn cancel(&mut self, attribs: WorkflowExecutionCanceledEventAttributes) {}
+    pub fn _cancel(&mut self, _attribs: WorkflowExecutionCanceledEventAttributes) {}
 }
 
 impl WorkflowFetcher for DrivenWorkflow {
@@ -50,6 +71,7 @@ impl ActivationListener for DrivenWorkflow {
     }
 }
 
+// TODO: These traits do not need to be tied in this way
 /// Implementors of this trait represent a way to fetch output from executing/iterating some
 /// workflow code (or a mocked workflow).
 pub trait WorkflowFetcher: ActivationListener + Send {
