@@ -178,28 +178,33 @@ where
             return Err(CoreError::ShuttingDown);
         }
 
-        // This will block forever in the event there is no work from the server
-        // TODO: Trap shutting down and recurse or goto top of fn
-        let work = self.poll_server(task_queue)?;
-        let task_token = work.task_token.clone();
-        debug!(
-            task_token = %fmt_task_token(&task_token),
-            "Received workflow task from server"
-        );
+        // This will block forever (unless interrupted by shutdown) in the event there is no work
+        // from the server
+        match self.poll_server(task_queue) {
+            Ok(work) => {
+                let task_token = work.task_token.clone();
+                debug!(
+                    task_token = %fmt_task_token(&task_token),
+                    "Received workflow task from server"
+                );
 
-        let (next_activation, run_id) = self.instantiate_or_update_workflow(work)?;
+                let (next_activation, run_id) = self.instantiate_or_update_workflow(work)?;
 
-        if next_activation.more_activations_needed {
-            self.pending_activations.push(PendingActivation {
-                run_id,
-                task_token: task_token.clone(),
-            });
+                if next_activation.more_activations_needed {
+                    self.pending_activations.push(PendingActivation {
+                        run_id,
+                        task_token: task_token.clone(),
+                    });
+                }
+
+                Ok(Task {
+                    task_token,
+                    variant: next_activation.activation.map(Into::into),
+                })
+            }
+            Err(CoreError::ShuttingDown) => self.poll_task(task_queue),
+            Err(e) => Err(e),
         }
-
-        Ok(Task {
-            task_token,
-            variant: next_activation.activation.map(Into::into),
-        })
     }
 
     #[instrument(skip(self))]
