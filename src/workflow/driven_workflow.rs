@@ -1,7 +1,7 @@
-use crate::protos::coresdk::WfActivationJob;
 use crate::{
     machines::WFCommand,
     protos::coresdk::wf_activation_job,
+    protos::coresdk::WfActivationJob,
     protos::temporal::api::history::v1::{
         WorkflowExecutionCanceledEventAttributes, WorkflowExecutionSignaledEventAttributes,
         WorkflowExecutionStartedEventAttributes,
@@ -13,14 +13,14 @@ use std::collections::VecDeque;
 /// jobs and fetching output from it.
 pub struct DrivenWorkflow {
     started_attrs: Option<WorkflowExecutionStartedEventAttributes>,
-    fetcher: Box<dyn WorkflowFetcher>,
+    fetcher: Box<dyn ExternalWorkflow>,
     /// Outgoing activation jobs that need to be sent to the lang sdk
     outgoing_wf_activation_jobs: VecDeque<wf_activation_job::Variant>,
 }
 
 impl<WF> From<Box<WF>> for DrivenWorkflow
 where
-    WF: WorkflowFetcher + 'static,
+    WF: ExternalWorkflow + 'static,
 {
     fn from(wf: Box<WF>) -> Self {
         Self {
@@ -71,10 +71,12 @@ impl ActivationListener for DrivenWorkflow {
     }
 }
 
-// TODO: These traits do not need to be tied in this way
+pub trait ExternalWorkflow: WorkflowFetcher + ActivationListener {}
+impl<T> ExternalWorkflow for T where T: WorkflowFetcher + ActivationListener {}
+
 /// Implementors of this trait represent a way to fetch output from executing/iterating some
 /// workflow code (or a mocked workflow).
-pub trait WorkflowFetcher: ActivationListener + Send {
+pub trait WorkflowFetcher: Send {
     /// Obtain any output from the workflow's recent execution(s). Because the lang sdk is
     /// responsible for calling workflow code as a result of receiving tasks from
     /// [crate::Core::poll_task], we cannot directly iterate it here. Thus implementations of this
