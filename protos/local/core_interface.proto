@@ -13,6 +13,7 @@ import "temporal/api/workflowservice/v1/request_response.proto";
 import "temporal/api/taskqueue/v1/message.proto";
 import "temporal/api/enums/v1/failed_cause.proto";
 import "temporal/api/failure/v1/message.proto";
+import "temporal/api/history/v1/message.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/command/v1/message.proto";
 import "temporal/api/query/v1/message.proto";
@@ -69,6 +70,8 @@ message WFActivationJob {
         QueryWorkflow query_workflow = 5;
         // A request to cancel the workflow was received.
         CancelWorkflow cancel_workflow = 6;
+        // A request to signal the workflow was received.
+        SignalWorkflow signal_workflow = 7;
     }
 }
 
@@ -87,10 +90,6 @@ message StartWorkflow {
     //   will be others - workflow exe started attrs, etc
 }
 
-message CancelWorkflow {
-    // TODO: add attributes here
-}
-
 message FireTimer {
     string timer_id = 1;
 }
@@ -105,6 +104,15 @@ message UpdateRandomSeed {
 
 message QueryWorkflow {
     temporal.api.query.v1.WorkflowQuery query = 1;
+}
+
+message CancelWorkflow {
+    // TODO: add attributes here
+}
+
+message SignalWorkflow {
+    // The signal information from the workflow's history
+    temporal.api.history.v1.WorkflowExecutionSignaledEventAttributes signal = 1;
 }
 
 message ActivityTask {
