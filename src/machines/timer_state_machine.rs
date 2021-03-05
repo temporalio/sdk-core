@@ -273,7 +273,6 @@ mod test {
 
     #[fixture]
     fn fire_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
-        crate::core_tracing::tracing_init();
         /*
             We have two versions of this test, one which processes the history in two calls, and one
             which replays all of it in one go. Both versions must produce the same two activations.
@@ -373,8 +372,6 @@ mod test {
 
     #[fixture]
     fn cancellation_setup() -> (TestHistoryBuilder, WorkflowMachines) {
-        crate::core_tracing::tracing_init();
-
         let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
             let _cancel_this = cmd_sink.timer(
                 StartTimerCommandAttributes {
@@ -408,9 +405,6 @@ mod test {
 
     #[rstest]
     fn incremental_cancellation(cancellation_setup: (TestHistoryBuilder, WorkflowMachines)) {
-        let s = span!(Level::DEBUG, "Test start", t = "cancel_inc");
-        let _enter = s.enter();
-
         let (t, mut state_machines) = cancellation_setup;
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
@@ -436,9 +430,6 @@ mod test {
 
     #[rstest]
     fn full_cancellation(cancellation_setup: (TestHistoryBuilder, WorkflowMachines)) {
-        let s = span!(Level::DEBUG, "Test start", t = "cancel_full");
-        let _enter = s.enter();
-
         let (t, mut state_machines) = cancellation_setup;
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, None)
@@ -449,7 +440,6 @@ mod test {
 
     #[test]
     fn cancel_before_sent_to_server() {
-        crate::core_tracing::tracing_init();
         let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
             cmd_sink.timer(
                 StartTimerCommandAttributes {
