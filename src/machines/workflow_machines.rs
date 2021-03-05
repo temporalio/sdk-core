@@ -559,7 +559,6 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(cwfm);
                 }
                 WFCommand::FailWorkflow(attrs) => {
-                    // TODO: Do we blow up cache here? I don't think so?
                     let cwfm = self.add_new_machine(fail_workflow(attrs));
                     self.current_wf_task_commands.push_back(cwfm);
                 }

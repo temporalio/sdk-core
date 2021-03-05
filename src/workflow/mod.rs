@@ -106,17 +106,13 @@ impl WorkflowManager {
 
         let (wfb, cmd_sink) = WorkflowBridge::new();
         let state_machines = WorkflowMachines::new(we.workflow_id, we.run_id, Box::new(wfb));
-        // TODO: Combine stuff
-        let task_hist = HistoryInfo::new_from_history(&history, Some(1))?;
-        let mut retme = Self {
+        Ok(Self {
             machines: state_machines,
             command_sink: cmd_sink,
             last_history_task_count: history.get_workflow_task_count(None)?,
             last_history_from_server: history,
             current_wf_task_num: 1,
-        };
-        retme.machines.apply_history_events(&task_hist)?;
-        Ok(retme)
+        })
     }
 }
 
