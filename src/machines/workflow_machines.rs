@@ -1,9 +1,10 @@
+use crate::workflow::{ActivationListener, DrivenWorkflow, WorkflowFetcher};
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
-        workflow_task_state_machine::WorkflowTaskMachine, DrivenWorkflow, NewMachineWithCommand,
-        ProtoCommand, TemporalStateMachine, WFCommand,
+        workflow_task_state_machine::WorkflowTaskMachine, NewMachineWithCommand, ProtoCommand,
+        TemporalStateMachine, WFCommand,
     },
     protos::{
         coresdk::{wf_activation_job, StartWorkflow, UpdateRandomSeed, WfActivation},
@@ -68,7 +69,7 @@ pub(crate) struct WorkflowMachines {
     outgoing_wf_activation_jobs: VecDeque<wf_activation_job::Variant>,
 
     /// The workflow that is being driven by this instance of the machines
-    drive_me: Box<dyn DrivenWorkflow + 'static>,
+    drive_me: DrivenWorkflow,
 }
 
 slotmap::new_key_type! { struct MachineKey; }
@@ -128,11 +129,7 @@ pub enum WFMachinesError {
 }
 
 impl WorkflowMachines {
-    pub(crate) fn new(
-        workflow_id: String,
-        run_id: String,
-        driven_wf: Box<dyn DrivenWorkflow>,
-    ) -> Self {
+    pub(crate) fn new(workflow_id: String, run_id: String, driven_wf: DrivenWorkflow) -> Self {
         Self {
             workflow_id,
             run_id,
@@ -490,6 +487,7 @@ impl WorkflowMachines {
         for response in machine_responses {
             match response {
                 MachineResponse::PushWFJob(a) => {
+                    // TODO: Move inside push in driven workflow
                     self.drive_me.on_activation_job(&a);
                     self.outgoing_wf_activation_jobs.push_back(a);
                 }

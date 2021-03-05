@@ -1,15 +1,10 @@
 use crate::{
-    machines::{ActivationListener, DrivenWorkflow, WFCommand},
+    machines::WFCommand,
     protos::{
         coresdk::{wf_activation_job, FireTimer},
-        temporal::api::{
-            command::v1::{CancelTimerCommandAttributes, StartTimerCommandAttributes},
-            history::v1::{
-                WorkflowExecutionCanceledEventAttributes, WorkflowExecutionSignaledEventAttributes,
-                WorkflowExecutionStartedEventAttributes,
-            },
-        },
+        temporal::api::command::v1::{CancelTimerCommandAttributes, StartTimerCommandAttributes},
     },
+    workflow::{ActivationListener, WorkflowFetcher},
 };
 use dashmap::DashMap;
 use futures::Future;
@@ -74,15 +69,11 @@ impl<F> ActivationListener for TestWorkflowDriver<F> {
     }
 }
 
-impl<F, Fut> DrivenWorkflow for TestWorkflowDriver<F>
+impl<F, Fut> WorkflowFetcher for TestWorkflowDriver<F>
 where
     F: Fn(CommandSender) -> Fut + Send + Sync,
     Fut: Future<Output = ()>,
 {
-    fn start(&mut self, _attribs: WorkflowExecutionStartedEventAttributes) {
-        debug!("Test WF driver start called");
-    }
-
     fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
         // If we have already sent the command to complete the workflow, we don't want
         // to re-run the workflow again.
@@ -124,10 +115,6 @@ where
 
         emit_these
     }
-
-    fn signal(&mut self, _attribs: WorkflowExecutionSignaledEventAttributes) {}
-
-    fn cancel(&mut self, _attribs: WorkflowExecutionCanceledEventAttributes) {}
 }
 
 #[derive(Debug, derive_more::From)]
