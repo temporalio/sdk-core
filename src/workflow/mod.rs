@@ -1,8 +1,10 @@
 mod bridge;
 mod concurrency_manager;
+mod driven_workflow;
 
 pub(crate) use bridge::WorkflowBridge;
 pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
+pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFetcher};
 
 use crate::{
     machines::{ProtoCommand, WFCommand, WorkflowMachines},
@@ -105,7 +107,7 @@ impl WorkflowManager {
         };
 
         let (wfb, cmd_sink) = WorkflowBridge::new();
-        let state_machines = WorkflowMachines::new(we.workflow_id, we.run_id, Box::new(wfb));
+        let state_machines = WorkflowMachines::new(we.workflow_id, we.run_id, Box::new(wfb).into());
         Ok(Self {
             machines: state_machines,
             command_sink: cmd_sink,
