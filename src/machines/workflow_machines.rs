@@ -1,9 +1,10 @@
+use crate::workflow::{DrivenWorkflow, WorkflowFetcher};
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
         complete_workflow_state_machine::complete_workflow, timer_state_machine::new_timer,
-        workflow_task_state_machine::WorkflowTaskMachine, DrivenWorkflow, NewMachineWithCommand,
-        ProtoCommand, TemporalStateMachine, WFCommand,
+        workflow_task_state_machine::WorkflowTaskMachine, NewMachineWithCommand, ProtoCommand,
+        TemporalStateMachine, WFCommand,
     },
     protos::{
         coresdk::{wf_activation_job, StartWorkflow, UpdateRandomSeed, WfActivation},
@@ -64,11 +65,9 @@ pub(crate) struct WorkflowMachines {
     /// Old note: It is a queue as commands can be added (due to marker based commands) while
     /// iterating over already added commands.
     current_wf_task_commands: VecDeque<CommandAndMachine>,
-    /// Outgoing activation jobs that need to be sent to the lang sdk
-    outgoing_wf_activation_jobs: VecDeque<wf_activation_job::Variant>,
 
     /// The workflow that is being driven by this instance of the machines
-    drive_me: Box<dyn DrivenWorkflow + 'static>,
+    drive_me: DrivenWorkflow,
 }
 
 slotmap::new_key_type! { struct MachineKey; }
@@ -128,11 +127,7 @@ pub enum WFMachinesError {
 }
 
 impl WorkflowMachines {
-    pub(crate) fn new(
-        workflow_id: String,
-        run_id: String,
-        driven_wf: Box<dyn DrivenWorkflow>,
-    ) -> Self {
+    pub(crate) fn new(workflow_id: String, run_id: String, driven_wf: DrivenWorkflow) -> Self {
         Self {
             workflow_id,
             run_id,
@@ -148,7 +143,6 @@ impl WorkflowMachines {
             timer_id_to_machine: Default::default(),
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
-            outgoing_wf_activation_jobs: Default::default(),
         }
     }
 
@@ -319,7 +313,7 @@ impl WorkflowMachines {
                 {
                     self.run_id = attrs.original_execution_run_id.clone();
                     // We need to notify the lang sdk that it's time to kick off a workflow
-                    self.outgoing_wf_activation_jobs.push_back(
+                    self.drive_me.send_job(
                         StartWorkflow {
                             workflow_type: attrs
                                 .workflow_type
@@ -385,14 +379,10 @@ impl WorkflowMachines {
     /// timer, etc. This does *not* cause any advancement of the state machines, it merely drains
     /// from the outgoing queue of activation jobs.
     pub(crate) fn get_wf_activation(&mut self) -> Option<WfActivation> {
-        if self.outgoing_wf_activation_jobs.is_empty() {
+        let jobs = self.drive_me.drain_jobs();
+        if jobs.is_empty() {
             None
         } else {
-            let jobs = self
-                .outgoing_wf_activation_jobs
-                .drain(..)
-                .map(Into::into)
-                .collect();
             Some(WfActivation {
                 timestamp: self.current_wf_time.map(Into::into),
                 run_id: self.run_id.clone(),
@@ -490,8 +480,7 @@ impl WorkflowMachines {
         for response in machine_responses {
             match response {
                 MachineResponse::PushWFJob(a) => {
-                    self.drive_me.on_activation_job(&a);
-                    self.outgoing_wf_activation_jobs.push_back(a);
+                    self.drive_me.send_job(a);
                 }
                 MachineResponse::TriggerWFTaskStarted {
                     task_started_event_id,
@@ -502,11 +491,12 @@ impl WorkflowMachines {
                 MachineResponse::UpdateRunIdOnWorkflowReset { run_id: new_run_id } => {
                     // TODO: Should this also update self.run_id? Should we track orig/current
                     //   separately?
-                    self.outgoing_wf_activation_jobs.push_back(
-                        wf_activation_job::Variant::UpdateRandomSeed(UpdateRandomSeed {
-                            randomness_seed: str_to_randomness_seed(&new_run_id),
-                        }),
-                    );
+                    self.drive_me
+                        .send_job(wf_activation_job::Variant::UpdateRandomSeed(
+                            UpdateRandomSeed {
+                                randomness_seed: str_to_randomness_seed(&new_run_id),
+                            },
+                        ));
                 }
                 MachineResponse::NoOp => (),
                 MachineResponse::IssueNewCommand(_) => {

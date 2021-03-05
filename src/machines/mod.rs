@@ -38,17 +38,14 @@ use crate::{
     core_tracing::VecDisplayer,
     machines::workflow_machines::MachineResponse,
     protos::{
-        coresdk::{self, command::Variant, wf_activation_job},
+        coresdk::{self, command::Variant},
         temporal::api::{
             command::v1::{
                 command::Attributes, CancelTimerCommandAttributes, Command,
                 CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
             },
             enums::v1::CommandType,
-            history::v1::{
-                HistoryEvent, WorkflowExecutionCanceledEventAttributes,
-                WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
-            },
+            history::v1::HistoryEvent,
         },
     },
 };
@@ -60,35 +57,6 @@ use std::{
 };
 
 pub(crate) type ProtoCommand = Command;
-
-/// Implementors of this trait represent something that can (eventually) call into a workflow to
-/// drive it, start it, signal it, cancel it, etc.
-pub(crate) trait DrivenWorkflow: ActivationListener + Send {
-    /// Start the workflow
-    fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes);
-
-    /// Obtain any output from the workflow's recent execution(s). Because the lang sdk is
-    /// responsible for calling workflow code as a result of receiving tasks from
-    /// [crate::Core::poll_task], we cannot directly iterate it here. Thus implementations of this
-    /// trait are expected to either buffer output or otherwise produce it on demand when this
-    /// function is called.
-    ///
-    /// In the case of the real [WorkflowBridge] implementation, commands are simply pulled from
-    /// a buffer that the language side sinks into when it calls [crate::Core::complete_task]
-    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand>;
-
-    /// Signal the workflow
-    fn signal(&mut self, attribs: WorkflowExecutionSignaledEventAttributes);
-
-    /// Cancel the workflow
-    fn cancel(&mut self, attribs: WorkflowExecutionCanceledEventAttributes);
-}
-
-/// Allows observers to listen to newly generated outgoing activation jobs. Used for testing, where
-/// some activations must be handled before outgoing commands are issued to avoid deadlocking.
-pub(crate) trait ActivationListener {
-    fn on_activation_job(&mut self, _activation: &wf_activation_job::Variant) {}
-}
 
 /// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
 /// EX: Create a new timer, complete the workflow, etc.
