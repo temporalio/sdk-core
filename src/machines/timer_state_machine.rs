@@ -296,8 +296,11 @@ mod test {
         });
 
         let t = canned_histories::single_timer("timer1");
-        let state_machines =
-            WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
+        let state_machines = WorkflowMachines::new(
+            "wfid".to_string(),
+            "runid".to_string(),
+            Box::new(twd).into(),
+        );
 
         assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
         (t, state_machines)
@@ -354,8 +357,11 @@ mod test {
         });
 
         let t = canned_histories::single_timer("badid");
-        let mut state_machines =
-            WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
+        let mut state_machines = WorkflowMachines::new(
+            "wfid".to_string(),
+            "runid".to_string(),
+            Box::new(twd).into(),
+        );
 
         assert!(t
             .handle_workflow_task_take_cmds(&mut state_machines, None)
@@ -389,8 +395,11 @@ mod test {
         });
 
         let t = canned_histories::cancel_timer("wait_timer", "cancel_timer");
-        let state_machines =
-            WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
+        let state_machines = WorkflowMachines::new(
+            "wfid".to_string(),
+            "runid".to_string(),
+            Box::new(twd).into(),
+        );
         (t, state_machines)
     }
 
@@ -451,8 +460,11 @@ mod test {
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
 
-        let mut state_machines =
-            WorkflowMachines::new("wfid".to_string(), "runid".to_string(), Box::new(twd));
+        let mut state_machines = WorkflowMachines::new(
+            "wfid".to_string(),
+            "runid".to_string(),
+            Box::new(twd).into(),
+        );
 
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, None)
