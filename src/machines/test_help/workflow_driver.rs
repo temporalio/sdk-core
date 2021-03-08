@@ -1,3 +1,4 @@
+use crate::protos::temporal::api::command::v1::ScheduleActivityTaskCommandAttributes;
 use crate::{
     machines::WFCommand,
     protos::{
@@ -137,6 +138,11 @@ impl CommandSender {
     fn new(twd_cache: Arc<TestWfDriverCache>) -> (Self, Receiver<TestWFCommand>) {
         let (chan, rx) = mpsc::channel();
         (Self { chan, twd_cache }, rx)
+    }
+
+    pub fn activity(&mut self, a: ScheduleActivityTaskCommandAttributes) -> bool {
+        // TODO implement
+        false
     }
 
     /// Request to create a timer. Returns true if the timer has fired, false if it hasn't yet.

@@ -3,7 +3,8 @@ use crate::protos::temporal::api::common::v1::Payload;
 use crate::protos::temporal::api::enums::v1::{EventType, WorkflowTaskFailedCause};
 use crate::protos::temporal::api::failure::v1::Failure;
 use crate::protos::temporal::api::history::v1::{
-    history_event, TimerCanceledEventAttributes, TimerFiredEventAttributes,
+    history_event, ActivityTaskCompletedEventAttributes, ActivityTaskScheduledEventAttributes,
+    ActivityTaskStartedEventAttributes, TimerCanceledEventAttributes, TimerFiredEventAttributes,
 };
 
 ///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
@@ -148,6 +149,55 @@ pub fn workflow_fails_with_failure_after_timer(timer_id: &str) -> TestHistoryBui
         },
     );
 
+    t.add_workflow_task_scheduled_and_started();
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+///  6: EVENT_TYPE_ACTIVITY_TASK_STARTED
+///  7: EVENT_TYPE_ACTIVITY_TASK_COMPLETED
+///  8: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  9: EVENT_TYPE_WORKFLOW_TASK_STARTED
+pub fn single_activity(activity_id: &str) -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let scheduled_event_id = t.add_get_event_id(
+        EventType::ActivityTaskScheduled,
+        Some(
+            history_event::Attributes::ActivityTaskScheduledEventAttributes(
+                ActivityTaskScheduledEventAttributes {
+                    activity_id: activity_id.to_string(),
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    let started_event_id = t.add_get_event_id(
+        EventType::ActivityTaskStarted,
+        Some(
+            history_event::Attributes::ActivityTaskStartedEventAttributes(
+                ActivityTaskStartedEventAttributes {
+                    scheduled_event_id,
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    t.add(
+        EventType::ActivityTaskCompleted,
+        history_event::Attributes::ActivityTaskCompletedEventAttributes(
+            ActivityTaskCompletedEventAttributes {
+                scheduled_event_id,
+                started_event_id,
+                ..Default::default()
+            },
+        ),
+    );
     t.add_workflow_task_scheduled_and_started();
     t
 }
