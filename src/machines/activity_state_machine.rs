@@ -1,10 +1,15 @@
-use crate::protos::temporal::api::command::v1::ScheduleActivityTaskCommandAttributes;
-use rustfsm::{fsm, TransitionResult};
+use crate::machines::workflow_machines::MachineResponse;
+use crate::machines::{Cancellable, NewMachineWithCommand, WFMachinesAdapter, WFMachinesError};
+use crate::protos::temporal::api::command::v1::{Command, ScheduleActivityTaskCommandAttributes};
+use crate::protos::temporal::api::enums::v1::CommandType;
+use crate::protos::temporal::api::history::v1::HistoryEvent;
+use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
+use std::convert::TryFrom;
 
 // Schedule / cancel are "explicit events" (imperative rather than past events?)
 
 fsm! {
-    pub(super) name ActivityMachine; command ActivityCommand; error ActivityMachineError;
+    pub(super) name ActivityMachine; command ActivityCommand; error WFMachinesError;
 
     Created --(Schedule, on_schedule)--> ScheduleCommandCreated;
 
@@ -50,9 +55,6 @@ fsm! {
       --(ActivityTaskCanceled, on_activity_task_canceled) --> Canceled;
 }
 
-#[derive(thiserror::Error, Debug)]
-pub(super) enum ActivityMachineError {}
-
 pub(super) enum ActivityCommand {}
 
 #[derive(Debug, Clone, derive_more::Display)]
@@ -77,6 +79,74 @@ impl Default for ActivityCancellationType {
     fn default() -> Self {
         ActivityCancellationType::TryCancel
     }
+}
+
+/// Creates a new, scheduled, activity as a [CancellableCommand]
+pub(super) fn new_activity(
+    attribs: ScheduleActivityTaskCommandAttributes,
+) -> NewMachineWithCommand<ActivityMachine> {
+    let (activity, add_cmd) = ActivityMachine::new_scheduled(attribs);
+    NewMachineWithCommand {
+        command: add_cmd,
+        machine: activity,
+    }
+}
+
+impl ActivityMachine {
+    pub(crate) fn new_scheduled(attribs: ScheduleActivityTaskCommandAttributes) -> (Self, Command) {
+        let mut s = Self::new(attribs);
+        s.on_event_mut(ActivityMachine::Schedule)
+            .expect("Scheduling activities doesn't fail");
+        let cmd = Command {
+            command_type: CommandType::ScheduleActivityTask as i32,
+            attributes: Some(s.shared_state().attrs.clone().into()),
+        };
+        (s, cmd)
+    }
+}
+
+impl TryFrom<HistoryEvent> for ActivityMachine {
+    type Error = WFMachinesError;
+
+    fn try_from(value: HistoryEvent) -> Result<Self, Self::Error> {
+        unimplemented!()
+    }
+}
+
+impl TryFrom<CommandType> for ActivityMachine {
+    type Error = ();
+
+    fn try_from(c: CommandType) -> Result<Self, Self::Error> {
+        unimplemented!()
+    }
+}
+
+impl WFMachinesAdapter for ActivityMachine {
+    fn adapt_response(
+        &self,
+        event: &HistoryEvent,
+        has_next_event: bool,
+        my_command: ActivityMachineCommand,
+    ) -> Result<Vec<MachineResponse>, WFMachinesError> {
+        Ok(!vec![])
+    }
+}
+
+impl Cancellable for ActivityMachine {
+    fn cancel(&mut self) -> Result<MachineResponse, MachineError<Self::Error>> {
+        unimplemented!()
+    }
+
+    fn was_cancelled_before_sent_to_server(&self) -> bool {
+        unimplemented!()
+    }
+}
+
+#[derive(Debug, derive_more::Display)]
+pub(super) enum ActivityMachineCommand {
+    Complete,
+    Canceled,
+    IssueCancelCmd(Command),
 }
 
 #[derive(Default, Clone)]

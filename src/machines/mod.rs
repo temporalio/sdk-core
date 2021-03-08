@@ -33,7 +33,9 @@ pub(crate) mod test_help;
 
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
-use crate::protos::temporal::api::command::v1::FailWorkflowExecutionCommandAttributes;
+use crate::protos::temporal::api::command::v1::{
+    FailWorkflowExecutionCommandAttributes, ScheduleActivityTaskCommandAttributes,
+};
 use crate::{
     core_tracing::VecDisplayer,
     machines::workflow_machines::MachineResponse,
@@ -64,6 +66,7 @@ pub(crate) type ProtoCommand = Command;
 pub enum WFCommand {
     /// Returned when we need to wait for the lang sdk to send us something
     NoCommandsFromLang,
+    AddActivity(ScheduleActivityTaskCommandAttributes),
     AddTimer(StartTimerCommandAttributes),
     CancelTimer(CancelTimerCommandAttributes),
     CompleteWorkflow(CompleteWorkflowExecutionCommandAttributes),

@@ -141,8 +141,7 @@ impl CommandSender {
     }
 
     pub fn activity(&mut self, a: ScheduleActivityTaskCommandAttributes) -> bool {
-        // TODO implement
-        false
+        unimplemented!()
     }
 
     /// Request to create a timer. Returns true if the timer has fired, false if it hasn't yet.
