@@ -397,7 +397,7 @@ fn fail_workflow_execution() {
 
 #[test]
 fn signal_workflow() {
-    let task_q = "fail_workflow_execution";
+    let task_q = "signal_workflow";
     let core = get_integ_core();
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
