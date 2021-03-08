@@ -1,3 +1,4 @@
+use crate::machines::activity_state_machine::new_activity;
 use crate::workflow::{DrivenWorkflow, WorkflowFetcher};
 use crate::{
     core_tracing::VecDisplayer,
@@ -56,6 +57,9 @@ pub(crate) struct WorkflowMachines {
     /// Maps timer ids as created by workflow authors to their associated machines
     /// TODO: Make this apply to *all* cancellable things, once we've added more. Key can be enum.
     timer_id_to_machine: HashMap<String, MachineKey>,
+
+    /// TODO document
+    activity_id_to_machine: HashMap<String, MachineKey>,
 
     /// Queued commands which have been produced by machines and await processing / being sent to
     /// the server.
@@ -553,6 +557,12 @@ impl WorkflowMachines {
                             ))
                         }
                     }
+                }
+                WFCommand::AddActivity(attrs) => {
+                    let aid = attrs.activity_id.clone();
+                    let activity = self.add_new_machine(new_activity(attrs));
+                    self.activity_id_to_machine.insert(aid, activity.machine);
+                    self.current_wf_task_commands.push_back(activity);
                 }
                 WFCommand::CompleteWorkflow(attrs) => {
                     let cwfm = self.add_new_machine(complete_workflow(attrs));
