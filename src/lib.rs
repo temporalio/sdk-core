@@ -766,4 +766,31 @@ mod test {
         ))
         .unwrap();
     }
+
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
+    fn two_signals(hist_batches: &[usize]) {
+        let wfid = "fake_wf_id";
+        let run_id = "fake_run_id";
+
+        let mut t = canned_histories::two_signals("sig1", "sig2");
+        let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
+
+        let res = core.poll_task(TASK_Q).unwrap();
+        // Task is completed with no commands
+        core.complete_task(TaskCompletion::ok_from_api_attrs(vec![], res.task_token))
+            .unwrap();
+
+        let res = core.poll_task(TASK_Q).unwrap();
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [
+                WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+                },
+                WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+                }
+            ]
+        );
+    }
 }
