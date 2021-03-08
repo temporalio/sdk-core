@@ -350,6 +350,10 @@ pub enum CoreError {
     InvalidUri(#[from] InvalidUri),
     /// State machines are missing for the workflow with run id {0}!
     MissingMachines(String),
+    /// There exists a pending command in this workflow's history which has not yet been handled.
+    /// When thrown from complete_task, it means you should poll for a new task, receive a new
+    /// task token, and complete that task.
+    UnhandledCommandWhenCompleting,
 }
 
 #[cfg(test)]
