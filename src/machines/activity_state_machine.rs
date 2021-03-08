@@ -1,3 +1,4 @@
+use crate::protos::temporal::api::command::v1::ScheduleActivityTaskCommandAttributes;
 use rustfsm::{fsm, TransitionResult};
 
 // Schedule / cancel are "explicit events" (imperative rather than past events?)
@@ -53,6 +54,36 @@ fsm! {
 pub(super) enum ActivityMachineError {}
 
 pub(super) enum ActivityCommand {}
+
+#[derive(Debug, Clone, derive_more::Display)]
+pub(super) enum ActivityCancellationType {
+    /**
+     * Wait for activity cancellation completion. Note that activity must heartbeat to receive a
+     * cancellation notification. This can block the cancellation for a long time if activity doesn't
+     * heartbeat or chooses to ignore the cancellation request.
+     */
+    WaitCancellationCompleted,
+
+    /** Initiate a cancellation request and immediately report cancellation to the workflow. */
+    TryCancel,
+
+    /**
+     * Do not request cancellation of the activity and immediately report cancellation to the workflow
+     */
+    Abandon,
+}
+
+impl Default for ActivityCancellationType {
+    fn default() -> Self {
+        ActivityCancellationType::TryCancel
+    }
+}
+
+#[derive(Default, Clone)]
+pub(super) struct SharedState {
+    attrs: ScheduleActivityTaskCommandAttributes,
+    cancellation_type: ActivityCancellationType,
+}
 
 #[derive(Default, Clone)]
 pub(super) struct Created {}
@@ -201,6 +232,51 @@ pub(super) struct Canceled {}
 
 #[cfg(test)]
 mod activity_machine_tests {
-    #[test]
-    fn test() {}
+    use crate::machines::test_help::{CommandSender, TestHistoryBuilder, TestWorkflowDriver};
+    use crate::machines::WorkflowMachines;
+    use crate::protos::temporal::api::command::v1::CompleteWorkflowExecutionCommandAttributes;
+    use crate::protos::temporal::api::command::v1::ScheduleActivityTaskCommandAttributes;
+    use crate::protos::temporal::api::enums::v1::CommandType;
+    use crate::test_help::canned_histories;
+    use rstest::{fixture, rstest};
+    use tracing::Level;
+
+    #[fixture]
+    fn activity_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
+        let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
+            let activity = ScheduleActivityTaskCommandAttributes {
+                ..Default::default()
+            };
+            command_sink.activity(activity);
+
+            let complete = CompleteWorkflowExecutionCommandAttributes::default();
+            command_sink.send(complete.into());
+        });
+
+        let t = canned_histories::single_activity("activity1");
+        let state_machines = WorkflowMachines::new(
+            "wfid".to_string(),
+            "runid".to_string(),
+            Box::new(twd).into(),
+        );
+
+        assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
+        (t, state_machines)
+    }
+
+    #[rstest]
+    fn test_activity_happy_path(activity_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
+        let s = span!(Level::DEBUG, "Test start", t = "activity_happy_path");
+        let _enter = s.enter();
+        let (t, mut state_machines) = activity_happy_hist;
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
+            .unwrap();
+        state_machines.get_wf_activation();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].command_type,
+            CommandType::ScheduleActivityTask as i32
+        );
+    }
 }
