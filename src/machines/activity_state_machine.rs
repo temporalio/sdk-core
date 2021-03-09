@@ -343,9 +343,10 @@ mod activity_machine_tests {
     fn activity_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
         let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
             let activity = ScheduleActivityTaskCommandAttributes {
+                activity_id: "activity A".to_string(),
                 ..Default::default()
             };
-            command_sink.activity(activity);
+            command_sink.activity(activity, true);
 
             let complete = CompleteWorkflowExecutionCommandAttributes::default();
             command_sink.send(complete.into());

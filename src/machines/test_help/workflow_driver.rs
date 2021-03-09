@@ -38,6 +38,9 @@ pub(in crate::machines) struct TestWfDriverCache {
     /// means keeping the workflow suspended in a future somewhere. I tried this and it was hard,
     /// but ultimately it's how real workflows will need to work.
     unblocked_timers: DashMap<String, bool>,
+
+    // Holds a mapping of activity id -> is completed
+    completed_activities: DashMap<String, bool>,
 }
 
 impl<F, Fut> TestWorkflowDriver<F>
@@ -140,8 +143,24 @@ impl CommandSender {
         (Self { chan, twd_cache }, rx)
     }
 
-    pub fn activity(&mut self, a: ScheduleActivityTaskCommandAttributes) -> bool {
-        unimplemented!()
+    pub fn activity(&mut self, a: ScheduleActivityTaskCommandAttributes, do_wait: bool) -> bool {
+        let finished = match self
+            .twd_cache
+            .completed_activities
+            .entry(a.activity_id.clone())
+        {
+            dashmap::mapref::entry::Entry::Occupied(existing) => *existing.get(),
+            dashmap::mapref::entry::Entry::Vacant(v) => {
+                let c = WFCommand::AddActivity(a);
+                self.chan.send(c.into()).unwrap();
+                v.insert(false);
+                false
+            }
+        };
+        if !finished && do_wait {
+            self.chan.send(TestWFCommand::Waiting).unwrap();
+        }
+        finished
     }
 
     /// Request to create a timer. Returns true if the timer has fired, false if it hasn't yet.
