@@ -1,3 +1,4 @@
+use crate::protos::coresdk::SignalWorkflow;
 use crate::{
     machines::WFCommand,
     protos::coresdk::wf_activation_job,
@@ -53,7 +54,11 @@ impl DrivenWorkflow {
     }
 
     /// Signal the workflow
-    pub fn _signal(&mut self, _attribs: WorkflowExecutionSignaledEventAttributes) {}
+    pub fn signal(&mut self, attribs: WorkflowExecutionSignaledEventAttributes) {
+        self.send_job(wf_activation_job::Variant::SignalWorkflow(SignalWorkflow {
+            signal: Some(attribs),
+        }))
+    }
 
     /// Cancel the workflow
     pub fn _cancel(&mut self, _attribs: WorkflowExecutionCanceledEventAttributes) {}

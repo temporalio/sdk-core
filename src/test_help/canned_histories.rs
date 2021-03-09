@@ -1,4 +1,5 @@
 use crate::machines::test_help::TestHistoryBuilder;
+use crate::protos::temporal::api::common::v1::Payload;
 use crate::protos::temporal::api::enums::v1::{EventType, WorkflowTaskFailedCause};
 use crate::protos::temporal::api::failure::v1::Failure;
 use crate::protos::temporal::api::history::v1::{
@@ -147,6 +148,37 @@ pub fn workflow_fails_with_failure_after_timer(timer_id: &str) -> TestHistoryBui
         },
     );
 
+    t.add_workflow_task_scheduled_and_started();
+    t
+}
+
+/// First signal's payload is "hello " and second is "world" (no metadata for either)
+/// 1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+/// 2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 5: EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED
+/// 6: EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED
+/// 7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+pub fn two_signals(sig_1_id: &str, sig_2_id: &str) -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_we_signaled(
+        sig_1_id,
+        vec![Payload {
+            metadata: Default::default(),
+            data: b"hello ".to_vec(),
+        }],
+    );
+    t.add_we_signaled(
+        sig_2_id,
+        vec![Payload {
+            metadata: Default::default(),
+            data: b"world".to_vec(),
+        }],
+    );
     t.add_workflow_task_scheduled_and_started();
     t
 }
