@@ -146,6 +146,7 @@ impl WorkflowMachines {
             all_machines: Default::default(),
             machines_by_event_id: Default::default(),
             timer_id_to_machine: Default::default(),
+            activity_id_to_machine: Default::default(),
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
         }
