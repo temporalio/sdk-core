@@ -115,9 +115,15 @@ message SignalWorkflow {
     temporal.api.history.v1.WorkflowExecutionSignaledEventAttributes signal = 1;
 }
 
+message CancelActivity {
+    string activity_id = 1;
+}
+
 message ActivityTask {
-    // Original task from temporal service
-    temporal.api.workflowservice.v1.PollActivityTaskQueueResponse original = 1;
+    oneof variant {
+        temporal.api.workflowservice.v1.PollActivityTaskQueueResponse start_activity = 1;
+        CancelActivity cancel_activity = 2;
+    }
 }
 
 
@@ -175,12 +181,30 @@ message WFActivationFailure {
     // Other bits from RespondWorkflowTaskFailedRequest as needed
 }
 
-message ActivityTaskSuccess {
+message ActivityTaskCompleted {
     temporal.api.common.v1.Payloads result = 1;
     // Other bits from RespondActivityTaskCompletedRequest as needed
+}
+
+message ActivityTaskCancelled {
+    temporal.api.common.v1.Payloads details = 1;
+}
+
+message ActivityTaskSuccess {
+    oneof variant {
+        ActivityTaskCompleted completed = 1;
+        ActivityTaskCancelled cancelled = 2;
+    }
 }
 
 message ActivityTaskFailure {
     temporal.api.failure.v1.Failure failure = 1;
     // Other bits from RespondActivityTaskFailedRequest as needed
 }
+
+// A request as given to [crate::Core::send_activity_heartbeat]
+message ActivityHeartbeat {
+    string activity_id = 1;
+    temporal.api.common.v1.Payloads details = 2;
+}
+
