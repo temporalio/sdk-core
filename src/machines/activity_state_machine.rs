@@ -9,7 +9,10 @@ use std::convert::TryFrom;
 // Schedule / cancel are "explicit events" (imperative rather than past events?)
 
 fsm! {
-    pub(super) name ActivityMachine; command ActivityCommand; error WFMachinesError;
+    pub(super) name ActivityMachine;
+    command ActivityCommand;
+    error WFMachinesError;
+    shared_state SharedState;
 
     Created --(Schedule, on_schedule)--> ScheduleCommandCreated;
 
@@ -55,6 +58,7 @@ fsm! {
       --(ActivityTaskCanceled, on_activity_task_canceled) --> Canceled;
 }
 
+#[derive(Debug, derive_more::Display)]
 pub(super) enum ActivityCommand {}
 
 #[derive(Debug, Clone, derive_more::Display)]
@@ -94,8 +98,14 @@ pub(super) fn new_activity(
 
 impl ActivityMachine {
     pub(crate) fn new_scheduled(attribs: ScheduleActivityTaskCommandAttributes) -> (Self, Command) {
-        let mut s = Self::new(attribs);
-        s.on_event_mut(ActivityMachine::Schedule)
+        let mut s = Self {
+            state: Created {}.into(),
+            shared_state: SharedState {
+                attrs: attribs,
+                cancellation_type: ActivityCancellationType::TryCancel,
+            },
+        };
+        s.on_event_mut(ActivityMachineEvents::Schedule)
             .expect("Scheduling activities doesn't fail");
         let cmd = Command {
             command_type: CommandType::ScheduleActivityTask as i32,
@@ -105,7 +115,7 @@ impl ActivityMachine {
     }
 }
 
-impl TryFrom<HistoryEvent> for ActivityMachine {
+impl TryFrom<HistoryEvent> for ActivityMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(value: HistoryEvent) -> Result<Self, Self::Error> {
@@ -113,7 +123,7 @@ impl TryFrom<HistoryEvent> for ActivityMachine {
     }
 }
 
-impl TryFrom<CommandType> for ActivityMachine {
+impl TryFrom<CommandType> for ActivityMachineEvents {
     type Error = ();
 
     fn try_from(c: CommandType) -> Result<Self, Self::Error> {
@@ -126,9 +136,9 @@ impl WFMachinesAdapter for ActivityMachine {
         &self,
         event: &HistoryEvent,
         has_next_event: bool,
-        my_command: ActivityMachineCommand,
+        my_command: ActivityCommand,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        Ok(!vec![])
+        Ok(match my_command {})
     }
 }
 
