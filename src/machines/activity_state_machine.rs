@@ -1,5 +1,7 @@
 use crate::machines::workflow_machines::MachineResponse;
+use crate::machines::workflow_machines::MachineResponse::PushActivityJob;
 use crate::machines::{Cancellable, NewMachineWithCommand, WFMachinesAdapter, WFMachinesError};
+use crate::protos::coresdk::{activity_task, CancelActivity, StartActivity};
 use crate::protos::temporal::api::command::v1::{Command, ScheduleActivityTaskCommandAttributes};
 use crate::protos::temporal::api::enums::v1::CommandType;
 use crate::protos::temporal::api::history::v1::HistoryEvent;
@@ -59,7 +61,10 @@ fsm! {
 }
 
 #[derive(Debug, derive_more::Display)]
-pub(super) enum ActivityCommand {}
+pub(super) enum ActivityCommand {
+    StartActivity,
+    CancelActivity,
+}
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub(super) enum ActivityCancellationType {
@@ -138,7 +143,20 @@ impl WFMachinesAdapter for ActivityMachine {
         has_next_event: bool,
         my_command: ActivityCommand,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        Ok(match my_command {})
+        Ok(match my_command {
+            ActivityCommand::StartActivity => {
+                vec![PushActivityJob(activity_task::Job::Start(StartActivity {
+                    // TODO pass activity details
+                }))]
+            }
+            ActivityCommand::CancelActivity => {
+                vec![PushActivityJob(activity_task::Job::Cancel(
+                    CancelActivity {
+                        // TODO pass activity cancellation details
+                    },
+                ))]
+            }
+        })
     }
 }
 
