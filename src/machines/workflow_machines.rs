@@ -345,7 +345,14 @@ impl WorkflowMachines {
                 self.machines_by_event_id.insert(event.event_id, key);
             }
             Some(EventType::WorkflowExecutionSignaled) => {
-                // TODO: Signal callbacks
+                if let Some(history_event::Attributes::WorkflowExecutionSignaledEventAttributes(
+                    attrs,
+                )) = &event.attributes
+                {
+                    self.drive_me.signal(attrs.clone());
+                } else {
+                    // err
+                }
             }
             Some(EventType::WorkflowExecutionCancelRequested) => {
                 // TODO: Cancel callbacks

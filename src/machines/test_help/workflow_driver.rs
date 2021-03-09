@@ -79,6 +79,8 @@ where
         // to re-run the workflow again.
         // TODO: This would be better to solve by actually pausing the workflow properly rather
         //   than doing the re-run the whole thing every time deal.
+        // TODO: Probably screws up signals edge case where signal rcvd after complete makes it to
+        //   server
         if self.sent_final_execution {
             return vec![];
         }

@@ -1,5 +1,7 @@
 use super::Result;
+use crate::protos::temporal::api::common::v1::{Payload, Payloads};
 use crate::protos::temporal::api::failure::v1::Failure;
+use crate::protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes;
 use crate::{
     machines::{workflow_machines::WorkflowMachines, ProtoCommand},
     protos::temporal::api::{
@@ -126,6 +128,15 @@ impl TestHistoryBuilder {
             ..Default::default()
         };
         self.build_and_push_event(EventType::WorkflowTaskFailed, attrs.into());
+    }
+
+    pub fn add_we_signaled(&mut self, signal_name: &str, payloads: Vec<Payload>) {
+        let attrs = WorkflowExecutionSignaledEventAttributes {
+            signal_name: signal_name.to_string(),
+            input: Some(Payloads { payloads }),
+            ..Default::default()
+        };
+        self.build_and_push_event(EventType::WorkflowExecutionSignaled, attrs.into());
     }
 
     pub fn as_history(&self) -> History {

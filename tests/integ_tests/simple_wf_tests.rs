@@ -10,21 +10,25 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core::protos::temporal::api::command::v1::FailWorkflowExecutionCommandAttributes;
-use temporal_sdk_core::protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
-use temporal_sdk_core::protos::temporal::api::failure::v1::Failure;
 use temporal_sdk_core::{
     protos::{
         coresdk::{
             wf_activation_job, FireTimer, StartWorkflow, Task, TaskCompletion, WfActivationJob,
         },
-        temporal::api::command::v1::{
-            CancelTimerCommandAttributes, CompleteWorkflowExecutionCommandAttributes,
-            StartTimerCommandAttributes,
+        temporal::api::{
+            command::v1::{
+                CancelTimerCommandAttributes, CompleteWorkflowExecutionCommandAttributes,
+                FailWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
+            },
+            common::v1::WorkflowExecution,
+            enums::v1::WorkflowTaskFailedCause,
+            failure::v1::Failure,
+            workflowservice::v1::SignalWorkflowExecutionRequest,
         },
     },
     Core, CoreError, CoreInitOptions, ServerGatewayOptions, Url,
 };
+use tokio::runtime::Runtime;
 
 // TODO: These tests can get broken permanently if they break one time and the server is not
 //  restarted, because pulling from the same task queue produces tasks for the previous failed
@@ -55,19 +59,23 @@ async fn create_workflow(
         .run_id
 }
 
-fn get_integ_core() -> impl Core {
+fn get_integ_server_options() -> ServerGatewayOptions {
     let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
         Ok(addr) => addr,
         Err(_) => "http://localhost:7233".to_owned(),
     };
     let url = Url::try_from(&*temporal_server_address).unwrap();
-    let gateway_opts = ServerGatewayOptions {
+    ServerGatewayOptions {
         namespace: NAMESPACE.to_string(),
         identity: "integ_tester".to_string(),
         worker_binary_id: "".to_string(),
         long_poll_timeout: Duration::from_secs(60),
         target_url: url,
-    };
+    }
+}
+
+fn get_integ_core() -> impl Core {
+    let gateway_opts = get_integ_server_options();
     let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
     core
 }
@@ -403,6 +411,148 @@ fn fail_workflow_execution() {
         }
         .into()],
         task.task_token,
+    ))
+    .unwrap();
+}
+
+#[test]
+fn signal_workflow() {
+    let task_q = "signal_workflow";
+    let core = get_integ_core();
+    let mut rng = rand::thread_rng();
+    let workflow_id: u32 = rng.gen();
+    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+
+    let signal_id_1 = "signal1";
+    let signal_id_2 = "signal2";
+    let res = core.poll_task(task_q).unwrap();
+    // Task is completed with no commands
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![],
+        res.task_token.clone(),
+    ))
+    .unwrap();
+
+    // Send the signals to the server
+    let rt = Runtime::new().unwrap();
+    let mut client = rt.block_on(async { get_integ_server_options().connect().await.unwrap() });
+    let wfe = WorkflowExecution {
+        workflow_id: workflow_id.to_string(),
+        run_id: res.get_run_id().unwrap().to_string(),
+    };
+    rt.block_on(async {
+        client
+            .service
+            .signal_workflow_execution(SignalWorkflowExecutionRequest {
+                namespace: "default".to_string(),
+                workflow_execution: Some(wfe.clone()),
+                signal_name: signal_id_1.to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        client
+            .service
+            .signal_workflow_execution(SignalWorkflowExecutionRequest {
+                namespace: "default".to_string(),
+                workflow_execution: Some(wfe),
+                signal_name: signal_id_2.to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    });
+
+    let res = core.poll_task(task_q).unwrap();
+    assert_matches!(
+        res.get_wf_jobs().as_slice(),
+        [
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+            },
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+            }
+        ]
+    );
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+        res.task_token,
+    ))
+    .unwrap();
+}
+
+#[test]
+fn signal_workflow_signal_not_handled_on_workflow_completion() {
+    let task_q = "signal_workflow_signal_not_handled_on_workflow_completion";
+    let core = get_integ_core();
+    let mut rng = rand::thread_rng();
+    let workflow_id: u32 = rng.gen();
+    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+
+    let signal_id_1 = "signal1";
+    let res = core.poll_task(task_q).unwrap();
+    // Task is completed with a timer
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![StartTimerCommandAttributes {
+            timer_id: "sometimer".to_string(),
+            start_to_fire_timeout: Some(Duration::from_millis(10).into()),
+            ..Default::default()
+        }
+        .into()],
+        res.task_token.clone(),
+    ))
+    .unwrap();
+
+    // Poll before sending the signal - we should have the timer job
+    let res = core.poll_task(task_q).unwrap();
+    assert_matches!(
+        res.get_wf_jobs().as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::FireTimer(_)),
+        },]
+    );
+
+    // Send a signal to the server before we complete the workflow
+    let rt = Runtime::new().unwrap();
+    let mut client = rt.block_on(async { get_integ_server_options().connect().await.unwrap() });
+    let wfe = WorkflowExecution {
+        workflow_id: workflow_id.to_string(),
+        run_id: res.get_run_id().unwrap().to_string(),
+    };
+    rt.block_on(async {
+        client
+            .service
+            .signal_workflow_execution(SignalWorkflowExecutionRequest {
+                namespace: "default".to_string(),
+                workflow_execution: Some(wfe.clone()),
+                signal_name: signal_id_1.to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    });
+
+    // Send completion - not having seen a poll response with a signal in it yet
+    let unhandled = core
+        .complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            res.task_token,
+        ))
+        .unwrap_err();
+    assert_matches!(unhandled, CoreError::UnhandledCommandWhenCompleting);
+
+    // We should get a new task with the signal
+    let res = core.poll_task(task_q).unwrap();
+    assert_matches!(
+        res.get_wf_jobs().as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+        },]
+    );
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+        res.task_token,
     ))
     .unwrap();
 }

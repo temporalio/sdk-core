@@ -19,7 +19,7 @@ use crate::{
         PollWorkflowTaskQueueApi, RespondWorkflowTaskCompletedApi, RespondWorkflowTaskFailedApi,
         StartWorkflowExecutionApi,
     },
-    Result,
+    CoreError, Result,
 };
 use tonic::{transport::Channel, Request, Status};
 use url::Url;
@@ -140,12 +140,21 @@ impl RespondWorkflowTaskCompletedApi for ServerGateway {
             namespace: self.opts.namespace.to_string(),
             ..Default::default()
         };
-        Ok(self
+        match self
             .service
             .clone()
             .respond_workflow_task_completed(request)
-            .await?
-            .into_inner())
+            .await
+        {
+            Ok(pwtr) => Ok(pwtr.into_inner()),
+            Err(ts) => {
+                if ts.code() == tonic::Code::InvalidArgument && ts.message() == "UnhandledCommand" {
+                    Err(CoreError::UnhandledCommandWhenCompleting)
+                } else {
+                    Err(ts.into())
+                }
+            }
+        }
     }
 }
 
