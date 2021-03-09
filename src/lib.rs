@@ -311,7 +311,9 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             };
-            let pollfut = self.server_gateway.poll_workflow_task(task_queue);
+            let pollfut = self
+                .server_gateway
+                .poll_workflow_task(task_queue.to_owned());
             tokio::select! {
                 _ = shutdownfut => {
                     Err(CoreError::ShuttingDown)
