@@ -159,9 +159,10 @@ where
         }
 
         // This will block forever in the event there is no work from the server
-        let work = self
-            .runtime
-            .block_on(self.server_gateway.poll_workflow_task(task_queue))?;
+        let work = self.runtime.block_on(
+            self.server_gateway
+                .poll_workflow_task(task_queue.to_owned()),
+        )?;
         let task_token = work.task_token.clone();
         debug!(
             task_token = %fmt_task_token(&task_token),

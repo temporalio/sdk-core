@@ -8,7 +8,7 @@ pub(super) use workflow_driver::{CommandSender, TestWorkflowDriver};
 
 use crate::workflow::WorkflowConcurrencyManager;
 use crate::{
-    pollers::MockServerGateway,
+    pollers::MockServerGatewayApis,
     protos::temporal::api::common::v1::WorkflowExecution,
     protos::temporal::api::history::v1::History,
     protos::temporal::api::workflowservice::v1::{
@@ -21,7 +21,7 @@ use std::sync::atomic::AtomicBool;
 use std::{collections::VecDeque, sync::Arc};
 use tokio::runtime::Runtime;
 
-pub(crate) type FakeCore = CoreSDK<MockServerGateway>;
+pub(crate) type FakeCore = CoreSDK<MockServerGatewayApis>;
 
 /// Given identifiers for a workflow/run, and a test history builder, construct an instance of
 /// the core SDK with a mock server gateway that will produce the responses as appropriate.
@@ -55,7 +55,7 @@ pub(crate) fn build_fake_core(
         .collect();
 
     let mut tasks = VecDeque::from(responses);
-    let mut mock_gateway = MockServerGateway::new();
+    let mut mock_gateway = MockServerGatewayApis::new();
     mock_gateway
         .expect_poll_workflow_task()
         .times(response_batches.len())

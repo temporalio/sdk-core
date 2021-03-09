@@ -1,4 +1,5 @@
 use assert_matches::assert_matches;
+use futures::Future;
 use rand::{self, Rng};
 use std::{
     collections::HashMap,
@@ -20,15 +21,12 @@ use temporal_sdk_core::{
                 CancelTimerCommandAttributes, CompleteWorkflowExecutionCommandAttributes,
                 FailWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
             },
-            common::v1::WorkflowExecution,
             enums::v1::WorkflowTaskFailedCause,
             failure::v1::Failure,
-            workflowservice::v1::SignalWorkflowExecutionRequest,
         },
     },
-    Core, CoreError, CoreInitOptions, ServerGatewayOptions, Url,
+    Core, CoreError, CoreInitOptions, ServerGatewayApis, ServerGatewayOptions, Url,
 };
-use tokio::runtime::Runtime;
 
 // TODO: These tests can get broken permanently if they break one time and the server is not
 //  restarted, because pulling from the same task queue produces tasks for the previous failed
@@ -38,25 +36,31 @@ use tokio::runtime::Runtime;
 //   at the end matches.
 
 const NAMESPACE: &str = "default";
+type GwApi = Arc<dyn ServerGatewayApis>;
 
-#[tokio::main]
-async fn create_workflow(
+fn create_workflow(
     core: &dyn Core,
     task_q: &str,
     workflow_id: &str,
     wf_type: Option<&str>,
 ) -> String {
-    core.server_gateway()
-        .unwrap()
-        .start_workflow(
-            NAMESPACE,
-            task_q,
-            workflow_id,
-            wf_type.unwrap_or("test-workflow"),
+    with_gw(core, |gw: GwApi| async move {
+        gw.start_workflow(
+            NAMESPACE.to_owned(),
+            task_q.to_owned(),
+            workflow_id.to_owned(),
+            wf_type.unwrap_or("test-workflow").to_owned(),
         )
         .await
         .unwrap()
         .run_id
+    })
+}
+
+#[tokio::main]
+async fn with_gw<F: FnOnce(GwApi) -> Fout, Fout: Future>(core: &dyn Core, fun: F) -> Fout::Output {
+    let gw = core.server_gateway().unwrap();
+    fun(gw).await
 }
 
 fn get_integ_server_options() -> ServerGatewayOptions {
@@ -414,33 +418,23 @@ fn signal_workflow() {
     .unwrap();
 
     // Send the signals to the server
-    let rt = Runtime::new().unwrap();
-    let mut client = rt.block_on(async { get_integ_server_options().connect().await.unwrap() });
-    let wfe = WorkflowExecution {
-        workflow_id: workflow_id.to_string(),
-        run_id: res.get_run_id().unwrap().to_string(),
-    };
-    rt.block_on(async {
-        client
-            .service
-            .signal_workflow_execution(SignalWorkflowExecutionRequest {
-                namespace: "default".to_string(),
-                workflow_execution: Some(wfe.clone()),
-                signal_name: signal_id_1.to_string(),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
-        client
-            .service
-            .signal_workflow_execution(SignalWorkflowExecutionRequest {
-                namespace: "default".to_string(),
-                workflow_execution: Some(wfe),
-                signal_name: signal_id_2.to_string(),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
+    with_gw(&core, |gw: GwApi| async move {
+        gw.signal_workflow_execution(
+            workflow_id.to_string(),
+            res.get_run_id().unwrap().to_string(),
+            signal_id_1.to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+        gw.signal_workflow_execution(
+            workflow_id.to_string(),
+            res.get_run_id().unwrap().to_string(),
+            signal_id_2.to_string(),
+            None,
+        )
+        .await
+        .unwrap();
     });
 
     let res = core.poll_task(task_q).unwrap();
@@ -493,31 +487,24 @@ fn signal_workflow_signal_not_handled_on_workflow_completion() {
         },]
     );
 
-    // Send a signal to the server before we complete the workflow
-    let rt = Runtime::new().unwrap();
-    let mut client = rt.block_on(async { get_integ_server_options().connect().await.unwrap() });
-    let wfe = WorkflowExecution {
-        workflow_id: workflow_id.to_string(),
-        run_id: res.get_run_id().unwrap().to_string(),
-    };
-    rt.block_on(async {
-        client
-            .service
-            .signal_workflow_execution(SignalWorkflowExecutionRequest {
-                namespace: "default".to_string(),
-                workflow_execution: Some(wfe.clone()),
-                signal_name: signal_id_1.to_string(),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
+    let ttoken = res.task_token.clone();
+    // Send the signals to the server
+    with_gw(&core, |gw: GwApi| async move {
+        gw.signal_workflow_execution(
+            workflow_id.to_string(),
+            res.get_run_id().unwrap().to_string(),
+            signal_id_1.to_string(),
+            None,
+        )
+        .await
+        .unwrap();
     });
 
     // Send completion - not having seen a poll response with a signal in it yet
     let unhandled = core
         .complete_task(TaskCompletion::ok_from_api_attrs(
             vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
-            res.task_token,
+            ttoken,
         ))
         .unwrap_err();
     assert_matches!(unhandled, CoreError::UnhandledCommandWhenCompleting);

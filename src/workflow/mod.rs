@@ -7,76 +7,15 @@ pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
 pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFetcher};
 
 use crate::{
-    machines::{ProtoCommand, WFCommand, WorkflowMachines},
+    machines::{WFCommand, WorkflowMachines},
     protos::{
         coresdk::WfActivation,
-        temporal::api::{
-            enums::v1::WorkflowTaskFailedCause,
-            failure::v1::Failure,
-            history::v1::History,
-            workflowservice::v1::{
-                PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
-                RespondWorkflowTaskFailedResponse, StartWorkflowExecutionResponse,
-            },
-        },
+        temporal::api::{history::v1::History, workflowservice::v1::PollWorkflowTaskQueueResponse},
     },
     protosext::HistoryInfo,
     CoreError, Result,
 };
 use std::sync::mpsc::Sender;
-
-/// Implementors can provide new workflow tasks to the SDK. The connection to the server is the real
-/// implementor.
-#[cfg_attr(test, mockall::automock)]
-#[async_trait::async_trait]
-pub trait PollWorkflowTaskQueueApi {
-    /// Fetch new work. Should block indefinitely if there is no work.
-    async fn poll_workflow_task(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
-}
-
-/// Implementors can complete tasks issued by [Core::poll]. The real implementor sends the completed
-/// tasks to the server.
-#[cfg_attr(test, mockall::automock)]
-#[async_trait::async_trait]
-pub trait RespondWorkflowTaskCompletedApi {
-    /// Complete a task by sending it to the server. `task_token` is the task token that would've
-    /// been received from [PollWorkflowTaskQueueApi::poll]. `commands` is a list of new commands
-    /// to send to the server, such as starting a timer.
-    async fn complete_workflow_task(
-        &self,
-        task_token: Vec<u8>,
-        commands: Vec<ProtoCommand>,
-    ) -> Result<RespondWorkflowTaskCompletedResponse>;
-}
-
-/// Implementors can fail workflow tasks issued by [Core::poll]. The real implementor sends the
-/// failed tasks to the server.
-#[cfg_attr(test, mockall::automock)]
-#[async_trait::async_trait]
-pub trait RespondWorkflowTaskFailedApi {
-    /// Fail task by sending the failure to the server. `task_token` is the task token that would've
-    /// been received from [PollWorkflowTaskQueueApi::poll].
-    async fn fail_workflow_task(
-        &self,
-        task_token: Vec<u8>,
-        cause: WorkflowTaskFailedCause,
-        failure: Option<Failure>,
-    ) -> Result<RespondWorkflowTaskFailedResponse>;
-}
-
-/// Implementors should send StartWorkflowExecutionRequest to the server and pass the response back.
-#[cfg_attr(test, mockall::automock)]
-#[async_trait::async_trait]
-pub trait StartWorkflowExecutionApi {
-    /// Starts workflow execution.
-    async fn start_workflow(
-        &self,
-        namespace: &str,
-        task_queue: &str,
-        workflow_id: &str,
-        workflow_type: &str,
-    ) -> Result<StartWorkflowExecutionResponse>;
-}
 
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
 /// associated with that specific workflow run.
