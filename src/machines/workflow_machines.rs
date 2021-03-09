@@ -1,4 +1,5 @@
 use crate::machines::activity_state_machine::new_activity;
+use crate::protos::coresdk::activity_task;
 use crate::workflow::{DrivenWorkflow, WorkflowFetcher};
 use crate::{
     core_tracing::VecDisplayer,
@@ -90,6 +91,10 @@ struct CommandAndMachine {
 pub enum MachineResponse {
     #[display(fmt = "PushWFJob")]
     PushWFJob(#[from(forward)] wf_activation_job::Variant),
+
+    #[display(fmt = "PushActivityJob")]
+    PushActivityJob(activity_task::Job),
+
     IssueNewCommand(ProtoCommand),
     #[display(fmt = "TriggerWFTaskStarted")]
     TriggerWFTaskStarted {
@@ -514,6 +519,9 @@ impl WorkflowMachines {
                 MachineResponse::NoOp => (),
                 MachineResponse::IssueNewCommand(_) => {
                     panic!("Issue new command machine response not expected here")
+                }
+                MachineResponse::PushActivityJob(a) => {
+                    unimplemented!()
                 }
             }
         }
