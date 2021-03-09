@@ -14,7 +14,7 @@ use crate::{
     protos::temporal::api::workflowservice::v1::{
         PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
     },
-    CoreSDK,
+    CoreSDK, ServerGatewayApis,
 };
 use rand::{thread_rng, Rng};
 use std::sync::atomic::AtomicBool;
@@ -65,6 +65,13 @@ pub(crate) fn build_fake_core(
         .expect_complete_workflow_task()
         .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
 
+    fake_core_from_mock(mock_gateway)
+}
+
+pub(crate) fn fake_core_from_mock<MT>(mock_gateway: MT) -> CoreSDK<MT>
+where
+    MT: ServerGatewayApis,
+{
     let runtime = Runtime::new().unwrap();
     CoreSDK {
         runtime,
