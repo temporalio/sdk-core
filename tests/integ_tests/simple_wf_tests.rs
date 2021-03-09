@@ -213,7 +213,7 @@ fn timer_cancel_workflow() {
 
 #[test]
 fn timer_immediate_cancel_workflow() {
-    let task_q = "timer_cancel_workflow";
+    let task_q = "timer_immediate_cancel_workflow";
     let core = get_integ_core();
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
