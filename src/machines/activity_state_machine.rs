@@ -132,7 +132,11 @@ impl TryFrom<CommandType> for ActivityMachineEvents {
     type Error = ();
 
     fn try_from(c: CommandType) -> Result<Self, Self::Error> {
-        unimplemented!()
+        Ok(match c {
+            CommandType::ScheduleActivityTask => Self::CommandScheduleActivityTask,
+            CommandType::RequestCancelActivityTask => Self::CommandRequestCancelActivityTask,
+            _ => return Err(()),
+        })
     }
 }
 
@@ -166,7 +170,7 @@ impl Cancellable for ActivityMachine {
     }
 
     fn was_cancelled_before_sent_to_server(&self) -> bool {
-        unimplemented!()
+        false // TODO return cancellation flag from the shared state
     }
 }
 
