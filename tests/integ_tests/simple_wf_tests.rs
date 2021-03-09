@@ -507,7 +507,7 @@ fn signal_workflow_signal_not_handled_on_workflow_completion() {
         },]
     );
 
-    let ttoken = res.task_token.clone();
+    let task_token = res.task_token.clone();
     // Send the signals to the server
     with_gw(&core, |gw: GwApi| async move {
         gw.signal_workflow_execution(
@@ -524,7 +524,7 @@ fn signal_workflow_signal_not_handled_on_workflow_completion() {
     let unhandled = core
         .complete_task(TaskCompletion::ok_from_api_attrs(
             vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
-            ttoken,
+            task_token,
         ))
         .unwrap_err();
     assert_matches!(unhandled, CoreError::UnhandledCommandWhenCompleting);
