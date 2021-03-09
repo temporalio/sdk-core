@@ -126,9 +126,12 @@ impl WorkflowConcurrencyManager {
     /// # Panics
     /// If the workflow machine thread panicked
     pub fn shutdown(&self) {
+        let mut wf_thread = self.wf_thread.lock();
+        if wf_thread.is_none() {
+            return;
+        }
         let _ = self.shutdown_chan.send(true);
-        self.wf_thread
-            .lock()
+        wf_thread
             .take()
             .unwrap()
             .join()

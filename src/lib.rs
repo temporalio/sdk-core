@@ -49,6 +49,7 @@ use std::{
         mpsc::SendError,
         Arc,
     },
+    time::Duration,
 };
 use tokio::runtime::Runtime;
 use tonic::codegen::http::uri::InvalidUri;
@@ -111,10 +112,7 @@ pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
     })
 }
 
-struct CoreSDK<WP>
-where
-    WP: ServerGatewayApis + 'static,
-{
+struct CoreSDK<WP> {
     runtime: Runtime,
     /// Provides work in the form of responses the server would send from polling task Qs
     server_gateway: Arc<WP>,
@@ -133,7 +131,7 @@ where
 
 impl<WP> Core for CoreSDK<WP>
 where
-    WP: ServerGatewayApis + Send + Sync,
+    WP: ServerGatewayApis + Send + Sync + 'static,
 {
     #[instrument(skip(self), fields(pending_activation))]
     fn poll_task(&self, task_queue: &str) -> Result<Task> {
@@ -158,29 +156,33 @@ where
             return Err(CoreError::ShuttingDown);
         }
 
-        // This will block forever in the event there is no work from the server
-        let work = self
-            .runtime
-            .block_on(self.server_gateway.poll_workflow_task(task_queue))?;
-        let task_token = work.task_token.clone();
-        debug!(
-            task_token = %fmt_task_token(&task_token),
-            "Received workflow task from server"
-        );
+        // This will block forever (unless interrupted by shutdown) in the event there is no work
+        // from the server
+        match self.poll_server(task_queue) {
+            Ok(work) => {
+                let task_token = work.task_token.clone();
+                debug!(
+                    task_token = %fmt_task_token(&task_token),
+                    "Received workflow task from server"
+                );
 
-        let (next_activation, run_id) = self.instantiate_or_update_workflow(work)?;
+                let (next_activation, run_id) = self.instantiate_or_update_workflow(work)?;
 
-        if next_activation.more_activations_needed {
-            self.pending_activations.push(PendingActivation {
-                run_id,
-                task_token: task_token.clone(),
-            });
+                if next_activation.more_activations_needed {
+                    self.pending_activations.push(PendingActivation {
+                        run_id,
+                        task_token: task_token.clone(),
+                    });
+                }
+
+                Ok(Task {
+                    task_token,
+                    variant: next_activation.activation.map(Into::into),
+                })
+            }
+            Err(CoreError::ShuttingDown) => self.poll_task(task_queue),
+            Err(e) => Err(e),
         }
-
-        Ok(Task {
-            task_token,
-            variant: next_activation.activation.map(Into::into),
-        })
     }
 
     #[instrument(skip(self))]
@@ -295,6 +297,28 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             Ok(())
         })?;
         Ok(())
+    }
+
+    /// Blocks polling the server until it responds, or until the shutdown flag is set (aborting
+    /// the poll)
+    fn poll_server(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse> {
+        self.runtime.block_on(async {
+            let shutdownfut = async {
+                loop {
+                    if self.shutdown_requested.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            };
+            let pollfut = self.server_gateway.poll_workflow_task(task_queue);
+            tokio::select! {
+                _ = shutdownfut => {
+                    Err(CoreError::ShuttingDown)
+                }
+                r = pollfut => r
+            }
+        })
     }
 
     /// Remove a workflow run from the cache entirely
