@@ -7,6 +7,7 @@ package coresdk;
 // and adding the "api_upstream" subdir as an include path.
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
 import "google/protobuf/empty.proto";
 import "dependencies/gogoproto/gogo.proto";
 import "temporal/api/workflowservice/v1/request_response.proto";
@@ -116,7 +117,29 @@ message SignalWorkflow {
 }
 
 message StartActivity {
-    // TODO: add attributes
+    string workflow_namespace = 1;
+    temporal.api.common.v1.WorkflowType workflow_type = 2;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 3;
+    temporal.api.common.v1.ActivityType activity_type = 4;
+    temporal.api.common.v1.Header header = 5;
+    temporal.api.common.v1.Payloads input = 6;
+    temporal.api.common.v1.Payloads heartbeat_details = 7;
+    google.protobuf.Timestamp scheduled_time = 8 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp current_attempt_scheduled_time = 9 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp started_time = 10 [(gogoproto.stdtime) = true];
+    int32 attempt = 11;
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration schedule_to_close_timeout = 12 [(gogoproto.stdduration) = true];
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration start_to_close_timeout = 13 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration heartbeat_timeout = 14 [(gogoproto.stdduration) = true];
+    // This is an actual retry policy the service uses.
+    // It can be different from the one provided (or not) during activity scheduling
+    // as the service can override the provided one in case its values are not specified
+    // or exceed configured system limits.
+    temporal.api.common.v1.RetryPolicy retry_policy = 15;
 }
 
 message CancelActivity {
@@ -124,11 +147,12 @@ message CancelActivity {
 }
 
 message ActivityTask {
+    string activity_id = 1;
     oneof job {
         // Start activity execution.
-        StartActivity start = 1;
+        StartActivity start = 2;
         // Attempt to cancel activity execution.
-        CancelActivity cancel = 2;
+        CancelActivity cancel = 3;
     }
 }
 
