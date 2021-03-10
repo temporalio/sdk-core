@@ -115,14 +115,20 @@ message SignalWorkflow {
     temporal.api.history.v1.WorkflowExecutionSignaledEventAttributes signal = 1;
 }
 
+message StartActivity {
+    // TODO: add attributes
+}
+
 message CancelActivity {
-    string activity_id = 1;
+    // TODO: add attributes
 }
 
 message ActivityTask {
-    oneof variant {
-        temporal.api.workflowservice.v1.PollActivityTaskQueueResponse start_activity = 1;
-        CancelActivity cancel_activity = 2;
+    oneof job {
+        // Start activity execution.
+        StartActivity start = 1;
+        // Attempt to cancel activity execution.
+        CancelActivity cancel = 2;
     }
 }
 
@@ -135,7 +141,7 @@ message TaskCompletion {
         // Complete a workflow task
         WFActivationCompletion workflow = 2;
         // Complete an activity task
-        ActivityTaskCompletion activity = 3;
+        ActivityResult activity = 3;
     }
 }
 
@@ -146,10 +152,11 @@ message WFActivationCompletion {
     }
 }
 
-message ActivityTaskCompletion {
+message ActivityResult {
     oneof status {
-        ActivityTaskSuccess successful = 1;
-        ActivityTaskFailure failed = 2;
+        ActivityTaskSuccess completed = 1;
+        ActivityTaskCancelation canceled = 2;
+        ActivityTaskFailure failed = 3;
     }
 }
 
@@ -181,20 +188,13 @@ message WFActivationFailure {
     // Other bits from RespondWorkflowTaskFailedRequest as needed
 }
 
-message ActivityTaskCompleted {
-    temporal.api.common.v1.Payloads result = 1;
-    // Other bits from RespondActivityTaskCompletedRequest as needed
-}
-
-message ActivityTaskCancelled {
+message ActivityTaskCancelation {
     temporal.api.common.v1.Payloads details = 1;
 }
 
 message ActivityTaskSuccess {
-    oneof variant {
-        ActivityTaskCompleted completed = 1;
-        ActivityTaskCancelled cancelled = 2;
-    }
+    temporal.api.common.v1.Payloads result = 1;
+    // Other bits from RespondActivityTaskCompletedRequest as needed
 }
 
 message ActivityTaskFailure {
@@ -207,4 +207,3 @@ message ActivityHeartbeat {
     string activity_id = 1;
     temporal.api.common.v1.Payloads details = 2;
 }
-
