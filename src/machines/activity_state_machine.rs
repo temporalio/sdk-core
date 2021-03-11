@@ -3,7 +3,7 @@ use crate::machines::workflow_machines::MachineResponse::PushActivityJob;
 use crate::machines::{Cancellable, NewMachineWithCommand, WFMachinesAdapter, WFMachinesError};
 use crate::protos::coresdk::{activity_task, CancelActivity, StartActivity};
 use crate::protos::temporal::api::command::v1::{Command, ScheduleActivityTaskCommandAttributes};
-use crate::protos::temporal::api::enums::v1::CommandType;
+use crate::protos::temporal::api::enums::v1::{CommandType, EventType};
 use crate::protos::temporal::api::history::v1::HistoryEvent;
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::convert::TryFrom;
@@ -123,8 +123,22 @@ impl ActivityMachine {
 impl TryFrom<HistoryEvent> for ActivityMachineEvents {
     type Error = WFMachinesError;
 
-    fn try_from(value: HistoryEvent) -> Result<Self, Self::Error> {
-        unimplemented!()
+    fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
+        Ok(match EventType::from_i32(e.event_type) {
+            Some(EventType::ActivityTaskScheduled) => Self::ActivityTaskScheduled,
+            Some(EventType::ActivityTaskStarted) => Self::ActivityTaskStarted,
+            Some(EventType::ActivityTaskCompleted) => Self::ActivityTaskCompleted,
+            Some(EventType::ActivityTaskFailed) => Self::ActivityTaskFailed,
+            Some(EventType::ActivityTaskTimedOut) => Self::ActivityTaskTimedOut,
+            Some(EventType::ActivityTaskCancelRequested) => Self::ActivityTaskCancelRequested,
+            Some(EventType::ActivityTaskCanceled) => Self::ActivityTaskCanceled,
+            _ => {
+                return Err(WFMachinesError::UnexpectedEvent(
+                    e,
+                    "Activity machine does not handle this event",
+                ))
+            }
+        })
     }
 }
 
@@ -149,12 +163,14 @@ impl WFMachinesAdapter for ActivityMachine {
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
             ActivityCommand::StartActivity => {
-                vec![PushActivityJob(activity_task::Job::Start(StartActivity {
+                vec![PushActivityJob(activity_task::Variant::Start(
+                    StartActivity {
                     // TODO pass activity details
-                }))]
+                },
+                ))]
             }
             ActivityCommand::CancelActivity => {
-                vec![PushActivityJob(activity_task::Job::Cancel(
+                vec![PushActivityJob(activity_task::Variant::Cancel(
                     CancelActivity {
                         // TODO pass activity cancellation details
                     },

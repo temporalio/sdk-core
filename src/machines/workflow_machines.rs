@@ -10,7 +10,7 @@ use crate::{
         TemporalStateMachine, WFCommand,
     },
     protos::{
-        coresdk::{wf_activation_job, StartWorkflow, UpdateRandomSeed, WfActivation},
+        coresdk::{wf_activation_job, ActivityTask, StartWorkflow, UpdateRandomSeed, WfActivation},
         temporal::api::{
             enums::v1::{CommandType, EventType},
             history::v1::{history_event, HistoryEvent},
@@ -92,8 +92,9 @@ pub enum MachineResponse {
     #[display(fmt = "PushWFJob")]
     PushWFJob(#[from(forward)] wf_activation_job::Variant),
 
+    // TODO remove and use IssueNewCommand
     #[display(fmt = "PushActivityJob")]
-    PushActivityJob(activity_task::Job),
+    PushActivityJob(activity_task::Variant),
 
     IssueNewCommand(ProtoCommand),
     #[display(fmt = "TriggerWFTaskStarted")]
