@@ -193,6 +193,7 @@ message ActivityResult {
 
 message RequestActivityCancellation {
     string activity_id = 1;
+    string reason = 2;
 }
 
 message CoreCommand {
