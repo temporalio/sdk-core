@@ -191,9 +191,14 @@ message ActivityResult {
     }
 }
 
+message RequestActivityCancellation {
+    string activity_id = 1;
+}
+
 message CoreCommand {
     oneof variant {
-        temporal.api.query.v1.WorkflowQueryResult query_result = 1;
+        temporal.api.query.v1.WorkflowQueryResult respond_to_query = 1;
+        RequestActivityCancellation request_activity_cancellation = 2;
     }
 }
 
