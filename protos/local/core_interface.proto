@@ -73,6 +73,8 @@ message WFActivationJob {
         CancelWorkflow cancel_workflow = 6;
         // A request to signal the workflow was received.
         SignalWorkflow signal_workflow = 7;
+        // An activity was resolved with, result could be completed, failed or cancelled
+        ResolveActivity resolve_activity = 8;
     }
 }
 
@@ -93,6 +95,11 @@ message StartWorkflow {
 
 message FireTimer {
     string timer_id = 1;
+}
+
+message ResolveActivity {
+    string activity_id = 1;
+    ActivityResult result = 2;
 }
 
 message CancelTimer {
@@ -213,7 +220,6 @@ message WFActivationFailure {
 }
 
 message ActivityTaskCancelation {
-    temporal.api.common.v1.Payloads details = 1;
 }
 
 message ActivityTaskSuccess {
