@@ -155,7 +155,7 @@ message CancelActivity {
 
 message ActivityTask {
     string activity_id = 1;
-    oneof job {
+    oneof variant {
         // Start activity execution.
         StartActivity start = 2;
         // Attempt to cancel activity execution.

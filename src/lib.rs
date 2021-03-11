@@ -22,16 +22,20 @@ mod workflow;
 mod test_help;
 
 pub use core_tracing::tracing_init;
-pub use pollers::{ServerGateway, ServerGatewayApis, ServerGatewayOptions};
+pub use pollers::{
+    PollTaskRequest, PollTaskResponse, ServerGateway, ServerGatewayApis, ServerGatewayOptions,
+};
 pub use url::Url;
 
+use crate::protos::coresdk::ActivityTask;
+use crate::protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 use crate::{
     machines::{InconvertibleCommandError, WFCommand, WFMachinesError},
     pending_activations::{PendingActivation, PendingActivations},
     protos::{
         coresdk::{
-            task_completion, wf_activation_completion::Status, Task, TaskCompletion,
-            WfActivationCompletion, WfActivationSuccess,
+            task_completion, wf_activation_completion::Status, ActivityResult, Task,
+            TaskCompletion, WfActivationCompletion, WfActivationSuccess,
         },
         temporal::api::{
             enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
@@ -62,12 +66,16 @@ pub type Result<T, E = CoreError> = std::result::Result<T, E>;
 /// expected that only one instance of an implementation will exist for the lifetime of the
 /// worker(s) using it.
 pub trait Core: Send + Sync {
-    /// Ask the core for some work, returning a [Task], which will eventually contain either a
-    /// [protos::coresdk::WfActivation] or an [protos::coresdk::ActivityTask]. It is then the
-    /// language SDK's responsibility to call the appropriate code with the provided inputs.
+    /// Ask the core for some work, returning a [Task], which will contain a [protos::coresdk::WfActivation].
+    /// It is then the language SDK's responsibility to call the appropriate code with the provided inputs.
     ///
     /// TODO: Examples
+    /// TODO: rename to poll_workflow_task and change result type to WfActivation
     fn poll_task(&self, task_queue: &str) -> Result<Task>;
+
+    /// Ask the core for some work, returning a [protos::coresdk::Task], which will contain a [protos::coresdk::ActivityTask].
+    /// It is then the language SDK's responsibility to call the completion API.
+    fn poll_activity_task(&self, task_queue: &str) -> Result<Task>;
 
     /// Tell the core that some work has been completed - whether as a result of running workflow
     /// code or executing an activity.
@@ -158,8 +166,8 @@ where
 
         // This will block forever (unless interrupted by shutdown) in the event there is no work
         // from the server
-        match self.poll_server(task_queue) {
-            Ok(work) => {
+        match self.poll_server(PollTaskRequest::Workflow(task_queue.to_owned())) {
+            Ok(PollTaskResponse::WorkflowTask(work)) => {
                 let task_token = work.task_token.clone();
                 debug!(
                     task_token = %fmt_task_token(&task_token),
@@ -180,8 +188,29 @@ where
                     variant: next_activation.activation.map(Into::into),
                 })
             }
+            // Drain pending activations in case of shutdown.
             Err(CoreError::ShuttingDown) => self.poll_task(task_queue),
             Err(e) => Err(e),
+            Ok(PollTaskResponse::ActivityTask(_)) => Err(CoreError::UnexpectedResult),
+        }
+    }
+
+    #[instrument(skip(self))]
+    fn poll_activity_task(&self, task_queue: &str) -> Result<Task> {
+        if self.shutdown_requested.load(Ordering::SeqCst) {
+            return Err(CoreError::ShuttingDown);
+        }
+
+        match self.poll_server(PollTaskRequest::Activity(task_queue.to_owned())) {
+            Ok(PollTaskResponse::ActivityTask(work)) => {
+                let task_token = work.task_token.clone();
+                Ok(Task {
+                    task_token,
+                    variant: None,
+                })
+            }
+            Err(e) => Err(e),
+            Ok(PollTaskResponse::WorkflowTask(_)) => Err(CoreError::UnexpectedResult),
         }
     }
 
@@ -233,8 +262,11 @@ where
                 Ok(())
             }
             TaskCompletion {
-                variant: Some(task_completion::Variant::Activity(_)),
-                ..
+                task_token,
+                variant:
+                    Some(task_completion::Variant::Activity(ActivityResult {
+                        status: Some(activity_status),
+                    })),
             } => unimplemented!(),
             _ => Err(CoreError::MalformedCompletion(req)),
         }
@@ -301,7 +333,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 
     /// Blocks polling the server until it responds, or until the shutdown flag is set (aborting
     /// the poll)
-    fn poll_server(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse> {
+    fn poll_server(&self, req: PollTaskRequest) -> Result<PollTaskResponse> {
         self.runtime.block_on(async {
             let shutdownfut = async {
                 loop {
@@ -311,14 +343,12 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             };
-            let pollfut = self
-                .server_gateway
-                .poll_workflow_task(task_queue.to_owned());
+            let poll_result_future = self.server_gateway.poll_task(req);
             tokio::select! {
                 _ = shutdownfut => {
                     Err(CoreError::ShuttingDown)
                 }
-                r = pollfut => r
+                r = poll_result_future => r
             }
         })
     }
@@ -380,6 +410,9 @@ pub enum CoreError {
     /// When thrown from complete_task, it means you should poll for a new task, receive a new
     /// task token, and complete that task.
     UnhandledCommandWhenCompleting,
+    /// Indicates that underlying function returned Ok, but result type was incorrect.
+    /// This is likely a result of a bug and should never happen.
+    UnexpectedResult,
 }
 
 #[cfg(test)]
@@ -813,14 +846,11 @@ mod test {
         let res = core.poll_task(TASK_Q).unwrap();
         assert_matches!(
             res.get_wf_jobs().as_slice(),
-            [
-                WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
-                },
-                WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
-                }
-            ]
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+            }, WfActivationJob {
+                variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+            }]
         );
     }
 }
