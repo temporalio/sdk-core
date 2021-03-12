@@ -183,6 +183,7 @@ message WFActivationCompletion {
     }
 }
 
+/// Used to report activity completion to core and to resolve the activity in a workflow activtion
 message ActivityResult {
     oneof status {
         ActivityTaskSuccess completed = 1;
@@ -191,6 +192,7 @@ message ActivityResult {
     }
 }
 
+/// Request cancellation of an activity from a workflow
 message RequestActivityCancellation {
     string activity_id = 1;
     string reason = 2;
@@ -225,14 +227,17 @@ message WFActivationFailure {
     // Other bits from RespondWorkflowTaskFailedRequest as needed
 }
 
+/// Used in ActivityResult to report cancellation
 message ActivityTaskCancelation {
 }
 
+/// Used in ActivityResult to report successful completion
 message ActivityTaskSuccess {
     temporal.api.common.v1.Payloads result = 1;
     // Other bits from RespondActivityTaskCompletedRequest as needed
 }
 
+/// Used in ActivityResult to report failure
 message ActivityTaskFailure {
     temporal.api.failure.v1.Failure failure = 1;
     // Other bits from RespondActivityTaskFailedRequest as needed
