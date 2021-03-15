@@ -188,6 +188,7 @@ message ActivityResult {
     oneof status {
         ActivityTaskSuccess completed = 1;
         ActivityTaskFailure failed = 2;
+        ActivityTaskCancelation canceled = 3;
     }
 }
 
