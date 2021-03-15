@@ -27,6 +27,7 @@ pub use pollers::{
 };
 pub use url::Url;
 
+use crate::protos::coresdk::activity_result::Status;
 use crate::protos::coresdk::{activity_result, ActivityTask};
 use crate::protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 use crate::{
@@ -282,7 +283,7 @@ where
                                 .complete_activity_task(task_token, success.result),
                         )?;
                     }
-                    activity_result::Status::Failed(_) => unimplemented!(),
+                    _ => unimplemented!(),
                 }
                 Ok(())
             }
