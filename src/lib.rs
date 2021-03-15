@@ -27,15 +27,15 @@ pub use pollers::{
 };
 pub use url::Url;
 
-use crate::protos::coresdk::ActivityTask;
+use crate::protos::coresdk::{activity_result, ActivityTask};
 use crate::protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 use crate::{
     machines::{InconvertibleCommandError, WFCommand, WFMachinesError},
     pending_activations::{PendingActivation, PendingActivations},
     protos::{
         coresdk::{
-            task_completion, wf_activation_completion::Status, ActivityResult, Task,
-            TaskCompletion, WfActivationCompletion, WfActivationSuccess,
+            task_completion, wf_activation_completion, ActivityResult, Task, TaskCompletion,
+            WfActivationCompletion, WfActivationSuccess,
         },
         temporal::api::{
             enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
@@ -80,6 +80,9 @@ pub trait Core: Send + Sync {
     /// Tell the core that some work has been completed - whether as a result of running workflow
     /// code or executing an activity.
     fn complete_task(&self, req: TaskCompletion) -> Result<()>;
+
+    /// Tell the core that activity has completed. This will result in core calling the server and completing activity synchronously.
+    fn complete_activity_task(&self, req: TaskCompletion) -> Result<()>;
 
     /// Returns an instance of ServerGateway.
     fn server_gateway(&self) -> Result<Arc<dyn ServerGatewayApis>>;
@@ -230,7 +233,7 @@ where
                     .map(|x| x.value().clone())
                     .ok_or_else(|| CoreError::NothingFoundForTaskToken(task_token.clone()))?;
                 match wfstatus {
-                    Status::Successful(success) => {
+                    wf_activation_completion::Status::Successful(success) => {
                         self.push_lang_commands(&run_id, success)?;
                         let commands = self.access_wf_machine(&run_id, move |mgr| {
                             Ok(mgr.machines.get_commands())
@@ -245,7 +248,7 @@ where
                             )?;
                         }
                     }
-                    Status::Failed(failure) => {
+                    wf_activation_completion::Status::Failed(failure) => {
                         // Blow up any cached data associated with the workflow
                         self.evict_run(&run_id);
 
@@ -261,13 +264,31 @@ where
                 }
                 Ok(())
             }
+            _ => Err(CoreError::MalformedCompletion(req)),
+        }
+    }
+
+    #[instrument(skip(self))]
+    fn complete_activity_task(&self, req: TaskCompletion) -> Result<()> {
+        match req {
             TaskCompletion {
                 task_token,
                 variant:
                     Some(task_completion::Variant::Activity(ActivityResult {
-                        status: Some(activity_status),
+                        status: Some(status),
                     })),
-            } => unimplemented!(),
+            } => {
+                match status {
+                    activity_result::Status::Completed(success) => {
+                        self.runtime.block_on(
+                            self.server_gateway
+                                .complete_activity_task(task_token, success.result),
+                        )?;
+                    }
+                    activity_result::Status::Failed(_) => unimplemented!(),
+                }
+                Ok(())
+            }
             _ => Err(CoreError::MalformedCompletion(req)),
         }
     }

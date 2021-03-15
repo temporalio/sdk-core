@@ -2,8 +2,9 @@ use std::time::Duration;
 
 use crate::protos::temporal::api::common::v1::{Payloads, WorkflowExecution};
 use crate::protos::temporal::api::workflowservice::v1::{
-    PollActivityTaskQueueRequest, PollActivityTaskQueueResponse, SignalWorkflowExecutionRequest,
-    SignalWorkflowExecutionResponse,
+    PollActivityTaskQueueRequest, PollActivityTaskQueueResponse,
+    RespondActivityTaskCompletedRequest, RespondActivityTaskCompletedResponse,
+    SignalWorkflowExecutionRequest, SignalWorkflowExecutionResponse,
 };
 use crate::{
     machines::ProtoCommand,
@@ -117,6 +118,12 @@ pub trait ServerGatewayApis {
         task_token: Vec<u8>,
         commands: Vec<ProtoCommand>,
     ) -> Result<RespondWorkflowTaskCompletedResponse>;
+
+    async fn complete_activity_task(
+        &self,
+        task_token: Vec<u8>,
+        result: Option<Payloads>,
+    ) -> Result<RespondActivityTaskCompletedResponse>;
 
     /// Fail task by sending the failure to the server. `task_token` is the task token that would've
     /// been received from [PollWorkflowTaskQueueApi::poll].
@@ -301,6 +308,24 @@ impl ServerGatewayApis for ServerGateway {
                 input: payloads,
                 identity: self.opts.identity.clone(),
                 ..Default::default()
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn complete_activity_task(
+        &self,
+        task_token: Vec<u8>,
+        result: Option<Payloads>,
+    ) -> Result<RespondActivityTaskCompletedResponse> {
+        Ok(self
+            .service
+            .clone()
+            .respond_activity_task_completed(RespondActivityTaskCompletedRequest {
+                task_token,
+                result,
+                identity: self.opts.identity.clone(),
+                namespace: self.opts.namespace.clone(),
             })
             .await?
             .into_inner())
