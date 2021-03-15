@@ -183,7 +183,7 @@ message WFActivationCompletion {
     }
 }
 
-/// Used to report activity completion to core and to resolve the activity in a workflow activtion
+/// Used to report activity completion to core and to resolve the activity in a workflow activation
 message ActivityResult {
     oneof status {
         ActivityTaskSuccess completed = 1;

@@ -1,4 +1,5 @@
 use crate::protos::temporal::api::command::v1::ScheduleActivityTaskCommandAttributes;
+use crate::protos::temporal::api::common::v1::Payloads;
 use crate::{
     machines::WFCommand,
     protos::{
