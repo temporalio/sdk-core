@@ -189,8 +189,7 @@ message WFActivationCompletion {
 message ActivityResult {
     oneof status {
         ActivityTaskSuccess completed = 1;
-        ActivityTaskCancelation canceled = 2;
-        ActivityTaskFailure failed = 3;
+        ActivityTaskFailure failed = 2;
     }
 }
 
