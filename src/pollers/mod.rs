@@ -3,7 +3,9 @@ use std::time::Duration;
 use crate::protos::temporal::api::common::v1::{Payloads, WorkflowExecution};
 use crate::protos::temporal::api::workflowservice::v1::{
     PollActivityTaskQueueRequest, PollActivityTaskQueueResponse,
+    RespondActivityTaskCanceledRequest, RespondActivityTaskCanceledResponse,
     RespondActivityTaskCompletedRequest, RespondActivityTaskCompletedResponse,
+    RespondActivityTaskFailedRequest, RespondActivityTaskFailedResponse,
     SignalWorkflowExecutionRequest, SignalWorkflowExecutionResponse,
 };
 use crate::{
@@ -124,6 +126,18 @@ pub trait ServerGatewayApis {
         task_token: Vec<u8>,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse>;
+
+    async fn cancel_activity_task(
+        &self,
+        task_token: Vec<u8>,
+        details: Option<Payloads>,
+    ) -> Result<RespondActivityTaskCanceledResponse>;
+
+    async fn fail_activity_task(
+        &self,
+        task_token: Vec<u8>,
+        failure: Option<Failure>,
+    ) -> Result<RespondActivityTaskFailedResponse>;
 
     /// Fail task by sending the failure to the server. `task_token` is the task token that would've
     /// been received from [PollWorkflowTaskQueueApi::poll].
@@ -324,6 +338,42 @@ impl ServerGatewayApis for ServerGateway {
             .respond_activity_task_completed(RespondActivityTaskCompletedRequest {
                 task_token,
                 result,
+                identity: self.opts.identity.clone(),
+                namespace: self.opts.namespace.clone(),
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn cancel_activity_task(
+        &self,
+        task_token: Vec<u8>,
+        details: Option<Payloads>,
+    ) -> Result<RespondActivityTaskCanceledResponse> {
+        Ok(self
+            .service
+            .clone()
+            .respond_activity_task_canceled(RespondActivityTaskCanceledRequest {
+                task_token,
+                details,
+                identity: self.opts.identity.clone(),
+                namespace: self.opts.namespace.clone(),
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn fail_activity_task(
+        &self,
+        task_token: Vec<u8>,
+        failure: Option<Failure>,
+    ) -> Result<RespondActivityTaskFailedResponse> {
+        Ok(self
+            .service
+            .clone()
+            .respond_activity_task_failed(RespondActivityTaskFailedRequest {
+                task_token,
+                failure,
                 identity: self.opts.identity.clone(),
                 namespace: self.opts.namespace.clone(),
             })

@@ -28,7 +28,10 @@ pub use pollers::{
 pub use url::Url;
 
 use crate::protos::coresdk::activity_result::Status;
-use crate::protos::coresdk::{activity_result, ActivityTask};
+use crate::protos::coresdk::{
+    activity_result, ActivityTask, ActivityTaskCancelation, ActivityTaskFailure,
+    ActivityTaskSuccess,
+};
 use crate::protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 use crate::{
     machines::{InconvertibleCommandError, WFCommand, WFMachinesError},
@@ -280,13 +283,23 @@ where
                     })),
             } => {
                 match status {
-                    activity_result::Status::Completed(success) => {
+                    activity_result::Status::Completed(ActivityTaskSuccess { result }) => {
                         self.runtime.block_on(
                             self.server_gateway
-                                .complete_activity_task(task_token, success.result),
+                                .complete_activity_task(task_token, result),
                         )?;
                     }
-                    _ => unimplemented!(),
+                    activity_result::Status::Failed(ActivityTaskFailure { failure }) => {
+                        self.runtime.block_on(
+                            self.server_gateway.fail_activity_task(task_token, failure),
+                        )?;
+                    }
+                    activity_result::Status::Canceled(ActivityTaskCancelation { details }) => {
+                        self.runtime.block_on(
+                            self.server_gateway
+                                .cancel_activity_task(task_token, details),
+                        )?;
+                    }
                 }
                 Ok(())
             }
