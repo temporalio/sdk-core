@@ -92,10 +92,6 @@ pub enum MachineResponse {
     #[display(fmt = "PushWFJob")]
     PushWFJob(#[from(forward)] wf_activation_job::Variant),
 
-    // TODO remove and use IssueNewCommand
-    #[display(fmt = "PushActivityJob")]
-    PushActivityJob(activity_task::Variant),
-
     IssueNewCommand(ProtoCommand),
     #[display(fmt = "TriggerWFTaskStarted")]
     TriggerWFTaskStarted {
@@ -523,9 +519,6 @@ impl WorkflowMachines {
                 MachineResponse::NoOp => (),
                 MachineResponse::IssueNewCommand(_) => {
                     panic!("Issue new command machine response not expected here")
-                }
-                MachineResponse::PushActivityJob(a) => {
-                    unimplemented!()
                 }
             }
         }
