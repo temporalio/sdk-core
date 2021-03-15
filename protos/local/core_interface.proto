@@ -231,6 +231,7 @@ message WFActivationFailure {
 
 /// Used in ActivityResult to report cancellation
 message ActivityTaskCancelation {
+    temporal.api.common.v1.Payloads details = 1;
 }
 
 /// Used in ActivityResult to report successful completion
