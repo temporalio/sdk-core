@@ -288,9 +288,7 @@ mod test {
                 timer_id: "timer1".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
             };
-            dbg!("BLORP");
             command_sink.timer(timer).await;
-            dbg!("DORP");
 
             let complete = CompleteWorkflowExecutionCommandAttributes::default();
             command_sink.send(complete.into());
@@ -308,9 +306,7 @@ mod test {
     }
 
     #[rstest]
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_fire_happy_path_inc(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        // tracing_init();
+    fn test_fire_happy_path_inc(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
         let (t, mut state_machines) = fire_happy_hist;
 
         let commands = t
@@ -331,8 +327,7 @@ mod test {
     }
 
     #[rstest]
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_fire_happy_path_full(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
+    fn test_fire_happy_path_full(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
         let (t, mut state_machines) = fire_happy_hist;
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, None)
@@ -344,8 +339,8 @@ mod test {
         );
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn mismatched_timer_ids_errors() {
+    #[test]
+    fn mismatched_timer_ids_errors() {
         let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
             let timer = StartTimerCommandAttributes {
                 timer_id: "realid".to_string(),
@@ -399,8 +394,7 @@ mod test {
     }
 
     #[rstest]
-    #[tokio::test(flavor = "multi_thread")]
-    async fn incremental_cancellation(cancellation_setup: (TestHistoryBuilder, WorkflowMachines)) {
+    fn incremental_cancellation(cancellation_setup: (TestHistoryBuilder, WorkflowMachines)) {
         let (t, mut state_machines) = cancellation_setup;
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
@@ -425,8 +419,7 @@ mod test {
     }
 
     #[rstest]
-    #[tokio::test(flavor = "multi_thread")]
-    async fn full_cancellation(cancellation_setup: (TestHistoryBuilder, WorkflowMachines)) {
+    fn full_cancellation(cancellation_setup: (TestHistoryBuilder, WorkflowMachines)) {
         let (t, mut state_machines) = cancellation_setup;
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, None)
@@ -435,8 +428,8 @@ mod test {
         assert_eq!(commands.len(), 0);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn cancel_before_sent_to_server() {
+    #[test]
+    fn cancel_before_sent_to_server() {
         let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
             let cancel_timer_fut = cmd_sink.timer(StartTimerCommandAttributes {
                 timer_id: "cancel_timer".to_string(),

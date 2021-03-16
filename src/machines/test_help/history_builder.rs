@@ -146,7 +146,7 @@ impl TestHistoryBuilder {
     }
 
     /// Handle workflow task(s) using the provided [WorkflowMachines]. Will process as many workflow
-    /// tasks as the provided `to_wf_task_num` parameter..
+    /// tasks as the provided `to_wf_task_num` parameter.
     ///
     /// # Panics
     /// * Can panic if the passed in machines have been manipulated outside of this builder

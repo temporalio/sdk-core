@@ -7,7 +7,7 @@ pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
 pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFetcher};
 
 use crate::{
-    machines::{WFCommand, WorkflowMachines},
+    machines::{ProtoCommand, WFCommand, WorkflowMachines},
     protos::{
         coresdk::WfActivation,
         temporal::api::{history::v1::History, workflowservice::v1::PollWorkflowTaskQueueResponse},
@@ -21,7 +21,7 @@ use std::sync::mpsc::Sender;
 /// associated with that specific workflow run.
 pub(crate) struct WorkflowManager {
     pub machines: WorkflowMachines,
-    pub command_sink: Sender<Vec<WFCommand>>,
+    command_sink: Sender<Vec<WFCommand>>,
     /// The last recorded history we received from the server for this workflow run. This must be
     /// kept because the lang side polls & completes for every workflow task, but we do not need
     /// to poll the server that often during replay.
@@ -106,5 +106,13 @@ impl WorkflowManager {
             activation,
             more_activations_needed,
         })
+    }
+
+    // Feed the workflow machines new commands issued by the executing workflow code, iterate
+    // the workflow machines, and spit out the commands which are ready to be sent off to the server
+    pub fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<Vec<ProtoCommand>> {
+        self.command_sink.send(cmds)?;
+        self.machines.iterate_machines()?;
+        Ok(self.machines.get_commands())
     }
 }
