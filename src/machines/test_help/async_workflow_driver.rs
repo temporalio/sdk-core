@@ -152,8 +152,7 @@ impl TestWorkflowDriver {
     /// Create a new test workflow driver from a workflow "function" which is really a closure
     /// that returns an async block.
     ///
-    /// This function, though not async itself, must be called from an async context as it depends
-    /// on the tokio runtime to spawn the workflow future.
+    /// Creates a tokio runtime to execute the workflow on.
     pub fn new<F, Fut>(workflow_fn: F) -> Self
     where
         F: Fn(CommandSender) -> Fut,
