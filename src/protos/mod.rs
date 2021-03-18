@@ -104,7 +104,9 @@ pub mod temporal {
         pub mod command {
             pub mod v1 {
                 include!("temporal.api.command.v1.rs");
+                use crate::protos::coresdk::{activity_task, ActivityTask, StartActivity};
                 use crate::protos::temporal::api::enums::v1::CommandType;
+                use crate::protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
                 use command::Attributes;
                 use std::fmt::{Display, Formatter};
 
@@ -127,7 +129,40 @@ pub mod temporal {
                                 command_type: CommandType::FailWorkflowExecution as i32,
                                 attributes: Some(a),
                             },
+                            a @ Attributes::ScheduleActivityTaskCommandAttributes(_) => Self {
+                                command_type: CommandType::ScheduleActivityTask as i32,
+                                attributes: Some(a),
+                            },
+                            a @ Attributes::RequestCancelActivityTaskCommandAttributes(_) => Self {
+                                command_type: CommandType::RequestCancelActivityTask as i32,
+                                attributes: Some(a),
+                            },
                             _ => unimplemented!(),
+                        }
+                    }
+                }
+
+                impl From<PollActivityTaskQueueResponse> for ActivityTask {
+                    fn from(r: PollActivityTaskQueueResponse) -> Self {
+                        ActivityTask {
+                            activity_id: r.activity_id,
+                            variant: Some(activity_task::Variant::Start(StartActivity {
+                                workflow_namespace: r.workflow_namespace,
+                                workflow_type: r.workflow_type,
+                                workflow_execution: r.workflow_execution,
+                                activity_type: r.activity_type,
+                                header: r.header,
+                                input: r.input,
+                                heartbeat_details: r.heartbeat_details,
+                                scheduled_time: r.scheduled_time,
+                                current_attempt_scheduled_time: r.current_attempt_scheduled_time,
+                                started_time: r.started_time,
+                                attempt: r.attempt,
+                                schedule_to_close_timeout: r.schedule_to_close_timeout,
+                                start_to_close_timeout: r.start_to_close_timeout,
+                                heartbeat_timeout: r.heartbeat_timeout,
+                                retry_policy: r.retry_policy,
+                            })),
                         }
                     }
                 }

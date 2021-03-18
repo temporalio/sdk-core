@@ -27,12 +27,9 @@ pub use pollers::{
 };
 pub use url::Url;
 
-use crate::protos::coresdk::activity_result::Status;
 use crate::protos::coresdk::{
-    activity_result, ActivityTask, ActivityTaskCancelation, ActivityTaskFailure,
-    ActivityTaskSuccess,
+    activity_result, task, ActivityTaskCancelation, ActivityTaskFailure, ActivityTaskSuccess,
 };
-use crate::protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 use crate::{
     machines::{InconvertibleCommandError, ProtoCommand, WFCommand, WFMachinesError},
     pending_activations::{PendingActivation, PendingActivations},
@@ -213,7 +210,7 @@ where
                 let task_token = work.task_token.clone();
                 Ok(Task {
                     task_token,
-                    variant: None,
+                    variant: Some(task::Variant::Activity(work.into())),
                 })
             }
             Err(e) => Err(e),
@@ -450,7 +447,9 @@ pub enum CoreError {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::protos::temporal::api::command::v1::FailWorkflowExecutionCommandAttributes;
+    use crate::protos::temporal::api::command::v1::{
+        FailWorkflowExecutionCommandAttributes, ScheduleActivityTaskCommandAttributes,
+    };
     use crate::{
         machines::test_help::{build_fake_core, FakeCore, TestHistoryBuilder},
         protos::{
@@ -480,6 +479,14 @@ mod test {
         let wfid = "fake_wf_id";
 
         let mut t = canned_histories::single_timer("fake_timer");
+        build_fake_core(wfid, RUN_ID, &mut t, hist_batches)
+    }
+
+    #[fixture(hist_batches = &[])]
+    fn single_activity_setup(hist_batches: &[usize]) -> FakeCore {
+        let wfid = "fake_wf_id";
+
+        let mut t = canned_histories::single_activity("fake_activity");
         build_fake_core(wfid, RUN_ID, &mut t, hist_batches)
     }
 
@@ -523,7 +530,47 @@ mod test {
         .unwrap();
     }
 
-    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
+    #[rstest(core,
+    case::incremental(single_activity_setup(& [1, 2])),
+    case::replay(single_activity_setup(& [2]))
+    )]
+    fn single_activity_completion(core: FakeCore) {
+        let res = core.poll_task(TASK_Q).unwrap();
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
+            }]
+        );
+        assert!(core.workflow_machines.exists(RUN_ID));
+
+        let task_tok = res.task_token;
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![ScheduleActivityTaskCommandAttributes {
+                activity_id: "fake_activity".to_string(),
+                ..Default::default()
+            }
+            .into()],
+            task_tok,
+        ))
+        .unwrap();
+
+        let res = core.poll_task(TASK_Q).unwrap();
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveActivity(_)),
+            }]
+        );
+        let task_tok = res.task_token;
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            task_tok,
+        ))
+        .unwrap();
+    }
+
+    #[rstest(hist_batches, case::incremental(& [1, 2]), case::replay(& [2]))]
     fn parallel_timer_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";

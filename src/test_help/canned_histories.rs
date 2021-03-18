@@ -194,6 +194,7 @@ pub fn single_activity(activity_id: &str) -> TestHistoryBuilder {
             ActivityTaskCompletedEventAttributes {
                 scheduled_event_id,
                 started_event_id,
+                // todo add the result payload
                 ..Default::default()
             },
         ),

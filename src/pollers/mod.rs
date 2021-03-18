@@ -113,7 +113,7 @@ pub trait ServerGatewayApis {
     async fn poll_activity_task(&self, task_queue: String) -> Result<PollTaskResponse>;
 
     /// Complete a task by sending it to the server. `task_token` is the task token that would've
-    /// been received from [PollWorkflowTaskQueueApi::poll]. `commands` is a list of new commands
+    /// been received from [poll_workflow_task_queue] API. `commands` is a list of new commands
     /// to send to the server, such as starting a timer.
     async fn complete_workflow_task(
         &self,
@@ -121,18 +121,27 @@ pub trait ServerGatewayApis {
         commands: Vec<ProtoCommand>,
     ) -> Result<RespondWorkflowTaskCompletedResponse>;
 
+    /// Complete activity task by sending response to the server. `task_token` contains activity identifier that
+    /// would've been received from [poll_activity_task_queue] API. `result` is a blob that contains
+    /// activity response.
     async fn complete_activity_task(
         &self,
         task_token: Vec<u8>,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse>;
 
+    /// Cancel activity task by sending response to the server. `task_token` contains activity identifier that
+    /// would've been received from [poll_activity_task_queue] API. `details` is a blob that provides arbitrary
+    /// user defined cancellation info.
     async fn cancel_activity_task(
         &self,
         task_token: Vec<u8>,
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse>;
 
+    /// Fail activity task by sending response to the server. `task_token` contains activity identifier that
+    /// would've been received from [poll_activity_task_queue] API. `failure` provides failure details, such
+    /// as message, cause and stack trace.
     async fn fail_activity_task(
         &self,
         task_token: Vec<u8>,
@@ -158,13 +167,19 @@ pub trait ServerGatewayApis {
     ) -> Result<SignalWorkflowExecutionResponse>;
 }
 
+/// Contains poll task request. String parameter defines a task queue to be polled.
 pub enum PollTaskRequest {
+    /// Instructs core to poll for workflow task.
     Workflow(String),
+    /// Instructs core to poll for activity task.
     Activity(String),
 }
 
+/// Contains poll task response.
 pub enum PollTaskResponse {
+    /// Poll response for workflow task.
     WorkflowTask(PollWorkflowTaskQueueResponse),
+    /// Poll response for activity task.
     ActivityTask(PollActivityTaskQueueResponse),
 }
 

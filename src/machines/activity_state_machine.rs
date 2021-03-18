@@ -328,7 +328,10 @@ impl StartedActivityCancelEventRecorded {
         attrs: ActivityTaskCompletedEventAttributes,
     ) -> ActivityMachineTransition {
         // notify_completed
-        ActivityMachineTransition::default::<Completed>()
+        ActivityMachineTransition::ok(
+            vec![ActivityMachineCommand::Complete(attrs.result)],
+            Completed::default(),
+        )
     }
     pub(super) fn on_activity_task_failed(self) -> ActivityMachineTransition {
         // notify_failed

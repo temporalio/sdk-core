@@ -1,4 +1,4 @@
-use crate::protos::coresdk::{activity_task, SignalWorkflow};
+use crate::protos::coresdk::SignalWorkflow;
 use crate::{
     machines::WFCommand,
     protos::coresdk::wf_activation_job,

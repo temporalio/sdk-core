@@ -1,5 +1,4 @@
 use crate::machines::activity_state_machine::new_activity;
-use crate::protos::coresdk::activity_task;
 use crate::workflow::{DrivenWorkflow, WorkflowFetcher};
 use crate::{
     core_tracing::VecDisplayer,
@@ -10,7 +9,7 @@ use crate::{
         TemporalStateMachine, WFCommand,
     },
     protos::{
-        coresdk::{wf_activation_job, ActivityTask, StartWorkflow, UpdateRandomSeed, WfActivation},
+        coresdk::{wf_activation_job, StartWorkflow, UpdateRandomSeed, WfActivation},
         temporal::api::{
             enums::v1::{CommandType, EventType},
             history::v1::{history_event, HistoryEvent},
@@ -163,7 +162,7 @@ impl WorkflowMachines {
     /// is the last event in the history.
     ///
     /// TODO: Describe what actually happens in here
-    #[instrument(level = "debug", skip(self), fields(run_id = %self.run_id))]
+    #[instrument(level = "debug", skip(self), fields(run_id = % self.run_id))]
     pub(crate) fn handle_event(
         &mut self,
         event: &HistoryEvent,
@@ -371,7 +370,7 @@ impl WorkflowMachines {
                 return Err(WFMachinesError::UnexpectedEvent(
                     event.clone(),
                     "The event is non a non-stateful event, but we tried to handle it as one",
-                ))
+                ));
             }
         }
         Ok(())
@@ -557,7 +556,7 @@ impl WorkflowMachines {
                             return Err(WFMachinesError::UnexpectedMachineResponse(
                                 v,
                                 "When cancelling timer",
-                            ))
+                            ));
                         }
                     }
                 }
@@ -567,6 +566,7 @@ impl WorkflowMachines {
                     self.activity_id_to_machine.insert(aid, activity.machine);
                     self.current_wf_task_commands.push_back(activity);
                 }
+                WFCommand::RequestCancelActivity(_) => unimplemented!(),
                 WFCommand::CompleteWorkflow(attrs) => {
                     let cwfm = self.add_new_machine(complete_workflow(attrs));
                     self.current_wf_task_commands.push_back(cwfm);
