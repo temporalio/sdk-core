@@ -2,13 +2,16 @@ syntax = "proto3";
 
 package coresdk;
 
+import "activity_result.proto";
+import "activity_task.proto";
+import "common.proto";
+import "workflow_activation.proto";
+import "workflow_commands.proto";
+import "workflow_completion.proto";
+
 // Note: Intellij will think these imports don't work because of the slightly odd nature of
 // the include paths. You can make it work by going to the "Protobuf Support" settings section
 // and adding the "api_upstream" subdir as an include path.
-
-import "common.proto";
-import "workflow_commands.proto";
-
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/empty.proto";
@@ -34,125 +37,11 @@ message Task {
     // The type of task to be performed
     oneof variant {
         // Wake up a workflow
-        WFActivation workflow = 2;
+        workflow_activation.WFActivation workflow = 2;
         // Run an activity
-        ActivityTask activity = 3;
+        activity_task.ActivityTask activity = 3;
     }
 }
-
-// An instruction to the lang sdk to run some workflow code, whether for the first time or from
-// a cached state.
-message WFActivation {
-    // The current time as understood by the workflow, which is set by workflow task started events
-    google.protobuf.Timestamp timestamp = 1;
-    // The id of the currently active run of the workflow
-    string run_id = 2;
-    // The things to do upon activating the workflow
-    repeated WFActivationJob jobs = 3;
-}
-
-message WFActivationJob {
-    oneof variant {
-        // Begin a workflow for the first time
-        StartWorkflow start_workflow = 1;
-        // A timer has fired, allowing whatever was waiting on it (if anything) to proceed
-        FireTimer fire_timer = 2;
-        // Workflow was reset. The randomness seed must be updated.
-        UpdateRandomSeed update_random_seed = 4;
-        // A request to query the workflow was received.
-        QueryWorkflow query_workflow = 5;
-        // A request to cancel the workflow was received.
-        CancelWorkflow cancel_workflow = 6;
-        // A request to signal the workflow was received.
-        SignalWorkflow signal_workflow = 7;
-        // An activity was resolved with, result could be completed, failed or cancelled
-        ResolveActivity resolve_activity = 8;
-    }
-}
-
-message StartWorkflow {
-    // The identifier the lang-specific sdk uses to execute workflow code
-    string workflow_type = 1;
-    // The workflow id used on the temporal server
-    string workflow_id = 2;
-    // Inputs to the workflow code
-    repeated common.Payload arguments = 3;
-    // The seed must be used to initialize the random generator used by SDK.
-    // RandomSeedUpdatedAttributes are used to deliver seed updates.
-    uint64 randomness_seed = 4;
-
-    // TODO: Do we need namespace here, or should that just be fetchable easily?
-    //   will be others - workflow exe started attrs, etc
-}
-
-message FireTimer {
-    string timer_id = 1;
-}
-
-message ResolveActivity {
-    string activity_id = 1;
-    ActivityResult result = 2;
-}
-
-message UpdateRandomSeed {
-    uint64 randomness_seed = 1;
-}
-
-message QueryWorkflow {
-    string query_type = 1;
-    repeated common.Payload arguments = 2;
-}
-
-message CancelWorkflow {
-    // TODO: add attributes here
-}
-
-message SignalWorkflow {
-    string signal_name = 1;
-    repeated common.Payload input = 2;
-    string identity = 3;
-}
-
-message ActivityTask {
-    string activity_id = 1;
-    oneof variant {
-        // Start activity execution.
-        StartActivity start = 2;
-        // Attempt to cancel activity execution.
-        CancelActivity cancel = 3;
-    }
-}
-
-message StartActivity {
-    string workflow_namespace = 1;
-    // The workflow's type name or function identifier
-    string workflow_type = 2;
-    common.WorkflowExecution workflow_execution = 3;
-    // The activity's type name or function identifier
-    string activity_type = 4;
-    map<string, common.Payload> header_fields = 5;
-    // Arguments to the activity
-    repeated common.Payload input = 6;
-    repeated common.Payload heartbeat_details = 7;
-
-    google.protobuf.Timestamp scheduled_time = 8;
-    google.protobuf.Timestamp current_attempt_scheduled_time = 9;
-    google.protobuf.Timestamp started_time = 10;
-    int32 attempt = 11;
-
-    google.protobuf.Duration schedule_to_close_timeout = 12;
-    google.protobuf.Duration start_to_close_timeout = 13;
-    google.protobuf.Duration heartbeat_timeout = 14;
-    // This is an actual retry policy the service uses. It can be different from the one provided
-    // (or not) during activity scheduling as the service can override the provided one in case its
-    // values are not specified or exceed configured system limits.
-    common.RetryPolicy retry_policy = 15;
-}
-
-message CancelActivity {
-    // TODO: add attributes
-}
-
 
 // Sent from lang side to core when calling [crate::Core::complete_task]
 message TaskCompletion {
@@ -160,57 +49,10 @@ message TaskCompletion {
     bytes task_token = 1;
     oneof variant {
         // Complete a workflow task
-        WFActivationCompletion workflow = 2;
+        workflow_completion.WFActivationCompletion workflow = 2;
         // Complete an activity task
-        ActivityResult activity = 3;
+        activity_result.ActivityResult activity = 3;
     }
-}
-
-message WFActivationCompletion {
-    oneof status {
-        WFActivationSuccess successful = 1;
-        WFActivationFailure failed = 2;
-    }
-}
-
-/// Used to report activity completion to core and to resolve the activity in a workflow activation
-message ActivityResult {
-    oneof status {
-        ActivityTaskSuccess completed = 1;
-        ActivityTaskFailure failed = 2;
-        ActivityTaskCancelation canceled = 3;
-    }
-}
-
-message CoreCommand {
-    oneof variant {
-    }
-}
-
-message WFActivationSuccess {
-    // A list of commands to send back to the temporal server
-    repeated workflow_commands.WorkflowCommand commands = 1;
-}
-
-message WFActivationFailure {
-    common.UserCodeFailure failure = 1;
-}
-
-/// Used in ActivityResult to report cancellation
-message ActivityTaskCancelation {
-    repeated common.Payload details = 1;
-}
-
-/// Used in ActivityResult to report successful completion
-message ActivityTaskSuccess {
-    repeated common.Payload result = 1;
-    // Other bits from RespondActivityTaskCompletedRequest as needed
-}
-
-/// Used in ActivityResult to report failure
-message ActivityTaskFailure {
-    repeated common.Payload failure = 1;
-    // Other bits from RespondActivityTaskFailedRequest as needed
 }
 
 // A request as given to [crate::Core::send_activity_heartbeat]

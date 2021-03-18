@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+/**
+ * Definitions of the different workflow activation jobs returned from [crate::Core::poll_task]. The
+ * lang SDK applies these activation jobs to drive workflows.
+ */
+package coresdk.workflow_activation;
+
+import "common.proto";
+import "activity_result.proto";
+
+import "google/protobuf/timestamp.proto";
+
+/// An instruction to the lang sdk to run some workflow code, whether for the first time or from
+/// a cached state.
+message WFActivation {
+    /// The current time as understood by the workflow, which is set by workflow task started events
+    google.protobuf.Timestamp timestamp = 1;
+    /// The id of the currently active run of the workflow
+    string run_id = 2;
+    /// The things to do upon activating the workflow
+    repeated WFActivationJob jobs = 3;
+}
+
+message WFActivationJob {
+    oneof variant {
+        /// Begin a workflow for the first time
+        StartWorkflow start_workflow = 1;
+        /// A timer has fired, allowing whatever was waiting on it (if anything) to proceed
+        FireTimer fire_timer = 2;
+        /// Workflow was reset. The randomness seed must be updated.
+        UpdateRandomSeed update_random_seed = 4;
+        /// A request to query the workflow was received.
+        QueryWorkflow query_workflow = 5;
+        /// A request to cancel the workflow was received.
+        CancelWorkflow cancel_workflow = 6;
+        /// A request to signal the workflow was received.
+        SignalWorkflow signal_workflow = 7;
+        /// An activity was resolved with, result could be completed, failed or cancelled
+        ResolveActivity resolve_activity = 8;
+    }
+}
+
+/// Start a new workflow
+message StartWorkflow {
+    /// The identifier the lang-specific sdk uses to execute workflow code
+    string workflow_type = 1;
+    /// The workflow id used on the temporal server
+    string workflow_id = 2;
+    /// Inputs to the workflow code
+    repeated common.Payload arguments = 3;
+    /// The seed must be used to initialize the random generator used by SDK.
+    /// RandomSeedUpdatedAttributes are used to deliver seed updates.
+    uint64 randomness_seed = 4;
+
+    // TODO: Do we need namespace here, or should that just be fetchable easily?
+    //   will be others - workflow exe started attrs, etc
+}
+
+/// Notify a workflow that a timer has fired
+message FireTimer {
+    string timer_id = 1;
+}
+
+/// Notify a workflow that an activity has been resolved
+message ResolveActivity {
+    string activity_id = 1;
+    activity_result.ActivityResult result = 2;
+}
+
+/// Update the workflow's random seed
+message UpdateRandomSeed {
+    uint64 randomness_seed = 1;
+}
+
+/// Query a workflow
+message QueryWorkflow {
+    string query_type = 1;
+    repeated common.Payload arguments = 2;
+}
+
+/// Cancel a running workflow
+message CancelWorkflow {
+    // TODO: add attributes here
+}
+
+/// Send a signal to a workflow
+message SignalWorkflow {
+    string signal_name = 1;
+    repeated common.Payload input = 2;
+    string identity = 3;
+}
+

@@ -1,8 +1,15 @@
 syntax = "proto3";
 
+/**
+ * Definitions for commands from a workflow in lang SDK to core. While a workflow processes a batch
+ * of activation jobs, it accumulates these commands to be sent back to core to conclude that
+ * activation.
+ */
 package coresdk.workflow_commands;
 
 import "common.proto";
+
+import "google/protobuf/duration.proto";
 
 message WorkflowCommand {
     oneof variant {
@@ -38,24 +45,25 @@ message ScheduleActivity {
     //  TODO: Do we care about sticky/not sticky?
     string task_queue = 4;
     map<string, common.Payload> header_fields = 5;
-    repeated common.Payload input = 6;
-    // Indicates how long the caller is willing to wait for an activity completion. Limits how long
-    // retries will be attempted. Either this or start_to_close_timeout_seconds must be specified.
-    // When not specified defaults to the workflow execution timeout.
+    /// Arguments/input to the activity. Called "input" upstream.
+    repeated common.Payload arguments = 6;
+    /// Indicates how long the caller is willing to wait for an activity completion. Limits how long
+    /// retries will be attempted. Either this or start_to_close_timeout_seconds must be specified.
+    /// When not specified defaults to the workflow execution timeout.
     google.protobuf.Duration schedule_to_close_timeout = 7;
-    // Limits time an activity task can stay in a task queue before a worker picks it up. This
-    // timeout is always non retryable as all a retry would achieve is to put it back into the same
-    // queue. Defaults to schedule_to_close_timeout or workflow execution timeout if not specified.
+    /// Limits time an activity task can stay in a task queue before a worker picks it up. This
+    /// timeout is always non retryable as all a retry would achieve is to put it back into the same
+    /// queue. Defaults to schedule_to_close_timeout or workflow execution timeout if not specified.
     google.protobuf.Duration schedule_to_start_timeout = 8;
-    // Maximum time an activity is allowed to execute after a pick up by a worker. This timeout is
-    // always retryable. Either this or schedule_to_close_timeout must be specified.
-    // TODO: Is this really either or can you do both? Make oneof if mutually exclusive
+    /// Maximum time an activity is allowed to execute after a pick up by a worker. This timeout is
+    /// always retryable. Either this or schedule_to_close_timeout must be specified.
+    /// TODO: Is this really either or can you do both? Make oneof if mutually exclusive
     google.protobuf.Duration start_to_close_timeout = 9;
-    // Maximum time allowed between successful worker heartbeats.
+    /// Maximum time allowed between successful worker heartbeats.
     google.protobuf.Duration heartbeat_timeout = 10;
-    // Activities are provided by a default retry policy controlled through the service dynamic
-    // configuration. Retries are happening up to schedule_to_close_timeout. To disable retries set
-    // retry_policy.maximum_attempts to 1.
+    /// Activities are provided by a default retry policy controlled through the service dynamic
+    /// configuration. Retries are happening up to schedule_to_close_timeout. To disable retries set
+    /// retry_policy.maximum_attempts to 1.
     common.RetryPolicy retry_policy = 11;
 }
 
@@ -67,7 +75,7 @@ message QueryResult {
 }
 
 message QuerySuccess {
-    repeated common.Payload responses = 1;
+    common.Payload response = 1;
 }
 
 /// Request cancellation of an activity from a workflow
@@ -83,5 +91,5 @@ message CompleteWorkflowExecution {
 
 /// Issued when the workflow errors out
 message FailWorkflowExecution {
-
+    common.UserCodeFailure failure = 1;
 }
