@@ -237,6 +237,9 @@ impl WorkflowMachines {
 
         self.current_started_event_id = task_started_event_id;
         self.set_current_time(time);
+        // TODO: Ideally this would actually be called every time a command is pushed from a
+        //  workflow that isn't going across the public api, but as it stands that isn't really
+        //  doable, so this has to exist here for test workflow driver
         self.iterate_machines()?;
         Ok(())
     }

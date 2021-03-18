@@ -269,7 +269,6 @@ mod test {
     };
     use rstest::{fixture, rstest};
     use std::time::Duration;
-    use tracing::Level;
 
     #[fixture]
     fn fire_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
@@ -289,7 +288,7 @@ mod test {
                 timer_id: "timer1".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
             };
-            command_sink.timer(timer, true);
+            command_sink.timer(timer).await;
 
             let complete = CompleteWorkflowExecutionCommandAttributes::default();
             command_sink.send(complete.into());
@@ -308,9 +307,6 @@ mod test {
 
     #[rstest]
     fn test_fire_happy_path_inc(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let s = span!(Level::DEBUG, "Test start", t = "happy_inc");
-        let _enter = s.enter();
-
         let (t, mut state_machines) = fire_happy_hist;
 
         let commands = t
@@ -332,9 +328,6 @@ mod test {
 
     #[rstest]
     fn test_fire_happy_path_full(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let s = span!(Level::DEBUG, "Test start", t = "happy_full");
-        let _enter = s.enter();
-
         let (t, mut state_machines) = fire_happy_hist;
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, None)
@@ -353,7 +346,7 @@ mod test {
                 timer_id: "realid".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
             };
-            command_sink.timer(timer, true);
+            command_sink.timer(timer).await;
         });
 
         let t = canned_histories::single_timer("badid");
@@ -373,22 +366,19 @@ mod test {
     #[fixture]
     fn cancellation_setup() -> (TestHistoryBuilder, WorkflowMachines) {
         let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
-            let _cancel_this = cmd_sink.timer(
-                StartTimerCommandAttributes {
-                    timer_id: "cancel_timer".to_string(),
-                    start_to_fire_timeout: Some(Duration::from_secs(500).into()),
-                },
-                false,
-            );
-            cmd_sink.timer(
-                StartTimerCommandAttributes {
+            let cancel_timer_fut = cmd_sink.timer(StartTimerCommandAttributes {
+                timer_id: "cancel_timer".to_string(),
+                start_to_fire_timeout: Some(Duration::from_secs(500).into()),
+            });
+            cmd_sink
+                .timer(StartTimerCommandAttributes {
                     timer_id: "wait_timer".to_string(),
                     start_to_fire_timeout: Some(Duration::from_secs(5).into()),
-                },
-                true,
-            );
+                })
+                .await;
             // Cancel the first timer after having waited on the second
             cmd_sink.cancel_timer("cancel_timer");
+            cancel_timer_fut.await;
 
             let complete = CompleteWorkflowExecutionCommandAttributes::default();
             cmd_sink.send(complete.into());
@@ -441,15 +431,13 @@ mod test {
     #[test]
     fn cancel_before_sent_to_server() {
         let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
-            cmd_sink.timer(
-                StartTimerCommandAttributes {
-                    timer_id: "cancel_timer".to_string(),
-                    start_to_fire_timeout: Some(Duration::from_secs(500).into()),
-                },
-                false,
-            );
+            let cancel_timer_fut = cmd_sink.timer(StartTimerCommandAttributes {
+                timer_id: "cancel_timer".to_string(),
+                start_to_fire_timeout: Some(Duration::from_secs(500).into()),
+            });
             // Immediately cancel the timer
             cmd_sink.cancel_timer("cancel_timer");
+            cancel_timer_fut.await;
 
             let complete = CompleteWorkflowExecutionCommandAttributes::default();
             cmd_sink.send(complete.into());

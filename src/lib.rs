@@ -26,7 +26,7 @@ pub use pollers::{ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
 use crate::{
-    machines::{InconvertibleCommandError, WFCommand, WFMachinesError},
+    machines::{InconvertibleCommandError, ProtoCommand, WFCommand, WFMachinesError},
     pending_activations::{PendingActivation, PendingActivations},
     protos::{
         coresdk::{
@@ -202,10 +202,7 @@ where
                     .ok_or_else(|| CoreError::NothingFoundForTaskToken(task_token.clone()))?;
                 match wfstatus {
                     Status::Successful(success) => {
-                        self.push_lang_commands(&run_id, success)?;
-                        let commands = self.access_wf_machine(&run_id, move |mgr| {
-                            Ok(mgr.machines.get_commands())
-                        })?;
+                        let commands = self.push_lang_commands(&run_id, success)?;
                         // We only actually want to send commands back to the server if there are
                         // no more pending activations -- in other words the lang SDK has caught
                         // up on replay.
@@ -283,20 +280,20 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         }
     }
 
-    /// Feed commands from the lang sdk into the appropriate workflow bridge
-    fn push_lang_commands(&self, run_id: &str, success: WfActivationSuccess) -> Result<()> {
+    /// Feed commands from the lang sdk into appropriate workflow manager which will iterate
+    /// the state machines and return commands ready to be sent to the server
+    fn push_lang_commands(
+        &self,
+        run_id: &str,
+        success: WfActivationSuccess,
+    ) -> Result<Vec<ProtoCommand>> {
         // Convert to wf commands
         let cmds = success
             .commands
             .into_iter()
             .map(|c| c.try_into().map_err(Into::into))
             .collect::<Result<Vec<_>>>()?;
-        self.access_wf_machine(run_id, move |mgr| {
-            mgr.command_sink.send(cmds)?;
-            mgr.machines.iterate_machines()?;
-            Ok(())
-        })?;
-        Ok(())
+        self.access_wf_machine(run_id, move |mgr| mgr.push_commands(cmds))
     }
 
     /// Blocks polling the server until it responds, or until the shutdown flag is set (aborting
