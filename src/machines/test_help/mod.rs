@@ -1,10 +1,10 @@
 type Result<T, E = anyhow::Error> = std::result::Result<T, E>;
 
+mod async_workflow_driver;
 mod history_builder;
-mod workflow_driver;
 
+pub(super) use async_workflow_driver::{CommandSender, TestWorkflowDriver};
 pub(crate) use history_builder::TestHistoryBuilder;
-pub(super) use workflow_driver::{CommandSender, TestWorkflowDriver};
 
 use crate::workflow::WorkflowConcurrencyManager;
 use crate::{
