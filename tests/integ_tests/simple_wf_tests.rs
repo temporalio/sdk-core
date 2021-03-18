@@ -460,11 +460,14 @@ fn signal_workflow() {
     let res = core.poll_task(task_q).unwrap();
     assert_matches!(
         res.get_wf_jobs().as_slice(),
-        [WfActivationJob {
-            variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
-        }, WfActivationJob {
-            variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
-        }]
+        [
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+            },
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+            }
+        ]
     );
     core.complete_task(TaskCompletion::ok_from_api_attrs(
         vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],

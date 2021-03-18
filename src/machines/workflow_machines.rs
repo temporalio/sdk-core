@@ -56,7 +56,7 @@ pub(crate) struct WorkflowMachines {
 
     /// Maps timer ids as created by workflow authors to their associated machines
     /// TODO: Make this apply to *all* cancellable things, once we've added more. Key can be enum.
-    timer_id_to_machine: HashMap<String, MachineKey>,
+    id_to_machine: HashMap<String, MachineKey>,
 
     /// TODO document
     activity_id_to_machine: HashMap<String, MachineKey>,
@@ -146,7 +146,7 @@ impl WorkflowMachines {
             current_wf_time: None,
             all_machines: Default::default(),
             machines_by_event_id: Default::default(),
-            timer_id_to_machine: Default::default(),
+            id_to_machine: Default::default(),
             activity_id_to_machine: Default::default(),
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
@@ -530,19 +530,16 @@ impl WorkflowMachines {
                 WFCommand::AddTimer(attrs) => {
                     let tid = attrs.timer_id.clone();
                     let timer = self.add_new_machine(new_timer(attrs));
-                    self.timer_id_to_machine.insert(tid, timer.machine);
+                    self.id_to_machine.insert(tid, timer.machine);
                     self.current_wf_task_commands.push_back(timer);
                 }
                 WFCommand::CancelTimer(attrs) => {
-                    let mkey = *self
-                        .timer_id_to_machine
-                        .get(&attrs.timer_id)
-                        .ok_or_else(|| {
-                            WFMachinesError::MissingAssociatedMachine(format!(
-                                "Missing associated machine for cancelling timer {}",
-                                &attrs.timer_id
-                            ))
-                        })?;
+                    let mkey = *self.id_to_machine.get(&attrs.timer_id).ok_or_else(|| {
+                        WFMachinesError::MissingAssociatedMachine(format!(
+                            "Missing associated machine for cancelling timer {}",
+                            &attrs.timer_id
+                        ))
+                    })?;
                     let res = self.machine_mut(mkey).cancel()?;
                     match res {
                         MachineResponse::IssueNewCommand(c) => {

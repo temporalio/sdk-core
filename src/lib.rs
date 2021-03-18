@@ -531,8 +531,8 @@ mod test {
     }
 
     #[rstest(core,
-    case::incremental(single_activity_setup(& [1, 2])),
-    case::replay(single_activity_setup(& [2]))
+    case::incremental(single_activity_setup(&[1, 2])),
+    case::replay(single_activity_setup(&[2]))
     )]
     fn single_activity_completion(core: FakeCore) {
         let res = core.poll_task(TASK_Q).unwrap();

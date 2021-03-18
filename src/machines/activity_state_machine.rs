@@ -73,19 +73,15 @@ pub(super) enum ActivityMachineCommand {
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub(super) enum ActivityCancellationType {
-    /**
-     * Wait for activity cancellation completion. Note that activity must heartbeat to receive a
-     * cancellation notification. This can block the cancellation for a long time if activity doesn't
-     * heartbeat or chooses to ignore the cancellation request.
-     */
+    /// Wait for activity cancellation completion. Note that activity must heartbeat to receive a
+    /// cancellation notification. This can block the cancellation for a long time if activity doesn't
+    /// heartbeat or chooses to ignore the cancellation request.
     WaitCancellationCompleted,
 
-    /** Initiate a cancellation request and immediately report cancellation to the workflow. */
+    /// Initiate a cancellation request and immediately report cancellation to the workflow.
     TryCancel,
 
-    /**
-     * Do not request cancellation of the activity and immediately report cancellation to the workflow
-     */
+    /// Do not request cancellation of the activity and immediately report cancellation to the workflow
     Abandon,
 }
 
@@ -95,7 +91,7 @@ impl Default for ActivityCancellationType {
     }
 }
 
-/// Creates a new, scheduled, activity as a [CancellableCommand]
+/// Creates a new activity state machine and a command to schedule it on the server.
 pub(super) fn new_activity(
     attribs: ScheduleActivityTaskCommandAttributes,
 ) -> NewMachineWithCommand<ActivityMachine> {
@@ -107,6 +103,7 @@ pub(super) fn new_activity(
 }
 
 impl ActivityMachine {
+    /// Create a new activity and immediately schedule it.
     pub(crate) fn new_scheduled(attribs: ScheduleActivityTaskCommandAttributes) -> (Self, Command) {
         let mut s = Self {
             state: Created {}.into(),
