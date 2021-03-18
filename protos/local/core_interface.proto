@@ -7,6 +7,7 @@ package coresdk;
 // and adding the "api_upstream" subdir as an include path.
 
 import "common.proto";
+import "workflow_commands.proto";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
@@ -56,8 +57,6 @@ message WFActivationJob {
         StartWorkflow start_workflow = 1;
         // A timer has fired, allowing whatever was waiting on it (if anything) to proceed
         FireTimer fire_timer = 2;
-        // A timer was canceled, and needs to be unblocked on the lang side.
-        CancelTimer cancel_timer = 3;
         // Workflow was reset. The randomness seed must be updated.
         UpdateRandomSeed update_random_seed = 4;
         // A request to query the workflow was received.
@@ -93,10 +92,6 @@ message FireTimer {
 message ResolveActivity {
     string activity_id = 1;
     ActivityResult result = 2;
-}
-
-message CancelTimer {
-    string timer_id = 1;
 }
 
 message UpdateRandomSeed {
@@ -187,45 +182,18 @@ message ActivityResult {
     }
 }
 
-/// Request cancellation of an activity from a workflow
-message RequestActivityCancellation {
-    string activity_id = 1;
-    string reason = 2;
-}
-
 message CoreCommand {
     oneof variant {
-        WFQueryResult respond_to_query = 1;
-        RequestActivityCancellation request_activity_cancellation = 2;
-    }
-}
-
-// Included in successful [WfActivationCompletion]s, indicates what the workflow wishes to do next
-message Command {
-    oneof variant {
-        temporal.api.command.v1.Command api = 1;
-        CoreCommand core = 2;
     }
 }
 
 message WFActivationSuccess {
     // A list of commands to send back to the temporal server
-    repeated Command commands = 1;
+    repeated workflow_commands.WorkflowCommand commands = 1;
 }
 
 message WFActivationFailure {
     common.UserCodeFailure failure = 1;
-}
-
-message WFQueryResult {
-    oneof variant {
-        WFQuerySuccess succeeded = 1;
-        string failed_with_message = 2;
-    }
-}
-
-message WFQuerySuccess {
-    repeated common.Payload responses = 1;
 }
 
 /// Used in ActivityResult to report cancellation
