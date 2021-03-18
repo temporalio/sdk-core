@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package coresdk.common;
+
+import "google/protobuf/duration.proto";
+
+// Many of the messages in here are exact or near duplicates of the protobufs defined by the
+// Temporal API. We dupe them here to introduce better ergonomics wherever possible, and to
+// decouple ourselves from upstream changes. Additionally, we have no need for wire compatibility
+// between core and lang sdks, since the lang SDK chooses which version of core it wants to use.
+
+// Used as arguments to activities, signals, queries, etc.
+message Payload {
+    map<string,bytes> metadata = 1;
+    bytes data = 2;
+}
+
+// Identifying information about a particular workflow execution
+message WorkflowExecution {
+    string workflow_id = 1;
+    string run_id = 2;
+}
+
+// Defines how an activity or workflow should be retried in the event of failure, timeout, etc.
+message RetryPolicy {
+    // Interval of the first retry. If backoff_coefficient is 1.0 then it is used for all
+    // retries.
+    google.protobuf.Duration initial_interval = 1;
+    // Coefficient used to calculate the next retry interval. The next retry interval is previous
+    // interval multiplied by the coefficient. Must be 1 or larger.
+    double backoff_coefficient = 2;
+    // Maximum interval between retries. Exponential backoff leads to interval increase. This value
+    // caps that interval. Default is 100x of the initial interval.
+    google.protobuf.Duration maximum_interval = 3;
+    // Maximum number of attempts. When exceeded, retrying will stop. 1 disables retries. 0 means
+    // unlimited retries (until the activity or workflow's total timeout is reached).
+    int32 maximum_attempts = 4;
+    // If a stringified error matches something in this list, retries will cease.
+    repeated string non_retryable_error_types = 5;
+}
+
+// Represents a failure in user code, workflow or activity, which could've been triggered by
+// an exception or similar error mechanism like the error half of a Result type.
+//
+// This eventually needs to be converted into an upstream `Failure` which needs to handle a lot
+// more cases that the lang sdk does not care about. By default any lang sdk failure is an upstream
+// `ApplicationFailureInfo`.
+message UserCodeFailure {
+    // Human-specified or otherwise most-human-readable representation of the error.
+    string message = 1;
+    // A type identifier for the error, if the error is well-typed.
+    string type = 2;
+    // If known, the location the error was issued at.
+    string source = 3;
+    // If collected, a stack trace for the error.
+    string stack_trace = 4;
+    // Explicitly thrown user errors are able to indicate that retries should be prevented
+    bool non_retryable = 5;
+
+    UserCodeFailure cause = 6;
+}

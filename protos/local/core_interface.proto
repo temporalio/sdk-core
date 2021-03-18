@@ -6,18 +6,11 @@ package coresdk;
 // the include paths. You can make it work by going to the "Protobuf Support" settings section
 // and adding the "api_upstream" subdir as an include path.
 
+import "common.proto";
+
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/empty.proto";
-import "dependencies/gogoproto/gogo.proto";
-import "temporal/api/workflowservice/v1/request_response.proto";
-import "temporal/api/taskqueue/v1/message.proto";
-import "temporal/api/enums/v1/failed_cause.proto";
-import "temporal/api/failure/v1/message.proto";
-import "temporal/api/history/v1/message.proto";
-import "temporal/api/common/v1/message.proto";
-import "temporal/api/command/v1/message.proto";
-import "temporal/api/query/v1/message.proto";
 
 // A request as given to [crate::Core::poll_task]
 message PollTaskReq {
@@ -50,7 +43,7 @@ message Task {
 // a cached state.
 message WFActivation {
     // The current time as understood by the workflow, which is set by workflow task started events
-    google.protobuf.Timestamp timestamp = 1 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp timestamp = 1;
     // The id of the currently active run of the workflow
     string run_id = 2;
     // The things to do upon activating the workflow
@@ -83,8 +76,8 @@ message StartWorkflow {
     string workflow_type = 1;
     // The workflow id used on the temporal server
     string workflow_id = 2;
-    // Input to the workflow code
-    temporal.api.common.v1.Payloads arguments = 3;
+    // Inputs to the workflow code
+    repeated common.Payload arguments = 3;
     // The seed must be used to initialize the random generator used by SDK.
     // RandomSeedUpdatedAttributes are used to deliver seed updates.
     uint64 randomness_seed = 4;
@@ -111,7 +104,8 @@ message UpdateRandomSeed {
 }
 
 message QueryWorkflow {
-    temporal.api.query.v1.WorkflowQuery query = 1;
+    string query_type = 1;
+    repeated common.Payload arguments = 2;
 }
 
 message CancelWorkflow {
@@ -119,38 +113,9 @@ message CancelWorkflow {
 }
 
 message SignalWorkflow {
-    // The signal information from the workflow's history
-    temporal.api.history.v1.WorkflowExecutionSignaledEventAttributes signal = 1;
-}
-
-message StartActivity {
-    string workflow_namespace = 1;
-    temporal.api.common.v1.WorkflowType workflow_type = 2;
-    temporal.api.common.v1.WorkflowExecution workflow_execution = 3;
-    temporal.api.common.v1.ActivityType activity_type = 4;
-    temporal.api.common.v1.Header header = 5;
-    temporal.api.common.v1.Payloads input = 6;
-    temporal.api.common.v1.Payloads heartbeat_details = 7;
-    google.protobuf.Timestamp scheduled_time = 8 [(gogoproto.stdtime) = true];
-    google.protobuf.Timestamp current_attempt_scheduled_time = 9 [(gogoproto.stdtime) = true];
-    google.protobuf.Timestamp started_time = 10 [(gogoproto.stdtime) = true];
-    int32 attempt = 11;
-    // (-- api-linter: core::0140::prepositions=disabled
-    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
-    google.protobuf.Duration schedule_to_close_timeout = 12 [(gogoproto.stdduration) = true];
-    // (-- api-linter: core::0140::prepositions=disabled
-    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
-    google.protobuf.Duration start_to_close_timeout = 13 [(gogoproto.stdduration) = true];
-    google.protobuf.Duration heartbeat_timeout = 14 [(gogoproto.stdduration) = true];
-    // This is an actual retry policy the service uses.
-    // It can be different from the one provided (or not) during activity scheduling
-    // as the service can override the provided one in case its values are not specified
-    // or exceed configured system limits.
-    temporal.api.common.v1.RetryPolicy retry_policy = 15;
-}
-
-message CancelActivity {
-    // TODO: add attributes
+    string signal_name = 1;
+    repeated common.Payload input = 2;
+    string identity = 3;
 }
 
 message ActivityTask {
@@ -161,6 +126,36 @@ message ActivityTask {
         // Attempt to cancel activity execution.
         CancelActivity cancel = 3;
     }
+}
+
+message StartActivity {
+    string workflow_namespace = 1;
+    // The workflow's type name or function identifier
+    string workflow_type = 2;
+    common.WorkflowExecution workflow_execution = 3;
+    // The activity's type name or function identifier
+    string activity_type = 4;
+    map<string, common.Payload> header_fields = 5;
+    // Arguments to the activity
+    repeated common.Payload input = 6;
+    repeated common.Payload heartbeat_details = 7;
+
+    google.protobuf.Timestamp scheduled_time = 8;
+    google.protobuf.Timestamp current_attempt_scheduled_time = 9;
+    google.protobuf.Timestamp started_time = 10;
+    int32 attempt = 11;
+
+    google.protobuf.Duration schedule_to_close_timeout = 12;
+    google.protobuf.Duration start_to_close_timeout = 13;
+    google.protobuf.Duration heartbeat_timeout = 14;
+    // This is an actual retry policy the service uses. It can be different from the one provided
+    // (or not) during activity scheduling as the service can override the provided one in case its
+    // values are not specified or exceed configured system limits.
+    common.RetryPolicy retry_policy = 15;
+}
+
+message CancelActivity {
+    // TODO: add attributes
 }
 
 
@@ -200,7 +195,7 @@ message RequestActivityCancellation {
 
 message CoreCommand {
     oneof variant {
-        temporal.api.query.v1.WorkflowQueryResult respond_to_query = 1;
+        WFQueryResult respond_to_query = 1;
         RequestActivityCancellation request_activity_cancellation = 2;
     }
 }
@@ -216,36 +211,42 @@ message Command {
 message WFActivationSuccess {
     // A list of commands to send back to the temporal server
     repeated Command commands = 1;
-
-    // Other bits from RespondWorkflowTaskCompletedRequest as needed
 }
 
 message WFActivationFailure {
-    temporal.api.enums.v1.WorkflowTaskFailedCause cause = 1;
-    temporal.api.failure.v1.Failure failure = 2;
+    common.UserCodeFailure failure = 1;
+}
 
-    // Other bits from RespondWorkflowTaskFailedRequest as needed
+message WFQueryResult {
+    oneof variant {
+        WFQuerySuccess succeeded = 1;
+        string failed_with_message = 2;
+    }
+}
+
+message WFQuerySuccess {
+    repeated common.Payload responses = 1;
 }
 
 /// Used in ActivityResult to report cancellation
 message ActivityTaskCancelation {
-    temporal.api.common.v1.Payloads details = 1;
+    repeated common.Payload details = 1;
 }
 
 /// Used in ActivityResult to report successful completion
 message ActivityTaskSuccess {
-    temporal.api.common.v1.Payloads result = 1;
+    repeated common.Payload result = 1;
     // Other bits from RespondActivityTaskCompletedRequest as needed
 }
 
 /// Used in ActivityResult to report failure
 message ActivityTaskFailure {
-    temporal.api.failure.v1.Failure failure = 1;
+    repeated common.Payload failure = 1;
     // Other bits from RespondActivityTaskFailedRequest as needed
 }
 
 // A request as given to [crate::Core::send_activity_heartbeat]
 message ActivityHeartbeat {
     string activity_id = 1;
-    temporal.api.common.v1.Payloads details = 2;
+    repeated common.Payload details = 2;
 }
