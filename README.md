@@ -25,7 +25,7 @@ You can buld and test the project using cargo:
 
 ## Formatting
 To format all code run:
-`cargo format --all`
+`cargo fmt --all`
 
 ## Linting
 We are using [clippy](https://github.com/rust-lang/rust-clippy) for linting.
