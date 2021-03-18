@@ -1,0 +1,31 @@
+/**
+ * Definitions for commands from a workflow in lang SDK to core.
+ * While a workflow processes a batch of activiation jobs,
+ * it accumulates these commands to be sent back to core to conclude an activation.
+ */
+
+syntax = "proto3";
+
+package coresdk.workflow_command;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "temporal/api/common/v1/message.proto";
+import "temporal/api/query/v1/message.proto";
+import "activity_result.proto";
+import "timer_result.proto";
+
+/// Request cancellation of an activity from a workflow
+message RequestActivityCancellation {
+    string activity_id = 1;
+    string reason = 2;
+}
+
+// Included in successful [WfActivationCompletion]s, indicates what the workflow wishes to do next
+message WorkflowCommand {
+    oneof variant {
+        temporal.api.query.v1.WorkflowQueryResult respond_to_query = 1;
+        RequestActivityCancellation request_activity_cancellation = 2;
+        // TODO: add more, port API commands
+    }
+}

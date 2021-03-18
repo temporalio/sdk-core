@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package coresdk.activity_result;
+
+import "temporal/api/failure/v1/message.proto";
+import "temporal/api/common/v1/message.proto";
+
+/// Used in ActivityResult to report cancellation
+message Cancellation {
+}
+
+/// Used in ActivityResult to report successful completion
+message Success {
+    temporal.api.common.v1.Payload result = 1;
+}
+
+/// Used in ActivityResult to report failure
+message Failure {
+    temporal.api.failure.v1.Failure failure = 1;
+}
+
+/// Used to report activity completion to core and to resolve the activity in a workflow activation
+message ActivityResult {
+    oneof status {
+        Success successful = 1;
+        Cancellation cancelled = 2;
+        Failure failed = 3;
+    }
+}

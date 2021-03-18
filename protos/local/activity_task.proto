@@ -1,0 +1,51 @@
+/**
+ * Definitions of the different activity tasks returned from [crate::Core::poll_task].
+ */
+
+syntax = "proto3";
+
+package coresdk.activity_task;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "dependencies/gogoproto/gogo.proto";
+import "temporal/api/common/v1/message.proto";
+import "activity_result.proto";
+import "timer_result.proto";
+
+// TODO: docstrings everywhere
+message StartActivity {
+    string workflow_namespace = 1;
+    temporal.api.common.v1.WorkflowType workflow_type = 2;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 3;
+    temporal.api.common.v1.ActivityType activity_type = 4;
+    temporal.api.common.v1.Header header = 5;
+    temporal.api.common.v1.Payloads input = 6;
+    temporal.api.common.v1.Payloads heartbeat_details = 7;
+    google.protobuf.Timestamp scheduled_time = 8 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp current_attempt_scheduled_time = 9 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp started_time = 10 [(gogoproto.stdtime) = true];
+    int32 attempt = 11;
+    google.protobuf.Duration schedule_to_close_timeout = 12 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration start_to_close_timeout = 13 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration heartbeat_timeout = 14 [(gogoproto.stdduration) = true];
+    // This is an actual retry policy the service uses.
+    // It can be different from the one provided (or not) during activity scheduling
+    // as the service can override the provided one in case its values are not specified
+    // or exceed configured system limits.
+    temporal.api.common.v1.RetryPolicy retry_policy = 15;
+}
+
+/// Request to cancel an activity from a workflow
+message CancelActivity {
+}
+
+message ActivityTask {
+    string activity_id = 1;
+    oneof variant {
+        // Start activity execution.
+        StartActivity start = 2;
+        // Attempt to cancel activity execution.
+        CancelActivity cancel = 3;
+    }
+}

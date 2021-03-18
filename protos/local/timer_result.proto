@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package coresdk.timer_result;
+
+/// Used in TimerResult to report cancellation
+message Cancellation {
+}
+
+/// Used in TimerResult to report successful completion
+message Success {
+}
+
+/// Used to resolve a timer in a workflow activation
+message TimerResult {
+    oneof status {
+        Success successful = 1;
+        Cancellation cancelled = 2;
+    }
+}
