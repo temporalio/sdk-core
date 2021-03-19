@@ -1,3 +1,4 @@
+use crate::machines::workflow_machines::CommandID;
 use crate::{
     machines::WFCommand,
     protos::{
@@ -76,12 +77,6 @@ impl TestWfDriverCache {
         // finished sending what we can.
         self.blocking_condvar.1.notify_one();
     }
-}
-
-#[derive(Debug, PartialEq, Eq, Hash)]
-enum CommandID {
-    Timer(String),
-    Activity(String),
 }
 
 /// Contains the info needed to know if workflow code is "done" being iterated or not. A workflow

@@ -56,10 +56,7 @@ pub(crate) struct WorkflowMachines {
 
     /// Maps timer ids as created by workflow authors to their associated machines
     /// TODO: Make this apply to *all* cancellable things, once we've added more. Key can be enum.
-    id_to_machine: HashMap<String, MachineKey>,
-
-    /// TODO document
-    activity_id_to_machine: HashMap<String, MachineKey>,
+    id_to_machine: HashMap<CommandID, MachineKey>,
 
     /// Queued commands which have been produced by machines and await processing / being sent to
     /// the server.
@@ -73,6 +70,12 @@ pub(crate) struct WorkflowMachines {
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: DrivenWorkflow,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub enum CommandID {
+    Timer(String),
+    Activity(String),
 }
 
 slotmap::new_key_type! { struct MachineKey; }
@@ -147,7 +150,6 @@ impl WorkflowMachines {
             all_machines: Default::default(),
             machines_by_event_id: Default::default(),
             id_to_machine: Default::default(),
-            activity_id_to_machine: Default::default(),
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
         }
@@ -530,16 +532,20 @@ impl WorkflowMachines {
                 WFCommand::AddTimer(attrs) => {
                     let tid = attrs.timer_id.clone();
                     let timer = self.add_new_machine(new_timer(attrs));
-                    self.id_to_machine.insert(tid, timer.machine);
+                    self.id_to_machine
+                        .insert(CommandID::Timer(tid), timer.machine);
                     self.current_wf_task_commands.push_back(timer);
                 }
                 WFCommand::CancelTimer(attrs) => {
-                    let mkey = *self.id_to_machine.get(&attrs.timer_id).ok_or_else(|| {
-                        WFMachinesError::MissingAssociatedMachine(format!(
-                            "Missing associated machine for cancelling timer {}",
-                            &attrs.timer_id
-                        ))
-                    })?;
+                    let mkey = *self
+                        .id_to_machine
+                        .get(&CommandID::Timer(attrs.timer_id.to_owned()))
+                        .ok_or_else(|| {
+                            WFMachinesError::MissingAssociatedMachine(format!(
+                                "Missing associated machine for cancelling timer {}",
+                                &attrs.timer_id
+                            ))
+                        })?;
                     let res = self.machine_mut(mkey).cancel()?;
                     match res {
                         MachineResponse::IssueNewCommand(c) => {
@@ -560,7 +566,8 @@ impl WorkflowMachines {
                 WFCommand::AddActivity(attrs) => {
                     let aid = attrs.activity_id.clone();
                     let activity = self.add_new_machine(new_activity(attrs));
-                    self.activity_id_to_machine.insert(aid, activity.machine);
+                    self.id_to_machine
+                        .insert(CommandID::Activity(aid), activity.machine);
                     self.current_wf_task_commands.push_back(activity);
                 }
                 WFCommand::RequestCancelActivity(_) => unimplemented!(),
