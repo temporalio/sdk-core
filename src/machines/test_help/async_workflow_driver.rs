@@ -21,7 +21,7 @@ use tokio::{
     runtime::Runtime,
     task::{JoinError, JoinHandle},
 };
-use CommandId::TimerId;
+use CommandID::Timer;
 
 pub struct TestWorkflowDriver {
     join_handle: Option<JoinHandle<()>>,
@@ -37,7 +37,7 @@ struct TestWfDriverCache {
 
 impl TestWfDriverCache {
     /// Unblock a command by ID
-    fn unblock(&self, id: CommandId) {
+    fn unblock(&self, id: CommandID) {
         let mut bc = self.blocking_condvar.0.lock();
         if let Some(t) = bc.issued_commands.remove(&id) {
             t.unblocker.send(()).unwrap()
@@ -46,14 +46,14 @@ impl TestWfDriverCache {
 
     /// Cancel a timer by ID. Timers get some special handling here since they are always
     /// removed from the "lang" side without needing a response from core.
-    fn cancel_timer(&self, id: CommandId) {
+    fn cancel_timer(&self, id: CommandID) {
         let mut bc = self.blocking_condvar.0.lock();
         bc.issued_commands.remove(&id);
     }
 
     /// Track a new command that the wf has sent down the command sink. The command starts in
     /// [CommandStatus::Sent] and will be marked blocked once it is `await`ed
-    fn add_sent_cmd(&self, id: CommandId) -> oneshot::Receiver<()> {
+    fn add_sent_cmd(&self, id: CommandID) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
         let mut bc = self.blocking_condvar.0.lock();
         bc.issued_commands.insert(
@@ -67,7 +67,7 @@ impl TestWfDriverCache {
     }
 
     /// Indicate that a command is being `await`ed
-    fn set_cmd_blocked(&self, id: CommandId) {
+    fn set_cmd_blocked(&self, id: CommandID) {
         let mut bc = self.blocking_condvar.0.lock();
         if let Some(cmd) = bc.issued_commands.get_mut(&id) {
             cmd.status = CommandStatus::Blocked;
@@ -79,9 +79,9 @@ impl TestWfDriverCache {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
-enum CommandId {
-    TimerId(String),
-    ActivityId(String),
+enum CommandID {
+    Timer(String),
+    Activity(String),
 }
 
 /// Contains the info needed to know if workflow code is "done" being iterated or not. A workflow
@@ -90,7 +90,7 @@ enum CommandId {
 #[derive(Default, Debug)]
 struct BlockingCondInfo {
     /// Holds a mapping of timer id -> oneshot channel to resolve it
-    issued_commands: HashMap<CommandId, IssuedCommand>,
+    issued_commands: HashMap<CommandID, IssuedCommand>,
     wf_is_done: bool,
 }
 
@@ -136,10 +136,10 @@ impl CommandSender {
         let tid = a.timer_id.clone();
         let c = WFCommand::AddTimer(a);
         self.send(c);
-        let rx = self.twd_cache.add_sent_cmd(TimerId(tid.clone()));
+        let rx = self.twd_cache.add_sent_cmd(Timer(tid.clone()));
         let cache_clone = self.twd_cache.clone();
         async move {
-            cache_clone.set_cmd_blocked(TimerId(tid));
+            cache_clone.set_cmd_blocked(Timer(tid));
             rx.await
         }
     }
@@ -149,7 +149,7 @@ impl CommandSender {
         let c = WFCommand::CancelTimer(CancelTimerCommandAttributes {
             timer_id: timer_id.to_owned(),
         });
-        self.twd_cache.cancel_timer(TimerId(timer_id.to_string()));
+        self.twd_cache.cancel_timer(Timer(timer_id.to_string()));
         self.send(c);
     }
 }
@@ -246,7 +246,7 @@ impl WorkflowFetcher for TestWorkflowDriver {
 impl ActivationListener for TestWorkflowDriver {
     fn on_activation_job(&mut self, activation: &wf_activation_job::Variant) {
         if let wf_activation_job::Variant::FireTimer(FireTimer { timer_id }) = activation {
-            self.cache.unblock(TimerId(timer_id.to_owned()));
+            self.cache.unblock(Timer(timer_id.to_owned()));
         }
     }
 }
