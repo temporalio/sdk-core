@@ -181,6 +181,11 @@ fn activity_workflow() {
             assert_eq!(r, &Payloads{ payloads: response_payloads.clone()});
         }
     );
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+        task.task_token,
+    ))
+    .unwrap()
 }
 
 #[test]
