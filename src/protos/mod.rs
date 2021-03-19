@@ -13,6 +13,7 @@ pub mod coresdk {
     use super::temporal::api::command::v1::Command as ApiCommand;
     use super::temporal::api::enums::v1::WorkflowTaskFailedCause;
     use super::temporal::api::failure::v1::Failure;
+    use crate::protos::temporal::api::common::v1::Payloads;
     use command::Variant;
 
     pub type HistoryEventId = i64;
@@ -31,6 +32,14 @@ pub mod coresdk {
                 a.jobs.clone()
             } else {
                 vec![]
+            }
+        }
+        /// Returns any contained jobs if this task was a wf activation and it had some
+        pub fn get_activity_variant(&self) -> Option<activity_task::Variant> {
+            if let Some(task::Variant::Activity(a)) = &self.variant {
+                a.variant.clone()
+            } else {
+                None
             }
         }
 
@@ -75,6 +84,17 @@ pub mod coresdk {
                 task_token,
                 variant: Some(task_completion::Variant::Workflow(WfActivationCompletion {
                     status: Some(wf_activation_completion::Status::Successful(success)),
+                })),
+            }
+        }
+
+        pub fn ok_activity(result: Option<Payloads>, task_token: Vec<u8>) -> Self {
+            TaskCompletion {
+                task_token,
+                variant: Some(task_completion::Variant::Activity(ActivityResult {
+                    status: Some(activity_result::Status::Completed(ActivityTaskSuccess {
+                        result,
+                    })),
                 })),
             }
         }

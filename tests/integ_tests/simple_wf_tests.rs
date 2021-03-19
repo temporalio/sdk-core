@@ -11,10 +11,14 @@ use std::{
     },
     time::Duration,
 };
+use temporal_sdk_core::protos::temporal::api::command::v1::ScheduleActivityTaskCommandAttributes;
+use temporal_sdk_core::protos::temporal::api::common::v1::{ActivityType, Payload, Payloads};
+use temporal_sdk_core::protos::temporal::api::taskqueue::v1::TaskQueue;
 use temporal_sdk_core::{
     protos::{
         coresdk::{
-            wf_activation_job, FireTimer, StartWorkflow, Task, TaskCompletion, WfActivationJob,
+            activity_result, activity_task, wf_activation_job, ActivityResult, ActivityTaskSuccess,
+            FireTimer, ResolveActivity, StartWorkflow, Task, TaskCompletion, WfActivationJob,
         },
         temporal::api::{
             command::v1::{
@@ -109,6 +113,74 @@ fn timer_workflow() {
         task.task_token,
     ))
     .unwrap();
+}
+
+#[test]
+fn activity_workflow() {
+    let mut rng = rand::thread_rng();
+    let task_q_salt: u32 = rng.gen();
+    let task_q = &format!("activity_workflow_{}", task_q_salt.to_string());
+    let core = get_integ_core();
+    let workflow_id: u32 = rng.gen();
+    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+    let activity_id: String = rng.gen::<u32>().to_string();
+    let task = core.poll_task(task_q).unwrap();
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![ScheduleActivityTaskCommandAttributes {
+            activity_id: activity_id.to_string(),
+            activity_type: Some(ActivityType {
+                name: "test_activity".to_string(),
+            }),
+            namespace: NAMESPACE.to_owned(),
+            task_queue: Some(TaskQueue {
+                name: task_q.to_owned(),
+                kind: 1,
+            }),
+            schedule_to_start_timeout: Some(Duration::from_secs(30).into()),
+            start_to_close_timeout: Some(Duration::from_secs(30).into()),
+            schedule_to_close_timeout: Some(Duration::from_secs(60).into()),
+            heartbeat_timeout: Some(Duration::from_secs(60).into()),
+            ..Default::default()
+        }
+        .into()],
+        task.task_token,
+    ))
+    .unwrap();
+    let task = dbg!(core.poll_activity_task(task_q).unwrap());
+    assert_matches!(
+        task.get_activity_variant(),
+        Some(activity_task::Variant::Start(start_activity)) => {
+            assert_eq!(start_activity.activity_type, Some(ActivityType {
+                name: "test_activity".to_string(),
+            }))
+        }
+    );
+    let response_payloads = vec![Payload {
+        metadata: Default::default(),
+        data: b"hello ".to_vec(),
+    }];
+    core.complete_activity_task(TaskCompletion::ok_activity(
+        Some(Payloads {
+            payloads: response_payloads.clone(),
+        }),
+        task.task_token,
+    ))
+    .unwrap();
+    let task = core.poll_task(task_q).unwrap();
+    assert_matches!(
+        task.get_wf_jobs().as_slice(),
+        [
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveActivity(
+                    ResolveActivity {activity_id: a_id, result: Some(ActivityResult{
+                    status: Some(activity_result::Status::Completed(ActivityTaskSuccess{result: Some(r)}))})}
+                )),
+            },
+        ] => {
+            assert_eq!(a_id, &activity_id);
+            assert_eq!(r, &Payloads{ payloads: response_payloads.clone()});
+        }
+    );
 }
 
 #[test]

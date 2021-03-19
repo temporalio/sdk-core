@@ -250,7 +250,7 @@ impl ServerGatewayApis for ServerGateway {
             namespace: self.opts.namespace.clone(),
             task_queue: Some(TaskQueue {
                 name: task_queue,
-                kind: TaskQueueKind::Unspecified as i32,
+                kind: TaskQueueKind::Normal as i32,
             }),
             identity: self.opts.identity.clone(),
             task_queue_metadata: None,
