@@ -39,8 +39,7 @@ use crate::{
             PayloadsExt, Task, TaskCompletion,
         },
         temporal::api::{
-            enums::v1::WorkflowTaskFailedCause,
-            workflowservice::v1::{PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse},
+            enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
         },
     },
     protosext::{fmt_task_token, HistoryInfoError},
@@ -460,9 +459,7 @@ mod test {
                 TaskCompletion,
             },
             temporal::api::{
-                enums::v1::{EventType, WorkflowTaskFailedCause},
-                failure::v1::Failure,
-                workflowservice::v1::RespondWorkflowTaskFailedResponse,
+                enums::v1::EventType, workflowservice::v1::RespondWorkflowTaskFailedResponse,
             },
         },
         test_help::canned_histories,

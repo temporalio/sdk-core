@@ -3,7 +3,6 @@ use crate::{
     machines::WFCommand,
     protos::{
         coresdk::workflow_activation::{wf_activation_job, FireTimer},
-        temporal::api::command::v1::{CancelTimerCommandAttributes, StartTimerCommandAttributes},
     },
     workflow::{ActivationListener, WorkflowFetcher},
 };
@@ -147,7 +146,7 @@ impl CommandSender {
         self.send(c);
     }
 
-    pub fn activity(&mut self, a: ScheduleActivity) -> impl Future {
+    pub fn activity(&mut self, _a: ScheduleActivity) -> impl Future {
         async { unimplemented!() }
     }
 }

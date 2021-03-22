@@ -1,13 +1,9 @@
 use crate::{
     machines::WFCommand,
     protos::{
-        coresdk::{
-            activity_task,
-            workflow_activation::{wf_activation_job, SignalWorkflow, WfActivationJob},
-        },
+        coresdk::workflow_activation::{wf_activation_job, SignalWorkflow, WfActivationJob},
         temporal::api::history::v1::{
-            WorkflowExecutionCanceledEventAttributes, WorkflowExecutionSignaledEventAttributes,
-            WorkflowExecutionStartedEventAttributes,
+            WorkflowExecutionCanceledEventAttributes, WorkflowExecutionStartedEventAttributes,
         },
     },
 };

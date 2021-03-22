@@ -36,22 +36,13 @@ pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 use crate::protos::coresdk::workflow_commands::{
     CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution, ScheduleActivity, StartTimer,
 };
-use crate::protos::temporal::api::command::v1::{
-    FailWorkflowExecutionCommandAttributes, ScheduleActivityTaskCommandAttributes,
-};
+
 use crate::{
     core_tracing::VecDisplayer,
     machines::workflow_machines::MachineResponse,
     protos::{
         coresdk::workflow_commands::{workflow_command, WorkflowCommand},
-        temporal::api::{
-            command::v1::{
-                command::Attributes, CancelTimerCommandAttributes, Command,
-                CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
-            },
-            enums::v1::CommandType,
-            history::v1::HistoryEvent,
-        },
+        temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
     },
 };
 use prost::alloc::fmt::Formatter;

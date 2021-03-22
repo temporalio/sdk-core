@@ -28,8 +28,6 @@ pub mod coresdk {
         include!("coresdk.workflow_commands.rs");
     }
 
-    use super::temporal::api::command::v1 as api_command;
-    use super::temporal::api::command::v1::Command as ApiCommand;
     use super::temporal::api::failure::v1::Failure;
     use crate::protos::coresdk::common::{Payload, UserCodeFailure};
     use crate::protos::coresdk::workflow_activation::SignalWorkflow;
@@ -195,9 +193,7 @@ pub mod temporal {
         pub mod command {
             pub mod v1 {
                 include!("temporal.api.command.v1.rs");
-                use crate::protos::coresdk::workflow_commands::{
-                    CompleteWorkflowExecution, ScheduleActivity,
-                };
+
                 use crate::protos::coresdk::{workflow_commands, PayloadsExt};
                 use crate::protos::temporal::api::common::v1::ActivityType;
                 use crate::protos::temporal::api::enums::v1::CommandType;
