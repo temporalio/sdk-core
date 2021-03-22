@@ -47,9 +47,9 @@ impl TestWfDriverCache {
 
     /// Cancel a timer by ID. Timers get some special handling here since they are always
     /// removed from the "lang" side without needing a response from core.
-    fn cancel_timer(&self, id: CommandID) {
+    fn cancel_timer(&self, id: &str) {
         let mut bc = self.blocking_condvar.0.lock();
-        bc.issued_commands.remove(&id);
+        bc.issued_commands.remove(&CommandID::Timer(id.to_owned()));
     }
 
     /// Track a new command that the wf has sent down the command sink. The command starts in
@@ -144,7 +144,7 @@ impl CommandSender {
         let c = WFCommand::CancelTimer(CancelTimerCommandAttributes {
             timer_id: timer_id.to_owned(),
         });
-        self.twd_cache.cancel_timer(Timer(timer_id.to_string()));
+        self.twd_cache.cancel_timer(timer_id);
         self.send(c);
     }
 }
