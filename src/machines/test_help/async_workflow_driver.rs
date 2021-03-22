@@ -1,8 +1,9 @@
-use crate::machines::workflow_machines::CommandID;
-use crate::protos::coresdk::workflow_commands::{CancelTimer, StartTimer};
 use crate::{
-    machines::WFCommand,
-    protos::coresdk::workflow_activation::{wf_activation_job, FireTimer},
+    machines::{workflow_machines::CommandID, WFCommand},
+    protos::coresdk::{
+        workflow_activation::{wf_activation_job, FireTimer},
+        workflow_commands::{CancelTimer, StartTimer},
+    },
     workflow::{ActivationListener, WorkflowFetcher},
 };
 use futures::channel::oneshot;

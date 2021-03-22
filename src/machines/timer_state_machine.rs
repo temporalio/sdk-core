@@ -1,13 +1,16 @@
 #![allow(clippy::large_enum_variant)]
 
-use crate::protos::coresdk::workflow_commands::{CancelTimer, StartTimer};
 use crate::{
     machines::{
         workflow_machines::{MachineResponse, WFMachinesError},
         Cancellable, NewMachineWithCommand, WFMachinesAdapter,
     },
     protos::{
-        coresdk::{workflow_activation::FireTimer, HistoryEventId},
+        coresdk::{
+            workflow_activation::FireTimer,
+            workflow_commands::{CancelTimer, StartTimer},
+            HistoryEventId,
+        },
         temporal::api::{
             command::v1::Command,
             enums::v1::{CommandType, EventType},

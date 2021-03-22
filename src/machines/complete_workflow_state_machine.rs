@@ -1,13 +1,15 @@
-use crate::protos::coresdk::workflow_commands::CompleteWorkflowExecution;
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, WFMachinesAdapter,
         WFMachinesError,
     },
-    protos::temporal::api::{
-        command::v1::Command,
-        enums::v1::{CommandType, EventType},
-        history::v1::HistoryEvent,
+    protos::{
+        coresdk::workflow_commands::CompleteWorkflowExecution,
+        temporal::api::{
+            command::v1::Command,
+            enums::v1::{CommandType, EventType},
+            history::v1::HistoryEvent,
+        },
     },
 };
 use rustfsm::{fsm, StateMachine, TransitionResult};

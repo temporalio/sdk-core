@@ -33,15 +33,14 @@ pub(crate) mod test_help;
 
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
-use crate::protos::coresdk::workflow_commands::{
-    CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution, RequestCancelActivity,
-    ScheduleActivity, StartTimer,
-};
 use crate::{
     core_tracing::VecDisplayer,
     machines::workflow_machines::MachineResponse,
     protos::{
-        coresdk::workflow_commands::{workflow_command, WorkflowCommand},
+        coresdk::workflow_commands::{
+            workflow_command, CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution,
+            RequestCancelActivity, ScheduleActivity, StartTimer, WorkflowCommand,
+        },
         temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
     },
 };
