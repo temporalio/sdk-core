@@ -47,7 +47,7 @@ impl TestWfDriverCache {
     /// removed from the "lang" side without needing a response from core.
     fn cancel_timer(&self, id: CommandID) {
         let mut bc = self.blocking_condvar.0.lock();
-        bc.issued_commands.remove(&id);
+        bc.issued_commands.remove(&CommandID::Timer(id.to_owned()));
     }
 
     /// Track a new command that the wf has sent down the command sink. The command starts in

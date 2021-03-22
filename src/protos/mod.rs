@@ -34,6 +34,7 @@ pub mod coresdk {
     use crate::protos::coresdk::activity_result::ActivityResult;
     use crate::protos::coresdk::common::{Payload, UserCodeFailure};
     use crate::protos::coresdk::workflow_activation::SignalWorkflow;
+    use crate::protos::temporal::api::common::v1::Payloads;
     use crate::protos::temporal::api::common::v1::{Payloads, WorkflowExecution};
     use crate::protos::temporal::api::failure::v1::failure::FailureInfo;
     use crate::protos::temporal::api::failure::v1::ApplicationFailureInfo;
@@ -106,6 +107,17 @@ pub mod coresdk {
                 task_token,
                 variant: Some(task_completion::Variant::Workflow(WfActivationCompletion {
                     status: Some(wf_activation_completion::Status::Successful(success)),
+                })),
+            }
+        }
+
+        pub fn ok_activity(result: Option<Payloads>, task_token: Vec<u8>) -> Self {
+            TaskCompletion {
+                task_token,
+                variant: Some(task_completion::Variant::Activity(ActivityResult {
+                    status: Some(activity_result::Status::Completed(ActivityTaskSuccess {
+                        result,
+                    })),
                 })),
             }
         }
@@ -225,6 +237,8 @@ pub mod temporal {
             pub mod v1 {
                 include!("temporal.api.command.v1.rs");
 
+                use crate::protos::coresdk::{activity_task, ActivityTask, StartActivity};
+                use crate::protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
                 use crate::protos::{
                     coresdk::{
                         activity_task, activity_task::ActivityTask, workflow_commands, PayloadsExt,
