@@ -28,6 +28,7 @@ pub use pollers::{
 pub use url::Url;
 
 use crate::machines::EmptyWorkflowCommandErr;
+use crate::protos::coresdk::task;
 use crate::{
     machines::{ProtoCommand, WFCommand, WFMachinesError},
     pending_activations::{PendingActivation, PendingActivations},
@@ -448,7 +449,7 @@ mod test {
     use super::*;
     use crate::protos::coresdk::common::UserCodeFailure;
     use crate::protos::coresdk::workflow_commands::{
-        CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution, StartTimer,
+        CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution, ScheduleActivity, StartTimer,
     };
     use crate::{
         machines::test_help::{build_fake_core, FakeCore, TestHistoryBuilder},
@@ -541,7 +542,7 @@ mod test {
 
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            vec![ScheduleActivityTaskCommandAttributes {
+            vec![ScheduleActivity {
                 activity_id: "fake_activity".to_string(),
                 ..Default::default()
             }
@@ -559,7 +560,7 @@ mod test {
         );
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            vec![CompleteWorkflowExecution { result: vec![] }.into()],
             task_tok,
         ))
         .unwrap();

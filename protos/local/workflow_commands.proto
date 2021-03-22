@@ -16,7 +16,7 @@ message WorkflowCommand {
         StartTimer start_timer = 1;
         ScheduleActivity schedule_activity = 2;
         QueryResult respond_to_query = 3;
-        RequestActivityCancellation request_activity_cancellation = 4;
+        RequestCancelActivity request_cancel_activity = 4;
         CancelTimer cancel_timer = 5;
         CompleteWorkflowExecution complete_workflow_execution = 6;
         FailWorkflowExecution fail_workflow_execution = 7;
@@ -70,6 +70,10 @@ message ScheduleActivity {
     /// configuration. Retries are happening up to schedule_to_close_timeout. To disable retries set
     /// retry_policy.maximum_attempts to 1.
     common.RetryPolicy retry_policy = 11;
+}
+
+message RequestCancelActivity {
+    string activity_id = 1;
 }
 
 message QueryResult {

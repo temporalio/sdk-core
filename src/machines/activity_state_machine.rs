@@ -101,9 +101,7 @@ impl Default for ActivityCancellationType {
 }
 
 /// Creates a new activity state machine and a command to schedule it on the server.
-pub(super) fn new_activity(
-    attribs: ScheduleActivityTaskCommandAttributes,
-) -> NewMachineWithCommand<ActivityMachine> {
+pub(super) fn new_activity(attribs: ScheduleActivity) -> NewMachineWithCommand<ActivityMachine> {
     let (activity, add_cmd) = ActivityMachine::new_scheduled(attribs);
     NewMachineWithCommand {
         command: add_cmd,
@@ -113,7 +111,7 @@ pub(super) fn new_activity(
 
 impl ActivityMachine {
     /// Create a new activity and immediately schedule it.
-    pub(crate) fn new_scheduled(attribs: ScheduleActivityTaskCommandAttributes) -> (Self, Command) {
+    pub(crate) fn new_scheduled(attribs: ScheduleActivity) -> (Self, Command) {
         let mut s = Self {
             state: Created {}.into(),
             shared_state: SharedState {
@@ -188,8 +186,8 @@ impl WFMachinesAdapter for ActivityMachine {
             ActivityMachineCommand::Complete(result) => vec![ResolveActivity {
                 activity_id: self.shared_state.attrs.activity_id.clone(),
                 result: Some(ActivityResult {
-                    status: Some(activity_result::Status::Completed(ActivityTaskSuccess {
-                        result,
+                    status: Some(activity_result::Status::Completed(ar::Success {
+                        result: Vec::from_payloads(result),
                     })),
                 }),
             }
@@ -210,7 +208,7 @@ impl Cancellable for ActivityMachine {
 
 #[derive(Default, Clone)]
 pub(super) struct SharedState {
-    attrs: ScheduleActivityTaskCommandAttributes,
+    attrs: ScheduleActivity,
     cancellation_type: ActivityCancellationType,
 }
 

@@ -29,10 +29,10 @@ pub mod coresdk {
     }
 
     use super::temporal::api::failure::v1::Failure;
+    use crate::protos::coresdk::activity_result::ActivityResult;
     use crate::protos::coresdk::common::{Payload, UserCodeFailure};
     use crate::protos::coresdk::workflow_activation::SignalWorkflow;
-    use crate::protos::temporal::api::common::v1::Payloads;
-    use crate::protos::temporal::api::common::v1::Payloads;
+    use crate::protos::temporal::api::common::v1::{Payloads, WorkflowExecution};
     use crate::protos::temporal::api::failure::v1::failure::FailureInfo;
     use crate::protos::temporal::api::failure::v1::ApplicationFailureInfo;
     use crate::protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes;
@@ -59,7 +59,7 @@ pub mod coresdk {
             }
         }
         /// Returns any contained jobs if this task was a wf activation and it had some
-        pub fn get_activity_variant(&self) -> Option<activity_task::Variant> {
+        pub fn get_activity_variant(&self) -> Option<activity_task::activity_task::Variant> {
             if let Some(task::Variant::Activity(a)) = &self.variant {
                 a.variant.clone()
             } else {
@@ -108,13 +108,13 @@ pub mod coresdk {
             }
         }
 
-        pub fn ok_activity(result: Option<Payloads>, task_token: Vec<u8>) -> Self {
+        pub fn ok_activity(result: Vec<common::Payload>, task_token: Vec<u8>) -> Self {
             TaskCompletion {
                 task_token,
                 variant: Some(task_completion::Variant::Activity(ActivityResult {
-                    status: Some(activity_result::Status::Completed(ActivityTaskSuccess {
-                        result,
-                    })),
+                    status: Some(activity_result::activity_result::Status::Completed(
+                        activity_result::Success { result },
+                    )),
                 })),
             }
         }
@@ -202,6 +202,15 @@ pub mod coresdk {
             }
         }
     }
+
+    impl From<WorkflowExecution> for common::WorkflowExecution {
+        fn from(w: WorkflowExecution) -> Self {
+            Self {
+                workflow_id: w.workflow_id,
+                run_id: w.run_id,
+            }
+        }
+    }
 }
 
 // No need to lint these
@@ -214,12 +223,17 @@ pub mod temporal {
             pub mod v1 {
                 include!("temporal.api.command.v1.rs");
 
-                use crate::protos::coresdk::{workflow_commands, PayloadsExt};
-                use crate::protos::temporal::api::common::v1::ActivityType;
-                use crate::protos::temporal::api::enums::v1::CommandType;
-                use crate::protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
+                use crate::protos::{
+                    coresdk::{
+                        activity_task, activity_task::ActivityTask, workflow_commands, PayloadsExt,
+                    },
+                    temporal::api::common::v1::ActivityType,
+                    temporal::api::enums::v1::CommandType,
+                    temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
+                };
                 use command::Attributes;
                 use std::fmt::{Display, Formatter};
+
                 impl From<command::Attributes> for Command {
                     fn from(c: command::Attributes) -> Self {
                         match c {
@@ -256,23 +270,32 @@ pub mod temporal {
                     fn from(r: PollActivityTaskQueueResponse) -> Self {
                         ActivityTask {
                             activity_id: r.activity_id,
-                            variant: Some(activity_task::Variant::Start(StartActivity {
-                                workflow_namespace: r.workflow_namespace,
-                                workflow_type: r.workflow_type,
-                                workflow_execution: r.workflow_execution,
-                                activity_type: r.activity_type,
-                                header: r.header,
-                                input: r.input,
-                                heartbeat_details: r.heartbeat_details,
-                                scheduled_time: r.scheduled_time,
-                                current_attempt_scheduled_time: r.current_attempt_scheduled_time,
-                                started_time: r.started_time,
-                                attempt: r.attempt,
-                                schedule_to_close_timeout: r.schedule_to_close_timeout,
-                                start_to_close_timeout: r.start_to_close_timeout,
-                                heartbeat_timeout: r.heartbeat_timeout,
-                                retry_policy: r.retry_policy,
-                            })),
+                            variant: Some(activity_task::activity_task::Variant::Start(
+                                activity_task::Start {
+                                    workflow_namespace: r.workflow_namespace,
+                                    workflow_type: r
+                                        .workflow_type
+                                        .map(|wt| wt.name)
+                                        .unwrap_or("".to_string()),
+                                    workflow_execution: r.workflow_execution.map(Into::into),
+                                    activity_type: r
+                                        .activity_type
+                                        .map(|at| at.name)
+                                        .unwrap_or("".to_string()),
+                                    header_fields: r.header.map(Into::into).unwrap_or_default(),
+                                    input: Vec::from_payloads(r.input),
+                                    heartbeat_details: Vec::from_payloads(r.heartbeat_details),
+                                    scheduled_time: r.scheduled_time,
+                                    current_attempt_scheduled_time: r
+                                        .current_attempt_scheduled_time,
+                                    started_time: r.started_time,
+                                    attempt: r.attempt,
+                                    schedule_to_close_timeout: r.schedule_to_close_timeout,
+                                    start_to_close_timeout: r.start_to_close_timeout,
+                                    heartbeat_timeout: r.heartbeat_timeout,
+                                    retry_policy: r.retry_policy.map(Into::into),
+                                },
+                            )),
                         }
                     }
                 }
@@ -374,8 +397,26 @@ pub mod temporal {
                     }
                 }
 
+                impl From<Header> for HashMap<String, common::Payload> {
+                    fn from(h: Header) -> Self {
+                        h.fields.into_iter().map(|(k, v)| (k, v.into())).collect()
+                    }
+                }
+
                 impl From<common::RetryPolicy> for RetryPolicy {
                     fn from(r: common::RetryPolicy) -> Self {
+                        Self {
+                            initial_interval: r.initial_interval,
+                            backoff_coefficient: r.backoff_coefficient,
+                            maximum_interval: r.maximum_interval,
+                            maximum_attempts: r.maximum_attempts,
+                            non_retryable_error_types: r.non_retryable_error_types,
+                        }
+                    }
+                }
+
+                impl From<RetryPolicy> for common::RetryPolicy {
+                    fn from(r: RetryPolicy) -> Self {
                         Self {
                             initial_interval: r.initial_interval,
                             backoff_coefficient: r.backoff_coefficient,

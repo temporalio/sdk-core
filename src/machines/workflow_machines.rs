@@ -62,9 +62,6 @@ pub(crate) struct WorkflowMachines {
     /// TODO: Make this apply to *all* cancellable things, once we've added more. Key can be enum.
     id_to_machine: HashMap<CommandID, MachineKey>,
 
-    /// TODO document
-    activity_id_to_machine: HashMap<String, MachineKey>,
-
     /// Queued commands which have been produced by machines and await processing / being sent to
     /// the server.
     commands: VecDeque<CommandAndMachine>,
@@ -157,7 +154,6 @@ impl WorkflowMachines {
             all_machines: Default::default(),
             machines_by_event_id: Default::default(),
             id_to_machine: Default::default(),
-            activity_id_to_machine: Default::default(),
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
         }

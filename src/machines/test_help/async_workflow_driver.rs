@@ -1,5 +1,5 @@
 use crate::machines::workflow_machines::CommandID;
-use crate::protos::coresdk::workflow_commands::{CancelTimer, ScheduleActivity, StartTimer};
+use crate::protos::coresdk::workflow_commands::{CancelTimer, StartTimer};
 use crate::{
     machines::WFCommand,
     protos::coresdk::workflow_activation::{wf_activation_job, FireTimer},
@@ -143,10 +143,6 @@ impl CommandSender {
         });
         self.twd_cache.cancel_timer(Timer(timer_id.to_string()));
         self.send(c);
-    }
-
-    pub fn activity(&mut self, _a: ScheduleActivity) -> impl Future {
-        async { unimplemented!() }
     }
 }
 
