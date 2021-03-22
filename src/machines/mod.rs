@@ -33,7 +33,10 @@ pub(crate) mod test_help;
 
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
-use crate::protos::temporal::api::command::v1::FailWorkflowExecutionCommandAttributes;
+use crate::protos::temporal::api::command::v1::{
+    FailWorkflowExecutionCommandAttributes, RequestCancelActivityTaskCommandAttributes,
+    ScheduleActivityTaskCommandAttributes,
+};
 use crate::{
     core_tracing::VecDisplayer,
     machines::workflow_machines::MachineResponse,
@@ -61,9 +64,12 @@ pub(crate) type ProtoCommand = Command;
 /// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
 /// EX: Create a new timer, complete the workflow, etc.
 #[derive(Debug, derive_more::From)]
+#[allow(clippy::large_enum_variant)]
 pub enum WFCommand {
     /// Returned when we need to wait for the lang sdk to send us something
     NoCommandsFromLang,
+    AddActivity(ScheduleActivityTaskCommandAttributes),
+    RequestCancelActivity(RequestCancelActivityTaskCommandAttributes),
     AddTimer(StartTimerCommandAttributes),
     CancelTimer(CancelTimerCommandAttributes),
     CompleteWorkflow(CompleteWorkflowExecutionCommandAttributes),
@@ -85,6 +91,12 @@ impl TryFrom<coresdk::Command> for WFCommand {
             })) => match attrs {
                 Attributes::StartTimerCommandAttributes(s) => Ok(WFCommand::AddTimer(s)),
                 Attributes::CancelTimerCommandAttributes(s) => Ok(WFCommand::CancelTimer(s)),
+                Attributes::ScheduleActivityTaskCommandAttributes(s) => {
+                    Ok(WFCommand::AddActivity(s))
+                }
+                Attributes::RequestCancelActivityTaskCommandAttributes(s) => {
+                    Ok(WFCommand::RequestCancelActivity(s))
+                }
                 Attributes::CompleteWorkflowExecutionCommandAttributes(c) => {
                     Ok(WFCommand::CompleteWorkflow(c))
                 }

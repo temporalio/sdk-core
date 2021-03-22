@@ -157,7 +157,7 @@ message CancelActivity {
 
 message ActivityTask {
     string activity_id = 1;
-    oneof job {
+    oneof variant {
         // Start activity execution.
         StartActivity start = 2;
         // Attempt to cancel activity execution.
@@ -185,12 +185,12 @@ message WFActivationCompletion {
     }
 }
 
-/// Used to report activity completion to core and to resolve the activity in a workflow activtion
+/// Used to report activity completion to core and to resolve the activity in a workflow activation
 message ActivityResult {
     oneof status {
         ActivityTaskSuccess completed = 1;
-        ActivityTaskCancelation canceled = 2;
-        ActivityTaskFailure failed = 3;
+        ActivityTaskFailure failed = 2;
+        ActivityTaskCancelation canceled = 3;
     }
 }
 
@@ -231,6 +231,7 @@ message WFActivationFailure {
 
 /// Used in ActivityResult to report cancellation
 message ActivityTaskCancelation {
+    temporal.api.common.v1.Payloads details = 1;
 }
 
 /// Used in ActivityResult to report successful completion

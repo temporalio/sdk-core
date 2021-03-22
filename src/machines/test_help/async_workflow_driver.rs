@@ -1,3 +1,4 @@
+use crate::machines::workflow_machines::CommandID;
 use crate::{
     machines::WFCommand,
     protos::{
@@ -21,6 +22,7 @@ use tokio::{
     runtime::Runtime,
     task::{JoinError, JoinHandle},
 };
+use CommandID::Timer;
 
 pub struct TestWorkflowDriver {
     join_handle: Option<JoinHandle<()>>,
@@ -36,9 +38,9 @@ struct TestWfDriverCache {
 
 impl TestWfDriverCache {
     /// Unblock a command by ID
-    fn unblock(&self, id: &str) {
+    fn unblock(&self, id: CommandID) {
         let mut bc = self.blocking_condvar.0.lock();
-        if let Some(t) = bc.issued_commands.remove(id) {
+        if let Some(t) = bc.issued_commands.remove(&id) {
             t.unblocker.send(()).unwrap()
         };
     }
@@ -47,12 +49,12 @@ impl TestWfDriverCache {
     /// removed from the "lang" side without needing a response from core.
     fn cancel_timer(&self, id: &str) {
         let mut bc = self.blocking_condvar.0.lock();
-        bc.issued_commands.remove(id);
+        bc.issued_commands.remove(&CommandID::Timer(id.to_owned()));
     }
 
     /// Track a new command that the wf has sent down the command sink. The command starts in
     /// [CommandStatus::Sent] and will be marked blocked once it is `await`ed
-    fn add_sent_cmd(&self, id: String) -> oneshot::Receiver<()> {
+    fn add_sent_cmd(&self, id: CommandID) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
         let mut bc = self.blocking_condvar.0.lock();
         bc.issued_commands.insert(
@@ -66,9 +68,9 @@ impl TestWfDriverCache {
     }
 
     /// Indicate that a command is being `await`ed
-    fn set_cmd_blocked(&self, id: &str) {
+    fn set_cmd_blocked(&self, id: CommandID) {
         let mut bc = self.blocking_condvar.0.lock();
-        if let Some(cmd) = bc.issued_commands.get_mut(id) {
+        if let Some(cmd) = bc.issued_commands.get_mut(&id) {
             cmd.status = CommandStatus::Blocked;
         }
         // Wake up the fetcher thread, since we have blocked on a command and that would mean we've
@@ -83,8 +85,7 @@ impl TestWfDriverCache {
 #[derive(Default, Debug)]
 struct BlockingCondInfo {
     /// Holds a mapping of timer id -> oneshot channel to resolve it
-    /// TODO: Upgrade w/ enum key once activities are in
-    issued_commands: HashMap<String, IssuedCommand>,
+    issued_commands: HashMap<CommandID, IssuedCommand>,
     wf_is_done: bool,
 }
 
@@ -130,10 +131,10 @@ impl CommandSender {
         let tid = a.timer_id.clone();
         let c = WFCommand::AddTimer(a);
         self.send(c);
-        let rx = self.twd_cache.add_sent_cmd(tid.clone());
+        let rx = self.twd_cache.add_sent_cmd(Timer(tid.clone()));
         let cache_clone = self.twd_cache.clone();
         async move {
-            cache_clone.set_cmd_blocked(&tid);
+            cache_clone.set_cmd_blocked(Timer(tid));
             rx.await
         }
     }
@@ -240,7 +241,7 @@ impl WorkflowFetcher for TestWorkflowDriver {
 impl ActivationListener for TestWorkflowDriver {
     fn on_activation_job(&mut self, activation: &wf_activation_job::Variant) {
         if let wf_activation_job::Variant::FireTimer(FireTimer { timer_id }) = activation {
-            self.cache.unblock(timer_id);
+            self.cache.unblock(Timer(timer_id.to_owned()));
         }
     }
 }

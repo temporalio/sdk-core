@@ -2,6 +2,10 @@ use std::time::Duration;
 
 use crate::protos::temporal::api::common::v1::{Payloads, WorkflowExecution};
 use crate::protos::temporal::api::workflowservice::v1::{
+    PollActivityTaskQueueRequest, PollActivityTaskQueueResponse,
+    RespondActivityTaskCanceledRequest, RespondActivityTaskCanceledResponse,
+    RespondActivityTaskCompletedRequest, RespondActivityTaskCompletedResponse,
+    RespondActivityTaskFailedRequest, RespondActivityTaskFailedResponse,
     SignalWorkflowExecutionRequest, SignalWorkflowExecutionResponse,
 };
 use crate::{
@@ -100,17 +104,49 @@ pub trait ServerGatewayApis {
     ) -> Result<StartWorkflowExecutionResponse>;
 
     /// Fetch new work. Should block indefinitely if there is no work.
-    async fn poll_workflow_task(&self, task_queue: String)
-        -> Result<PollWorkflowTaskQueueResponse>;
+    async fn poll_task(&self, req: PollTaskRequest) -> Result<PollTaskResponse>;
+
+    /// Fetch new work. Should block indefinitely if there is no work.
+    async fn poll_workflow_task(&self, task_queue: String) -> Result<PollTaskResponse>;
+
+    /// Fetch new work. Should block indefinitely if there is no work.
+    async fn poll_activity_task(&self, task_queue: String) -> Result<PollTaskResponse>;
 
     /// Complete a task by sending it to the server. `task_token` is the task token that would've
-    /// been received from [PollWorkflowTaskQueueApi::poll]. `commands` is a list of new commands
+    /// been received from [poll_workflow_task_queue] API. `commands` is a list of new commands
     /// to send to the server, such as starting a timer.
     async fn complete_workflow_task(
         &self,
         task_token: Vec<u8>,
         commands: Vec<ProtoCommand>,
     ) -> Result<RespondWorkflowTaskCompletedResponse>;
+
+    /// Complete activity task by sending response to the server. `task_token` contains activity identifier that
+    /// would've been received from [poll_activity_task_queue] API. `result` is a blob that contains
+    /// activity response.
+    async fn complete_activity_task(
+        &self,
+        task_token: Vec<u8>,
+        result: Option<Payloads>,
+    ) -> Result<RespondActivityTaskCompletedResponse>;
+
+    /// Cancel activity task by sending response to the server. `task_token` contains activity identifier that
+    /// would've been received from [poll_activity_task_queue] API. `details` is a blob that provides arbitrary
+    /// user defined cancellation info.
+    async fn cancel_activity_task(
+        &self,
+        task_token: Vec<u8>,
+        details: Option<Payloads>,
+    ) -> Result<RespondActivityTaskCanceledResponse>;
+
+    /// Fail activity task by sending response to the server. `task_token` contains activity identifier that
+    /// would've been received from [poll_activity_task_queue] API. `failure` provides failure details, such
+    /// as message, cause and stack trace.
+    async fn fail_activity_task(
+        &self,
+        task_token: Vec<u8>,
+        failure: Option<Failure>,
+    ) -> Result<RespondActivityTaskFailedResponse>;
 
     /// Fail task by sending the failure to the server. `task_token` is the task token that would've
     /// been received from [PollWorkflowTaskQueueApi::poll].
@@ -129,6 +165,22 @@ pub trait ServerGatewayApis {
         signal_name: String,
         payloads: Option<Payloads>,
     ) -> Result<SignalWorkflowExecutionResponse>;
+}
+
+/// Contains poll task request. String parameter defines a task queue to be polled.
+pub enum PollTaskRequest {
+    /// Instructs core to poll for workflow task.
+    Workflow(String),
+    /// Instructs core to poll for activity task.
+    Activity(String),
+}
+
+/// Contains poll task response.
+pub enum PollTaskResponse {
+    /// Poll response for workflow task.
+    WorkflowTask(PollWorkflowTaskQueueResponse),
+    /// Poll response for activity task.
+    ActivityTask(PollActivityTaskQueueResponse),
 }
 
 #[async_trait::async_trait]
@@ -162,10 +214,18 @@ impl ServerGatewayApis for ServerGateway {
             .into_inner())
     }
 
-    async fn poll_workflow_task(
-        &self,
-        task_queue: String,
-    ) -> Result<PollWorkflowTaskQueueResponse> {
+    async fn poll_task(&self, req: PollTaskRequest) -> Result<PollTaskResponse> {
+        match req {
+            PollTaskRequest::Workflow(task_queue) => {
+                Ok(Self::poll_workflow_task(self, task_queue).await?)
+            }
+            PollTaskRequest::Activity(task_queue) => {
+                Ok(Self::poll_activity_task(self, task_queue).await?)
+            }
+        }
+    }
+
+    async fn poll_workflow_task(&self, task_queue: String) -> Result<PollTaskResponse> {
         let request = PollWorkflowTaskQueueRequest {
             namespace: self.opts.namespace.clone(),
             task_queue: Some(TaskQueue {
@@ -176,12 +236,33 @@ impl ServerGatewayApis for ServerGateway {
             binary_checksum: self.opts.worker_binary_id.clone(),
         };
 
-        Ok(self
-            .service
-            .clone()
-            .poll_workflow_task_queue(request)
-            .await?
-            .into_inner())
+        Ok(PollTaskResponse::WorkflowTask(
+            self.service
+                .clone()
+                .poll_workflow_task_queue(request)
+                .await?
+                .into_inner(),
+        ))
+    }
+
+    async fn poll_activity_task(&self, task_queue: String) -> Result<PollTaskResponse> {
+        let request = PollActivityTaskQueueRequest {
+            namespace: self.opts.namespace.clone(),
+            task_queue: Some(TaskQueue {
+                name: task_queue,
+                kind: TaskQueueKind::Normal as i32,
+            }),
+            identity: self.opts.identity.clone(),
+            task_queue_metadata: None,
+        };
+
+        Ok(PollTaskResponse::ActivityTask(
+            self.service
+                .clone()
+                .poll_activity_task_queue(request)
+                .await?
+                .into_inner(),
+        ))
     }
 
     async fn complete_workflow_task(
@@ -256,6 +337,60 @@ impl ServerGatewayApis for ServerGateway {
                 input: payloads,
                 identity: self.opts.identity.clone(),
                 ..Default::default()
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn complete_activity_task(
+        &self,
+        task_token: Vec<u8>,
+        result: Option<Payloads>,
+    ) -> Result<RespondActivityTaskCompletedResponse> {
+        Ok(self
+            .service
+            .clone()
+            .respond_activity_task_completed(RespondActivityTaskCompletedRequest {
+                task_token,
+                result,
+                identity: self.opts.identity.clone(),
+                namespace: self.opts.namespace.clone(),
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn cancel_activity_task(
+        &self,
+        task_token: Vec<u8>,
+        details: Option<Payloads>,
+    ) -> Result<RespondActivityTaskCanceledResponse> {
+        Ok(self
+            .service
+            .clone()
+            .respond_activity_task_canceled(RespondActivityTaskCanceledRequest {
+                task_token,
+                details,
+                identity: self.opts.identity.clone(),
+                namespace: self.opts.namespace.clone(),
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn fail_activity_task(
+        &self,
+        task_token: Vec<u8>,
+        failure: Option<Failure>,
+    ) -> Result<RespondActivityTaskFailedResponse> {
+        Ok(self
+            .service
+            .clone()
+            .respond_activity_task_failed(RespondActivityTaskFailedRequest {
+                task_token,
+                failure,
+                identity: self.opts.identity.clone(),
+                namespace: self.opts.namespace.clone(),
             })
             .await?
             .into_inner())
