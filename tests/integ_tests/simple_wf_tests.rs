@@ -11,12 +11,11 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core::protos::coresdk::common::Payload;
 use temporal_sdk_core::{
     protos::coresdk::{
         activity_result::{self, activity_result as act_res, ActivityResult},
         activity_task::activity_task as act_task,
-        common::UserCodeFailure,
+        common::{Payload, UserCodeFailure},
         workflow_activation::{
             wf_activation_job, FireTimer, ResolveActivity, StartWorkflow, WfActivationJob,
         },
@@ -81,8 +80,7 @@ fn get_integ_server_options() -> ServerGatewayOptions {
 
 fn get_integ_core() -> impl Core {
     let gateway_opts = get_integ_server_options();
-    let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
-    core
+    temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap()
 }
 
 #[test]
@@ -96,9 +94,8 @@ fn timer_workflow() {
     let task = core.poll_task(task_q).unwrap();
     core.complete_task(TaskCompletion::ok_from_api_attrs(
         vec![StartTimer {
-            timer_id: timer_id.to_string(),
+            timer_id,
             start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-            ..Default::default()
         }
         .into()],
         task.task_token,
@@ -191,13 +188,11 @@ fn parallel_timer_workflow() {
             StartTimer {
                 timer_id: timer_id.clone(),
                 start_to_fire_timeout: Some(Duration::from_millis(50).into()),
-                ..Default::default()
             }
             .into(),
             StartTimer {
                 timer_id: timer_2_id.clone(),
                 start_to_fire_timeout: Some(Duration::from_millis(100).into()),
-                ..Default::default()
             }
             .into(),
         ],
@@ -253,13 +248,11 @@ fn timer_cancel_workflow() {
             StartTimer {
                 timer_id: timer_id.to_string(),
                 start_to_fire_timeout: Some(Duration::from_millis(50).into()),
-                ..Default::default()
             }
             .into(),
             StartTimer {
                 timer_id: cancel_timer_id.to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(10).into()),
-                ..Default::default()
             }
             .into(),
         ],
@@ -298,7 +291,6 @@ fn timer_immediate_cancel_workflow() {
             .into(),
             CancelTimer {
                 timer_id: cancel_timer_id.to_string(),
-                ..Default::default()
             }
             .into(),
             CompleteWorkflowExecution { result: vec![] }.into(),
@@ -337,7 +329,6 @@ fn parallel_workflows_same_queue() {
             vec![StartTimer {
                 timer_id: "timer".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-                ..Default::default()
             }
             .into()],
             task.task_token,
@@ -408,7 +399,6 @@ fn fail_wf_task() {
         vec![StartTimer {
             timer_id: "best-timer".to_string(),
             start_to_fire_timeout: Some(Duration::from_millis(200).into()),
-            ..Default::default()
         }
         .into()],
         task.task_token,
@@ -461,9 +451,8 @@ fn fail_workflow_execution() {
     let task = core.poll_task(task_q).unwrap();
     core.complete_task(TaskCompletion::ok_from_api_attrs(
         vec![StartTimer {
-            timer_id: timer_id.to_string(),
+            timer_id,
             start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-            ..Default::default()
         }
         .into()],
         task.task_token,
@@ -555,10 +544,9 @@ fn signal_workflow_signal_not_handled_on_workflow_completion() {
         vec![StartTimer {
             timer_id: "sometimer".to_string(),
             start_to_fire_timeout: Some(Duration::from_millis(10).into()),
-            ..Default::default()
         }
         .into()],
-        res.task_token.clone(),
+        res.task_token,
     ))
     .unwrap();
 
