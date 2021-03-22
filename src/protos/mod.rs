@@ -9,9 +9,11 @@ pub mod coresdk {
     //! Contains all protobufs relating to communication between core and lang-specific SDKs
 
     include!("coresdk.rs");
+    #[allow(clippy::module_inception)]
     pub mod activity_task {
         include!("coresdk.activity_task.rs");
     }
+    #[allow(clippy::module_inception)]
     pub mod activity_result {
         include!("coresdk.activity_result.rs");
     }
