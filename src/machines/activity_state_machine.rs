@@ -82,19 +82,15 @@ pub(super) enum ActivityMachineCommand {
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub(super) enum ActivityCancellationType {
-    /**
-     * Wait for activity cancellation completion. Note that activity must heartbeat to receive a
-     * cancellation notification. This can block the cancellation for a long time if activity doesn't
-     * heartbeat or chooses to ignore the cancellation request.
-     */
+    /// Wait for activity cancellation completion. Note that activity must heartbeat to receive a
+    /// cancellation notification. This can block the cancellation for a long time if activity doesn't
+    /// heartbeat or chooses to ignore the cancellation request.
     WaitCancellationCompleted,
 
-    /** Initiate a cancellation request and immediately report cancellation to the workflow. */
+    /// Initiate a cancellation request and immediately report cancellation to the workflow.
     TryCancel,
 
-    /**
-     * Do not request cancellation of the activity and immediately report cancellation to the workflow
-     */
+    /// Do not request cancellation of the activity and immediately report cancellation to the workflow
     Abandon,
 }
 
@@ -104,8 +100,10 @@ impl Default for ActivityCancellationType {
     }
 }
 
-/// Creates a new, scheduled, activity as a [CancellableCommand]
-pub(super) fn new_activity(attribs: ScheduleActivity) -> NewMachineWithCommand<ActivityMachine> {
+/// Creates a new activity state machine and a command to schedule it on the server.
+pub(super) fn new_activity(
+    attribs: ScheduleActivityTaskCommandAttributes,
+) -> NewMachineWithCommand<ActivityMachine> {
     let (activity, add_cmd) = ActivityMachine::new_scheduled(attribs);
     NewMachineWithCommand {
         command: add_cmd,
@@ -114,7 +112,8 @@ pub(super) fn new_activity(attribs: ScheduleActivity) -> NewMachineWithCommand<A
 }
 
 impl ActivityMachine {
-    pub(crate) fn new_scheduled(attribs: ScheduleActivity) -> (Self, Command) {
+    /// Create a new activity and immediately schedule it.
+    pub(crate) fn new_scheduled(attribs: ScheduleActivityTaskCommandAttributes) -> (Self, Command) {
         let mut s = Self {
             state: Created {}.into(),
             shared_state: SharedState {
@@ -189,8 +188,8 @@ impl WFMachinesAdapter for ActivityMachine {
             ActivityMachineCommand::Complete(result) => vec![ResolveActivity {
                 activity_id: self.shared_state.attrs.activity_id.clone(),
                 result: Some(ActivityResult {
-                    status: Some(activity_result::Status::Completed(ar::Success {
-                        result: Vec::from_payloads(result),
+                    status: Some(activity_result::Status::Completed(ActivityTaskSuccess {
+                        result,
                     })),
                 }),
             }
@@ -211,7 +210,7 @@ impl Cancellable for ActivityMachine {
 
 #[derive(Default, Clone)]
 pub(super) struct SharedState {
-    attrs: ScheduleActivity,
+    attrs: ScheduleActivityTaskCommandAttributes,
     cancellation_type: ActivityCancellationType,
 }
 
@@ -335,7 +334,10 @@ impl StartedActivityCancelEventRecorded {
         attrs: ActivityTaskCompletedEventAttributes,
     ) -> ActivityMachineTransition {
         // notify_completed
-        ActivityMachineTransition::default::<Completed>()
+        ActivityMachineTransition::ok(
+            vec![ActivityMachineCommand::Complete(attrs.result)],
+            Completed::default(),
+        )
     }
     pub(super) fn on_activity_task_failed(self) -> ActivityMachineTransition {
         // notify_failed
@@ -368,55 +370,3 @@ pub(super) struct TimedOut {}
 
 #[derive(Default, Clone)]
 pub(super) struct Canceled {}
-
-#[cfg(test)]
-mod activity_machine_tests {
-    use super::*;
-    use crate::machines::test_help::{CommandSender, TestHistoryBuilder, TestWorkflowDriver};
-    use crate::machines::WorkflowMachines;
-    use crate::protos::coresdk::workflow_commands::CompleteWorkflowExecution;
-    use crate::protos::temporal::api::enums::v1::CommandType;
-    use crate::test_help::canned_histories;
-    use rstest::{fixture, rstest};
-    use tracing::Level;
-
-    #[fixture]
-    fn activity_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
-        let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
-            let activity = ScheduleActivity {
-                activity_id: "activity A".to_string(),
-                ..Default::default()
-            };
-            command_sink.activity(activity).await;
-
-            let complete = CompleteWorkflowExecution::default();
-            command_sink.send(complete.into());
-        });
-
-        let t = canned_histories::single_activity("activity1");
-        let state_machines = WorkflowMachines::new(
-            "wfid".to_string(),
-            "runid".to_string(),
-            Box::new(twd).into(),
-        );
-
-        assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
-        (t, state_machines)
-    }
-
-    #[rstest]
-    fn test_activity_happy_path(activity_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let s = span!(Level::DEBUG, "Test start", t = "activity_happy_path");
-        let _enter = s.enter();
-        let (t, mut state_machines) = activity_happy_hist;
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
-            .unwrap();
-        state_machines.get_wf_activation();
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::ScheduleActivityTask as i32
-        );
-    }
-}

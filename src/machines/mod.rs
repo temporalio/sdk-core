@@ -57,10 +57,12 @@ pub(crate) type ProtoCommand = Command;
 /// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
 /// EX: Create a new timer, complete the workflow, etc.
 #[derive(Debug, derive_more::From)]
+#[allow(clippy::large_enum_variant)]
 pub enum WFCommand {
     /// Returned when we need to wait for the lang sdk to send us something
     NoCommandsFromLang,
     AddActivity(ScheduleActivity),
+    RequestCancelActivity(RequestCancelActivity),
     AddTimer(StartTimer),
     CancelTimer(CancelTimer),
     CompleteWorkflow(CompleteWorkflowExecution),
@@ -78,6 +80,10 @@ impl TryFrom<WorkflowCommand> for WFCommand {
         match c.variant.ok_or(EmptyWorkflowCommandErr)? {
             workflow_command::Variant::StartTimer(s) => Ok(WFCommand::AddTimer(s)),
             workflow_command::Variant::CancelTimer(s) => Ok(WFCommand::CancelTimer(s)),
+            workflow_command::Variant::ScheduleActivity(s) => Ok(WFCommand::AddActivity(s)),
+            workflow_command::Variant::RequestCancelActivity(s) => {
+                Ok(WFCommand::RequestCancelActivity(s))
+            }
             workflow_command::Variant::CompleteWorkflowExecution(c) => {
                 Ok(WFCommand::CompleteWorkflow(c))
             }

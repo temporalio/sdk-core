@@ -57,7 +57,7 @@ pub(crate) fn build_fake_core(
     let mut tasks = VecDeque::from(responses);
     let mut mock_gateway = MockServerGatewayApis::new();
     mock_gateway
-        .expect_poll_workflow_task()
+        .expect_poll_task()
         .times(response_batches.len())
         .returning(move |_| Ok(PollTaskResponse::WorkflowTask(tasks.pop_front().unwrap())));
     // Response not really important here

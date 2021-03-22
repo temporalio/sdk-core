@@ -210,7 +210,7 @@ where
                 let task_token = work.task_token.clone();
                 Ok(Task {
                     task_token,
-                    variant: None,
+                    variant: Some(task::Variant::Activity(work.into())),
                 })
             }
             Err(e) => Err(e),
@@ -477,6 +477,14 @@ mod test {
         build_fake_core(wfid, RUN_ID, &mut t, hist_batches)
     }
 
+    #[fixture(hist_batches = &[])]
+    fn single_activity_setup(hist_batches: &[usize]) -> FakeCore {
+        let wfid = "fake_wf_id";
+
+        let mut t = canned_histories::single_activity("fake_activity");
+        build_fake_core(wfid, RUN_ID, &mut t, hist_batches)
+    }
+
     #[rstest(core,
     case::incremental(single_timer_setup(&[1, 2])),
     case::replay(single_timer_setup(&[2]))
@@ -517,7 +525,47 @@ mod test {
         .unwrap();
     }
 
-    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
+    #[rstest(core,
+    case::incremental(single_activity_setup(&[1, 2])),
+    case::replay(single_activity_setup(&[2]))
+    )]
+    fn single_activity_completion(core: FakeCore) {
+        let res = core.poll_task(TASK_Q).unwrap();
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
+            }]
+        );
+        assert!(core.workflow_machines.exists(RUN_ID));
+
+        let task_tok = res.task_token;
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![ScheduleActivityTaskCommandAttributes {
+                activity_id: "fake_activity".to_string(),
+                ..Default::default()
+            }
+            .into()],
+            task_tok,
+        ))
+        .unwrap();
+
+        let res = core.poll_task(TASK_Q).unwrap();
+        assert_matches!(
+            res.get_wf_jobs().as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveActivity(_)),
+            }]
+        );
+        let task_tok = res.task_token;
+        core.complete_task(TaskCompletion::ok_from_api_attrs(
+            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            task_tok,
+        ))
+        .unwrap();
+    }
+
+    #[rstest(hist_batches, case::incremental(& [1, 2]), case::replay(& [2]))]
     fn parallel_timer_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";

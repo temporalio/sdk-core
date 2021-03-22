@@ -32,6 +32,7 @@ pub mod coresdk {
     use crate::protos::coresdk::common::{Payload, UserCodeFailure};
     use crate::protos::coresdk::workflow_activation::SignalWorkflow;
     use crate::protos::temporal::api::common::v1::Payloads;
+    use crate::protos::temporal::api::common::v1::Payloads;
     use crate::protos::temporal::api::failure::v1::failure::FailureInfo;
     use crate::protos::temporal::api::failure::v1::ApplicationFailureInfo;
     use crate::protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes;
@@ -55,6 +56,14 @@ pub mod coresdk {
                 a.jobs.clone()
             } else {
                 vec![]
+            }
+        }
+        /// Returns any contained jobs if this task was a wf activation and it had some
+        pub fn get_activity_variant(&self) -> Option<activity_task::Variant> {
+            if let Some(task::Variant::Activity(a)) = &self.variant {
+                a.variant.clone()
+            } else {
+                None
             }
         }
 
@@ -95,6 +104,17 @@ pub mod coresdk {
                 task_token,
                 variant: Some(task_completion::Variant::Workflow(WfActivationCompletion {
                     status: Some(wf_activation_completion::Status::Successful(success)),
+                })),
+            }
+        }
+
+        pub fn ok_activity(result: Option<Payloads>, task_token: Vec<u8>) -> Self {
+            TaskCompletion {
+                task_token,
+                variant: Some(task_completion::Variant::Activity(ActivityResult {
+                    status: Some(activity_result::Status::Completed(ActivityTaskSuccess {
+                        result,
+                    })),
                 })),
             }
         }
@@ -197,6 +217,7 @@ pub mod temporal {
                 use crate::protos::coresdk::{workflow_commands, PayloadsExt};
                 use crate::protos::temporal::api::common::v1::ActivityType;
                 use crate::protos::temporal::api::enums::v1::CommandType;
+                use crate::protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
                 use command::Attributes;
                 use std::fmt::{Display, Formatter};
                 impl From<command::Attributes> for Command {
@@ -218,7 +239,40 @@ pub mod temporal {
                                 command_type: CommandType::FailWorkflowExecution as i32,
                                 attributes: Some(a),
                             },
+                            a @ Attributes::ScheduleActivityTaskCommandAttributes(_) => Self {
+                                command_type: CommandType::ScheduleActivityTask as i32,
+                                attributes: Some(a),
+                            },
+                            a @ Attributes::RequestCancelActivityTaskCommandAttributes(_) => Self {
+                                command_type: CommandType::RequestCancelActivityTask as i32,
+                                attributes: Some(a),
+                            },
                             _ => unimplemented!(),
+                        }
+                    }
+                }
+
+                impl From<PollActivityTaskQueueResponse> for ActivityTask {
+                    fn from(r: PollActivityTaskQueueResponse) -> Self {
+                        ActivityTask {
+                            activity_id: r.activity_id,
+                            variant: Some(activity_task::Variant::Start(StartActivity {
+                                workflow_namespace: r.workflow_namespace,
+                                workflow_type: r.workflow_type,
+                                workflow_execution: r.workflow_execution,
+                                activity_type: r.activity_type,
+                                header: r.header,
+                                input: r.input,
+                                heartbeat_details: r.heartbeat_details,
+                                scheduled_time: r.scheduled_time,
+                                current_attempt_scheduled_time: r.current_attempt_scheduled_time,
+                                started_time: r.started_time,
+                                attempt: r.attempt,
+                                schedule_to_close_timeout: r.schedule_to_close_timeout,
+                                start_to_close_timeout: r.start_to_close_timeout,
+                                heartbeat_timeout: r.heartbeat_timeout,
+                                retry_policy: r.retry_policy,
+                            })),
                         }
                     }
                 }
