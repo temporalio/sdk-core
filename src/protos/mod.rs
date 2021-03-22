@@ -9,11 +9,37 @@ pub mod coresdk {
     //! Contains all protobufs relating to communication between core and lang-specific SDKs
 
     include!("coresdk.rs");
+    pub mod activity_task {
+        include!("coresdk.activity_task.rs");
+    }
+    pub mod activity_result {
+        include!("coresdk.activity_result.rs");
+    }
+    pub mod common {
+        include!("coresdk.common.rs");
+    }
+    pub mod workflow_activation {
+        include!("coresdk.workflow_activation.rs");
+    }
+    pub mod workflow_completion {
+        include!("coresdk.workflow_completion.rs");
+    }
+    pub mod workflow_commands {
+        include!("coresdk.workflow_commands.rs");
+    }
+
     use super::temporal::api::command::v1 as api_command;
     use super::temporal::api::command::v1::Command as ApiCommand;
-    use super::temporal::api::enums::v1::WorkflowTaskFailedCause;
     use super::temporal::api::failure::v1::Failure;
-    use command::Variant;
+    use crate::protos::coresdk::common::{Payload, UserCodeFailure};
+    use crate::protos::coresdk::workflow_activation::SignalWorkflow;
+    use crate::protos::temporal::api::common::v1::Payloads;
+    use crate::protos::temporal::api::failure::v1::failure::FailureInfo;
+    use crate::protos::temporal::api::failure::v1::ApplicationFailureInfo;
+    use crate::protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes;
+    use workflow_activation::{wf_activation_job, WfActivation, WfActivationJob};
+    use workflow_commands::{workflow_command, WorkflowCommand};
+    use workflow_completion::{wf_activation_completion, WfActivationCompletion};
 
     pub type HistoryEventId = i64;
 
@@ -50,27 +76,23 @@ pub mod coresdk {
         }
     }
 
-    impl From<Vec<ApiCommand>> for WfActivationSuccess {
-        fn from(v: Vec<ApiCommand>) -> Self {
-            WfActivationSuccess {
-                commands: v
-                    .into_iter()
-                    .map(|cmd| Command {
-                        variant: Some(Variant::Api(cmd)),
-                    })
-                    .collect(),
-            }
+    impl From<Vec<WorkflowCommand>> for workflow_completion::Success {
+        fn from(v: Vec<WorkflowCommand>) -> Self {
+            Self { commands: v }
         }
     }
 
     impl TaskCompletion {
         /// Build a successful completion from some api command attributes and a task token
         pub fn ok_from_api_attrs(
-            cmds: Vec<api_command::command::Attributes>,
+            cmds: Vec<workflow_command::Variant>,
             task_token: Vec<u8>,
         ) -> Self {
-            let cmds: Vec<ApiCommand> = cmds.into_iter().map(Into::into).collect();
-            let success: WfActivationSuccess = cmds.into();
+            let cmds: Vec<_> = cmds
+                .into_iter()
+                .map(|c| WorkflowCommand { variant: Some(c) })
+                .collect();
+            let success: workflow_completion::Success = cmds.into();
             TaskCompletion {
                 task_token,
                 variant: Some(task_completion::Variant::Workflow(WfActivationCompletion {
@@ -79,17 +101,86 @@ pub mod coresdk {
             }
         }
 
-        pub fn fail(task_token: Vec<u8>, cause: WorkflowTaskFailedCause, failure: Failure) -> Self {
+        pub fn fail(task_token: Vec<u8>, failure: UserCodeFailure) -> Self {
             Self {
                 task_token,
                 variant: Some(task_completion::Variant::Workflow(WfActivationCompletion {
                     status: Some(wf_activation_completion::Status::Failed(
-                        WfActivationFailure {
-                            cause: cause as i32,
+                        workflow_completion::Failure {
                             failure: Some(failure),
                         },
                     )),
                 })),
+            }
+        }
+    }
+
+    impl From<UserCodeFailure> for Failure {
+        fn from(f: UserCodeFailure) -> Self {
+            Self {
+                message: f.message,
+                source: f.source,
+                stack_trace: f.stack_trace,
+                cause: f.cause.map(|b| Box::new((*b).into())),
+                failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                    ApplicationFailureInfo {
+                        r#type: f.r#type,
+                        non_retryable: f.non_retryable,
+                        details: None,
+                    },
+                )),
+            }
+        }
+    }
+
+    impl From<common::Payload> for super::temporal::api::common::v1::Payload {
+        fn from(p: Payload) -> Self {
+            Self {
+                metadata: p.metadata,
+                data: p.data,
+            }
+        }
+    }
+
+    impl From<super::temporal::api::common::v1::Payload> for common::Payload {
+        fn from(p: super::temporal::api::common::v1::Payload) -> Self {
+            Self {
+                metadata: p.metadata,
+                data: p.data,
+            }
+        }
+    }
+
+    pub trait PayloadsExt {
+        fn into_payloads(self) -> Option<Payloads>;
+        fn from_payloads(p: Option<Payloads>) -> Self;
+    }
+
+    impl PayloadsExt for Vec<common::Payload> {
+        fn into_payloads(self) -> Option<Payloads> {
+            if self.is_empty() {
+                None
+            } else {
+                Some(Payloads {
+                    payloads: self.into_iter().map(Into::into).collect(),
+                })
+            }
+        }
+
+        fn from_payloads(p: Option<Payloads>) -> Self {
+            match p {
+                None => vec![],
+                Some(p) => p.payloads.into_iter().map(Into::into).collect(),
+            }
+        }
+    }
+
+    impl From<WorkflowExecutionSignaledEventAttributes> for SignalWorkflow {
+        fn from(a: WorkflowExecutionSignaledEventAttributes) -> Self {
+            Self {
+                signal_name: a.signal_name,
+                input: Vec::from_payloads(a.input),
+                identity: a.identity,
             }
         }
     }
@@ -104,10 +195,14 @@ pub mod temporal {
         pub mod command {
             pub mod v1 {
                 include!("temporal.api.command.v1.rs");
+                use crate::protos::coresdk::workflow_commands::{
+                    CompleteWorkflowExecution, ScheduleActivity,
+                };
+                use crate::protos::coresdk::{workflow_commands, PayloadsExt};
+                use crate::protos::temporal::api::common::v1::ActivityType;
                 use crate::protos::temporal::api::enums::v1::CommandType;
                 use command::Attributes;
                 use std::fmt::{Display, Formatter};
-
                 impl From<command::Attributes> for Command {
                     fn from(c: command::Attributes) -> Self {
                         match c {
@@ -139,6 +234,65 @@ pub mod temporal {
                         write!(f, "{:?}", ct)
                     }
                 }
+
+                impl From<workflow_commands::StartTimer> for command::Attributes {
+                    fn from(s: workflow_commands::StartTimer) -> Self {
+                        Self::StartTimerCommandAttributes(StartTimerCommandAttributes {
+                            timer_id: s.timer_id,
+                            start_to_fire_timeout: s.start_to_fire_timeout,
+                        })
+                    }
+                }
+
+                impl From<workflow_commands::CancelTimer> for command::Attributes {
+                    fn from(s: workflow_commands::CancelTimer) -> Self {
+                        Self::CancelTimerCommandAttributes(CancelTimerCommandAttributes {
+                            timer_id: s.timer_id,
+                        })
+                    }
+                }
+
+                impl From<workflow_commands::ScheduleActivity> for command::Attributes {
+                    fn from(s: workflow_commands::ScheduleActivity) -> Self {
+                        Self::ScheduleActivityTaskCommandAttributes(
+                            ScheduleActivityTaskCommandAttributes {
+                                activity_id: s.activity_id,
+                                activity_type: Some(ActivityType {
+                                    name: s.activity_type,
+                                }),
+                                namespace: s.namespace,
+                                task_queue: Some(s.task_queue.into()),
+                                header: Some(s.header_fields.into()),
+                                input: s.arguments.into_payloads(),
+                                schedule_to_close_timeout: s.schedule_to_close_timeout,
+                                schedule_to_start_timeout: s.schedule_to_start_timeout,
+                                start_to_close_timeout: s.start_to_close_timeout,
+                                heartbeat_timeout: s.heartbeat_timeout,
+                                retry_policy: s.retry_policy.map(Into::into),
+                            },
+                        )
+                    }
+                }
+
+                impl From<workflow_commands::CompleteWorkflowExecution> for command::Attributes {
+                    fn from(c: workflow_commands::CompleteWorkflowExecution) -> Self {
+                        Self::CompleteWorkflowExecutionCommandAttributes(
+                            CompleteWorkflowExecutionCommandAttributes {
+                                result: c.result.into_payloads(),
+                            },
+                        )
+                    }
+                }
+
+                impl From<workflow_commands::FailWorkflowExecution> for command::Attributes {
+                    fn from(c: workflow_commands::FailWorkflowExecution) -> Self {
+                        Self::FailWorkflowExecutionCommandAttributes(
+                            FailWorkflowExecutionCommandAttributes {
+                                failure: c.failure.map(Into::into),
+                            },
+                        )
+                    }
+                }
             }
         }
         pub mod enums {
@@ -158,7 +312,29 @@ pub mod temporal {
         }
         pub mod common {
             pub mod v1 {
+                use crate::protos::coresdk::common;
+                use std::collections::HashMap;
                 include!("temporal.api.common.v1.rs");
+
+                impl From<HashMap<String, common::Payload>> for Header {
+                    fn from(h: HashMap<String, common::Payload>) -> Self {
+                        Self {
+                            fields: h.into_iter().map(|(k, v)| (k, v.into())).collect(),
+                        }
+                    }
+                }
+
+                impl From<common::RetryPolicy> for RetryPolicy {
+                    fn from(r: common::RetryPolicy) -> Self {
+                        Self {
+                            initial_interval: r.initial_interval,
+                            backoff_coefficient: r.backoff_coefficient,
+                            maximum_interval: r.maximum_interval,
+                            maximum_attempts: r.maximum_attempts,
+                            non_retryable_error_types: r.non_retryable_error_types,
+                        }
+                    }
+                }
             }
         }
         pub mod history {
@@ -336,7 +512,17 @@ pub mod temporal {
 
         pub mod taskqueue {
             pub mod v1 {
+                use crate::protos::temporal::api::enums::v1::TaskQueueKind;
                 include!("temporal.api.taskqueue.v1.rs");
+
+                impl From<String> for TaskQueue {
+                    fn from(name: String) -> Self {
+                        Self {
+                            name,
+                            kind: TaskQueueKind::Normal as i32,
+                        }
+                    }
+                }
             }
         }
 

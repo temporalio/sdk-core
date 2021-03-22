@@ -17,8 +17,9 @@ message WorkflowCommand {
         ScheduleActivity schedule_activity = 2;
         QueryResult respond_to_query = 3;
         RequestActivityCancellation request_activity_cancellation = 4;
-        CompleteWorkflowExecution complete_workflow_execution = 5;
-        FailWorkflowExecution fail_workflow_execution = 6;
+        CancelTimer cancel_timer = 5;
+        CompleteWorkflowExecution complete_workflow_execution = 6;
+        FailWorkflowExecution fail_workflow_execution = 7;
 
         // To be added as/if needed:
         //  RequestCancelActivityTask request_cancel_activity_task_command_attributes = 6;
@@ -35,6 +36,10 @@ message WorkflowCommand {
 message StartTimer {
     string timer_id = 1;
     google.protobuf.Duration start_to_fire_timeout = 2;
+}
+
+message CancelTimer {
+    string timer_id = 1;
 }
 
 message ScheduleActivity {

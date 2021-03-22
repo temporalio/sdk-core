@@ -1,22 +1,25 @@
-use crate::machines::activity_state_machine::new_activity;
-use crate::protos::coresdk::activity_task;
-use crate::workflow::{DrivenWorkflow, WorkflowFetcher};
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
-        complete_workflow_state_machine::complete_workflow,
+        activity_state_machine::new_activity, complete_workflow_state_machine::complete_workflow,
         fail_workflow_state_machine::fail_workflow, timer_state_machine::new_timer,
         workflow_task_state_machine::WorkflowTaskMachine, NewMachineWithCommand, ProtoCommand,
         TemporalStateMachine, WFCommand,
     },
     protos::{
-        coresdk::{wf_activation_job, ActivityTask, StartWorkflow, UpdateRandomSeed, WfActivation},
+        coresdk::{
+            workflow_activation::{
+                wf_activation_job, StartWorkflow, UpdateRandomSeed, WfActivation,
+            },
+            PayloadsExt,
+        },
         temporal::api::{
             enums::v1::{CommandType, EventType},
             history::v1::{history_event, HistoryEvent},
         },
     },
     protosext::HistoryInfo,
+    workflow::{DrivenWorkflow, WorkflowFetcher},
 };
 use slotmap::SlotMap;
 use std::{
@@ -332,7 +335,7 @@ impl WorkflowMachines {
                                 .map(|wt| wt.name.clone())
                                 .unwrap_or_default(),
                             workflow_id: self.workflow_id.clone(),
-                            arguments: attrs.input.clone(),
+                            arguments: Vec::from_payloads(attrs.input.clone()),
                             randomness_seed: str_to_randomness_seed(
                                 &attrs.original_execution_run_id,
                             ),
@@ -359,7 +362,7 @@ impl WorkflowMachines {
                     attrs,
                 )) = &event.attributes
                 {
-                    self.drive_me.signal(attrs.clone());
+                    self.drive_me.signal(attrs.clone().into());
                 } else {
                     // err
                 }

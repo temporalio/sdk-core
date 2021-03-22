@@ -33,6 +33,9 @@ pub(crate) mod test_help;
 
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
+use crate::protos::coresdk::workflow_commands::{
+    CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution, ScheduleActivity, StartTimer,
+};
 use crate::protos::temporal::api::command::v1::{
     FailWorkflowExecutionCommandAttributes, ScheduleActivityTaskCommandAttributes,
 };
@@ -40,7 +43,7 @@ use crate::{
     core_tracing::VecDisplayer,
     machines::workflow_machines::MachineResponse,
     protos::{
-        coresdk::{self, command::Variant},
+        coresdk::workflow_commands::{workflow_command, WorkflowCommand},
         temporal::api::{
             command::v1::{
                 command::Attributes, CancelTimerCommandAttributes, Command,
@@ -66,37 +69,29 @@ pub(crate) type ProtoCommand = Command;
 pub enum WFCommand {
     /// Returned when we need to wait for the lang sdk to send us something
     NoCommandsFromLang,
-    AddActivity(ScheduleActivityTaskCommandAttributes),
-    AddTimer(StartTimerCommandAttributes),
-    CancelTimer(CancelTimerCommandAttributes),
-    CompleteWorkflow(CompleteWorkflowExecutionCommandAttributes),
-    FailWorkflow(FailWorkflowExecutionCommandAttributes),
+    AddActivity(ScheduleActivity),
+    AddTimer(StartTimer),
+    CancelTimer(CancelTimer),
+    CompleteWorkflow(CompleteWorkflowExecution),
+    FailWorkflow(FailWorkflowExecution),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
-#[error("Couldn't convert <lang> command")]
-pub struct InconvertibleCommandError(pub coresdk::Command);
+#[error("Lang provided workflow command with empty variant")]
+pub struct EmptyWorkflowCommandErr;
 
-impl TryFrom<coresdk::Command> for WFCommand {
-    type Error = InconvertibleCommandError;
+impl TryFrom<WorkflowCommand> for WFCommand {
+    type Error = EmptyWorkflowCommandErr;
 
-    fn try_from(c: coresdk::Command) -> Result<Self, Self::Error> {
-        match c.variant {
-            Some(Variant::Api(Command {
-                attributes: Some(attrs),
-                ..
-            })) => match attrs {
-                Attributes::StartTimerCommandAttributes(s) => Ok(WFCommand::AddTimer(s)),
-                Attributes::CancelTimerCommandAttributes(s) => Ok(WFCommand::CancelTimer(s)),
-                Attributes::CompleteWorkflowExecutionCommandAttributes(c) => {
-                    Ok(WFCommand::CompleteWorkflow(c))
-                }
-                Attributes::FailWorkflowExecutionCommandAttributes(s) => {
-                    Ok(WFCommand::FailWorkflow(s))
-                }
-                _ => unimplemented!(),
-            },
-            _ => Err(c.into()),
+    fn try_from(c: WorkflowCommand) -> Result<Self, Self::Error> {
+        match c.variant.ok_or(EmptyWorkflowCommandErr)? {
+            workflow_command::Variant::StartTimer(s) => Ok(WFCommand::AddTimer(s)),
+            workflow_command::Variant::CancelTimer(s) => Ok(WFCommand::CancelTimer(s)),
+            workflow_command::Variant::CompleteWorkflowExecution(c) => {
+                Ok(WFCommand::CompleteWorkflow(c))
+            }
+            workflow_command::Variant::FailWorkflowExecution(s) => Ok(WFCommand::FailWorkflow(s)),
+            _ => unimplemented!(),
         }
     }
 }

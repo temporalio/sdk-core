@@ -27,22 +27,20 @@ pub use pollers::{
 };
 pub use url::Url;
 
-use crate::protos::coresdk::activity_result::Status;
-use crate::protos::coresdk::{
-    activity_result, ActivityTask, ActivityTaskCancelation, ActivityTaskFailure,
-    ActivityTaskSuccess,
-};
-use crate::protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
+use crate::machines::EmptyWorkflowCommandErr;
 use crate::{
-    machines::{InconvertibleCommandError, ProtoCommand, WFCommand, WFMachinesError},
+    machines::{ProtoCommand, WFCommand, WFMachinesError},
     pending_activations::{PendingActivation, PendingActivations},
     protos::{
         coresdk::{
-            task_completion, wf_activation_completion, ActivityResult, Task, TaskCompletion,
-            WfActivationCompletion, WfActivationSuccess,
+            activity_result::{self as ar, activity_result, ActivityResult},
+            task_completion, workflow_completion,
+            workflow_completion::{wf_activation_completion, WfActivationCompletion},
+            PayloadsExt, Task, TaskCompletion,
         },
         temporal::api::{
-            enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
+            enums::v1::WorkflowTaskFailedCause,
+            workflowservice::v1::{PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse},
         },
     },
     protosext::{fmt_task_token, HistoryInfoError},
@@ -253,14 +251,12 @@ where
                         // Blow up any cached data associated with the workflow
                         self.evict_run(&run_id);
 
-                        self.runtime.block_on(
-                            self.server_gateway.fail_workflow_task(
+                        self.runtime
+                            .block_on(self.server_gateway.fail_workflow_task(
                                 task_token,
-                                WorkflowTaskFailedCause::from_i32(failure.cause)
-                                    .unwrap_or(WorkflowTaskFailedCause::Unspecified),
-                                failure.failure,
-                            ),
-                        )?;
+                                WorkflowTaskFailedCause::Unspecified,
+                                failure.failure.map(Into::into),
+                            ))?;
                     }
                 }
                 Ok(())
@@ -280,21 +276,22 @@ where
                     })),
             } => {
                 match status {
-                    activity_result::Status::Completed(ActivityTaskSuccess { result }) => {
+                    activity_result::Status::Completed(ar::Success { result }) => {
                         self.runtime.block_on(
                             self.server_gateway
-                                .complete_activity_task(task_token, result),
+                                .complete_activity_task(task_token, result.into_payloads()),
                         )?;
                     }
-                    activity_result::Status::Failed(ActivityTaskFailure { failure }) => {
-                        self.runtime.block_on(
-                            self.server_gateway.fail_activity_task(task_token, failure),
-                        )?;
-                    }
-                    activity_result::Status::Canceled(ActivityTaskCancelation { details }) => {
+                    activity_result::Status::Failed(ar::Failure { failure }) => {
                         self.runtime.block_on(
                             self.server_gateway
-                                .cancel_activity_task(task_token, details),
+                                .fail_activity_task(task_token, failure.map(Into::into)),
+                        )?;
+                    }
+                    activity_result::Status::Canceled(ar::Cancelation { details }) => {
+                        self.runtime.block_on(
+                            self.server_gateway
+                                .cancel_activity_task(task_token, details.into_payloads()),
                         )?;
                     }
                 }
@@ -352,7 +349,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
     fn push_lang_commands(
         &self,
         run_id: &str,
-        success: WfActivationSuccess,
+        success: workflow_completion::Success,
     ) -> Result<Vec<ProtoCommand>> {
         // Convert to wf commands
         let cmds = success
@@ -420,8 +417,8 @@ pub enum CoreError {
     MalformedCompletion(TaskCompletion),
     /// Error buffering commands
     CantSendCommands(#[from] SendError<Vec<WFCommand>>),
-    /// Couldn't interpret command from <lang>
-    UninterpretableCommand(#[from] InconvertibleCommandError),
+    /// Land SDK sent us an empty workflow command (no variant)
+    UninterpretableCommand(#[from] EmptyWorkflowCommandErr),
     /// Underlying error in history processing
     UnderlyingHistError(#[from] HistoryInfoError),
     /// Underlying error in state machines: {0:?}
@@ -450,19 +447,19 @@ pub enum CoreError {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::protos::temporal::api::command::v1::FailWorkflowExecutionCommandAttributes;
+    use crate::protos::coresdk::common::UserCodeFailure;
+    use crate::protos::coresdk::workflow_commands::{
+        CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution, StartTimer,
+    };
     use crate::{
         machines::test_help::{build_fake_core, FakeCore, TestHistoryBuilder},
         protos::{
             coresdk::{
-                wf_activation_job, FireTimer, StartWorkflow, TaskCompletion, UpdateRandomSeed,
-                WfActivationJob,
+                workflow_activation::{wf_activation_job, WfActivationJob},
+                workflow_activation::{FireTimer, StartWorkflow, UpdateRandomSeed},
+                TaskCompletion,
             },
             temporal::api::{
-                command::v1::{
-                    CancelTimerCommandAttributes, CompleteWorkflowExecutionCommandAttributes,
-                    StartTimerCommandAttributes,
-                },
                 enums::v1::{EventType, WorkflowTaskFailedCause},
                 failure::v1::Failure,
                 workflowservice::v1::RespondWorkflowTaskFailedResponse,
@@ -499,7 +496,7 @@ mod test {
 
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            vec![StartTimerCommandAttributes {
+            vec![StartTimer {
                 timer_id: "fake_timer".to_string(),
                 ..Default::default()
             }
@@ -517,7 +514,7 @@ mod test {
         );
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            vec![CompleteWorkflowExecution { result: vec![] }.into()],
             task_tok,
         ))
         .unwrap();
@@ -546,12 +543,12 @@ mod test {
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![
-                StartTimerCommandAttributes {
+                StartTimer {
                     timer_id: timer_1_id.to_string(),
                     ..Default::default()
                 }
                 .into(),
-                StartTimerCommandAttributes {
+                StartTimer {
                     timer_id: timer_2_id.to_string(),
                     ..Default::default()
                 }
@@ -582,7 +579,7 @@ mod test {
         );
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            vec![CompleteWorkflowExecution { result: vec![] }.into()],
             task_tok,
         ))
         .unwrap();
@@ -611,12 +608,12 @@ mod test {
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![
-                StartTimerCommandAttributes {
+                StartTimer {
                     timer_id: cancel_timer_id.to_string(),
                     ..Default::default()
                 }
                 .into(),
-                StartTimerCommandAttributes {
+                StartTimer {
                     timer_id: timer_id.to_string(),
                     ..Default::default()
                 }
@@ -636,11 +633,11 @@ mod test {
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![
-                CancelTimerCommandAttributes {
+                CancelTimer {
                     timer_id: cancel_timer_id.to_string(),
                 }
                 .into(),
-                CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
+                CompleteWorkflowExecution { result: vec![] }.into(),
             ],
             task_tok,
         ))
@@ -687,7 +684,7 @@ mod test {
 
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            vec![StartTimerCommandAttributes {
+            vec![StartTimer {
                 timer_id: timer_1_id.to_string(),
                 ..Default::default()
             }
@@ -710,7 +707,7 @@ mod test {
         );
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            vec![CompleteWorkflowExecution { result: vec![] }.into()],
             task_tok,
         ))
         .unwrap();
@@ -741,16 +738,16 @@ mod test {
         let task_tok = res.task_token;
         core.complete_task(TaskCompletion::ok_from_api_attrs(
             vec![
-                StartTimerCommandAttributes {
+                StartTimer {
                     timer_id: cancel_timer_id.to_string(),
                     ..Default::default()
                 }
                 .into(),
-                CancelTimerCommandAttributes {
+                CancelTimer {
                     timer_id: cancel_timer_id.to_string(),
                 }
                 .into(),
-                CompleteWorkflowExecutionCommandAttributes { result: None }.into(),
+                CompleteWorkflowExecution { result: vec![] }.into(),
             ],
             task_tok,
         ))
@@ -776,7 +773,7 @@ mod test {
 
         let res = core.poll_task(TASK_Q).unwrap();
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            vec![StartTimerCommandAttributes {
+            vec![StartTimer {
                 timer_id: timer_id.to_string(),
                 ..Default::default()
             }
@@ -788,8 +785,7 @@ mod test {
         let res = core.poll_task(TASK_Q).unwrap();
         core.complete_task(TaskCompletion::fail(
             res.task_token,
-            WorkflowTaskFailedCause::BadBinary,
-            Failure {
+            UserCodeFailure {
                 message: "oh noooooooo".to_string(),
                 ..Default::default()
             },
@@ -805,7 +801,7 @@ mod test {
         );
         // Need to re-issue the start timer command (we are replaying)
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            vec![StartTimerCommandAttributes {
+            vec![StartTimer {
                 timer_id: timer_id.to_string(),
                 ..Default::default()
             }
@@ -822,7 +818,7 @@ mod test {
             }]
         );
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            vec![CompleteWorkflowExecutionCommandAttributes { result: None }.into()],
+            vec![CompleteWorkflowExecution { result: vec![] }.into()],
             res.task_token,
         ))
         .unwrap();
@@ -839,7 +835,7 @@ mod test {
 
         let res = core.poll_task(TASK_Q).unwrap();
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            vec![StartTimerCommandAttributes {
+            vec![StartTimer {
                 timer_id: timer_id.to_string(),
                 ..Default::default()
             }
@@ -850,8 +846,8 @@ mod test {
 
         let res = core.poll_task(TASK_Q).unwrap();
         core.complete_task(TaskCompletion::ok_from_api_attrs(
-            vec![FailWorkflowExecutionCommandAttributes {
-                failure: Some(Failure {
+            vec![FailWorkflowExecution {
+                failure: Some(UserCodeFailure {
                     message: "I'm ded".to_string(),
                     ..Default::default()
                 }),

@@ -1,14 +1,23 @@
-use crate::machines::workflow_machines::MachineResponse;
-use crate::machines::{Cancellable, NewMachineWithCommand, WFMachinesAdapter, WFMachinesError};
-use crate::protos::coresdk::{
-    activity_result, activity_task, ActivityResult, ActivityTaskSuccess, CancelActivity,
-    ResolveActivity, StartActivity,
-};
-use crate::protos::temporal::api::command::v1::{Command, ScheduleActivityTaskCommandAttributes};
-use crate::protos::temporal::api::common::v1::Payloads;
-use crate::protos::temporal::api::enums::v1::{CommandType, EventType};
-use crate::protos::temporal::api::history::v1::{
-    history_event, ActivityTaskCompletedEventAttributes, HistoryEvent,
+use crate::protos::coresdk::PayloadsExt;
+use crate::{
+    machines::{
+        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, WFMachinesAdapter,
+        WFMachinesError,
+    },
+    protos::coresdk::workflow_commands::ScheduleActivity,
+    protos::{
+        coresdk::{
+            activity_result::{self as ar, activity_result, ActivityResult},
+            activity_task,
+            workflow_activation::ResolveActivity,
+        },
+        temporal::api::{
+            command::v1::Command,
+            common::v1::Payloads,
+            enums::v1::{CommandType, EventType},
+            history::v1::{history_event, ActivityTaskCompletedEventAttributes, HistoryEvent},
+        },
+    },
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::convert::TryFrom;
@@ -96,9 +105,7 @@ impl Default for ActivityCancellationType {
 }
 
 /// Creates a new, scheduled, activity as a [CancellableCommand]
-pub(super) fn new_activity(
-    attribs: ScheduleActivityTaskCommandAttributes,
-) -> NewMachineWithCommand<ActivityMachine> {
+pub(super) fn new_activity(attribs: ScheduleActivity) -> NewMachineWithCommand<ActivityMachine> {
     let (activity, add_cmd) = ActivityMachine::new_scheduled(attribs);
     NewMachineWithCommand {
         command: add_cmd,
@@ -107,7 +114,7 @@ pub(super) fn new_activity(
 }
 
 impl ActivityMachine {
-    pub(crate) fn new_scheduled(attribs: ScheduleActivityTaskCommandAttributes) -> (Self, Command) {
+    pub(crate) fn new_scheduled(attribs: ScheduleActivity) -> (Self, Command) {
         let mut s = Self {
             state: Created {}.into(),
             shared_state: SharedState {
@@ -182,8 +189,8 @@ impl WFMachinesAdapter for ActivityMachine {
             ActivityMachineCommand::Complete(result) => vec![ResolveActivity {
                 activity_id: self.shared_state.attrs.activity_id.clone(),
                 result: Some(ActivityResult {
-                    status: Some(activity_result::Status::Completed(ActivityTaskSuccess {
-                        result,
+                    status: Some(activity_result::Status::Completed(ar::Success {
+                        result: Vec::from_payloads(result),
                     })),
                 }),
             }
@@ -204,7 +211,7 @@ impl Cancellable for ActivityMachine {
 
 #[derive(Default, Clone)]
 pub(super) struct SharedState {
-    attrs: ScheduleActivityTaskCommandAttributes,
+    attrs: ScheduleActivity,
     cancellation_type: ActivityCancellationType,
 }
 
@@ -364,10 +371,10 @@ pub(super) struct Canceled {}
 
 #[cfg(test)]
 mod activity_machine_tests {
+    use super::*;
     use crate::machines::test_help::{CommandSender, TestHistoryBuilder, TestWorkflowDriver};
     use crate::machines::WorkflowMachines;
-    use crate::protos::temporal::api::command::v1::CompleteWorkflowExecutionCommandAttributes;
-    use crate::protos::temporal::api::command::v1::ScheduleActivityTaskCommandAttributes;
+    use crate::protos::coresdk::workflow_commands::CompleteWorkflowExecution;
     use crate::protos::temporal::api::enums::v1::CommandType;
     use crate::test_help::canned_histories;
     use rstest::{fixture, rstest};
@@ -376,13 +383,13 @@ mod activity_machine_tests {
     #[fixture]
     fn activity_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
         let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
-            let activity = ScheduleActivityTaskCommandAttributes {
+            let activity = ScheduleActivity {
                 activity_id: "activity A".to_string(),
                 ..Default::default()
             };
-            command_sink.activity(activity, true);
+            command_sink.activity(activity).await;
 
-            let complete = CompleteWorkflowExecutionCommandAttributes::default();
+            let complete = CompleteWorkflowExecution::default();
             command_sink.send(complete.into());
         });
 

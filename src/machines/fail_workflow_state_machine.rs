@@ -1,9 +1,9 @@
+use crate::protos::coresdk::workflow_commands::FailWorkflowExecution;
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, ProtoCommand,
         WFMachinesAdapter, WFMachinesError,
     },
-    protos::temporal::api::command::v1::FailWorkflowExecutionCommandAttributes,
     protos::temporal::api::enums::v1::CommandType,
     protos::temporal::api::enums::v1::EventType,
     protos::temporal::api::history::v1::HistoryEvent,
@@ -15,7 +15,7 @@ fsm! {
     pub(super) name FailWorkflowMachine;
     command FailWFCommand;
     error WFMachinesError;
-    shared_state FailWorkflowExecutionCommandAttributes;
+    shared_state FailWorkflowExecution;
 
     Created --(Schedule, shared on_schedule) --> FailWorkflowCommandCreated;
 
@@ -30,7 +30,7 @@ pub(super) enum FailWFCommand {
 
 /// Fail a workflow
 pub(super) fn fail_workflow(
-    attribs: FailWorkflowExecutionCommandAttributes,
+    attribs: FailWorkflowExecution,
 ) -> NewMachineWithCommand<FailWorkflowMachine> {
     let (machine, add_cmd) = FailWorkflowMachine::new_scheduled(attribs);
     NewMachineWithCommand {
@@ -41,9 +41,7 @@ pub(super) fn fail_workflow(
 
 impl FailWorkflowMachine {
     /// Create a new WF machine and schedule it
-    pub(crate) fn new_scheduled(
-        attribs: FailWorkflowExecutionCommandAttributes,
-    ) -> (Self, ProtoCommand) {
+    pub(crate) fn new_scheduled(attribs: FailWorkflowExecution) -> (Self, ProtoCommand) {
         let mut s = Self {
             state: Created {}.into(),
             shared_state: attribs,
@@ -64,10 +62,7 @@ impl FailWorkflowMachine {
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_schedule(
-        self,
-        dat: FailWorkflowExecutionCommandAttributes,
-    ) -> FailWorkflowMachineTransition {
+    pub(super) fn on_schedule(self, dat: FailWorkflowExecution) -> FailWorkflowMachineTransition {
         let cmd = ProtoCommand {
             command_type: CommandType::FailWorkflowExecution as i32,
             attributes: Some(dat.into()),
