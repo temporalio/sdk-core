@@ -1,9 +1,8 @@
-use crate::machines::workflow_machines::CommandID;
 use crate::{
-    machines::WFCommand,
-    protos::{
-        coresdk::{wf_activation_job, FireTimer},
-        temporal::api::command::v1::{CancelTimerCommandAttributes, StartTimerCommandAttributes},
+    machines::{workflow_machines::CommandID, WFCommand},
+    protos::coresdk::{
+        workflow_activation::{wf_activation_job, FireTimer},
+        workflow_commands::{CancelTimer, StartTimer},
     },
     workflow::{ActivationListener, WorkflowFetcher},
 };
@@ -127,7 +126,7 @@ impl CommandSender {
     }
 
     /// Request to create a timer
-    pub fn timer(&mut self, a: StartTimerCommandAttributes) -> impl Future {
+    pub fn timer(&mut self, a: StartTimer) -> impl Future {
         let tid = a.timer_id.clone();
         let c = WFCommand::AddTimer(a);
         self.send(c);
@@ -141,7 +140,7 @@ impl CommandSender {
 
     /// Cancel a timer
     pub fn cancel_timer(&self, timer_id: &str) {
-        let c = WFCommand::CancelTimer(CancelTimerCommandAttributes {
+        let c = WFCommand::CancelTimer(CancelTimer {
             timer_id: timer_id.to_owned(),
         });
         self.twd_cache.cancel_timer(timer_id);

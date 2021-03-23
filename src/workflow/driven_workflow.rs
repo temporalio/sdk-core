@@ -1,11 +1,10 @@
-use crate::protos::coresdk::SignalWorkflow;
 use crate::{
     machines::WFCommand,
-    protos::coresdk::wf_activation_job,
-    protos::coresdk::WfActivationJob,
-    protos::temporal::api::history::v1::{
-        WorkflowExecutionCanceledEventAttributes, WorkflowExecutionSignaledEventAttributes,
-        WorkflowExecutionStartedEventAttributes,
+    protos::{
+        coresdk::workflow_activation::{wf_activation_job, SignalWorkflow, WfActivationJob},
+        temporal::api::history::v1::{
+            WorkflowExecutionCanceledEventAttributes, WorkflowExecutionStartedEventAttributes,
+        },
     },
 };
 use std::collections::VecDeque;
@@ -54,10 +53,8 @@ impl DrivenWorkflow {
     }
 
     /// Signal the workflow
-    pub fn signal(&mut self, attribs: WorkflowExecutionSignaledEventAttributes) {
-        self.send_job(wf_activation_job::Variant::SignalWorkflow(SignalWorkflow {
-            signal: Some(attribs),
-        }))
+    pub fn signal(&mut self, signal: SignalWorkflow) {
+        self.send_job(wf_activation_job::Variant::SignalWorkflow(signal))
     }
 
     /// Cancel the workflow

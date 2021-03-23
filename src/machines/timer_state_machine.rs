@@ -6,9 +6,13 @@ use crate::{
         Cancellable, NewMachineWithCommand, WFMachinesAdapter,
     },
     protos::{
-        coresdk::{CancelTimer, FireTimer, HistoryEventId},
+        coresdk::{
+            workflow_activation::FireTimer,
+            workflow_commands::{CancelTimer, StartTimer},
+            HistoryEventId,
+        },
         temporal::api::{
-            command::v1::{CancelTimerCommandAttributes, Command, StartTimerCommandAttributes},
+            command::v1::Command,
             enums::v1::{CommandType, EventType},
             history::v1::{history_event, HistoryEvent, TimerFiredEventAttributes},
         },
@@ -48,14 +52,12 @@ pub(super) enum TimerMachineCommand {
 
 #[derive(Default, Clone)]
 pub(super) struct SharedState {
-    attrs: StartTimerCommandAttributes,
+    attrs: StartTimer,
     cancelled_before_sent: bool,
 }
 
 /// Creates a new, scheduled, timer as a [CancellableCommand]
-pub(super) fn new_timer(
-    attribs: StartTimerCommandAttributes,
-) -> NewMachineWithCommand<TimerMachine> {
+pub(super) fn new_timer(attribs: StartTimer) -> NewMachineWithCommand<TimerMachine> {
     let (timer, add_cmd) = TimerMachine::new_scheduled(attribs);
     NewMachineWithCommand {
         command: add_cmd,
@@ -65,7 +67,7 @@ pub(super) fn new_timer(
 
 impl TimerMachine {
     /// Create a new timer and immediately schedule it
-    pub(crate) fn new_scheduled(attribs: StartTimerCommandAttributes) -> (Self, Command) {
+    pub(crate) fn new_scheduled(attribs: StartTimer) -> (Self, Command) {
         let mut s = Self::new(attribs);
         s.on_event_mut(TimerMachineEvents::Schedule)
             .expect("Scheduling timers doesn't fail");
@@ -76,7 +78,7 @@ impl TimerMachine {
         (s, cmd)
     }
 
-    fn new(attribs: StartTimerCommandAttributes) -> Self {
+    fn new(attribs: StartTimer) -> Self {
         Self {
             state: Created {}.into(),
             shared_state: SharedState {
@@ -207,7 +209,7 @@ impl StartCommandRecorded {
         let cmd = Command {
             command_type: CommandType::CancelTimer as i32,
             attributes: Some(
-                CancelTimerCommandAttributes {
+                CancelTimer {
                     timer_id: dat.attrs.timer_id,
                 }
                 .into(),
@@ -233,10 +235,10 @@ impl WFMachinesAdapter for TimerMachine {
                 timer_id: self.shared_state.attrs.timer_id.clone(),
             }
             .into()],
-            TimerMachineCommand::Canceled => vec![CancelTimer {
-                timer_id: self.shared_state.attrs.timer_id.clone(),
-            }
-            .into()],
+            // We don't issue activations for timer cancellations. Lang SDK is expected to cancel
+            // it's own timers when user calls cancel, and they cannot be cancelled by any other
+            // means.
+            TimerMachineCommand::Canceled => vec![],
             TimerMachineCommand::IssueCancelCmd(c) => vec![MachineResponse::IssueNewCommand(c)],
         })
     }
@@ -264,7 +266,7 @@ mod test {
             test_help::{CommandSender, TestHistoryBuilder, TestWorkflowDriver},
             workflow_machines::WorkflowMachines,
         },
-        protos::temporal::api::command::v1::CompleteWorkflowExecutionCommandAttributes,
+        protos::coresdk::workflow_commands::CompleteWorkflowExecution,
         test_help::canned_histories,
     };
     use rstest::{fixture, rstest};
@@ -284,13 +286,13 @@ mod test {
             task, hence no extra loop.
         */
         let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
-            let timer = StartTimerCommandAttributes {
+            let timer = StartTimer {
                 timer_id: "timer1".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
             };
             command_sink.timer(timer).await;
 
-            let complete = CompleteWorkflowExecutionCommandAttributes::default();
+            let complete = CompleteWorkflowExecution::default();
             command_sink.send(complete.into());
         });
 
@@ -342,7 +344,7 @@ mod test {
     #[test]
     fn mismatched_timer_ids_errors() {
         let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
-            let timer = StartTimerCommandAttributes {
+            let timer = StartTimer {
                 timer_id: "realid".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
             };
@@ -366,12 +368,12 @@ mod test {
     #[fixture]
     fn cancellation_setup() -> (TestHistoryBuilder, WorkflowMachines) {
         let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
-            let cancel_timer_fut = cmd_sink.timer(StartTimerCommandAttributes {
+            let cancel_timer_fut = cmd_sink.timer(StartTimer {
                 timer_id: "cancel_timer".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(500).into()),
             });
             cmd_sink
-                .timer(StartTimerCommandAttributes {
+                .timer(StartTimer {
                     timer_id: "wait_timer".to_string(),
                     start_to_fire_timeout: Some(Duration::from_secs(5).into()),
                 })
@@ -380,7 +382,7 @@ mod test {
             cmd_sink.cancel_timer("cancel_timer");
             cancel_timer_fut.await;
 
-            let complete = CompleteWorkflowExecutionCommandAttributes::default();
+            let complete = CompleteWorkflowExecution::default();
             cmd_sink.send(complete.into());
         });
 
@@ -431,7 +433,7 @@ mod test {
     #[test]
     fn cancel_before_sent_to_server() {
         let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
-            let cancel_timer_fut = cmd_sink.timer(StartTimerCommandAttributes {
+            let cancel_timer_fut = cmd_sink.timer(StartTimer {
                 timer_id: "cancel_timer".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(500).into()),
             });
@@ -439,7 +441,7 @@ mod test {
             cmd_sink.cancel_timer("cancel_timer");
             cancel_timer_fut.await;
 
-            let complete = CompleteWorkflowExecutionCommandAttributes::default();
+            let complete = CompleteWorkflowExecution::default();
             cmd_sink.send(complete.into());
         });
 

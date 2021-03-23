@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+/**
+ * Definitions for commands from a workflow in lang SDK to core. While a workflow processes a batch
+ * of activation jobs, it accumulates these commands to be sent back to core to conclude that
+ * activation.
+ */
+package coresdk.workflow_commands;
+
+import "common.proto";
+
+import "google/protobuf/duration.proto";
+
+message WorkflowCommand {
+    oneof variant {
+        StartTimer start_timer = 1;
+        ScheduleActivity schedule_activity = 2;
+        QueryResult respond_to_query = 3;
+        RequestCancelActivity request_cancel_activity = 4;
+        CancelTimer cancel_timer = 5;
+        CompleteWorkflowExecution complete_workflow_execution = 6;
+        FailWorkflowExecution fail_workflow_execution = 7;
+
+        // To be added as/if needed:
+        //  RequestCancelActivityTask request_cancel_activity_task_command_attributes = 6;
+        //  CancelWorkflowExecution cancel_workflow_execution_command_attributes = 8;
+        //  RequestCancelExternalWorkflowExecution request_cancel_external_workflow_execution_command_attributes = 9;
+        //  RecordMarker record_marker_command_attributes = 10;
+        //  ContinueAsNewWorkflowExecution continue_as_new_workflow_execution_command_attributes = 11;
+        //  StartChildWorkflowExecution start_child_workflow_execution_command_attributes = 12;
+        //  SignalExternalWorkflowExecution signal_external_workflow_execution_command_attributes = 13;
+        //  UpsertWorkflowSearchAttributes upsert_workflow_search_attributes_command_attributes = 14;
+    }
+}
+
+message StartTimer {
+    string timer_id = 1;
+    google.protobuf.Duration start_to_fire_timeout = 2;
+}
+
+message CancelTimer {
+    string timer_id = 1;
+}
+
+message ScheduleActivity {
+    string activity_id = 1;
+    string activity_type = 2;
+    string namespace = 3;
+    // The name of the task queue to place this activity request in
+    //  TODO: Do we care about sticky/not sticky?
+    string task_queue = 4;
+    map<string, common.Payload> header_fields = 5;
+    /// Arguments/input to the activity. Called "input" upstream.
+    repeated common.Payload arguments = 6;
+    /// Indicates how long the caller is willing to wait for an activity completion. Limits how long
+    /// retries will be attempted. Either this or start_to_close_timeout_seconds must be specified.
+    /// When not specified defaults to the workflow execution timeout.
+    google.protobuf.Duration schedule_to_close_timeout = 7;
+    /// Limits time an activity task can stay in a task queue before a worker picks it up. This
+    /// timeout is always non retryable as all a retry would achieve is to put it back into the same
+    /// queue. Defaults to schedule_to_close_timeout or workflow execution timeout if not specified.
+    google.protobuf.Duration schedule_to_start_timeout = 8;
+    /// Maximum time an activity is allowed to execute after a pick up by a worker. This timeout is
+    /// always retryable. Either this or schedule_to_close_timeout must be specified.
+    /// TODO: Is this really either or can you do both? Make oneof if mutually exclusive
+    google.protobuf.Duration start_to_close_timeout = 9;
+    /// Maximum time allowed between successful worker heartbeats.
+    google.protobuf.Duration heartbeat_timeout = 10;
+    /// Activities are provided by a default retry policy controlled through the service dynamic
+    /// configuration. Retries are happening up to schedule_to_close_timeout. To disable retries set
+    /// retry_policy.maximum_attempts to 1.
+    common.RetryPolicy retry_policy = 11;
+}
+
+message RequestCancelActivity {
+    string activity_id = 1;
+}
+
+message QueryResult {
+    oneof variant {
+        QuerySuccess succeeded = 1;
+        string failed_with_message = 2;
+    }
+}
+
+message QuerySuccess {
+    common.Payload response = 1;
+}
+
+/// Request cancellation of an activity from a workflow
+message RequestActivityCancellation {
+    string activity_id = 1;
+    string reason = 2;
+}
+
+/// Issued when the workflow completes successfully
+message CompleteWorkflowExecution {
+    repeated common.Payload result = 1;
+}
+
+/// Issued when the workflow errors out
+message FailWorkflowExecution {
+    common.UserCodeFailure failure = 1;
+}

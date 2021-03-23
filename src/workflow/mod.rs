@@ -9,7 +9,7 @@ pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFet
 use crate::{
     machines::{ProtoCommand, WFCommand, WorkflowMachines},
     protos::{
-        coresdk::WfActivation,
+        coresdk::workflow_activation::WfActivation,
         temporal::api::{history::v1::History, workflowservice::v1::PollWorkflowTaskQueueResponse},
     },
     protosext::HistoryInfo,
