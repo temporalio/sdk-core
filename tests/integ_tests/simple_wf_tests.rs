@@ -426,7 +426,6 @@ fn fail_wf_task() {
         vec![StartTimer {
             timer_id: "best-timer".to_string(),
             start_to_fire_timeout: Some(Duration::from_millis(200).into()),
-            ..Default::default()
         }
         .into()],
         task.task_token,
