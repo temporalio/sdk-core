@@ -1,25 +1,22 @@
 use std::time::Duration;
 
-use crate::protos::temporal::api::common::v1::{Payloads, WorkflowExecution};
-use crate::protos::temporal::api::workflowservice::v1::{
-    PollActivityTaskQueueRequest, PollActivityTaskQueueResponse,
-    RespondActivityTaskCanceledRequest, RespondActivityTaskCanceledResponse,
-    RespondActivityTaskCompletedRequest, RespondActivityTaskCompletedResponse,
-    RespondActivityTaskFailedRequest, RespondActivityTaskFailedResponse,
-    SignalWorkflowExecutionRequest, SignalWorkflowExecutionResponse,
-};
 use crate::{
     machines::ProtoCommand,
     protos::temporal::api::{
-        common::v1::WorkflowType,
+        common::v1::{Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
         taskqueue::v1::TaskQueue,
         workflowservice::v1::{
-            workflow_service_client::WorkflowServiceClient, PollWorkflowTaskQueueRequest,
-            PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedRequest,
+            workflow_service_client::WorkflowServiceClient, PollActivityTaskQueueRequest,
+            PollActivityTaskQueueResponse, PollWorkflowTaskQueueRequest,
+            PollWorkflowTaskQueueResponse, RespondActivityTaskCanceledRequest,
+            RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedRequest,
+            RespondActivityTaskCompletedResponse, RespondActivityTaskFailedRequest,
+            RespondActivityTaskFailedResponse, RespondWorkflowTaskCompletedRequest,
             RespondWorkflowTaskCompletedResponse, RespondWorkflowTaskFailedRequest,
-            RespondWorkflowTaskFailedResponse, StartWorkflowExecutionRequest,
+            RespondWorkflowTaskFailedResponse, SignalWorkflowExecutionRequest,
+            SignalWorkflowExecutionResponse, StartWorkflowExecutionRequest,
             StartWorkflowExecutionResponse,
         },
     },
@@ -113,35 +110,35 @@ pub trait ServerGatewayApis {
     async fn poll_activity_task(&self, task_queue: String) -> Result<PollTaskResponse>;
 
     /// Complete a task by sending it to the server. `task_token` is the task token that would've
-    /// been received from [poll_workflow_task_queue] API. `commands` is a list of new commands
-    /// to send to the server, such as starting a timer.
+    /// been received from [crate::Core::poll_task] API. `commands` is a list of new
+    /// commands to send to the server, such as starting a timer.
     async fn complete_workflow_task(
         &self,
         task_token: Vec<u8>,
         commands: Vec<ProtoCommand>,
     ) -> Result<RespondWorkflowTaskCompletedResponse>;
 
-    /// Complete activity task by sending response to the server. `task_token` contains activity identifier that
-    /// would've been received from [poll_activity_task_queue] API. `result` is a blob that contains
-    /// activity response.
+    /// Complete activity task by sending response to the server. `task_token` contains activity
+    /// identifier that would've been received from [crate::Core::poll_activity_task] API. `result`
+    /// is a blob that contains activity response.
     async fn complete_activity_task(
         &self,
         task_token: Vec<u8>,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse>;
 
-    /// Cancel activity task by sending response to the server. `task_token` contains activity identifier that
-    /// would've been received from [poll_activity_task_queue] API. `details` is a blob that provides arbitrary
-    /// user defined cancellation info.
+    /// Cancel activity task by sending response to the server. `task_token` contains activity
+    /// identifier that would've been received from [crate::Core::poll_activity_task] API. `details`
+    /// is a blob that provides arbitrary user defined cancellation info.
     async fn cancel_activity_task(
         &self,
         task_token: Vec<u8>,
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse>;
 
-    /// Fail activity task by sending response to the server. `task_token` contains activity identifier that
-    /// would've been received from [poll_activity_task_queue] API. `failure` provides failure details, such
-    /// as message, cause and stack trace.
+    /// Fail activity task by sending response to the server. `task_token` contains activity
+    /// identifier that would've been received from [crate::Core::poll_activity_task] API. `failure`
+    /// provides failure details, such as message, cause and stack trace.
     async fn fail_activity_task(
         &self,
         task_token: Vec<u8>,
@@ -149,7 +146,7 @@ pub trait ServerGatewayApis {
     ) -> Result<RespondActivityTaskFailedResponse>;
 
     /// Fail task by sending the failure to the server. `task_token` is the task token that would've
-    /// been received from [PollWorkflowTaskQueueApi::poll].
+    /// been received from [crate::Core::poll_task].
     async fn fail_workflow_task(
         &self,
         task_token: Vec<u8>,

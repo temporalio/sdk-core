@@ -27,17 +27,15 @@ pub use pollers::{
 };
 pub use url::Url;
 
-use crate::machines::EmptyWorkflowCommandErr;
-use crate::protos::coresdk::task;
 use crate::{
-    machines::{ProtoCommand, WFCommand, WFMachinesError},
+    machines::{EmptyWorkflowCommandErr, ProtoCommand, WFCommand, WFMachinesError},
     pending_activations::{PendingActivation, PendingActivations},
     protos::{
         coresdk::{
             activity_result::{self as ar, activity_result, ActivityResult},
-            task_completion, workflow_completion,
-            workflow_completion::{wf_activation_completion, WfActivationCompletion},
-            PayloadsExt, Task, TaskCompletion,
+            task, task_completion,
+            workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
+            ActivityHeartbeat, PayloadsExt, Task, TaskCompletion,
         },
         temporal::api::{
             enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
@@ -68,33 +66,39 @@ pub type Result<T, E = CoreError> = std::result::Result<T, E>;
 /// expected that only one instance of an implementation will exist for the lifetime of the
 /// worker(s) using it.
 pub trait Core: Send + Sync {
-    /// Ask the core for some work, returning a [Task], which will contain a [protos::coresdk::WfActivation].
-    /// It is then the language SDK's responsibility to call the appropriate code with the provided inputs.
+    /// Ask the core for some work, returning a [Task], which will contain a
+    /// [protos::coresdk::workflow_activation::WfActivation]. It is then the language SDK's
+    /// responsibility to call the appropriate code with the provided inputs.
     ///
     /// TODO: Examples
     /// TODO: rename to poll_workflow_task and change result type to WfActivation
     fn poll_task(&self, task_queue: &str) -> Result<Task>;
 
-    /// Ask the core for some work, returning a [protos::coresdk::Task], which will contain a [protos::coresdk::ActivityTask].
-    /// It is then the language SDK's responsibility to call the completion API.
+    /// Ask the core for some work, returning a [protos::coresdk::Task], which will contain a
+    /// [protos::coresdk::activity_task::ActivityTask]. It is then the language SDK's responsibility
+    /// to call the completion API.
     fn poll_activity_task(&self, task_queue: &str) -> Result<Task>;
 
     /// Tell the core that some work has been completed - whether as a result of running workflow
     /// code or executing an activity.
     fn complete_task(&self, req: TaskCompletion) -> Result<()>;
 
-    /// Tell the core that activity has completed. This will result in core calling the server and completing activity synchronously.
+    /// Tell the core that activity has completed. This will result in core calling the server and
+    /// completing activity synchronously.
     fn complete_activity_task(&self, req: TaskCompletion) -> Result<()>;
 
-    /// Returns an instance of ServerGateway.
-    fn server_gateway(&self) -> Result<Arc<dyn ServerGatewayApis>>;
+    /// Indicate that a long running activity is still making progress
+    fn send_activity_heartbeat(&self, task_token: ActivityHeartbeat) -> Result<()>;
+
+    /// Returns core's instance of the [ServerGatewayApis] implementor it is using.
+    fn server_gateway(&self) -> Arc<dyn ServerGatewayApis>;
 
     /// Eventually ceases all polling of the server. [Core::poll_task] should be called until it
     /// returns [CoreError::ShuttingDown] to ensure that any workflows which are still undergoing
     /// replay have an opportunity to finish. This means that the lang sdk will need to call
     /// [Core::complete_task] for those workflows until they are done. At that point, the lang
     /// SDK can end the process, or drop the [Core] instance, which will close the connection.
-    fn shutdown(&self) -> Result<()>;
+    fn shutdown(&self);
 }
 
 /// Holds various configuration information required to call [init]
@@ -301,14 +305,17 @@ where
         }
     }
 
-    fn server_gateway(&self) -> Result<Arc<dyn ServerGatewayApis>> {
-        Ok(self.server_gateway.clone())
+    fn send_activity_heartbeat(&self, _task_token: ActivityHeartbeat) -> Result<()> {
+        unimplemented!()
     }
 
-    fn shutdown(&self) -> Result<(), CoreError> {
+    fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {
+        self.server_gateway.clone()
+    }
+
+    fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
         self.workflow_machines.shutdown();
-        Ok(())
     }
 }
 
@@ -447,16 +454,18 @@ pub enum CoreError {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::protos::coresdk::common::UserCodeFailure;
-    use crate::protos::coresdk::workflow_commands::{
-        CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution, ScheduleActivity, StartTimer,
-    };
     use crate::{
         machines::test_help::{build_fake_core, FakeCore, TestHistoryBuilder},
         protos::{
             coresdk::{
-                workflow_activation::{wf_activation_job, WfActivationJob},
-                workflow_activation::{FireTimer, StartWorkflow, UpdateRandomSeed},
+                common::UserCodeFailure,
+                workflow_activation::{
+                    wf_activation_job, FireTimer, StartWorkflow, UpdateRandomSeed, WfActivationJob,
+                },
+                workflow_commands::{
+                    CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution,
+                    ScheduleActivity, StartTimer,
+                },
                 TaskCompletion,
             },
             temporal::api::{
@@ -695,7 +704,7 @@ mod test {
         let res = single_timer_setup.poll_task(TASK_Q).unwrap();
         assert_eq!(res.get_wf_jobs().len(), 1);
 
-        single_timer_setup.shutdown().unwrap();
+        single_timer_setup.shutdown();
         assert_matches!(
             single_timer_setup.poll_task(TASK_Q).unwrap_err(),
             CoreError::ShuttingDown
