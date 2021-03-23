@@ -362,12 +362,14 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
                 .insert(task_token.clone(), run_id.clone());
 
             // TODO: can I eliminate the clones
-            let activation = self.workflow_machines.create_or_update(
+            match self.workflow_machines.create_or_update(
                 &run_id,
                 history.clone(),
                 workflow_execution.clone(),
-            )?;
-            Ok((activation, run_id))
+            ) {
+                Ok(activation) => Ok((activation, run_id)),
+                Err(source) => Err(CoreError::WorkflowError { source, run_id }),
+            }
         } else {
             Err(CoreError::BadDataFromWorkProvider(poll_wf_resp))
         }
@@ -396,7 +398,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 
     /// Wraps access to `self.workflow_machines.access`, properly passing in the current tracing
     /// span to the wf machines thread.
-    fn access_wf_machine<F, Fout>(&self, run_id: &str, mutator: F) -> Result<Fout, WorkflowError>
+    fn access_wf_machine<F, Fout>(&self, run_id: &str, mutator: F) -> Result<Fout, CoreError>
     where
         F: FnOnce(&mut WorkflowManager) -> Result<Fout, WorkflowError> + Send + 'static,
         Fout: Send + Debug + 'static,
@@ -406,7 +408,12 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             let _e = curspan.enter();
             mutator(wfm)
         };
-        self.workflow_machines.access(run_id, mutator)
+        self.workflow_machines
+            .access(run_id, mutator)
+            .map_err(|source| CoreError::WorkflowError {
+                source,
+                run_id: run_id.to_owned(),
+            })
     }
 }
 
@@ -422,9 +429,11 @@ pub enum CoreError {
     BadDataFromWorkProvider(PollWorkflowTaskQueueResponse),
     /// Lang SDK sent us a malformed completion: {0:?}
     MalformedCompletion(TaskCompletion),
-    /// There was an error specific to a workflow instance: {0:?}
-    // TODO: Run id
-    WorkflowError(#[from] WorkflowError),
+    /// There was an error specific to a workflow instance with id ({run_id}): {source:?}
+    WorkflowError {
+        source: WorkflowError,
+        run_id: String,
+    },
     /// Land SDK sent us an empty workflow command (no variant)
     UninterpretableCommand(#[from] EmptyWorkflowCommandErr),
     /// Task token had nothing associated with it: {0:?}
