@@ -100,14 +100,13 @@ pub trait ServerGatewayApis {
         workflow_type: String,
     ) -> Result<StartWorkflowExecutionResponse>;
 
-    /// Fetch new work. Should block indefinitely if there is no work.
-    async fn poll_task(&self, req: PollTaskRequest) -> Result<PollTaskResponse>;
+    /// Fetch new workflow tasks. Should block indefinitely if there is no work.
+    async fn poll_workflow_task(&self, task_queue: String)
+        -> Result<PollWorkflowTaskQueueResponse>;
 
-    /// Fetch new work. Should block indefinitely if there is no work.
-    async fn poll_workflow_task(&self, task_queue: String) -> Result<PollTaskResponse>;
-
-    /// Fetch new work. Should block indefinitely if there is no work.
-    async fn poll_activity_task(&self, task_queue: String) -> Result<PollTaskResponse>;
+    /// Fetch new activity tasks. Should block indefinitely if there is no work.
+    async fn poll_activity_task(&self, task_queue: String)
+        -> Result<PollActivityTaskQueueResponse>;
 
     /// Complete a task by sending it to the server. `task_token` is the task token that would've
     /// been received from [crate::Core::poll_task] API. `commands` is a list of new
@@ -172,14 +171,6 @@ pub enum PollTaskRequest {
     Activity(String),
 }
 
-/// Contains poll task response.
-pub enum PollTaskResponse {
-    /// Poll response for workflow task.
-    WorkflowTask(PollWorkflowTaskQueueResponse),
-    /// Poll response for activity task.
-    ActivityTask(PollActivityTaskQueueResponse),
-}
-
 #[async_trait::async_trait]
 impl ServerGatewayApis for ServerGateway {
     async fn start_workflow(
@@ -211,18 +202,10 @@ impl ServerGatewayApis for ServerGateway {
             .into_inner())
     }
 
-    async fn poll_task(&self, req: PollTaskRequest) -> Result<PollTaskResponse> {
-        match req {
-            PollTaskRequest::Workflow(task_queue) => {
-                Ok(Self::poll_workflow_task(self, task_queue).await?)
-            }
-            PollTaskRequest::Activity(task_queue) => {
-                Ok(Self::poll_activity_task(self, task_queue).await?)
-            }
-        }
-    }
-
-    async fn poll_workflow_task(&self, task_queue: String) -> Result<PollTaskResponse> {
+    async fn poll_workflow_task(
+        &self,
+        task_queue: String,
+    ) -> Result<PollWorkflowTaskQueueResponse> {
         let request = PollWorkflowTaskQueueRequest {
             namespace: self.opts.namespace.clone(),
             task_queue: Some(TaskQueue {
@@ -233,16 +216,18 @@ impl ServerGatewayApis for ServerGateway {
             binary_checksum: self.opts.worker_binary_id.clone(),
         };
 
-        Ok(PollTaskResponse::WorkflowTask(
-            self.service
-                .clone()
-                .poll_workflow_task_queue(request)
-                .await?
-                .into_inner(),
-        ))
+        Ok(self
+            .service
+            .clone()
+            .poll_workflow_task_queue(request)
+            .await?
+            .into_inner())
     }
 
-    async fn poll_activity_task(&self, task_queue: String) -> Result<PollTaskResponse> {
+    async fn poll_activity_task(
+        &self,
+        task_queue: String,
+    ) -> Result<PollActivityTaskQueueResponse> {
         let request = PollActivityTaskQueueRequest {
             namespace: self.opts.namespace.clone(),
             task_queue: Some(TaskQueue {
@@ -253,13 +238,12 @@ impl ServerGatewayApis for ServerGateway {
             task_queue_metadata: None,
         };
 
-        Ok(PollTaskResponse::ActivityTask(
-            self.service
-                .clone()
-                .poll_activity_task_queue(request)
-                .await?
-                .into_inner(),
-        ))
+        Ok(self
+            .service
+            .clone()
+            .poll_activity_task_queue(request)
+            .await?
+            .into_inner())
     }
 
     async fn complete_workflow_task(
@@ -290,53 +274,6 @@ impl ServerGatewayApis for ServerGateway {
                 }
             }
         }
-    }
-
-    async fn fail_workflow_task(
-        &self,
-        task_token: Vec<u8>,
-        cause: WorkflowTaskFailedCause,
-        failure: Option<Failure>,
-    ) -> Result<RespondWorkflowTaskFailedResponse> {
-        let request = RespondWorkflowTaskFailedRequest {
-            task_token,
-            cause: cause as i32,
-            failure,
-            identity: self.opts.identity.clone(),
-            binary_checksum: self.opts.worker_binary_id.clone(),
-            namespace: self.opts.namespace.clone(),
-        };
-        Ok(self
-            .service
-            .clone()
-            .respond_workflow_task_failed(request)
-            .await?
-            .into_inner())
-    }
-
-    async fn signal_workflow_execution(
-        &self,
-        workflow_id: String,
-        run_id: String,
-        signal_name: String,
-        payloads: Option<Payloads>,
-    ) -> Result<SignalWorkflowExecutionResponse> {
-        Ok(self
-            .service
-            .clone()
-            .signal_workflow_execution(SignalWorkflowExecutionRequest {
-                namespace: self.opts.namespace.clone(),
-                workflow_execution: Some(WorkflowExecution {
-                    workflow_id,
-                    run_id,
-                }),
-                signal_name,
-                input: payloads,
-                identity: self.opts.identity.clone(),
-                ..Default::default()
-            })
-            .await?
-            .into_inner())
     }
 
     async fn complete_activity_task(
@@ -388,6 +325,53 @@ impl ServerGatewayApis for ServerGateway {
                 failure,
                 identity: self.opts.identity.clone(),
                 namespace: self.opts.namespace.clone(),
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn fail_workflow_task(
+        &self,
+        task_token: Vec<u8>,
+        cause: WorkflowTaskFailedCause,
+        failure: Option<Failure>,
+    ) -> Result<RespondWorkflowTaskFailedResponse> {
+        let request = RespondWorkflowTaskFailedRequest {
+            task_token,
+            cause: cause as i32,
+            failure,
+            identity: self.opts.identity.clone(),
+            binary_checksum: self.opts.worker_binary_id.clone(),
+            namespace: self.opts.namespace.clone(),
+        };
+        Ok(self
+            .service
+            .clone()
+            .respond_workflow_task_failed(request)
+            .await?
+            .into_inner())
+    }
+
+    async fn signal_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: String,
+        signal_name: String,
+        payloads: Option<Payloads>,
+    ) -> Result<SignalWorkflowExecutionResponse> {
+        Ok(self
+            .service
+            .clone()
+            .signal_workflow_execution(SignalWorkflowExecutionRequest {
+                namespace: self.opts.namespace.clone(),
+                workflow_execution: Some(WorkflowExecution {
+                    workflow_id,
+                    run_id,
+                }),
+                signal_name,
+                input: payloads,
+                identity: self.opts.identity.clone(),
+                ..Default::default()
             })
             .await?
             .into_inner())

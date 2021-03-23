@@ -22,9 +22,7 @@ mod workflow;
 mod test_help;
 
 pub use core_tracing::tracing_init;
-pub use pollers::{
-    PollTaskRequest, PollTaskResponse, ServerGateway, ServerGatewayApis, ServerGatewayOptions,
-};
+pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
 use crate::{
@@ -146,6 +144,30 @@ struct CoreSDK<WP> {
     shutdown_requested: AtomicBool,
 }
 
+/// Can be used inside the CoreSDK impl to block on any method that polls the server until it
+/// responds, or until the shutdown flag is set (aborting the poll)
+macro_rules! abort_on_shutdown {
+    ($self:ident, $gateway_fn:tt, $poll_arg:expr) => {
+        $self.runtime.block_on(async {
+            let shutdownfut = async {
+                loop {
+                    if $self.shutdown_requested.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            };
+            let poll_result_future = $self.server_gateway.$gateway_fn($poll_arg);
+            tokio::select! {
+                _ = shutdownfut => {
+                    Err(CoreError::ShuttingDown)
+                }
+                r = poll_result_future => r
+            }
+        })
+    };
+}
+
 impl<WP> Core for CoreSDK<WP>
 where
     WP: ServerGatewayApis + Send + Sync + 'static,
@@ -175,8 +197,8 @@ where
 
         // This will block forever (unless interrupted by shutdown) in the event there is no work
         // from the server
-        match self.poll_server(PollTaskRequest::Workflow(task_queue.to_owned())) {
-            Ok(PollTaskResponse::WorkflowTask(work)) => {
+        match abort_on_shutdown!(self, poll_workflow_task, task_queue.to_owned()) {
+            Ok(work) => {
                 let task_token = work.task_token.clone();
                 debug!(
                     task_token = %fmt_task_token(&task_token),
@@ -200,7 +222,6 @@ where
             // Drain pending activations in case of shutdown.
             Err(CoreError::ShuttingDown) => self.poll_task(task_queue),
             Err(e) => Err(e),
-            Ok(PollTaskResponse::ActivityTask(_)) => Err(CoreError::UnexpectedResult),
         }
     }
 
@@ -210,8 +231,8 @@ where
             return Err(CoreError::ShuttingDown);
         }
 
-        match self.poll_server(PollTaskRequest::Activity(task_queue.to_owned())) {
-            Ok(PollTaskResponse::ActivityTask(work)) => {
+        match abort_on_shutdown!(self, poll_activity_task, task_queue.to_owned()) {
+            Ok(work) => {
                 let task_token = work.task_token.clone();
                 Ok(Task {
                     task_token,
@@ -219,7 +240,6 @@ where
                 })
             }
             Err(e) => Err(e),
-            Ok(PollTaskResponse::WorkflowTask(_)) => Err(CoreError::UnexpectedResult),
         }
     }
 
@@ -367,28 +387,6 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         self.access_wf_machine(run_id, move |mgr| mgr.push_commands(cmds))
     }
 
-    /// Blocks polling the server until it responds, or until the shutdown flag is set (aborting
-    /// the poll)
-    fn poll_server(&self, req: PollTaskRequest) -> Result<PollTaskResponse> {
-        self.runtime.block_on(async {
-            let shutdownfut = async {
-                loop {
-                    if self.shutdown_requested.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-            };
-            let poll_result_future = self.server_gateway.poll_task(req);
-            tokio::select! {
-                _ = shutdownfut => {
-                    Err(CoreError::ShuttingDown)
-                }
-                r = poll_result_future => r
-            }
-        })
-    }
-
     /// Remove a workflow run from the cache entirely
     fn evict_run(&self, run_id: &str) {
         self.workflow_machines.evict(run_id);
@@ -446,9 +444,6 @@ pub enum CoreError {
     /// When thrown from complete_task, it means you should poll for a new task, receive a new
     /// task token, and complete that task.
     UnhandledCommandWhenCompleting,
-    /// Indicates that underlying function returned Ok, but result type was incorrect.
-    /// This is likely a result of a bug and should never happen.
-    UnexpectedResult,
 }
 
 #[cfg(test)]
