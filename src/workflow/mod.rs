@@ -7,15 +7,31 @@ pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
 pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFetcher};
 
 use crate::{
-    machines::{ProtoCommand, WFCommand, WorkflowMachines},
+    machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
     protos::{
         coresdk::workflow_activation::WfActivation,
-        temporal::api::{history::v1::History, workflowservice::v1::PollWorkflowTaskQueueResponse},
+        temporal::api::{common::v1::WorkflowExecution, history::v1::History},
     },
-    protosext::HistoryInfo,
-    CoreError, Result,
+    protosext::{HistoryInfo, HistoryInfoError},
 };
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{SendError, Sender};
+
+type Result<T, E = WorkflowError> = std::result::Result<T, E>;
+
+/// Errors relating to workflow management and machine logic
+#[derive(thiserror::Error, Debug, displaydoc::Display)]
+#[allow(clippy::large_enum_variant)]
+// NOTE: Docstrings take the place of #[error("xxxx")] here b/c of displaydoc
+pub enum WorkflowError {
+    /// The machine with `run_id` was not found in memory
+    MissingMachine { run_id: String },
+    /// Underlying error in state machines: {0:?}
+    UnderlyingMachinesError(#[from] WFMachinesError),
+    /// There was an error in the history associated with the workflow: {0:?}
+    HistoryError(#[from] HistoryInfoError),
+    /// Error buffering commands
+    CantSendCommands(#[from] SendError<Vec<WFCommand>>),
+}
 
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
 /// associated with that specific workflow run.
@@ -32,21 +48,18 @@ pub(crate) struct WorkflowManager {
 }
 
 impl WorkflowManager {
-    /// Create a new workflow manager from a server workflow task queue response.
-    pub fn new(poll_resp: PollWorkflowTaskQueueResponse) -> Result<Self> {
-        let (history, we) = if let PollWorkflowTaskQueueResponse {
-            workflow_execution: Some(we),
-            history: Some(hist),
-            ..
-        } = poll_resp
-        {
-            (hist, we)
-        } else {
-            return Err(CoreError::BadDataFromWorkProvider(poll_resp.clone()));
-        };
-
+    /// Create a new workflow manager given workflow history and exection info as would be found
+    /// in [PollWorkflowTaskQueueResponse]
+    pub fn new(
+        history: History,
+        workflow_execution: WorkflowExecution,
+    ) -> Result<Self, HistoryInfoError> {
         let (wfb, cmd_sink) = WorkflowBridge::new();
-        let state_machines = WorkflowMachines::new(we.workflow_id, we.run_id, Box::new(wfb).into());
+        let state_machines = WorkflowMachines::new(
+            workflow_execution.workflow_id,
+            workflow_execution.run_id,
+            Box::new(wfb).into(),
+        );
         Ok(Self {
             machines: state_machines,
             command_sink: cmd_sink,

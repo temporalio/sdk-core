@@ -59,7 +59,7 @@ fn create_workflow(
 
 #[tokio::main]
 async fn with_gw<F: FnOnce(GwApi) -> Fout, Fout: Future>(core: &dyn Core, fun: F) -> Fout::Output {
-    let gw = core.server_gateway().unwrap();
+    let gw = core.server_gateway();
     fun(gw).await
 }
 
@@ -376,7 +376,7 @@ fn shutdown_aborts_actively_blocked_poll() {
     let tcore = core.clone();
     let handle = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(100));
-        tcore.shutdown().unwrap();
+        tcore.shutdown();
     });
     assert_matches!(
         core.poll_workflow_task(task_q).unwrap_err(),
@@ -384,7 +384,7 @@ fn shutdown_aborts_actively_blocked_poll() {
     );
     handle.join().unwrap();
     // Ensure double-shutdown doesn't explode
-    core.shutdown().unwrap();
+    core.shutdown();
     assert_matches!(
         core.poll_workflow_task(task_q).unwrap_err(),
         CoreError::ShuttingDown

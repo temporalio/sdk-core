@@ -26,7 +26,7 @@ pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatew
 pub use url::Url;
 
 use crate::{
-    machines::{EmptyWorkflowCommandErr, ProtoCommand, WFCommand, WFMachinesError},
+    machines::{EmptyWorkflowCommandErr, ProtoCommand},
     pending_activations::{PendingActivation, PendingActivations},
     protos::{
         coresdk::{
@@ -39,8 +39,8 @@ use crate::{
             enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
         },
     },
-    protosext::{fmt_task_token, HistoryInfoError},
-    workflow::{NextWfActivation, WorkflowConcurrencyManager, WorkflowManager},
+    protosext::fmt_task_token,
+    workflow::{NextWfActivation, WorkflowConcurrencyManager, WorkflowError, WorkflowManager},
 };
 use dashmap::DashMap;
 use std::{
@@ -48,7 +48,6 @@ use std::{
     fmt::Debug,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::SendError,
         Arc,
     },
     time::Duration,
@@ -353,6 +352,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         if let PollWorkflowTaskQueueResponse {
             task_token,
             workflow_execution: Some(workflow_execution),
+            history: Some(history),
             ..
         } = &poll_wf_resp
         {
@@ -361,9 +361,12 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             self.workflow_task_tokens
                 .insert(task_token.clone(), run_id.clone());
 
-            let activation = self
-                .workflow_machines
-                .create_or_update(&run_id, poll_wf_resp)?;
+            // TODO: can I eliminate the clones
+            let activation = self.workflow_machines.create_or_update(
+                &run_id,
+                history.clone(),
+                workflow_execution.clone(),
+            )?;
             Ok((activation, run_id))
         } else {
             Err(CoreError::BadDataFromWorkProvider(poll_wf_resp))
@@ -383,7 +386,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             .into_iter()
             .map(|c| c.try_into().map_err(Into::into))
             .collect::<Result<Vec<_>>>()?;
-        self.access_wf_machine(run_id, move |mgr| mgr.push_commands(cmds))
+        Ok(self.access_wf_machine(run_id, move |mgr| mgr.push_commands(cmds))?)
     }
 
     /// Remove a workflow run from the cache entirely
@@ -393,9 +396,9 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 
     /// Wraps access to `self.workflow_machines.access`, properly passing in the current tracing
     /// span to the wf machines thread.
-    fn access_wf_machine<F, Fout>(&self, run_id: &str, mutator: F) -> Result<Fout>
+    fn access_wf_machine<F, Fout>(&self, run_id: &str, mutator: F) -> Result<Fout, WorkflowError>
     where
-        F: FnOnce(&mut WorkflowManager) -> Result<Fout> + Send + 'static,
+        F: FnOnce(&mut WorkflowManager) -> Result<Fout, WorkflowError> + Send + 'static,
         Fout: Send + Debug + 'static,
     {
         let curspan = Span::current();
@@ -419,14 +422,11 @@ pub enum CoreError {
     BadDataFromWorkProvider(PollWorkflowTaskQueueResponse),
     /// Lang SDK sent us a malformed completion: {0:?}
     MalformedCompletion(TaskCompletion),
-    /// Error buffering commands
-    CantSendCommands(#[from] SendError<Vec<WFCommand>>),
+    /// There was an error specific to a workflow instance: {0:?}
+    // TODO: Run id
+    WorkflowError(#[from] WorkflowError),
     /// Land SDK sent us an empty workflow command (no variant)
     UninterpretableCommand(#[from] EmptyWorkflowCommandErr),
-    /// Underlying error in history processing
-    UnderlyingHistError(#[from] HistoryInfoError),
-    /// Underlying error in state machines: {0:?}
-    UnderlyingMachinesError(#[from] WFMachinesError),
     /// Task token had nothing associated with it: {0:?}
     NothingFoundForTaskToken(Vec<u8>),
     /// Error calling the service: {0:?}
