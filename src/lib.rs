@@ -65,7 +65,8 @@ pub type Result<T, E = CoreError> = std::result::Result<T, E>;
 pub trait Core: Send + Sync {
     /// Ask the core for some work, returning a
     /// [protos::coresdk::workflow_activation::WfActivation]. It is then the language SDK's
-    /// responsibility to call the appropriate code with the provided inputs.
+    /// responsibility to call the appropriate code with the provided inputs. Blocks indefinitely
+    /// until such work is available or [shutdown] is called.
     ///
     /// TODO: Examples
     fn poll_workflow_task(&self, task_queue: &str) -> Result<Task>;
@@ -172,54 +173,62 @@ where
 {
     #[instrument(skip(self), fields(pending_activation))]
     fn poll_workflow_task(&self, task_queue: &str) -> Result<Task> {
-        // We must first check if there are pending workflow tasks for workflows that are currently
-        // replaying, and issue those tasks before bothering the server.
-        if let Some(pa) = self.pending_activations.pop() {
-            Span::current().record("pending_activation", &format!("{}", &pa).as_str());
+        // The poll needs to be in a loop because we can't guarantee tail call optimization in Rust
+        // (simply) and we really, really need that for the long-poll retry situation.
+        loop {
+            // We must first check if there are pending workflow tasks for workflows that are
+            // currently replaying, and issue those tasks before bothering the server.
+            if let Some(pa) = self.pending_activations.pop() {
+                Span::current().record("pending_activation", &format!("{}", &pa).as_str());
 
-            let next_activation =
-                self.access_wf_machine(&pa.run_id, move |mgr| mgr.get_next_activation())?;
-            let task_token = pa.task_token.clone();
-            if next_activation.more_activations_needed {
-                self.pending_activations.push(pa);
-            }
-            return Ok(Task {
-                task_token,
-                variant: next_activation.activation.map(Into::into),
-            });
-        }
-
-        if self.shutdown_requested.load(Ordering::SeqCst) {
-            return Err(CoreError::ShuttingDown);
-        }
-
-        // This will block forever (unless interrupted by shutdown) in the event there is no work
-        // from the server
-        match abort_on_shutdown!(self, poll_workflow_task, task_queue.to_owned()) {
-            Ok(work) => {
-                let task_token = work.task_token.clone();
-                debug!(
-                    task_token = %fmt_task_token(&task_token),
-                    "Received workflow task from server"
-                );
-
-                let (next_activation, run_id) = self.instantiate_or_update_workflow(work)?;
-
+                let next_activation =
+                    self.access_wf_machine(&pa.run_id, move |mgr| mgr.get_next_activation())?;
+                let task_token = pa.task_token.clone();
                 if next_activation.more_activations_needed {
-                    self.pending_activations.push(PendingActivation {
-                        run_id,
-                        task_token: task_token.clone(),
-                    });
+                    self.pending_activations.push(pa);
                 }
-
-                Ok(Task {
+                return Ok(Task {
                     task_token,
                     variant: next_activation.activation.map(Into::into),
-                })
+                });
             }
-            // Drain pending activations in case of shutdown.
-            Err(CoreError::ShuttingDown) => self.poll_workflow_task(task_queue),
-            Err(e) => Err(e),
+
+            if self.shutdown_requested.load(Ordering::SeqCst) {
+                return Err(CoreError::ShuttingDown);
+            }
+
+            // This will block until the long poll timeout (unless interrupted by shutdown) in the
+            // event there is no work from the server
+            match abort_on_shutdown!(self, poll_workflow_task, task_queue.to_owned()) {
+                Ok(work) => {
+                    if work == PollWorkflowTaskQueueResponse::default() {
+                        // We get the default proto in the event that the long poll times out.
+                        continue;
+                    }
+                    let task_token = work.task_token.clone();
+                    debug!(
+                        task_token = %fmt_task_token(&task_token),
+                        "Received workflow task from server"
+                    );
+
+                    let (next_activation, run_id) = self.instantiate_or_update_workflow(work)?;
+
+                    if next_activation.more_activations_needed {
+                        self.pending_activations.push(PendingActivation {
+                            run_id,
+                            task_token: task_token.clone(),
+                        });
+                    }
+
+                    return Ok(Task {
+                        task_token,
+                        variant: next_activation.activation.map(Into::into),
+                    });
+                }
+                // Drain pending activations in case of shutdown.
+                Err(CoreError::ShuttingDown) => continue,
+                Err(e) => return Err(e),
+            }
         }
     }
 
@@ -349,29 +358,26 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         &self,
         poll_wf_resp: PollWorkflowTaskQueueResponse,
     ) -> Result<(NextWfActivation, String)> {
-        if let PollWorkflowTaskQueueResponse {
-            task_token,
-            workflow_execution: Some(workflow_execution),
-            history: Some(history),
-            ..
-        } = &poll_wf_resp
-        {
-            let run_id = workflow_execution.run_id.clone();
-            // Correlate task token w/ run ID
-            self.workflow_task_tokens
-                .insert(task_token.clone(), run_id.clone());
+        match poll_wf_resp {
+            PollWorkflowTaskQueueResponse {
+                task_token,
+                workflow_execution: Some(workflow_execution),
+                history: Some(history),
+                ..
+            } => {
+                let run_id = workflow_execution.run_id.clone();
+                // Correlate task token w/ run ID
+                self.workflow_task_tokens.insert(task_token, run_id.clone());
 
-            // TODO: can I eliminate the clones
-            match self.workflow_machines.create_or_update(
-                &run_id,
-                history.clone(),
-                workflow_execution.clone(),
-            ) {
-                Ok(activation) => Ok((activation, run_id)),
-                Err(source) => Err(CoreError::WorkflowError { source, run_id }),
+                match self
+                    .workflow_machines
+                    .create_or_update(&run_id, history, workflow_execution)
+                {
+                    Ok(activation) => Ok((activation, run_id)),
+                    Err(source) => Err(CoreError::WorkflowError { source, run_id }),
+                }
             }
-        } else {
-            Err(CoreError::BadDataFromWorkProvider(poll_wf_resp))
+            p => Err(CoreError::BadDataFromWorkProvider(p)),
         }
     }
 
@@ -431,7 +437,9 @@ pub enum CoreError {
     MalformedCompletion(TaskCompletion),
     /// There was an error specific to a workflow instance with id ({run_id}): {source:?}
     WorkflowError {
+        /// Underlying workflow error
         source: WorkflowError,
+        /// The run id of the erring workflow
         run_id: String,
     },
     /// Land SDK sent us an empty workflow command (no variant)

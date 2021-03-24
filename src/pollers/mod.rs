@@ -53,7 +53,8 @@ impl ServerGatewayOptions {
         let channel = Channel::from_shared(self.target_url.to_string())?
             .connect()
             .await?;
-        let service = WorkflowServiceClient::with_interceptor(channel, intercept);
+        let interceptor = intercept(&self);
+        let service = WorkflowServiceClient::with_interceptor(channel, interceptor);
         Ok(ServerGateway {
             service,
             opts: self.clone(),
@@ -61,22 +62,25 @@ impl ServerGatewayOptions {
     }
 }
 
-/// This function will get called on each outbound request. Returning a
-/// `Status` here will cancel the request and have that status returned to
-/// the caller.
-#[allow(clippy::unnecessary_wraps)] // Clippy lies because we need to pass to `with_interceptor`
-fn intercept(mut req: Request<()>) -> Result<Request<()>, Status> {
-    let metadata = req.metadata_mut();
-    // TODO: Only apply this to long poll requests
-    metadata.insert(
-        "grpc-timeout",
-        "50000m".parse().expect("Static value is parsable"),
-    );
-    metadata.insert(
-        "client-name",
-        "core-sdk".parse().expect("Static value is parsable"),
-    );
-    Ok(req)
+/// This function will get called on each outbound request. Returning a `Status` here will cancel
+/// the request and have that status returned to the caller.
+fn intercept(opts: &ServerGatewayOptions) -> impl Fn(Request<()>) -> Result<Request<()>, Status> {
+    let timeout_str = format!("{}m", opts.long_poll_timeout.as_millis());
+    move |mut req: Request<()>| {
+        let metadata = req.metadata_mut();
+        // TODO: Only apply this to long poll requests
+        metadata.insert(
+            "grpc-timeout",
+            timeout_str
+                .parse()
+                .expect("Timeout string construction cannot fail"),
+        );
+        metadata.insert(
+            "client-name",
+            "core-sdk".parse().expect("Static value is parsable"),
+        );
+        Ok(req)
+    }
 }
 
 /// Contains an instance of a client for interacting with the temporal server
