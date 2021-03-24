@@ -25,6 +25,8 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
+use crate::machines::WFCommand;
+use crate::protos::coresdk::task;
 use crate::{
     machines::{EmptyWorkflowCommandErr, ProtoCommand},
     pending_activations::{PendingActivation, PendingActivations},
@@ -32,7 +34,7 @@ use crate::{
         coresdk::{
             activity_result::{self as ar, activity_result, ActivityResult},
             task_completion,
-            workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
+            workflow_completion::{wf_activation_completion, WfActivationCompletion},
             ActivityHeartbeat, PayloadsExt, PollTaskReq, Task, TaskCompletion,
         },
         temporal::api::{
@@ -191,39 +193,53 @@ where
             }
 
             // TODO: There's an interesting question here about whether activities or workflows
-            //  should take priority in the event that the caller is OK with either.
+            //  should take priority in the event that the caller is OK with either, and we
+            //  could potentially poll both and just proceed with whichever returns first... but
+            //  that starts getting tricky. Perhaps we should not allow specifying both.
 
-            // This will block until the long poll timeout (unless interrupted by shutdown) in the
-            // event there is no work from the server
-            match abort_on_shutdown!(self, poll_workflow_task, task_queue.to_owned()) {
-                Ok(work) => {
-                    if work == PollWorkflowTaskQueueResponse::default() {
-                        // We get the default proto in the event that the long poll times out.
-                        continue;
-                    }
-                    let task_token = work.task_token.clone();
-                    debug!(
-                        task_token = %fmt_task_token(&task_token),
-                        "Received workflow task from server"
-                    );
+            if req.workflows {
+                match abort_on_shutdown!(self, poll_workflow_task, task_queue.to_owned()) {
+                    Ok(work) => {
+                        if work == PollWorkflowTaskQueueResponse::default() {
+                            // We get the default proto in the event that the long poll times out.
+                            continue;
+                        }
+                        let task_token = work.task_token.clone();
+                        debug!(
+                            task_token = %fmt_task_token(&task_token),
+                            "Received workflow task from server"
+                        );
 
-                    let (next_activation, run_id) = self.instantiate_or_update_workflow(work)?;
+                        let (next_activation, run_id) =
+                            self.instantiate_or_update_workflow(work)?;
 
-                    if next_activation.more_activations_needed {
-                        self.pending_activations.push(PendingActivation {
-                            run_id,
-                            task_token: task_token.clone(),
+                        if next_activation.more_activations_needed {
+                            self.pending_activations.push(PendingActivation {
+                                run_id,
+                                task_token: task_token.clone(),
+                            });
+                        }
+
+                        return Ok(Task {
+                            task_token,
+                            variant: next_activation.activation.map(Into::into),
                         });
                     }
-
-                    return Ok(Task {
-                        task_token,
-                        variant: next_activation.activation.map(Into::into),
-                    });
+                    // Drain pending activations in case of shutdown.
+                    Err(CoreError::ShuttingDown) => continue,
+                    Err(e) => return Err(e),
                 }
-                // Drain pending activations in case of shutdown.
-                Err(CoreError::ShuttingDown) => continue,
-                Err(e) => return Err(e),
+            } else {
+                return match abort_on_shutdown!(self, poll_activity_task, task_queue.to_owned()) {
+                    Ok(work) => {
+                        let task_token = work.task_token.clone();
+                        Ok(Task {
+                            task_token,
+                            variant: Some(task::Variant::Activity(work.into())),
+                        })
+                    }
+                    Err(e) => Err(e),
+                };
             }
         }
     }
@@ -251,7 +267,19 @@ where
                     })?;
                 match wfstatus {
                     wf_activation_completion::Status::Successful(success) => {
-                        let commands = self.push_lang_commands(&run_id, success)?;
+                        // Convert to wf commands
+                        let cmds = success
+                            .commands
+                            .into_iter()
+                            .map(|c| c.try_into())
+                            .collect::<Result<Vec<_>, EmptyWorkflowCommandErr>>()
+                            .map_err(|_| CoreError::MalformedCompletion {
+                                reason: "At least one workflow command in the completion \
+                                contained an empty variant"
+                                    .to_owned(),
+                                completion: None,
+                            })?;
+                        let commands = self.push_lang_commands(&run_id, cmds)?;
                         // We only actually want to send commands back to the server if there are
                         // no more pending activations -- in other words the lang SDK has caught
                         // up on replay.
@@ -363,17 +391,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 
     /// Feed commands from the lang sdk into appropriate workflow manager which will iterate
     /// the state machines and return commands ready to be sent to the server
-    fn push_lang_commands(
-        &self,
-        run_id: &str,
-        success: workflow_completion::Success,
-    ) -> Result<Vec<ProtoCommand>> {
-        // Convert to wf commands
-        let cmds = success
-            .commands
-            .into_iter()
-            .map(|c| c.try_into().map_err(Into::into))
-            .collect::<Result<Vec<_>>>()?;
+    fn push_lang_commands(&self, run_id: &str, cmds: Vec<WFCommand>) -> Result<Vec<ProtoCommand>> {
         Ok(self.access_wf_machine(run_id, move |mgr| mgr.push_commands(cmds))?)
     }
 
@@ -415,7 +433,9 @@ pub enum CoreError {
     BadDataFromWorkProvider(PollWorkflowTaskQueueResponse),
     /// Lang SDK sent us a malformed completion ({reason}): {completion:?}
     MalformedCompletion {
+        /// Reason the completion was malformed
         reason: String,
+        /// The completion, which may not be included to avoid unnecessary copies.
         completion: Option<TaskCompletion>,
     },
     /// There was an error specific to a workflow instance with id ({run_id}): {source:?}
@@ -425,8 +445,6 @@ pub enum CoreError {
         /// The run id of the erring workflow
         run_id: String,
     },
-    /// Land SDK sent us an empty workflow command (no variant)
-    UninterpretableCommand(#[from] EmptyWorkflowCommandErr),
     /// Error calling the service: {0:?}
     TonicError(#[from] tonic::Status),
     /// Server connection error: {0:?}
