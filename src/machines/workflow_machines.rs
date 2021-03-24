@@ -75,7 +75,7 @@ pub(crate) struct WorkflowMachines {
     drive_me: DrivenWorkflow,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum CommandID {
     Timer(String),
     Activity(String),

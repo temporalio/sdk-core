@@ -131,26 +131,20 @@ impl CommandSender {
 
     /// Request to create a timer
     pub fn timer(&mut self, a: StartTimer) -> impl Future {
-        let tid = a.timer_id.clone();
-        let c = WFCommand::AddTimer(a);
-        self.send(c);
-        let rx = self.twd_cache.add_sent_cmd(Timer(tid.clone()));
-        let cache_clone = self.twd_cache.clone();
-        async move {
-            cache_clone.set_cmd_blocked(Timer(tid));
-            rx.await
-        }
+        self.send_blocking_cmd(Timer(a.timer_id.clone()), WFCommand::AddTimer(a))
     }
 
     /// Request to run an activity
     pub fn activity(&mut self, a: ScheduleActivity) -> impl Future {
-        let aid = a.activity_id.clone();
-        let c = WFCommand::AddActivity(a);
+        self.send_blocking_cmd(Activity(a.activity_id.clone()), WFCommand::AddActivity(a))
+    }
+
+    fn send_blocking_cmd(&mut self, id: CommandID, c: WFCommand) -> impl Future {
         self.send(c);
-        let rx = self.twd_cache.add_sent_cmd(Activity(aid.clone()));
+        let rx = self.twd_cache.add_sent_cmd(id.clone());
         let cache_clone = self.twd_cache.clone();
         async move {
-            cache_clone.set_cmd_blocked(Activity(aid));
+            cache_clone.set_cmd_blocked(id);
             rx.await
         }
     }
