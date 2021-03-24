@@ -242,7 +242,13 @@ where
                     .workflow_task_tokens
                     .get(&task_token)
                     .map(|x| x.value().clone())
-                    .ok_or_else(|| CoreError::NothingFoundForTaskToken(task_token.clone()))?;
+                    .ok_or_else(|| CoreError::MalformedCompletion {
+                        reason: format!(
+                            "Task token {} had no workflow run associated with it",
+                            fmt_task_token(&task_token)
+                        ),
+                        completion: None,
+                    })?;
                 match wfstatus {
                     wf_activation_completion::Status::Successful(success) => {
                         let commands = self.push_lang_commands(&run_id, success)?;
@@ -299,7 +305,10 @@ where
                 }
                 Ok(())
             }
-            _ => Err(CoreError::MalformedCompletion(req)),
+            _ => Err(CoreError::MalformedCompletion {
+                completion: Some(req),
+                reason: "TaskCompletion didn't have a workflow or activity completion".to_owned(),
+            }),
         }
     }
 
@@ -404,8 +413,11 @@ pub enum CoreError {
     ShuttingDown,
     /// Poll response from server was malformed: {0:?}
     BadDataFromWorkProvider(PollWorkflowTaskQueueResponse),
-    /// Lang SDK sent us a malformed completion: {0:?}
-    MalformedCompletion(TaskCompletion),
+    /// Lang SDK sent us a malformed completion ({reason}): {completion:?}
+    MalformedCompletion {
+        reason: String,
+        completion: Option<TaskCompletion>,
+    },
     /// There was an error specific to a workflow instance with id ({run_id}): {source:?}
     WorkflowError {
         /// Underlying workflow error
@@ -415,8 +427,6 @@ pub enum CoreError {
     },
     /// Land SDK sent us an empty workflow command (no variant)
     UninterpretableCommand(#[from] EmptyWorkflowCommandErr),
-    /// Task token had nothing associated with it: {0:?}
-    NothingFoundForTaskToken(Vec<u8>),
     /// Error calling the service: {0:?}
     TonicError(#[from] tonic::Status),
     /// Server connection error: {0:?}

@@ -18,19 +18,22 @@ use std::sync::mpsc::{SendError, Sender};
 
 type Result<T, E = WorkflowError> = std::result::Result<T, E>;
 
-/// Errors relating to workflow management and machine logic
+/// Errors relating to workflow management and machine logic. These are going to be passed up and
+/// out to the lang SDK where it will need to handle them. Generally that will usually mean
+/// showing an error to the user and/or invalidating the workflow cache.
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
 #[allow(clippy::large_enum_variant)]
 // NOTE: Docstrings take the place of #[error("xxxx")] here b/c of displaydoc
 pub enum WorkflowError {
-    /// The machine with `run_id` was not found in memory
+    /// The workflow machines associated with `run_id` were not found in memory
     MissingMachine { run_id: String },
     /// Underlying error in state machines: {0:?}
     UnderlyingMachinesError(#[from] WFMachinesError),
     /// There was an error in the history associated with the workflow: {0:?}
     HistoryError(#[from] HistoryInfoError),
-    /// Error buffering commands
-    CantSendCommands(#[from] SendError<Vec<WFCommand>>),
+    /// Error buffering commands coming in from the lang side. This shouldn't happen unless we've
+    /// run out of memory or there is a logic bug. Considered fatal.
+    CommandBufferingError(#[from] SendError<Vec<WFCommand>>),
 }
 
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
