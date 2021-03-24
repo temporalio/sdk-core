@@ -20,11 +20,13 @@ use crate::{
             StartWorkflowExecutionResponse,
         },
     },
-    CoreError, CoreInitError, Result,
+    CoreInitError,
 };
 use tonic::{transport::Channel, Request, Status};
 use url::Url;
 use uuid::Uuid;
+
+pub type Result<T, E = Status> = std::result::Result<T, E>;
 
 /// Options for the connection to the temporal server
 #[derive(Clone, Debug)]
@@ -263,21 +265,12 @@ impl ServerGatewayApis for ServerGateway {
             namespace: self.opts.namespace.clone(),
             ..Default::default()
         };
-        match self
+        Ok(self
             .service
             .clone()
             .respond_workflow_task_completed(request)
-            .await
-        {
-            Ok(pwtr) => Ok(pwtr.into_inner()),
-            Err(ts) => {
-                if ts.code() == tonic::Code::InvalidArgument && ts.message() == "UnhandledCommand" {
-                    Err(CoreError::UnhandledCommandWhenCompleting)
-                } else {
-                    Err(ts.into())
-                }
-            }
-        }
+            .await?
+            .into_inner())
     }
 
     async fn complete_activity_task(

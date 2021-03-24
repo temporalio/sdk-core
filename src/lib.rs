@@ -153,7 +153,7 @@ macro_rules! abort_on_shutdown {
                 _ = shutdownfut => {
                     Err(CoreError::ShuttingDown)
                 }
-                r = poll_result_future => r
+                r = poll_result_future => r.map_err(Into::into)
             }
         })
     };
@@ -284,10 +284,20 @@ where
                         // no more pending activations -- in other words the lang SDK has caught
                         // up on replay.
                         if !self.pending_activations.has_pending(&run_id) {
-                            self.runtime.block_on(
-                                self.server_gateway
-                                    .complete_workflow_task(task_token, commands),
-                            )?;
+                            self.runtime
+                                .block_on(
+                                    self.server_gateway
+                                        .complete_workflow_task(task_token, commands),
+                                )
+                                .map_err(|ts| {
+                                    if ts.code() == tonic::Code::InvalidArgument
+                                        && ts.message() == "UnhandledCommand"
+                                    {
+                                        CoreError::UnhandledCommandWhenCompleting
+                                    } else {
+                                        ts.into()
+                                    }
+                                })?;
                         }
                     }
                     wf_activation_completion::Status::Failed(failure) => {
@@ -385,7 +395,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
                     Err(source) => Err(CoreError::WorkflowError { source, run_id }),
                 }
             }
-            p => Err(CoreError::BadDataFromWorkProvider(p)),
+            p => Err(CoreError::BadPollResponseFromServer(p)),
         }
     }
 
@@ -429,8 +439,8 @@ pub enum CoreError {
     /// [Core::shutdown] was called, and there are no more replay tasks to be handled. You must
     /// call [Core::complete_task] for any remaining tasks, and then may exit.
     ShuttingDown,
-    /// Poll response from server was malformed: {0:?}
-    BadDataFromWorkProvider(PollWorkflowTaskQueueResponse),
+    /// Poll workflow response from server was malformed: {0:?}
+    BadPollResponseFromServer(PollWorkflowTaskQueueResponse),
     /// Lang SDK sent us a malformed completion ({reason}): {completion:?}
     MalformedCompletion {
         /// Reason the completion was malformed
