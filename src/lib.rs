@@ -445,7 +445,7 @@ pub enum CoreError {
         /// The run id of the erring workflow
         run_id: String,
     },
-    /// Error calling the service: {0:?}
+    /// Unhandled error when calling the temporal server: {0:?}
     TonicError(#[from] tonic::Status),
     /// Server connection error: {0:?}
     TonicTransportError(#[from] tonic::transport::Error),
@@ -453,8 +453,6 @@ pub enum CoreError {
     TokioInitError(std::io::Error),
     /// Invalid URI: {0:?}
     InvalidUri(#[from] InvalidUri),
-    /// State machines are missing for the workflow with run id {0}!
-    MissingMachines(String),
     /// There exists a pending command in this workflow's history which has not yet been handled.
     /// When thrown from complete_task, it means you should poll for a new task, receive a new
     /// task token, and complete that task.
