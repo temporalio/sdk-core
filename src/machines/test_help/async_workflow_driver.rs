@@ -1,3 +1,6 @@
+use crate::protos::coresdk::workflow_activation::wf_activation_job::Variant;
+use crate::protos::coresdk::workflow_activation::ResolveActivity;
+use crate::protos::coresdk::workflow_commands::ScheduleActivity;
 use crate::{
     machines::{workflow_machines::CommandID, WFCommand},
     protos::coresdk::{
@@ -21,6 +24,7 @@ use tokio::{
     runtime::Runtime,
     task::{JoinError, JoinHandle},
 };
+use CommandID::Activity;
 use CommandID::Timer;
 
 pub struct TestWorkflowDriver {
@@ -138,6 +142,19 @@ impl CommandSender {
         }
     }
 
+    /// Request to run an activity
+    pub fn activity(&mut self, a: ScheduleActivity) -> impl Future {
+        let aid = a.activity_id.clone();
+        let c = WFCommand::AddActivity(a);
+        self.send(c);
+        let rx = self.twd_cache.add_sent_cmd(Activity(aid.clone()));
+        let cache_clone = self.twd_cache.clone();
+        async move {
+            cache_clone.set_cmd_blocked(Activity(aid));
+            rx.await
+        }
+    }
+
     /// Cancel a timer
     pub fn cancel_timer(&self, timer_id: &str) {
         let c = WFCommand::CancelTimer(CancelTimer {
@@ -239,8 +256,17 @@ impl WorkflowFetcher for TestWorkflowDriver {
 
 impl ActivationListener for TestWorkflowDriver {
     fn on_activation_job(&mut self, activation: &wf_activation_job::Variant) {
-        if let wf_activation_job::Variant::FireTimer(FireTimer { timer_id }) = activation {
-            self.cache.unblock(Timer(timer_id.to_owned()));
+        match activation {
+            Variant::FireTimer(FireTimer { timer_id }) => {
+                self.cache.unblock(Timer(timer_id.to_owned()));
+            }
+            Variant::ResolveActivity(ResolveActivity {
+                activity_id,
+                result: _result,
+            }) => {
+                self.cache.unblock(Activity(activity_id.to_owned()));
+            }
+            _ => {}
         }
     }
 }

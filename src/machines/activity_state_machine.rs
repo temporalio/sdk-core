@@ -368,3 +368,79 @@ pub(super) struct TimedOut {}
 
 #[derive(Default, Clone)]
 pub(super) struct Canceled {}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{
+        machines::{
+            test_help::{CommandSender, TestHistoryBuilder, TestWorkflowDriver},
+            workflow_machines::WorkflowMachines,
+        },
+        protos::coresdk::workflow_commands::CompleteWorkflowExecution,
+        test_help::canned_histories,
+    };
+    use rstest::{fixture, rstest};
+    use std::time::Duration;
+
+    #[fixture]
+    fn activity_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
+        let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
+            let activity = ScheduleActivity {
+                activity_id: "activity-id-1".to_string(),
+                ..Default::default()
+            };
+            command_sink.activity(activity).await;
+
+            let complete = CompleteWorkflowExecution::default();
+            command_sink.send(complete.into());
+        });
+
+        let t = canned_histories::single_activity("activity-id-1");
+        let state_machines = WorkflowMachines::new(
+            "wfid".to_string(),
+            "runid".to_string(),
+            Box::new(twd).into(),
+        );
+
+        assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
+        (t, state_machines)
+    }
+
+    #[rstest]
+    fn activity_happy_path_inc(activity_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
+        let (t, mut state_machines) = activity_happy_hist;
+
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
+            .unwrap();
+        state_machines.get_wf_activation();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].command_type,
+            CommandType::ScheduleActivityTask as i32
+        );
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
+            .unwrap();
+        state_machines.get_wf_activation();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].command_type,
+            CommandType::CompleteWorkflowExecution as i32
+        );
+    }
+
+    #[rstest]
+    fn activity_happy_path_full(activity_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
+        let (t, mut state_machines) = activity_happy_hist;
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, None)
+            .unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].command_type,
+            CommandType::CompleteWorkflowExecution as i32
+        );
+    }
+}
