@@ -103,8 +103,8 @@ pub struct CoreInitOptions {
 /// # Panics
 /// * Will panic if called from within an async context, as it will construct a runtime and you
 ///   cannot construct a runtime from within a runtime.
-pub fn init(opts: CoreInitOptions) -> Result<impl Core> {
-    let runtime = Runtime::new().map_err(CoreError::TokioInitError)?;
+pub fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
+    let runtime = Runtime::new().map_err(CoreInitError::TokioInitError)?;
     // Initialize server client
     let work_provider = runtime.block_on(opts.gateway_opts.connect())?;
 
@@ -445,18 +445,23 @@ pub enum CoreError {
         /// The run id of the erring workflow
         run_id: String,
     },
+    /// There exists a pending command in this workflow's history which has not yet been handled.
+    /// When thrown from [Core::complete_task], it means you should poll for a new task, receive a
+    /// new task token, and complete that new task.
+    UnhandledCommandWhenCompleting,
     /// Unhandled error when calling the temporal server: {0:?}
     TonicError(#[from] tonic::Status),
-    /// Server connection error: {0:?}
-    TonicTransportError(#[from] tonic::transport::Error),
+}
+
+/// Errors thrown during initialization of [Core]
+#[derive(thiserror::Error, Debug, displaydoc::Display)]
+pub enum CoreInitError {
     /// Failed to initialize tokio runtime: {0:?}
     TokioInitError(std::io::Error),
     /// Invalid URI: {0:?}
     InvalidUri(#[from] InvalidUri),
-    /// There exists a pending command in this workflow's history which has not yet been handled.
-    /// When thrown from complete_task, it means you should poll for a new task, receive a new
-    /// task token, and complete that task.
-    UnhandledCommandWhenCompleting,
+    /// Server connection error: {0:?}
+    TonicTransportError(#[from] tonic::transport::Error),
 }
 
 #[cfg(test)]

@@ -20,7 +20,7 @@ use crate::{
             StartWorkflowExecutionResponse,
         },
     },
-    CoreError, Result,
+    CoreError, CoreInitError, Result,
 };
 use tonic::{transport::Channel, Request, Status};
 use url::Url;
@@ -49,7 +49,7 @@ pub struct ServerGatewayOptions {
 
 impl ServerGatewayOptions {
     /// Attempt to establish a connection to the Temporal server
-    pub async fn connect(&self) -> Result<ServerGateway> {
+    pub async fn connect(&self) -> Result<ServerGateway, CoreInitError> {
         let channel = Channel::from_shared(self.target_url.to_string())?
             .connect()
             .await?;
