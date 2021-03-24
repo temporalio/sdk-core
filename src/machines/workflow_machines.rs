@@ -58,8 +58,7 @@ pub(crate) struct WorkflowMachines {
     /// for that machine.
     machines_by_event_id: HashMap<i64, MachineKey>,
 
-    /// Maps timer ids as created by workflow authors to their associated machines
-    /// TODO: Make this apply to *all* cancellable things, once we've added more. Key can be enum.
+    /// Maps command ids as created by workflow authors to their associated machines.
     id_to_machine: HashMap<CommandID, MachineKey>,
 
     /// Queued commands which have been produced by machines and await processing / being sent to
@@ -76,7 +75,7 @@ pub(crate) struct WorkflowMachines {
     drive_me: DrivenWorkflow,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum CommandID {
     Timer(String),
     Activity(String),

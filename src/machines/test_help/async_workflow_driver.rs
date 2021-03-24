@@ -1,3 +1,6 @@
+use crate::protos::coresdk::workflow_activation::wf_activation_job::Variant;
+use crate::protos::coresdk::workflow_activation::ResolveActivity;
+use crate::protos::coresdk::workflow_commands::ScheduleActivity;
 use crate::{
     machines::{workflow_machines::CommandID, WFCommand},
     protos::coresdk::{
@@ -21,6 +24,7 @@ use tokio::{
     runtime::Runtime,
     task::{JoinError, JoinHandle},
 };
+use CommandID::Activity;
 use CommandID::Timer;
 
 pub struct TestWorkflowDriver {
@@ -127,13 +131,20 @@ impl CommandSender {
 
     /// Request to create a timer
     pub fn timer(&mut self, a: StartTimer) -> impl Future {
-        let tid = a.timer_id.clone();
-        let c = WFCommand::AddTimer(a);
+        self.send_blocking_cmd(Timer(a.timer_id.clone()), WFCommand::AddTimer(a))
+    }
+
+    /// Request to run an activity
+    pub fn activity(&mut self, a: ScheduleActivity) -> impl Future {
+        self.send_blocking_cmd(Activity(a.activity_id.clone()), WFCommand::AddActivity(a))
+    }
+
+    fn send_blocking_cmd(&mut self, id: CommandID, c: WFCommand) -> impl Future {
         self.send(c);
-        let rx = self.twd_cache.add_sent_cmd(Timer(tid.clone()));
+        let rx = self.twd_cache.add_sent_cmd(id.clone());
         let cache_clone = self.twd_cache.clone();
         async move {
-            cache_clone.set_cmd_blocked(Timer(tid));
+            cache_clone.set_cmd_blocked(id);
             rx.await
         }
     }
@@ -239,8 +250,17 @@ impl WorkflowFetcher for TestWorkflowDriver {
 
 impl ActivationListener for TestWorkflowDriver {
     fn on_activation_job(&mut self, activation: &wf_activation_job::Variant) {
-        if let wf_activation_job::Variant::FireTimer(FireTimer { timer_id }) = activation {
-            self.cache.unblock(Timer(timer_id.to_owned()));
+        match activation {
+            Variant::FireTimer(FireTimer { timer_id }) => {
+                self.cache.unblock(Timer(timer_id.to_owned()));
+            }
+            Variant::ResolveActivity(ResolveActivity {
+                activity_id,
+                result: _result,
+            }) => {
+                self.cache.unblock(Activity(activity_id.to_owned()));
+            }
+            _ => {}
         }
     }
 }
