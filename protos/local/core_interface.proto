@@ -16,18 +16,15 @@ import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/empty.proto";
 
-// A request as given to [crate::Core::poll_task]
+// A request as given to [crate::Core::poll_task]. Either `workflows`, `activities`, or both must be
+// set to true. To set neither will result in an error.
 message PollTaskReq {
-    // What type of task to poll for
-    enum TaskType {
-        // Poll for workflows
-        WORKFLOWS = 0;
-        // Poll for activities
-        ACTIVITIES = 1;
-    }
-
-    // A list of task types to poll for
-    repeated TaskType types = 1;
+    // Should poll_task be allowed to return workflow tasks?
+    bool workflows = 1;
+    // Should poll_task be allowed to return activity tasks?
+    bool activities = 2;
+    // What task queue are we polling on?
+    string task_queue = 3;
 }
 
 // An instruction to perform work from core->lang sdk

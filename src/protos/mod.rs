@@ -79,6 +79,31 @@ pub mod coresdk {
         }
     }
 
+    pub trait IntoTaskQExt {
+        /// Transform the string into a workflow-only poll request
+        fn into_wf_poll(self) -> PollTaskReq;
+        /// Transform the string into an activity-only poll request
+        fn into_act_poll(self) -> PollTaskReq;
+    }
+
+    impl IntoTaskQExt for &str {
+        fn into_wf_poll(self) -> PollTaskReq {
+            PollTaskReq {
+                workflows: true,
+                activities: false,
+                task_queue: self.to_string(),
+            }
+        }
+
+        fn into_act_poll(self) -> PollTaskReq {
+            PollTaskReq {
+                workflows: false,
+                activities: true,
+                task_queue: self.to_string(),
+            }
+        }
+    }
+
     impl From<wf_activation_job::Variant> for WfActivationJob {
         fn from(a: wf_activation_job::Variant) -> Self {
             WfActivationJob { variant: Some(a) }
