@@ -6,10 +6,12 @@ import "common.proto";
 
 /// Used to report activity completion to core and to resolve the activity in a workflow activation
 message ActivityResult {
+    // The token from the [ActivityTask] being completed
+    bytes task_token = 1;
     oneof status {
-        Success completed = 1;
-        Failure failed = 2;
-        Cancelation canceled = 3;
+        Success completed = 2;
+        Failure failed = 3;
+        Cancelation canceled = 4;
     }
 }
 

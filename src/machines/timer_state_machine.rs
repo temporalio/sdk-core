@@ -249,7 +249,7 @@ impl Cancellable for TimerMachine {
         Ok(match self.on_event_mut(TimerMachineEvents::Cancel)?.pop() {
             Some(TimerMachineCommand::IssueCancelCmd(cmd)) => MachineResponse::IssueNewCommand(cmd),
             Some(TimerMachineCommand::Canceled) => MachineResponse::NoOp,
-            x => panic!(format!("Invalid cancel event response {:?}", x)),
+            x => panic!("Invalid cancel event response {:?}", x),
         })
     }
 

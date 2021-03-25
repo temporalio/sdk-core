@@ -400,6 +400,9 @@ impl WorkflowMachines {
     /// Returns the next activation that needs to be performed by the lang sdk. Things like unblock
     /// timer, etc. This does *not* cause any advancement of the state machines, it merely drains
     /// from the outgoing queue of activation jobs.
+    ///
+    /// Importantly, the returned activation will have an empty task token. A meaningful one is
+    /// expected to be attached by something higher in the call stack.
     pub(crate) fn get_wf_activation(&mut self) -> Option<WfActivation> {
         let jobs = self.drive_me.drain_jobs();
         if jobs.is_empty() {
@@ -409,6 +412,7 @@ impl WorkflowMachines {
                 timestamp: self.current_wf_time.map(Into::into),
                 run_id: self.run_id.clone(),
                 jobs,
+                task_token: vec![],
             })
         }
     }

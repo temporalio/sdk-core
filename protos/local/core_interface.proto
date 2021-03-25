@@ -16,42 +16,6 @@ import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/empty.proto";
 
-// A request as given to [crate::Core::poll_task]. Either `workflows`, `activities`, or both must be
-// set to true. To set neither will result in an error.
-message PollTaskReq {
-    // Should poll_task be allowed to return workflow tasks?
-    bool workflows = 1;
-    // Should poll_task be allowed to return activity tasks?
-    bool activities = 2;
-    // What task queue are we polling on?
-    string task_queue = 3;
-}
-
-// An instruction to perform work from core->lang sdk
-message Task {
-    // A unique identifier for this task
-    bytes task_token = 1;
-    // The type of task to be performed
-    oneof variant {
-        // Wake up a workflow
-        workflow_activation.WFActivation workflow = 2;
-        // Run an activity
-        activity_task.ActivityTask activity = 3;
-    }
-}
-
-// Sent from lang side to core when calling [crate::Core::complete_task]
-message TaskCompletion {
-    // The id from the [Task] being completed
-    bytes task_token = 1;
-    oneof variant {
-        // Complete a workflow task
-        workflow_completion.WFActivationCompletion workflow = 2;
-        // Complete an activity task
-        activity_result.ActivityResult activity = 3;
-    }
-}
-
 // A request as given to [crate::Core::send_activity_heartbeat]
 message ActivityHeartbeat {
     string activity_id = 1;

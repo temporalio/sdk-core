@@ -66,7 +66,7 @@ impl WorkflowConcurrencyManager {
         run_id: &str,
         history: History,
         workflow_execution: WorkflowExecution,
-    ) -> Result<NextWfActivation> {
+    ) -> Result<Option<NextWfActivation>> {
         let span = debug_span!("create_or_update machines", %run_id);
 
         if self.exists(run_id) {
@@ -92,7 +92,7 @@ impl WorkflowConcurrencyManager {
                 .recv()
                 .expect("wfm create resp channel can't be dropped, it is in this stackframe")?;
             self.machines.insert(run_id.to_string(), machine_sender);
-            Ok(activation)
+            Ok(Some(activation))
         }
     }
 
@@ -210,7 +210,11 @@ impl WorkflowConcurrencyManager {
                         let (machine_sender, machine_rcv) = unbounded();
                         machine_rcvs.push((machine_rcv, wfm));
                         resp_chan
-                            .send(Ok((activation, machine_sender)))
+                            // TODO: Turn into error
+                            .send(Ok((
+                                activation.expect("Activation always present for new machine"),
+                                machine_sender,
+                            )))
                             .expect("wfm create resp rx side can't be dropped");
                     }
                     Err(e) => {
@@ -289,7 +293,7 @@ mod tests {
                 },
             )
             .unwrap();
-        assert!(activation.activation.is_some());
+        assert!(activation.is_some());
 
         mgr.shutdown();
     }

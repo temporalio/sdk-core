@@ -75,7 +75,7 @@ impl WorkflowManager {
 
 #[derive(Debug)]
 pub(crate) struct NextWfActivation {
-    pub activation: Option<WfActivation>,
+    pub activation: WfActivation,
     pub more_activations_needed: bool,
 }
 
@@ -85,7 +85,7 @@ impl WorkflowManager {
     /// Should only be called when a workflow has caught up on replay (or is just beginning). It
     /// will return a workflow activation if one is needed, as well as a bool indicating if there
     /// are more workflow tasks that need to be performed to replay the remaining history.
-    pub fn feed_history_from_server(&mut self, hist: History) -> Result<NextWfActivation> {
+    pub fn feed_history_from_server(&mut self, hist: History) -> Result<Option<NextWfActivation>> {
         let task_hist = HistoryInfo::new_from_history(&hist, Some(self.current_wf_task_num))?;
         let task_ct = hist.get_workflow_task_count(None)?;
         self.last_history_task_count = task_ct;
@@ -100,13 +100,13 @@ impl WorkflowManager {
 
         self.current_wf_task_num += 1;
 
-        Ok(NextWfActivation {
+        Ok(activation.map(|activation| NextWfActivation {
             activation,
             more_activations_needed,
-        })
+        }))
     }
 
-    pub fn get_next_activation(&mut self) -> Result<NextWfActivation> {
+    pub fn get_next_activation(&mut self) -> Result<Option<NextWfActivation>> {
         let hist = &self.last_history_from_server;
         let task_hist = HistoryInfo::new_from_history(hist, Some(self.current_wf_task_num))?;
         self.machines.apply_history_events(&task_hist)?;
@@ -118,10 +118,10 @@ impl WorkflowManager {
             debug!("More activations needed");
         }
 
-        Ok(NextWfActivation {
+        Ok(activation.map(|activation| NextWfActivation {
             activation,
             more_activations_needed,
-        })
+        }))
     }
 
     /// Feed the workflow machines new commands issued by the executing workflow code, iterate the

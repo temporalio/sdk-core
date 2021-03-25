@@ -30,79 +30,25 @@ pub mod coresdk {
         include!("coresdk.workflow_commands.rs");
     }
 
-    use super::temporal::api::failure::v1::Failure;
-    use crate::protos::coresdk::activity_result::ActivityResult;
-    use crate::protos::coresdk::common::{Payload, UserCodeFailure};
-    use crate::protos::coresdk::workflow_activation::SignalWorkflow;
-    use crate::protos::temporal::api::common::v1::{Payloads, WorkflowExecution};
-    use crate::protos::temporal::api::failure::v1::failure::FailureInfo;
-    use crate::protos::temporal::api::failure::v1::ApplicationFailureInfo;
-    use crate::protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes;
-    use workflow_activation::{wf_activation_job, WfActivation, WfActivationJob};
+    use crate::protos::{
+        coresdk::{
+            activity_task::ActivityTask,
+            common::{Payload, UserCodeFailure},
+            workflow_activation::SignalWorkflow,
+        },
+        temporal::api::{
+            common::v1::{Payloads, WorkflowExecution},
+            failure::v1::ApplicationFailureInfo,
+            failure::v1::{failure::FailureInfo, Failure},
+            history::v1::WorkflowExecutionSignaledEventAttributes,
+            workflowservice::v1::PollActivityTaskQueueResponse,
+        },
+    };
+    use workflow_activation::{wf_activation_job, WfActivationJob};
     use workflow_commands::{workflow_command, WorkflowCommand};
     use workflow_completion::{wf_activation_completion, WfActivationCompletion};
 
     pub type HistoryEventId = i64;
-
-    impl Task {
-        pub fn from_wf_task(task_token: Vec<u8>, t: WfActivation) -> Self {
-            Task {
-                task_token,
-                variant: Some(t.into()),
-            }
-        }
-
-        /// Returns any contained jobs if this task was a wf activation and it had some
-        pub fn get_wf_jobs(&self) -> Vec<WfActivationJob> {
-            if let Some(task::Variant::Workflow(a)) = &self.variant {
-                a.jobs.clone()
-            } else {
-                vec![]
-            }
-        }
-        /// Returns any contained jobs if this task was a wf activation and it had some
-        pub fn get_activity_variant(&self) -> Option<activity_task::activity_task::Variant> {
-            if let Some(task::Variant::Activity(a)) = &self.variant {
-                a.variant.clone()
-            } else {
-                None
-            }
-        }
-
-        /// Returns the workflow run id if the task was a workflow
-        pub fn get_run_id(&self) -> Option<&str> {
-            if let Some(task::Variant::Workflow(a)) = &self.variant {
-                Some(&a.run_id)
-            } else {
-                None
-            }
-        }
-    }
-
-    pub trait IntoTaskQExt {
-        /// Transform the string into a workflow-only poll request
-        fn into_wf_poll(self) -> PollTaskReq;
-        /// Transform the string into an activity-only poll request
-        fn into_act_poll(self) -> PollTaskReq;
-    }
-
-    impl IntoTaskQExt for &str {
-        fn into_wf_poll(self) -> PollTaskReq {
-            PollTaskReq {
-                workflows: true,
-                activities: false,
-                task_queue: self.to_string(),
-            }
-        }
-
-        fn into_act_poll(self) -> PollTaskReq {
-            PollTaskReq {
-                workflows: false,
-                activities: true,
-                task_queue: self.to_string(),
-            }
-        }
-    }
 
     impl From<wf_activation_job::Variant> for WfActivationJob {
         fn from(a: wf_activation_job::Variant) -> Self {
@@ -116,46 +62,54 @@ pub mod coresdk {
         }
     }
 
-    impl TaskCompletion {
-        /// Build a successful completion from some api command attributes and a task token
-        pub fn ok_from_api_attrs(
-            cmds: Vec<workflow_command::Variant>,
-            task_token: Vec<u8>,
-        ) -> Self {
+    impl WfActivationCompletion {
+        pub fn ok_from_cmds(cmds: Vec<workflow_command::Variant>, task_token: Vec<u8>) -> Self {
             let cmds: Vec<_> = cmds
                 .into_iter()
                 .map(|c| WorkflowCommand { variant: Some(c) })
                 .collect();
             let success: workflow_completion::Success = cmds.into();
-            TaskCompletion {
+            Self {
                 task_token,
-                variant: Some(task_completion::Variant::Workflow(WfActivationCompletion {
-                    status: Some(wf_activation_completion::Status::Successful(success)),
-                })),
+                status: Some(wf_activation_completion::Status::Successful(success)),
             }
         }
-
-        pub fn ok_activity(result: Vec<common::Payload>, task_token: Vec<u8>) -> Self {
-            TaskCompletion {
-                task_token,
-                variant: Some(task_completion::Variant::Activity(ActivityResult {
-                    status: Some(activity_result::activity_result::Status::Completed(
-                        activity_result::Success { result },
-                    )),
-                })),
-            }
-        }
-
         pub fn fail(task_token: Vec<u8>, failure: UserCodeFailure) -> Self {
             Self {
                 task_token,
-                variant: Some(task_completion::Variant::Workflow(WfActivationCompletion {
-                    status: Some(wf_activation_completion::Status::Failed(
-                        workflow_completion::Failure {
-                            failure: Some(failure),
-                        },
-                    )),
-                })),
+                status: Some(wf_activation_completion::Status::Failed(
+                    workflow_completion::Failure {
+                        failure: Some(failure),
+                    },
+                )),
+            }
+        }
+    }
+
+    impl ActivityTask {
+        pub fn start_from_poll_resp(r: PollActivityTaskQueueResponse, task_token: Vec<u8>) -> Self {
+            ActivityTask {
+                task_token,
+                activity_id: r.activity_id,
+                variant: Some(activity_task::activity_task::Variant::Start(
+                    activity_task::Start {
+                        workflow_namespace: r.workflow_namespace,
+                        workflow_type: r.workflow_type.map(|wt| wt.name).unwrap_or("".to_string()),
+                        workflow_execution: r.workflow_execution.map(Into::into),
+                        activity_type: r.activity_type.map(|at| at.name).unwrap_or("".to_string()),
+                        header_fields: r.header.map(Into::into).unwrap_or_default(),
+                        input: Vec::from_payloads(r.input),
+                        heartbeat_details: Vec::from_payloads(r.heartbeat_details),
+                        scheduled_time: r.scheduled_time,
+                        current_attempt_scheduled_time: r.current_attempt_scheduled_time,
+                        started_time: r.started_time,
+                        attempt: r.attempt,
+                        schedule_to_close_timeout: r.schedule_to_close_timeout,
+                        start_to_close_timeout: r.start_to_close_timeout,
+                        heartbeat_timeout: r.heartbeat_timeout,
+                        retry_policy: r.retry_policy.map(Into::into),
+                    },
+                )),
             }
         }
     }
@@ -251,12 +205,9 @@ pub mod temporal {
                 include!("temporal.api.command.v1.rs");
 
                 use crate::protos::{
-                    coresdk::{
-                        activity_task, activity_task::ActivityTask, workflow_commands, PayloadsExt,
-                    },
+                    coresdk::{workflow_commands, PayloadsExt},
                     temporal::api::common::v1::ActivityType,
                     temporal::api::enums::v1::CommandType,
-                    temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
                 };
                 use command::Attributes;
                 use std::fmt::{Display, Formatter};
@@ -289,40 +240,6 @@ pub mod temporal {
                                 attributes: Some(a),
                             },
                             _ => unimplemented!(),
-                        }
-                    }
-                }
-
-                impl From<PollActivityTaskQueueResponse> for ActivityTask {
-                    fn from(r: PollActivityTaskQueueResponse) -> Self {
-                        ActivityTask {
-                            activity_id: r.activity_id,
-                            variant: Some(activity_task::activity_task::Variant::Start(
-                                activity_task::Start {
-                                    workflow_namespace: r.workflow_namespace,
-                                    workflow_type: r
-                                        .workflow_type
-                                        .map(|wt| wt.name)
-                                        .unwrap_or("".to_string()),
-                                    workflow_execution: r.workflow_execution.map(Into::into),
-                                    activity_type: r
-                                        .activity_type
-                                        .map(|at| at.name)
-                                        .unwrap_or("".to_string()),
-                                    header_fields: r.header.map(Into::into).unwrap_or_default(),
-                                    input: Vec::from_payloads(r.input),
-                                    heartbeat_details: Vec::from_payloads(r.heartbeat_details),
-                                    scheduled_time: r.scheduled_time,
-                                    current_attempt_scheduled_time: r
-                                        .current_attempt_scheduled_time,
-                                    started_time: r.started_time,
-                                    attempt: r.attempt,
-                                    schedule_to_close_timeout: r.schedule_to_close_timeout,
-                                    start_to_close_timeout: r.start_to_close_timeout,
-                                    heartbeat_timeout: r.heartbeat_timeout,
-                                    retry_policy: r.retry_policy.map(Into::into),
-                                },
-                            )),
                         }
                     }
                 }
