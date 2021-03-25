@@ -17,12 +17,12 @@ message ActivityResult {
 
 /// Used in ActivityResult to report cancellation
 message Cancelation {
-    repeated common.Payload details = 1;
+    common.Payload details = 1;
 }
 
 /// Used in ActivityResult to report successful completion
 message Success {
-    repeated common.Payload result = 1;
+    common.Payload result = 1;
 }
 
 /// Used in ActivityResult to report failure

@@ -30,6 +30,7 @@ pub mod coresdk {
         include!("coresdk.workflow_commands.rs");
     }
 
+    use crate::protos::coresdk::activity_result::ActivityResult;
     use crate::protos::{
         coresdk::{
             activity_task::ActivityTask,
@@ -44,6 +45,7 @@ pub mod coresdk {
             workflowservice::v1::PollActivityTaskQueueResponse,
         },
     };
+    use std::convert::TryFrom;
     use workflow_activation::{wf_activation_job, WfActivationJob};
     use workflow_commands::{workflow_command, WorkflowCommand};
     use workflow_completion::{wf_activation_completion, WfActivationCompletion};
@@ -80,6 +82,19 @@ pub mod coresdk {
                 status: Some(wf_activation_completion::Status::Failed(
                     workflow_completion::Failure {
                         failure: Some(failure),
+                    },
+                )),
+            }
+        }
+    }
+
+    impl ActivityResult {
+        pub fn ok(result: Payload, task_token: Vec<u8>) -> Self {
+            Self {
+                task_token,
+                status: Some(activity_result::activity_result::Status::Completed(
+                    activity_result::Success {
+                        result: Some(result),
                     },
                 )),
             }
@@ -170,6 +185,37 @@ pub mod coresdk {
             match p {
                 None => vec![],
                 Some(p) => p.payloads.into_iter().map(Into::into).collect(),
+            }
+        }
+    }
+
+    impl From<common::Payload> for Payloads {
+        fn from(p: Payload) -> Self {
+            Payloads {
+                payloads: vec![p.into()],
+            }
+        }
+    }
+
+    /// Errors when converting from a [Payloads] api proto to our internal [common::Payload]
+    #[derive(derive_more::Display, Debug)]
+    pub enum PayloadsToPayloadError {
+        MoreThanOnePayload,
+        NoPayload,
+    }
+    impl TryFrom<Payloads> for common::Payload {
+        type Error = PayloadsToPayloadError;
+
+        fn try_from(mut v: Payloads) -> Result<Self, Self::Error> {
+            match v.payloads.pop() {
+                None => Err(PayloadsToPayloadError::NoPayload),
+                Some(p) => {
+                    if !v.payloads.is_empty() {
+                        Err(PayloadsToPayloadError::MoreThanOnePayload)
+                    } else {
+                        Ok(p.into())
+                    }
+                }
             }
         }
     }
@@ -295,7 +341,7 @@ pub mod temporal {
                     fn from(c: workflow_commands::CompleteWorkflowExecution) -> Self {
                         Self::CompleteWorkflowExecutionCommandAttributes(
                             CompleteWorkflowExecutionCommandAttributes {
-                                result: c.result.into_payloads(),
+                                result: c.result.map(Into::into),
                             },
                         )
                     }

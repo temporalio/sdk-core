@@ -12,20 +12,20 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core::protos::coresdk::IntoTaskQExt;
 use temporal_sdk_core::{
     protos::coresdk::{
         activity_result::{self, activity_result as act_res, ActivityResult},
         activity_task::activity_task as act_task,
         common::{Payload, UserCodeFailure},
         workflow_activation::{
-            wf_activation_job, FireTimer, ResolveActivity, StartWorkflow, WfActivationJob,
+            wf_activation_job, FireTimer, ResolveActivity, StartWorkflow, WfActivation,
+            WfActivationJob,
         },
         workflow_commands::{
             CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution, ScheduleActivity,
             StartTimer,
         },
-        Task, TaskCompletion,
+        workflow_completion::WfActivationCompletion,
     },
     Core, CoreError, CoreInitOptions, ServerGatewayApis, ServerGatewayOptions, Url,
 };
@@ -93,8 +93,8 @@ fn timer_workflow() {
     let workflow_id: u32 = rng.gen();
     create_workflow(&core, task_q, &workflow_id.to_string(), None);
     let timer_id: String = rng.gen::<u32>().to_string();
-    let task = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
+    let task = core.poll_workflow_task(task_q).unwrap();
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![StartTimer {
             timer_id,
             start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -103,9 +103,9 @@ fn timer_workflow() {
         task.task_token,
     ))
     .unwrap();
-    let task = dbg!(core.poll_workflow_task(task_q.into_wf_poll()).unwrap());
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
-        vec![CompleteWorkflowExecution { result: vec![] }.into()],
+    let task = dbg!(core.poll_workflow_task(task_q).unwrap());
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
     ))
     .unwrap();
@@ -120,8 +120,8 @@ fn activity_workflow() {
     let workflow_id: u32 = rng.gen();
     create_workflow(&core, task_q, &workflow_id.to_string(), None);
     let activity_id: String = rng.gen::<u32>().to_string();
-    let task = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
+    let task = core.poll_workflow_task(task_q).unwrap();
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![ScheduleActivity {
             activity_id: activity_id.to_string(),
             activity_type: "test_activity".to_string(),
@@ -137,39 +137,41 @@ fn activity_workflow() {
         task.task_token,
     ))
     .unwrap();
-    let task = dbg!(core.poll_workflow_task(task_q.into_act_poll()).unwrap());
+    let task = dbg!(core.poll_activity_task(task_q).unwrap());
     assert_matches!(
-        task.get_activity_variant(),
+        task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
             assert_eq!(start_activity.activity_type, "test_activity".to_string())
         }
     );
-    let response_payloads = vec![Payload {
+    let response_payload = Payload {
         data: b"hello ".to_vec(),
         metadata: Default::default(),
-    }];
-    core.complete_workflow_task(TaskCompletion::ok_activity(
-        response_payloads.clone(),
+    };
+    core.complete_activity_task(ActivityResult::ok(
+        response_payload.clone(),
         task.task_token,
     ))
     .unwrap();
-    let task = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
+
+    let task = core.poll_workflow_task(task_q).unwrap();
     assert_matches!(
-        task.get_wf_jobs().as_slice(),
+        task.jobs.as_slice(),
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {activity_id: a_id, result: Some(ActivityResult{
-                    status: Some(act_res::Status::Completed(activity_result::Success{result: r}))})}
+                    status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)})),
+                     ..})}
                 )),
             },
         ] => {
             assert_eq!(a_id, &activity_id);
-            assert_eq!(r, &response_payloads);
+            assert_eq!(r, &response_payload);
         }
     );
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
-        vec![CompleteWorkflowExecution { result: vec![] }.into()],
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
     ))
     .unwrap()
@@ -184,8 +186,8 @@ fn parallel_timer_workflow() {
     create_workflow(&core, task_q, &workflow_id.to_string(), None);
     let timer_id = "timer 1".to_string();
     let timer_2_id = "timer 2".to_string();
-    let task = dbg!(core.poll_workflow_task(task_q.into_wf_poll()).unwrap());
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
+    let task = dbg!(core.poll_workflow_task(task_q).unwrap());
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![
             StartTimer {
                 timer_id: timer_id.clone(),
@@ -204,9 +206,9 @@ fn parallel_timer_workflow() {
     // Wait long enough for both timers to complete. Server seems to be a bit weird about actually
     // sending both of these in one go, so we need to wait longer than you would expect.
     std::thread::sleep(Duration::from_millis(1500));
-    let task = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
+    let task = core.poll_workflow_task(task_q).unwrap();
     assert_matches!(
-        task.get_wf_jobs().as_slice(),
+        task.jobs.as_slice(),
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::FireTimer(
@@ -223,8 +225,8 @@ fn parallel_timer_workflow() {
             assert_eq!(t2_id, &timer_2_id);
         }
     );
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
-        vec![CompleteWorkflowExecution { result: vec![] }.into()],
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
     ))
     .unwrap();
@@ -244,8 +246,8 @@ fn timer_cancel_workflow() {
     ));
     let timer_id = "wait_timer";
     let cancel_timer_id = "cancel_timer";
-    let task = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
+    let task = core.poll_workflow_task(task_q).unwrap();
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![
             StartTimer {
                 timer_id: timer_id.to_string(),
@@ -261,14 +263,14 @@ fn timer_cancel_workflow() {
         task.task_token,
     ))
     .unwrap();
-    let task = dbg!(core.poll_workflow_task(task_q.into_wf_poll()).unwrap());
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
+    let task = dbg!(core.poll_workflow_task(task_q).unwrap());
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![
             CancelTimer {
                 timer_id: cancel_timer_id.to_string(),
             }
             .into(),
-            CompleteWorkflowExecution { result: vec![] }.into(),
+            CompleteWorkflowExecution { result: None }.into(),
         ],
         task.task_token,
     ))
@@ -283,8 +285,8 @@ fn timer_immediate_cancel_workflow() {
     let workflow_id: u32 = rng.gen();
     create_workflow(&core, task_q, &workflow_id.to_string(), None);
     let cancel_timer_id = "cancel_timer";
-    let task = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
+    let task = core.poll_workflow_task(task_q).unwrap();
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![
             StartTimer {
                 timer_id: cancel_timer_id.to_string(),
@@ -295,7 +297,7 @@ fn timer_immediate_cancel_workflow() {
                 timer_id: cancel_timer_id.to_string(),
             }
             .into(),
-            CompleteWorkflowExecution { result: vec![] }.into(),
+            CompleteWorkflowExecution { result: None }.into(),
         ],
         task.task_token,
     ))
@@ -314,10 +316,10 @@ fn parallel_workflows_same_queue() {
 
     let mut send_chans = HashMap::new();
 
-    fn wf_thread(core: Arc<dyn Core>, task_chan: Receiver<Task>) {
+    fn wf_thread(core: Arc<dyn Core>, task_chan: Receiver<WfActivation>) {
         let task = task_chan.recv().unwrap();
         assert_matches!(
-            task.get_wf_jobs().as_slice(),
+            task.jobs.as_slice(),
             [WfActivationJob {
                 variant: Some(wf_activation_job::Variant::StartWorkflow(
                     StartWorkflow {
@@ -327,7 +329,7 @@ fn parallel_workflows_same_queue() {
                 )),
             }] => assert_eq!(&workflow_type, &"wf-type-1")
         );
-        core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
+        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
             vec![StartTimer {
                 timer_id: "timer".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -337,8 +339,8 @@ fn parallel_workflows_same_queue() {
         ))
         .unwrap();
         let task = task_chan.recv().unwrap();
-        core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
-            vec![CompleteWorkflowExecution { result: vec![] }.into()],
+        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+            vec![CompleteWorkflowExecution { result: None }.into()],
             task.task_token,
         ))
         .unwrap();
@@ -356,12 +358,8 @@ fn parallel_workflows_same_queue() {
         .collect();
 
     for _ in 0..num_workflows * 2 {
-        let task = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
-        send_chans
-            .get(task.get_run_id().unwrap())
-            .unwrap()
-            .send(task)
-            .unwrap();
+        let task = core.poll_workflow_task(task_q).unwrap();
+        send_chans.get(&task.run_id).unwrap().send(task).unwrap();
     }
 
     handles.into_iter().for_each(|h| h.join().unwrap());
@@ -381,14 +379,14 @@ fn shutdown_aborts_actively_blocked_poll() {
         tcore.shutdown();
     });
     assert_matches!(
-        core.poll_workflow_task(task_q.into_wf_poll()).unwrap_err(),
+        core.poll_workflow_task(task_q).unwrap_err(),
         CoreError::ShuttingDown
     );
     handle.join().unwrap();
     // Ensure double-shutdown doesn't explode
     core.shutdown();
     assert_matches!(
-        core.poll_workflow_task(task_q.into_wf_poll()).unwrap_err(),
+        core.poll_workflow_task(task_q).unwrap_err(),
         CoreError::ShuttingDown
     );
 }
@@ -402,8 +400,8 @@ fn fail_wf_task() {
     create_workflow(&core, task_q, &workflow_id.to_string(), None);
 
     // Start with a timer
-    let task = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
+    let task = core.poll_workflow_task(task_q).unwrap();
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![StartTimer {
             timer_id: "best-timer".to_string(),
             start_to_fire_timeout: Some(Duration::from_millis(200).into()),
@@ -417,8 +415,8 @@ fn fail_wf_task() {
     std::thread::sleep(Duration::from_millis(500));
 
     // Then break for whatever reason
-    let task = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
-    core.complete_workflow_task(TaskCompletion::fail(
+    let task = core.poll_workflow_task(task_q).unwrap();
+    core.complete_workflow_task(WfActivationCompletion::fail(
         task.task_token,
         UserCodeFailure {
             message: "I did an oopsie".to_string(),
@@ -429,8 +427,8 @@ fn fail_wf_task() {
 
     // The server will want to retry the task. This time we finish the workflow -- but we need
     // to poll a couple of times as there will be more than one required workflow activation.
-    let task = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
+    let task = core.poll_workflow_task(task_q).unwrap();
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![StartTimer {
             timer_id: "best-timer".to_string(),
             start_to_fire_timeout: Some(Duration::from_millis(200).into()),
@@ -439,9 +437,9 @@ fn fail_wf_task() {
         task.task_token,
     ))
     .unwrap();
-    let task = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
-        vec![CompleteWorkflowExecution { result: vec![] }.into()],
+    let task = core.poll_workflow_task(task_q).unwrap();
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
     ))
     .unwrap();
@@ -455,8 +453,8 @@ fn fail_workflow_execution() {
     let workflow_id: u32 = rng.gen();
     create_workflow(&core, task_q, &workflow_id.to_string(), None);
     let timer_id: String = rng.gen::<u32>().to_string();
-    let task = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
+    let task = core.poll_workflow_task(task_q).unwrap();
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![StartTimer {
             timer_id,
             start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -465,8 +463,8 @@ fn fail_workflow_execution() {
         task.task_token,
     ))
     .unwrap();
-    let task = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
+    let task = core.poll_workflow_task(task_q).unwrap();
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![FailWorkflowExecution {
             failure: Some(UserCodeFailure {
                 message: "I'm ded".to_string(),
@@ -489,9 +487,9 @@ fn signal_workflow() {
 
     let signal_id_1 = "signal1";
     let signal_id_2 = "signal2";
-    let res = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
+    let res = core.poll_workflow_task(task_q).unwrap();
     // Task is completed with no commands
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![],
         res.task_token.clone(),
     ))
@@ -501,7 +499,7 @@ fn signal_workflow() {
     with_gw(&core, |gw: GwApi| async move {
         gw.signal_workflow_execution(
             workflow_id.to_string(),
-            res.get_run_id().unwrap().to_string(),
+            res.run_id.to_string(),
             signal_id_1.to_string(),
             None,
         )
@@ -509,7 +507,7 @@ fn signal_workflow() {
         .unwrap();
         gw.signal_workflow_execution(
             workflow_id.to_string(),
-            res.get_run_id().unwrap().to_string(),
+            res.run_id.to_string(),
             signal_id_2.to_string(),
             None,
         )
@@ -517,9 +515,9 @@ fn signal_workflow() {
         .unwrap();
     });
 
-    let res = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
+    let res = core.poll_workflow_task(task_q).unwrap();
     assert_matches!(
-        res.get_wf_jobs().as_slice(),
+        res.jobs.as_slice(),
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
@@ -529,8 +527,8 @@ fn signal_workflow() {
             }
         ]
     );
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
-        vec![CompleteWorkflowExecution { result: vec![] }.into()],
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
         res.task_token,
     ))
     .unwrap();
@@ -545,9 +543,9 @@ fn signal_workflow_signal_not_handled_on_workflow_completion() {
     create_workflow(&core, task_q, &workflow_id.to_string(), None);
 
     let signal_id_1 = "signal1";
-    let res = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
+    let res = core.poll_workflow_task(task_q).unwrap();
     // Task is completed with a timer
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![StartTimer {
             timer_id: "sometimer".to_string(),
             start_to_fire_timeout: Some(Duration::from_millis(10).into()),
@@ -558,9 +556,9 @@ fn signal_workflow_signal_not_handled_on_workflow_completion() {
     .unwrap();
 
     // Poll before sending the signal - we should have the timer job
-    let res = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
+    let res = core.poll_workflow_task(task_q).unwrap();
     assert_matches!(
-        res.get_wf_jobs().as_slice(),
+        res.jobs.as_slice(),
         [WfActivationJob {
             variant: Some(wf_activation_job::Variant::FireTimer(_)),
         }]
@@ -571,7 +569,7 @@ fn signal_workflow_signal_not_handled_on_workflow_completion() {
     with_gw(&core, |gw: GwApi| async move {
         gw.signal_workflow_execution(
             workflow_id.to_string(),
-            res.get_run_id().unwrap().to_string(),
+            res.run_id.to_string(),
             signal_id_1.to_string(),
             None,
         )
@@ -581,23 +579,23 @@ fn signal_workflow_signal_not_handled_on_workflow_completion() {
 
     // Send completion - not having seen a poll response with a signal in it yet
     let unhandled = core
-        .complete_workflow_task(TaskCompletion::ok_from_api_attrs(
-            vec![CompleteWorkflowExecution { result: vec![] }.into()],
+        .complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+            vec![CompleteWorkflowExecution { result: None }.into()],
             task_token,
         ))
         .unwrap_err();
     assert_matches!(unhandled, CoreError::UnhandledCommandWhenCompleting);
 
     // We should get a new task with the signal
-    let res = core.poll_workflow_task(task_q.into_wf_poll()).unwrap();
+    let res = core.poll_workflow_task(task_q).unwrap();
     assert_matches!(
-        res.get_wf_jobs().as_slice(),
+        res.jobs.as_slice(),
         [WfActivationJob {
             variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
         }]
     );
-    core.complete_workflow_task(TaskCompletion::ok_from_api_attrs(
-        vec![CompleteWorkflowExecution { result: vec![] }.into()],
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
         res.task_token,
     ))
     .unwrap();
@@ -612,8 +610,7 @@ fn long_poll_timeout_is_retried() {
     // Should block for more than 3 seconds, since we internally retry long poll
     let (tx, rx) = unbounded();
     std::thread::spawn(move || {
-        core.poll_workflow_task("some_task_q".into_wf_poll())
-            .unwrap();
+        core.poll_workflow_task("some_task_q").unwrap();
         tx.send(())
     });
     let err = rx.recv_timeout(Duration::from_secs(4)).unwrap_err();

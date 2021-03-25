@@ -34,7 +34,7 @@ use crate::{
             activity_task::ActivityTask,
             workflow_activation::WfActivation,
             workflow_completion::{wf_activation_completion, WfActivationCompletion},
-            ActivityHeartbeat, PayloadsExt,
+            ActivityHeartbeat,
         },
         temporal::api::{
             enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
@@ -332,7 +332,7 @@ where
             activity_result::Status::Completed(ar::Success { result }) => {
                 self.runtime.block_on(
                     self.server_gateway
-                        .complete_activity_task(task_token, result.into_payloads()),
+                        .complete_activity_task(task_token, result.map(Into::into)),
                 )?;
             }
             activity_result::Status::Failed(ar::Failure { failure }) => {
@@ -344,7 +344,7 @@ where
             activity_result::Status::Canceled(ar::Cancelation { details }) => {
                 self.runtime.block_on(
                     self.server_gateway
-                        .cancel_activity_task(task_token, details.into_payloads()),
+                        .cancel_activity_task(task_token, details.map(Into::into)),
                 )?;
             }
         }
@@ -559,7 +559,7 @@ mod test {
         );
         let task_tok = res.task_token;
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![CompleteWorkflowExecution { result: vec![] }.into()],
+            vec![CompleteWorkflowExecution { result: None }.into()],
             task_tok,
         ))
         .unwrap();
@@ -599,7 +599,7 @@ mod test {
         );
         let task_tok = res.task_token;
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![CompleteWorkflowExecution { result: vec![] }.into()],
+            vec![CompleteWorkflowExecution { result: None }.into()],
             task_tok,
         ))
         .unwrap();
@@ -663,7 +663,7 @@ mod test {
         );
         let task_tok = res.task_token;
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![CompleteWorkflowExecution { result: vec![] }.into()],
+            vec![CompleteWorkflowExecution { result: None }.into()],
             task_tok,
         ))
         .unwrap();
@@ -720,7 +720,7 @@ mod test {
                     timer_id: cancel_timer_id.to_string(),
                 }
                 .into(),
-                CompleteWorkflowExecution { result: vec![] }.into(),
+                CompleteWorkflowExecution { result: None }.into(),
             ],
             task_tok,
         ))
@@ -789,7 +789,7 @@ mod test {
         );
         let task_tok = res.task_token;
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![CompleteWorkflowExecution { result: vec![] }.into()],
+            vec![CompleteWorkflowExecution { result: None }.into()],
             task_tok,
         ))
         .unwrap();
@@ -830,7 +830,7 @@ mod test {
                     timer_id: cancel_timer_id.to_string(),
                 }
                 .into(),
-                CompleteWorkflowExecution { result: vec![] }.into(),
+                CompleteWorkflowExecution { result: None }.into(),
             ],
             task_tok,
         ))
@@ -898,7 +898,7 @@ mod test {
             }]
         );
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![CompleteWorkflowExecution { result: vec![] }.into()],
+            vec![CompleteWorkflowExecution { result: None }.into()],
             res.task_token,
         ))
         .unwrap();

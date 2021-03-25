@@ -95,7 +95,7 @@ message RequestActivityCancellation {
 
 /// Issued when the workflow completes successfully
 message CompleteWorkflowExecution {
-    repeated common.Payload result = 1;
+    common.Payload result = 1;
 }
 
 /// Issued when the workflow errors out

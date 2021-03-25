@@ -20,7 +20,7 @@ use crate::{
     },
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 
 // Schedule / cancel are "explicit events" (imperative rather than past events?)
 
@@ -179,21 +179,25 @@ impl WFMachinesAdapter for ActivityMachine {
     fn adapt_response(
         &self,
         event: &HistoryEvent,
-        has_next_event: bool,
+        _has_next_event: bool,
         my_command: ActivityMachineCommand,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
-            ActivityMachineCommand::Complete(result) => vec![ResolveActivity {
-                activity_id: self.shared_state.attrs.activity_id.clone(),
-                result: Some(ActivityResult {
-                    // TODO: This sucks here
-                    task_token: vec![],
-                    status: Some(activity_result::Status::Completed(ar::Success {
-                        result: Vec::from_payloads(result),
-                    })),
-                }),
+            ActivityMachineCommand::Complete(result) => {
+                let result = result
+                    .map(TryInto::try_into)
+                    .transpose()
+                    .map_err(|pe| WFMachinesError::NotExactlyOnePayload(pe, event.clone()))?;
+                vec![ResolveActivity {
+                    activity_id: self.shared_state.attrs.activity_id.clone(),
+                    result: Some(ActivityResult {
+                        // TODO: This sucks here
+                        task_token: vec![],
+                        status: Some(activity_result::Status::Completed(ar::Success { result })),
+                    }),
+                }
+                .into()]
             }
-            .into()],
         })
     }
 }

@@ -1,3 +1,4 @@
+use crate::protos::coresdk::PayloadsToPayloadError;
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
@@ -133,6 +134,8 @@ pub enum WFMachinesError {
     UnexpectedMachineResponse(MachineResponse, &'static str),
     #[error("Command was missing its associated machine: {0}")]
     MissingAssociatedMachine(String),
+    #[error("There was {0} when we expected exactly one payload while applying event: {1:?}")]
+    NotExactlyOnePayload(PayloadsToPayloadError, HistoryEvent),
 
     #[error("Machine encountered an invalid transition: {0}")]
     InvalidTransition(&'static str),
