@@ -202,27 +202,23 @@ impl WorkflowConcurrencyManager {
                 span,
             }) => {
                 let _e = span.enter();
-                match WorkflowManager::new(history, workflow_execution)
+                let send_this = match WorkflowManager::new(history, workflow_execution)
                     .map_err(Into::into)
                     .and_then(|mut wfm| Ok((wfm.get_next_activation()?, wfm)))
                 {
-                    Ok((activation, wfm)) => {
+                    Ok((Some(activation), wfm)) => {
                         let (machine_sender, machine_rcv) = unbounded();
                         machine_rcvs.push((machine_rcv, wfm));
-                        resp_chan
-                            // TODO: Turn into error
-                            .send(Ok((
-                                activation.expect("Activation always present for new machine"),
-                                machine_sender,
-                            )))
-                            .expect("wfm create resp rx side can't be dropped");
+                        Ok((activation, machine_sender))
                     }
-                    Err(e) => {
-                        resp_chan
-                            .send(Err(e))
-                            .expect("wfm create resp rx side can't be dropped");
-                    }
-                }
+                    Ok((None, wfm)) => Err(WorkflowError::MachineWasCreatedWithNoActivations {
+                        run_id: wfm.machines.run_id,
+                    }),
+                    Err(e) => Err(e),
+                };
+                resp_chan
+                    .send(send_this)
+                    .expect("wfm create resp rx side can't be dropped");
             }
             Err(TryRecvError::Disconnected) => {
                 warn!(
