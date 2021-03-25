@@ -434,17 +434,7 @@ mod test {
 
     #[fixture]
     fn activity_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
-        let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
-            let activity = ScheduleActivity {
-                activity_id: "activity-id-1".to_string(),
-                ..Default::default()
-            };
-            command_sink.activity(activity).await;
-
-            let complete = CompleteWorkflowExecution::default();
-            command_sink.send(complete.into());
-        });
-
+        let twd = activity_workflow_driver();
         let t = canned_histories::single_activity("activity-id-1");
         let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
@@ -456,9 +446,40 @@ mod test {
         (t, state_machines)
     }
 
-    #[rstest]
-    fn activity_happy_path_inc(activity_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let (t, mut state_machines) = activity_happy_hist;
+    #[fixture]
+    fn activity_failure_hist() -> (TestHistoryBuilder, WorkflowMachines) {
+        let twd = activity_workflow_driver();
+        let t = canned_histories::single_failed_activity("activity-id-1");
+        let state_machines = WorkflowMachines::new(
+            "wfid".to_string(),
+            "runid".to_string(),
+            Box::new(twd).into(),
+        );
+
+        assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
+        (t, state_machines)
+    }
+
+    fn activity_workflow_driver() -> TestWorkflowDriver {
+        TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
+            let activity = ScheduleActivity {
+                activity_id: "activity-id-1".to_string(),
+                ..Default::default()
+            };
+            command_sink.activity(activity).await;
+
+            let complete = CompleteWorkflowExecution::default();
+            command_sink.send(complete.into());
+        })
+    }
+
+    #[rstest(
+        hist_batches,
+        case::success(activity_happy_hist()),
+        case::failure(activity_failure_hist())
+    )]
+    fn single_activity_inc(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
+        let (t, mut state_machines) = hist_batches;
 
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
@@ -480,9 +501,13 @@ mod test {
         );
     }
 
-    #[rstest]
-    fn activity_happy_path_full(activity_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let (t, mut state_machines) = activity_happy_hist;
+    #[rstest(
+        hist_batches,
+        case::success(activity_happy_hist()),
+        case::failure(activity_failure_hist())
+    )]
+    fn single_activity_full(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
+        let (t, mut state_machines) = hist_batches;
         let commands = t
             .handle_workflow_task_take_cmds(&mut state_machines, None)
             .unwrap();
