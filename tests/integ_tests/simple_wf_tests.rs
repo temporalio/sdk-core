@@ -12,6 +12,7 @@ use std::{
     },
     time::Duration,
 };
+use temporal_sdk_core::protos::coresdk::common::RetryPolicy;
 use temporal_sdk_core::{
     protos::coresdk::{
         activity_result::{self, activity_result as act_res, ActivityResult},
@@ -172,6 +173,71 @@ fn activity_workflow() {
     );
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
+        task.task_token,
+    ))
+    .unwrap()
+}
+
+#[test]
+fn activity_failed_workflow() {
+    let mut rng = rand::thread_rng();
+    let task_q_salt: u32 = rng.gen();
+    let task_q = &format!("activity_failed_workflow_{}", task_q_salt.to_string());
+    let core = get_integ_core();
+    let workflow_id: u32 = rng.gen();
+    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+    let activity_id: String = rng.gen::<u32>().to_string();
+    let task = core.poll_task(task_q).unwrap();
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![ScheduleActivity {
+            activity_id: activity_id.to_string(),
+            activity_type: "test_activity".to_string(),
+            namespace: NAMESPACE.to_owned(),
+            task_queue: task_q.to_owned(),
+            schedule_to_start_timeout: Some(Duration::from_secs(30).into()),
+            start_to_close_timeout: Some(Duration::from_secs(30).into()),
+            schedule_to_close_timeout: Some(Duration::from_secs(60).into()),
+            heartbeat_timeout: Some(Duration::from_secs(60).into()),
+            ..Default::default()
+        }
+        .into()],
+        task.task_token,
+    ))
+    .unwrap();
+    let task = dbg!(core.poll_activity_task(task_q).unwrap());
+    assert_matches!(
+        task.get_activity_variant(),
+        Some(act_task::Variant::Start(start_activity)) => {
+            assert_eq!(start_activity.activity_type, "test_activity".to_string())
+        }
+    );
+    let failure = UserCodeFailure {
+        message: "activity failed".to_string(),
+        non_retryable: true,
+        ..Default::default()
+    };
+    core.complete_activity_task(TaskCompletion::fail_activity(
+        failure.clone(),
+        task.task_token,
+    ))
+    .unwrap();
+    let task = core.poll_task(task_q).unwrap();
+    assert_matches!(
+        task.get_wf_jobs().as_slice(),
+        [
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveActivity(
+                    ResolveActivity {activity_id: a_id, result: Some(ActivityResult{
+                    status: Some(act_res::Status::Failed(activity_result::Failure{failure: Some(f)}))})}
+                )),
+            },
+        ] => {
+            assert_eq!(a_id, &activity_id);
+            assert_eq!(f, &failure);
+        }
+    );
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![CompleteWorkflowExecution { result: vec![] }.into()],
         task.task_token,
     ))
     .unwrap()
