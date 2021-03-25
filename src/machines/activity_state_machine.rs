@@ -87,7 +87,7 @@ pub(super) enum ActivityMachineCommand {
     Complete(Option<Payloads>),
     #[display(fmt = "Fail")]
     Fail(Option<Failure>),
-    #[display(fmt = "Complete")]
+    #[display(fmt = "Cancel")]
     Cancel(Option<Payloads>),
 }
 
