@@ -179,7 +179,7 @@ fn activity_workflow() {
 }
 
 #[test]
-fn activity_failed_workflow() {
+fn activity_non_retryable_failure() {
     let mut rng = rand::thread_rng();
     let task_q_salt: u32 = rng.gen();
     let task_q = &format!("activity_failed_workflow_{}", task_q_salt.to_string());
