@@ -1,3 +1,5 @@
+#![allow(clippy::large_enum_variant)]
+
 use crate::protos::coresdk::PayloadsExt;
 use crate::protos::temporal::api::failure::v1::Failure;
 use crate::protos::temporal::api::history::v1::ActivityTaskCanceledEventAttributes;
