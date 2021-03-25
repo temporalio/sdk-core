@@ -248,11 +248,8 @@ fn activity_retry() {
         non_retryable: false,
         ..Default::default()
     };
-    core.complete_activity_task(TaskCompletion::fail_activity(
-        failure.clone(),
-        task.task_token,
-    ))
-    .unwrap();
+    core.complete_activity_task(TaskCompletion::fail_activity(failure, task.task_token))
+        .unwrap();
     // Poll 2nd time
     let task = dbg!(core.poll_activity_task(task_q).unwrap());
     assert_matches!(
@@ -294,7 +291,7 @@ fn activity_retry() {
     .unwrap()
 }
 
-fn activity_completion_req(task_q: &String, activity_id: &String, task: Task) -> TaskCompletion {
+fn activity_completion_req(task_q: &str, activity_id: &str, task: Task) -> TaskCompletion {
     WfActivationCompletion::ok_from_cmds(
         vec![ScheduleActivity {
             activity_id: activity_id.to_string(),
