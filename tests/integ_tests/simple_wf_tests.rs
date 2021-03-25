@@ -12,7 +12,6 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core::protos::coresdk::common::RetryPolicy;
 use temporal_sdk_core::{
     protos::coresdk::{
         activity_result::{self, activity_result as act_res, ActivityResult},
@@ -122,22 +121,10 @@ fn activity_workflow() {
     create_workflow(&core, task_q, &workflow_id.to_string(), None);
     let activity_id: String = rng.gen::<u32>().to_string();
     let task = core.poll_workflow_task(task_q).unwrap();
-    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-        vec![ScheduleActivity {
-            activity_id: activity_id.to_string(),
-            activity_type: "test_activity".to_string(),
-            namespace: NAMESPACE.to_owned(),
-            task_queue: task_q.to_owned(),
-            schedule_to_start_timeout: Some(Duration::from_secs(30).into()),
-            start_to_close_timeout: Some(Duration::from_secs(30).into()),
-            schedule_to_close_timeout: Some(Duration::from_secs(60).into()),
-            heartbeat_timeout: Some(Duration::from_secs(60).into()),
-            ..Default::default()
-        }
-        .into()],
-        task.task_token,
-    ))
-    .unwrap();
+    // Complete workflow task and schedule activity
+    core.complete_task(activity_completion_req(task_q, &activity_id, task))
+        .unwrap();
+    // Poll activity and verify that it's been scheduled with correct parameters
     let task = dbg!(core.poll_activity_task(task_q).unwrap());
     assert_matches!(
         task.variant,
@@ -149,12 +136,13 @@ fn activity_workflow() {
         data: b"hello ".to_vec(),
         metadata: Default::default(),
     };
+    // Complete activity successfully.
     core.complete_activity_task(
         task.task_token,
         ActivityResult::ok(response_payload.clone()),
     )
     .unwrap();
-
+    // Poll workflow task and verify that activity has succeeded.
     let task = core.poll_workflow_task(task_q).unwrap();
     assert_matches!(
         task.jobs.as_slice(),
@@ -188,22 +176,10 @@ fn activity_non_retryable_failure() {
     create_workflow(&core, task_q, &workflow_id.to_string(), None);
     let activity_id: String = rng.gen::<u32>().to_string();
     let task = core.poll_task(task_q).unwrap();
-    core.complete_task(TaskCompletion::ok_from_api_attrs(
-        vec![ScheduleActivity {
-            activity_id: activity_id.to_string(),
-            activity_type: "test_activity".to_string(),
-            namespace: NAMESPACE.to_owned(),
-            task_queue: task_q.to_owned(),
-            schedule_to_start_timeout: Some(Duration::from_secs(30).into()),
-            start_to_close_timeout: Some(Duration::from_secs(30).into()),
-            schedule_to_close_timeout: Some(Duration::from_secs(60).into()),
-            heartbeat_timeout: Some(Duration::from_secs(60).into()),
-            ..Default::default()
-        }
-        .into()],
-        task.task_token,
-    ))
-    .unwrap();
+    // Complete workflow task and schedule activity
+    core.complete_task(activity_completion_req(task_q, &activity_id, task))
+        .unwrap();
+    // Poll activity and verify that it's been scheduled with correct parameters
     let task = dbg!(core.poll_activity_task(task_q).unwrap());
     assert_matches!(
         task.get_activity_variant(),
@@ -211,6 +187,7 @@ fn activity_non_retryable_failure() {
             assert_eq!(start_activity.activity_type, "test_activity".to_string())
         }
     );
+    // Fail activity with non-retryable error
     let failure = UserCodeFailure {
         message: "activity failed".to_string(),
         non_retryable: true,
@@ -221,6 +198,7 @@ fn activity_non_retryable_failure() {
         task.task_token,
     ))
     .unwrap();
+    // Poll workflow task and verify that activity has failed.
     let task = core.poll_task(task_q).unwrap();
     assert_matches!(
         task.get_wf_jobs().as_slice(),
@@ -241,6 +219,97 @@ fn activity_non_retryable_failure() {
         task.task_token,
     ))
     .unwrap()
+}
+
+#[test]
+fn activity_retry() {
+    let mut rng = rand::thread_rng();
+    let task_q_salt: u32 = rng.gen();
+    let task_q = &format!("activity_failed_workflow_{}", task_q_salt.to_string());
+    let core = get_integ_core();
+    let workflow_id: u32 = rng.gen();
+    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+    let activity_id: String = rng.gen::<u32>().to_string();
+    let task = core.poll_task(task_q).unwrap();
+    // Complete workflow task and schedule activity
+    core.complete_task(activity_completion_req(task_q, &activity_id, task))
+        .unwrap();
+    // Poll activity 1st time
+    let task = dbg!(core.poll_activity_task(task_q).unwrap());
+    assert_matches!(
+        task.get_activity_variant(),
+        Some(act_task::Variant::Start(start_activity)) => {
+            assert_eq!(start_activity.activity_type, "test_activity".to_string())
+        }
+    );
+    // Fail activity with retryable error
+    let failure = UserCodeFailure {
+        message: "activity failed".to_string(),
+        non_retryable: false,
+        ..Default::default()
+    };
+    core.complete_activity_task(TaskCompletion::fail_activity(
+        failure.clone(),
+        task.task_token,
+    ))
+    .unwrap();
+    // Poll 2nd time
+    let task = dbg!(core.poll_activity_task(task_q).unwrap());
+    assert_matches!(
+        task.get_activity_variant(),
+        Some(act_task::Variant::Start(start_activity)) => {
+            assert_eq!(start_activity.activity_type, "test_activity".to_string())
+        }
+    );
+    // Complete activity successfully
+    let response_payloads = vec![Payload {
+        data: b"hello ".to_vec(),
+        metadata: Default::default(),
+    }];
+    core.complete_activity_task(TaskCompletion::ok_activity(
+        response_payloads.clone(),
+        task.task_token,
+    ))
+    .unwrap();
+    // Poll workflow task and verify activity has succeeded.
+    let task = core.poll_task(task_q).unwrap();
+    assert_matches!(
+        task.get_wf_jobs().as_slice(),
+        [
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveActivity(
+                    ResolveActivity {activity_id: a_id, result: Some(ActivityResult{
+                    status: Some(act_res::Status::Completed(activity_result::Success{result: r}))})}
+                )),
+            },
+        ] => {
+            assert_eq!(a_id, &activity_id);
+            assert_eq!(r, &response_payloads);
+        }
+    );
+    core.complete_task(TaskCompletion::ok_from_api_attrs(
+        vec![CompleteWorkflowExecution { result: vec![] }.into()],
+        task.task_token,
+    ))
+    .unwrap()
+}
+
+fn activity_completion_req(task_q: &String, activity_id: &String, task: Task) -> TaskCompletion {
+    WfActivationCompletion::ok_from_cmds(
+        vec![ScheduleActivity {
+            activity_id: activity_id.to_string(),
+            activity_type: "test_activity".to_string(),
+            namespace: NAMESPACE.to_owned(),
+            task_queue: task_q.to_owned(),
+            schedule_to_start_timeout: Some(Duration::from_secs(30).into()),
+            start_to_close_timeout: Some(Duration::from_secs(30).into()),
+            schedule_to_close_timeout: Some(Duration::from_secs(60).into()),
+            heartbeat_timeout: Some(Duration::from_secs(60).into()),
+            ..Default::default()
+        }
+        .into()],
+        task.task_token,
+    )
 }
 
 #[test]
