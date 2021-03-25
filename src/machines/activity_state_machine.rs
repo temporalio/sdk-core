@@ -1,4 +1,6 @@
 use crate::protos::coresdk::PayloadsExt;
+use crate::protos::temporal::api::failure::v1::Failure;
+use crate::protos::temporal::api::history::v1::ActivityTaskCanceledEventAttributes;
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, WFMachinesAdapter,
@@ -15,7 +17,10 @@ use crate::{
             command::v1::Command,
             common::v1::Payloads,
             enums::v1::{CommandType, EventType},
-            history::v1::{history_event, ActivityTaskCompletedEventAttributes, HistoryEvent},
+            history::v1::{
+                history_event, ActivityTaskCompletedEventAttributes,
+                ActivityTaskFailedEventAttributes, HistoryEvent,
+            },
         },
     },
 };
@@ -42,7 +47,7 @@ fsm! {
     ScheduledEventRecorded --(Cancel, on_canceled) --> ScheduledActivityCancelCommandCreated;
 
     Started --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes), on_activity_task_completed) --> Completed;
-    Started --(ActivityTaskFailed, on_activity_task_failed) --> Failed;
+    Started --(ActivityTaskFailed(ActivityTaskFailedEventAttributes), on_activity_task_failed) --> Failed;
     Started --(ActivityTaskTimedOut, on_activity_task_timed_out) --> TimedOut;
     Started --(Cancel, on_canceled) --> StartedActivityCancelCommandCreated;
 
@@ -65,7 +70,7 @@ fsm! {
       --(ActivityTaskCancelRequested,
          on_activity_task_cancel_requested) --> StartedActivityCancelEventRecorded;
 
-    StartedActivityCancelEventRecorded --(ActivityTaskFailed, on_activity_task_failed) --> Failed;
+    StartedActivityCancelEventRecorded --(ActivityTaskFailed(ActivityTaskFailedEventAttributes), on_activity_task_failed) --> Failed;
     StartedActivityCancelEventRecorded
       --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes), on_activity_task_completed) --> Completed;
     StartedActivityCancelEventRecorded
@@ -78,6 +83,10 @@ fsm! {
 pub(super) enum ActivityMachineCommand {
     #[display(fmt = "Complete")]
     Complete(Option<Payloads>),
+    #[display(fmt = "Complete")]
+    Fail(Option<Failure>),
+    #[display(fmt = "Complete")]
+    Cancel(Option<Payloads>),
 }
 
 #[derive(Debug, Clone, derive_more::Display)]
@@ -149,7 +158,18 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                     ));
                 }
             }
-            Some(EventType::ActivityTaskFailed) => Self::ActivityTaskFailed,
+            Some(EventType::ActivityTaskFailed) => {
+                if let Some(history_event::Attributes::ActivityTaskFailedEventAttributes(attrs)) =
+                    e.attributes
+                {
+                    Self::ActivityTaskFailed(attrs)
+                } else {
+                    return Err(WFMachinesError::MalformedEvent(
+                        e,
+                        "Activity completion attributes were unset".to_string(),
+                    ));
+                }
+            }
             Some(EventType::ActivityTaskTimedOut) => Self::ActivityTaskTimedOut,
             Some(EventType::ActivityTaskCancelRequested) => Self::ActivityTaskCancelRequested,
             Some(EventType::ActivityTaskCanceled) => Self::ActivityTaskCanceled,
@@ -196,6 +216,19 @@ impl WFMachinesAdapter for ActivityMachine {
                 }
                 .into()]
             }
+            ActivityMachineCommand::Fail(failure) => vec![ResolveActivity {
+                activity_id: self.shared_state.attrs.activity_id.clone(),
+                result: Some(ActivityResult {
+                    status: Some(activity_result::Status::Failed(ar::Failure {
+                        failure: match failure {
+                            Some(f) => Some(f.into()),
+                            None => None,
+                        },
+                    })),
+                }),
+            }
+            .into()],
+            ActivityMachineCommand::Cancel(_) => unimplemented!(),
         })
     }
 }
@@ -273,9 +306,15 @@ impl Started {
             Completed::default(),
         )
     }
-    pub(super) fn on_activity_task_failed(self) -> ActivityMachineTransition {
+    pub(super) fn on_activity_task_failed(
+        self,
+        attrs: ActivityTaskFailedEventAttributes,
+    ) -> ActivityMachineTransition {
         // notify_failed
-        ActivityMachineTransition::default::<Failed>()
+        ActivityMachineTransition::ok(
+            vec![ActivityMachineCommand::Fail(attrs.failure)],
+            Completed::default(),
+        )
     }
     pub(super) fn on_activity_task_timed_out(self) -> ActivityMachineTransition {
         // notify_timed_out
@@ -341,9 +380,15 @@ impl StartedActivityCancelEventRecorded {
             Completed::default(),
         )
     }
-    pub(super) fn on_activity_task_failed(self) -> ActivityMachineTransition {
+    pub(super) fn on_activity_task_failed(
+        self,
+        attrs: ActivityTaskFailedEventAttributes,
+    ) -> ActivityMachineTransition {
         // notify_failed
-        ActivityMachineTransition::default::<Failed>()
+        ActivityMachineTransition::ok(
+            vec![ActivityMachineCommand::Fail(attrs.failure)],
+            Completed::default(),
+        )
     }
     pub(super) fn on_activity_task_timed_out(self) -> ActivityMachineTransition {
         // notify_timed_out
