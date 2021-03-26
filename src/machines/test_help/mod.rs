@@ -6,7 +6,6 @@ mod history_builder;
 pub(super) use async_workflow_driver::{CommandSender, TestWorkflowDriver};
 pub(crate) use history_builder::TestHistoryBuilder;
 
-use crate::workflow::WorkflowConcurrencyManager;
 use crate::{
     pollers::MockServerGatewayApis,
     protos::temporal::api::common::v1::WorkflowExecution,
@@ -14,11 +13,10 @@ use crate::{
     protos::temporal::api::workflowservice::v1::{
         PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
     },
-    CoreSDK, ServerGatewayApis,
+    CoreSDK,
 };
 use rand::{thread_rng, Rng};
-use std::sync::atomic::AtomicBool;
-use std::{collections::VecDeque, sync::Arc};
+use std::collections::VecDeque;
 
 pub(crate) type FakeCore = CoreSDK<MockServerGatewayApis>;
 
@@ -64,18 +62,5 @@ pub(crate) fn build_fake_core(
         .expect_complete_workflow_task()
         .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
 
-    fake_core_from_mock(mock_gateway)
-}
-
-pub(crate) fn fake_core_from_mock<MT>(mock_gateway: MT) -> CoreSDK<MT>
-where
-    MT: ServerGatewayApis,
-{
-    CoreSDK {
-        server_gateway: Arc::new(mock_gateway),
-        workflow_machines: WorkflowConcurrencyManager::new(),
-        workflow_task_tokens: Default::default(),
-        pending_activations: Default::default(),
-        shutdown_requested: AtomicBool::new(false),
-    }
+    CoreSDK::new(mock_gateway)
 }

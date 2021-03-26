@@ -52,8 +52,8 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
 };
+use tokio::sync::Notify;
 use tonic::codegen::http::uri::InvalidUri;
 use tracing::Span;
 
@@ -120,13 +120,7 @@ pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
     // Initialize server client
     let work_provider = opts.gateway_opts.connect().await?;
 
-    Ok(CoreSDK {
-        server_gateway: Arc::new(work_provider),
-        workflow_machines: WorkflowConcurrencyManager::new(),
-        workflow_task_tokens: Default::default(),
-        pending_activations: Default::default(),
-        shutdown_requested: AtomicBool::new(false),
-    })
+    Ok(CoreSDK::new(work_provider))
 }
 
 struct CoreSDK<WP> {
@@ -143,6 +137,8 @@ struct CoreSDK<WP> {
 
     /// Has shutdown been called?
     shutdown_requested: AtomicBool,
+    /// Used to wake up future which checks shutdown state
+    shutdown_notify: Notify,
 }
 
 /// Can be used inside the CoreSDK impl to block on any method that polls the server until it
@@ -151,10 +147,10 @@ macro_rules! abort_on_shutdown {
     ($self:ident, $gateway_fn:tt, $poll_arg:expr) => {{
         let shutdownfut = async {
             loop {
-                if $self.shutdown_requested.load(Ordering::Relaxed) {
+                $self.shutdown_notify.notified().await;
+                if $self.shutdown_requested.load(Ordering::SeqCst) {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(100)).await;
             }
         };
         let poll_result_future = $self.server_gateway.$gateway_fn($poll_arg);
@@ -358,11 +354,23 @@ where
 
     fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
+        self.shutdown_notify.notify_one();
         self.workflow_machines.shutdown();
     }
 }
 
 impl<WP: ServerGatewayApis> CoreSDK<WP> {
+    pub(crate) fn new(wp: WP) -> Self {
+        Self {
+            server_gateway: Arc::new(wp),
+            workflow_machines: WorkflowConcurrencyManager::new(),
+            workflow_task_tokens: Default::default(),
+            pending_activations: Default::default(),
+            shutdown_requested: AtomicBool::new(false),
+            shutdown_notify: Notify::new(),
+        }
+    }
+
     /// Will create a new workflow manager if needed for the workflow task, if not, it will
     /// feed the existing manager the updated history we received from the server.
     ///
