@@ -122,7 +122,7 @@ fn activity_workflow() {
     let activity_id: String = rng.gen::<u32>().to_string();
     let task = core.poll_workflow_task(task_q).unwrap();
     // Complete workflow task and schedule activity
-    core.complete_task(activity_completion_req(task_q, &activity_id, task))
+    core.complete_workflow_task(activity_completion_req(task_q, &activity_id, task))
         .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
     let task = dbg!(core.poll_activity_task(task_q).unwrap());
@@ -175,14 +175,14 @@ fn activity_non_retryable_failure() {
     let workflow_id: u32 = rng.gen();
     create_workflow(&core, task_q, &workflow_id.to_string(), None);
     let activity_id: String = rng.gen::<u32>().to_string();
-    let task = core.poll_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).unwrap();
     // Complete workflow task and schedule activity
-    core.complete_task(activity_completion_req(task_q, &activity_id, task))
+    core.complete_workflow_task(activity_completion_req(task_q, &activity_id, task))
         .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
     let task = dbg!(core.poll_activity_task(task_q).unwrap());
     assert_matches!(
-        task.get_activity_variant(),
+        task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
             assert_eq!(start_activity.activity_type, "test_activity".to_string())
         }
@@ -193,15 +193,21 @@ fn activity_non_retryable_failure() {
         non_retryable: true,
         ..Default::default()
     };
-    core.complete_activity_task(TaskCompletion::fail_activity(
-        failure.clone(),
+    core.complete_activity_task(
         task.task_token,
-    ))
+        ActivityResult {
+            status: Some(activity_result::activity_result::Status::Failed(
+                activity_result::Failure {
+                    failure: Some(failure.clone()),
+                },
+            )),
+        },
+    )
     .unwrap();
     // Poll workflow task and verify that activity has failed.
-    let task = core.poll_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).unwrap();
     assert_matches!(
-        task.get_wf_jobs().as_slice(),
+        task.jobs.as_slice(),
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
@@ -214,8 +220,8 @@ fn activity_non_retryable_failure() {
             assert_eq!(f, &failure);
         }
     );
-    core.complete_task(TaskCompletion::ok_from_api_attrs(
-        vec![CompleteWorkflowExecution { result: vec![] }.into()],
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
     ))
     .unwrap()
@@ -230,14 +236,14 @@ fn activity_retry() {
     let workflow_id: u32 = rng.gen();
     create_workflow(&core, task_q, &workflow_id.to_string(), None);
     let activity_id: String = rng.gen::<u32>().to_string();
-    let task = core.poll_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).unwrap();
     // Complete workflow task and schedule activity
-    core.complete_task(activity_completion_req(task_q, &activity_id, task))
+    core.complete_workflow_task(activity_completion_req(task_q, &activity_id, task))
         .unwrap();
     // Poll activity 1st time
     let task = dbg!(core.poll_activity_task(task_q).unwrap());
     assert_matches!(
-        task.get_activity_variant(),
+        task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
             assert_eq!(start_activity.activity_type, "test_activity".to_string())
         }
@@ -248,50 +254,69 @@ fn activity_retry() {
         non_retryable: false,
         ..Default::default()
     };
-    core.complete_activity_task(TaskCompletion::fail_activity(failure, task.task_token))
-        .unwrap();
+    core.complete_activity_task(
+        task.task_token,
+        ActivityResult {
+            status: Some(activity_result::activity_result::Status::Failed(
+                activity_result::Failure {
+                    failure: Some(failure),
+                },
+            )),
+        },
+    )
+    .unwrap();
     // Poll 2nd time
     let task = dbg!(core.poll_activity_task(task_q).unwrap());
     assert_matches!(
-        task.get_activity_variant(),
+        task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
             assert_eq!(start_activity.activity_type, "test_activity".to_string())
         }
     );
     // Complete activity successfully
-    let response_payloads = vec![Payload {
+    let response_payload = Payload {
         data: b"hello ".to_vec(),
         metadata: Default::default(),
-    }];
-    core.complete_activity_task(TaskCompletion::ok_activity(
-        response_payloads.clone(),
+    };
+    core.complete_activity_task(
         task.task_token,
-    ))
+        ActivityResult {
+            status: Some(activity_result::activity_result::Status::Completed(
+                activity_result::Success {
+                    result: Some(response_payload.clone()),
+                },
+            )),
+        },
+    )
     .unwrap();
     // Poll workflow task and verify activity has succeeded.
-    let task = core.poll_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).unwrap();
     assert_matches!(
-        task.get_wf_jobs().as_slice(),
+        task.jobs.as_slice(),
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {activity_id: a_id, result: Some(ActivityResult{
-                    status: Some(act_res::Status::Completed(activity_result::Success{result: r}))})}
+                    status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)}))})}
                 )),
             },
         ] => {
             assert_eq!(a_id, &activity_id);
-            assert_eq!(r, &response_payloads);
+            assert_eq!(r, &response_payload);
         }
     );
-    core.complete_task(TaskCompletion::ok_from_api_attrs(
-        vec![CompleteWorkflowExecution { result: vec![] }.into()],
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
     ))
     .unwrap()
 }
 
-fn activity_completion_req(task_q: &str, activity_id: &str, task: Task) -> TaskCompletion {
+fn activity_completion_req(
+    task_q: &str,
+    activity_id: &str,
+    task: WfActivation,
+) -> WfActivationCompletion {
     WfActivationCompletion::ok_from_cmds(
         vec![ScheduleActivity {
             activity_id: activity_id.to_string(),
