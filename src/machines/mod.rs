@@ -241,7 +241,7 @@ trait Cancellable: StateMachine {
     fn cancel(&mut self) -> Result<MachineResponse, MachineError<Self::Error>> {
         // It's a logic error on our part if this is ever called on a machine that can't actually
         // be cancelled
-        panic!(format!("Machine {} cannot be cancelled", self.name()))
+        panic!("Machine {} cannot be cancelled", self.name())
     }
 
     /// Should return true if the command was cancelled before we sent it to the server
