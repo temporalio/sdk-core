@@ -178,16 +178,14 @@ where
             if let Some(pa) = self.pending_activations.pop() {
                 Span::current().record("pending_activation", &format!("{}", &pa).as_str());
 
-                if let Some(mut next_activation) =
+                if let Some(next_activation) =
                     self.access_wf_machine(&pa.run_id, move |mgr| mgr.get_next_activation())?
                 {
-                    // TODO: What do do about task token
                     let task_token = pa.task_token.clone();
                     if next_activation.more_activations_needed {
                         self.pending_activations.push(pa);
                     }
-                    next_activation.activation.task_token = task_token;
-                    return Ok(next_activation.activation);
+                    return Ok(next_activation.finalize(task_token));
                 }
             }
 
@@ -209,17 +207,14 @@ where
 
                     let (next_activation, run_id) = self.instantiate_or_update_workflow(work)?;
 
-                    if let Some(mut na) = next_activation {
+                    if let Some(na) = next_activation {
                         if na.more_activations_needed {
                             self.pending_activations.push(PendingActivation {
                                 run_id,
                                 task_token: task_token.clone(),
                             });
                         }
-
-                        // TODO: This sucks
-                        na.activation.task_token = task_token;
-                        return Ok(na.activation);
+                        return Ok(na.finalize(task_token));
                     }
                 }
                 // Drain pending activations in case of shutdown.

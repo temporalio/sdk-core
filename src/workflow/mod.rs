@@ -78,8 +78,18 @@ impl WorkflowManager {
 
 #[derive(Debug)]
 pub(crate) struct NextWfActivation {
-    pub activation: WfActivation,
+    /// Keep this private, so we can ensure task tokens are attached via [Self::finalize]
+    activation: WfActivation,
     pub more_activations_needed: bool,
+}
+
+impl NextWfActivation {
+    /// Attach a task token to the activation so it can be sent out to the lang sdk
+    pub(crate) fn finalize(self, task_token: Vec<u8>) -> WfActivation {
+        let mut a = self.activation;
+        a.task_token = task_token;
+        a
+    }
 }
 
 impl WorkflowManager {
