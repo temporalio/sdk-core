@@ -152,6 +152,25 @@ pub mod coresdk {
         }
     }
 
+    impl From<Failure> for UserCodeFailure {
+        fn from(f: Failure) -> Self {
+            let mut r#type = "".to_string();
+            let mut non_retryable = false;
+            if let Some(FailureInfo::ApplicationFailureInfo(fi)) = f.failure_info {
+                r#type = fi.r#type;
+                non_retryable = fi.non_retryable;
+            }
+            Self {
+                message: f.message,
+                r#type,
+                source: f.source,
+                stack_trace: f.stack_trace,
+                non_retryable,
+                cause: f.cause.map(|b| Box::new((*b).into())),
+            }
+        }
+    }
+
     impl From<common::Payload> for super::temporal::api::common::v1::Payload {
         fn from(p: Payload) -> Self {
             Self {

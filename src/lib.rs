@@ -524,6 +524,14 @@ mod test {
         build_fake_core(wfid, RUN_ID, &mut t, hist_batches)
     }
 
+    #[fixture(hist_batches = &[])]
+    fn single_activity_failure_setup(hist_batches: &[usize]) -> FakeCore {
+        let wfid = "fake_wf_id";
+
+        let mut t = canned_histories::single_failed_activity("fake_activity");
+        build_fake_core(wfid, RUN_ID, &mut t, hist_batches)
+    }
+
     #[rstest(core,
     case::incremental(single_timer_setup(&[1, 2])),
     case::replay(single_timer_setup(&[2]))
@@ -566,7 +574,9 @@ mod test {
 
     #[rstest(core,
     case::incremental(single_activity_setup(&[1, 2])),
-    case::replay(single_activity_setup(&[2]))
+    case::incremental_activity_failure(single_activity_failure_setup(&[1, 2])),
+    case::replay(single_activity_setup(&[2])),
+    case::replay_activity_failure(single_activity_failure_setup(&[2]))
     )]
     fn single_activity_completion(core: FakeCore) {
         let res = core.poll_workflow_task(TASK_Q).unwrap();
