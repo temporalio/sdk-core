@@ -108,9 +108,15 @@ pub mod coresdk {
                 variant: Some(activity_task::activity_task::Variant::Start(
                     activity_task::Start {
                         workflow_namespace: r.workflow_namespace,
-                        workflow_type: r.workflow_type.map(|wt| wt.name).unwrap_or("".to_string()),
+                        workflow_type: r
+                            .workflow_type
+                            .map(|wt| wt.name)
+                            .unwrap_or_else(|| "".to_string()),
                         workflow_execution: r.workflow_execution.map(Into::into),
-                        activity_type: r.activity_type.map(|at| at.name).unwrap_or("".to_string()),
+                        activity_type: r
+                            .activity_type
+                            .map(|at| at.name)
+                            .unwrap_or_else(|| "".to_string()),
                         header_fields: r.header.map(Into::into).unwrap_or_default(),
                         input: Vec::from_payloads(r.input),
                         heartbeat_details: Vec::from_payloads(r.heartbeat_details),

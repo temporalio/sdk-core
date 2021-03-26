@@ -1,4 +1,5 @@
 #![warn(missing_docs)] // error if there are missing docs
+#![allow(clippy::upper_case_acronyms)]
 
 //! This crate provides a basis for creating new Temporal SDKs without completely starting from
 //! scratch
@@ -232,14 +233,15 @@ where
         }
     }
 
+    #[instrument(skip(self))]
     fn poll_activity_task(&self, task_queue: &str) -> Result<ActivityTask, CoreError> {
-        return match abort_on_shutdown!(self, poll_activity_task, task_queue.to_owned()) {
+        match abort_on_shutdown!(self, poll_activity_task, task_queue.to_owned()) {
             Ok(work) => {
                 let task_token = work.task_token.clone();
                 Ok(ActivityTask::start_from_poll_resp(work, task_token))
             }
             Err(e) => Err(e),
-        };
+        }
     }
 
     #[instrument(skip(self))]
@@ -398,7 +400,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
     /// Feed commands from the lang sdk into appropriate workflow manager which will iterate
     /// the state machines and return commands ready to be sent to the server
     fn push_lang_commands(&self, run_id: &str, cmds: Vec<WFCommand>) -> Result<Vec<ProtoCommand>> {
-        Ok(self.access_wf_machine(run_id, move |mgr| mgr.push_commands(cmds))?)
+        self.access_wf_machine(run_id, move |mgr| mgr.push_commands(cmds))
     }
 
     /// Remove a workflow run from the cache entirely
