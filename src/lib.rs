@@ -1,7 +1,5 @@
-#![warn(missing_docs)]
-// error if there are missing docs
-// TODO: Turn on when rust 1.51 docker image available
-// #![allow(clippy::upper_case_acronyms)]
+#![warn(missing_docs)] // error if there are missing docs
+#![allow(clippy::upper_case_acronyms)]
 
 //! This crate provides a basis for creating new Temporal SDKs without completely starting from
 //! scratch
@@ -54,9 +52,8 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
 };
-use tokio::runtime::Runtime;
+use tokio::sync::Notify;
 use tonic::codegen::http::uri::InvalidUri;
 use tracing::Span;
 
@@ -66,29 +63,34 @@ pub type Result<T, E = CoreError> = std::result::Result<T, E>;
 /// This trait is the primary way by which language specific SDKs interact with the core SDK. It is
 /// expected that only one instance of an implementation will exist for the lifetime of the
 /// worker(s) using it.
+#[async_trait::async_trait]
 pub trait Core: Send + Sync {
     /// Ask the core for some work, returning a [WfActivation]. It is then the language SDK's
     /// responsibility to call the appropriate workflow code with the provided inputs. Blocks
     /// indefinitely until such work is available or [shutdown] is called.
     ///
     /// TODO: Examples
-    fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation>;
+    async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation>;
 
     /// Ask the core for some work, returning an [ActivityTask]. It is then the language SDK's
     /// responsibility to call the appropriate activity code with the provided inputs. Blocks
     /// indefinitely until such work is available or [shutdown] is called.
     ///
     /// TODO: Examples
-    fn poll_activity_task(&self, task_queue: &str) -> Result<ActivityTask>;
+    async fn poll_activity_task(&self, task_queue: &str) -> Result<ActivityTask>;
 
     /// Tell the core that a workflow activation has completed
-    fn complete_workflow_task(&self, completion: WfActivationCompletion) -> Result<()>;
+    async fn complete_workflow_task(&self, completion: WfActivationCompletion) -> Result<()>;
 
     /// Tell the core that an activity has finished executing
-    fn complete_activity_task(&self, task_token: Vec<u8>, result: ActivityResult) -> Result<()>;
+    async fn complete_activity_task(
+        &self,
+        task_token: Vec<u8>,
+        result: ActivityResult,
+    ) -> Result<()>;
 
     /// Indicate that a long running activity is still making progress
-    fn send_activity_heartbeat(&self, task_token: ActivityHeartbeat) -> Result<()>;
+    async fn send_activity_heartbeat(&self, task_token: ActivityHeartbeat) -> Result<()>;
 
     /// Returns core's instance of the [ServerGatewayApis] implementor it is using.
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis>;
@@ -114,23 +116,14 @@ pub struct CoreInitOptions {
 /// # Panics
 /// * Will panic if called from within an async context, as it will construct a runtime and you
 ///   cannot construct a runtime from within a runtime.
-pub fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
-    let runtime = Runtime::new().map_err(CoreInitError::TokioInitError)?;
+pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
     // Initialize server client
-    let work_provider = runtime.block_on(opts.gateway_opts.connect())?;
+    let work_provider = opts.gateway_opts.connect().await?;
 
-    Ok(CoreSDK {
-        runtime,
-        server_gateway: Arc::new(work_provider),
-        workflow_machines: WorkflowConcurrencyManager::new(),
-        workflow_task_tokens: Default::default(),
-        pending_activations: Default::default(),
-        shutdown_requested: AtomicBool::new(false),
-    })
+    Ok(CoreSDK::new(work_provider))
 }
 
 struct CoreSDK<WP> {
-    runtime: Runtime,
     /// Provides work in the form of responses the server would send from polling task Qs
     server_gateway: Arc<WP>,
     /// Key is run id
@@ -144,38 +137,39 @@ struct CoreSDK<WP> {
 
     /// Has shutdown been called?
     shutdown_requested: AtomicBool,
+    /// Used to wake up future which checks shutdown state
+    shutdown_notify: Notify,
 }
 
 /// Can be used inside the CoreSDK impl to block on any method that polls the server until it
 /// responds, or until the shutdown flag is set (aborting the poll)
 macro_rules! abort_on_shutdown {
-    ($self:ident, $gateway_fn:tt, $poll_arg:expr) => {
-        $self.runtime.block_on(async {
-            let shutdownfut = async {
-                loop {
-                    if $self.shutdown_requested.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+    ($self:ident, $gateway_fn:tt, $poll_arg:expr) => {{
+        let shutdownfut = async {
+            loop {
+                $self.shutdown_notify.notified().await;
+                if $self.shutdown_requested.load(Ordering::SeqCst) {
+                    break;
                 }
-            };
-            let poll_result_future = $self.server_gateway.$gateway_fn($poll_arg);
-            tokio::select! {
-                _ = shutdownfut => {
-                    Err(CoreError::ShuttingDown)
-                }
-                r = poll_result_future => r.map_err(Into::into)
             }
-        })
-    };
+        };
+        let poll_result_future = $self.server_gateway.$gateway_fn($poll_arg);
+        tokio::select! {
+            _ = shutdownfut => {
+                Err(CoreError::ShuttingDown)
+            }
+            r = poll_result_future => r.map_err(Into::into)
+        }
+    }};
 }
 
+#[async_trait::async_trait]
 impl<WP> Core for CoreSDK<WP>
 where
     WP: ServerGatewayApis + Send + Sync + 'static,
 {
     #[instrument(skip(self), fields(pending_activation))]
-    fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation> {
+    async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation> {
         // The poll needs to be in a loop because we can't guarantee tail call optimization in Rust
         // (simply) and we really, really need that for long-poll retries.
         loop {
@@ -236,7 +230,7 @@ where
     }
 
     #[instrument(skip(self))]
-    fn poll_activity_task(&self, task_queue: &str) -> Result<ActivityTask, CoreError> {
+    async fn poll_activity_task(&self, task_queue: &str) -> Result<ActivityTask, CoreError> {
         match abort_on_shutdown!(self, poll_activity_task, task_queue.to_owned()) {
             Ok(work) => {
                 let task_token = work.task_token.clone();
@@ -247,7 +241,7 @@ where
     }
 
     #[instrument(skip(self))]
-    fn complete_workflow_task(&self, completion: WfActivationCompletion) -> Result<()> {
+    async fn complete_workflow_task(&self, completion: WfActivationCompletion) -> Result<()> {
         let task_token = completion.task_token;
         let wfstatus = completion.status;
         let run_id = self
@@ -280,11 +274,9 @@ where
                 // no more pending activations -- in other words the lang SDK has caught
                 // up on replay.
                 if !self.pending_activations.has_pending(&run_id) {
-                    self.runtime
-                        .block_on(
-                            self.server_gateway
-                                .complete_workflow_task(task_token, commands),
-                        )
+                    self.server_gateway
+                        .complete_workflow_task(task_token, commands)
+                        .await
                         .map_err(|ts| {
                             if ts.code() == tonic::Code::InvalidArgument
                                 && ts.message() == "UnhandledCommand"
@@ -300,12 +292,13 @@ where
                 // Blow up any cached data associated with the workflow
                 self.evict_run(&run_id);
 
-                self.runtime
-                    .block_on(self.server_gateway.fail_workflow_task(
+                self.server_gateway
+                    .fail_workflow_task(
                         task_token,
                         WorkflowTaskFailedCause::Unspecified,
                         failure.failure.map(Into::into),
-                    ))?;
+                    )
+                    .await?;
             }
             None => {
                 return Err(CoreError::MalformedWorkflowCompletion {
@@ -318,7 +311,11 @@ where
     }
 
     #[instrument(skip(self))]
-    fn complete_activity_task(&self, task_token: Vec<u8>, result: ActivityResult) -> Result<()> {
+    async fn complete_activity_task(
+        &self,
+        task_token: Vec<u8>,
+        result: ActivityResult,
+    ) -> Result<()> {
         let status = if let Some(s) = result.status {
             s
         } else {
@@ -329,28 +326,25 @@ where
         };
         match status {
             activity_result::Status::Completed(ar::Success { result }) => {
-                self.runtime.block_on(
-                    self.server_gateway
-                        .complete_activity_task(task_token, result.map(Into::into)),
-                )?;
+                self.server_gateway
+                    .complete_activity_task(task_token, result.map(Into::into))
+                    .await?;
             }
             activity_result::Status::Failed(ar::Failure { failure }) => {
-                self.runtime.block_on(
-                    self.server_gateway
-                        .fail_activity_task(task_token, failure.map(Into::into)),
-                )?;
+                self.server_gateway
+                    .fail_activity_task(task_token, failure.map(Into::into))
+                    .await?;
             }
             activity_result::Status::Canceled(ar::Cancelation { details }) => {
-                self.runtime.block_on(
-                    self.server_gateway
-                        .cancel_activity_task(task_token, details.map(Into::into)),
-                )?;
+                self.server_gateway
+                    .cancel_activity_task(task_token, details.map(Into::into))
+                    .await?;
             }
         }
         Ok(())
     }
 
-    fn send_activity_heartbeat(&self, _task_token: ActivityHeartbeat) -> Result<()> {
+    async fn send_activity_heartbeat(&self, _task_token: ActivityHeartbeat) -> Result<()> {
         unimplemented!()
     }
 
@@ -360,11 +354,23 @@ where
 
     fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
+        self.shutdown_notify.notify_one();
         self.workflow_machines.shutdown();
     }
 }
 
 impl<WP: ServerGatewayApis> CoreSDK<WP> {
+    pub(crate) fn new(wp: WP) -> Self {
+        Self {
+            server_gateway: Arc::new(wp),
+            workflow_machines: WorkflowConcurrencyManager::new(),
+            workflow_task_tokens: Default::default(),
+            pending_activations: Default::default(),
+            shutdown_requested: AtomicBool::new(false),
+            shutdown_notify: Notify::new(),
+        }
+    }
+
     /// Will create a new workflow manager if needed for the workflow task, if not, it will
     /// feed the existing manager the updated history we received from the server.
     ///
@@ -436,8 +442,8 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 #[allow(clippy::large_enum_variant)]
 // NOTE: Docstrings take the place of #[error("xxxx")] here b/c of displaydoc
 pub enum CoreError {
-    /// [Core::shutdown] was called, and there are no more replay tasks to be handled. You must
-    /// call [Core::complete_task] for any remaining tasks, and then may exit.
+    /** [Core::shutdown] was called, and there are no more replay tasks to be handled. You must
+    call [Core::complete_task] for any remaining tasks, and then may exit.*/
     ShuttingDown,
     /// Poll workflow response from server was malformed: {0:?}
     BadPollResponseFromServer(PollWorkflowTaskQueueResponse),
@@ -462,9 +468,9 @@ pub enum CoreError {
         /// The run id of the erring workflow
         run_id: String,
     },
-    /// There exists a pending command in this workflow's history which has not yet been handled.
-    /// When thrown from [Core::complete_task], it means you should poll for a new task, receive a
-    /// new task token, and complete that new task.
+    /** There exists a pending command in this workflow's history which has not yet been handled.
+    When thrown from [Core::complete_task], it means you should poll for a new task, receive a
+    new task token, and complete that new task. */
     UnhandledCommandWhenCompleting,
     /// Unhandled error when calling the temporal server: {0:?}
     TonicError(#[from] tonic::Status),
@@ -473,8 +479,6 @@ pub enum CoreError {
 /// Errors thrown during initialization of [Core]
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
 pub enum CoreInitError {
-    /// Failed to initialize tokio runtime: {0:?}
-    TokioInitError(std::io::Error),
     /// Invalid URI: {0:?}
     InvalidUri(#[from] InvalidUri),
     /// Server connection error: {0:?}
@@ -533,11 +537,12 @@ mod test {
     }
 
     #[rstest(core,
-    case::incremental(single_timer_setup(&[1, 2])),
-    case::replay(single_timer_setup(&[2]))
+        case::incremental(single_timer_setup(&[1, 2])),
+        case::replay(single_timer_setup(&[2]))
     )]
-    fn single_timer_test_across_wf_bridge(core: FakeCore) {
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+    #[tokio::test]
+    async fn single_timer_test_across_wf_bridge(core: FakeCore) {
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
             [WfActivationJob {
@@ -555,9 +560,10 @@ mod test {
             .into()],
             task_tok,
         ))
+        .await
         .unwrap();
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
             [WfActivationJob {
@@ -569,17 +575,19 @@ mod test {
             vec![CompleteWorkflowExecution { result: None }.into()],
             task_tok,
         ))
+        .await
         .unwrap();
     }
 
     #[rstest(core,
-    case::incremental(single_activity_setup(&[1, 2])),
-    case::incremental_activity_failure(single_activity_failure_setup(&[1, 2])),
-    case::replay(single_activity_setup(&[2])),
-    case::replay_activity_failure(single_activity_failure_setup(&[2]))
+        case::incremental(single_activity_setup(&[1, 2])),
+        case::incremental_activity_failure(single_activity_failure_setup(&[1, 2])),
+        case::replay(single_activity_setup(&[2])),
+        case::replay_activity_failure(single_activity_failure_setup(&[2]))
     )]
-    fn single_activity_completion(core: FakeCore) {
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+    #[tokio::test]
+    async fn single_activity_completion(core: FakeCore) {
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
             [WfActivationJob {
@@ -597,9 +605,10 @@ mod test {
             .into()],
             task_tok,
         ))
+        .await
         .unwrap();
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
             [WfActivationJob {
@@ -611,11 +620,13 @@ mod test {
             vec![CompleteWorkflowExecution { result: None }.into()],
             task_tok,
         ))
+        .await
         .unwrap();
     }
 
     #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
-    fn parallel_timer_test_across_wf_bridge(hist_batches: &[usize]) {
+    #[tokio::test]
+    async fn parallel_timer_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
         let timer_1_id = "timer1";
@@ -624,7 +635,7 @@ mod test {
         let mut t = canned_histories::parallel_timer(timer_1_id, timer_2_id);
         let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
             [WfActivationJob {
@@ -649,9 +660,10 @@ mod test {
             ],
             task_tok,
         ))
+        .await
         .unwrap();
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
             [
@@ -675,11 +687,13 @@ mod test {
             vec![CompleteWorkflowExecution { result: None }.into()],
             task_tok,
         ))
+        .await
         .unwrap();
     }
 
     #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
-    fn timer_cancel_test_across_wf_bridge(hist_batches: &[usize]) {
+    #[tokio::test]
+    async fn timer_cancel_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
         let timer_id = "wait_timer";
@@ -688,7 +702,7 @@ mod test {
         let mut t = canned_histories::cancel_timer(timer_id, cancel_timer_id);
         let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
             [WfActivationJob {
@@ -713,9 +727,10 @@ mod test {
             ],
             task_tok,
         ))
+        .await
         .unwrap();
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
             [WfActivationJob {
@@ -733,23 +748,28 @@ mod test {
             ],
             task_tok,
         ))
+        .await
         .unwrap();
     }
 
     #[rstest(single_timer_setup(&[1]))]
-    fn after_shutdown_server_is_not_polled(single_timer_setup: FakeCore) {
-        let res = single_timer_setup.poll_workflow_task(TASK_Q).unwrap();
+    #[tokio::test]
+    async fn after_shutdown_server_is_not_polled(single_timer_setup: FakeCore) {
+        let res = single_timer_setup.poll_workflow_task(TASK_Q).await.unwrap();
         assert_eq!(res.jobs.len(), 1);
 
         single_timer_setup.shutdown();
         assert_matches!(
-            single_timer_setup.poll_workflow_task(TASK_Q).unwrap_err(),
+            single_timer_setup
+                .poll_workflow_task(TASK_Q)
+                .await
+                .unwrap_err(),
             CoreError::ShuttingDown
         );
     }
 
-    #[test]
-    fn workflow_update_random_seed_on_workflow_reset() {
+    #[tokio::test]
+    async fn workflow_update_random_seed_on_workflow_reset() {
         let wfid = "fake_wf_id";
         let run_id = "CA733AB0-8133-45F6-A4C1-8D375F61AE8B";
         let original_run_id = "86E39A5F-AE31-4626-BDFE-398EE072D156";
@@ -759,7 +779,7 @@ mod test {
             canned_histories::workflow_fails_with_reset_after_timer(timer_1_id, original_run_id);
         let core = build_fake_core(wfid, run_id, &mut t, &[2]);
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         let randomness_seed_from_start: u64;
         assert_matches!(
             res.jobs.as_slice(),
@@ -782,9 +802,10 @@ mod test {
             .into()],
             task_tok,
         ))
+        .await
         .unwrap();
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
             [WfActivationJob {
@@ -801,13 +822,15 @@ mod test {
             vec![CompleteWorkflowExecution { result: None }.into()],
             task_tok,
         ))
+        .await
         .unwrap();
     }
 
     // The incremental version only does one batch here, because the workflow completes right away
     // and any subsequent poll would block forever with nothing to do.
     #[rstest(hist_batches, case::incremental(&[1]), case::replay(&[2]))]
-    fn cancel_timer_before_sent_wf_bridge(hist_batches: &[usize]) {
+    #[tokio::test]
+    async fn cancel_timer_before_sent_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
         let cancel_timer_id = "cancel_timer";
@@ -819,7 +842,7 @@ mod test {
 
         let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
             [WfActivationJob {
@@ -843,11 +866,12 @@ mod test {
             ],
             task_tok,
         ))
+        .await
         .unwrap();
     }
 
-    #[test]
-    fn complete_activation_with_failure() {
+    #[tokio::test]
+    async fn complete_activation_with_failure() {
         let wfid = "fake_wf_id";
         let timer_id = "timer";
 
@@ -860,7 +884,7 @@ mod test {
             .times(1)
             .returning(|_, _, _| Ok(RespondWorkflowTaskFailedResponse {}));
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
             vec![StartTimer {
                 timer_id: timer_id.to_string(),
@@ -869,9 +893,10 @@ mod test {
             .into()],
             res.task_token,
         ))
+        .await
         .unwrap();
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         core.complete_workflow_task(WfActivationCompletion::fail(
             res.task_token,
             UserCodeFailure {
@@ -879,9 +904,10 @@ mod test {
                 ..Default::default()
             },
         ))
+        .await
         .unwrap();
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
             [WfActivationJob {
@@ -897,9 +923,10 @@ mod test {
             .into()],
             res.task_token,
         ))
+        .await
         .unwrap();
         // Now we may complete the workflow
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
             [WfActivationJob {
@@ -910,11 +937,13 @@ mod test {
             vec![CompleteWorkflowExecution { result: None }.into()],
             res.task_token,
         ))
+        .await
         .unwrap();
     }
 
     #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
-    fn simple_timer_fail_wf_execution(hist_batches: &[usize]) {
+    #[tokio::test]
+    async fn simple_timer_fail_wf_execution(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
         let timer_id = "timer1";
@@ -922,7 +951,7 @@ mod test {
         let mut t = canned_histories::single_timer(timer_id);
         let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
             vec![StartTimer {
                 timer_id: timer_id.to_string(),
@@ -931,9 +960,10 @@ mod test {
             .into()],
             res.task_token,
         ))
+        .await
         .unwrap();
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
             vec![FailWorkflowExecution {
                 failure: Some(UserCodeFailure {
@@ -944,23 +974,26 @@ mod test {
             .into()],
             res.task_token,
         ))
+        .await
         .unwrap();
     }
 
     #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
-    fn two_signals(hist_batches: &[usize]) {
+    #[tokio::test]
+    async fn two_signals(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let run_id = "fake_run_id";
 
         let mut t = canned_histories::two_signals("sig1", "sig2");
         let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         // Task is completed with no commands
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(vec![], res.task_token))
+            .await
             .unwrap();
 
-        let res = core.poll_workflow_task(TASK_Q).unwrap();
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
             [

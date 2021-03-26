@@ -1,17 +1,8 @@
 use assert_matches::assert_matches;
 use crossbeam::channel::{unbounded, RecvTimeoutError};
-use futures::Future;
+use futures::{channel::mpsc::UnboundedReceiver, future, Future, SinkExt, StreamExt};
 use rand::{self, Rng};
-use std::{
-    collections::HashMap,
-    convert::TryFrom,
-    env,
-    sync::{
-        mpsc::{channel, Receiver},
-        Arc,
-    },
-    time::Duration,
-};
+use std::{collections::HashMap, convert::TryFrom, env, sync::Arc, time::Duration};
 use temporal_sdk_core::{
     protos::coresdk::{
         activity_result::{self, activity_result as act_res, ActivityResult},
@@ -40,7 +31,7 @@ use temporal_sdk_core::{
 const NAMESPACE: &str = "default";
 type GwApi = Arc<dyn ServerGatewayApis>;
 
-fn create_workflow(
+async fn create_workflow(
     core: &dyn Core,
     task_q: &str,
     workflow_id: &str,
@@ -57,9 +48,9 @@ fn create_workflow(
         .unwrap()
         .run_id
     })
+    .await
 }
 
-#[tokio::main]
 async fn with_gw<F: FnOnce(GwApi) -> Fout, Fout: Future>(core: &dyn Core, fun: F) -> Fout::Output {
     let gw = core.server_gateway();
     fun(gw).await
@@ -80,20 +71,22 @@ fn get_integ_server_options() -> ServerGatewayOptions {
     }
 }
 
-fn get_integ_core() -> impl Core {
+async fn get_integ_core() -> impl Core {
     let gateway_opts = get_integ_server_options();
-    temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap()
+    temporal_sdk_core::init(CoreInitOptions { gateway_opts })
+        .await
+        .unwrap()
 }
 
-#[test]
-fn timer_workflow() {
+#[tokio::test]
+async fn timer_workflow() {
     let task_q = "timer_workflow";
-    let core = get_integ_core();
+    let core = get_integ_core().await;
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+    create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
     let timer_id: String = rng.gen::<u32>().to_string();
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![StartTimer {
             timer_id,
@@ -102,30 +95,33 @@ fn timer_workflow() {
         .into()],
         task.task_token,
     ))
+    .await
     .unwrap();
-    let task = dbg!(core.poll_workflow_task(task_q).unwrap());
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
     ))
+    .await
     .unwrap();
 }
 
-#[test]
-fn activity_workflow() {
+#[tokio::test]
+async fn activity_workflow() {
     let mut rng = rand::thread_rng();
     let task_q_salt: u32 = rng.gen();
     let task_q = &format!("activity_workflow_{}", task_q_salt.to_string());
-    let core = get_integ_core();
+    let core = get_integ_core().await;
     let workflow_id: u32 = rng.gen();
-    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+    create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
     let activity_id: String = rng.gen::<u32>().to_string();
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_task(activity_completion_req(task_q, &activity_id, task))
+        .await
         .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
-    let task = dbg!(core.poll_activity_task(task_q).unwrap());
+    let task = dbg!(core.poll_activity_task(task_q).await.unwrap());
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -141,9 +137,10 @@ fn activity_workflow() {
         task.task_token,
         ActivityResult::ok(response_payload.clone()),
     )
+    .await
     .unwrap();
     // Poll workflow task and verify that activity has succeeded.
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -163,24 +160,26 @@ fn activity_workflow() {
         vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
     ))
+    .await
     .unwrap()
 }
 
-#[test]
-fn activity_non_retryable_failure() {
+#[tokio::test]
+async fn activity_non_retryable_failure() {
     let mut rng = rand::thread_rng();
     let task_q_salt: u32 = rng.gen();
     let task_q = &format!("activity_failed_workflow_{}", task_q_salt.to_string());
-    let core = get_integ_core();
+    let core = get_integ_core().await;
     let workflow_id: u32 = rng.gen();
-    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+    create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
     let activity_id: String = rng.gen::<u32>().to_string();
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_task(activity_completion_req(task_q, &activity_id, task))
+        .await
         .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
-    let task = dbg!(core.poll_activity_task(task_q).unwrap());
+    let task = dbg!(core.poll_activity_task(task_q).await.unwrap());
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -203,9 +202,10 @@ fn activity_non_retryable_failure() {
             )),
         },
     )
+    .await
     .unwrap();
     // Poll workflow task and verify that activity has failed.
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -224,24 +224,26 @@ fn activity_non_retryable_failure() {
         vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
     ))
+    .await
     .unwrap()
 }
 
-#[test]
-fn activity_retry() {
+#[tokio::test]
+async fn activity_retry() {
     let mut rng = rand::thread_rng();
     let task_q_salt: u32 = rng.gen();
     let task_q = &format!("activity_failed_workflow_{}", task_q_salt.to_string());
-    let core = get_integ_core();
+    let core = get_integ_core().await;
     let workflow_id: u32 = rng.gen();
-    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+    create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
     let activity_id: String = rng.gen::<u32>().to_string();
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_task(activity_completion_req(task_q, &activity_id, task))
+        .await
         .unwrap();
     // Poll activity 1st time
-    let task = dbg!(core.poll_activity_task(task_q).unwrap());
+    let task = core.poll_activity_task(task_q).await.unwrap();
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -264,9 +266,10 @@ fn activity_retry() {
             )),
         },
     )
+    .await
     .unwrap();
     // Poll 2nd time
-    let task = dbg!(core.poll_activity_task(task_q).unwrap());
+    let task = dbg!(core.poll_activity_task(task_q).await.unwrap());
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -288,9 +291,10 @@ fn activity_retry() {
             )),
         },
     )
+    .await
     .unwrap();
     // Poll workflow task and verify activity has succeeded.
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -309,6 +313,7 @@ fn activity_retry() {
         vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
     ))
+    .await
     .unwrap()
 }
 
@@ -334,16 +339,16 @@ fn activity_completion_req(
     )
 }
 
-#[test]
-fn parallel_timer_workflow() {
+#[tokio::test]
+async fn parallel_timer_workflow() {
     let task_q = "parallel_timer_workflow";
-    let core = get_integ_core();
+    let core = get_integ_core().await;
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+    create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
     let timer_id = "timer 1".to_string();
     let timer_2_id = "timer 2".to_string();
-    let task = dbg!(core.poll_workflow_task(task_q).unwrap());
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![
             StartTimer {
@@ -359,11 +364,12 @@ fn parallel_timer_workflow() {
         ],
         task.task_token,
     ))
+    .await
     .unwrap();
     // Wait long enough for both timers to complete. Server seems to be a bit weird about actually
     // sending both of these in one go, so we need to wait longer than you would expect.
     std::thread::sleep(Duration::from_millis(1500));
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -386,24 +392,20 @@ fn parallel_timer_workflow() {
         vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
     ))
+    .await
     .unwrap();
 }
 
-#[test]
-fn timer_cancel_workflow() {
+#[tokio::test]
+async fn timer_cancel_workflow() {
     let task_q = "timer_cancel_workflow";
-    let core = get_integ_core();
+    let core = get_integ_core().await;
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    dbg!(create_workflow(
-        &core,
-        task_q,
-        &workflow_id.to_string(),
-        None
-    ));
+    create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
     let timer_id = "wait_timer";
     let cancel_timer_id = "cancel_timer";
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![
             StartTimer {
@@ -419,8 +421,9 @@ fn timer_cancel_workflow() {
         ],
         task.task_token,
     ))
+    .await
     .unwrap();
-    let task = dbg!(core.poll_workflow_task(task_q).unwrap());
+    let task = dbg!(core.poll_workflow_task(task_q).await.unwrap());
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![
             CancelTimer {
@@ -431,18 +434,19 @@ fn timer_cancel_workflow() {
         ],
         task.task_token,
     ))
+    .await
     .unwrap();
 }
 
-#[test]
-fn timer_immediate_cancel_workflow() {
+#[tokio::test]
+async fn timer_immediate_cancel_workflow() {
     let task_q = "timer_immediate_cancel_workflow";
-    let core = get_integ_core();
+    let core = get_integ_core().await;
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+    create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
     let cancel_timer_id = "cancel_timer";
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![
             StartTimer {
@@ -458,23 +462,29 @@ fn timer_immediate_cancel_workflow() {
         ],
         task.task_token,
     ))
+    .await
     .unwrap();
 }
 
-#[test]
-fn parallel_workflows_same_queue() {
+#[tokio::test]
+async fn parallel_workflows_same_queue() {
     let task_q = "parallel_workflows_same_queue";
-    let core = get_integ_core();
+    let core = get_integ_core().await;
     let num_workflows = 25;
 
-    let run_ids: Vec<_> = (0..num_workflows)
-        .map(|i| create_workflow(&core, task_q, &format!("wf-id-{}", i), Some("wf-type-1")))
-        .collect();
+    let run_ids: Vec<_> =
+        future::join_all((0..num_workflows).map(|i| {
+            let core = &core;
+            async move {
+                create_workflow(core, task_q, &format!("wf-id-{}", i), Some("wf-type-1")).await
+            }
+        }))
+        .await;
 
     let mut send_chans = HashMap::new();
 
-    fn wf_thread(core: Arc<dyn Core>, task_chan: Receiver<WfActivation>) {
-        let task = task_chan.recv().unwrap();
+    async fn wf_task(core: Arc<dyn Core>, mut task_chan: UnboundedReceiver<WfActivation>) {
+        let task = task_chan.next().await.unwrap();
         assert_matches!(
             task.jobs.as_slice(),
             [WfActivationJob {
@@ -494,12 +504,14 @@ fn parallel_workflows_same_queue() {
             .into()],
             task.task_token,
         ))
+        .await
         .unwrap();
-        let task = task_chan.recv().unwrap();
+        let task = task_chan.next().await.unwrap();
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
             vec![CompleteWorkflowExecution { result: None }.into()],
             task.task_token,
         ))
+        .await
         .unwrap();
     }
 
@@ -507,28 +519,35 @@ fn parallel_workflows_same_queue() {
     let handles: Vec<_> = run_ids
         .iter()
         .map(|run_id| {
-            let (tx, rx) = channel();
+            let (tx, rx) = futures::channel::mpsc::unbounded();
             send_chans.insert(run_id.clone(), tx);
             let core_c = core.clone();
-            std::thread::spawn(move || wf_thread(core_c, rx))
+            tokio::spawn(wf_task(core_c, rx))
         })
         .collect();
 
     for _ in 0..num_workflows * 2 {
-        let task = core.poll_workflow_task(task_q).unwrap();
-        send_chans.get(&task.run_id).unwrap().send(task).unwrap();
+        let task = core.poll_workflow_task(task_q).await.unwrap();
+        send_chans
+            .get(&task.run_id)
+            .unwrap()
+            .send(task)
+            .await
+            .unwrap();
     }
 
-    handles.into_iter().for_each(|h| h.join().unwrap());
+    for handle in handles {
+        handle.await.unwrap()
+    }
 }
 
 // Ideally this would be a unit test, but returning a pending future with mockall bloats the mock
 // code a bunch and just isn't worth it. Do it when https://github.com/asomers/mockall/issues/189 is
 // fixed.
-#[test]
-fn shutdown_aborts_actively_blocked_poll() {
+#[tokio::test]
+async fn shutdown_aborts_actively_blocked_poll() {
     let task_q = "shutdown_aborts_actively_blocked_poll";
-    let core = Arc::new(get_integ_core());
+    let core = Arc::new(get_integ_core().await);
     // Begin the poll, and request shutdown from another thread after a small period of time.
     let tcore = core.clone();
     let handle = std::thread::spawn(move || {
@@ -536,28 +555,28 @@ fn shutdown_aborts_actively_blocked_poll() {
         tcore.shutdown();
     });
     assert_matches!(
-        core.poll_workflow_task(task_q).unwrap_err(),
+        core.poll_workflow_task(task_q).await.unwrap_err(),
         CoreError::ShuttingDown
     );
     handle.join().unwrap();
     // Ensure double-shutdown doesn't explode
     core.shutdown();
     assert_matches!(
-        core.poll_workflow_task(task_q).unwrap_err(),
+        core.poll_workflow_task(task_q).await.unwrap_err(),
         CoreError::ShuttingDown
     );
 }
 
-#[test]
-fn fail_wf_task() {
+#[tokio::test]
+async fn fail_wf_task() {
     let task_q = "fail_wf_task";
-    let core = get_integ_core();
+    let core = get_integ_core().await;
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+    create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
 
     // Start with a timer
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![StartTimer {
             timer_id: "best-timer".to_string(),
@@ -566,13 +585,14 @@ fn fail_wf_task() {
         .into()],
         task.task_token,
     ))
+    .await
     .unwrap();
 
     // Allow timer to fire
     std::thread::sleep(Duration::from_millis(500));
 
     // Then break for whatever reason
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::fail(
         task.task_token,
         UserCodeFailure {
@@ -580,11 +600,12 @@ fn fail_wf_task() {
             ..Default::default()
         },
     ))
+    .await
     .unwrap();
 
     // The server will want to retry the task. This time we finish the workflow -- but we need
     // to poll a couple of times as there will be more than one required workflow activation.
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![StartTimer {
             timer_id: "best-timer".to_string(),
@@ -593,24 +614,26 @@ fn fail_wf_task() {
         .into()],
         task.task_token,
     ))
+    .await
     .unwrap();
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
     ))
+    .await
     .unwrap();
 }
 
-#[test]
-fn fail_workflow_execution() {
+#[tokio::test]
+async fn fail_workflow_execution() {
     let task_q = "fail_workflow_execution";
-    let core = get_integ_core();
+    let core = get_integ_core().await;
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+    create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
     let timer_id: String = rng.gen::<u32>().to_string();
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![StartTimer {
             timer_id,
@@ -619,8 +642,9 @@ fn fail_workflow_execution() {
         .into()],
         task.task_token,
     ))
+    .await
     .unwrap();
-    let task = core.poll_workflow_task(task_q).unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![FailWorkflowExecution {
             failure: Some(UserCodeFailure {
@@ -631,25 +655,27 @@ fn fail_workflow_execution() {
         .into()],
         task.task_token,
     ))
+    .await
     .unwrap();
 }
 
-#[test]
-fn signal_workflow() {
+#[tokio::test]
+async fn signal_workflow() {
     let task_q = "signal_workflow";
-    let core = get_integ_core();
+    let core = get_integ_core().await;
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+    create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
 
     let signal_id_1 = "signal1";
     let signal_id_2 = "signal2";
-    let res = core.poll_workflow_task(task_q).unwrap();
+    let res = core.poll_workflow_task(task_q).await.unwrap();
     // Task is completed with no commands
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![],
         res.task_token.clone(),
     ))
+    .await
     .unwrap();
 
     // Send the signals to the server
@@ -670,9 +696,10 @@ fn signal_workflow() {
         )
         .await
         .unwrap();
-    });
+    })
+    .await;
 
-    let res = core.poll_workflow_task(task_q).unwrap();
+    let res = core.poll_workflow_task(task_q).await.unwrap();
     assert_matches!(
         res.jobs.as_slice(),
         [
@@ -688,19 +715,20 @@ fn signal_workflow() {
         vec![CompleteWorkflowExecution { result: None }.into()],
         res.task_token,
     ))
+    .await
     .unwrap();
 }
 
-#[test]
-fn signal_workflow_signal_not_handled_on_workflow_completion() {
+#[tokio::test]
+async fn signal_workflow_signal_not_handled_on_workflow_completion() {
     let task_q = "signal_workflow_signal_not_handled_on_workflow_completion";
-    let core = get_integ_core();
+    let core = get_integ_core().await;
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    create_workflow(&core, task_q, &workflow_id.to_string(), None);
+    create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
 
     let signal_id_1 = "signal1";
-    let res = core.poll_workflow_task(task_q).unwrap();
+    let res = core.poll_workflow_task(task_q).await.unwrap();
     // Task is completed with a timer
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![StartTimer {
@@ -710,10 +738,11 @@ fn signal_workflow_signal_not_handled_on_workflow_completion() {
         .into()],
         res.task_token,
     ))
+    .await
     .unwrap();
 
     // Poll before sending the signal - we should have the timer job
-    let res = core.poll_workflow_task(task_q).unwrap();
+    let res = core.poll_workflow_task(task_q).await.unwrap();
     assert_matches!(
         res.jobs.as_slice(),
         [WfActivationJob {
@@ -732,7 +761,8 @@ fn signal_workflow_signal_not_handled_on_workflow_completion() {
         )
         .await
         .unwrap();
-    });
+    })
+    .await;
 
     // Send completion - not having seen a poll response with a signal in it yet
     let unhandled = core
@@ -740,11 +770,12 @@ fn signal_workflow_signal_not_handled_on_workflow_completion() {
             vec![CompleteWorkflowExecution { result: None }.into()],
             task_token,
         ))
+        .await
         .unwrap_err();
     assert_matches!(unhandled, CoreError::UnhandledCommandWhenCompleting);
 
     // We should get a new task with the signal
-    let res = core.poll_workflow_task(task_q).unwrap();
+    let res = core.poll_workflow_task(task_q).await.unwrap();
     assert_matches!(
         res.jobs.as_slice(),
         [WfActivationJob {
@@ -755,19 +786,22 @@ fn signal_workflow_signal_not_handled_on_workflow_completion() {
         vec![CompleteWorkflowExecution { result: None }.into()],
         res.task_token,
     ))
+    .await
     .unwrap();
 }
 
-#[test]
-fn long_poll_timeout_is_retried() {
+#[tokio::test]
+async fn long_poll_timeout_is_retried() {
     let mut gateway_opts = get_integ_server_options();
     // Server whines unless long poll > 2 seconds
     gateway_opts.long_poll_timeout = Duration::from_secs(3);
-    let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts }).unwrap();
+    let core = temporal_sdk_core::init(CoreInitOptions { gateway_opts })
+        .await
+        .unwrap();
     // Should block for more than 3 seconds, since we internally retry long poll
     let (tx, rx) = unbounded();
-    std::thread::spawn(move || {
-        core.poll_workflow_task("some_task_q").unwrap();
+    tokio::spawn(async move {
+        core.poll_workflow_task("some_task_q").await.unwrap();
         tx.send(())
     });
     let err = rx.recv_timeout(Duration::from_secs(4)).unwrap_err();
