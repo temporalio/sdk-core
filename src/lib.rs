@@ -412,7 +412,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
                     Err(source) => Err(PollWfError::WorkflowUpdateError { source, run_id }),
                 }
             }
-            p => Err(PollWfError::BadPollResponseFromServer(p).into()),
+            p => Err(PollWfError::BadPollResponseFromServer(p)),
         }
     }
 

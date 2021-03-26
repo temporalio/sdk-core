@@ -74,6 +74,7 @@ impl From<ShutdownErr> for PollActivityError {
 
 /// Errors thrown by [Core::complete_workflow_task]
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
+#[allow(clippy::large_enum_variant)]
 pub enum CompleteWfError {
     /// Lang SDK sent us a malformed workflow completion ({reason}): {completion:?}
     MalformedWorkflowCompletion {
