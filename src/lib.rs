@@ -13,6 +13,7 @@ extern crate tracing;
 pub mod protos;
 
 pub(crate) mod core_tracing;
+mod errors;
 mod machines;
 mod pending_activations;
 mod pollers;
@@ -22,11 +23,16 @@ mod workflow;
 #[cfg(test)]
 mod test_help;
 
+pub use crate::errors::{
+    CompleteActivityError, CompleteWfError, CoreInitError, PollActivityError, PollWfError,
+};
 pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
+use crate::errors::WorkflowUpdateError;
 use crate::{
+    errors::ShutdownErr,
     machines::{EmptyWorkflowCommandErr, ProtoCommand, WFCommand},
     pending_activations::{PendingActivation, PendingActivations},
     protos::{
@@ -54,11 +60,7 @@ use std::{
     },
 };
 use tokio::sync::Notify;
-use tonic::codegen::http::uri::InvalidUri;
 use tracing::Span;
-
-/// A result alias having [CoreError] as the error type
-pub type Result<T, E = CoreError> = std::result::Result<T, E>;
 
 /// This trait is the primary way by which language specific SDKs interact with the core SDK. It is
 /// expected that only one instance of an implementation will exist for the lifetime of the
@@ -70,27 +72,31 @@ pub trait Core: Send + Sync {
     /// indefinitely until such work is available or [shutdown] is called.
     ///
     /// TODO: Examples
-    async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation>;
+    async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError>;
 
     /// Ask the core for some work, returning an [ActivityTask]. It is then the language SDK's
     /// responsibility to call the appropriate activity code with the provided inputs. Blocks
     /// indefinitely until such work is available or [shutdown] is called.
     ///
     /// TODO: Examples
-    async fn poll_activity_task(&self, task_queue: &str) -> Result<ActivityTask>;
+    async fn poll_activity_task(&self, task_queue: &str)
+        -> Result<ActivityTask, PollActivityError>;
 
     /// Tell the core that a workflow activation has completed
-    async fn complete_workflow_task(&self, completion: WfActivationCompletion) -> Result<()>;
+    async fn complete_workflow_task(
+        &self,
+        completion: WfActivationCompletion,
+    ) -> Result<(), CompleteWfError>;
 
     /// Tell the core that an activity has finished executing
     async fn complete_activity_task(
         &self,
         task_token: Vec<u8>,
         result: ActivityResult,
-    ) -> Result<()>;
+    ) -> Result<(), CompleteActivityError>;
 
     /// Indicate that a long running activity is still making progress
-    async fn send_activity_heartbeat(&self, task_token: ActivityHeartbeat) -> Result<()>;
+    async fn send_activity_heartbeat(&self, task_token: ActivityHeartbeat) -> Result<(), ()>;
 
     /// Returns core's instance of the [ServerGatewayApis] implementor it is using.
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis>;
@@ -156,7 +162,7 @@ macro_rules! abort_on_shutdown {
         let poll_result_future = $self.server_gateway.$gateway_fn($poll_arg);
         tokio::select! {
             _ = shutdownfut => {
-                Err(CoreError::ShuttingDown)
+                Err(ShutdownErr.into())
             }
             r = poll_result_future => r.map_err(Into::into)
         }
@@ -169,7 +175,7 @@ where
     WP: ServerGatewayApis + Send + Sync + 'static,
 {
     #[instrument(skip(self), fields(pending_activation))]
-    async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation> {
+    async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError> {
         // The poll needs to be in a loop because we can't guarantee tail call optimization in Rust
         // (simply) and we really, really need that for long-poll retries.
         loop {
@@ -190,7 +196,7 @@ where
             }
 
             if self.shutdown_requested.load(Ordering::SeqCst) {
-                return Err(CoreError::ShuttingDown);
+                return Err(PollWfError::ShuttingDown);
             }
 
             match abort_on_shutdown!(self, poll_workflow_task, task_queue.to_owned()) {
@@ -218,14 +224,21 @@ where
                     }
                 }
                 // Drain pending activations in case of shutdown.
-                Err(CoreError::ShuttingDown) => continue,
+                Err(PollWfError::ShuttingDown) => continue,
                 Err(e) => return Err(e),
             }
         }
     }
 
     #[instrument(skip(self))]
-    async fn poll_activity_task(&self, task_queue: &str) -> Result<ActivityTask, CoreError> {
+    async fn poll_activity_task(
+        &self,
+        task_queue: &str,
+    ) -> Result<ActivityTask, PollActivityError> {
+        if self.shutdown_requested.load(Ordering::SeqCst) {
+            return Err(PollActivityError::ShuttingDown);
+        }
+
         match abort_on_shutdown!(self, poll_activity_task, task_queue.to_owned()) {
             Ok(work) => {
                 let task_token = work.task_token.clone();
@@ -236,14 +249,17 @@ where
     }
 
     #[instrument(skip(self))]
-    async fn complete_workflow_task(&self, completion: WfActivationCompletion) -> Result<()> {
+    async fn complete_workflow_task(
+        &self,
+        completion: WfActivationCompletion,
+    ) -> Result<(), CompleteWfError> {
         let task_token = completion.task_token;
         let wfstatus = completion.status;
         let run_id = self
             .workflow_task_tokens
             .get(&task_token)
             .map(|x| x.value().clone())
-            .ok_or_else(|| CoreError::MalformedWorkflowCompletion {
+            .ok_or_else(|| CompleteWfError::MalformedWorkflowCompletion {
                 reason: format!(
                     "Task token {} had no workflow run associated with it",
                     fmt_task_token(&task_token)
@@ -258,7 +274,7 @@ where
                     .into_iter()
                     .map(|c| c.try_into())
                     .collect::<Result<Vec<_>, EmptyWorkflowCommandErr>>()
-                    .map_err(|_| CoreError::MalformedWorkflowCompletion {
+                    .map_err(|_| CompleteWfError::MalformedWorkflowCompletion {
                         reason: "At least one workflow command in the completion \
                                 contained an empty variant"
                             .to_owned(),
@@ -276,7 +292,7 @@ where
                             if ts.code() == tonic::Code::InvalidArgument
                                 && ts.message() == "UnhandledCommand"
                             {
-                                CoreError::UnhandledCommandWhenCompleting
+                                CompleteWfError::UnhandledCommandWhenCompleting
                             } else {
                                 ts.into()
                             }
@@ -296,7 +312,7 @@ where
                     .await?;
             }
             None => {
-                return Err(CoreError::MalformedWorkflowCompletion {
+                return Err(CompleteWfError::MalformedWorkflowCompletion {
                     reason: "Workflow completion had empty status field".to_owned(),
                     completion: None,
                 })
@@ -310,11 +326,11 @@ where
         &self,
         task_token: Vec<u8>,
         result: ActivityResult,
-    ) -> Result<()> {
+    ) -> Result<(), CompleteActivityError> {
         let status = if let Some(s) = result.status {
             s
         } else {
-            return Err(CoreError::MalformedActivityCompletion {
+            return Err(CompleteActivityError::MalformedActivityCompletion {
                 reason: "Activity result had empty status field".to_owned(),
                 completion: Some(result),
             });
@@ -339,7 +355,7 @@ where
         Ok(())
     }
 
-    async fn send_activity_heartbeat(&self, _task_token: ActivityHeartbeat) -> Result<()> {
+    async fn send_activity_heartbeat(&self, _task_token: ActivityHeartbeat) -> Result<(), ()> {
         unimplemented!()
     }
 
@@ -376,7 +392,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
     fn instantiate_or_update_workflow(
         &self,
         poll_wf_resp: PollWorkflowTaskQueueResponse,
-    ) -> Result<(Option<NextWfActivation>, String)> {
+    ) -> Result<(Option<NextWfActivation>, String), PollWfError> {
         match poll_wf_resp {
             PollWorkflowTaskQueueResponse {
                 task_token,
@@ -393,16 +409,20 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
                     .create_or_update(&run_id, history, workflow_execution)
                 {
                     Ok(activation) => Ok((activation, run_id)),
-                    Err(source) => Err(CoreError::WorkflowError { source, run_id }),
+                    Err(source) => Err(PollWfError::WorkflowUpdateError { source, run_id }),
                 }
             }
-            p => Err(CoreError::BadPollResponseFromServer(p)),
+            p => Err(PollWfError::BadPollResponseFromServer(p).into()),
         }
     }
 
     /// Feed commands from the lang sdk into appropriate workflow manager which will iterate
     /// the state machines and return commands ready to be sent to the server
-    fn push_lang_commands(&self, run_id: &str, cmds: Vec<WFCommand>) -> Result<Vec<ProtoCommand>> {
+    fn push_lang_commands(
+        &self,
+        run_id: &str,
+        cmds: Vec<WFCommand>,
+    ) -> Result<Vec<ProtoCommand>, WorkflowUpdateError> {
         self.access_wf_machine(run_id, move |mgr| mgr.push_commands(cmds))
     }
 
@@ -413,7 +433,11 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 
     /// Wraps access to `self.workflow_machines.access`, properly passing in the current tracing
     /// span to the wf machines thread.
-    fn access_wf_machine<F, Fout>(&self, run_id: &str, mutator: F) -> Result<Fout, CoreError>
+    fn access_wf_machine<F, Fout>(
+        &self,
+        run_id: &str,
+        mutator: F,
+    ) -> Result<Fout, WorkflowUpdateError>
     where
         F: FnOnce(&mut WorkflowManager) -> Result<Fout, WorkflowError> + Send + 'static,
         Fout: Send + Debug + 'static,
@@ -425,59 +449,11 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         };
         self.workflow_machines
             .access(run_id, mutator)
-            .map_err(|source| CoreError::WorkflowError {
+            .map_err(|source| WorkflowUpdateError {
                 source,
                 run_id: run_id.to_owned(),
             })
     }
-}
-
-/// The error type returned by interactions with [Core]
-#[derive(thiserror::Error, Debug, displaydoc::Display)]
-#[allow(clippy::large_enum_variant)]
-// NOTE: Docstrings take the place of #[error("xxxx")] here b/c of displaydoc
-pub enum CoreError {
-    /** [Core::shutdown] was called, and there are no more replay tasks to be handled. You must
-    call [Core::complete_task] for any remaining tasks, and then may exit.*/
-    ShuttingDown,
-    /// Poll workflow response from server was malformed: {0:?}
-    BadPollResponseFromServer(PollWorkflowTaskQueueResponse),
-    /// Lang SDK sent us a malformed workflow completion ({reason}): {completion:?}
-    MalformedWorkflowCompletion {
-        /// Reason the completion was malformed
-        reason: String,
-        /// The completion, which may not be included to avoid unnecessary copies.
-        completion: Option<WfActivationCompletion>,
-    },
-    /// Lang SDK sent us a malformed activity completion ({reason}): {completion:?}
-    MalformedActivityCompletion {
-        /// Reason the completion was malformed
-        reason: String,
-        /// The completion, which may not be included to avoid unnecessary copies.
-        completion: Option<ActivityResult>,
-    },
-    /// There was an error specific to a workflow instance with id ({run_id}): {source:?}
-    WorkflowError {
-        /// Underlying workflow error
-        source: WorkflowError,
-        /// The run id of the erring workflow
-        run_id: String,
-    },
-    /** There exists a pending command in this workflow's history which has not yet been handled.
-    When thrown from [Core::complete_task], it means you should poll for a new task, receive a
-    new task token, and complete that new task. */
-    UnhandledCommandWhenCompleting,
-    /// Unhandled error when calling the temporal server: {0:?}
-    TonicError(#[from] tonic::Status),
-}
-
-/// Errors thrown during initialization of [Core]
-#[derive(thiserror::Error, Debug, displaydoc::Display)]
-pub enum CoreInitError {
-    /// Invalid URI: {0:?}
-    InvalidUri(#[from] InvalidUri),
-    /// Server connection error: {0:?}
-    TonicTransportError(#[from] tonic::transport::Error),
 }
 
 #[cfg(test)]
@@ -759,7 +735,7 @@ mod test {
                 .poll_workflow_task(TASK_Q)
                 .await
                 .unwrap_err(),
-            CoreError::ShuttingDown
+            PollWfError::ShuttingDown
         );
     }
 

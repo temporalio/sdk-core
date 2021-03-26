@@ -18,7 +18,8 @@ use temporal_sdk_core::{
         },
         workflow_completion::WfActivationCompletion,
     },
-    Core, CoreError, CoreInitOptions, ServerGatewayApis, ServerGatewayOptions, Url,
+    CompleteWfError, Core, CoreInitOptions, PollWfError, ServerGatewayApis, ServerGatewayOptions,
+    Url,
 };
 
 // TODO: These tests can get broken permanently if they break one time and the server is not
@@ -556,14 +557,14 @@ async fn shutdown_aborts_actively_blocked_poll() {
     });
     assert_matches!(
         core.poll_workflow_task(task_q).await.unwrap_err(),
-        CoreError::ShuttingDown
+        PollWfError::ShuttingDown
     );
     handle.join().unwrap();
     // Ensure double-shutdown doesn't explode
     core.shutdown();
     assert_matches!(
         core.poll_workflow_task(task_q).await.unwrap_err(),
-        CoreError::ShuttingDown
+        PollWfError::ShuttingDown
     );
 }
 
@@ -772,7 +773,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
         ))
         .await
         .unwrap_err();
-    assert_matches!(unhandled, CoreError::UnhandledCommandWhenCompleting);
+    assert_matches!(unhandled, CompleteWfError::UnhandledCommandWhenCompleting);
 
     // We should get a new task with the signal
     let res = core.poll_workflow_task(task_q).await.unwrap();
