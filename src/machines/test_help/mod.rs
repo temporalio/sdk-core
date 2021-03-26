@@ -19,7 +19,6 @@ use crate::{
 use rand::{thread_rng, Rng};
 use std::sync::atomic::AtomicBool;
 use std::{collections::VecDeque, sync::Arc};
-use tokio::runtime::Runtime;
 
 pub(crate) type FakeCore = CoreSDK<MockServerGatewayApis>;
 
@@ -72,9 +71,7 @@ pub(crate) fn fake_core_from_mock<MT>(mock_gateway: MT) -> CoreSDK<MT>
 where
     MT: ServerGatewayApis,
 {
-    let runtime = Runtime::new().unwrap();
     CoreSDK {
-        runtime,
         server_gateway: Arc::new(mock_gateway),
         workflow_machines: WorkflowConcurrencyManager::new(),
         workflow_task_tokens: Default::default(),

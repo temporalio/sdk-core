@@ -54,7 +54,7 @@ pub(crate) struct WorkflowManager {
 }
 
 impl WorkflowManager {
-    /// Create a new workflow manager given workflow history and exection info as would be found
+    /// Create a new workflow manager given workflow history and execution info as would be found
     /// in [PollWorkflowTaskQueueResponse]
     pub fn new(
         history: History,
