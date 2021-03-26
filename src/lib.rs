@@ -82,7 +82,7 @@ pub trait Core: Send + Sync {
     fn complete_workflow_task(&self, completion: WfActivationCompletion) -> Result<()>;
 
     /// Tell the core that an activity has finished executing
-    fn complete_activity_task(&self, result: ActivityResult) -> Result<()>;
+    fn complete_activity_task(&self, task_token: Vec<u8>, result: ActivityResult) -> Result<()>;
 
     /// Indicate that a long running activity is still making progress
     fn send_activity_heartbeat(&self, task_token: ActivityHeartbeat) -> Result<()>;
@@ -191,8 +191,6 @@ where
                     }
                     next_activation.activation.task_token = task_token;
                     return Ok(next_activation.activation);
-                } else {
-                    dbg!("No activation bruh!");
                 }
             }
 
@@ -225,8 +223,6 @@ where
                         // TODO: This sucks
                         na.activation.task_token = task_token;
                         return Ok(na.activation);
-                    } else {
-                        dbg!("No activation, mann");
                     }
                 }
                 // Drain pending activations in case of shutdown.
@@ -318,7 +314,7 @@ where
     }
 
     #[instrument(skip(self))]
-    fn complete_activity_task(&self, result: ActivityResult) -> Result<()> {
+    fn complete_activity_task(&self, task_token: Vec<u8>, result: ActivityResult) -> Result<()> {
         let status = if let Some(s) = result.status {
             s
         } else {
@@ -327,7 +323,6 @@ where
                 completion: Some(result),
             });
         };
-        let task_token = result.task_token;
         match status {
             activity_result::Status::Completed(ar::Success { result }) => {
                 self.runtime.block_on(

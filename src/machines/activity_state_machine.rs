@@ -191,8 +191,6 @@ impl WFMachinesAdapter for ActivityMachine {
                 vec![ResolveActivity {
                     activity_id: self.shared_state.attrs.activity_id.clone(),
                     result: Some(ActivityResult {
-                        // TODO: This sucks here
-                        task_token: vec![],
                         status: Some(activity_result::Status::Completed(ar::Success { result })),
                     }),
                 }

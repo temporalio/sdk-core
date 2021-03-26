@@ -148,10 +148,10 @@ fn activity_workflow() {
         data: b"hello ".to_vec(),
         metadata: Default::default(),
     };
-    core.complete_activity_task(ActivityResult::ok(
-        response_payload.clone(),
+    core.complete_activity_task(
         task.task_token,
-    ))
+        ActivityResult::ok(response_payload.clone()),
+    )
     .unwrap();
 
     let task = core.poll_workflow_task(task_q).unwrap();

@@ -89,9 +89,8 @@ pub mod coresdk {
     }
 
     impl ActivityResult {
-        pub fn ok(result: Payload, task_token: Vec<u8>) -> Self {
+        pub fn ok(result: Payload) -> Self {
             Self {
-                task_token,
                 status: Some(activity_result::activity_result::Status::Completed(
                     activity_result::Success {
                         result: Some(result),
