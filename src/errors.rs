@@ -14,7 +14,7 @@ pub(crate) struct WorkflowUpdateError {
     pub run_id: String,
 }
 
-/// Errors thrown during initialization of [Core]
+/// Errors thrown during initialization of [crate::Core]
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
 pub enum CoreInitError {
     /// Invalid URI: {0:?}
@@ -23,7 +23,7 @@ pub enum CoreInitError {
     TonicTransportError(#[from] tonic::transport::Error),
 }
 
-/// Errors thrown by [Core::poll_workflow_task]
+/// Errors thrown by [crate::Core::poll_workflow_task]
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
 pub enum PollWfError {
     /// There was an error specific to a workflow instance with id ({run_id}): {source:?}
@@ -35,8 +35,9 @@ pub enum PollWfError {
     },
     /// Poll workflow response from server was malformed: {0:?}
     BadPollResponseFromServer(PollWorkflowTaskQueueResponse),
-    /** [Core::shutdown] was called, and there are no more replay tasks to be handled. You must
-    call [Core::complete_workflow_task] for any remaining tasks, and then may exit.*/
+    /** [crate::Core::shutdown] was called, and there are no more replay tasks to be handled. You
+     * must call [crate::Core::complete_workflow_task] for any remaining tasks, and then may
+     * exit.*/
     ShuttingDown,
     /// Unhandled error when calling the temporal server: {0:?}
     TonicError(#[from] tonic::Status),
@@ -57,10 +58,10 @@ impl From<ShutdownErr> for PollWfError {
     }
 }
 
-/// Errors thrown by [Core::poll_activity_task]
+/// Errors thrown by [crate::Core::poll_activity_task]
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
 pub enum PollActivityError {
-    /// [Core::shutdown] was called, we will no longer fetch new activity tasks
+    /// [crate::Core::shutdown] was called, we will no longer fetch new activity tasks
     ShuttingDown,
     /// Unhandled error when calling the temporal server: {0:?}
     TonicError(#[from] tonic::Status),
@@ -72,7 +73,7 @@ impl From<ShutdownErr> for PollActivityError {
     }
 }
 
-/// Errors thrown by [Core::complete_workflow_task]
+/// Errors thrown by [crate::Core::complete_workflow_task]
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
 #[allow(clippy::large_enum_variant)]
 pub enum CompleteWfError {
@@ -91,8 +92,8 @@ pub enum CompleteWfError {
         run_id: String,
     },
     /** There exists a pending command in this workflow's history which has not yet been handled.
-    When thrown from [Core::complete_task], it means you should poll for a new task, receive a
-    new task token, and complete that new task. */
+     * When thrown from [crate::Core::complete_workflow_task], it means you should poll for a new
+     * task, receive a new task token, and complete that new task. */
     UnhandledCommandWhenCompleting,
     /// Unhandled error when calling the temporal server: {0:?}
     TonicError(#[from] tonic::Status),
@@ -107,7 +108,7 @@ impl From<WorkflowUpdateError> for CompleteWfError {
     }
 }
 
-/// Errors thrown by [Core::complete_activity_task]
+/// Errors thrown by [crate::Core::complete_activity_task]
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
 pub enum CompleteActivityError {
     /// Lang SDK sent us a malformed activity completion ({reason}): {completion:?}

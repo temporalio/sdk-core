@@ -7,7 +7,7 @@ import "workflow_commands.proto";
 
 /// Result of a single workflow activation, reported from lang to core
 message WFActivationCompletion {
-    // The token from the [WfActivation] you are completing
+    // The token from the workflow activation you are completing
     bytes task_token = 1;
     oneof status {
         Success successful = 2;

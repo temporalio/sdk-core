@@ -69,14 +69,14 @@ use tracing::Span;
 pub trait Core: Send + Sync {
     /// Ask the core for some work, returning a [WfActivation]. It is then the language SDK's
     /// responsibility to call the appropriate workflow code with the provided inputs. Blocks
-    /// indefinitely until such work is available or [shutdown] is called.
+    /// indefinitely until such work is available or [Core::shutdown] is called.
     ///
     /// TODO: Examples
     async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError>;
 
     /// Ask the core for some work, returning an [ActivityTask]. It is then the language SDK's
     /// responsibility to call the appropriate activity code with the provided inputs. Blocks
-    /// indefinitely until such work is available or [shutdown] is called.
+    /// indefinitely until such work is available or [Core::shutdown] is called.
     ///
     /// TODO: Examples
     async fn poll_activity_task(&self, task_queue: &str)
@@ -101,11 +101,12 @@ pub trait Core: Send + Sync {
     /// Returns core's instance of the [ServerGatewayApis] implementor it is using.
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis>;
 
-    /// Eventually ceases all polling of the server. [Core::poll_task] should be called until it
-    /// returns [CoreError::ShuttingDown] to ensure that any workflows which are still undergoing
-    /// replay have an opportunity to finish. This means that the lang sdk will need to call
-    /// [Core::complete_task] for those workflows until they are done. At that point, the lang
-    /// SDK can end the process, or drop the [Core] instance, which will close the connection.
+    /// Eventually ceases all polling of the server. [Core::poll_workflow_task] should be called
+    /// until it returns [PollWfError::ShuttingDown] to ensure that any workflows which are still
+    /// undergoing replay have an opportunity to finish. This means that the lang sdk will need to
+    /// call [Core::complete_workflow_task] for those workflows until they are done. At that point,
+    /// the lang SDK can end the process, or drop the [Core] instance, which will close the
+    /// connection.
     fn shutdown(&self);
 }
 
