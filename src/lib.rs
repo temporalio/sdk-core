@@ -1,5 +1,7 @@
-#![warn(missing_docs)] // error if there are missing docs
-#![allow(clippy::upper_case_acronyms)]
+#![warn(missing_docs)]
+// error if there are missing docs
+// TODO: Turn on when rust 1.51 docker image available
+// #![allow(clippy::upper_case_acronyms)]
 
 //! This crate provides a basis for creating new Temporal SDKs without completely starting from
 //! scratch
