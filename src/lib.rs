@@ -442,8 +442,8 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 #[allow(clippy::large_enum_variant)]
 // NOTE: Docstrings take the place of #[error("xxxx")] here b/c of displaydoc
 pub enum CoreError {
-    /// [Core::shutdown] was called, and there are no more replay tasks to be handled. You must
-    /// call [Core::complete_task] for any remaining tasks, and then may exit.
+    /** [Core::shutdown] was called, and there are no more replay tasks to be handled. You must
+    call [Core::complete_task] for any remaining tasks, and then may exit.*/
     ShuttingDown,
     /// Poll workflow response from server was malformed: {0:?}
     BadPollResponseFromServer(PollWorkflowTaskQueueResponse),
@@ -468,9 +468,9 @@ pub enum CoreError {
         /// The run id of the erring workflow
         run_id: String,
     },
-    /// There exists a pending command in this workflow's history which has not yet been handled.
-    /// When thrown from [Core::complete_task], it means you should poll for a new task, receive a
-    /// new task token, and complete that new task.
+    /** There exists a pending command in this workflow's history which has not yet been handled.
+    When thrown from [Core::complete_task], it means you should poll for a new task, receive a
+    new task token, and complete that new task. */
     UnhandledCommandWhenCompleting,
     /// Unhandled error when calling the temporal server: {0:?}
     TonicError(#[from] tonic::Status),

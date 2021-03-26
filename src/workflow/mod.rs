@@ -31,11 +31,11 @@ pub enum WorkflowError {
     UnderlyingMachinesError(#[from] WFMachinesError),
     /// There was an error in the history associated with the workflow: {0:?}
     HistoryError(#[from] HistoryInfoError),
-    /// Error buffering commands coming in from the lang side. This shouldn't happen unless we've
-    /// run out of memory or there is a logic bug. Considered fatal.
+    /** Error buffering commands coming in from the lang side. This shouldn't happen unless we've
+    run out of memory or there is a logic bug. Considered fatal. */
     CommandBufferingError(#[from] SendError<Vec<WFCommand>>),
-    /// We tried to instantiate a workflow instance, but the provided history resulted in no
-    /// new activations. There is nothing to do.
+    /** We tried to instantiate a workflow instance, but the provided history resulted in no
+    new activations. There is nothing to do. */
     MachineWasCreatedWithNoActivations { run_id: String },
 }
 
