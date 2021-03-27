@@ -188,7 +188,7 @@ where
                 .pop()
                 .and_then(|p| self.prepare_pending_activation(p).transpose())
             {
-                return Ok(pa?);
+                return pa;
             }
 
             if self.shutdown_requested.load(Ordering::SeqCst) {
