@@ -31,6 +31,7 @@ pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatew
 pub use url::Url;
 
 use crate::errors::WorkflowUpdateError;
+use crate::protos::coresdk::workflow_completion;
 use crate::{
     errors::ShutdownErr,
     machines::{EmptyWorkflowCommandErr, ProtoCommand, WFCommand},
@@ -175,25 +176,19 @@ impl<WP> Core for CoreSDK<WP>
 where
     WP: ServerGatewayApis + Send + Sync + 'static,
 {
-    #[instrument(skip(self), fields(pending_activation))]
+    #[instrument(skip(self))]
     async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError> {
         // The poll needs to be in a loop because we can't guarantee tail call optimization in Rust
         // (simply) and we really, really need that for long-poll retries.
         loop {
             // We must first check if there are pending workflow tasks for workflows that are
             // currently replaying, and issue those tasks before bothering the server.
-            if let Some(pa) = self.pending_activations.pop() {
-                Span::current().record("pending_activation", &format!("{}", &pa).as_str());
-
-                if let Some(next_activation) =
-                    self.access_wf_machine(&pa.run_id, move |mgr| mgr.get_next_activation())?
-                {
-                    let task_token = pa.task_token.clone();
-                    if next_activation.more_activations_needed {
-                        self.pending_activations.push(pa);
-                    }
-                    return Ok(next_activation.finalize(task_token));
-                }
+            if let Some(pa) = self
+                .pending_activations
+                .pop()
+                .and_then(|p| self.prepare_pending_activation(p).transpose())
+            {
+                return Ok(pa?);
             }
 
             if self.shutdown_requested.load(Ordering::SeqCst) {
@@ -202,26 +197,8 @@ where
 
             match abort_on_shutdown!(self, poll_workflow_task, task_queue.to_owned()) {
                 Ok(work) => {
-                    if work == PollWorkflowTaskQueueResponse::default() {
-                        // We get the default proto in the event that the long poll times out.
-                        continue;
-                    }
-                    let task_token = work.task_token.clone();
-                    debug!(
-                        task_token = %fmt_task_token(&task_token),
-                        "Received workflow task from server"
-                    );
-
-                    let (next_activation, run_id) = self.instantiate_or_update_workflow(work)?;
-
-                    if let Some(na) = next_activation {
-                        if na.more_activations_needed {
-                            self.pending_activations.push(PendingActivation {
-                                run_id,
-                                task_token: task_token.clone(),
-                            });
-                        }
-                        return Ok(na.finalize(task_token));
+                    if let Some(activation) = self.prepare_new_activation(work)? {
+                        return Ok(activation);
                     }
                 }
                 // Drain pending activations in case of shutdown.
@@ -269,47 +246,11 @@ where
             })?;
         match wfstatus {
             Some(wf_activation_completion::Status::Successful(success)) => {
-                // Convert to wf commands
-                let cmds = success
-                    .commands
-                    .into_iter()
-                    .map(|c| c.try_into())
-                    .collect::<Result<Vec<_>, EmptyWorkflowCommandErr>>()
-                    .map_err(|_| CompleteWfError::MalformedWorkflowCompletion {
-                        reason: "At least one workflow command in the completion \
-                                contained an empty variant"
-                            .to_owned(),
-                        completion: None,
-                    })?;
-                let commands = self.push_lang_commands(&run_id, cmds)?;
-                // We only actually want to send commands back to the server if there are
-                // no more pending activations -- in other words the lang SDK has caught
-                // up on replay.
-                if !self.pending_activations.has_pending(&run_id) {
-                    self.server_gateway
-                        .complete_workflow_task(task_token, commands)
-                        .await
-                        .map_err(|ts| {
-                            if ts.code() == tonic::Code::InvalidArgument
-                                && ts.message() == "UnhandledCommand"
-                            {
-                                CompleteWfError::UnhandledCommandWhenCompleting
-                            } else {
-                                ts.into()
-                            }
-                        })?;
-                }
+                self.wf_completion_success(task_token, &run_id, success)
+                    .await?;
             }
             Some(wf_activation_completion::Status::Failed(failure)) => {
-                // Blow up any cached data associated with the workflow
-                self.evict_run(&run_id);
-
-                self.server_gateway
-                    .fail_workflow_task(
-                        task_token,
-                        WorkflowTaskFailedCause::Unspecified,
-                        failure.failure.map(Into::into),
-                    )
+                self.wf_completion_failed(task_token, &run_id, failure)
                     .await?;
             }
             None => {
@@ -381,6 +322,113 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
         }
+    }
+
+    /// Given a pending activation, prepare it to be sent to lang
+    #[instrument(skip(self))]
+    fn prepare_pending_activation(
+        &self,
+        pa: PendingActivation,
+    ) -> Result<Option<WfActivation>, PollWfError> {
+        if let Some(next_activation) =
+            self.access_wf_machine(&pa.run_id, move |mgr| mgr.get_next_activation())?
+        {
+            let task_token = pa.task_token.clone();
+            if next_activation.more_activations_needed {
+                self.pending_activations.push(pa);
+            }
+            return Ok(Some(next_activation.finalize(task_token)));
+        }
+        Ok(None)
+    }
+
+    /// Given a wf task from the server, prepare an activation (if there is one) to be sent to lang
+    fn prepare_new_activation(
+        &self,
+        work: PollWorkflowTaskQueueResponse,
+    ) -> Result<Option<WfActivation>, PollWfError> {
+        if work == PollWorkflowTaskQueueResponse::default() {
+            // We get the default proto in the event that the long poll times out.
+            return Ok(None);
+        }
+        let task_token = work.task_token.clone();
+        debug!(
+            task_token = %fmt_task_token(&task_token),
+            "Received workflow task from server"
+        );
+
+        let (next_activation, run_id) = self.instantiate_or_update_workflow(work)?;
+
+        if let Some(na) = next_activation {
+            if na.more_activations_needed {
+                self.pending_activations.push(PendingActivation {
+                    run_id,
+                    task_token: task_token.clone(),
+                });
+            }
+            return Ok(Some(na.finalize(task_token)));
+        }
+        Ok(None)
+    }
+
+    /// Handle a successful workflow completion
+    async fn wf_completion_success(
+        &self,
+        task_token: Vec<u8>,
+        run_id: &str,
+        success: workflow_completion::Success,
+    ) -> Result<(), CompleteWfError> {
+        // Convert to wf commands
+        let cmds = success
+            .commands
+            .into_iter()
+            .map(|c| c.try_into())
+            .collect::<Result<Vec<_>, EmptyWorkflowCommandErr>>()
+            .map_err(|_| CompleteWfError::MalformedWorkflowCompletion {
+                reason: "At least one workflow command in the completion \
+                                contained an empty variant"
+                    .to_owned(),
+                completion: None,
+            })?;
+        let commands = self.push_lang_commands(&run_id, cmds)?;
+        // We only actually want to send commands back to the server if there are
+        // no more pending activations -- in other words the lang SDK has caught
+        // up on replay.
+        if !self.pending_activations.has_pending(&run_id) {
+            self.server_gateway
+                .complete_workflow_task(task_token, commands)
+                .await
+                .map_err(|ts| {
+                    if ts.code() == tonic::Code::InvalidArgument
+                        && ts.message() == "UnhandledCommand"
+                    {
+                        CompleteWfError::UnhandledCommandWhenCompleting
+                    } else {
+                        ts.into()
+                    }
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Handle a failed workflow completion
+    async fn wf_completion_failed(
+        &self,
+        task_token: Vec<u8>,
+        run_id: &str,
+        failure: workflow_completion::Failure,
+    ) -> Result<(), CompleteWfError> {
+        // Blow up any cached data associated with the workflow
+        self.evict_run(&run_id);
+
+        self.server_gateway
+            .fail_workflow_task(
+                task_token,
+                WorkflowTaskFailedCause::Unspecified,
+                failure.failure.map(Into::into),
+            )
+            .await?;
+        Ok(())
     }
 
     /// Will create a new workflow manager if needed for the workflow task, if not, it will
