@@ -1,40 +1,62 @@
 use crate::protosext::fmt_task_token;
-use crossbeam::queue::SegQueue;
-use dashmap::DashMap;
-use std::fmt::{Display, Formatter};
+use parking_lot::RwLock;
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt::{Display, Formatter},
+};
 
-/// Tracks pending activations using an internal queue, while also allowing fast lookup of any
-/// pending activations by run ID
+/// Tracks pending activations using an internal queue, while also allowing lookup and removal of
+/// any pending activations by run ID.
 #[derive(Default)]
 pub struct PendingActivations {
-    queue: SegQueue<PendingActivation>,
+    inner: RwLock<PaInner>,
+}
+
+#[derive(Default)]
+struct PaInner {
+    queue: VecDeque<PendingActivation>,
     // Keys are run ids
-    count_by_id: DashMap<String, usize>,
+    count_by_id: HashMap<String, usize>,
 }
 
 impl PendingActivations {
     pub fn push(&self, v: PendingActivation) {
-        *self
+        let mut inner = self.inner.write();
+        *inner
             .count_by_id
             .entry(v.run_id.clone())
-            .or_insert_with(|| 0)
-            .value_mut() += 1;
-        self.queue.push(v);
+            .or_insert_with(|| 0) += 1;
+        inner.queue.push_back(v);
     }
 
     pub fn pop(&self) -> Option<PendingActivation> {
-        let rme = self.queue.pop();
+        let mut inner = self.inner.write();
+        let rme = inner.queue.pop_front();
         if let Some(pa) = &rme {
-            if let Some(mut c) = self.count_by_id.get_mut(&pa.run_id) {
-                *c.value_mut() -= 1
+            let do_remove = if let Some(c) = inner.count_by_id.get_mut(&pa.run_id) {
+                *c -= 1;
+                *c == 0
+            } else {
+                false
+            };
+            if do_remove {
+                inner.count_by_id.remove(&pa.run_id);
             }
-            self.count_by_id.remove_if(&pa.run_id, |_, v| v <= &0);
         }
         rme
     }
 
     pub fn has_pending(&self, run_id: &str) -> bool {
-        self.count_by_id.contains_key(run_id)
+        self.inner.read().count_by_id.contains_key(run_id)
+    }
+
+    pub fn remove_all_with_run_id(&self, run_id: &str) {
+        let mut inner = self.inner.write();
+
+        // The perf here can obviously be improved if it ever becomes an issue, but is left for
+        // later since it would require some careful fiddling
+        inner.queue.retain(|pa| pa.run_id != run_id);
+        inner.count_by_id.remove(run_id);
     }
 }
 
@@ -52,5 +74,72 @@ impl Display for PendingActivation {
             &self.run_id,
             fmt_task_token(&self.task_token)
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counts_run_ids() {
+        let pas = PendingActivations::default();
+        let rid1 = "1".to_string();
+        let rid2 = "2".to_string();
+        pas.push(PendingActivation {
+            run_id: rid1.clone(),
+            task_token: vec![],
+        });
+        pas.push(PendingActivation {
+            run_id: rid2.clone(),
+            task_token: vec![],
+        });
+        pas.push(PendingActivation {
+            run_id: rid2.clone(),
+            task_token: vec![],
+        });
+        pas.push(PendingActivation {
+            run_id: rid2.clone(),
+            task_token: vec![],
+        });
+        assert!(pas.has_pending(&rid1));
+        assert!(pas.has_pending(&rid2));
+        let last = pas.pop().unwrap();
+        assert_eq!(&last.run_id, &rid1);
+        assert!(!pas.has_pending(&rid1));
+        assert!(pas.has_pending(&rid2));
+        for _ in 0..3 {
+            let last = pas.pop().unwrap();
+            assert_eq!(&last.run_id, &rid2);
+        }
+        assert!(!pas.has_pending(&rid2));
+        assert!(pas.pop().is_none());
+    }
+
+    #[test]
+    fn can_remove_all_with_id() {
+        let pas = PendingActivations::default();
+        let remove_me = "2".to_string();
+        pas.push(PendingActivation {
+            run_id: "1".to_owned(),
+            task_token: vec![],
+        });
+        pas.push(PendingActivation {
+            run_id: remove_me.clone(),
+            task_token: vec![],
+        });
+        pas.push(PendingActivation {
+            run_id: remove_me.clone(),
+            task_token: vec![],
+        });
+        pas.push(PendingActivation {
+            run_id: "3".to_owned(),
+            task_token: vec![],
+        });
+        pas.remove_all_with_run_id(&remove_me);
+        assert!(!pas.has_pending(&remove_me));
+        assert_eq!(&pas.pop().unwrap().run_id, "1");
+        assert_eq!(&pas.pop().unwrap().run_id, "3");
+        assert!(pas.pop().is_none());
     }
 }

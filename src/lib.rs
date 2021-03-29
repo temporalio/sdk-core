@@ -347,6 +347,8 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         Ok(None)
     }
 
+    /// Prepare an activation we've just pulled out of a workflow machines instance to be shipped
+    /// to the lang sdk
     fn finalize_next_activation(
         &self,
         next_a: NextWfActivation,
