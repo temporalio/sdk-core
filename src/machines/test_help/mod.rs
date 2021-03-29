@@ -28,10 +28,10 @@ pub(crate) type FakeCore = CoreSDK<MockServerGatewayApis>;
 /// up to the workflow task with that number, as in [TestHistoryBuilder::get_history_info].
 pub(crate) fn build_fake_core(
     wf_id: &str,
-    run_id: &str,
     t: &mut TestHistoryBuilder,
     response_batches: &[usize],
 ) -> FakeCore {
+    let run_id = t.get_orig_run_id();
     let wf = Some(WorkflowExecution {
         workflow_id: wf_id.to_string(),
         run_id: run_id.to_string(),

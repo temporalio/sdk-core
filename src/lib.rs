@@ -30,10 +30,8 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::errors::WorkflowUpdateError;
-use crate::protos::coresdk::workflow_completion;
 use crate::{
-    errors::ShutdownErr,
+    errors::{ShutdownErr, WorkflowUpdateError},
     machines::{EmptyWorkflowCommandErr, ProtoCommand, WFCommand},
     pending_activations::{PendingActivation, PendingActivations},
     protos::{
@@ -41,6 +39,7 @@ use crate::{
             activity_result::{self as ar, activity_result, ActivityResult},
             activity_task::ActivityTask,
             workflow_activation::WfActivation,
+            workflow_completion,
             workflow_completion::{wf_activation_completion, WfActivationCompletion},
             ActivityHeartbeat,
         },
@@ -324,6 +323,14 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         }
     }
 
+    /// Evict a workflow from the cache by it's run id
+    ///
+    /// TODO: Very likely needs to be in Core public api
+    pub(crate) fn evict_run(&self, run_id: &str) {
+        self.workflow_machines.evict(run_id);
+        // Blow up any pending activations for the run
+    }
+
     /// Given a pending activation, prepare it to be sent to lang
     #[instrument(skip(self))]
     fn prepare_pending_activation(
@@ -333,13 +340,25 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         if let Some(next_activation) =
             self.access_wf_machine(&pa.run_id, move |mgr| mgr.get_next_activation())?
         {
-            let task_token = pa.task_token.clone();
-            if next_activation.more_activations_needed {
-                self.pending_activations.push(pa);
-            }
-            return Ok(Some(next_activation.finalize(task_token)));
+            return Ok(Some(
+                self.finalize_next_activation(next_activation, pa.task_token),
+            ));
         }
         Ok(None)
+    }
+
+    fn finalize_next_activation(
+        &self,
+        next_a: NextWfActivation,
+        task_token: Vec<u8>,
+    ) -> WfActivation {
+        if next_a.more_activations_needed {
+            self.pending_activations.push(PendingActivation {
+                run_id: next_a.get_run_id().to_owned(),
+                task_token: task_token.clone(),
+            })
+        }
+        next_a.finalize(task_token)
     }
 
     /// Given a wf task from the server, prepare an activation (if there is one) to be sent to lang
@@ -357,16 +376,10 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             "Received workflow task from server"
         );
 
-        let (next_activation, run_id) = self.instantiate_or_update_workflow(work)?;
+        let next_activation = self.instantiate_or_update_workflow(work)?;
 
         if let Some(na) = next_activation {
-            if na.more_activations_needed {
-                self.pending_activations.push(PendingActivation {
-                    run_id,
-                    task_token: task_token.clone(),
-                });
-            }
-            return Ok(Some(na.finalize(task_token)));
+            return Ok(Some(self.finalize_next_activation(na, task_token)));
         }
         Ok(None)
     }
@@ -441,7 +454,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
     fn instantiate_or_update_workflow(
         &self,
         poll_wf_resp: PollWorkflowTaskQueueResponse,
-    ) -> Result<(Option<NextWfActivation>, String), PollWfError> {
+    ) -> Result<Option<NextWfActivation>, PollWfError> {
         match poll_wf_resp {
             PollWorkflowTaskQueueResponse {
                 task_token,
@@ -457,7 +470,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
                     .workflow_machines
                     .create_or_update(&run_id, history, workflow_execution)
                 {
-                    Ok(activation) => Ok((activation, run_id)),
+                    Ok(activation) => Ok(activation),
                     Err(source) => Err(PollWfError::WorkflowUpdateError { source, run_id }),
                 }
             }
@@ -473,11 +486,6 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         cmds: Vec<WFCommand>,
     ) -> Result<Vec<ProtoCommand>, WorkflowUpdateError> {
         self.access_wf_machine(run_id, move |mgr| mgr.push_commands(cmds))
-    }
-
-    /// Remove a workflow run from the cache entirely
-    fn evict_run(&self, run_id: &str) {
-        self.workflow_machines.evict(run_id);
     }
 
     /// Wraps access to `self.workflow_machines.access`, properly passing in the current tracing
@@ -530,14 +538,13 @@ mod test {
     use rstest::{fixture, rstest};
 
     const TASK_Q: &str = "test-task-queue";
-    const RUN_ID: &str = "fake_run_id";
 
     #[fixture(hist_batches = &[])]
     fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
         let wfid = "fake_wf_id";
 
         let mut t = canned_histories::single_timer("fake_timer");
-        build_fake_core(wfid, RUN_ID, &mut t, hist_batches)
+        build_fake_core(wfid, &mut t, hist_batches)
     }
 
     #[fixture(hist_batches = &[])]
@@ -545,7 +552,7 @@ mod test {
         let wfid = "fake_wf_id";
 
         let mut t = canned_histories::single_activity("fake_activity");
-        build_fake_core(wfid, RUN_ID, &mut t, hist_batches)
+        build_fake_core(wfid, &mut t, hist_batches)
     }
 
     #[fixture(hist_batches = &[])]
@@ -553,7 +560,7 @@ mod test {
         let wfid = "fake_wf_id";
 
         let mut t = canned_histories::single_failed_activity("fake_activity");
-        build_fake_core(wfid, RUN_ID, &mut t, hist_batches)
+        build_fake_core(wfid, &mut t, hist_batches)
     }
 
     #[rstest(core,
@@ -562,6 +569,7 @@ mod test {
     )]
     #[tokio::test]
     async fn single_timer_test_across_wf_bridge(core: FakeCore) {
+        tracing_init();
         let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
@@ -569,7 +577,7 @@ mod test {
                 variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
             }]
         );
-        assert!(core.workflow_machines.exists(RUN_ID));
+        assert!(core.workflow_machines.exists(&res.run_id));
 
         let task_tok = res.task_token;
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
@@ -582,6 +590,9 @@ mod test {
         ))
         .await
         .unwrap();
+
+        // warn!(run_id = %&res.run_id, "Evicting");
+        // core.workflow_machines.evict(&res.run_id);
 
         let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
@@ -614,7 +625,6 @@ mod test {
                 variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
             }]
         );
-        assert!(core.workflow_machines.exists(RUN_ID));
 
         let task_tok = res.task_token;
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
@@ -648,12 +658,11 @@ mod test {
     #[tokio::test]
     async fn parallel_timer_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
-        let run_id = "fake_run_id";
         let timer_1_id = "timer1";
         let timer_2_id = "timer2";
 
         let mut t = canned_histories::parallel_timer(timer_1_id, timer_2_id);
-        let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
+        let core = build_fake_core(wfid, &mut t, hist_batches);
 
         let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
@@ -662,7 +671,7 @@ mod test {
                 variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
             }]
         );
-        assert!(core.workflow_machines.exists(run_id));
+        assert!(core.workflow_machines.exists(t.get_orig_run_id()));
 
         let task_tok = res.task_token;
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
@@ -715,12 +724,11 @@ mod test {
     #[tokio::test]
     async fn timer_cancel_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
-        let run_id = "fake_run_id";
         let timer_id = "wait_timer";
         let cancel_timer_id = "cancel_timer";
 
         let mut t = canned_histories::cancel_timer(timer_id, cancel_timer_id);
-        let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
+        let core = build_fake_core(wfid, &mut t, hist_batches);
 
         let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
@@ -729,7 +737,7 @@ mod test {
                 variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
             }]
         );
-        assert!(core.workflow_machines.exists(run_id));
+        assert!(core.workflow_machines.exists(t.get_orig_run_id()));
 
         let task_tok = res.task_token;
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
@@ -791,13 +799,11 @@ mod test {
     #[tokio::test]
     async fn workflow_update_random_seed_on_workflow_reset() {
         let wfid = "fake_wf_id";
-        let run_id = "CA733AB0-8133-45F6-A4C1-8D375F61AE8B";
-        let original_run_id = "86E39A5F-AE31-4626-BDFE-398EE072D156";
+        let new_run_id = "86E39A5F-AE31-4626-BDFE-398EE072D156";
         let timer_1_id = "timer1";
 
-        let mut t =
-            canned_histories::workflow_fails_with_reset_after_timer(timer_1_id, original_run_id);
-        let core = build_fake_core(wfid, run_id, &mut t, &[2]);
+        let mut t = canned_histories::workflow_fails_with_reset_after_timer(timer_1_id, new_run_id);
+        let core = build_fake_core(wfid, &mut t, &[2]);
 
         let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         let randomness_seed_from_start: u64;
@@ -811,7 +817,7 @@ mod test {
             randomness_seed_from_start = *randomness_seed;
             }
         );
-        assert!(core.workflow_machines.exists(run_id));
+        assert!(core.workflow_machines.exists(t.get_orig_run_id()));
 
         let task_tok = res.task_token;
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
@@ -852,7 +858,6 @@ mod test {
     #[tokio::test]
     async fn cancel_timer_before_sent_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
-        let run_id = "fake_run_id";
         let cancel_timer_id = "cancel_timer";
 
         let mut t = TestHistoryBuilder::default();
@@ -860,7 +865,7 @@ mod test {
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
 
-        let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
+        let core = build_fake_core(wfid, &mut t, hist_batches);
 
         let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
@@ -890,13 +895,14 @@ mod test {
         .unwrap();
     }
 
+    // TODO: This should use batches as well, probably
     #[tokio::test]
     async fn complete_activation_with_failure() {
         let wfid = "fake_wf_id";
         let timer_id = "timer";
 
         let mut t = canned_histories::workflow_fails_with_failure_after_timer(timer_id);
-        let mut core = build_fake_core(wfid, RUN_ID, &mut t, &[2, 3]);
+        let mut core = build_fake_core(wfid, &mut t, &[2, 3]);
         // Need to create an expectation that we will call a failure completion
         Arc::get_mut(&mut core.server_gateway)
             .unwrap()
@@ -965,11 +971,10 @@ mod test {
     #[tokio::test]
     async fn simple_timer_fail_wf_execution(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
-        let run_id = "fake_run_id";
         let timer_id = "timer1";
 
         let mut t = canned_histories::single_timer(timer_id);
-        let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
+        let core = build_fake_core(wfid, &mut t, hist_batches);
 
         let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
@@ -1002,10 +1007,9 @@ mod test {
     #[tokio::test]
     async fn two_signals(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
-        let run_id = "fake_run_id";
 
         let mut t = canned_histories::two_signals("sig1", "sig2");
-        let core = build_fake_core(wfid, run_id, &mut t, hist_batches);
+        let core = build_fake_core(wfid, &mut t, hist_batches);
 
         let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         // Task is completed with no commands

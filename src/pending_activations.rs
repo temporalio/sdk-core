@@ -8,6 +8,7 @@ use std::fmt::{Display, Formatter};
 #[derive(Default)]
 pub struct PendingActivations {
     queue: SegQueue<PendingActivation>,
+    // Keys are run ids
     count_by_id: DashMap<String, usize>,
 }
 
