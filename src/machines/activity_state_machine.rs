@@ -82,7 +82,7 @@ fsm! {
     StartedActivityCancelEventRecorded
       --(ActivityTaskTimedOut, on_activity_task_timed_out) --> TimedOut;
     StartedActivityCancelEventRecorded
-      --(ActivityTaskCanceled(ActivityTaskCanceledEventAttributes), on_activity_task_canceled) --> Canceled;
+      --(ActivityTaskCanceled(ActivityTaskCanceledEventAttributes), shared on_activity_task_canceled) --> Canceled;
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -366,6 +366,33 @@ impl Common {
             dat,
         )
     }
+
+    fn notify_canceled_from_event(
+        dat: SharedState,
+        attrs: ActivityTaskCanceledEventAttributes,
+    ) -> TransitionResult<ActivityMachine> {
+        ActivityMachineTransition::ok(
+            vec![ActivityMachineCommand::Fail(Some(Failure {
+                message: "Activity canceled".to_string(),
+                source: "CoreSDK".to_string(),
+                stack_trace: "".to_string(),
+                cause: None,
+                failure_info: Some(failure::FailureInfo::ActivityFailureInfo(
+                    ActivityFailureInfo {
+                        scheduled_event_id: attrs.scheduled_event_id,
+                        started_event_id: attrs.started_event_id,
+                        identity: "".to_string(), // TODO ?
+                        activity_type: Some(ActivityType {
+                            name: dat.attrs.activity_type.to_string(),
+                        }),
+                        activity_id: dat.attrs.activity_id.to_string(),
+                        retry_state: RetryState::Unspecified as i32,
+                    },
+                )),
+            }))],
+            Canceled::default(),
+        )
+    }
 }
 
 #[derive(Default, Clone)]
@@ -484,10 +511,11 @@ impl StartedActivityCancelEventRecorded {
     }
     pub(super) fn on_activity_task_canceled(
         self,
-        _attrs: ActivityTaskCanceledEventAttributes,
+        dat: SharedState,
+        attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition {
         // notifyCancellationFromEvent
-        ActivityMachineTransition::default::<Failed>()
+        Common::notify_canceled_from_event(dat, attrs)
     }
 }
 
