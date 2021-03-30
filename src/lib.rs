@@ -328,7 +328,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
     /// TODO: Very likely needs to be in Core public api
     pub(crate) fn evict_run(&self, run_id: &str) {
         self.workflow_machines.evict(run_id);
-        // Blow up any pending activations for the run
+        self.pending_activations.remove_all_with_run_id(run_id);
     }
 
     /// Given a pending activation, prepare it to be sent to lang
@@ -518,6 +518,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::machines::test_help::{gen_assert_and_reply, poll_and_reply};
     use crate::{
         machines::test_help::{build_fake_core, FakeCore, TestHistoryBuilder},
         protos::{
@@ -572,6 +573,49 @@ mod test {
     #[tokio::test]
     async fn single_timer_test_across_wf_bridge(core: FakeCore) {
         tracing_init();
+
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            vec![
+                gen_assert_and_reply(
+                    |res| {
+                        assert_matches!(
+                            res.jobs.as_slice(),
+                            [WfActivationJob {
+                                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
+                            }]
+                        );
+                    },
+                    vec![StartTimer {
+                        timer_id: "fake_timer".to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    |res| {
+                        assert_matches!(
+                            res.jobs.as_slice(),
+                            [WfActivationJob {
+                                variant: Some(wf_activation_job::Variant::FireTimer(_)),
+                            }]
+                        );
+                    },
+                    vec![CompleteWorkflowExecution { result: None }.into()],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[rstest(core,
+        case::incremental(single_timer_setup(&[1, 2])),
+        case::replay(single_timer_setup(&[2, 2]))
+    )]
+    #[tokio::test]
+    async fn single_timer_eviction_test_across_wf_bridge(core: FakeCore) {
+        tracing_init();
         let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
@@ -579,7 +623,6 @@ mod test {
                 variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
             }]
         );
-        assert!(core.workflow_machines.exists(&res.run_id));
 
         let task_tok = res.task_token;
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
@@ -593,8 +636,28 @@ mod test {
         .await
         .unwrap();
 
-        // warn!(run_id = %&res.run_id, "Evicting");
-        // core.workflow_machines.evict(&res.run_id);
+        warn!(run_id = %&res.run_id, "Evicting");
+        core.evict_run(&res.run_id);
+
+        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
+        assert_matches!(
+            res.jobs.as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
+            }]
+        );
+
+        let task_tok = res.task_token;
+        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+            vec![StartTimer {
+                timer_id: "fake_timer".to_string(),
+                ..Default::default()
+            }
+            .into()],
+            task_tok,
+        ))
+        .await
+        .unwrap();
 
         let res = core.poll_workflow_task(TASK_Q).await.unwrap();
         assert_matches!(

@@ -8,12 +8,19 @@ pub(crate) use history_builder::TestHistoryBuilder;
 
 use crate::{
     pollers::MockServerGatewayApis,
-    protos::temporal::api::common::v1::WorkflowExecution,
-    protos::temporal::api::history::v1::History,
-    protos::temporal::api::workflowservice::v1::{
-        PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
+    protos::{
+        coresdk::{
+            workflow_activation::WfActivation,
+            workflow_commands::workflow_command,
+            workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
+        },
+        temporal::api::common::v1::WorkflowExecution,
+        temporal::api::history::v1::History,
+        temporal::api::workflowservice::v1::{
+            PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
+        },
     },
-    CoreSDK,
+    Core, CoreSDK,
 };
 use rand::{thread_rng, Rng};
 use std::collections::VecDeque;
@@ -63,4 +70,48 @@ pub(crate) fn build_fake_core(
         .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
 
     CoreSDK::new(mock_gateway)
+}
+
+// TODO: In reality this whole thing might be better done by just using the async wf driver --
+//  then we don't need to bother with the commands being issued and assertions, but keeping this
+//  probably has some value still to test without it getting in the way, too.
+
+type AsserterFn = Box<dyn Fn(&WfActivation) -> ()>;
+type AsserterWithReply = (AsserterFn, wf_activation_completion::Status);
+
+pub(crate) enum CoreInteraction {
+    EvictRunId(String),
+    AssertAndReply(AsserterWithReply),
+}
+
+pub(crate) async fn poll_and_reply<'a>(
+    core: &'a FakeCore,
+    task_queue: &'a str,
+    expect_and_reply: Vec<CoreInteraction>,
+) {
+    for interaction in expect_and_reply {
+        match interaction {
+            CoreInteraction::AssertAndReply((asserter, reply)) => {
+                let res = core.poll_workflow_task(task_queue).await.unwrap();
+                asserter(&res);
+                let task_tok = res.task_token;
+                core.complete_workflow_task(WfActivationCompletion::from_status(task_tok, reply))
+                    .await
+                    .unwrap();
+            }
+            CoreInteraction::EvictRunId(run_id) => {
+                // TODO: Start from beginning, but remove the eviction somehow
+            }
+        }
+    }
+}
+
+pub(crate) fn gen_assert_and_reply(
+    asserter: impl Fn(&WfActivation) -> () + 'static,
+    reply_commands: Vec<workflow_command::Variant>,
+) -> CoreInteraction {
+    CoreInteraction::AssertAndReply((
+        Box::new(asserter),
+        workflow_completion::Success::from_cmds(reply_commands).into(),
+    ))
 }
