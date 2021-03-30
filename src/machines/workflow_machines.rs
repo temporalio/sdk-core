@@ -547,21 +547,14 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(timer);
                 }
                 WFCommand::CancelTimer(attrs) => {
-                    let mkey = *self
-                        .id_to_machine
-                        .get(&CommandID::Timer(attrs.timer_id.to_owned()))
-                        .ok_or_else(|| {
-                            WFMachinesError::MissingAssociatedMachine(format!(
-                                "Missing associated machine for cancelling timer {}",
-                                &attrs.timer_id
-                            ))
-                        })?;
-                    let res = self.machine_mut(mkey).cancel()?;
+                    let m_key =
+                        self.get_machine_key(&CommandID::Timer(attrs.timer_id.to_owned()))?;
+                    let res = self.machine_mut(m_key).cancel()?;
                     match res {
                         MachineResponse::IssueNewCommand(c) => {
                             self.current_wf_task_commands.push_back(CommandAndMachine {
                                 command: c,
-                                machine: mkey,
+                                machine: m_key,
                             })
                         }
                         MachineResponse::NoOp => {}
@@ -580,7 +573,26 @@ impl WorkflowMachines {
                         .insert(CommandID::Activity(aid), activity.machine);
                     self.current_wf_task_commands.push_back(activity);
                 }
-                WFCommand::RequestCancelActivity(_) => unimplemented!(),
+                WFCommand::RequestCancelActivity(attrs) => {
+                    let m_key =
+                        self.get_machine_key(&CommandID::Activity(attrs.activity_id.to_owned()))?;
+                    let res = self.machine_mut(m_key).cancel()?;
+                    match res {
+                        MachineResponse::IssueNewCommand(c) => {
+                            self.current_wf_task_commands.push_back(CommandAndMachine {
+                                command: c,
+                                machine: m_key,
+                            })
+                        }
+                        MachineResponse::NoOp => {}
+                        v => {
+                            return Err(WFMachinesError::UnexpectedMachineResponse(
+                                v,
+                                "When cancelling activity",
+                            ));
+                        }
+                    }
+                }
                 WFCommand::CompleteWorkflow(attrs) => {
                     let cwfm = self.add_new_machine(complete_workflow(attrs));
                     self.current_wf_task_commands.push_back(cwfm);
@@ -593,6 +605,15 @@ impl WorkflowMachines {
             }
         }
         Ok(())
+    }
+
+    fn get_machine_key(&mut self, id: &CommandID) -> Result<MachineKey> {
+        Ok(*self.id_to_machine.get(id).ok_or_else(|| {
+            WFMachinesError::MissingAssociatedMachine(format!(
+                "Missing associated machine for cancelling timer {:?}",
+                id
+            ))
+        })?)
     }
 
     /// Transfer commands from `current_wf_task_commands` to `commands`, so they may be sent off

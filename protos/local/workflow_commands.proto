@@ -70,10 +70,24 @@ message ScheduleActivity {
     /// configuration. Retries are happening up to schedule_to_close_timeout. To disable retries set
     /// retry_policy.maximum_attempts to 1.
     common.RetryPolicy retry_policy = 11;
+    /// Defines behaviour of the underlying workflow when activity cancellation has been requested.
+    ActivityCancellationType cancellation_type = 12;
+}
+
+enum ActivityCancellationType {
+    /// Initiate a cancellation request and immediately report cancellation to the workflow.
+    TRY_CANCEL = 0;
+    /// Wait for activity cancellation completion. Note that activity must heartbeat to receive a
+    /// cancellation notification. This can block the cancellation for a long time if activity doesn't
+    /// heartbeat or chooses to ignore the cancellation request.
+    WAIT_CANCELLATION_COMPLETED = 1;
+    /// Do not request cancellation of the activity and immediately report cancellation to the workflow
+    ABANDON = 2;
 }
 
 message RequestCancelActivity {
     string activity_id = 1;
+    int64 scheduled_event_id = 2;
 }
 
 message QueryResult {
