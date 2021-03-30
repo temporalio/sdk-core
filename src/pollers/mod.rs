@@ -115,8 +115,8 @@ pub trait ServerGatewayApis {
         -> Result<PollActivityTaskQueueResponse>;
 
     /// Complete a workflow activation. `task_token` is the task token that would've been received
-    /// from [crate::Core::poll_task] API. `commands` is a list of new commands to send to the
-    /// server, such as starting a timer.
+    /// from [crate::Core::poll_workflow_task] API. `commands` is a list of new commands to send to
+    /// the server, such as starting a timer.
     async fn complete_workflow_task(
         &self,
         task_token: Vec<u8>,
@@ -151,7 +151,7 @@ pub trait ServerGatewayApis {
     ) -> Result<RespondActivityTaskFailedResponse>;
 
     /// Fail task by sending the failure to the server. `task_token` is the task token that would've
-    /// been received from [crate::Core::poll_task].
+    /// been received from [crate::Core::poll_workflow_task].
     async fn fail_workflow_task(
         &self,
         task_token: Vec<u8>,

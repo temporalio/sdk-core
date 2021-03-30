@@ -21,21 +21,25 @@ type Result<T, E = WorkflowError> = std::result::Result<T, E>;
 /// Errors relating to workflow management and machine logic. These are going to be passed up and
 /// out to the lang SDK where it will need to handle them. Generally that will usually mean
 /// showing an error to the user and/or invalidating the workflow cache.
-#[derive(thiserror::Error, Debug, displaydoc::Display)]
+#[derive(thiserror::Error, Debug)]
 #[allow(clippy::large_enum_variant)]
-// NOTE: Docstrings take the place of #[error("xxxx")] here b/c of displaydoc
 pub enum WorkflowError {
     /// The workflow machines associated with `run_id` were not found in memory
+    #[error("Workflow machines associated with `{run_id}` not found")]
     MissingMachine { run_id: String },
-    /// Underlying error in state machines: {0:?}
+    /// Underlying error in state machines
+    #[error("Underlying error in state machines: {0:?}")]
     UnderlyingMachinesError(#[from] WFMachinesError),
     /// There was an error in the history associated with the workflow: {0:?}
+    #[error("There was an error in the history associated with the workflow: {0:?}")]
     HistoryError(#[from] HistoryInfoError),
-    /** Error buffering commands coming in from the lang side. This shouldn't happen unless we've
-    run out of memory or there is a logic bug. Considered fatal. */
+    /// Error buffering commands coming in from the lang side. This shouldn't happen unless we've
+    /// run out of memory or there is a logic bug. Considered fatal.
+    #[error("Internal error buffering workflow commands")]
     CommandBufferingError(#[from] SendError<Vec<WFCommand>>),
-    /** We tried to instantiate a workflow instance, but the provided history resulted in no
-    new activations. There is nothing to do. */
+    /// We tried to instantiate a workflow instance, but the provided history resulted in no
+    /// new activations. There is nothing to do.
+    #[error("Machine created with no activations for run_id {run_id}")]
     MachineWasCreatedWithNoActivations { run_id: String },
 }
 
@@ -78,8 +82,18 @@ impl WorkflowManager {
 
 #[derive(Debug)]
 pub(crate) struct NextWfActivation {
-    pub activation: WfActivation,
+    /// Keep this private, so we can ensure task tokens are attached via [Self::finalize]
+    activation: WfActivation,
     pub more_activations_needed: bool,
+}
+
+impl NextWfActivation {
+    /// Attach a task token to the activation so it can be sent out to the lang sdk
+    pub(crate) fn finalize(self, task_token: Vec<u8>) -> WfActivation {
+        let mut a = self.activation;
+        a.task_token = task_token;
+        a
+    }
 }
 
 impl WorkflowManager {
