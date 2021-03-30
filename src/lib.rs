@@ -30,19 +30,17 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::errors::WorkflowUpdateError;
-use crate::protos::coresdk::workflow_completion;
 use crate::{
-    errors::ShutdownErr,
+    errors::{ShutdownErr, WorkflowUpdateError},
     machines::{EmptyWorkflowCommandErr, ProtoCommand, WFCommand},
     pending_activations::{PendingActivation, PendingActivations},
     protos::{
         coresdk::{
-            activity_result::{self as ar, activity_result, ActivityResult},
+            activity_result::{self as ar, activity_result},
             activity_task::ActivityTask,
             workflow_activation::WfActivation,
-            workflow_completion::{wf_activation_completion, WfActivationCompletion},
-            ActivityHeartbeat,
+            workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
+            ActivityHeartbeat, ActivityTaskCompletion,
         },
         temporal::api::{
             enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
@@ -92,8 +90,7 @@ pub trait Core: Send + Sync {
     /// Tell the core that an activity has finished executing
     async fn complete_activity_task(
         &self,
-        task_token: Vec<u8>,
-        result: ActivityResult,
+        completion: ActivityTaskCompletion,
     ) -> Result<(), CompleteActivityError>;
 
     /// Indicate that a long running activity is still making progress
@@ -266,15 +263,15 @@ where
     #[instrument(skip(self))]
     async fn complete_activity_task(
         &self,
-        task_token: Vec<u8>,
-        result: ActivityResult,
+        completion: ActivityTaskCompletion,
     ) -> Result<(), CompleteActivityError> {
-        let status = if let Some(s) = result.status {
+        let task_token = completion.task_token;
+        let status = if let Some(s) = completion.result.and_then(|r| r.status) {
             s
         } else {
             return Err(CompleteActivityError::MalformedActivityCompletion {
-                reason: "Activity result had empty status field".to_owned(),
-                completion: Some(result),
+                reason: "Activity completion had empty result/status field".to_owned(),
+                completion: None,
             });
         };
         match status {
