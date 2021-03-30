@@ -21,3 +21,9 @@ message ActivityHeartbeat {
     string activity_id = 1;
     repeated common.Payload details = 2;
 }
+
+// A request as given to [crate::Core::complete_activity_task]
+message ActivityTaskCompletion {
+    bytes task_token = 1;
+    activity_result.ActivityResult result = 2;
+}
