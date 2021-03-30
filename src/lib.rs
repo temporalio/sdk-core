@@ -189,7 +189,7 @@ where
             }
 
             if self.shutdown_requested.load(Ordering::SeqCst) {
-                return Err(PollWfError::ShuttingDown);
+                return Err(PollWfError::ShutDown);
             }
 
             match abort_on_shutdown!(self, poll_workflow_task, task_queue.to_owned()) {
@@ -199,7 +199,7 @@ where
                     }
                 }
                 // Drain pending activations in case of shutdown.
-                Err(PollWfError::ShuttingDown) => continue,
+                Err(PollWfError::ShutDown) => continue,
                 Err(e) => return Err(e),
             }
         }
@@ -211,7 +211,7 @@ where
         task_queue: &str,
     ) -> Result<ActivityTask, PollActivityError> {
         if self.shutdown_requested.load(Ordering::SeqCst) {
-            return Err(PollActivityError::ShuttingDown);
+            return Err(PollActivityError::ShutDown);
         }
 
         match abort_on_shutdown!(self, poll_activity_task, task_queue.to_owned()) {
@@ -781,7 +781,7 @@ mod test {
                 .poll_workflow_task(TASK_Q)
                 .await
                 .unwrap_err(),
-            PollWfError::ShuttingDown
+            PollWfError::ShutDown
         );
     }
 

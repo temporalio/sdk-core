@@ -552,14 +552,14 @@ async fn shutdown_aborts_actively_blocked_poll() {
     });
     assert_matches!(
         core.poll_workflow_task(task_q).await.unwrap_err(),
-        PollWfError::ShuttingDown
+        PollWfError::ShutDown
     );
     handle.join().unwrap();
     // Ensure double-shutdown doesn't explode
     core.shutdown();
     assert_matches!(
         core.poll_workflow_task(task_q).await.unwrap_err(),
-        PollWfError::ShuttingDown
+        PollWfError::ShutDown
     );
 }
 
