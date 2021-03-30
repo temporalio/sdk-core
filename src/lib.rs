@@ -36,12 +36,11 @@ use crate::{
     pending_activations::{PendingActivation, PendingActivations},
     protos::{
         coresdk::{
-            activity_result::{self as ar, activity_result, ActivityResult},
+            activity_result::{self as ar, activity_result},
             activity_task::ActivityTask,
             workflow_activation::WfActivation,
-            workflow_completion,
-            workflow_completion::{wf_activation_completion, WfActivationCompletion},
-            ActivityHeartbeat,
+            workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
+            ActivityHeartbeat, ActivityTaskCompletion,
         },
         temporal::api::{
             enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
@@ -91,8 +90,7 @@ pub trait Core: Send + Sync {
     /// Tell the core that an activity has finished executing
     async fn complete_activity_task(
         &self,
-        task_token: Vec<u8>,
-        result: ActivityResult,
+        completion: ActivityTaskCompletion,
     ) -> Result<(), CompleteActivityError>;
 
     /// Indicate that a long running activity is still making progress
@@ -102,7 +100,7 @@ pub trait Core: Send + Sync {
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis>;
 
     /// Eventually ceases all polling of the server. [Core::poll_workflow_task] should be called
-    /// until it returns [PollWfError::ShuttingDown] to ensure that any workflows which are still
+    /// until it returns [PollWfError::ShutDown] to ensure that any workflows which are still
     /// undergoing replay have an opportunity to finish. This means that the lang sdk will need to
     /// call [Core::complete_workflow_task] for those workflows until they are done. At that point,
     /// the lang SDK can end the process, or drop the [Core] instance, which will close the
@@ -191,7 +189,7 @@ where
             }
 
             if self.shutdown_requested.load(Ordering::SeqCst) {
-                return Err(PollWfError::ShuttingDown);
+                return Err(PollWfError::ShutDown);
             }
 
             match abort_on_shutdown!(self, poll_workflow_task, task_queue.to_owned()) {
@@ -201,7 +199,7 @@ where
                     }
                 }
                 // Drain pending activations in case of shutdown.
-                Err(PollWfError::ShuttingDown) => continue,
+                Err(PollWfError::ShutDown) => continue,
                 Err(e) => return Err(e),
             }
         }
@@ -213,7 +211,7 @@ where
         task_queue: &str,
     ) -> Result<ActivityTask, PollActivityError> {
         if self.shutdown_requested.load(Ordering::SeqCst) {
-            return Err(PollActivityError::ShuttingDown);
+            return Err(PollActivityError::ShutDown);
         }
 
         match abort_on_shutdown!(self, poll_activity_task, task_queue.to_owned()) {
@@ -265,15 +263,15 @@ where
     #[instrument(skip(self))]
     async fn complete_activity_task(
         &self,
-        task_token: Vec<u8>,
-        result: ActivityResult,
+        completion: ActivityTaskCompletion,
     ) -> Result<(), CompleteActivityError> {
-        let status = if let Some(s) = result.status {
+        let task_token = completion.task_token;
+        let status = if let Some(s) = completion.result.and_then(|r| r.status) {
             s
         } else {
             return Err(CompleteActivityError::MalformedActivityCompletion {
-                reason: "Activity result had empty status field".to_owned(),
-                completion: Some(result),
+                reason: "Activity completion had empty result/status field".to_owned(),
+                completion: None,
             });
         };
         match status {
@@ -857,7 +855,7 @@ mod test {
                 .poll_workflow_task(TASK_Q)
                 .await
                 .unwrap_err(),
-            PollWfError::ShuttingDown
+            PollWfError::ShutDown
         );
     }
 
