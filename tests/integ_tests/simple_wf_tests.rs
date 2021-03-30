@@ -3,6 +3,7 @@ use crossbeam::channel::{unbounded, RecvTimeoutError};
 use futures::{channel::mpsc::UnboundedReceiver, future, Future, SinkExt, StreamExt};
 use rand::{self, Rng};
 use std::{collections::HashMap, convert::TryFrom, env, sync::Arc, time::Duration};
+use temporal_sdk_core::protos::coresdk::ActivityTaskCompletion;
 use temporal_sdk_core::{
     protos::coresdk::{
         activity_result::{self, activity_result as act_res, ActivityResult},
@@ -133,10 +134,10 @@ async fn activity_workflow() {
         metadata: Default::default(),
     };
     // Complete activity successfully.
-    core.complete_activity_task(
-        task.task_token,
-        ActivityResult::ok(response_payload.clone()),
-    )
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: task.task_token,
+        result: Some(ActivityResult::ok(response_payload.clone())),
+    })
     .await
     .unwrap();
     // Poll workflow task and verify that activity has succeeded.
@@ -192,16 +193,16 @@ async fn activity_non_retryable_failure() {
         non_retryable: true,
         ..Default::default()
     };
-    core.complete_activity_task(
-        task.task_token,
-        ActivityResult {
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: task.task_token,
+        result: Some(ActivityResult {
             status: Some(activity_result::activity_result::Status::Failed(
                 activity_result::Failure {
                     failure: Some(failure.clone()),
                 },
             )),
-        },
-    )
+        }),
+    })
     .await
     .unwrap();
     // Poll workflow task and verify that activity has failed.
@@ -256,16 +257,16 @@ async fn activity_retry() {
         non_retryable: false,
         ..Default::default()
     };
-    core.complete_activity_task(
-        task.task_token,
-        ActivityResult {
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: task.task_token,
+        result: Some(ActivityResult {
             status: Some(activity_result::activity_result::Status::Failed(
                 activity_result::Failure {
                     failure: Some(failure),
                 },
             )),
-        },
-    )
+        }),
+    })
     .await
     .unwrap();
     // Poll 2nd time
@@ -281,16 +282,10 @@ async fn activity_retry() {
         data: b"hello ".to_vec(),
         metadata: Default::default(),
     };
-    core.complete_activity_task(
-        task.task_token,
-        ActivityResult {
-            status: Some(activity_result::activity_result::Status::Completed(
-                activity_result::Success {
-                    result: Some(response_payload.clone()),
-                },
-            )),
-        },
-    )
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: task.task_token,
+        result: Some(ActivityResult::ok(response_payload.clone())),
+    })
     .await
     .unwrap();
     // Poll workflow task and verify activity has succeeded.

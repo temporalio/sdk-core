@@ -35,7 +35,7 @@ use crate::{
             activity_task::ActivityTask,
             workflow_activation::WfActivation,
             workflow_completion::{wf_activation_completion, WfActivationCompletion},
-            ActivityHeartbeat,
+            ActivityHeartbeat, ActivityTaskCompletion,
         },
         temporal::api::{
             enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
@@ -83,11 +83,7 @@ pub trait Core: Send + Sync {
     async fn complete_workflow_task(&self, completion: WfActivationCompletion) -> Result<()>;
 
     /// Tell the core that an activity has finished executing
-    async fn complete_activity_task(
-        &self,
-        task_token: Vec<u8>,
-        result: ActivityResult,
-    ) -> Result<()>;
+    async fn complete_activity_task(&self, completion: ActivityTaskCompletion) -> Result<()>;
 
     /// Indicate that a long running activity is still making progress
     async fn send_activity_heartbeat(&self, task_token: ActivityHeartbeat) -> Result<()>;
@@ -311,11 +307,16 @@ where
     }
 
     #[instrument(skip(self))]
-    async fn complete_activity_task(
-        &self,
-        task_token: Vec<u8>,
-        result: ActivityResult,
-    ) -> Result<()> {
+    async fn complete_activity_task(&self, completion: ActivityTaskCompletion) -> Result<()> {
+        let task_token = completion.task_token;
+        let result = if let Some(r) = completion.result {
+            r
+        } else {
+            return Err(CoreError::MalformedActivityCompletion {
+                reason: "Activity completion had empty result field".to_owned(),
+                completion: None,
+            });
+        };
         let status = if let Some(s) = result.status {
             s
         } else {
