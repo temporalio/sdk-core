@@ -73,10 +73,6 @@ pub(crate) fn build_fake_core(
     CoreSDK::new(mock_gateway)
 }
 
-// TODO: In reality this whole thing might be better done by just using the async wf driver --
-//  then we don't need to bother with the commands being issued and assertions, but keeping this
-//  probably has some value still to test without it getting in the way, too.
-
 type AsserterWithReply<'a> = (&'a dyn Fn(&WfActivation), wf_activation_completion::Status);
 
 pub(crate) async fn poll_and_reply<'a>(
