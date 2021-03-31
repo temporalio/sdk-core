@@ -26,6 +26,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "coresdk.workflow_activation.WFActivationJob.variant",
             "#[derive(::derive_more::From)]",
         )
+        .type_attribute(
+            "coresdk.workflow_completion.WFActivationCompletion.status",
+            "#[derive(::derive_more::From)]",
+        )
         .type_attribute("coresdk.Task.variant", "#[derive(::derive_more::From)]")
         .compile(
             &[

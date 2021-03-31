@@ -29,6 +29,7 @@ mod version_state_machine;
 mod workflow_task_state_machine;
 
 #[cfg(test)]
+#[macro_use]
 pub(crate) mod test_help;
 
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
