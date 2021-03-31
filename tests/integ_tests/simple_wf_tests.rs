@@ -386,9 +386,9 @@ async fn activity_cancellation() {
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to complete
     // it in this test as activity is getting cancelled.
-    let task = dbg!(core.poll_activity_task(task_q).await.unwrap());
+    let activity_task = dbg!(core.poll_activity_task(task_q).await.unwrap());
     assert_matches!(
-        task.variant,
+        activity_task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
             assert_eq!(start_activity.activity_type, "test_activity".to_string())
         }
@@ -408,18 +408,32 @@ async fn activity_cancellation() {
         }
     );
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-        vec![
-            RequestCancelActivity {
-                activity_id,
-                ..Default::default()
-            }
-            .into(),
-            CompleteWorkflowExecution { result: None }.into(),
-        ],
+        vec![RequestCancelActivity {
+            activity_id,
+            ..Default::default()
+        }
+        .into()],
         task.task_token,
     ))
     .await
-    .unwrap()
+    .unwrap();
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: activity_task.task_token,
+        result: Some(ActivityResult {
+            status: Some(activity_result::activity_result::Status::Canceled(
+                activity_result::Cancelation { details: None },
+            )),
+        }),
+    })
+    .await
+    .unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
+        task.task_token,
+    ))
+    .await
+    .unwrap();
 }
 
 #[tokio::test]

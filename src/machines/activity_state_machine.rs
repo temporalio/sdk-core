@@ -59,7 +59,7 @@ fsm! {
 
     ScheduledActivityCancelCommandCreated
       --(CommandRequestCancelActivityTask,
-         on_command_request_cancel_activity_task) --> ScheduledActivityCancelCommandCreated;
+         shared on_command_request_cancel_activity_task) --> ScheduledActivityCancelCommandCreated;
     ScheduledActivityCancelCommandCreated
       --(ActivityTaskCancelRequested) --> ScheduledActivityCancelEventRecorded;
 
@@ -91,8 +91,6 @@ pub(super) enum ActivityMachineCommand {
     Complete(Option<Payloads>),
     #[display(fmt = "Fail")]
     Fail(Option<Failure>),
-    #[display(fmt = "Cancel")]
-    Cancel,
     #[display(fmt = "RequestCancellation")]
     RequestCancellation(Command),
 }
@@ -214,8 +212,9 @@ impl WFMachinesAdapter for ActivityMachine {
                 }),
             }
             .into()],
-            ActivityMachineCommand::Cancel => unimplemented!(),
-            ActivityMachineCommand::RequestCancellation(_) => unimplemented!(),
+            ActivityMachineCommand::RequestCancellation(c) => {
+                vec![MachineResponse::IssueNewCommand(c)]
+            }
         })
     }
 }
@@ -239,7 +238,6 @@ impl Cancellable for ActivityMachine {
                 Some(ActivityMachineCommand::RequestCancellation(cmd)) => {
                     MachineResponse::IssueNewCommand(cmd)
                 }
-                Some(ActivityMachineCommand::Cancel) => unimplemented!(),
                 x => panic!("Invalid cancel event response {:?}", x),
             },
         )
@@ -293,11 +291,9 @@ impl ScheduleCommandCreated {
             ..dat
         };
         match dat.cancellation_type {
-            ActivityCancellationType::Abandon => ActivityMachineTransition::ok_shared(
-                vec![ActivityMachineCommand::Cancel],
-                Canceled::default(),
-                canceled_state,
-            ),
+            ActivityCancellationType::Abandon => {
+                ActivityMachineTransition::ok_shared(vec![], Canceled::default(), canceled_state)
+            }
             _ => notify_canceled(canceled_state, Canceled::default().into()),
         }
     }
@@ -367,9 +363,17 @@ impl Started {
 pub(super) struct ScheduledActivityCancelCommandCreated {}
 
 impl ScheduledActivityCancelCommandCreated {
-    pub(super) fn on_command_request_cancel_activity_task(self) -> ActivityMachineTransition {
+    pub(super) fn on_command_request_cancel_activity_task(
+        self,
+        dat: SharedState,
+    ) -> ActivityMachineTransition {
         // notifyCanceledIfTryCancel
-        ActivityMachineTransition::default::<ScheduledActivityCancelCommandCreated>()
+        match dat.cancellation_type {
+            ActivityCancellationType::TryCancel => {
+                notify_canceled(dat, ScheduledActivityCancelCommandCreated::default().into())
+            }
+            _ => ActivityMachineTransition::default::<ScheduledActivityCancelCommandCreated>(),
+        }
     }
 }
 
