@@ -274,14 +274,12 @@ pub mod temporal {
             pub mod v1 {
                 include!("temporal.api.command.v1.rs");
 
-                use crate::protos::coresdk::workflow_commands::ActivityCancellationType;
                 use crate::protos::{
                     coresdk::{workflow_commands, PayloadsExt},
                     temporal::api::common::v1::ActivityType,
                     temporal::api::enums::v1::CommandType,
                 };
                 use command::Attributes;
-                use std::convert::TryFrom;
                 use std::fmt::{Display, Formatter};
 
                 impl From<command::Attributes> for Command {
@@ -348,32 +346,6 @@ pub mod temporal {
                                 scheduled_event_id: c.scheduled_event_id,
                             },
                         )
-                    }
-                }
-
-                #[derive(derive_more::Display, Debug)]
-                pub enum CancellationTypeConversionError {
-                    InvalidCancellationType,
-                }
-
-                impl TryFrom<i32> for ActivityCancellationType {
-                    type Error = CancellationTypeConversionError;
-
-                    fn try_from(c: i32) -> Result<Self, Self::Error> {
-                        match c {
-                            x if x == ActivityCancellationType::TryCancel as i32 => {
-                                Ok(ActivityCancellationType::TryCancel)
-                            }
-                            x if x
-                                == ActivityCancellationType::WaitCancellationCompleted as i32 =>
-                            {
-                                Ok(ActivityCancellationType::WaitCancellationCompleted)
-                            }
-                            x if x == ActivityCancellationType::Abandon as i32 => {
-                                Ok(ActivityCancellationType::Abandon)
-                            }
-                            _ => Err(CancellationTypeConversionError::InvalidCancellationType),
-                        }
                     }
                 }
 

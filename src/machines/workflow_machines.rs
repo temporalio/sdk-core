@@ -139,6 +139,8 @@ pub enum WFMachinesError {
 
     #[error("Machine encountered an invalid transition: {0}")]
     InvalidTransition(&'static str),
+    #[error("Invalid cancelation type: {0}")]
+    InvalidCancelationType(i32),
 }
 
 impl WorkflowMachines {
@@ -610,7 +612,7 @@ impl WorkflowMachines {
     fn get_machine_key(&mut self, id: &CommandID) -> Result<MachineKey> {
         Ok(*self.id_to_machine.get(id).ok_or_else(|| {
             WFMachinesError::MissingAssociatedMachine(format!(
-                "Missing associated machine for cancelling timer {:?}",
+                "Missing associated machine for {:?}",
                 id
             ))
         })?)
