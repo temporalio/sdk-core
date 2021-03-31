@@ -6,6 +6,7 @@ mod history_builder;
 pub(super) use async_workflow_driver::{CommandSender, TestWorkflowDriver};
 pub(crate) use history_builder::TestHistoryBuilder;
 
+use crate::protos::coresdk::common::UserCodeFailure;
 use crate::{
     pollers::MockServerGatewayApis,
     protos::{
@@ -80,29 +81,51 @@ type AsserterFn = Box<dyn Fn(&WfActivation) -> ()>;
 type AsserterWithReply = (AsserterFn, wf_activation_completion::Status);
 
 pub(crate) enum CoreInteraction {
-    EvictRunId(String),
     AssertAndReply(AsserterWithReply),
 }
 
 pub(crate) async fn poll_and_reply<'a>(
     core: &'a FakeCore,
     task_queue: &'a str,
+    evict_after_each_reply: bool,
     expect_and_reply: Vec<CoreInteraction>,
 ) {
-    for interaction in expect_and_reply {
-        match interaction {
-            CoreInteraction::AssertAndReply((asserter, reply)) => {
-                let res = core.poll_workflow_task(task_queue).await.unwrap();
-                asserter(&res);
-                let task_tok = res.task_token;
-                core.complete_workflow_task(WfActivationCompletion::from_status(task_tok, reply))
+    let mut run_id = "".to_string();
+    let mut evictions = 0;
+    let expected_evictions = expect_and_reply.len() - 1;
+
+    'outer: loop {
+        let expect_iter = expect_and_reply.iter();
+
+        for interaction in expect_iter {
+            match interaction {
+                CoreInteraction::AssertAndReply((asserter, reply)) => {
+                    let res = core.poll_workflow_task(task_queue).await.unwrap();
+
+                    asserter(&res);
+
+                    let task_tok = res.task_token;
+                    if run_id.is_empty() {
+                        run_id = res.run_id;
+                    }
+
+                    core.complete_workflow_task(WfActivationCompletion::from_status(
+                        task_tok,
+                        reply.clone(),
+                    ))
                     .await
                     .unwrap();
-            }
-            CoreInteraction::EvictRunId(run_id) => {
-                // TODO: Start from beginning, but remove the eviction somehow
+
+                    if evict_after_each_reply && evictions < expected_evictions {
+                        core.evict_run(&run_id);
+                        evictions += 1;
+                        continue 'outer;
+                    }
+                }
             }
         }
+
+        break;
     }
 }
 
@@ -115,3 +138,20 @@ pub(crate) fn gen_assert_and_reply(
         workflow_completion::Success::from_cmds(reply_commands).into(),
     ))
 }
+
+pub(crate) fn gen_assert_and_fail(
+    asserter: impl Fn(&WfActivation) -> () + 'static,
+) -> CoreInteraction {
+    CoreInteraction::AssertAndReply((
+        Box::new(asserter),
+        workflow_completion::Failure {
+            failure: Some(UserCodeFailure {
+                message: "Intentional test failure".to_string(),
+                ..Default::default()
+            }),
+        }
+        .into(),
+    ))
+}
+
+// TODO make simple match macro for typical assert_matches case

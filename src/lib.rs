@@ -516,9 +516,11 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::machines::test_help::{gen_assert_and_reply, poll_and_reply};
+    use crate::machines::test_help::gen_assert_and_fail;
     use crate::{
-        machines::test_help::{build_fake_core, FakeCore, TestHistoryBuilder},
+        machines::test_help::{
+            build_fake_core, gen_assert_and_reply, poll_and_reply, FakeCore, TestHistoryBuilder,
+        },
         protos::{
             coresdk::{
                 common::UserCodeFailure,
@@ -564,17 +566,19 @@ mod test {
         build_fake_core(wfid, &mut t, hist_batches)
     }
 
-    #[rstest(core,
-        case::incremental(single_timer_setup(&[1, 2])),
-        case::replay(single_timer_setup(&[2]))
-    )]
+    #[rstest]
+    #[case::incremental(single_timer_setup(&[1, 2]), false)]
+    #[case::replay(single_timer_setup(&[2]), false)]
+    #[case::incremental_evict(single_timer_setup(&[1, 2]), true)]
+    #[case::replay_evict(single_timer_setup(&[2, 2]), true)]
     #[tokio::test]
-    async fn single_timer_test_across_wf_bridge(core: FakeCore) {
+    async fn single_timer_test_across_wf_bridge(#[case] core: FakeCore, #[case] evict: bool) {
         tracing_init();
 
         poll_and_reply(
             &core,
             TASK_Q,
+            evict,
             vec![
                 gen_assert_and_reply(
                     |res| {
@@ -605,72 +609,6 @@ mod test {
             ],
         )
         .await;
-    }
-
-    #[rstest(core,
-        case::incremental(single_timer_setup(&[1, 2])),
-        case::replay(single_timer_setup(&[2, 2]))
-    )]
-    #[tokio::test]
-    async fn single_timer_eviction_test_across_wf_bridge(core: FakeCore) {
-        tracing_init();
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        assert_matches!(
-            res.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
-            }]
-        );
-
-        let task_tok = res.task_token;
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![StartTimer {
-                timer_id: "fake_timer".to_string(),
-                ..Default::default()
-            }
-            .into()],
-            task_tok,
-        ))
-        .await
-        .unwrap();
-
-        warn!(run_id = %&res.run_id, "Evicting");
-        core.evict_run(&res.run_id);
-
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        assert_matches!(
-            res.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
-            }]
-        );
-
-        let task_tok = res.task_token;
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![StartTimer {
-                timer_id: "fake_timer".to_string(),
-                ..Default::default()
-            }
-            .into()],
-            task_tok,
-        ))
-        .await
-        .unwrap();
-
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        assert_matches!(
-            res.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::FireTimer(_)),
-            }]
-        );
-        let task_tok = res.task_token;
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
-            task_tok,
-        ))
-        .await
-        .unwrap();
     }
 
     #[rstest(core,
@@ -958,14 +896,17 @@ mod test {
         .unwrap();
     }
 
-    // TODO: This should use batches as well, probably
+    #[rstest]
+    #[case::no_evict_inc(&[1, 2, 3], false)]
+    #[case::no_evict(&[2, 3], false)]
+    #[case::evict(&[2, 3, 3, 3, 3], true)]
     #[tokio::test]
-    async fn complete_activation_with_failure() {
+    async fn complete_activation_with_failure(#[case] batches: &[usize], #[case] evict: bool) {
         let wfid = "fake_wf_id";
         let timer_id = "timer";
 
         let mut t = canned_histories::workflow_fails_with_failure_after_timer(timer_id);
-        let mut core = build_fake_core(wfid, &mut t, &[2, 3]);
+        let mut core = build_fake_core(wfid, &mut t, batches);
         // Need to create an expectation that we will call a failure completion
         Arc::get_mut(&mut core.server_gateway)
             .unwrap()
@@ -973,61 +914,50 @@ mod test {
             .times(1)
             .returning(|_, _, _| Ok(RespondWorkflowTaskFailedResponse {}));
 
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![StartTimer {
-                timer_id: timer_id.to_string(),
-                ..Default::default()
-            }
-            .into()],
-            res.task_token,
-        ))
-        .await
-        .unwrap();
-
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        core.complete_workflow_task(WfActivationCompletion::fail(
-            res.task_token,
-            UserCodeFailure {
-                message: "oh noooooooo".to_string(),
-                ..Default::default()
-            },
-        ))
-        .await
-        .unwrap();
-
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        assert_matches!(
-            res.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
-            }]
-        );
-        // Need to re-issue the start timer command (we are replaying)
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![StartTimer {
-                timer_id: timer_id.to_string(),
-                ..Default::default()
-            }
-            .into()],
-            res.task_token,
-        ))
-        .await
-        .unwrap();
-        // Now we may complete the workflow
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        assert_matches!(
-            res.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::FireTimer(_)),
-            }]
-        );
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
-            res.task_token,
-        ))
-        .await
-        .unwrap();
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            evict,
+            vec![
+                gen_assert_and_reply(
+                    |_| {},
+                    vec![StartTimer {
+                        timer_id: timer_id.to_owned(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_fail(|_| {}),
+                gen_assert_and_reply(
+                    |res| {
+                        assert_matches!(
+                            res.jobs.as_slice(),
+                            [WfActivationJob {
+                                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
+                            }]
+                        );
+                    },
+                    // Need to re-issue the start timer command (we are replaying)
+                    vec![StartTimer {
+                        timer_id: timer_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    |res| {
+                        assert_matches!(
+                            res.jobs.as_slice(),
+                            [WfActivationJob {
+                                variant: Some(wf_activation_job::Variant::FireTimer(_)),
+                            }]
+                        );
+                    },
+                    vec![CompleteWorkflowExecution { result: None }.into()],
+                ),
+            ],
+        )
+        .await;
     }
 
     #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
