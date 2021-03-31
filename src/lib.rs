@@ -516,10 +516,10 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::machines::test_help::gen_assert_and_fail;
     use crate::{
         machines::test_help::{
-            build_fake_core, gen_assert_and_reply, poll_and_reply, FakeCore, TestHistoryBuilder,
+            build_fake_core, gen_assert_and_fail, gen_assert_and_reply, poll_and_reply, FakeCore,
+            TestHistoryBuilder,
         },
         protos::{
             coresdk::{
@@ -539,6 +539,7 @@ mod test {
         test_help::canned_histories,
     };
     use rstest::{fixture, rstest};
+    use std::sync::atomic::AtomicU64;
 
     const TASK_Q: &str = "test-task-queue";
 
@@ -573,22 +574,13 @@ mod test {
     #[case::replay_evict(single_timer_setup(&[2, 2]), true)]
     #[tokio::test]
     async fn single_timer_test_across_wf_bridge(#[case] core: FakeCore, #[case] evict: bool) {
-        tracing_init();
-
         poll_and_reply(
             &core,
             TASK_Q,
             evict,
-            vec![
+            &[
                 gen_assert_and_reply(
-                    |res| {
-                        assert_matches!(
-                            res.jobs.as_slice(),
-                            [WfActivationJob {
-                                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
-                            }]
-                        );
-                    },
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                     vec![StartTimer {
                         timer_id: "fake_timer".to_string(),
                         ..Default::default()
@@ -596,14 +588,7 @@ mod test {
                     .into()],
                 ),
                 gen_assert_and_reply(
-                    |res| {
-                        assert_matches!(
-                            res.jobs.as_slice(),
-                            [WfActivationJob {
-                                variant: Some(wf_activation_job::Variant::FireTimer(_)),
-                            }]
-                        );
-                    },
+                    &job_assert!(wf_activation_job::Variant::FireTimer(_)),
                     vec![CompleteWorkflowExecution { result: None }.into()],
                 ),
             ],
@@ -619,40 +604,26 @@ mod test {
     )]
     #[tokio::test]
     async fn single_activity_completion(core: FakeCore) {
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        assert_matches!(
-            res.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
-            }]
-        );
-
-        let task_tok = res.task_token;
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![ScheduleActivity {
-                activity_id: "fake_activity".to_string(),
-                ..Default::default()
-            }
-            .into()],
-            task_tok,
-        ))
-        .await
-        .unwrap();
-
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        assert_matches!(
-            res.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(_)),
-            }]
-        );
-        let task_tok = res.task_token;
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
-            task_tok,
-        ))
-        .await
-        .unwrap();
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            false,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    vec![ScheduleActivity {
+                        activity_id: "fake_activity".to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                    vec![CompleteWorkflowExecution { result: None }.into()],
+                ),
+            ],
+        )
+        .await;
     }
 
     #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
@@ -665,60 +636,52 @@ mod test {
         let mut t = canned_histories::parallel_timer(timer_1_id, timer_2_id);
         let core = build_fake_core(wfid, &mut t, hist_batches);
 
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        assert_matches!(
-            res.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
-            }]
-        );
-        assert!(core.workflow_machines.exists(t.get_orig_run_id()));
-
-        let task_tok = res.task_token;
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![
-                StartTimer {
-                    timer_id: timer_1_id.to_string(),
-                    ..Default::default()
-                }
-                .into(),
-                StartTimer {
-                    timer_id: timer_2_id.to_string(),
-                    ..Default::default()
-                }
-                .into(),
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            false,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    vec![
+                        StartTimer {
+                            timer_id: timer_1_id.to_string(),
+                            ..Default::default()
+                        }
+                        .into(),
+                        StartTimer {
+                            timer_id: timer_2_id.to_string(),
+                            ..Default::default()
+                        }
+                        .into(),
+                    ],
+                ),
+                gen_assert_and_reply(
+                    &|res| {
+                        assert_matches!(
+                            res.jobs.as_slice(),
+                            [
+                                WfActivationJob {
+                                    variant: Some(wf_activation_job::Variant::FireTimer(
+                                        FireTimer { timer_id: t1_id }
+                                    )),
+                                },
+                                WfActivationJob {
+                                    variant: Some(wf_activation_job::Variant::FireTimer(
+                                        FireTimer { timer_id: t2_id }
+                                    )),
+                                }
+                            ] => {
+                                assert_eq!(t1_id, &timer_1_id);
+                                assert_eq!(t2_id, &timer_2_id);
+                            }
+                        );
+                    },
+                    vec![CompleteWorkflowExecution { result: None }.into()],
+                ),
             ],
-            task_tok,
-        ))
-        .await
-        .unwrap();
-
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        assert_matches!(
-            res.jobs.as_slice(),
-            [
-                WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::FireTimer(
-                        FireTimer { timer_id: t1_id }
-                    )),
-                },
-                WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::FireTimer(
-                        FireTimer { timer_id: t2_id }
-                    )),
-                }
-            ] => {
-                assert_eq!(t1_id, &timer_1_id);
-                assert_eq!(t2_id, &timer_2_id);
-            }
-        );
-        let task_tok = res.task_token;
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
-            task_tok,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
     }
 
     #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
@@ -731,54 +694,39 @@ mod test {
         let mut t = canned_histories::cancel_timer(timer_id, cancel_timer_id);
         let core = build_fake_core(wfid, &mut t, hist_batches);
 
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        assert_matches!(
-            res.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
-            }]
-        );
-        assert!(core.workflow_machines.exists(t.get_orig_run_id()));
-
-        let task_tok = res.task_token;
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![
-                StartTimer {
-                    timer_id: cancel_timer_id.to_string(),
-                    ..Default::default()
-                }
-                .into(),
-                StartTimer {
-                    timer_id: timer_id.to_string(),
-                    ..Default::default()
-                }
-                .into(),
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            false,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    vec![
+                        StartTimer {
+                            timer_id: cancel_timer_id.to_string(),
+                            ..Default::default()
+                        }
+                        .into(),
+                        StartTimer {
+                            timer_id: timer_id.to_string(),
+                            ..Default::default()
+                        }
+                        .into(),
+                    ],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::FireTimer(_)),
+                    vec![
+                        CancelTimer {
+                            timer_id: cancel_timer_id.to_string(),
+                        }
+                        .into(),
+                        CompleteWorkflowExecution { result: None }.into(),
+                    ],
+                ),
             ],
-            task_tok,
-        ))
-        .await
-        .unwrap();
-
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        assert_matches!(
-            res.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::FireTimer(_)),
-            }]
-        );
-        let task_tok = res.task_token;
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![
-                CancelTimer {
-                    timer_id: cancel_timer_id.to_string(),
-                }
-                .into(),
-                CompleteWorkflowExecution { result: None }.into(),
-            ],
-            task_tok,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
     }
 
     #[rstest(single_timer_setup(&[1]))]
@@ -802,55 +750,56 @@ mod test {
         let wfid = "fake_wf_id";
         let new_run_id = "86E39A5F-AE31-4626-BDFE-398EE072D156";
         let timer_1_id = "timer1";
+        let randomness_seed_from_start = AtomicU64::new(0);
 
         let mut t = canned_histories::workflow_fails_with_reset_after_timer(timer_1_id, new_run_id);
         let core = build_fake_core(wfid, &mut t, &[2]);
 
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        let randomness_seed_from_start: u64;
-        assert_matches!(
-            res.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::StartWorkflow(
-                StartWorkflow{randomness_seed, ..}
-                )),
-            }] => {
-            randomness_seed_from_start = *randomness_seed;
-            }
-        );
-        assert!(core.workflow_machines.exists(t.get_orig_run_id()));
-
-        let task_tok = res.task_token;
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![StartTimer {
-                timer_id: timer_1_id.to_string(),
-                ..Default::default()
-            }
-            .into()],
-            task_tok,
-        ))
-        .await
-        .unwrap();
-
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        assert_matches!(
-            res.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::FireTimer(_),),
-            },
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::UpdateRandomSeed(UpdateRandomSeed{randomness_seed})),
-            }] => {
-                assert_ne!(randomness_seed_from_start, *randomness_seed)
-            }
-        );
-        let task_tok = res.task_token;
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
-            task_tok,
-        ))
-        .await
-        .unwrap();
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            false,
+            &[
+                gen_assert_and_reply(
+                    &|res| {
+                        assert_matches!(
+                            res.jobs.as_slice(),
+                            [WfActivationJob {
+                                variant: Some(wf_activation_job::Variant::StartWorkflow(
+                                StartWorkflow{randomness_seed, ..}
+                                )),
+                            }] => {
+                            randomness_seed_from_start.store(*randomness_seed, Ordering::SeqCst);
+                            }
+                        );
+                    },
+                    vec![StartTimer {
+                        timer_id: timer_1_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    &|res| {
+                        assert_matches!(
+                            res.jobs.as_slice(),
+                            [WfActivationJob {
+                                variant: Some(wf_activation_job::Variant::FireTimer(_),),
+                            },
+                            WfActivationJob {
+                                variant: Some(wf_activation_job::Variant::UpdateRandomSeed(
+                                    UpdateRandomSeed{randomness_seed})),
+                            }] => {
+                                assert_ne!(randomness_seed_from_start.load(Ordering::SeqCst),
+                                          *randomness_seed)
+                            }
+                        )
+                    },
+                    vec![CompleteWorkflowExecution { result: None }.into()],
+                ),
+            ],
+        )
+        .await;
     }
 
     // The incremental version only does one batch here, because the workflow completes right away
@@ -868,32 +817,27 @@ mod test {
 
         let core = build_fake_core(wfid, &mut t, hist_batches);
 
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        assert_matches!(
-            res.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
-            }]
-        );
-
-        let task_tok = res.task_token;
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![
-                StartTimer {
-                    timer_id: cancel_timer_id.to_string(),
-                    ..Default::default()
-                }
-                .into(),
-                CancelTimer {
-                    timer_id: cancel_timer_id.to_string(),
-                }
-                .into(),
-                CompleteWorkflowExecution { result: None }.into(),
-            ],
-            task_tok,
-        ))
-        .await
-        .unwrap();
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            false,
+            &[gen_assert_and_reply(
+                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                vec![
+                    StartTimer {
+                        timer_id: cancel_timer_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into(),
+                    CancelTimer {
+                        timer_id: cancel_timer_id.to_string(),
+                    }
+                    .into(),
+                    CompleteWorkflowExecution { result: None }.into(),
+                ],
+            )],
+        )
+        .await;
     }
 
     #[rstest]
@@ -918,25 +862,18 @@ mod test {
             &core,
             TASK_Q,
             evict,
-            vec![
+            &[
                 gen_assert_and_reply(
-                    |_| {},
+                    &|_| {},
                     vec![StartTimer {
                         timer_id: timer_id.to_owned(),
                         ..Default::default()
                     }
                     .into()],
                 ),
-                gen_assert_and_fail(|_| {}),
+                gen_assert_and_fail(&|_| {}),
                 gen_assert_and_reply(
-                    |res| {
-                        assert_matches!(
-                            res.jobs.as_slice(),
-                            [WfActivationJob {
-                                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
-                            }]
-                        );
-                    },
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                     // Need to re-issue the start timer command (we are replaying)
                     vec![StartTimer {
                         timer_id: timer_id.to_string(),
@@ -945,14 +882,7 @@ mod test {
                     .into()],
                 ),
                 gen_assert_and_reply(
-                    |res| {
-                        assert_matches!(
-                            res.jobs.as_slice(),
-                            [WfActivationJob {
-                                variant: Some(wf_activation_job::Variant::FireTimer(_)),
-                            }]
-                        );
-                    },
+                    &job_assert!(wf_activation_job::Variant::FireTimer(_)),
                     vec![CompleteWorkflowExecution { result: None }.into()],
                 ),
             ],
@@ -969,31 +899,32 @@ mod test {
         let mut t = canned_histories::single_timer(timer_id);
         let core = build_fake_core(wfid, &mut t, hist_batches);
 
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![StartTimer {
-                timer_id: timer_id.to_string(),
-                ..Default::default()
-            }
-            .into()],
-            res.task_token,
-        ))
-        .await
-        .unwrap();
-
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![FailWorkflowExecution {
-                failure: Some(UserCodeFailure {
-                    message: "I'm ded".to_string(),
-                    ..Default::default()
-                }),
-            }
-            .into()],
-            res.task_token,
-        ))
-        .await
-        .unwrap();
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            false,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    vec![StartTimer {
+                        timer_id: timer_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::FireTimer(_)),
+                    vec![FailWorkflowExecution {
+                        failure: Some(UserCodeFailure {
+                            message: "I'm ded".to_string(),
+                            ..Default::default()
+                        }),
+                    }
+                    .into()],
+                ),
+            ],
+        )
+        .await;
     }
 
     #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
@@ -1004,23 +935,25 @@ mod test {
         let mut t = canned_histories::two_signals("sig1", "sig2");
         let core = build_fake_core(wfid, &mut t, hist_batches);
 
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        // Task is completed with no commands
-        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(vec![], res.task_token))
-            .await
-            .unwrap();
-
-        let res = core.poll_workflow_task(TASK_Q).await.unwrap();
-        assert_matches!(
-            res.jobs.as_slice(),
-            [
-                WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
-                },
-                WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
-                }
-            ]
-        );
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            false,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    // Task is completed with no commands
+                    vec![],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(
+                        wf_activation_job::Variant::SignalWorkflow(_),
+                        wf_activation_job::Variant::SignalWorkflow(_)
+                    ),
+                    vec![],
+                ),
+            ],
+        )
+        .await;
     }
 }

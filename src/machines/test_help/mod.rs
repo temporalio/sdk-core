@@ -77,18 +77,13 @@ pub(crate) fn build_fake_core(
 //  then we don't need to bother with the commands being issued and assertions, but keeping this
 //  probably has some value still to test without it getting in the way, too.
 
-type AsserterFn = Box<dyn Fn(&WfActivation) -> ()>;
-type AsserterWithReply = (AsserterFn, wf_activation_completion::Status);
-
-pub(crate) enum CoreInteraction {
-    AssertAndReply(AsserterWithReply),
-}
+type AsserterWithReply<'a> = (&'a dyn Fn(&WfActivation), wf_activation_completion::Status);
 
 pub(crate) async fn poll_and_reply<'a>(
     core: &'a FakeCore,
     task_queue: &'a str,
     evict_after_each_reply: bool,
-    expect_and_reply: Vec<CoreInteraction>,
+    expect_and_reply: &'a [AsserterWithReply<'a>],
 ) {
     let mut run_id = "".to_string();
     let mut evictions = 0;
@@ -99,7 +94,7 @@ pub(crate) async fn poll_and_reply<'a>(
 
         for interaction in expect_iter {
             match interaction {
-                CoreInteraction::AssertAndReply((asserter, reply)) => {
+                (asserter, reply) => {
                     let res = core.poll_workflow_task(task_queue).await.unwrap();
 
                     asserter(&res);
@@ -129,21 +124,21 @@ pub(crate) async fn poll_and_reply<'a>(
     }
 }
 
-pub(crate) fn gen_assert_and_reply(
-    asserter: impl Fn(&WfActivation) -> () + 'static,
+pub(crate) fn gen_assert_and_reply<'a>(
+    asserter: &'a dyn Fn(&WfActivation),
     reply_commands: Vec<workflow_command::Variant>,
-) -> CoreInteraction {
-    CoreInteraction::AssertAndReply((
-        Box::new(asserter),
+) -> AsserterWithReply<'a> {
+    (
+        asserter,
         workflow_completion::Success::from_cmds(reply_commands).into(),
-    ))
+    )
 }
 
-pub(crate) fn gen_assert_and_fail(
-    asserter: impl Fn(&WfActivation) -> () + 'static,
-) -> CoreInteraction {
-    CoreInteraction::AssertAndReply((
-        Box::new(asserter),
+pub(crate) fn gen_assert_and_fail<'a>(
+    asserter: &'a dyn Fn(&WfActivation),
+) -> AsserterWithReply<'a> {
+    (
+        asserter,
         workflow_completion::Failure {
             failure: Some(UserCodeFailure {
                 message: "Intentional test failure".to_string(),
@@ -151,7 +146,20 @@ pub(crate) fn gen_assert_and_fail(
             }),
         }
         .into(),
-    ))
+    )
 }
 
-// TODO make simple match macro for typical assert_matches case
+/// Generate asserts for [poll_and_reply] by passing patterns to match against the job list
+#[macro_export]
+macro_rules! job_assert {
+    ($($pat:pat),+) => {
+        |res| {
+            assert_matches!(
+                res.jobs.as_slice(),
+                [$(WfActivationJob {
+                    variant: Some($pat),
+                }),+]
+            );
+        }
+    };
+}
