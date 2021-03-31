@@ -14,8 +14,8 @@ use temporal_sdk_core::{
             WfActivationJob,
         },
         workflow_commands::{
-            CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution, ScheduleActivity,
-            StartTimer,
+            CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution, RequestCancelActivity,
+            ScheduleActivity, StartTimer,
         },
         workflow_completion::WfActivationCompletion,
     },
@@ -119,7 +119,7 @@ async fn activity_workflow() {
     let activity_id: String = rng.gen::<u32>().to_string();
     let task = core.poll_workflow_task(task_q).await.unwrap();
     // Complete workflow task and schedule activity
-    core.complete_workflow_task(activity_completion_req(task_q, &activity_id, task))
+    core.complete_workflow_task(schedule_activity_cmd(task_q, &activity_id, task))
         .await
         .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
@@ -177,7 +177,7 @@ async fn activity_non_retryable_failure() {
     let activity_id: String = rng.gen::<u32>().to_string();
     let task = core.poll_workflow_task(task_q).await.unwrap();
     // Complete workflow task and schedule activity
-    core.complete_workflow_task(activity_completion_req(task_q, &activity_id, task))
+    core.complete_workflow_task(schedule_activity_cmd(task_q, &activity_id, task))
         .await
         .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
@@ -241,7 +241,7 @@ async fn activity_retry() {
     let activity_id: String = rng.gen::<u32>().to_string();
     let task = core.poll_workflow_task(task_q).await.unwrap();
     // Complete workflow task and schedule activity
-    core.complete_workflow_task(activity_completion_req(task_q, &activity_id, task))
+    core.complete_workflow_task(schedule_activity_cmd(task_q, &activity_id, task))
         .await
         .unwrap();
     // Poll activity 1st time
@@ -313,7 +313,7 @@ async fn activity_retry() {
     .unwrap()
 }
 
-fn activity_completion_req(
+fn schedule_activity_cmd(
     task_q: &str,
     activity_id: &str,
     task: WfActivation,
@@ -333,6 +333,93 @@ fn activity_completion_req(
         .into()],
         task.task_token,
     )
+}
+fn schedule_activity_and_timer_cmds(
+    task_q: &str,
+    activity_id: &str,
+    timer_id: &str,
+    task: WfActivation,
+) -> WfActivationCompletion {
+    WfActivationCompletion::ok_from_cmds(
+        vec![
+            ScheduleActivity {
+                activity_id: activity_id.to_string(),
+                activity_type: "test_activity".to_string(),
+                namespace: NAMESPACE.to_owned(),
+                task_queue: task_q.to_owned(),
+                schedule_to_start_timeout: Some(Duration::from_secs(30).into()),
+                start_to_close_timeout: Some(Duration::from_secs(30).into()),
+                schedule_to_close_timeout: Some(Duration::from_secs(60).into()),
+                heartbeat_timeout: Some(Duration::from_secs(60).into()),
+                ..Default::default()
+            }
+            .into(),
+            StartTimer {
+                timer_id: timer_id.to_string(),
+                start_to_fire_timeout: Some(Duration::from_millis(50).into()),
+            }
+            .into(),
+        ],
+        task.task_token,
+    )
+}
+
+#[tokio::test]
+async fn activity_cancellation() {
+    let mut rng = rand::thread_rng();
+    let task_q_salt: u32 = rng.gen();
+    let task_q = &format!("activity_failed_workflow_{}", task_q_salt.to_string());
+    let core = get_integ_core().await;
+    let workflow_id: u32 = rng.gen();
+    create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
+    let activity_id: String = rng.gen::<u32>().to_string();
+    let timer_id: String = rng.gen::<u32>().to_string();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
+    // Complete workflow task and schedule activity and a timer that fires immediately
+    core.complete_workflow_task(schedule_activity_and_timer_cmds(
+        task_q,
+        &activity_id,
+        &timer_id,
+        task,
+    ))
+    .await
+    .unwrap();
+    // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to complete
+    // it in this test as activity is getting cancelled.
+    let task = dbg!(core.poll_activity_task(task_q).await.unwrap());
+    assert_matches!(
+        task.variant,
+        Some(act_task::Variant::Start(start_activity)) => {
+            assert_eq!(start_activity.activity_type, "test_activity".to_string())
+        }
+    );
+    // Poll workflow task and verify that activity has failed.
+    let task = core.poll_workflow_task(task_q).await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::FireTimer(
+                    FireTimer { timer_id: t_id }
+                )),
+            },
+        ] => {
+            assert_eq!(t_id, &timer_id);
+        }
+    );
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![
+            RequestCancelActivity {
+                activity_id,
+                ..Default::default()
+            }
+            .into(),
+            CompleteWorkflowExecution { result: None }.into(),
+        ],
+        task.task_token,
+    ))
+    .await
+    .unwrap()
 }
 
 #[tokio::test]

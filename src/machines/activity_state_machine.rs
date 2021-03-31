@@ -275,11 +275,17 @@ pub(super) struct ScheduleCommandCreated {}
 impl ScheduleCommandCreated {
     pub(super) fn on_activity_task_scheduled(
         self,
-        mut dat: SharedState,
+        dat: SharedState,
         scheduled_event_id: i64,
     ) -> ActivityMachineTransition {
-        dat.scheduled_event_id = scheduled_event_id;
-        ActivityMachineTransition::default::<ScheduledEventRecorded>()
+        ActivityMachineTransition::ok_shared(
+            vec![],
+            ScheduledEventRecorded::default(),
+            SharedState {
+                scheduled_event_id,
+                ..dat
+            },
+        )
     }
     pub(super) fn on_canceled(self, dat: SharedState) -> ActivityMachineTransition {
         let canceled_state = SharedState {
@@ -303,11 +309,17 @@ pub(super) struct ScheduledEventRecorded {}
 impl ScheduledEventRecorded {
     pub(super) fn on_task_started(
         self,
-        mut dat: SharedState,
+        dat: SharedState,
         started_event_id: i64,
     ) -> ActivityMachineTransition {
-        dat.started_event_id = started_event_id;
-        ActivityMachineTransition::default::<Started>()
+        ActivityMachineTransition::ok_shared(
+            vec![],
+            Started::default(),
+            SharedState {
+                started_event_id,
+                ..dat
+            },
+        )
     }
     pub(super) fn on_task_timed_out(self) -> ActivityMachineTransition {
         // notify_timed_out

@@ -101,12 +101,6 @@ message QuerySuccess {
     common.Payload response = 1;
 }
 
-/// Request cancellation of an activity from a workflow
-message RequestActivityCancellation {
-    string activity_id = 1;
-    string reason = 2;
-}
-
 /// Issued when the workflow completes successfully
 message CompleteWorkflowExecution {
     common.Payload result = 1;
