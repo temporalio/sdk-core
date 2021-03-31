@@ -538,7 +538,7 @@ fn notify_canceled_from_event(
                     activity_type: Some(ActivityType {
                         name: dat.attrs.activity_type.to_string(),
                     }),
-                    activity_id: dat.attrs.activity_id.to_string(),
+                    activity_id: dat.attrs.activity_id,
                     retry_state: RetryState::Unspecified as i32,
                 },
             )),
