@@ -93,30 +93,27 @@ pub(crate) async fn poll_and_reply<'a>(
         let expect_iter = expect_and_reply.iter();
 
         for interaction in expect_iter {
-            match interaction {
-                (asserter, reply) => {
-                    let res = core.poll_workflow_task(task_queue).await.unwrap();
+            let (asserter, reply) = interaction;
+            let res = core.poll_workflow_task(task_queue).await.unwrap();
 
-                    asserter(&res);
+            asserter(&res);
 
-                    let task_tok = res.task_token;
-                    if run_id.is_empty() {
-                        run_id = res.run_id;
-                    }
+            let task_tok = res.task_token;
+            if run_id.is_empty() {
+                run_id = res.run_id;
+            }
 
-                    core.complete_workflow_task(WfActivationCompletion::from_status(
-                        task_tok,
-                        reply.clone(),
-                    ))
-                    .await
-                    .unwrap();
+            core.complete_workflow_task(WfActivationCompletion::from_status(
+                task_tok,
+                reply.clone(),
+            ))
+            .await
+            .unwrap();
 
-                    if evict_after_each_reply && evictions < expected_evictions {
-                        core.evict_run(&run_id);
-                        evictions += 1;
-                        continue 'outer;
-                    }
-                }
+            if evict_after_each_reply && evictions < expected_evictions {
+                core.evict_run(&run_id);
+                evictions += 1;
+                continue 'outer;
             }
         }
 
@@ -124,19 +121,17 @@ pub(crate) async fn poll_and_reply<'a>(
     }
 }
 
-pub(crate) fn gen_assert_and_reply<'a>(
-    asserter: &'a dyn Fn(&WfActivation),
+pub(crate) fn gen_assert_and_reply(
+    asserter: &dyn Fn(&WfActivation),
     reply_commands: Vec<workflow_command::Variant>,
-) -> AsserterWithReply<'a> {
+) -> AsserterWithReply<'_> {
     (
         asserter,
         workflow_completion::Success::from_cmds(reply_commands).into(),
     )
 }
 
-pub(crate) fn gen_assert_and_fail<'a>(
-    asserter: &'a dyn Fn(&WfActivation),
-) -> AsserterWithReply<'a> {
+pub(crate) fn gen_assert_and_fail(asserter: &dyn Fn(&WfActivation)) -> AsserterWithReply<'_> {
     (
         asserter,
         workflow_completion::Failure {
