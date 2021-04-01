@@ -322,7 +322,10 @@ impl ScheduledEventRecorded {
         ActivityMachineTransition::default::<TimedOut>()
     }
     pub(super) fn on_canceled(self, dat: SharedState) -> ActivityMachineTransition {
-        create_request_cancel_activity_task_command(dat)
+        create_request_cancel_activity_task_command(
+            dat,
+            ScheduledActivityCancelCommandCreated::default().into(),
+        )
     }
 }
 
@@ -355,7 +358,10 @@ impl Started {
         ActivityMachineTransition::default::<TimedOut>()
     }
     pub(super) fn on_canceled(self, dat: SharedState) -> ActivityMachineTransition {
-        create_request_cancel_activity_task_command(dat)
+        create_request_cancel_activity_task_command(
+            dat,
+            StartedActivityCancelCommandCreated::default().into(),
+        )
     }
 }
 
@@ -478,6 +484,7 @@ pub(super) struct Canceled {}
 
 fn create_request_cancel_activity_task_command(
     dat: SharedState,
+    next_state: ActivityMachineState,
 ) -> TransitionResult<ActivityMachine> {
     // createRequestCancelActivityTaskCommand
     let cmd = Command {
@@ -492,7 +499,7 @@ fn create_request_cancel_activity_task_command(
     };
     ActivityMachineTransition::ok(
         vec![ActivityMachineCommand::RequestCancellation(cmd)],
-        ScheduledActivityCancelCommandCreated::default(),
+        next_state,
     )
 }
 
