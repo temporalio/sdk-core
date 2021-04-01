@@ -1,5 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
+use crate::protos::coresdk::workflow_activation::wf_activation_job::Variant;
 use crate::protos::coresdk::workflow_commands::{ActivityCancellationType, RequestCancelActivity};
 use crate::protos::coresdk::PayloadsExt;
 use crate::protos::temporal::api::common::v1::ActivityType;
@@ -17,7 +18,9 @@ use crate::{
         coresdk::{
             activity_result::{self as ar, activity_result, ActivityResult},
             activity_task,
-            workflow_activation::ResolveActivity,
+            workflow_activation::{
+                wf_activation_job, ResolveActivity, StartWorkflow, WfActivationJob,
+            },
         },
         temporal::api::{
             command::v1::Command,
@@ -233,14 +236,27 @@ impl TryFrom<CommandType> for ActivityMachineEvents {
 
 impl Cancellable for ActivityMachine {
     fn cancel(&mut self) -> Result<MachineResponse, MachineError<Self::Error>> {
-        Ok(
-            match self.on_event_mut(ActivityMachineEvents::Cancel)?.pop() {
-                Some(ActivityMachineCommand::RequestCancellation(cmd)) => {
-                    MachineResponse::IssueNewCommand(cmd)
-                }
-                x => panic!("Invalid cancel event response {:?}", x),
-            },
-        )
+        let mut vec = self.on_event_mut(ActivityMachineEvents::Cancel)?;
+        // TODO it could be possible to have multiple events, e.g. cancellation command and immediate activation, we should handle it.
+        if vec.len() != 1 {
+            unimplemented!()
+        }
+        Ok(match vec.pop() {
+            Some(ActivityMachineCommand::RequestCancellation(cmd)) => {
+                MachineResponse::IssueNewCommand(cmd)
+            }
+            Some(ActivityMachineCommand::Fail(failure)) => {
+                MachineResponse::PushWFJob(Variant::ResolveActivity(ResolveActivity {
+                    activity_id: self.shared_state.attrs.activity_id.clone(),
+                    result: Some(ActivityResult {
+                        status: Some(activity_result::Status::Failed(ar::Failure {
+                            failure: failure.map(Into::into),
+                        })),
+                    }),
+                }))
+            }
+            x => panic!("Invalid cancel event response {:?}", x),
+        })
     }
 
     fn was_cancelled_before_sent_to_server(&self) -> bool {
@@ -561,6 +577,7 @@ fn notify_canceled_from_event(
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::protos::coresdk::workflow_activation::WfActivation;
     use crate::{
         machines::{
             test_help::{CommandSender, TestHistoryBuilder, TestWorkflowDriver},
@@ -574,7 +591,7 @@ mod test {
 
     #[fixture]
     fn activity_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
-        let twd = activity_workflow_driver();
+        let twd = activity_workflow_driver("activity-id-1");
         let t = canned_histories::single_activity("activity-id-1");
         let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
@@ -588,7 +605,7 @@ mod test {
 
     #[fixture]
     fn activity_failure_hist() -> (TestHistoryBuilder, WorkflowMachines) {
-        let twd = activity_workflow_driver();
+        let twd = activity_workflow_driver("activity-id-1");
         let t = canned_histories::single_failed_activity("activity-id-1");
         let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
@@ -600,10 +617,10 @@ mod test {
         (t, state_machines)
     }
 
-    fn activity_workflow_driver() -> TestWorkflowDriver {
+    fn activity_workflow_driver(activity_id: &'static str) -> TestWorkflowDriver {
         TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
             let activity = ScheduleActivity {
-                activity_id: "activity-id-1".to_string(),
+                activity_id: activity_id.to_string(),
                 ..Default::default()
             };
             command_sink.activity(activity).await;
@@ -656,5 +673,56 @@ mod test {
             commands[0].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
+    }
+
+    #[test]
+    fn immediate_activity_cancelation() {
+        let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
+            let cancel_activity_future = cmd_sink.activity(ScheduleActivity {
+                activity_id: "activity-id-1".to_string(),
+                ..Default::default()
+            });
+            // Immediately cancel the activity
+            cmd_sink.cancel_activity("activity-id-1");
+            cancel_activity_future.await;
+
+            let complete = CompleteWorkflowExecution::default();
+            cmd_sink.send(complete.into());
+        });
+
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_workflow_execution_completed();
+
+        let mut state_machines = WorkflowMachines::new(
+            "wfid".to_string(),
+            "runid".to_string(),
+            Box::new(twd).into(),
+        );
+
+        let commands = t
+            .handle_workflow_task_take_cmds(&mut state_machines, None)
+            .unwrap();
+        assert_eq!(commands.len(), 0);
+        let activation = state_machines.get_wf_activation().unwrap();
+        assert_matches!(
+            activation.jobs.as_slice(),
+            [
+                WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
+                },
+                WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::ResolveActivity(
+                        ResolveActivity {
+                            activity_id,
+                            result: Some(ActivityResult {
+                                status: Some(activity_result::Status::Failed(_))
+                            })
+                        }
+                    )),
+                },
+            ]
+        )
     }
 }

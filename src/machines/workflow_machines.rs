@@ -586,6 +586,9 @@ impl WorkflowMachines {
                                 machine: m_key,
                             })
                         }
+                        MachineResponse::PushWFJob(j) => {
+                            self.drive_me.send_job(j);
+                        }
                         MachineResponse::NoOp => {}
                         v => {
                             return Err(WFMachinesError::UnexpectedMachineResponse(
