@@ -157,7 +157,7 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                 } else {
                     return Err(WFMachinesError::MalformedEvent(
                         e,
-                        "Activity completion attributes were unset".to_string(),
+                        "Activity failure attributes were unset".to_string(),
                     ));
                 }
             }
@@ -171,7 +171,7 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                 } else {
                     return Err(WFMachinesError::MalformedEvent(
                         e,
-                        "Activity cancelation attributes were unset".to_string(),
+                        "Activity cancellation attributes were unset".to_string(),
                     ));
                 }
             }
@@ -235,28 +235,28 @@ impl TryFrom<CommandType> for ActivityMachineEvents {
 }
 
 impl Cancellable for ActivityMachine {
-    fn cancel(&mut self) -> Result<MachineResponse, MachineError<Self::Error>> {
-        let mut vec = self.on_event_mut(ActivityMachineEvents::Cancel)?;
-        // TODO it could be possible to have multiple events, e.g. cancellation command and immediate activation, we should handle it.
-        if vec.len() != 1 {
-            unimplemented!()
-        }
-        Ok(match vec.pop() {
-            Some(ActivityMachineCommand::RequestCancellation(cmd)) => {
-                MachineResponse::IssueNewCommand(cmd)
-            }
-            Some(ActivityMachineCommand::Fail(failure)) => {
-                MachineResponse::PushWFJob(Variant::ResolveActivity(ResolveActivity {
-                    activity_id: self.shared_state.attrs.activity_id.clone(),
-                    result: Some(ActivityResult {
-                        status: Some(activity_result::Status::Failed(ar::Failure {
-                            failure: failure.map(Into::into),
-                        })),
-                    }),
-                }))
-            }
-            x => panic!("Invalid cancel event response {:?}", x),
-        })
+    fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
+        let vec = self.on_event_mut(ActivityMachineEvents::Cancel)?;
+        let res = vec
+            .into_iter()
+            .map(|amc| match amc {
+                ActivityMachineCommand::RequestCancellation(cmd) => {
+                    MachineResponse::IssueNewCommand(cmd)
+                }
+                ActivityMachineCommand::Fail(failure) => {
+                    MachineResponse::PushWFJob(Variant::ResolveActivity(ResolveActivity {
+                        activity_id: self.shared_state.attrs.activity_id.clone(),
+                        result: Some(ActivityResult {
+                            status: Some(activity_result::Status::Failed(ar::Failure {
+                                failure: failure.map(Into::into),
+                            })),
+                        }),
+                    }))
+                }
+                x => panic!("Invalid cancel event response {:?}", x),
+            })
+            .collect();
+        Ok(res)
     }
 
     fn was_cancelled_before_sent_to_server(&self) -> bool {

@@ -108,7 +108,7 @@ trait TemporalStateMachine: CheckStateMachineInFinal + Send {
     ) -> Result<Vec<MachineResponse>, WFMachinesError>;
 
     /// Attempt to cancel the command associated with this state machine, if it is cancellable
-    fn cancel(&mut self) -> Result<MachineResponse, WFMachinesError>;
+    fn cancel(&mut self) -> Result<Vec<MachineResponse>, WFMachinesError>;
 
     /// Should return true if the command was cancelled before we sent it to the server. Always
     /// returns false for non-cancellable machines
@@ -187,7 +187,7 @@ where
         }
     }
 
-    fn cancel(&mut self) -> Result<MachineResponse, WFMachinesError> {
+    fn cancel(&mut self) -> Result<Vec<MachineResponse>, WFMachinesError> {
         let res = self.cancel();
         res.map_err(|e| match e {
             MachineError::InvalidTransition => {
@@ -238,7 +238,7 @@ trait Cancellable: StateMachine {
     /// # Panics
     /// * If the machine is not cancellable. It's a logic error on our part to call it on such
     ///   machines.
-    fn cancel(&mut self) -> Result<MachineResponse, MachineError<Self::Error>> {
+    fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
         // It's a logic error on our part if this is ever called on a machine that can't actually
         // be cancelled
         panic!("Machine {} cannot be cancelled", self.name())

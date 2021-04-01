@@ -108,7 +108,6 @@ pub enum MachineResponse {
     UpdateRunIdOnWorkflowReset {
         run_id: String,
     },
-    NoOp,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -529,7 +528,6 @@ impl WorkflowMachines {
                             },
                         ));
                 }
-                MachineResponse::NoOp => (),
                 MachineResponse::IssueNewCommand(_) => {
                     panic!("Issue new command machine response not expected here")
                 }
@@ -552,19 +550,21 @@ impl WorkflowMachines {
                     let m_key =
                         self.get_machine_key(&CommandID::Timer(attrs.timer_id.to_owned()))?;
                     let res = self.machine_mut(m_key).cancel()?;
-                    match res {
-                        MachineResponse::IssueNewCommand(c) => {
-                            self.current_wf_task_commands.push_back(CommandAndMachine {
-                                command: c,
-                                machine: m_key,
-                            })
-                        }
-                        MachineResponse::NoOp => {}
-                        v => {
-                            return Err(WFMachinesError::UnexpectedMachineResponse(
-                                v,
-                                "When cancelling timer",
-                            ));
+                    // TODO: Dedupe with req cancel activity
+                    for r in res {
+                        match r {
+                            MachineResponse::IssueNewCommand(c) => {
+                                self.current_wf_task_commands.push_back(CommandAndMachine {
+                                    command: c,
+                                    machine: m_key,
+                                })
+                            }
+                            v => {
+                                return Err(WFMachinesError::UnexpectedMachineResponse(
+                                    v,
+                                    "When cancelling timer",
+                                ));
+                            }
                         }
                     }
                 }
@@ -579,22 +579,23 @@ impl WorkflowMachines {
                     let m_key =
                         self.get_machine_key(&CommandID::Activity(attrs.activity_id.to_owned()))?;
                     let res = self.machine_mut(m_key).cancel()?;
-                    match res {
-                        MachineResponse::IssueNewCommand(c) => {
-                            self.current_wf_task_commands.push_back(CommandAndMachine {
-                                command: c,
-                                machine: m_key,
-                            })
-                        }
-                        MachineResponse::PushWFJob(j) => {
-                            self.drive_me.send_job(j);
-                        }
-                        MachineResponse::NoOp => {}
-                        v => {
-                            return Err(WFMachinesError::UnexpectedMachineResponse(
-                                v,
-                                "When cancelling activity",
-                            ));
+                    for r in res {
+                        match r {
+                            MachineResponse::IssueNewCommand(c) => {
+                                self.current_wf_task_commands.push_back(CommandAndMachine {
+                                    command: c,
+                                    machine: m_key,
+                                })
+                            }
+                            MachineResponse::PushWFJob(j) => {
+                                self.drive_me.send_job(j);
+                            }
+                            v => {
+                                return Err(WFMachinesError::UnexpectedMachineResponse(
+                                    v,
+                                    "When cancelling activity",
+                                ));
+                            }
                         }
                     }
                 }

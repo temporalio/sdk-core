@@ -245,10 +245,12 @@ impl WFMachinesAdapter for TimerMachine {
 }
 
 impl Cancellable for TimerMachine {
-    fn cancel(&mut self) -> Result<MachineResponse, MachineError<Self::Error>> {
+    fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
         Ok(match self.on_event_mut(TimerMachineEvents::Cancel)?.pop() {
-            Some(TimerMachineCommand::IssueCancelCmd(cmd)) => MachineResponse::IssueNewCommand(cmd),
-            Some(TimerMachineCommand::Canceled) => MachineResponse::NoOp,
+            Some(TimerMachineCommand::IssueCancelCmd(cmd)) => {
+                vec![MachineResponse::IssueNewCommand(cmd)]
+            }
+            Some(TimerMachineCommand::Canceled) => vec![],
             x => panic!("Invalid cancel event response {:?}", x),
         })
     }

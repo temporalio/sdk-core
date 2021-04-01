@@ -384,8 +384,8 @@ async fn activity_cancellation() {
     ))
     .await
     .unwrap();
-    // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to complete
-    // it in this test as activity is getting cancelled.
+    // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
+    // complete it in this test as activity is try-cancelled.
     let activity_task = dbg!(core.poll_activity_task(task_q).await.unwrap());
     assert_matches!(
         activity_task.variant,
