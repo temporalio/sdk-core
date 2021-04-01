@@ -447,6 +447,8 @@ impl WorkflowMachines {
         let results = self.drive_me.fetch_workflow_iteration_output();
         self.handle_driven_results(results)?;
         self.prepare_commands()?;
+        // TODO: Handling driven results might also mean that we need to push a new pending
+        //   activation
         Ok(())
     }
 
@@ -579,6 +581,7 @@ impl WorkflowMachines {
                     let m_key =
                         self.get_machine_key(&CommandID::Activity(attrs.activity_id.to_owned()))?;
                     let res = self.machine_mut(m_key).cancel()?;
+                    debug!(machine_responses = ?res, "Req cancel activity responses");
                     for r in res {
                         match r {
                             MachineResponse::IssueNewCommand(c) => {

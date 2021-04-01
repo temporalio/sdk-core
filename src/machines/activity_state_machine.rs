@@ -127,6 +127,25 @@ impl ActivityMachine {
         };
         (s, cmd)
     }
+
+    fn machine_responses_from_cancel_request(&self, cancel_cmd: Command) -> Vec<MachineResponse> {
+        let mut r = vec![MachineResponse::IssueNewCommand(cancel_cmd)];
+        if self.shared_state.cancellation_type
+            != ActivityCancellationType::WaitCancellationCompleted
+        {
+            r.push(MachineResponse::PushWFJob(Variant::ResolveActivity(
+                ResolveActivity {
+                    activity_id: self.shared_state.attrs.activity_id.clone(),
+                    result: Some(ActivityResult {
+                        status: Some(activity_result::Status::Canceled(ar::Cancelation {
+                            details: None,
+                        })),
+                    }),
+                },
+            )))
+        }
+        r
+    }
 }
 
 impl TryFrom<HistoryEvent> for ActivityMachineEvents {
@@ -206,17 +225,21 @@ impl WFMachinesAdapter for ActivityMachine {
                 }
                 .into()]
             }
-            ActivityMachineCommand::Fail(failure) => vec![ResolveActivity {
-                activity_id: self.shared_state.attrs.activity_id.clone(),
-                result: Some(ActivityResult {
-                    status: Some(activity_result::Status::Failed(ar::Failure {
-                        failure: failure.map(Into::into),
-                    })),
-                }),
+            ActivityMachineCommand::Fail(failure) => {
+                warn!("I'm a doin' a failure!");
+                vec![ResolveActivity {
+                    activity_id: self.shared_state.attrs.activity_id.clone(),
+                    result: Some(ActivityResult {
+                        status: Some(activity_result::Status::Failed(ar::Failure {
+                            failure: failure.map(Into::into),
+                        })),
+                    }),
+                }
+                .into()]
             }
-            .into()],
             ActivityMachineCommand::RequestCancellation(c) => {
-                vec![MachineResponse::IssueNewCommand(c)]
+                warn!("I'm a requesting a cancel!");
+                self.machine_responses_from_cancel_request(c)
             }
         })
     }
@@ -239,19 +262,23 @@ impl Cancellable for ActivityMachine {
         let vec = self.on_event_mut(ActivityMachineEvents::Cancel)?;
         let res = vec
             .into_iter()
-            .map(|amc| match amc {
+            .flat_map(|amc| match amc {
                 ActivityMachineCommand::RequestCancellation(cmd) => {
-                    MachineResponse::IssueNewCommand(cmd)
+                    warn!("Request cancel from cancel");
+                    self.machine_responses_from_cancel_request(cmd)
                 }
                 ActivityMachineCommand::Fail(failure) => {
-                    MachineResponse::PushWFJob(Variant::ResolveActivity(ResolveActivity {
-                        activity_id: self.shared_state.attrs.activity_id.clone(),
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Failed(ar::Failure {
-                                failure: failure.map(Into::into),
-                            })),
-                        }),
-                    }))
+                    warn!("fail from cancel");
+                    vec![MachineResponse::PushWFJob(Variant::ResolveActivity(
+                        ResolveActivity {
+                            activity_id: self.shared_state.attrs.activity_id.clone(),
+                            result: Some(ActivityResult {
+                                status: Some(activity_result::Status::Failed(ar::Failure {
+                                    failure: failure.map(Into::into),
+                                })),
+                            }),
+                        },
+                    ))]
                 }
                 x => panic!("Invalid cancel event response {:?}", x),
             })

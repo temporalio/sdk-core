@@ -19,8 +19,8 @@ use temporal_sdk_core::{
         },
         workflow_completion::WfActivationCompletion,
     },
-    CompleteWfError, Core, CoreInitOptions, PollWfError, ServerGatewayApis, ServerGatewayOptions,
-    Url,
+    tracing_init, CompleteWfError, Core, CoreInitOptions, PollWfError, ServerGatewayApis,
+    ServerGatewayOptions, Url,
 };
 
 // TODO: These tests can get broken permanently if they break one time and the server is not
@@ -366,6 +366,8 @@ fn schedule_activity_and_timer_cmds(
 
 #[tokio::test]
 async fn activity_cancellation() {
+    tracing_init();
+
     let mut rng = rand::thread_rng();
     let task_q_salt: u32 = rng.gen();
     let task_q = &format!("activity_failed_workflow_{}", task_q_salt.to_string());
@@ -386,7 +388,7 @@ async fn activity_cancellation() {
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
     // complete it in this test as activity is try-cancelled.
-    let activity_task = dbg!(core.poll_activity_task(task_q).await.unwrap());
+    let activity_task = core.poll_activity_task(task_q).await.unwrap();
     assert_matches!(
         activity_task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -417,16 +419,16 @@ async fn activity_cancellation() {
     ))
     .await
     .unwrap();
-    core.complete_activity_task(ActivityTaskCompletion {
-        task_token: activity_task.task_token,
-        result: Some(ActivityResult {
-            status: Some(activity_result::activity_result::Status::Canceled(
-                activity_result::Cancelation { details: None },
-            )),
-        }),
-    })
-    .await
-    .unwrap();
+    // core.complete_activity_task(ActivityTaskCompletion {
+    //     task_token: activity_task.task_token,
+    //     result: Some(ActivityResult {
+    //         status: Some(activity_result::activity_result::Status::Canceled(
+    //             activity_result::Cancelation { details: None },
+    //         )),
+    //     }),
+    // })
+    // .await
+    // .unwrap();
     let task = core.poll_workflow_task(task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],

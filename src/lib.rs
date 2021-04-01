@@ -391,6 +391,12 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         // We only actually want to send commands back to the server if there are
         // no more pending activations -- in other words the lang SDK has caught
         // up on replay.
+        // TODO: This may no longer be true. In the activity abandon/trycancel case, we need a new
+        //   activation to resolve the activity, but we also need to pump this command out. Can
+        //   probably deal with this by having `push_lang_commands` return (from deep below) a
+        //   signal that a new PA should be enqueued *after* sending out commands, but then it
+        //   somehow needs to be replay aware (maybe by checking there weren't already any PAs).
+        //  That could be hard. Alternatively, perhaps we just buffer the returned commands
         if !self.pending_activations.has_pending(&run_id) {
             self.server_gateway
                 .complete_workflow_task(task_token, commands)
