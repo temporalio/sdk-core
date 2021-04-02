@@ -340,7 +340,7 @@ impl ScheduleCommandCreated {
             ActivityCancellationType::Abandon => {
                 ActivityMachineTransition::ok_shared(vec![], Canceled::default(), canceled_state)
             }
-            _ => notify_canceled(canceled_state, Canceled::default().into()),
+            _ => notify_canceled(canceled_state, None, Canceled::default().into()),
         }
     }
 }
@@ -421,9 +421,11 @@ impl ScheduledActivityCancelCommandCreated {
     ) -> ActivityMachineTransition {
         // notifyCanceledIfTryCancel
         match dat.cancellation_type {
-            ActivityCancellationType::TryCancel => {
-                notify_canceled(dat, ScheduledActivityCancelCommandCreated::default().into())
-            }
+            ActivityCancellationType::TryCancel => notify_canceled(
+                dat,
+                None,
+                ScheduledActivityCancelCommandCreated::default().into(),
+            ),
             _ => ActivityMachineTransition::default::<ScheduledActivityCancelCommandCreated>(),
         }
     }
@@ -439,7 +441,7 @@ impl ScheduledActivityCancelEventRecorded {
         _attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition {
         // notify_canceled
-        notify_canceled(dat, Canceled::default().into())
+        notify_canceled(dat, None, Canceled::default().into())
     }
 
     pub(super) fn on_activity_task_timed_out(self) -> ActivityMachineTransition {
@@ -464,9 +466,11 @@ impl StartedActivityCancelCommandCreated {
     ) -> ActivityMachineTransition {
         // notifyCanceledIfTryCancel
         match dat.cancellation_type {
-            ActivityCancellationType::TryCancel => {
-                notify_canceled(dat, StartedActivityCancelEventRecorded::default().into())
-            }
+            ActivityCancellationType::TryCancel => notify_canceled(
+                dat,
+                None,
+                StartedActivityCancelEventRecorded::default().into(),
+            ),
             _ => ActivityMachineTransition::default::<StartedActivityCancelEventRecorded>(),
         }
     }
@@ -506,7 +510,12 @@ impl StartedActivityCancelEventRecorded {
         attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition {
         // notifyCancellationFromEvent
-        notify_canceled_from_event(dat, attrs)
+        match dat.cancellation_type {
+            ActivityCancellationType::WaitCancellationCompleted => {
+                notify_canceled(dat, Some(attrs), Canceled::default().into())
+            }
+            _ => ActivityMachineTransition::ok(vec![], Canceled::default()),
+        }
     }
 }
 
@@ -551,8 +560,13 @@ fn create_request_cancel_activity_task_command(
 
 fn notify_canceled(
     dat: SharedState,
+    canceled_event: Option<ActivityTaskCanceledEventAttributes>,
     next_state: ActivityMachineState,
 ) -> TransitionResult<ActivityMachine> {
+    let (scheduled_event_id, started_event_id) = match canceled_event {
+        None => (dat.scheduled_event_id, dat.started_event_id),
+        Some(e) => (e.scheduled_event_id, e.scheduled_event_id),
+    };
     let cancelled_failure = Failure {
         source: "CoreSDK".to_string(),
         failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
@@ -565,8 +579,8 @@ fn notify_canceled(
         activity_type: Some(ActivityType {
             name: dat.attrs.activity_type.to_string(),
         }),
-        scheduled_event_id: dat.scheduled_event_id,
-        started_event_id: dat.started_event_id,
+        scheduled_event_id,
+        started_event_id,
         identity: "workflow".to_string(),
         retry_state: RetryState::Unspecified as i32,
     };
@@ -581,33 +595,6 @@ fn notify_canceled(
         }))],
         next_state,
         dat,
-    )
-}
-
-fn notify_canceled_from_event(
-    dat: SharedState,
-    attrs: ActivityTaskCanceledEventAttributes,
-) -> TransitionResult<ActivityMachine> {
-    ActivityMachineTransition::ok(
-        vec![ActivityMachineCommand::Fail(Some(Failure {
-            message: "Activity canceled".to_string(),
-            source: "CoreSDK".to_string(),
-            stack_trace: "".to_string(),
-            cause: None,
-            failure_info: Some(failure::FailureInfo::ActivityFailureInfo(
-                ActivityFailureInfo {
-                    scheduled_event_id: attrs.scheduled_event_id,
-                    started_event_id: attrs.started_event_id,
-                    identity: "".to_string(), // TODO ?
-                    activity_type: Some(ActivityType {
-                        name: dat.attrs.activity_type.to_string(),
-                    }),
-                    activity_id: dat.attrs.activity_id,
-                    retry_state: RetryState::Unspecified as i32,
-                },
-            )),
-        }))],
-        Canceled::default(),
     )
 }
 

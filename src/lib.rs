@@ -522,6 +522,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::protos::coresdk::workflow_commands::RequestCancelActivity;
     use crate::{
         machines::test_help::{
             build_fake_core, gen_assert_and_fail, gen_assert_and_reply, poll_and_reply, FakeCore,
@@ -729,6 +730,46 @@ mod test {
                         .into(),
                         CompleteWorkflowExecution { result: None }.into(),
                     ],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[rstest(hist_batches, case::incremental(&[1, 2, 3]), case::replay(&[3]))]
+    #[tokio::test]
+    async fn activity_cancel_test_across_wf_bridge(hist_batches: &[usize]) {
+        let wfid = "fake_wf_id";
+        let activity_id = "fake_activity";
+        let signal_id = "signal";
+
+        let mut t = canned_histories::cancel_scheduled_activity(activity_id, signal_id);
+        let core = build_fake_core(wfid, &mut t, hist_batches);
+
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            false,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    vec![ScheduleActivity {
+                        activity_id: activity_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                    vec![RequestCancelActivity {
+                        activity_id: activity_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                    vec![CompleteWorkflowExecution { result: None }.into()],
                 ),
             ],
         )
