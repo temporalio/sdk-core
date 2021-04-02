@@ -6,7 +6,10 @@ use crate::protos::coresdk::PayloadsExt;
 use crate::protos::temporal::api::common::v1::ActivityType;
 use crate::protos::temporal::api::enums::v1::RetryState;
 use crate::protos::temporal::api::enums::v1::RetryState::CancelRequested;
-use crate::protos::temporal::api::failure::v1::{failure, ActivityFailureInfo, Failure};
+use crate::protos::temporal::api::failure::v1::failure::FailureInfo;
+use crate::protos::temporal::api::failure::v1::{
+    failure, ActivityFailureInfo, CanceledFailureInfo, Failure,
+};
 use crate::protos::temporal::api::history::v1::ActivityTaskCanceledEventAttributes;
 use crate::{
     machines::{
@@ -550,24 +553,31 @@ fn notify_canceled(
     dat: SharedState,
     next_state: ActivityMachineState,
 ) -> TransitionResult<ActivityMachine> {
+    let cancelled_failure = Failure {
+        source: "CoreSDK".to_string(),
+        failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
+            details: None,
+        })),
+        ..Default::default()
+    };
+    let activity_failure_info = ActivityFailureInfo {
+        activity_id: dat.attrs.activity_id.to_string(),
+        activity_type: Some(ActivityType {
+            name: dat.attrs.activity_type.to_string(),
+        }),
+        scheduled_event_id: dat.scheduled_event_id,
+        started_event_id: dat.started_event_id,
+        identity: "workflow".to_string(),
+        retry_state: RetryState::Unspecified as i32,
+    };
     ActivityMachineTransition::ok_shared(
         vec![ActivityMachineCommand::Fail(Some(Failure {
             message: "Activity canceled".to_string(),
-            source: "CoreSDK".to_string(),
-            stack_trace: "".to_string(),
-            cause: None,
+            cause: Some(Box::new(cancelled_failure)),
             failure_info: Some(failure::FailureInfo::ActivityFailureInfo(
-                ActivityFailureInfo {
-                    scheduled_event_id: dat.scheduled_event_id,
-                    started_event_id: dat.started_event_id,
-                    identity: "workflow".to_string(),
-                    activity_type: Some(ActivityType {
-                        name: dat.attrs.activity_type.to_string(),
-                    }),
-                    activity_id: dat.attrs.activity_id.to_string(),
-                    retry_state: RetryState::Unspecified as i32,
-                },
+                activity_failure_info,
             )),
+            ..Default::default()
         }))],
         next_state,
         dat,
