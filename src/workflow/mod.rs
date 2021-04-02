@@ -94,6 +94,10 @@ impl NextWfActivation {
         a.task_token = task_token;
         a
     }
+
+    pub(crate) fn get_run_id(&self) -> &str {
+        &self.activation.run_id
+    }
 }
 
 impl WorkflowManager {

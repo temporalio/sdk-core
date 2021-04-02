@@ -30,12 +30,14 @@ pub mod coresdk {
         include!("coresdk.workflow_commands.rs");
     }
 
-    use crate::protos::coresdk::activity_result::ActivityResult;
     use crate::protos::{
         coresdk::{
+            activity_result::ActivityResult,
             activity_task::ActivityTask,
             common::{Payload, UserCodeFailure},
             workflow_activation::SignalWorkflow,
+            workflow_commands::workflow_command::Variant,
+            workflow_completion::Success,
         },
         temporal::api::{
             common::v1::{Payloads, WorkflowExecution},
@@ -64,18 +66,25 @@ pub mod coresdk {
         }
     }
 
-    impl WfActivationCompletion {
-        pub fn ok_from_cmds(cmds: Vec<workflow_command::Variant>, task_token: Vec<u8>) -> Self {
+    impl Success {
+        pub fn from_cmds(cmds: Vec<Variant>) -> Self {
             let cmds: Vec<_> = cmds
                 .into_iter()
                 .map(|c| WorkflowCommand { variant: Some(c) })
                 .collect();
-            let success: workflow_completion::Success = cmds.into();
+            cmds.into()
+        }
+    }
+
+    impl WfActivationCompletion {
+        pub fn ok_from_cmds(cmds: Vec<workflow_command::Variant>, task_token: Vec<u8>) -> Self {
+            let success = Success::from_cmds(cmds);
             Self {
                 task_token,
                 status: Some(wf_activation_completion::Status::Successful(success)),
             }
         }
+
         pub fn fail(task_token: Vec<u8>, failure: UserCodeFailure) -> Self {
             Self {
                 task_token,
@@ -84,6 +93,13 @@ pub mod coresdk {
                         failure: Some(failure),
                     },
                 )),
+            }
+        }
+
+        pub fn from_status(task_token: Vec<u8>, status: wf_activation_completion::Status) -> Self {
+            Self {
+                task_token,
+                status: Some(status),
             }
         }
     }

@@ -28,6 +28,7 @@ pub struct TestHistoryBuilder {
     workflow_task_scheduled_event_id: i64,
     previous_started_event_id: i64,
     previous_task_completed_id: i64,
+    original_run_id: String,
 }
 
 impl TestHistoryBuilder {
@@ -159,6 +160,10 @@ impl TestHistoryBuilder {
         Ok(wf_machines.get_commands())
     }
 
+    pub fn get_orig_run_id(&self) -> &str {
+        &self.original_run_id
+    }
+
     fn handle_workflow_task(
         &self,
         wf_machines: &mut WorkflowMachines,
@@ -186,6 +191,15 @@ impl TestHistoryBuilder {
             event_time: Some(SystemTime::now().into()),
             attributes: Some(attribs),
             ..Default::default()
+        };
+        if let Some(Attributes::WorkflowExecutionStartedEventAttributes(
+            WorkflowExecutionStartedEventAttributes {
+                original_execution_run_id,
+                ..
+            },
+        )) = &evt.attributes
+        {
+            self.original_run_id = original_execution_run_id.to_owned();
         };
         self.events.push(evt);
     }
