@@ -30,9 +30,10 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
+use crate::workflow::PushCommandsResult;
 use crate::{
     errors::{ShutdownErr, WorkflowUpdateError},
-    machines::{EmptyWorkflowCommandErr, ProtoCommand, WFCommand},
+    machines::{EmptyWorkflowCommandErr, WFCommand},
     pending_activations::{PendingActivation, PendingActivations},
     protos::{
         coresdk::{
@@ -403,7 +404,13 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
                     .to_owned(),
                 completion: None,
             })?;
-        let commands = self.push_lang_commands(&run_id, cmds)?;
+        let push_result = self.push_lang_commands(&run_id, cmds)?;
+        if push_result.has_new_lang_jobs {
+            self.pending_activations.push(PendingActivation {
+                run_id: run_id.to_string(),
+                task_token: task_token.clone(),
+            });
+        }
         // We only actually want to send commands back to the server if there are
         // no more pending activations -- in other words the lang SDK has caught
         // up on replay.
@@ -415,7 +422,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         //  That could be hard. Alternatively, perhaps we just buffer the returned commands
         if !self.pending_activations.has_pending(&run_id) {
             self.server_gateway
-                .complete_workflow_task(task_token, commands)
+                .complete_workflow_task(task_token, push_result.server_commands)
                 .await
                 .map_err(|ts| {
                     if ts.code() == tonic::Code::InvalidArgument
@@ -490,7 +497,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         &self,
         run_id: &str,
         cmds: Vec<WFCommand>,
-    ) -> Result<Vec<ProtoCommand>, WorkflowUpdateError> {
+    ) -> Result<PushCommandsResult, WorkflowUpdateError> {
         self.access_wf_machine(run_id, move |mgr| mgr.push_commands(cmds))
     }
 
@@ -522,7 +529,9 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::protos::coresdk::workflow_commands::RequestCancelActivity;
+    use crate::protos::coresdk::workflow_commands::{
+        ActivityCancellationType, RequestCancelActivity,
+    };
     use crate::{
         machines::test_help::{
             build_fake_core, gen_assert_and_fail, gen_assert_and_reply, poll_and_reply, FakeCore,
@@ -736,9 +745,9 @@ mod test {
         .await;
     }
 
-    #[rstest(hist_batches, case::incremental(&[1, 2, 3]), case::replay(&[3]))]
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
     #[tokio::test]
-    async fn activity_cancel_test_across_wf_bridge(hist_batches: &[usize]) {
+    async fn scheduled_activity_cancellation_try_cancel(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let activity_id = "fake_activity";
         let signal_id = "signal";
@@ -755,6 +764,7 @@ mod test {
                     &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                     vec![ScheduleActivity {
                         activity_id: activity_id.to_string(),
+                        cancellation_type: ActivityCancellationType::TryCancel as i32,
                         ..Default::default()
                     }
                     .into()],
@@ -767,6 +777,58 @@ mod test {
                     }
                     .into()],
                 ),
+                // Activity is getting resolved right away as we are in the TryCancel mode.
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                    vec![CompleteWorkflowExecution { result: None }.into()],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[rstest(hist_batches, case::incremental(&[1, 2, 3, 4]), case::replay(&[4]))]
+    #[tokio::test]
+    async fn scheduled_activity_cancellation_wait_for_cancellation(hist_batches: &[usize]) {
+        let wfid = "fake_wf_id";
+        let activity_id = "fake_activity";
+        let signal_id = "signal";
+
+        let mut t = canned_histories::cancel_scheduled_activity_with_activity_task_cancel(
+            activity_id,
+            signal_id,
+        );
+        let core = build_fake_core(wfid, &mut t, hist_batches);
+
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            false,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    vec![ScheduleActivity {
+                        activity_id: activity_id.to_string(),
+                        cancellation_type: ActivityCancellationType::WaitCancellationCompleted
+                            as i32,
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                    vec![RequestCancelActivity {
+                        activity_id: activity_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                // Making sure that activity is not resolved until it's cancelled.
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                    vec![],
+                ),
+                // Now ActivityTaskCanceled has been processed and activity can be resolved.
                 gen_assert_and_reply(
                     &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
                     vec![CompleteWorkflowExecution { result: None }.into()],

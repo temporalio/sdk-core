@@ -3,7 +3,7 @@ use crate::protos::temporal::api::common::v1::Payload;
 use crate::protos::temporal::api::enums::v1::{EventType, WorkflowTaskFailedCause};
 use crate::protos::temporal::api::failure::v1::Failure;
 use crate::protos::temporal::api::history::v1::{
-    history_event, ActivityTaskCancelRequestedEventAttributes,
+    history_event, ActivityTaskCancelRequestedEventAttributes, ActivityTaskCanceledEventAttributes,
     ActivityTaskCompletedEventAttributes, ActivityTaskFailedEventAttributes,
     ActivityTaskScheduledEventAttributes, ActivityTaskStartedEventAttributes,
     TimerCanceledEventAttributes, TimerFiredEventAttributes,
@@ -264,8 +264,8 @@ pub fn single_failed_activity(activity_id: &str) -> TestHistoryBuilder {
 /// 8: EVENT_TYPE_WORKFLOW_TASK_STARTED
 /// 9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
 /// 10: EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED
-/// 11: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-/// 12: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 12: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 13: EVENT_TYPE_WORKFLOW_TASK_STARTED
 pub fn cancel_scheduled_activity(activity_id: &str, signal_id: &str) -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -302,6 +302,78 @@ pub fn cancel_scheduled_activity(activity_id: &str, signal_id: &str) -> TestHist
     t
 }
 
+/// 1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+/// 2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 5: EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+/// 6: EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED
+/// 7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 10: EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED
+/// 11: EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED
+/// 12: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 13: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 14: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 15: EVENT_TYPE_ACTIVITY_TASK_CANCELED
+/// 16: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 17: EVENT_TYPE_WORKFLOW_TASK_STARTED
+pub fn cancel_scheduled_activity_with_activity_task_cancel(
+    activity_id: &str,
+    signal_id: &str,
+) -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let scheduled_event_id = t.add_get_event_id(
+        EventType::ActivityTaskScheduled,
+        Some(
+            history_event::Attributes::ActivityTaskScheduledEventAttributes(
+                ActivityTaskScheduledEventAttributes {
+                    activity_id: activity_id.to_string(),
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    t.add_we_signaled(
+        signal_id,
+        vec![Payload {
+            metadata: Default::default(),
+            data: b"hello ".to_vec(),
+        }],
+    );
+    t.add_full_wf_task();
+    t.add(
+        EventType::ActivityTaskCancelRequested,
+        history_event::Attributes::ActivityTaskCancelRequestedEventAttributes(
+            ActivityTaskCancelRequestedEventAttributes {
+                scheduled_event_id,
+                ..Default::default()
+            },
+        ),
+    );
+    t.add_we_signaled(
+        signal_id,
+        vec![Payload {
+            metadata: Default::default(),
+            data: b"hello ".to_vec(),
+        }],
+    );
+    t.add_full_wf_task();
+    t.add(
+        EventType::ActivityTaskCanceled,
+        history_event::Attributes::ActivityTaskCanceledEventAttributes(
+            ActivityTaskCanceledEventAttributes {
+                scheduled_event_id,
+                ..Default::default()
+            },
+        ),
+    );
+    t.add_workflow_task_scheduled_and_started();
+    t
+}
 /// First signal's payload is "hello " and second is "world" (no metadata for either)
 /// 1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
 /// 2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED

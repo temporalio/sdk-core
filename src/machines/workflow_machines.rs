@@ -443,13 +443,15 @@ impl WorkflowMachines {
 
     /// Iterate the state machines, which consists of grabbing any pending outgoing commands from
     /// the workflow, handling them, and preparing them to be sent off to the server.
-    pub(crate) fn iterate_machines(&mut self) -> Result<()> {
+    pub(crate) fn iterate_machines(&mut self) -> Result<bool> {
         let results = self.drive_me.fetch_workflow_iteration_output();
-        self.handle_driven_results(results)?;
+        let jobs = self.handle_driven_results(results)?;
+        let has_new_lang_jobs = !jobs.is_empty();
+        for job in jobs.into_iter() {
+            self.drive_me.send_job(job);
+        }
         self.prepare_commands()?;
-        // TODO: Handling driven results might also mean that we need to push a new pending
-        //   activation
-        Ok(())
+        Ok(has_new_lang_jobs)
     }
 
     /// Apply events from history to this machines instance
@@ -538,7 +540,11 @@ impl WorkflowMachines {
         Ok(())
     }
 
-    fn handle_driven_results(&mut self, results: Vec<WFCommand>) -> Result<()> {
+    fn handle_driven_results(
+        &mut self,
+        results: Vec<WFCommand>,
+    ) -> Result<Vec<wf_activation_job::Variant>> {
+        let mut jobs = vec![];
         for cmd in results {
             match cmd {
                 WFCommand::AddTimer(attrs) => {
@@ -591,7 +597,7 @@ impl WorkflowMachines {
                                 })
                             }
                             MachineResponse::PushWFJob(j) => {
-                                self.drive_me.send_job(j);
+                                jobs.push(j);
                             }
                             v => {
                                 return Err(WFMachinesError::UnexpectedMachineResponse(
@@ -613,7 +619,7 @@ impl WorkflowMachines {
                 WFCommand::NoCommandsFromLang => (),
             }
         }
-        Ok(())
+        Ok(jobs)
     }
 
     fn get_machine_key(&mut self, id: &CommandID) -> Result<MachineKey> {

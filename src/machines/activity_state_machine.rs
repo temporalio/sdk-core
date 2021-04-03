@@ -558,6 +558,8 @@ fn create_request_cancel_activity_task_command(
     )
 }
 
+/// Notifies lang side that activity has been cancelled by sending a failure with cancelled failure as a cause.
+/// Optional cancelled_event, if passed, is used to supply event IDs.
 fn notify_canceled(
     dat: SharedState,
     canceled_event: Option<ActivityTaskCanceledEventAttributes>,
