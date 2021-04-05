@@ -2,10 +2,7 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
-use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
-    iter::FromIterator,
-};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 use syn::{
     parenthesized,
     parse::{Parse, ParseStream, Result},
@@ -118,7 +115,7 @@ use syn::{
 /// # Ok(())
 /// # }
 /// ```
-///None
+///
 /// In the above example the first word is the name of the state machine, then after the comma the
 /// type (which you must define separately) of commands produced by the machine.
 ///
@@ -153,6 +150,9 @@ use syn::{
 ///
 ///   You are expected to define a type for each state, to contain that state's data. If there is
 ///   no data, you can simply: `type StateName = ()`
+/// * For any instance of transitions with the same event/handler which transition to different
+///   destination states (dynamic destinations), an enum named like `DestAOrDestBOrDestC` is
+///   generated. This enum must be used as the destination "state" from those handlers.
 /// * An enum with a variant for each event. You are expected to define the type (if any) contained
 ///   in the event variant.
 ///   ```ignore
@@ -215,7 +215,7 @@ impl Parse for StateMachineDefinition {
         // Check for and whine about any identical transitions. We do this here because preserving
         // the order transitions were defined in is important, so simply collecting to a set is
         // not ideal.
-        let trans_set: HashSet<&Transition> = HashSet::from_iter(transitions.iter());
+        let trans_set: HashSet<_> = transitions.iter().collect();
         if trans_set.len() != transitions.len() {
             return Err(syn::Error::new(
                 input.span(),

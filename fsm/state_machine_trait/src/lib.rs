@@ -207,7 +207,6 @@ where
     }
 }
 
-//TODO: Make a into_general trait to allow returning that from handlers
 pub trait ATransitionResult {
     type StateMachine: StateMachine;
     type DestState;
