@@ -13,7 +13,7 @@ fsm! {
 #[derive(Default, Clone)]
 pub struct One {}
 impl One {
-    fn on_a(self) -> SimpleTransition {
+    fn on_a(self) -> SimpleTransition<Two> {
         SimpleTransition::ok(vec![], Two {})
     }
 }
@@ -27,4 +27,5 @@ fn main() {
     // state enum exists with both states
     let _ = SimpleState::One(One {});
     let _ = SimpleState::Two(Two {});
+    let _ = SimpleEvents::A;
 }

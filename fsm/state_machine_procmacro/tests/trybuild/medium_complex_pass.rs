@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 extern crate state_machine_trait as rustfsm;
 
 use state_machine_procmacro::fsm;
@@ -16,8 +18,8 @@ fsm! {
 #[derive(Default, Clone)]
 pub struct One {}
 impl One {
-    fn foo(self, _: String) -> SimpleMachineTransition {
-        TransitionResult::default::<Two>()
+    fn foo(self, _: String) -> SimpleMachineTransition<Two> {
+        TransitionResult::default()
     }
 }
 impl From<Two> for One {
@@ -29,8 +31,8 @@ impl From<Two> for One {
 #[derive(Default, Clone)]
 pub struct Two {}
 impl Two {
-    fn baz(self) -> SimpleMachineTransition {
-        TransitionResult::default::<One>()
+    fn baz(self) -> SimpleMachineTransition<One> {
+        TransitionResult::default()
     }
 }
 impl From<One> for Two {

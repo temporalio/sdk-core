@@ -63,16 +63,17 @@ use syn::{
 /// #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 /// pub struct DoorOpen {}
 /// impl DoorOpen {
-///     fn on_door_closed(&self) -> CardReaderTransition {
+///     fn on_door_closed(&self) -> CardReaderTransition<Locked> {
 ///         TransitionResult::ok(vec![], Locked {})
 ///     }
 /// }
 ///
 /// impl Locked {
-///     fn on_card_readable(&self, shared_dat: SharedState, data: CardData) -> CardReaderTransition {
+///     fn on_card_readable(&self, shared_dat: SharedState, data: CardData)
+///       -> CardReaderTransition<ReadingCardOrLocked> {
 ///         match shared_dat.last_id {
 ///             // Arbitrarily deny the same person entering twice in a row
-///             Some(d) if d == data => TransitionResult::default::<Locked>(),
+///             Some(d) if d == data => TransitionResult::ok(vec![], Locked {}.into()),
 ///             _ => {
 ///                 // Otherwise issue a processing command. This illustrates using the same handler
 ///                 // for different destinations
@@ -81,7 +82,7 @@ use syn::{
 ///                         Commands::ProcessData(data.clone()),
 ///                         Commands::StartBlinkingLight,
 ///                     ],
-///                     ReadingCard { card_data: data.clone() },
+///                     ReadingCard { card_data: data.clone() }.into(),
 ///                     SharedState { last_id: Some(data) }
 ///                 )
 ///             }   
@@ -90,10 +91,10 @@ use syn::{
 /// }
 ///
 /// impl ReadingCard {
-///     fn on_card_accepted(&self) -> CardReaderTransition {
+///     fn on_card_accepted(&self) -> CardReaderTransition<DoorOpen> {
 ///         TransitionResult::ok(vec![Commands::StopBlinkingLight], DoorOpen {})
 ///     }
-///     fn on_card_rejected(&self) -> CardReaderTransition {
+///     fn on_card_rejected(&self) -> CardReaderTransition<Locked> {
 ///         TransitionResult::ok(vec![Commands::StopBlinkingLight], Locked {})
 ///     }
 /// }
@@ -444,6 +445,7 @@ impl StateMachineDefinition {
                                 let enum_ident = Ident::new(&string_dests.join("Or"),
                                                             multi_dests[0].span());
                                 let multi_dest_enum = quote! {
+                                    #[derive(::derive_more::From)]
                                     #visibility enum #enum_ident {
                                         #(#multi_dests(#multi_dests)),*
                                     }
