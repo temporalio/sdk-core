@@ -3,11 +3,9 @@ use rustfsm::{fsm, TransitionResult};
 fsm! {
     pub(super) name VersionMachine; command VersionCommand; error VersionMachineError;
 
-    // TODO: And more
     Created --(CheckExecutionState, on_check_execution_state) --> Replaying;
     Created --(CheckExecutionState, on_check_execution_state) --> Executing;
 
-    // TODO: And more
     Executing --(Schedule, on_schedule) --> MarkerCommandCreated;
     Executing --(Schedule, on_schedule) --> Skipped;
 
@@ -20,7 +18,6 @@ fsm! {
     ResultNotified --(MarkerRecorded, on_marker_recorded) --> MarkerCommandRecorded;
 
     ResultNotifiedReplaying --(NonMatchingEvent, on_non_matching_event) --> SkippedNotified;
-    // TODO: And more
     ResultNotifiedReplaying --(MarkerRecorded, on_marker_recorded) --> MarkerCommandRecorded;
     ResultNotifiedReplaying --(MarkerRecorded, on_marker_recorded) --> SkippedNotified;
 
@@ -36,7 +33,7 @@ pub(super) enum VersionCommand {}
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_check_execution_state(self) -> VersionMachineTransition<Replaying> {
+    pub(super) fn on_check_execution_state(self) -> VersionMachineTransition<ReplayingOrExecuting> {
         unimplemented!()
     }
 }
@@ -45,7 +42,7 @@ impl Created {
 pub(super) struct Executing {}
 
 impl Executing {
-    pub(super) fn on_schedule(self) -> VersionMachineTransition<MarkerCommandCreated> {
+    pub(super) fn on_schedule(self) -> VersionMachineTransition<MarkerCommandCreatedOrSkipped> {
         unimplemented!()
     }
 }
@@ -90,7 +87,9 @@ impl ResultNotifiedReplaying {
     pub(super) fn on_non_matching_event(self) -> VersionMachineTransition<SkippedNotified> {
         unimplemented!()
     }
-    pub(super) fn on_marker_recorded(self) -> VersionMachineTransition<MarkerCommandRecorded> {
+    pub(super) fn on_marker_recorded(
+        self,
+    ) -> VersionMachineTransition<MarkerCommandRecordedOrSkippedNotified> {
         unimplemented!()
     }
 }

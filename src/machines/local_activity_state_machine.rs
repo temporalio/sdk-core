@@ -5,7 +5,6 @@ fsm! {
     command LocalActivityCommand;
     error LocalActivityMachineError;
 
-    // TODO: Fuk
     Created --(CheckExecutionState, on_check_execution_state) --> Replaying;
     Created --(CheckExecutionState, on_check_execution_state) --> Executing;
 
@@ -34,14 +33,11 @@ pub(super) enum LocalActivityCommand {}
 #[derive(Default, Clone)]
 pub(super) struct Created {}
 
-pub(super) enum ReplayingOrExecuting {
-    Replaying(Replaying),
-    Executing(Executing),
-}
-
 impl Created {
     // TODO: Needs to be either of two states
-    pub(super) fn on_check_execution_state(self) -> LocalActivityMachineTransition<Replaying> {
+    pub(super) fn on_check_execution_state(
+        self,
+    ) -> LocalActivityMachineTransition<ReplayingOrExecuting> {
         unimplemented!()
     }
 }

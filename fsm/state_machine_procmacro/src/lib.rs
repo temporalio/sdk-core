@@ -2,8 +2,10 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
-use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{hash_map::Entry, HashMap, HashSet},
+    iter::FromIterator,
+};
 use syn::{
     parenthesized,
     parse::{Parse, ParseStream, Result},
@@ -182,7 +184,7 @@ struct StateMachineDefinition {
     shared_state_type: Option<Type>,
     command_type: Ident,
     error_type: Ident,
-    transitions: HashSet<Transition>,
+    transitions: Vec<Transition>,
 }
 
 impl StateMachineDefinition {
@@ -208,7 +210,17 @@ impl Parse for StateMachineDefinition {
         // semicolons
         let transitions: Punctuated<Transition, Token![;]> =
             input.parse_terminated(Transition::parse)?;
-        let transitions = transitions.into_iter().collect();
+        let transitions: Vec<_> = transitions.into_iter().collect();
+        // Check for and whine about any identical transitions. We do this here because preserving
+        // the order transitions were defined in is important, so simply collecting to a set is
+        // not ideal.
+        let trans_set: HashSet<&Transition> = HashSet::from_iter(transitions.iter());
+        if trans_set.len() != transitions.len() {
+            return Err(syn::Error::new(
+                input.span(),
+                "Duplicate transitions are not allowed!",
+            ));
+        }
         Ok(Self {
             visibility,
             name,
@@ -411,27 +423,42 @@ impl StateMachineDefinition {
                 statemap.insert(s.clone(), vec![]);
             }
         }
-        let state_branches = statemap.into_iter().map(|(from, transitions)| {
+        let mut multi_dest_enums = vec![];
+        let state_branches: Vec<_> = statemap.into_iter().map(|(from, transitions)| {
             // Merge transition dest states with the same handler
             let transitions = merge_transition_dests(transitions);
-            // TODO: This isn't right for dynamic destinations either, as we
-            //  end up with two match arms for the same event
             let event_branches = transitions
-                .iter()
+                .into_iter()
                 .map(|ts| {
                     let ev_variant = &ts.event.ident;
                     if let Some(ts_fn) = ts.handler.clone() {
                         let span = ts_fn.span();
-                        let (trans_type, maybe_dest_enum) = match ts.to.as_slice() {
+                        let trans_type = match ts.to.as_slice() {
                             [] => unreachable!("There will be at least one dest state in transitions"),
-                            [one_to] => (quote! {
+                            [one_to] => quote! {
                                             #transition_result_name<#one_to>
-                                        }, None),
-                            _ => {
+                                        },
+                            multi_dests => {
+                                let string_dests: Vec<_> = multi_dests.iter()
+                                    .map(|i| i.to_string()).collect();
+                                let enum_ident = Ident::new(&string_dests.join("Or"),
+                                                            multi_dests[0].span());
                                 let multi_dest_enum = quote! {
-                                    #visibility enum
+                                    #visibility enum #enum_ident {
+                                        #(#multi_dests(#multi_dests)),*
+                                    }
+                                    impl ::core::convert::From<#enum_ident> for #state_enum_name {
+                                        fn from(v: #enum_ident) -> Self {
+                                            match v {
+                                                #(#enum_ident::#multi_dests(sv) => Self::#multi_dests(sv)),*
+                                            }
+                                        }
+                                    }
                                 };
-                                panic!("More than one dest state");
+                                multi_dest_enums.push(multi_dest_enum);
+                                quote! {
+                                    #transition_result_name<#enum_ident>
+                                }
                             }
                         };
                         match ts.event.fields {
@@ -500,7 +527,7 @@ impl StateMachineDefinition {
                     #(#event_branches),*
                 }
             }
-        });
+        }).collect();
 
         let trait_impl = quote! {
             impl ::rustfsm::StateMachine for #name {
@@ -548,6 +575,7 @@ impl StateMachineDefinition {
             #transition_type_alias
             #machine_struct
             #states_enum
+            #(#multi_dest_enums)*
             #states_enum_impl
             #events_enum
             #trait_impl

@@ -3,11 +3,9 @@ use rustfsm::{fsm, TransitionResult};
 fsm! {
     pub(super) name MutableSideEffectMachine; command MutableSideEffectCommand; error MutableSideEffectMachineError;
 
-    // TODO: Another either/or
     Created --(CheckExecutionState, on_check_execution_state) --> Replaying;
     Created --(CheckExecutionState, on_check_execution_state) --> Executing;
 
-    // TODO: Annnnnd another
     Executing --(Schedule, on_schedule) --> MarkerCommandCreated;
     Executing --(Schedule, on_schedule) --> Skipped;
 
@@ -20,7 +18,6 @@ fsm! {
     ResultNotified --(MarkerRecorded, on_marker_recorded) --> MarkerCommandRecorded;
 
     ResultNotifiedReplaying --(NonMatchingEvent, on_non_matching_event) --> SkippedNotified;
-    // TODO: Annnnnd another
     ResultNotifiedReplaying --(MarkerRecorded, on_marker_recorded) --> MarkerCommandRecorded;
     ResultNotifiedReplaying --(MarkerRecorded, on_marker_recorded) --> SkippedNotified;
 
@@ -36,7 +33,9 @@ pub(super) enum MutableSideEffectCommand {}
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_check_execution_state(self) -> MutableSideEffectMachineTransition<Replaying> {
+    pub(super) fn on_check_execution_state(
+        self,
+    ) -> MutableSideEffectMachineTransition<ReplayingOrExecuting> {
         unimplemented!()
     }
 }
@@ -45,7 +44,9 @@ impl Created {
 pub(super) struct Executing {}
 
 impl Executing {
-    pub(super) fn on_schedule(self) -> MutableSideEffectMachineTransition<MarkerCommandCreated> {
+    pub(super) fn on_schedule(
+        self,
+    ) -> MutableSideEffectMachineTransition<MarkerCommandCreatedOrSkipped> {
         unimplemented!()
     }
 }
@@ -100,7 +101,7 @@ impl ResultNotifiedReplaying {
     }
     pub(super) fn on_marker_recorded(
         self,
-    ) -> MutableSideEffectMachineTransition<MarkerCommandRecorded> {
+    ) -> MutableSideEffectMachineTransition<MarkerCommandRecordedOrSkippedNotified> {
         unimplemented!()
     }
 }

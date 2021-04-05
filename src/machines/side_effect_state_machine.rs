@@ -3,7 +3,6 @@ use rustfsm::{fsm, TransitionResult};
 fsm! {
     pub(super) name SideEffectMachine; command SideEffectCommand; error SideEffectMachineError;
 
-    // TODO: Yet more
     Created --(Schedule, on_schedule) --> MarkerCommandCreated;
     Created --(Schedule, on_schedule) --> MarkerCommandCreatedReplaying;
 
@@ -25,7 +24,9 @@ pub(super) enum SideEffectCommand {}
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_schedule(self) -> SideEffectMachineTransition<MarkerCommandCreated> {
+    pub(super) fn on_schedule(
+        self,
+    ) -> SideEffectMachineTransition<MarkerCommandCreatedOrMarkerCommandCreatedReplaying> {
         unimplemented!()
     }
 }
