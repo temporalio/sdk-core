@@ -2,6 +2,7 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use syn::{
     parenthesized,
@@ -246,7 +247,7 @@ fn parse_machine_types(input: &ParseStream) -> Result<(Ident, Ident, Ident, Opti
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct Transition {
     from: Ident,
-    to: Ident,
+    to: Vec<Ident>,
     event: Variant,
     handler: Option<Ident>,
     mutates_shared: bool,
@@ -313,7 +314,7 @@ impl Parse for Transition {
             from,
             event,
             handler,
-            to,
+            to: vec![to],
             mutates_shared,
         })
     }
@@ -326,7 +327,11 @@ impl StateMachineDefinition {
         let states: HashSet<_> = self
             .transitions
             .iter()
-            .flat_map(|t| vec![t.from.clone(), t.to.clone()])
+            .flat_map(|t| {
+                let mut states = t.to.clone();
+                states.push(t.from.clone());
+                states
+            })
             .collect();
         let state_variants = states.iter().map(|s| {
             let statestr = s.to_string();
@@ -406,16 +411,28 @@ impl StateMachineDefinition {
                 statemap.insert(s.clone(), vec![]);
             }
         }
-        let state_branches = statemap.iter().map(|(from, transitions)| {
+        let state_branches = statemap.into_iter().map(|(from, transitions)| {
+            // Merge transition dest states with the same handler
+            let transitions = merge_transition_dests(transitions);
+            // TODO: This isn't right for dynamic destinations either, as we
+            //  end up with two match arms for the same event
             let event_branches = transitions
                 .iter()
                 .map(|ts| {
                     let ev_variant = &ts.event.ident;
                     if let Some(ts_fn) = ts.handler.clone() {
                         let span = ts_fn.span();
-                        let to_state = &ts.to;
-                        let trans_type = quote! {
-                            #transition_result_name<#to_state>
+                        let (trans_type, maybe_dest_enum) = match ts.to.as_slice() {
+                            [] => unreachable!("There will be at least one dest state in transitions"),
+                            [one_to] => (quote! {
+                                            #transition_result_name<#one_to>
+                                        }, None),
+                            _ => {
+                                let multi_dest_enum = quote! {
+                                    #visibility enum
+                                };
+                                panic!("More than one dest state");
+                            }
                         };
                         match ts.event.fields {
                             Fields::Unnamed(_) => {
@@ -449,24 +466,28 @@ impl StateMachineDefinition {
                     } else {
                         // If events do not have a handler, attempt to construct the next state
                         // using `Default`.
-                        let new_state = ts.to.clone();
-                        let span = new_state.span();
-                        let default_trans = quote_spanned! {span=>
+                        if let [new_state] = ts.to.as_slice() {
+                            let span = new_state.span();
+                            let default_trans = quote_spanned! {span=>
                             TransitionResult::<_, #new_state>::from::<#from>(state_data).into_general()
                         };
-                        let span = ts.event.span();
-                        match ts.event.fields {
-                            Fields::Unnamed(_) => quote_spanned! {span=>
+                            let span = ts.event.span();
+                            match ts.event.fields {
+                                Fields::Unnamed(_) => quote_spanned! {span=>
                                 #events_enum_name::#ev_variant(_val) => {
                                     #default_trans
                                 }
                             },
-                            Fields::Unit => quote_spanned! {span=>
+                                Fields::Unit => quote_spanned! {span=>
                                 #events_enum_name::#ev_variant => {
                                     #default_trans
                                 }
                             },
-                            Fields::Named(_) => unreachable!(),
+                                Fields::Named(_) => unreachable!(),
+                            }
+
+                        } else {
+                            unreachable!("It should be impossible to have more than one dest state in no-handler transitions")
                         }
                     }
                 })
@@ -534,4 +555,22 @@ impl StateMachineDefinition {
 
         output.into()
     }
+}
+
+/// Merge transition's dest state lists for those with the same from state & handler
+fn merge_transition_dests(transitions: Vec<Transition>) -> Vec<Transition> {
+    let mut map = HashMap::<_, Transition>::new();
+    // TODO: Should verify that other parts of transition == when merging
+    //   -- Should also complain when different events from same state use same handler
+    transitions.into_iter().for_each(|t| {
+        match map.entry((t.from.clone(), t.event.clone(), t.handler.clone())) {
+            Entry::Occupied(mut e) => {
+                e.get_mut().to.extend(t.to.into_iter());
+            }
+            Entry::Vacant(v) => {
+                v.insert(t);
+            }
+        }
+    });
+    map.into_iter().map(|(_, v)| v).collect()
 }

@@ -1,7 +1,9 @@
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    pub(super) name LocalActivityMachine; command LocalActivityCommand; error LocalActivityMachineError;
+    pub(super) name LocalActivityMachine;
+    command LocalActivityCommand;
+    error LocalActivityMachineError;
 
     // TODO: Fuk
     Created --(CheckExecutionState, on_check_execution_state) --> Replaying;
@@ -31,6 +33,11 @@ pub(super) enum LocalActivityCommand {}
 
 #[derive(Default, Clone)]
 pub(super) struct Created {}
+
+pub(super) enum ReplayingOrExecuting {
+    Replaying(Replaying),
+    Executing(Executing),
+}
 
 impl Created {
     // TODO: Needs to be either of two states
