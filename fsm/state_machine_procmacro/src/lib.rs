@@ -268,8 +268,6 @@ struct Transition {
 
 impl Parse for Transition {
     fn parse(input: ParseStream) -> Result<Self> {
-        // TODO: Currently the handlers are not required to transition to the state they claimed
-        //   they would. It would be great to find a way to fix that.
         // Parse the initial state name
         let from: Ident = input.parse()?;
         // Parse at least one dash
@@ -589,10 +587,14 @@ impl StateMachineDefinition {
 /// Merge transition's dest state lists for those with the same from state & handler
 fn merge_transition_dests(transitions: Vec<Transition>) -> Vec<Transition> {
     let mut map = HashMap::<_, Transition>::new();
-    // TODO: Should verify that other parts of transition == when merging
-    //   -- Should also complain when different events from same state use same handler
     transitions.into_iter().for_each(|t| {
-        match map.entry((t.from.clone(), t.event.clone(), t.handler.clone())) {
+        // We want to use the transition sans-destinations as the key
+        let without_dests = {
+            let mut wd = t.clone();
+            wd.to = vec![];
+            wd
+        };
+        match map.entry(without_dests) {
             Entry::Occupied(mut e) => {
                 e.get_mut().to.extend(t.to.into_iter());
             }

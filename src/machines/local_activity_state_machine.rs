@@ -34,7 +34,6 @@ pub(super) enum LocalActivityCommand {}
 pub(super) struct Created {}
 
 impl Created {
-    // TODO: Needs to be either of two states
     pub(super) fn on_check_execution_state(
         self,
     ) -> LocalActivityMachineTransition<ReplayingOrExecuting> {

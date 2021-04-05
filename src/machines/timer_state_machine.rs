@@ -134,7 +134,6 @@ impl TryFrom<CommandType> for TimerMachineEvents {
 pub(super) struct Created {}
 
 impl Created {
-    // TODO: Should error until I fix this back
     pub(super) fn on_schedule(self) -> TimerMachineTransition<StartCommandCreated> {
         TransitionResult::default()
     }
