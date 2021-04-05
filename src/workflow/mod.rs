@@ -1,70 +1,53 @@
 mod bridge;
 mod concurrency_manager;
+mod driven_workflow;
 
 pub(crate) use bridge::WorkflowBridge;
 pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
+pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFetcher};
 
 use crate::{
-    machines::{ProtoCommand, WFCommand, WorkflowMachines},
+    machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
     protos::{
-        coresdk::WfActivation,
-        temporal::api::{
-            history::v1::History,
-            workflowservice::v1::{
-                PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
-                StartWorkflowExecutionResponse,
-            },
-        },
+        coresdk::workflow_activation::WfActivation,
+        temporal::api::{common::v1::WorkflowExecution, history::v1::History},
     },
-    protosext::HistoryInfo,
-    CoreError, Result,
+    protosext::{HistoryInfo, HistoryInfoError},
 };
-use std::sync::mpsc::Sender;
-use tracing::Level;
+use std::sync::mpsc::{SendError, Sender};
 
-/// Implementors can provide new workflow tasks to the SDK. The connection to the server is the real
-/// implementor.
-#[cfg_attr(test, mockall::automock)]
-#[async_trait::async_trait]
-pub trait PollWorkflowTaskQueueApi {
-    /// Fetch new work. Should block indefinitely if there is no work.
-    async fn poll_workflow_task(&self, task_queue: &str) -> Result<PollWorkflowTaskQueueResponse>;
-}
+type Result<T, E = WorkflowError> = std::result::Result<T, E>;
 
-/// Implementors can complete tasks as would've been issued by [Core::poll]. The real implementor
-/// sends the completed tasks to the server.
-#[cfg_attr(test, mockall::automock)]
-#[async_trait::async_trait]
-pub trait RespondWorkflowTaskCompletedApi {
-    /// Complete a task by sending it to the server. `task_token` is the task token that would've
-    /// been received from [PollWorkflowTaskQueueApi::poll]. `commands` is a list of new commands
-    /// to send to the server, such as starting a timer.
-    async fn complete_workflow_task(
-        &self,
-        task_token: Vec<u8>,
-        commands: Vec<ProtoCommand>,
-    ) -> Result<RespondWorkflowTaskCompletedResponse>;
-}
-
-/// Implementors should send StartWorkflowExecutionRequest to the server and pass the response back.
-#[cfg_attr(test, mockall::automock)]
-#[async_trait::async_trait]
-pub trait StartWorkflowExecutionApi {
-    /// Starts workflow execution.
-    async fn start_workflow(
-        &self,
-        namespace: &str,
-        task_queue: &str,
-        workflow_id: &str,
-        workflow_type: &str,
-    ) -> Result<StartWorkflowExecutionResponse>;
+/// Errors relating to workflow management and machine logic. These are going to be passed up and
+/// out to the lang SDK where it will need to handle them. Generally that will usually mean
+/// showing an error to the user and/or invalidating the workflow cache.
+#[derive(thiserror::Error, Debug)]
+#[allow(clippy::large_enum_variant)]
+pub enum WorkflowError {
+    /// The workflow machines associated with `run_id` were not found in memory
+    #[error("Workflow machines associated with `{run_id}` not found")]
+    MissingMachine { run_id: String },
+    /// Underlying error in state machines
+    #[error("Underlying error in state machines: {0:?}")]
+    UnderlyingMachinesError(#[from] WFMachinesError),
+    /// There was an error in the history associated with the workflow: {0:?}
+    #[error("There was an error in the history associated with the workflow: {0:?}")]
+    HistoryError(#[from] HistoryInfoError),
+    /// Error buffering commands coming in from the lang side. This shouldn't happen unless we've
+    /// run out of memory or there is a logic bug. Considered fatal.
+    #[error("Internal error buffering workflow commands")]
+    CommandBufferingError(#[from] SendError<Vec<WFCommand>>),
+    /// We tried to instantiate a workflow instance, but the provided history resulted in no
+    /// new activations. There is nothing to do.
+    #[error("Machine created with no activations for run_id {run_id}")]
+    MachineWasCreatedWithNoActivations { run_id: String },
 }
 
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
 /// associated with that specific workflow run.
 pub(crate) struct WorkflowManager {
     pub machines: WorkflowMachines,
-    pub command_sink: Sender<Vec<WFCommand>>,
+    command_sink: Sender<Vec<WFCommand>>,
     /// The last recorded history we received from the server for this workflow run. This must be
     /// kept because the lang side polls & completes for every workflow task, but we do not need
     /// to poll the server that often during replay.
@@ -75,21 +58,18 @@ pub(crate) struct WorkflowManager {
 }
 
 impl WorkflowManager {
-    /// Create a new workflow manager from a server workflow task queue response.
-    pub fn new(poll_resp: PollWorkflowTaskQueueResponse) -> Result<Self> {
-        let (history, we) = if let PollWorkflowTaskQueueResponse {
-            workflow_execution: Some(we),
-            history: Some(hist),
-            ..
-        } = poll_resp
-        {
-            (hist, we)
-        } else {
-            return Err(CoreError::BadDataFromWorkProvider(poll_resp.clone()));
-        };
-
+    /// Create a new workflow manager given workflow history and execution info as would be found
+    /// in [PollWorkflowTaskQueueResponse]
+    pub fn new(
+        history: History,
+        workflow_execution: WorkflowExecution,
+    ) -> Result<Self, HistoryInfoError> {
         let (wfb, cmd_sink) = WorkflowBridge::new();
-        let state_machines = WorkflowMachines::new(we.workflow_id, we.run_id, Box::new(wfb));
+        let state_machines = WorkflowMachines::new(
+            workflow_execution.workflow_id,
+            workflow_execution.run_id,
+            Box::new(wfb).into(),
+        );
         Ok(Self {
             machines: state_machines,
             command_sink: cmd_sink,
@@ -102,8 +82,22 @@ impl WorkflowManager {
 
 #[derive(Debug)]
 pub(crate) struct NextWfActivation {
-    pub activation: Option<WfActivation>,
+    /// Keep this private, so we can ensure task tokens are attached via [Self::finalize]
+    activation: WfActivation,
     pub more_activations_needed: bool,
+}
+
+impl NextWfActivation {
+    /// Attach a task token to the activation so it can be sent out to the lang sdk
+    pub(crate) fn finalize(self, task_token: Vec<u8>) -> WfActivation {
+        let mut a = self.activation;
+        a.task_token = task_token;
+        a
+    }
+
+    pub(crate) fn get_run_id(&self) -> &str {
+        &self.activation.run_id
+    }
 }
 
 impl WorkflowManager {
@@ -112,8 +106,7 @@ impl WorkflowManager {
     /// Should only be called when a workflow has caught up on replay (or is just beginning). It
     /// will return a workflow activation if one is needed, as well as a bool indicating if there
     /// are more workflow tasks that need to be performed to replay the remaining history.
-    #[instrument(skip(self))]
-    pub fn feed_history_from_server(&mut self, hist: History) -> Result<NextWfActivation> {
+    pub fn feed_history_from_server(&mut self, hist: History) -> Result<Option<NextWfActivation>> {
         let task_hist = HistoryInfo::new_from_history(&hist, Some(self.current_wf_task_num))?;
         let task_ct = hist.get_workflow_task_count(None)?;
         self.last_history_task_count = task_ct;
@@ -123,18 +116,18 @@ impl WorkflowManager {
         let more_activations_needed = task_ct > self.current_wf_task_num;
 
         if more_activations_needed {
-            event!(Level::DEBUG, msg = "More activations needed");
+            debug!("More activations needed");
         }
 
         self.current_wf_task_num += 1;
 
-        Ok(NextWfActivation {
+        Ok(activation.map(|activation| NextWfActivation {
             activation,
             more_activations_needed,
-        })
+        }))
     }
 
-    pub fn get_next_activation(&mut self) -> Result<NextWfActivation> {
+    pub fn get_next_activation(&mut self) -> Result<Option<NextWfActivation>> {
         let hist = &self.last_history_from_server;
         let task_hist = HistoryInfo::new_from_history(hist, Some(self.current_wf_task_num))?;
         self.machines.apply_history_events(&task_hist)?;
@@ -142,36 +135,21 @@ impl WorkflowManager {
 
         self.current_wf_task_num += 1;
         let more_activations_needed = self.current_wf_task_num <= self.last_history_task_count;
+        if more_activations_needed {
+            debug!("More activations needed");
+        }
 
-        Ok(NextWfActivation {
+        Ok(activation.map(|activation| NextWfActivation {
             activation,
             more_activations_needed,
-        })
+        }))
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        protos::temporal::api::common::v1::WorkflowExecution, test_help::canned_histories,
-    };
-    use rand::{thread_rng, Rng};
-
-    #[test]
-    fn full_history_application() {
-        let t = canned_histories::single_timer("fake_timer");
-        let task_token: [u8; 16] = thread_rng().gen();
-        let pwtqr = PollWorkflowTaskQueueResponse {
-            history: Some(t.as_history()),
-            workflow_execution: Some(WorkflowExecution {
-                workflow_id: "wfid".to_string(),
-                run_id: "runid".to_string(),
-            }),
-            task_token: task_token.to_vec(),
-            ..Default::default()
-        };
-        let mut wfm = WorkflowManager::new(pwtqr).unwrap();
-        wfm.get_next_activation().unwrap();
+    /// Feed the workflow machines new commands issued by the executing workflow code, iterate the
+    /// workflow machines, and spit out the commands which are ready to be sent off to the server
+    pub fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<Vec<ProtoCommand>> {
+        self.command_sink.send(cmds)?;
+        self.machines.iterate_machines()?;
+        Ok(self.machines.get_commands())
     }
 }

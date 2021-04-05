@@ -1,7 +1,11 @@
 use crate::machines::test_help::TestHistoryBuilder;
+use crate::protos::temporal::api::common::v1::Payload;
 use crate::protos::temporal::api::enums::v1::{EventType, WorkflowTaskFailedCause};
+use crate::protos::temporal::api::failure::v1::Failure;
 use crate::protos::temporal::api::history::v1::{
-    history_event, TimerCanceledEventAttributes, TimerFiredEventAttributes,
+    history_event, ActivityTaskCompletedEventAttributes, ActivityTaskFailedEventAttributes,
+    ActivityTaskScheduledEventAttributes, ActivityTaskStartedEventAttributes,
+    TimerCanceledEventAttributes, TimerFiredEventAttributes,
 };
 
 ///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
@@ -114,21 +118,168 @@ pub fn parallel_timer(timer1: &str, timer2: &str) -> TestHistoryBuilder {
 ///  9: EVENT_TYPE_WORKFLOW_TASK_FAILED
 /// 10: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
 /// 11: EVENT_TYPE_WORKFLOW_TASK_STARTED
-pub fn workflow_fails_after_timer(timer_id: &str, original_run_id: &str) -> TestHistoryBuilder {
+pub fn workflow_fails_with_reset_after_timer(
+    timer_id: &str,
+    original_run_id: &str,
+) -> TestHistoryBuilder {
+    let mut t = single_timer(timer_id);
+    t.add_workflow_task_failed_new_id(WorkflowTaskFailedCause::ResetWorkflow, original_run_id);
+
+    t.add_workflow_task_scheduled_and_started();
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_TIMER_STARTED
+///  6: EVENT_TYPE_TIMER_FIRED
+///  7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  9: EVENT_TYPE_WORKFLOW_TASK_FAILED
+/// 10: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 11: EVENT_TYPE_WORKFLOW_TASK_STARTED
+pub fn workflow_fails_with_failure_after_timer(timer_id: &str) -> TestHistoryBuilder {
+    let mut t = single_timer(timer_id);
+    t.add_workflow_task_failed_with_failure(
+        WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure,
+        Failure {
+            message: "boom".to_string(),
+            ..Default::default()
+        },
+    );
+
+    t.add_workflow_task_scheduled_and_started();
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+///  6: EVENT_TYPE_ACTIVITY_TASK_STARTED
+///  7: EVENT_TYPE_ACTIVITY_TASK_COMPLETED
+///  8: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  9: EVENT_TYPE_WORKFLOW_TASK_STARTED
+pub fn single_activity(activity_id: &str) -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let scheduled_event_id = t.add_get_event_id(
+        EventType::ActivityTaskScheduled,
+        Some(
+            history_event::Attributes::ActivityTaskScheduledEventAttributes(
+                ActivityTaskScheduledEventAttributes {
+                    activity_id: activity_id.to_string(),
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    let started_event_id = t.add_get_event_id(
+        EventType::ActivityTaskStarted,
+        Some(
+            history_event::Attributes::ActivityTaskStartedEventAttributes(
+                ActivityTaskStartedEventAttributes {
+                    scheduled_event_id,
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
     t.add(
-        EventType::TimerFired,
-        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-            started_event_id: timer_started_event_id,
-            timer_id: timer_id.to_string(),
-        }),
+        EventType::ActivityTaskCompleted,
+        history_event::Attributes::ActivityTaskCompletedEventAttributes(
+            ActivityTaskCompletedEventAttributes {
+                scheduled_event_id,
+                started_event_id,
+                // todo add the result payload
+                ..Default::default()
+            },
+        ),
     );
     t.add_workflow_task_scheduled_and_started();
-    t.add_workflow_task_failed(WorkflowTaskFailedCause::ResetWorkflow, original_run_id);
+    t
+}
 
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+///  6: EVENT_TYPE_ACTIVITY_TASK_STARTED
+///  7: EVENT_TYPE_ACTIVITY_TASK_FAILED
+///  8: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  9: EVENT_TYPE_WORKFLOW_TASK_STARTED
+pub fn single_failed_activity(activity_id: &str) -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let scheduled_event_id = t.add_get_event_id(
+        EventType::ActivityTaskScheduled,
+        Some(
+            history_event::Attributes::ActivityTaskScheduledEventAttributes(
+                ActivityTaskScheduledEventAttributes {
+                    activity_id: activity_id.to_string(),
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    let started_event_id = t.add_get_event_id(
+        EventType::ActivityTaskStarted,
+        Some(
+            history_event::Attributes::ActivityTaskStartedEventAttributes(
+                ActivityTaskStartedEventAttributes {
+                    scheduled_event_id,
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    t.add(
+        EventType::ActivityTaskFailed,
+        history_event::Attributes::ActivityTaskFailedEventAttributes(
+            ActivityTaskFailedEventAttributes {
+                scheduled_event_id,
+                started_event_id,
+                ..Default::default()
+            },
+        ),
+    );
+    t.add_workflow_task_scheduled_and_started();
+    t
+}
+
+/// First signal's payload is "hello " and second is "world" (no metadata for either)
+/// 1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+/// 2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 5: EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED
+/// 6: EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED
+/// 7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+pub fn two_signals(sig_1_id: &str, sig_2_id: &str) -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_we_signaled(
+        sig_1_id,
+        vec![Payload {
+            metadata: Default::default(),
+            data: b"hello ".to_vec(),
+        }],
+    );
+    t.add_we_signaled(
+        sig_2_id,
+        vec![Payload {
+            metadata: Default::default(),
+            data: b"world".to_vec(),
+        }],
+    );
     t.add_workflow_task_scheduled_and_started();
     t
 }

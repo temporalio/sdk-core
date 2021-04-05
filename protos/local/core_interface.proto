@@ -2,177 +2,28 @@ syntax = "proto3";
 
 package coresdk;
 
+import "activity_result.proto";
+import "activity_task.proto";
+import "common.proto";
+import "workflow_activation.proto";
+import "workflow_commands.proto";
+import "workflow_completion.proto";
+
 // Note: Intellij will think these imports don't work because of the slightly odd nature of
 // the include paths. You can make it work by going to the "Protobuf Support" settings section
 // and adding the "api_upstream" subdir as an include path.
-
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
 import "google/protobuf/empty.proto";
-import "dependencies/gogoproto/gogo.proto";
-import "temporal/api/workflowservice/v1/request_response.proto";
-import "temporal/api/taskqueue/v1/message.proto";
-import "temporal/api/enums/v1/failed_cause.proto";
-import "temporal/api/failure/v1/message.proto";
-import "temporal/api/common/v1/message.proto";
-import "temporal/api/command/v1/message.proto";
-import "temporal/api/query/v1/message.proto";
 
-// A request as given to [crate::Core::poll_task]
-message PollTaskReq {
-    // What type of task to poll for
-    enum TaskType {
-        // Poll for workflows
-        WORKFLOWS = 0;
-        // Poll for activities
-        ACTIVITIES = 1;
-    }
-
-    // A list of task types to poll for
-    repeated TaskType types = 1;
+// A request as given to [crate::Core::send_activity_heartbeat]
+message ActivityHeartbeat {
+    string activity_id = 1;
+    repeated common.Payload details = 2;
 }
 
-// An instruction to perform work from core->lang sdk
-message Task {
-    // A unique identifier for this task
-    bytes task_token = 1;
-    // The type of task to be performed
-    oneof variant {
-        // Wake up a workflow
-        WFActivation workflow = 2;
-        // Run an activity
-        ActivityTask activity = 3;
-    }
-}
-
-// An instruction to the lang sdk to run some workflow code, whether for the first time or from
-// a cached state.
-message WFActivation {
-    // The current time as understood by the workflow, which is set by workflow task started events
-    google.protobuf.Timestamp timestamp = 1 [(gogoproto.stdtime) = true];
-    // The id of the currently active run of the workflow
-    string run_id = 2;
-    // The things to do upon activating the workflow
-    repeated WFActivationJob jobs = 3;
-}
-
-message WFActivationJob {
-    oneof variant {
-        // Begin a workflow for the first time
-        StartWorkflow start_workflow = 1;
-        // A timer has fired, allowing whatever was waiting on it (if anything) to proceed
-        FireTimer fire_timer = 2;
-        // A timer was canceled, and needs to be unblocked on the lang side.
-        CancelTimer cancel_timer = 3;
-        // Workflow was reset. The randomness seed must be updated.
-        UpdateRandomSeed update_random_seed = 4;
-        // A request to query the workflow was received.
-        QueryWorkflow query_workflow = 5;
-        // A request to cancel the workflow was received.
-        CancelWorkflow cancel_workflow = 6;
-    }
-}
-
-message StartWorkflow {
-    // The identifier the lang-specific sdk uses to execute workflow code
-    string workflow_type = 1;
-    // The workflow id used on the temporal server
-    string workflow_id = 2;
-    // Input to the workflow code
-    temporal.api.common.v1.Payloads arguments = 3;
-    // The seed must be used to initialize the random generator used by SDK.
-    // RandomSeedUpdatedAttributes are used to deliver seed updates.
-    uint64 randomness_seed = 4;
-
-    // TODO: Do we need namespace here, or should that just be fetchable easily?
-    //   will be others - workflow exe started attrs, etc
-}
-
-message CancelWorkflow {
-    // TODO: add attributes here
-}
-
-message FireTimer {
-    string timer_id = 1;
-}
-
-message CancelTimer {
-    string timer_id = 1;
-}
-
-message UpdateRandomSeed {
-    uint64 randomness_seed = 1;
-}
-
-message QueryWorkflow {
-    temporal.api.query.v1.WorkflowQuery query = 1;
-}
-
-message ActivityTask {
-    // Original task from temporal service
-    temporal.api.workflowservice.v1.PollActivityTaskQueueResponse original = 1;
-}
-
-
-// Sent from lang side to core when calling [crate::Core::complete_task]
-message TaskCompletion {
-    // The id from the [Task] being completed
-    bytes task_token = 1;
-    oneof variant {
-        // Complete a workflow task
-        WFActivationCompletion workflow = 2;
-        // Complete an activity task
-        ActivityTaskCompletion activity = 3;
-    }
-}
-
-message WFActivationCompletion {
-    oneof status {
-        WFActivationSuccess successful = 1;
-        WFActivationFailure failed = 2;
-    }
-}
-
+// A request as given to [crate::Core::complete_activity_task]
 message ActivityTaskCompletion {
-    oneof status {
-        ActivityTaskSuccess successful = 1;
-        ActivityTaskFailure failed = 2;
-    }
-}
-
-message CoreCommand {
-    oneof variant {
-        temporal.api.query.v1.WorkflowQueryResult query_result = 1;
-    }
-}
-
-// Included in successful [WfActivationCompletion]s, indicates what the workflow wishes to do next
-message Command {
-    oneof variant {
-        temporal.api.command.v1.Command api = 1;
-        CoreCommand core = 2;
-    }
-}
-
-message WFActivationSuccess {
-    // A list of commands to send back to the temporal server
-    repeated Command commands = 1;
-
-    // Other bits from RespondWorkflowTaskCompletedRequest as needed
-}
-
-message WFActivationFailure {
-    temporal.api.enums.v1.WorkflowTaskFailedCause cause = 1;
-    temporal.api.failure.v1.Failure failure = 2;
-
-    // Other bits from RespondWorkflowTaskFailedRequest as needed
-}
-
-message ActivityTaskSuccess {
-    temporal.api.common.v1.Payloads result = 1;
-    // Other bits from RespondActivityTaskCompletedRequest as needed
-}
-
-message ActivityTaskFailure {
-    temporal.api.failure.v1.Failure failure = 1;
-    // Other bits from RespondActivityTaskFailedRequest as needed
+    bytes task_token = 1;
+    activity_result.ActivityResult result = 2;
 }

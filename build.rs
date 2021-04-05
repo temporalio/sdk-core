@@ -14,10 +14,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "temporal.api.command.v1.Command.attributes",
             "#[derive(::derive_more::From)]",
         )
-        .type_attribute("coresdk.Command.variant", "#[derive(::derive_more::From)]")
-        .type_attribute("coresdk.WFActivationJob", "#[derive(::derive_more::From)]")
         .type_attribute(
-            "coresdk.WFActivationJob.variant",
+            "coresdk.workflow_commands.WorkflowCommand.variant",
+            "#[derive(::derive_more::From)]",
+        )
+        .type_attribute(
+            "coresdk.workflow_activation.wf_activation_job",
+            "#[derive(::derive_more::From)]",
+        )
+        .type_attribute(
+            "coresdk.workflow_activation.WFActivationJob.variant",
+            "#[derive(::derive_more::From)]",
+        )
+        .type_attribute(
+            "coresdk.workflow_completion.WFActivationCompletion.status",
             "#[derive(::derive_more::From)]",
         )
         .type_attribute("coresdk.Task.variant", "#[derive(::derive_more::From)]")

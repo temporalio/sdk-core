@@ -2,9 +2,9 @@
 //! doing so is nontrivial
 
 use crate::{
-    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
-    workflow::{NextWfActivation, WorkflowManager},
-    CoreError, Result,
+    protos::temporal::api::common::v1::WorkflowExecution,
+    protos::temporal::api::history::v1::History,
+    workflow::{NextWfActivation, Result, WorkflowError, WorkflowManager},
 };
 use crossbeam::channel::{bounded, unbounded, Receiver, Select, Sender, TryRecvError};
 use dashmap::DashMap;
@@ -13,15 +13,12 @@ use std::{
     fmt::Debug,
     thread::{self, JoinHandle},
 };
-use tracing::Level;
+use tracing::Span;
 
 /// Provides a thread-safe way to access workflow machines which live exclusively on one thread
 /// managed by this struct. We could make this generic for any collection of things which need
 /// to live on one thread, if desired.
 pub(crate) struct WorkflowConcurrencyManager {
-    // TODO: We need to remove things from here at some point, but that wasn't implemented
-    //  in core SDK yet either - once we're ready to remove things, they can be removed from this
-    //  map and the wfm thread will drop the machines.
     machines: DashMap<String, MachineMutationSender>,
     wf_thread: Mutex<Option<JoinHandle<()>>>,
     machine_creator: Sender<MachineCreatorMsg>,
@@ -33,10 +30,12 @@ type MachineMutationSender = Sender<Box<dyn FnOnce(&mut WorkflowManager) + Send>
 type MachineMutationReceiver = Receiver<Box<dyn FnOnce(&mut WorkflowManager) + Send>>;
 /// This is the message sent from the concurrency manager to the dedicated thread in order to
 /// instantiate a new workflow manager
-type MachineCreatorMsg = (
-    PollWorkflowTaskQueueResponse,
-    Sender<MachineCreatorResponseMsg>,
-);
+struct MachineCreatorMsg {
+    history: History,
+    workflow_execution: WorkflowExecution,
+    resp_chan: Sender<MachineCreatorResponseMsg>,
+    span: Span,
+}
 /// The response to [MachineCreatorMsg], which includes the wf activation and the channel to
 /// send requests to the newly instantiated workflow manager.
 type MachineCreatorResponseMsg = Result<(NextWfActivation, MachineMutationSender)>;
@@ -65,30 +64,35 @@ impl WorkflowConcurrencyManager {
     pub fn create_or_update(
         &self,
         run_id: &str,
-        poll_wf_resp: PollWorkflowTaskQueueResponse,
-    ) -> Result<NextWfActivation> {
+        history: History,
+        workflow_execution: WorkflowExecution,
+    ) -> Result<Option<NextWfActivation>> {
+        let span = debug_span!("create_or_update machines", %run_id);
+
         if self.exists(run_id) {
-            if let Some(history) = poll_wf_resp.history {
-                let activation = self.access(run_id, |wfm: &mut WorkflowManager| {
-                    wfm.feed_history_from_server(history)
-                })?;
-                Ok(activation)
-            } else {
-                Err(CoreError::BadDataFromWorkProvider(poll_wf_resp))
-            }
+            let activation = self.access(run_id, move |wfm: &mut WorkflowManager| {
+                let _enter = span.enter();
+                wfm.feed_history_from_server(history)
+            })?;
+            Ok(activation)
         } else {
             // Creates a channel for the response to attempting to create the machine, sends
             // the task q response, and waits for the result of machine creation along with
             // the activation
             let (resp_send, resp_rcv) = bounded(1);
             self.machine_creator
-                .send((poll_wf_resp, resp_send))
+                .send(MachineCreatorMsg {
+                    history,
+                    workflow_execution,
+                    resp_chan: resp_send,
+                    span,
+                })
                 .expect("wfm creation channel can't be dropped if we are inside this method");
             let (activation, machine_sender) = resp_rcv
                 .recv()
                 .expect("wfm create resp channel can't be dropped, it is in this stackframe")?;
             self.machines.insert(run_id.to_string(), machine_sender);
-            Ok(activation)
+            Ok(Some(activation))
         }
     }
 
@@ -100,7 +104,9 @@ impl WorkflowConcurrencyManager {
         let m = self
             .machines
             .get(run_id)
-            .ok_or_else(|| CoreError::MissingMachines(run_id.to_string()))?;
+            .ok_or_else(|| WorkflowError::MissingMachine {
+                run_id: run_id.to_string(),
+            })?;
 
         // This code fetches the channel for a workflow manager and sends it a modified version of
         // of closure the caller provided which includes a channel for the response, and sends
@@ -121,13 +127,21 @@ impl WorkflowConcurrencyManager {
     /// # Panics
     /// If the workflow machine thread panicked
     pub fn shutdown(&self) {
+        let mut wf_thread = self.wf_thread.lock();
+        if wf_thread.is_none() {
+            return;
+        }
         let _ = self.shutdown_chan.send(true);
-        self.wf_thread
-            .lock()
+        wf_thread
             .take()
             .unwrap()
             .join()
             .expect("Workflow manager thread should shut down cleanly");
+    }
+
+    /// Remove the workflow with the provided run id from management
+    pub fn evict(&self, run_id: &str) {
+        self.machines.remove(run_id);
     }
 
     /// The implementation of the dedicated thread workflow managers live on
@@ -181,28 +195,36 @@ impl WorkflowConcurrencyManager {
         maybe_create_chan_msg: Result<MachineCreatorMsg, TryRecvError>,
     ) -> bool {
         match maybe_create_chan_msg {
-            Ok((pwtqr, resp_chan)) => match WorkflowManager::new(pwtqr)
-                .and_then(|mut wfm| Ok((wfm.get_next_activation()?, wfm)))
-            {
-                Ok((activation, wfm)) => {
-                    let (machine_sender, machine_rcv) = unbounded();
-                    machine_rcvs.push((machine_rcv, wfm));
-                    resp_chan
-                        .send(Ok((activation, machine_sender)))
-                        .expect("wfm create resp rx side can't be dropped");
-                }
-                Err(e) => {
-                    resp_chan
-                        .send(Err(e))
-                        .expect("wfm create resp rx side can't be dropped");
-                }
-            },
+            Ok(MachineCreatorMsg {
+                history,
+                workflow_execution,
+                resp_chan,
+                span,
+            }) => {
+                let _e = span.enter();
+                let send_this = match WorkflowManager::new(history, workflow_execution)
+                    .map_err(Into::into)
+                    .and_then(|mut wfm| Ok((wfm.get_next_activation()?, wfm)))
+                {
+                    Ok((Some(activation), wfm)) => {
+                        let (machine_sender, machine_rcv) = unbounded();
+                        machine_rcvs.push((machine_rcv, wfm));
+                        Ok((activation, machine_sender))
+                    }
+                    Ok((None, wfm)) => Err(WorkflowError::MachineWasCreatedWithNoActivations {
+                        run_id: wfm.machines.run_id,
+                    }),
+                    Err(e) => Err(e),
+                };
+                resp_chan
+                    .send(send_this)
+                    .expect("wfm create resp rx side can't be dropped");
+            }
             Err(TryRecvError::Disconnected) => {
-                event!(
-                    Level::WARN,
+                warn!(
                     "Sending side of workflow machine creator was dropped. Likely the \
-                            WorkflowConcurrencyManager was dropped. This indicates a failure to \
-                            call shutdown."
+                    WorkflowConcurrencyManager was dropped. This indicates a failure to call \
+                    shutdown."
                 );
                 return true;
             }
@@ -228,11 +250,7 @@ impl WorkflowConcurrencyManager {
                 // concurrency manager is the signal to this thread that the workflow
                 // manager can be dropped.
                 let wfid = &machine_rcvs[index].1.machines.workflow_id;
-                event!(
-                    Level::DEBUG,
-                    "Workflow manager thread done with workflow id {}",
-                    wfid
-                );
+                debug!(wfid = %wfid, "Workflow manager thread done",);
                 machine_rcvs.remove(index);
             }
             Err(TryRecvError::Empty) => {}
@@ -262,20 +280,16 @@ mod tests {
         let activation = mgr
             .create_or_update(
                 "some_run_id",
-                PollWorkflowTaskQueueResponse {
-                    history: Some(History {
-                        events: t.get_history_info(1).unwrap().events().to_vec(),
-                    }),
-                    workflow_execution: Some(WorkflowExecution {
-                        workflow_id: "wid".to_string(),
-                        run_id: "rid".to_string(),
-                    }),
-                    task_token: vec![1],
-                    ..Default::default()
+                History {
+                    events: t.get_history_info(1).unwrap().events().to_vec(),
+                },
+                WorkflowExecution {
+                    workflow_id: "wid".to_string(),
+                    run_id: "rid".to_string(),
                 },
             )
             .unwrap();
-        assert!(activation.activation.is_some());
+        assert!(activation.is_some());
 
         mgr.shutdown();
     }
@@ -283,8 +297,8 @@ mod tests {
     #[test]
     fn returns_errors_on_creation() {
         let mgr = WorkflowConcurrencyManager::new();
-        let res = mgr.create_or_update("some_run_id", PollWorkflowTaskQueueResponse::default());
-        // Should whine that we didn't provide history
-        assert_matches!(res.unwrap_err(), CoreError::BadDataFromWorkProvider(_))
+        let res = mgr.create_or_update("some_run_id", Default::default(), Default::default());
+        // Should whine that the history is empty
+        assert_matches!(res.unwrap_err(), WorkflowError::HistoryError(_))
     }
 }

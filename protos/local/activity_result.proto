@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package coresdk.activity_result;
+
+import "common.proto";
+
+/// Used to report activity completion to core and to resolve the activity in a workflow activation
+message ActivityResult {
+    oneof status {
+        Success completed = 1;
+        Failure failed = 2;
+        Cancelation canceled = 3;
+    }
+}
+
+/// Used in ActivityResult to report cancellation
+message Cancelation {
+    common.Payload details = 1;
+}
+
+/// Used in ActivityResult to report successful completion
+message Success {
+    common.Payload result = 1;
+}
+
+/// Used in ActivityResult to report failure
+message Failure {
+    common.UserCodeFailure failure = 1;
+}
+

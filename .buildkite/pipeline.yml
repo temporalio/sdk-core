@@ -9,11 +9,23 @@ steps:
       - docker-compose#v3.0.0:
           run: unit-test
           config: .buildkite/docker/docker-compose.yaml
+  - label: "doc"
+    agents:
+      queue: "default"
+      docker: "*"
+    command: "cargo doc --workspace --all-features --no-deps"
+    timeout_in_minutes: 15
+    plugins:
+      - docker-compose#v3.0.0:
+          run: unit-test
+          config: .buildkite/docker/docker-compose.yaml
+          env:
+            - RUSTDOCFLAGS=-Dwarnings
   - label: "lint"
     agents:
       queue: "default"
       docker: "*"
-    command: "cargo clippy --all -- -D warnings"
+    command: "cargo clippy --workspace --all-features --all-targets -- -D warnings && cargo clippy --test integ_tests --all-features -- --D warnings"
     timeout_in_minutes: 15
     plugins:
       - docker-compose#v3.0.0:

@@ -3,10 +3,13 @@ use crate::{
         workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, WFMachinesAdapter,
         WFMachinesError,
     },
-    protos::temporal::api::{
-        command::v1::{Command, CompleteWorkflowExecutionCommandAttributes},
-        enums::v1::{CommandType, EventType},
-        history::v1::HistoryEvent,
+    protos::{
+        coresdk::workflow_commands::CompleteWorkflowExecution,
+        temporal::api::{
+            command::v1::Command,
+            enums::v1::{CommandType, EventType},
+            history::v1::HistoryEvent,
+        },
     },
 };
 use rustfsm::{fsm, StateMachine, TransitionResult};
@@ -17,7 +20,7 @@ fsm! {
     name CompleteWorkflowMachine;
     command CompleteWFCommand;
     error WFMachinesError;
-    shared_state CompleteWorkflowExecutionCommandAttributes;
+    shared_state CompleteWorkflowExecution;
 
     Created --(Schedule, shared on_schedule) --> CompleteWorkflowCommandCreated;
 
@@ -27,14 +30,14 @@ fsm! {
         --> CompleteWorkflowCommandRecorded;
 }
 
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display)]
 pub(super) enum CompleteWFCommand {
     AddCommand(Command),
 }
 
 /// Complete a workflow
 pub(super) fn complete_workflow(
-    attribs: CompleteWorkflowExecutionCommandAttributes,
+    attribs: CompleteWorkflowExecution,
 ) -> NewMachineWithCommand<CompleteWorkflowMachine> {
     let (machine, add_cmd) = CompleteWorkflowMachine::new_scheduled(attribs);
     NewMachineWithCommand {
@@ -45,20 +48,18 @@ pub(super) fn complete_workflow(
 
 impl CompleteWorkflowMachine {
     /// Create a new WF machine and schedule it
-    pub(crate) fn new_scheduled(
-        attribs: CompleteWorkflowExecutionCommandAttributes,
-    ) -> (Self, Command) {
+    pub(crate) fn new_scheduled(attribs: CompleteWorkflowExecution) -> (Self, Command) {
         let mut s = Self {
             state: Created {}.into(),
             shared_state: attribs,
         };
         let cmd = match s
             .on_event_mut(CompleteWorkflowMachineEvents::Schedule)
-            .expect("Scheduling timers doesn't fail")
+            .expect("Scheduling complete wf machines doesn't fail")
             .pop()
         {
             Some(CompleteWFCommand::AddCommand(c)) => c,
-            _ => panic!("Timer on_schedule must produce command"),
+            _ => panic!("complete wf machine on_schedule must produce command"),
         };
         (s, cmd)
     }
@@ -97,7 +98,7 @@ pub(super) struct Created {}
 impl Created {
     pub(super) fn on_schedule(
         self,
-        dat: CompleteWorkflowExecutionCommandAttributes,
+        dat: CompleteWorkflowExecution,
     ) -> CompleteWorkflowMachineTransition<CompleteWorkflowCommandCreated> {
         let cmd = Command {
             command_type: CommandType::CompleteWorkflowExecution as i32,

@@ -26,10 +26,6 @@ pub enum HistoryInfoError {
     FailedOrTimeout(HistoryEvent),
     #[error("Last item in history wasn't WorkflowTaskStarted")]
     HistoryEndsUnexpectedly,
-
-    // We erase the underlying error type here to keep from leaking it into public
-    #[error("Underlying error in workflow machine: {0:?}")]
-    UnderlyingMachineError(#[from] anyhow::Error),
 }
 
 impl HistoryInfo {
@@ -39,6 +35,10 @@ impl HistoryInfo {
         events: &[HistoryEvent],
         to_wf_task_num: Option<usize>,
     ) -> Result<Self> {
+        if events.is_empty() {
+            return Err(HistoryInfoError::HistoryEndsUnexpectedly);
+        }
+
         let to_wf_task_num = to_wf_task_num.unwrap_or(usize::MAX);
         let mut workflow_task_started_event_id = 0;
         let mut previous_started_event_id = 0;

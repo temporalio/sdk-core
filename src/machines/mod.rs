@@ -12,7 +12,6 @@ mod child_workflow_state_machine;
 mod complete_workflow_state_machine;
 #[allow(unused)]
 mod continue_as_new_workflow_state_machine;
-#[allow(unused)]
 mod fail_workflow_state_machine;
 #[allow(unused)]
 mod local_activity_state_machine;
@@ -30,25 +29,20 @@ mod version_state_machine;
 mod workflow_task_state_machine;
 
 #[cfg(test)]
+#[macro_use]
 pub(crate) mod test_help;
 
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
 use crate::{
+    core_tracing::VecDisplayer,
     machines::workflow_machines::MachineResponse,
     protos::{
-        coresdk::{self, command::Variant, wf_activation_job},
-        temporal::api::{
-            command::v1::{
-                command::Attributes, CancelTimerCommandAttributes, Command,
-                CompleteWorkflowExecutionCommandAttributes, StartTimerCommandAttributes,
-            },
-            enums::v1::CommandType,
-            history::v1::{
-                HistoryEvent, WorkflowExecutionCanceledEventAttributes,
-                WorkflowExecutionSignaledEventAttributes, WorkflowExecutionStartedEventAttributes,
-            },
+        coresdk::workflow_commands::{
+            workflow_command, CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution,
+            RequestCancelActivity, ScheduleActivity, StartTimer, WorkflowCommand,
         },
+        temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
     },
 };
 use prost::alloc::fmt::Formatter;
@@ -57,71 +51,44 @@ use std::{
     convert::{TryFrom, TryInto},
     fmt::{Debug, Display},
 };
-use tracing::Level;
 
 pub(crate) type ProtoCommand = Command;
-
-/// Implementors of this trait represent something that can (eventually) call into a workflow to
-/// drive it, start it, signal it, cancel it, etc.
-pub(crate) trait DrivenWorkflow: ActivationListener + Send {
-    /// Start the workflow
-    fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes);
-
-    /// Obtain any output from the workflow's recent execution(s). Because the lang sdk is
-    /// responsible for calling workflow code as a result of receiving tasks from
-    /// [crate::Core::poll_task], we cannot directly iterate it here. Thus implementations of this
-    /// trait are expected to either buffer output or otherwise produce it on demand when this
-    /// function is called.
-    ///
-    /// In the case of the real [WorkflowBridge] implementation, commands are simply pulled from
-    /// a buffer that the language side sinks into when it calls [crate::Core::complete_task]
-    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand>;
-
-    /// Signal the workflow
-    fn signal(&mut self, attribs: WorkflowExecutionSignaledEventAttributes);
-
-    /// Cancel the workflow
-    fn cancel(&mut self, attribs: WorkflowExecutionCanceledEventAttributes);
-}
-
-/// Allows observers to listen to newly generated outgoing activation jobs. Used for testing, where
-/// some activations must be handled before outgoing commands are issued to avoid deadlocking.
-pub(crate) trait ActivationListener {
-    fn on_activation_job(&mut self, _activation: &wf_activation_job::Variant) {}
-}
 
 /// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
 /// EX: Create a new timer, complete the workflow, etc.
 #[derive(Debug, derive_more::From)]
+#[allow(clippy::large_enum_variant)]
 pub enum WFCommand {
     /// Returned when we need to wait for the lang sdk to send us something
     NoCommandsFromLang,
-    AddTimer(StartTimerCommandAttributes),
-    CancelTimer(CancelTimerCommandAttributes),
-    CompleteWorkflow(CompleteWorkflowExecutionCommandAttributes),
+    AddActivity(ScheduleActivity),
+    RequestCancelActivity(RequestCancelActivity),
+    AddTimer(StartTimer),
+    CancelTimer(CancelTimer),
+    CompleteWorkflow(CompleteWorkflowExecution),
+    FailWorkflow(FailWorkflowExecution),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
-#[error("Couldn't convert <lang> command")]
-pub struct InconvertibleCommandError(pub coresdk::Command);
+#[error("Lang provided workflow command with empty variant")]
+pub struct EmptyWorkflowCommandErr;
 
-impl TryFrom<coresdk::Command> for WFCommand {
-    type Error = InconvertibleCommandError;
+impl TryFrom<WorkflowCommand> for WFCommand {
+    type Error = EmptyWorkflowCommandErr;
 
-    fn try_from(c: coresdk::Command) -> Result<Self, Self::Error> {
-        match c.variant {
-            Some(Variant::Api(Command {
-                attributes: Some(attrs),
-                ..
-            })) => match attrs {
-                Attributes::StartTimerCommandAttributes(s) => Ok(WFCommand::AddTimer(s)),
-                Attributes::CancelTimerCommandAttributes(s) => Ok(WFCommand::CancelTimer(s)),
-                Attributes::CompleteWorkflowExecutionCommandAttributes(c) => {
-                    Ok(WFCommand::CompleteWorkflow(c))
-                }
-                _ => unimplemented!(),
-            },
-            _ => Err(c.into()),
+    fn try_from(c: WorkflowCommand) -> Result<Self, Self::Error> {
+        match c.variant.ok_or(EmptyWorkflowCommandErr)? {
+            workflow_command::Variant::StartTimer(s) => Ok(WFCommand::AddTimer(s)),
+            workflow_command::Variant::CancelTimer(s) => Ok(WFCommand::CancelTimer(s)),
+            workflow_command::Variant::ScheduleActivity(s) => Ok(WFCommand::AddActivity(s)),
+            workflow_command::Variant::RequestCancelActivity(s) => {
+                Ok(WFCommand::RequestCancelActivity(s))
+            }
+            workflow_command::Variant::CompleteWorkflowExecution(c) => {
+                Ok(WFCommand::CompleteWorkflow(c))
+            }
+            workflow_command::Variant::FailWorkflowExecution(s) => Ok(WFCommand::FailWorkflow(s)),
+            _ => unimplemented!(),
         }
     }
 }
@@ -155,7 +122,7 @@ where
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
     WFMachinesError: From<<<SM as StateMachine>::Event as TryFrom<HistoryEvent>>::Error>,
-    <SM as StateMachine>::Command: Debug,
+    <SM as StateMachine>::Command: Debug + Display,
     <SM as StateMachine>::State: Display,
     <SM as StateMachine>::Error: Into<WFMachinesError> + 'static + Send + Sync,
 {
@@ -164,12 +131,11 @@ where
     }
 
     fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError> {
-        event!(
-            Level::DEBUG,
-            msg = "handling command",
-            ?command_type,
+        debug!(
+            command_type = ?command_type,
             machine_name = %self.name(),
-            state = %self.state()
+            state = %self.state(),
+            "handling command"
         );
         if let Ok(converted_command) = command_type.try_into() {
             match self.on_event_mut(converted_command) {
@@ -189,18 +155,18 @@ where
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        event!(
-            Level::DEBUG,
-            msg = "handling event",
-            %event,
+        debug!(
+            event = %event,
             machine_name = %self.name(),
-            state = %self.state()
+            state = %self.state(),
+            "handling event"
         );
         let converted_event = event.clone().try_into()?;
         match self.on_event_mut(converted_event) {
             Ok(c) => {
                 if !c.is_empty() {
-                    event!(Level::DEBUG, msg = "Machine produced commands", ?c, state = %self.state());
+                    debug!(commands = %c.display(), state = %self.state(),
+                           "Machine produced commands");
                 }
                 let mut machine_responses = vec![];
                 for cmd in c {
@@ -276,7 +242,7 @@ trait Cancellable: StateMachine {
     fn cancel(&mut self) -> Result<MachineResponse, MachineError<Self::Error>> {
         // It's a logic error on our part if this is ever called on a machine that can't actually
         // be cancelled
-        panic!(format!("Machine {} cannot be cancelled", self.name()))
+        panic!("Machine {} cannot be cancelled", self.name())
     }
 
     /// Should return true if the command was cancelled before we sent it to the server
