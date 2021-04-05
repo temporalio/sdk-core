@@ -70,9 +70,7 @@ impl Created {
             command_type: CommandType::FailWorkflowExecution as i32,
             attributes: Some(dat.into()),
         };
-        TransitionResult::commands::<_, FailWorkflowCommandCreated>(vec![
-            FailWFCommand::AddCommand(cmd),
-        ])
+        TransitionResult::commands(vec![FailWFCommand::AddCommand(cmd)])
     }
 }
 

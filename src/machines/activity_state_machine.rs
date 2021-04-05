@@ -1,27 +1,27 @@
 #![allow(clippy::large_enum_variant)]
 
-use crate::protos::coresdk::PayloadsExt;
-use crate::protos::temporal::api::failure::v1::Failure;
-use crate::protos::temporal::api::history::v1::ActivityTaskCanceledEventAttributes;
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, WFMachinesAdapter,
         WFMachinesError,
     },
-    protos::coresdk::workflow_commands::ScheduleActivity,
     protos::{
         coresdk::{
             activity_result::{self as ar, activity_result, ActivityResult},
             activity_task,
             workflow_activation::ResolveActivity,
+            workflow_commands::ScheduleActivity,
+            PayloadsExt,
         },
         temporal::api::{
             command::v1::Command,
             common::v1::Payloads,
             enums::v1::{CommandType, EventType},
+            failure::v1::Failure,
             history::v1::{
-                history_event, ActivityTaskCompletedEventAttributes,
-                ActivityTaskFailedEventAttributes, HistoryEvent,
+                history_event, ActivityTaskCanceledEventAttributes,
+                ActivityTaskCompletedEventAttributes, ActivityTaskFailedEventAttributes,
+                HistoryEvent,
             },
         },
     },
@@ -316,7 +316,7 @@ impl Started {
         // notify_failed
         ActivityMachineTransition::ok(
             vec![ActivityMachineCommand::Fail(attrs.failure)],
-            Completed::default(),
+            Failed::default(),
         )
     }
     pub(super) fn on_activity_task_timed_out(self) -> ActivityMachineTransition<TimedOut> {
@@ -396,7 +396,7 @@ impl StartedActivityCancelEventRecorded {
         // notify_failed
         ActivityMachineTransition::ok(
             vec![ActivityMachineCommand::Fail(attrs.failure)],
-            Completed::default(),
+            Failed::default(),
         )
     }
     pub(super) fn on_activity_task_timed_out(self) -> ActivityMachineTransition<TimedOut> {
