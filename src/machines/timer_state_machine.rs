@@ -18,7 +18,7 @@ use crate::{
         },
     },
 };
-use rustfsm::{fsm, ATransitionResult, MachineError, StateMachine, TransitionResult};
+use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::convert::TryFrom;
 
 fsm! {

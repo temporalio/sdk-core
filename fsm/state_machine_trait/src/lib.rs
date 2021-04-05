@@ -207,24 +207,13 @@ where
     }
 }
 
-pub trait ATransitionResult {
-    type StateMachine: StateMachine;
-    type DestState;
-    fn into_general(
-        self,
-    ) -> TransitionResult<Self::StateMachine, <Self::StateMachine as StateMachine>::State>;
-}
-
-impl<Sm, Ds> ATransitionResult for TransitionResult<Sm, Ds>
+impl<Sm, Ds> TransitionResult<Sm, Ds>
 where
     Sm: StateMachine,
     Ds: Into<Sm::State>,
 {
-    type StateMachine = Sm;
-    type DestState = Ds;
-
     /// Turns more-specific (struct) transition result into more-general (enum) transition result
-    fn into_general(self) -> TransitionResult<Sm, Sm::State> {
+    pub fn into_general(self) -> TransitionResult<Sm, Sm::State> {
         match self {
             TransitionResult::InvalidTransition => TransitionResult::InvalidTransition,
             TransitionResult::Ok {

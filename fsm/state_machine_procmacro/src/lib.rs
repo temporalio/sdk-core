@@ -572,7 +572,6 @@ impl StateMachineDefinition {
         };
 
         let output = quote! {
-            use ::rustfsm::ATransitionResult as _HiddenATransitionResult;
 
             #transition_type_alias
             #machine_struct
