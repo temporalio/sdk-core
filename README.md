@@ -32,16 +32,6 @@ We are using [clippy](https://github.com/rust-lang/rust-clippy) for linting.
 You can run it using:
 `cargo clippy --all -- -D warnings`
 
-## Style Guidelines
-
-### Error handling
-Any error which is returned from a public interface should be well-typed, and we use 
-[thiserror](https://github.com/dtolnay/thiserror) for that purpose.
-
-Errors returned from things only used in testing are free to use 
-[anyhow](https://github.com/dtolnay/anyhow) for less verbosity.
-
-
 ## Debugging
 The crate uses [tracing](https://github.com/tokio-rs/tracing) to help with debugging. To enable
 it for a test, insert the below snippet at the start of the test. By default, tracing data is output
@@ -55,3 +45,21 @@ let _enter = s.enter();
 
 To run the Jaeger instance:
 `docker run --rm -p6831:6831/udp -p6832:6832/udp -p16686:16686 jaegertracing/all-in-one:latest`
+
+To show logs in the console, set the `RUST_LOG` environment variable to `temporal_sdk_core=DEBUG`
+or whatever level you desire. The env var is parsed according to tracing's 
+[EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html)
+rules.
+
+If you are working on a language SDK, you are expected to initialize tracing early in your `main`
+equivalent.
+
+## Style Guidelines
+
+### Error handling
+Any error which is returned from a public interface should be well-typed, and we use 
+[thiserror](https://github.com/dtolnay/thiserror) for that purpose.
+
+Errors returned from things only used in testing are free to use 
+[anyhow](https://github.com/dtolnay/anyhow) for less verbosity.
+
