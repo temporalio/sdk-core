@@ -6,11 +6,11 @@ mod history_builder;
 pub(super) use async_workflow_driver::{CommandSender, TestWorkflowDriver};
 pub(crate) use history_builder::TestHistoryBuilder;
 
-use crate::protos::coresdk::common::UserCodeFailure;
 use crate::{
     pollers::MockServerGatewayApis,
     protos::{
         coresdk::{
+            common::UserCodeFailure,
             workflow_activation::WfActivation,
             workflow_commands::workflow_command,
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
@@ -31,9 +31,9 @@ pub(crate) type FakeCore = CoreSDK<MockServerGatewayApis>;
 /// Given identifiers for a workflow/run, and a test history builder, construct an instance of
 /// the core SDK with a mock server gateway that will produce the responses as appropriate.
 ///
-/// `response_batches` is used to control the fake [PollWorkflowTaskQueueResponse]s returned.
-/// For each number in the input list, a fake response will be prepared which includes history
-/// up to the workflow task with that number, as in [TestHistoryBuilder::get_history_info].
+/// `response_batches` is used to control the fake [PollWorkflowTaskQueueResponse]s returned. For
+/// each number in the input list, a fake response will be prepared which includes history up to the
+/// workflow task with that number, as in [TestHistoryBuilder::get_history_info].
 pub(crate) fn build_fake_core(
     wf_id: &str,
     t: &mut TestHistoryBuilder,
@@ -99,6 +99,7 @@ pub(crate) async fn poll_and_reply<'a>(
                 run_id = res.run_id;
             }
 
+            dbg!(&reply);
             core.complete_workflow_task(WfActivationCompletion::from_status(
                 task_tok,
                 reply.clone(),

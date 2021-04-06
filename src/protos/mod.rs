@@ -355,6 +355,16 @@ pub mod temporal {
                     }
                 }
 
+                impl From<workflow_commands::RequestCancelActivity> for command::Attributes {
+                    fn from(c: workflow_commands::RequestCancelActivity) -> Self {
+                        Self::RequestCancelActivityTaskCommandAttributes(
+                            RequestCancelActivityTaskCommandAttributes {
+                                scheduled_event_id: c.scheduled_event_id,
+                            },
+                        )
+                    }
+                }
+
                 impl From<workflow_commands::ScheduleActivity> for command::Attributes {
                     fn from(s: workflow_commands::ScheduleActivity) -> Self {
                         Self::ScheduleActivityTaskCommandAttributes(
