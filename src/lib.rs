@@ -414,12 +414,6 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         // We only actually want to send commands back to the server if there are
         // no more pending activations -- in other words the lang SDK has caught
         // up on replay.
-        // TODO: This may no longer be true. In the activity abandon/trycancel case, we need a new
-        //   activation to resolve the activity, but we also need to pump this command out. Can
-        //   probably deal with this by having `push_lang_commands` return (from deep below) a
-        //   signal that a new PA should be enqueued *after* sending out commands, but then it
-        //   somehow needs to be replay aware (maybe by checking there weren't already any PAs).
-        //  That could be hard. Alternatively, perhaps we just buffer the returned commands
         if !self.pending_activations.has_pending(&run_id) {
             self.server_gateway
                 .complete_workflow_task(task_token, push_result.server_commands)
@@ -564,7 +558,7 @@ mod test {
         let wfid = "fake_wf_id";
 
         let mut t = canned_histories::single_timer("fake_timer");
-        build_fake_core(wfid, &mut t, hist_batches)
+        build_fake_core(wfid, &mut t, hist_batches, None)
     }
 
     #[fixture(hist_batches = &[])]
@@ -572,7 +566,7 @@ mod test {
         let wfid = "fake_wf_id";
 
         let mut t = canned_histories::single_activity("fake_activity");
-        build_fake_core(wfid, &mut t, hist_batches)
+        build_fake_core(wfid, &mut t, hist_batches, None)
     }
 
     #[fixture(hist_batches = &[])]
@@ -580,7 +574,7 @@ mod test {
         let wfid = "fake_wf_id";
 
         let mut t = canned_histories::single_failed_activity("fake_activity");
-        build_fake_core(wfid, &mut t, hist_batches)
+        build_fake_core(wfid, &mut t, hist_batches, None)
     }
 
     #[rstest]
@@ -650,7 +644,7 @@ mod test {
         let timer_2_id = "timer2";
 
         let mut t = canned_histories::parallel_timer(timer_1_id, timer_2_id);
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let core = build_fake_core(wfid, &mut t, hist_batches, None);
 
         poll_and_reply(
             &core,
@@ -708,7 +702,7 @@ mod test {
         let cancel_timer_id = "cancel_timer";
 
         let mut t = canned_histories::cancel_timer(timer_id, cancel_timer_id);
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let core = build_fake_core(wfid, &mut t, hist_batches, None);
 
         poll_and_reply(
             &core,
@@ -745,7 +739,7 @@ mod test {
         .await;
     }
 
-    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
+    #[rstest(hist_batches, case::incremental(&[1, 2, 3]), case::replay(&[3]))]
     #[tokio::test]
     async fn scheduled_activity_cancellation_try_cancel(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
@@ -753,7 +747,7 @@ mod test {
         let signal_id = "signal";
 
         let mut t = canned_histories::cancel_scheduled_activity(activity_id, signal_id);
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let core = build_fake_core(wfid, &mut t, hist_batches, Some(1));
 
         poll_and_reply(
             &core,
@@ -787,6 +781,48 @@ mod test {
         .await;
     }
 
+    #[rstest(hist_batches, case::incremental(&[1, 2, 3]), case::replay(&[3]))]
+    #[tokio::test]
+    async fn scheduled_activity_cancellation_abandon(hist_batches: &[usize]) {
+        let wfid = "fake_wf_id";
+        let activity_id = "fake_activity";
+        let signal_id = "signal";
+
+        let mut t = canned_histories::cancel_scheduled_activity_abandon(activity_id, signal_id);
+        let core = build_fake_core(wfid, &mut t, hist_batches, Some(1));
+
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            false,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    vec![ScheduleActivity {
+                        activity_id: activity_id.to_string(),
+                        cancellation_type: ActivityCancellationType::Abandon as i32,
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                    vec![RequestCancelActivity {
+                        activity_id: activity_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                // Activity is getting resolved right away as we are in the Abandon mode.
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                    vec![CompleteWorkflowExecution { result: None }.into()],
+                ),
+            ],
+        )
+        .await;
+    }
+
     #[rstest(hist_batches, case::incremental(&[1, 2, 3, 4]), case::replay(&[4]))]
     #[tokio::test]
     async fn scheduled_activity_cancellation_wait_for_cancellation(hist_batches: &[usize]) {
@@ -798,7 +834,7 @@ mod test {
             activity_id,
             signal_id,
         );
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let core = build_fake_core(wfid, &mut t, hist_batches, None);
 
         poll_and_reply(
             &core,
@@ -862,7 +898,7 @@ mod test {
         let randomness_seed_from_start = AtomicU64::new(0);
 
         let mut t = canned_histories::workflow_fails_with_reset_after_timer(timer_1_id, new_run_id);
-        let core = build_fake_core(wfid, &mut t, &[2]);
+        let core = build_fake_core(wfid, &mut t, &[2], None);
 
         poll_and_reply(
             &core,
@@ -924,7 +960,7 @@ mod test {
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
 
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let core = build_fake_core(wfid, &mut t, hist_batches, None);
 
         poll_and_reply(
             &core,
@@ -959,7 +995,7 @@ mod test {
         let timer_id = "timer";
 
         let mut t = canned_histories::workflow_fails_with_failure_after_timer(timer_id);
-        let mut core = build_fake_core(wfid, &mut t, batches);
+        let mut core = build_fake_core(wfid, &mut t, batches, None);
         // Need to create an expectation that we will call a failure completion
         Arc::get_mut(&mut core.server_gateway)
             .unwrap()
@@ -1006,7 +1042,7 @@ mod test {
         let timer_id = "timer1";
 
         let mut t = canned_histories::single_timer(timer_id);
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let core = build_fake_core(wfid, &mut t, hist_batches, None);
 
         poll_and_reply(
             &core,
@@ -1042,7 +1078,7 @@ mod test {
         let wfid = "fake_wf_id";
 
         let mut t = canned_histories::two_signals("sig1", "sig2");
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let core = build_fake_core(wfid, &mut t, hist_batches, None);
 
         poll_and_reply(
             &core,

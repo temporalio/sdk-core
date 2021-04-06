@@ -152,7 +152,8 @@ impl WorkflowManager {
     }
 
     /// Feed the workflow machines new commands issued by the executing workflow code, iterate the
-    /// workflow machines, and spit out the commands which are ready to be sent off to the server
+    /// workflow machines, and spit out the commands which are ready to be sent off to the server, as
+    /// well as a possible indication that there are new jobs that must be sent to lang.
     pub fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<PushCommandsResult> {
         self.command_sink.send(cmds)?;
         let has_new_lang_jobs = self.machines.iterate_machines()?;

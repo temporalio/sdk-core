@@ -443,6 +443,8 @@ impl WorkflowMachines {
 
     /// Iterate the state machines, which consists of grabbing any pending outgoing commands from
     /// the workflow, handling them, and preparing them to be sent off to the server.
+    /// Returns a boolean flag which indicates whether or not new activations were produced by the state
+    /// machine. If true, pending activation should be created by the caller making jobs available to the lang side.
     pub(crate) fn iterate_machines(&mut self) -> Result<bool> {
         let results = self.drive_me.fetch_workflow_iteration_output();
         let jobs = self.handle_driven_results(results)?;
@@ -540,6 +542,11 @@ impl WorkflowMachines {
         Ok(())
     }
 
+    /// Handles results of the workflow activation, delegating work to the appropriate state machine.
+    /// Returns a list of workflow jobs that should be queued in the pending activation for the next poll.
+    /// This list will be populated only if state machine produced lang activations as part of command processing.
+    /// For example some types of activity cancellation need to immediately unblock lang side without
+    /// having it to poll for an actual workflow task from the server.
     fn handle_driven_results(
         &mut self,
         results: Vec<WFCommand>,
