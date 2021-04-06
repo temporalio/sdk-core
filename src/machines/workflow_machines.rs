@@ -1,3 +1,4 @@
+use crate::protos::coresdk::workflow_activation::wf_activation_job::Variant;
 use crate::protos::coresdk::PayloadsToPayloadError;
 use crate::{
     core_tracing::VecDisplayer,
@@ -108,7 +109,6 @@ pub enum MachineResponse {
     UpdateRunIdOnWorkflowReset {
         run_id: String,
     },
-    NoOp,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -131,7 +131,7 @@ pub enum WFMachinesError {
     #[error("No command was scheduled for event {0:?}")]
     NoCommandScheduledForEvent(HistoryEvent),
     #[error("Machine response {0:?} was not expected: {1}")]
-    UnexpectedMachineResponse(MachineResponse, &'static str),
+    UnexpectedMachineResponse(MachineResponse, String),
     #[error("Command was missing its associated machine: {0}")]
     MissingAssociatedMachine(String),
     #[error("There was {0} when we expected exactly one payload while applying event: {1:?}")]
@@ -139,6 +139,8 @@ pub enum WFMachinesError {
 
     #[error("Machine encountered an invalid transition: {0}")]
     InvalidTransition(&'static str),
+    #[error("Invalid cancelation type: {0}")]
+    InvalidCancelationType(i32),
 }
 
 impl WorkflowMachines {
@@ -442,11 +444,17 @@ impl WorkflowMachines {
 
     /// Iterate the state machines, which consists of grabbing any pending outgoing commands from
     /// the workflow, handling them, and preparing them to be sent off to the server.
-    pub(crate) fn iterate_machines(&mut self) -> Result<()> {
+    /// Returns a boolean flag which indicates whether or not new activations were produced by the state
+    /// machine. If true, pending activation should be created by the caller making jobs available to the lang side.
+    pub(crate) fn iterate_machines(&mut self) -> Result<bool> {
         let results = self.drive_me.fetch_workflow_iteration_output();
-        self.handle_driven_results(results)?;
+        let jobs = self.handle_driven_results(results)?;
+        let has_new_lang_jobs = !jobs.is_empty();
+        for job in jobs.into_iter() {
+            self.drive_me.send_job(job);
+        }
         self.prepare_commands()?;
-        Ok(())
+        Ok(has_new_lang_jobs)
     }
 
     /// Apply events from history to this machines instance
@@ -527,7 +535,6 @@ impl WorkflowMachines {
                             },
                         ));
                 }
-                MachineResponse::NoOp => (),
                 MachineResponse::IssueNewCommand(_) => {
                     panic!("Issue new command machine response not expected here")
                 }
@@ -536,7 +543,16 @@ impl WorkflowMachines {
         Ok(())
     }
 
-    fn handle_driven_results(&mut self, results: Vec<WFCommand>) -> Result<()> {
+    /// Handles results of the workflow activation, delegating work to the appropriate state machine.
+    /// Returns a list of workflow jobs that should be queued in the pending activation for the next poll.
+    /// This list will be populated only if state machine produced lang activations as part of command processing.
+    /// For example some types of activity cancellation need to immediately unblock lang side without
+    /// having it to poll for an actual workflow task from the server.
+    fn handle_driven_results(
+        &mut self,
+        results: Vec<WFCommand>,
+    ) -> Result<Vec<wf_activation_job::Variant>> {
+        let mut jobs = vec![];
         for cmd in results {
             match cmd {
                 WFCommand::AddTimer(attrs) => {
@@ -546,33 +562,10 @@ impl WorkflowMachines {
                         .insert(CommandID::Timer(tid), timer.machine);
                     self.current_wf_task_commands.push_back(timer);
                 }
-                WFCommand::CancelTimer(attrs) => {
-                    let mkey = *self
-                        .id_to_machine
-                        .get(&CommandID::Timer(attrs.timer_id.to_owned()))
-                        .ok_or_else(|| {
-                            WFMachinesError::MissingAssociatedMachine(format!(
-                                "Missing associated machine for cancelling timer {}",
-                                &attrs.timer_id
-                            ))
-                        })?;
-                    let res = self.machine_mut(mkey).cancel()?;
-                    match res {
-                        MachineResponse::IssueNewCommand(c) => {
-                            self.current_wf_task_commands.push_back(CommandAndMachine {
-                                command: c,
-                                machine: mkey,
-                            })
-                        }
-                        MachineResponse::NoOp => {}
-                        v => {
-                            return Err(WFMachinesError::UnexpectedMachineResponse(
-                                v,
-                                "When cancelling timer",
-                            ));
-                        }
-                    }
-                }
+                WFCommand::CancelTimer(attrs) => self.process_cancellation(
+                    &CommandID::Timer(attrs.timer_id.to_owned()),
+                    &mut jobs,
+                )?,
                 WFCommand::AddActivity(attrs) => {
                     let aid = attrs.activity_id.clone();
                     let activity = self.add_new_machine(new_activity(attrs));
@@ -580,7 +573,10 @@ impl WorkflowMachines {
                         .insert(CommandID::Activity(aid), activity.machine);
                     self.current_wf_task_commands.push_back(activity);
                 }
-                WFCommand::RequestCancelActivity(_) => unimplemented!(),
+                WFCommand::RequestCancelActivity(attrs) => self.process_cancellation(
+                    &CommandID::Activity(attrs.activity_id.to_owned()),
+                    &mut jobs,
+                )?,
                 WFCommand::CompleteWorkflow(attrs) => {
                     let cwfm = self.add_new_machine(complete_workflow(attrs));
                     self.current_wf_task_commands.push_back(cwfm);
@@ -592,7 +588,42 @@ impl WorkflowMachines {
                 WFCommand::NoCommandsFromLang => (),
             }
         }
+        Ok(jobs)
+    }
+
+    fn process_cancellation(&mut self, id: &CommandID, jobs: &mut Vec<Variant>) -> Result<()> {
+        let m_key = self.get_machine_key(id)?;
+        let res = self.machine_mut(m_key).cancel()?;
+        debug!(machine_responses = ?res, cmd_id = ?id, "Req cancel responses");
+        for r in res {
+            match r {
+                MachineResponse::IssueNewCommand(c) => {
+                    self.current_wf_task_commands.push_back(CommandAndMachine {
+                        command: c,
+                        machine: m_key,
+                    })
+                }
+                MachineResponse::PushWFJob(j) => {
+                    jobs.push(j);
+                }
+                v => {
+                    return Err(WFMachinesError::UnexpectedMachineResponse(
+                        v,
+                        format!("When cancelling {:?}", id),
+                    ));
+                }
+            }
+        }
         Ok(())
+    }
+
+    fn get_machine_key(&mut self, id: &CommandID) -> Result<MachineKey> {
+        Ok(*self.id_to_machine.get(id).ok_or_else(|| {
+            WFMachinesError::MissingAssociatedMachine(format!(
+                "Missing associated machine for {:?}",
+                id
+            ))
+        })?)
     }
 
     /// Transfer commands from `current_wf_task_commands` to `commands`, so they may be sent off

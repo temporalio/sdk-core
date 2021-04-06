@@ -100,6 +100,12 @@ impl NextWfActivation {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct PushCommandsResult {
+    pub server_commands: Vec<ProtoCommand>,
+    pub has_new_lang_jobs: bool,
+}
+
 impl WorkflowManager {
     /// Given history that was just obtained from the server, pipe it into this workflow's machines.
     ///
@@ -146,10 +152,14 @@ impl WorkflowManager {
     }
 
     /// Feed the workflow machines new commands issued by the executing workflow code, iterate the
-    /// workflow machines, and spit out the commands which are ready to be sent off to the server
-    pub fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<Vec<ProtoCommand>> {
+    /// workflow machines, and spit out the commands which are ready to be sent off to the server, as
+    /// well as a possible indication that there are new jobs that must be sent to lang.
+    pub fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<PushCommandsResult> {
         self.command_sink.send(cmds)?;
-        self.machines.iterate_machines()?;
-        Ok(self.machines.get_commands())
+        let has_new_lang_jobs = self.machines.iterate_machines()?;
+        Ok(PushCommandsResult {
+            server_commands: self.machines.get_commands(),
+            has_new_lang_jobs,
+        })
     }
 }

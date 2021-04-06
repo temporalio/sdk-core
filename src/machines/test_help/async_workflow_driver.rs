@@ -1,6 +1,6 @@
 use crate::protos::coresdk::workflow_activation::wf_activation_job::Variant;
 use crate::protos::coresdk::workflow_activation::ResolveActivity;
-use crate::protos::coresdk::workflow_commands::ScheduleActivity;
+use crate::protos::coresdk::workflow_commands::{RequestCancelActivity, ScheduleActivity};
 use crate::{
     machines::{workflow_machines::CommandID, WFCommand},
     protos::coresdk::{
@@ -53,6 +53,13 @@ impl TestWfDriverCache {
     fn cancel_timer(&self, id: &str) {
         let mut bc = self.blocking_condvar.0.lock();
         bc.issued_commands.remove(&CommandID::Timer(id.to_owned()));
+    }
+
+    /// Cancel activity by ID.
+    fn cancel_activity(&self, id: &str) {
+        let mut bc = self.blocking_condvar.0.lock();
+        bc.issued_commands
+            .remove(&CommandID::Activity(id.to_owned()));
     }
 
     /// Track a new command that the wf has sent down the command sink. The command starts in
@@ -155,6 +162,16 @@ impl CommandSender {
             timer_id: timer_id.to_owned(),
         });
         self.twd_cache.cancel_timer(timer_id);
+        self.send(c);
+    }
+
+    /// Cancel activity
+    pub fn cancel_activity(&self, activity_id: &str) {
+        let c = WFCommand::RequestCancelActivity(RequestCancelActivity {
+            activity_id: activity_id.to_string(),
+            ..Default::default()
+        });
+        self.twd_cache.cancel_activity(activity_id);
         self.send(c);
     }
 }
