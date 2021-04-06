@@ -264,8 +264,7 @@ pub fn single_failed_activity(activity_id: &str) -> TestHistoryBuilder {
 /// 8: EVENT_TYPE_WORKFLOW_TASK_STARTED
 /// 9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
 /// 10: EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED
-/// 11: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-/// 12: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 11: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
 pub fn cancel_scheduled_activity(activity_id: &str, signal_id: &str) -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -298,7 +297,7 @@ pub fn cancel_scheduled_activity(activity_id: &str, signal_id: &str) -> TestHist
             },
         ),
     );
-    t.add_workflow_task_scheduled_and_started();
+    t.add_workflow_execution_completed();
     t
 }
 
@@ -311,8 +310,6 @@ pub fn cancel_scheduled_activity(activity_id: &str, signal_id: &str) -> TestHist
 /// 7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
 /// 8: EVENT_TYPE_WORKFLOW_TASK_STARTED
 /// 9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
-/// 10: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-/// 11: EVENT_TYPE_WORKFLOW_TASK_STARTED
 pub fn cancel_scheduled_activity_abandon(activity_id: &str, signal_id: &str) -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -336,7 +333,6 @@ pub fn cancel_scheduled_activity_abandon(activity_id: &str, signal_id: &str) -> 
         }],
     );
     t.add_full_wf_task();
-    t.add_workflow_task_scheduled_and_started();
     t
 }
 

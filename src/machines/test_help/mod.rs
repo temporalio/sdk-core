@@ -6,11 +6,11 @@ mod history_builder;
 pub(super) use async_workflow_driver::{CommandSender, TestWorkflowDriver};
 pub(crate) use history_builder::TestHistoryBuilder;
 
-use crate::protos::coresdk::common::UserCodeFailure;
 use crate::{
     pollers::MockServerGatewayApis,
     protos::{
         coresdk::{
+            common::UserCodeFailure,
             workflow_activation::WfActivation,
             workflow_commands::workflow_command,
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
@@ -24,7 +24,6 @@ use crate::{
     Core, CoreSDK,
 };
 use rand::{thread_rng, Rng};
-use std::cmp;
 use std::collections::VecDeque;
 
 pub(crate) type FakeCore = CoreSDK<MockServerGatewayApis>;
@@ -32,17 +31,13 @@ pub(crate) type FakeCore = CoreSDK<MockServerGatewayApis>;
 /// Given identifiers for a workflow/run, and a test history builder, construct an instance of
 /// the core SDK with a mock server gateway that will produce the responses as appropriate.
 ///
-/// `response_batches` is used to control the fake [PollWorkflowTaskQueueResponse]s returned.
-/// For each number in the input list, a fake response will be prepared which includes history
-/// up to the workflow task with that number, as in [TestHistoryBuilder::get_history_info].
-/// Optional `lang_job_batch_count` defines the number of direct lang activation batches produced by the underlying
-/// state machine. Each lang job batch would save us a poll to the server as it is going to be queued in the
-/// pending activations.
+/// `response_batches` is used to control the fake [PollWorkflowTaskQueueResponse]s returned. For
+/// each number in the input list, a fake response will be prepared which includes history up to the
+/// workflow task with that number, as in [TestHistoryBuilder::get_history_info].
 pub(crate) fn build_fake_core(
     wf_id: &str,
     t: &mut TestHistoryBuilder,
     response_batches: &[usize],
-    lang_job_batch_count: Option<usize>,
 ) -> FakeCore {
     let run_id = t.get_orig_run_id();
     let wf = Some(WorkflowExecution {
@@ -68,10 +63,7 @@ pub(crate) fn build_fake_core(
     let mut mock_gateway = MockServerGatewayApis::new();
     mock_gateway
         .expect_poll_workflow_task()
-        .times(cmp::max(
-            1, // At least one poll from the server is always needed.
-            response_batches.len() - lang_job_batch_count.unwrap_or(0),
-        ))
+        .times(response_batches.len())
         .returning(move |_| Ok(tasks.pop_front().unwrap()));
     // Response not really important here
     mock_gateway
@@ -107,6 +99,7 @@ pub(crate) async fn poll_and_reply<'a>(
                 run_id = res.run_id;
             }
 
+            dbg!(&reply);
             core.complete_workflow_task(WfActivationCompletion::from_status(
                 task_tok,
                 reply.clone(),
