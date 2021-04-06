@@ -24,7 +24,9 @@ pub(super) struct CancelRequested {}
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_schedule(self) -> CancelExternalMachineTransition {
+    pub(super) fn on_schedule(
+        self,
+    ) -> CancelExternalMachineTransition<RequestCancelExternalCommandCreated> {
         unimplemented!()
     }
 }
@@ -35,7 +37,7 @@ pub(super) struct RequestCancelExternalCommandCreated {}
 impl RequestCancelExternalCommandCreated {
     pub(super) fn on_request_cancel_external_workflow_execution_initiated(
         self,
-    ) -> CancelExternalMachineTransition {
+    ) -> CancelExternalMachineTransition<RequestCancelExternalCommandRecorded> {
         unimplemented!()
     }
 }
@@ -46,12 +48,12 @@ pub(super) struct RequestCancelExternalCommandRecorded {}
 impl RequestCancelExternalCommandRecorded {
     pub(super) fn on_external_workflow_execution_cancel_requested(
         self,
-    ) -> CancelExternalMachineTransition {
+    ) -> CancelExternalMachineTransition<CancelRequested> {
         unimplemented!()
     }
     pub(super) fn on_request_cancel_external_workflow_execution_failed(
         self,
-    ) -> CancelExternalMachineTransition {
+    ) -> CancelExternalMachineTransition<RequestCancelFailed> {
         unimplemented!()
     }
 }

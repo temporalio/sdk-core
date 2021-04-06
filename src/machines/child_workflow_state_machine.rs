@@ -34,7 +34,7 @@ pub(super) struct Completed {}
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_schedule(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_schedule(self) -> ChildWorkflowMachineTransition<StartCommandCreated> {
         unimplemented!()
     }
 }
@@ -48,10 +48,10 @@ pub(super) struct StartCommandCreated {}
 impl StartCommandCreated {
     pub(super) fn on_start_child_workflow_execution_initiated(
         self,
-    ) -> ChildWorkflowMachineTransition {
+    ) -> ChildWorkflowMachineTransition<StartEventRecorded> {
         unimplemented!()
     }
-    pub(super) fn on_cancel(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_cancel(self) -> ChildWorkflowMachineTransition<Canceled> {
         unimplemented!()
     }
 }
@@ -60,10 +60,14 @@ impl StartCommandCreated {
 pub(super) struct StartEventRecorded {}
 
 impl StartEventRecorded {
-    pub(super) fn on_child_workflow_execution_started(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_child_workflow_execution_started(
+        self,
+    ) -> ChildWorkflowMachineTransition<Started> {
         unimplemented!()
     }
-    pub(super) fn on_start_child_workflow_execution_failed(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_start_child_workflow_execution_failed(
+        self,
+    ) -> ChildWorkflowMachineTransition<StartFailed> {
         unimplemented!()
     }
 }
@@ -75,19 +79,29 @@ pub(super) struct StartFailed {}
 pub(super) struct Started {}
 
 impl Started {
-    pub(super) fn on_child_workflow_execution_completed(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_child_workflow_execution_completed(
+        self,
+    ) -> ChildWorkflowMachineTransition<Completed> {
         unimplemented!()
     }
-    pub(super) fn on_child_workflow_execution_failed(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_child_workflow_execution_failed(
+        self,
+    ) -> ChildWorkflowMachineTransition<Failed> {
         unimplemented!()
     }
-    pub(super) fn on_child_workflow_execution_timed_out(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_child_workflow_execution_timed_out(
+        self,
+    ) -> ChildWorkflowMachineTransition<TimedOut> {
         unimplemented!()
     }
-    pub(super) fn on_child_workflow_execution_canceled(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_child_workflow_execution_canceled(
+        self,
+    ) -> ChildWorkflowMachineTransition<Canceled> {
         unimplemented!()
     }
-    pub(super) fn on_child_workflow_execution_terminated(self) -> ChildWorkflowMachineTransition {
+    pub(super) fn on_child_workflow_execution_terminated(
+        self,
+    ) -> ChildWorkflowMachineTransition<Terminated> {
         unimplemented!()
     }
 }

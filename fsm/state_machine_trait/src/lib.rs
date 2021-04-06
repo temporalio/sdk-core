@@ -19,7 +19,7 @@ pub trait StateMachine: Sized {
 
     /// Handle an incoming event, returning a transition result which represents updates to apply
     /// to the state machine.
-    fn on_event(self, event: Self::Event) -> TransitionResult<Self>;
+    fn on_event(self, event: Self::Event) -> TransitionResult<Self, Self::State>;
 
     /// Handle an incoming event and mutate the state machine to update to the new state and apply
     /// any changes to shared state.
@@ -113,9 +113,10 @@ where
 }
 
 /// A transition result is emitted every time the [StateMachine] handles an event.
-pub enum TransitionResult<Machine>
+pub enum TransitionResult<Machine, DestinationState>
 where
     Machine: StateMachine,
+    DestinationState: Into<Machine::State>,
 {
     /// This state does not define a transition for this event from this state. All other errors
     /// should use the [Err](enum.TransitionResult.html#variant.Err) variant.
@@ -123,85 +124,115 @@ where
     /// The transition was successful
     Ok {
         commands: Vec<Machine::Command>,
-        new_state: Machine::State,
+        new_state: DestinationState,
         shared_state: Machine::SharedState,
     },
     /// The transition was successful with no shared state change
     OkNoShare {
         commands: Vec<Machine::Command>,
-        new_state: Machine::State,
+        new_state: DestinationState,
     },
     /// There was some error performing the transition
     Err(Machine::Error),
 }
 
-impl<S> TransitionResult<S>
+impl<Sm, Ds> TransitionResult<Sm, Ds>
 where
-    S: StateMachine,
+    Sm: StateMachine,
+    Ds: Into<Sm::State>,
 {
     /// Produce a transition with the provided commands to the provided state. No changes to shared
     /// state if it exists
-    pub fn ok<CI, IS>(commands: CI, new_state: IS) -> Self
+    pub fn ok<CI>(commands: CI, new_state: Ds) -> Self
     where
-        CI: IntoIterator<Item = S::Command>,
-        IS: Into<S::State>,
+        CI: IntoIterator<Item = Sm::Command>,
     {
         Self::OkNoShare {
             commands: commands.into_iter().collect(),
-            new_state: new_state.into(),
+            new_state,
         }
     }
 
     /// Produce a transition with the provided commands to the provided state with shared state
     /// changes
-    pub fn ok_shared<CI, IS, SS>(commands: CI, new_state: IS, new_shared: SS) -> Self
+    pub fn ok_shared<CI, SS>(commands: CI, new_state: Ds, new_shared: SS) -> Self
     where
-        CI: IntoIterator<Item = S::Command>,
-        IS: Into<S::State>,
-        SS: Into<S::SharedState>,
+        CI: IntoIterator<Item = Sm::Command>,
+        SS: Into<Sm::SharedState>,
     {
         Self::Ok {
             commands: commands.into_iter().collect(),
-            new_state: new_state.into(),
+            new_state,
             shared_state: new_shared.into(),
-        }
-    }
-
-    /// Produce a transition with commands relying on [Default] for the destination state's value
-    pub fn commands<CI, DestState>(commands: CI) -> Self
-    where
-        CI: IntoIterator<Item = S::Command>,
-        DestState: Into<S::State> + Default,
-    {
-        Self::OkNoShare {
-            commands: commands.into_iter().collect(),
-            new_state: DestState::default().into(),
-        }
-    }
-
-    /// Produce a transition with no commands relying on [Default] for the destination state's
-    /// value
-    pub fn default<DestState>() -> Self
-    where
-        DestState: Into<S::State> + Default,
-    {
-        Self::OkNoShare {
-            commands: vec![],
-            new_state: DestState::default().into(),
         }
     }
 
     /// Uses `Into` to produce a transition with no commands from the provided current state to
     /// the provided (by type parameter) destination state.
-    pub fn from<CurrentState, DestState>(current_state: CurrentState) -> Self
+    pub fn from<CurrentState>(current_state: CurrentState) -> Self
     where
-        DestState: Into<S::State>,
-        CurrentState: Into<DestState>,
+        CurrentState: Into<Ds>,
     {
-        let as_dest: DestState = current_state.into();
+        let as_dest: Ds = current_state.into();
         Self::OkNoShare {
             commands: vec![],
-            new_state: as_dest.into(),
+            new_state: as_dest,
+        }
+    }
+}
+
+impl<Sm, Ds> TransitionResult<Sm, Ds>
+where
+    Sm: StateMachine,
+    Ds: Into<Sm::State> + Default,
+{
+    /// Produce a transition with commands relying on [Default] for the destination state's value
+    pub fn commands<CI>(commands: CI) -> Self
+    where
+        CI: IntoIterator<Item = Sm::Command>,
+    {
+        Self::OkNoShare {
+            commands: commands.into_iter().collect(),
+            new_state: Ds::default(),
+        }
+    }
+
+    /// Produce a transition with no commands relying on [Default] for the destination state's
+    /// value
+    pub fn default() -> Self {
+        Self::OkNoShare {
+            commands: vec![],
+            new_state: Ds::default(),
+        }
+    }
+}
+
+impl<Sm, Ds> TransitionResult<Sm, Ds>
+where
+    Sm: StateMachine,
+    Ds: Into<Sm::State>,
+{
+    /// Turns more-specific (struct) transition result into more-general (enum) transition result
+    pub fn into_general(self) -> TransitionResult<Sm, Sm::State> {
+        match self {
+            TransitionResult::InvalidTransition => TransitionResult::InvalidTransition,
+            TransitionResult::Ok {
+                commands,
+                new_state,
+                shared_state,
+            } => TransitionResult::Ok {
+                commands,
+                new_state: new_state.into(),
+                shared_state,
+            },
+            TransitionResult::OkNoShare {
+                commands,
+                new_state,
+            } => TransitionResult::OkNoShare {
+                commands,
+                new_state: new_state.into(),
+            },
+            TransitionResult::Err(e) => TransitionResult::Err(e),
         }
     }
 }

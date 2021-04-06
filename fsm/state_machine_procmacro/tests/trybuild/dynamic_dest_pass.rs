@@ -10,36 +10,31 @@ fsm! {
     name SimpleMachine; command SimpleMachineCommand; error Infallible;
 
     One --(A(String), foo)--> Two;
-    One --(B)--> Two;
-    Two --(B)--> One;
-    Two --(C, baz)--> One
+    One --(A(String), foo)--> Three;
+
+    Two --(B(String), bar)--> One;
+    Two --(B(String), bar)--> Two;
+    Two --(B(String), bar)--> Three;
 }
 
 #[derive(Default, Clone)]
 pub struct One {}
 impl One {
-    fn foo(self, _: String) -> SimpleMachineTransition<Two> {
-        TransitionResult::default()
-    }
-}
-impl From<Two> for One {
-    fn from(_: Two) -> Self {
-        One {}
+    fn foo(self, _: String) -> SimpleMachineTransition<TwoOrThree> {
+        TransitionResult::ok(vec![], Two {}.into())
     }
 }
 
 #[derive(Default, Clone)]
 pub struct Two {}
 impl Two {
-    fn baz(self) -> SimpleMachineTransition<One> {
-        TransitionResult::default()
+    fn bar(self, _: String) -> SimpleMachineTransition<OneOrTwoOrThree> {
+        TransitionResult::ok(vec![], Three {}.into())
     }
 }
-impl From<One> for Two {
-    fn from(_: One) -> Self {
-        Two {}
-    }
-}
+
+#[derive(Default, Clone)]
+pub struct Three {}
 
 pub enum SimpleMachineCommand {}
 

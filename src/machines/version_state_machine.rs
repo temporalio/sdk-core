@@ -33,7 +33,7 @@ pub(super) enum VersionCommand {}
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_check_execution_state(self) -> VersionMachineTransition {
+    pub(super) fn on_check_execution_state(self) -> VersionMachineTransition<ReplayingOrExecuting> {
         unimplemented!()
     }
 }
@@ -42,7 +42,7 @@ impl Created {
 pub(super) struct Executing {}
 
 impl Executing {
-    pub(super) fn on_schedule(self) -> VersionMachineTransition {
+    pub(super) fn on_schedule(self) -> VersionMachineTransition<MarkerCommandCreatedOrSkipped> {
         unimplemented!()
     }
 }
@@ -51,7 +51,7 @@ impl Executing {
 pub(super) struct MarkerCommandCreated {}
 
 impl MarkerCommandCreated {
-    pub(super) fn on_command_record_marker(self) -> VersionMachineTransition {
+    pub(super) fn on_command_record_marker(self) -> VersionMachineTransition<ResultNotified> {
         unimplemented!()
     }
 }
@@ -66,7 +66,7 @@ pub(super) struct MarkerCommandRecorded {}
 pub(super) struct Replaying {}
 
 impl Replaying {
-    pub(super) fn on_schedule(self) -> VersionMachineTransition {
+    pub(super) fn on_schedule(self) -> VersionMachineTransition<MarkerCommandCreatedReplaying> {
         unimplemented!()
     }
 }
@@ -75,7 +75,7 @@ impl Replaying {
 pub(super) struct ResultNotified {}
 
 impl ResultNotified {
-    pub(super) fn on_marker_recorded(self) -> VersionMachineTransition {
+    pub(super) fn on_marker_recorded(self) -> VersionMachineTransition<MarkerCommandRecorded> {
         unimplemented!()
     }
 }
@@ -84,10 +84,12 @@ impl ResultNotified {
 pub(super) struct ResultNotifiedReplaying {}
 
 impl ResultNotifiedReplaying {
-    pub(super) fn on_non_matching_event(self) -> VersionMachineTransition {
+    pub(super) fn on_non_matching_event(self) -> VersionMachineTransition<SkippedNotified> {
         unimplemented!()
     }
-    pub(super) fn on_marker_recorded(self) -> VersionMachineTransition {
+    pub(super) fn on_marker_recorded(
+        self,
+    ) -> VersionMachineTransition<MarkerCommandRecordedOrSkippedNotified> {
         unimplemented!()
     }
 }
@@ -102,7 +104,7 @@ impl From<MarkerCommandCreatedReplaying> for ResultNotifiedReplaying {
 pub(super) struct Skipped {}
 
 impl Skipped {
-    pub(super) fn on_command_record_marker(self) -> VersionMachineTransition {
+    pub(super) fn on_command_record_marker(self) -> VersionMachineTransition<SkippedNotified> {
         unimplemented!()
     }
 }

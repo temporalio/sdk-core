@@ -2,7 +2,7 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 use syn::{
     parenthesized,
     parse::{Parse, ParseStream, Result},
@@ -60,16 +60,17 @@ use syn::{
 /// #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 /// pub struct DoorOpen {}
 /// impl DoorOpen {
-///     fn on_door_closed(&self) -> CardReaderTransition {
+///     fn on_door_closed(&self) -> CardReaderTransition<Locked> {
 ///         TransitionResult::ok(vec![], Locked {})
 ///     }
 /// }
 ///
 /// impl Locked {
-///     fn on_card_readable(&self, shared_dat: SharedState, data: CardData) -> CardReaderTransition {
+///     fn on_card_readable(&self, shared_dat: SharedState, data: CardData)
+///       -> CardReaderTransition<ReadingCardOrLocked> {
 ///         match shared_dat.last_id {
 ///             // Arbitrarily deny the same person entering twice in a row
-///             Some(d) if d == data => TransitionResult::default::<Locked>(),
+///             Some(d) if d == data => TransitionResult::ok(vec![], Locked {}.into()),
 ///             _ => {
 ///                 // Otherwise issue a processing command. This illustrates using the same handler
 ///                 // for different destinations
@@ -78,7 +79,7 @@ use syn::{
 ///                         Commands::ProcessData(data.clone()),
 ///                         Commands::StartBlinkingLight,
 ///                     ],
-///                     ReadingCard { card_data: data.clone() },
+///                     ReadingCard { card_data: data.clone() }.into(),
 ///                     SharedState { last_id: Some(data) }
 ///                 )
 ///             }   
@@ -87,10 +88,10 @@ use syn::{
 /// }
 ///
 /// impl ReadingCard {
-///     fn on_card_accepted(&self) -> CardReaderTransition {
+///     fn on_card_accepted(&self) -> CardReaderTransition<DoorOpen> {
 ///         TransitionResult::ok(vec![Commands::StopBlinkingLight], DoorOpen {})
 ///     }
-///     fn on_card_rejected(&self) -> CardReaderTransition {
+///     fn on_card_rejected(&self) -> CardReaderTransition<Locked> {
 ///         TransitionResult::ok(vec![Commands::StopBlinkingLight], Locked {})
 ///     }
 /// }
@@ -114,7 +115,7 @@ use syn::{
 /// # Ok(())
 /// # }
 /// ```
-///None
+///
 /// In the above example the first word is the name of the state machine, then after the comma the
 /// type (which you must define separately) of commands produced by the machine.
 ///
@@ -149,6 +150,9 @@ use syn::{
 ///
 ///   You are expected to define a type for each state, to contain that state's data. If there is
 ///   no data, you can simply: `type StateName = ()`
+/// * For any instance of transitions with the same event/handler which transition to different
+///   destination states (dynamic destinations), an enum named like `DestAOrDestBOrDestC` is
+///   generated. This enum must be used as the destination "state" from those handlers.
 /// * An enum with a variant for each event. You are expected to define the type (if any) contained
 ///   in the event variant.
 ///   ```ignore
@@ -181,7 +185,7 @@ struct StateMachineDefinition {
     shared_state_type: Option<Type>,
     command_type: Ident,
     error_type: Ident,
-    transitions: HashSet<Transition>,
+    transitions: Vec<Transition>,
 }
 
 impl StateMachineDefinition {
@@ -207,7 +211,17 @@ impl Parse for StateMachineDefinition {
         // semicolons
         let transitions: Punctuated<Transition, Token![;]> =
             input.parse_terminated(Transition::parse)?;
-        let transitions = transitions.into_iter().collect();
+        let transitions: Vec<_> = transitions.into_iter().collect();
+        // Check for and whine about any identical transitions. We do this here because preserving
+        // the order transitions were defined in is important, so simply collecting to a set is
+        // not ideal.
+        let trans_set: HashSet<_> = transitions.iter().collect();
+        if trans_set.len() != transitions.len() {
+            return Err(syn::Error::new(
+                input.span(),
+                "Duplicate transitions are not allowed!",
+            ));
+        }
         Ok(Self {
             visibility,
             name,
@@ -246,7 +260,7 @@ fn parse_machine_types(input: &ParseStream) -> Result<(Ident, Ident, Ident, Opti
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct Transition {
     from: Ident,
-    to: Ident,
+    to: Vec<Ident>,
     event: Variant,
     handler: Option<Ident>,
     mutates_shared: bool,
@@ -254,8 +268,6 @@ struct Transition {
 
 impl Parse for Transition {
     fn parse(input: ParseStream) -> Result<Self> {
-        // TODO: Currently the handlers are not required to transition to the state they claimed
-        //   they would. It would be great to find a way to fix that.
         // Parse the initial state name
         let from: Ident = input.parse()?;
         // Parse at least one dash
@@ -313,7 +325,7 @@ impl Parse for Transition {
             from,
             event,
             handler,
-            to,
+            to: vec![to],
             mutates_shared,
         })
     }
@@ -326,7 +338,11 @@ impl StateMachineDefinition {
         let states: HashSet<_> = self
             .transitions
             .iter()
-            .flat_map(|t| vec![t.from.clone(), t.to.clone()])
+            .flat_map(|t| {
+                let mut states = t.to.clone();
+                states.push(t.from.clone());
+                states
+            })
             .collect();
         let state_variants = states.iter().map(|s| {
             let statestr = s.to_string();
@@ -337,6 +353,12 @@ impl StateMachineDefinition {
         });
         let name = &self.name;
         let name_str = &self.name.to_string();
+
+        let transition_result_name = Ident::new(&format!("{}Transition", name), name.span());
+        let transition_type_alias = quote! {
+            type #transition_result_name<Ds, Sm = #name> = TransitionResult<Sm, Ds>;
+        };
+
         let state_enum_name = Ident::new(&format!("{}State", name), name.span());
         // If user has not defined any shared state, use the unit type.
         let shared_state_type = self
@@ -400,13 +422,45 @@ impl StateMachineDefinition {
                 statemap.insert(s.clone(), vec![]);
             }
         }
-        let state_branches = statemap.iter().map(|(from, transitions)| {
+        let mut multi_dest_enums = vec![];
+        let state_branches: Vec<_> = statemap.into_iter().map(|(from, transitions)| {
+            // Merge transition dest states with the same handler
+            let transitions = merge_transition_dests(transitions);
             let event_branches = transitions
-                .iter()
+                .into_iter()
                 .map(|ts| {
                     let ev_variant = &ts.event.ident;
                     if let Some(ts_fn) = ts.handler.clone() {
                         let span = ts_fn.span();
+                        let trans_type = match ts.to.as_slice() {
+                            [] => unreachable!("There will be at least one dest state in transitions"),
+                            [one_to] => quote! {
+                                            #transition_result_name<#one_to>
+                                        },
+                            multi_dests => {
+                                let string_dests: Vec<_> = multi_dests.iter()
+                                    .map(|i| i.to_string()).collect();
+                                let enum_ident = Ident::new(&string_dests.join("Or"),
+                                                            multi_dests[0].span());
+                                let multi_dest_enum = quote! {
+                                    #[derive(::derive_more::From)]
+                                    #visibility enum #enum_ident {
+                                        #(#multi_dests(#multi_dests)),*
+                                    }
+                                    impl ::core::convert::From<#enum_ident> for #state_enum_name {
+                                        fn from(v: #enum_ident) -> Self {
+                                            match v {
+                                                #(#enum_ident::#multi_dests(sv) => Self::#multi_dests(sv)),*
+                                            }
+                                        }
+                                    }
+                                };
+                                multi_dest_enums.push(multi_dest_enum);
+                                quote! {
+                                    #transition_result_name<#enum_ident>
+                                }
+                            }
+                        };
                         match ts.event.fields {
                             Fields::Unnamed(_) => {
                                 let arglist = if ts.mutates_shared {
@@ -416,7 +470,8 @@ impl StateMachineDefinition {
                                 };
                                 quote_spanned! {span=>
                                     #events_enum_name::#ev_variant(val) => {
-                                        state_data.#ts_fn(#arglist)
+                                        let res: #trans_type = state_data.#ts_fn(#arglist);
+                                        res.into_general()
                                     }
                                 }
                             }
@@ -428,7 +483,8 @@ impl StateMachineDefinition {
                                 };
                                 quote_spanned! {span=>
                                     #events_enum_name::#ev_variant => {
-                                        state_data.#ts_fn(#arglist)
+                                        let res: #trans_type = state_data.#ts_fn(#arglist);
+                                        res.into_general()
                                     }
                                 }
                             }
@@ -437,24 +493,28 @@ impl StateMachineDefinition {
                     } else {
                         // If events do not have a handler, attempt to construct the next state
                         // using `Default`.
-                        let new_state = ts.to.clone();
-                        let span = new_state.span();
-                        let default_trans = quote_spanned! {span=>
-                            TransitionResult::from::<#from, #new_state>(state_data)
+                        if let [new_state] = ts.to.as_slice() {
+                            let span = new_state.span();
+                            let default_trans = quote_spanned! {span=>
+                            TransitionResult::<_, #new_state>::from::<#from>(state_data).into_general()
                         };
-                        let span = ts.event.span();
-                        match ts.event.fields {
-                            Fields::Unnamed(_) => quote_spanned! {span=>
+                            let span = ts.event.span();
+                            match ts.event.fields {
+                                Fields::Unnamed(_) => quote_spanned! {span=>
                                 #events_enum_name::#ev_variant(_val) => {
                                     #default_trans
                                 }
                             },
-                            Fields::Unit => quote_spanned! {span=>
+                                Fields::Unit => quote_spanned! {span=>
                                 #events_enum_name::#ev_variant => {
                                     #default_trans
                                 }
                             },
-                            Fields::Named(_) => unreachable!(),
+                                Fields::Named(_) => unreachable!(),
+                            }
+
+                        } else {
+                            unreachable!("It should be impossible to have more than one dest state in no-handler transitions")
                         }
                     }
                 })
@@ -467,7 +527,7 @@ impl StateMachineDefinition {
                     #(#event_branches),*
                 }
             }
-        });
+        }).collect();
 
         let trait_impl = quote! {
             impl ::rustfsm::StateMachine for #name {
@@ -482,7 +542,7 @@ impl StateMachineDefinition {
                 }
 
                 fn on_event(self, event: #events_enum_name)
-                  -> ::rustfsm::TransitionResult<Self> {
+                  -> ::rustfsm::TransitionResult<Self, Self::State> {
                     match self.state {
                         #(#state_branches),*
                     }
@@ -509,15 +569,12 @@ impl StateMachineDefinition {
             }
         };
 
-        let transition_result_name = Ident::new(&format!("{}Transition", name), name.span());
-        let transition_type_alias = quote! {
-            type #transition_result_name = TransitionResult<#name>;
-        };
-
         let output = quote! {
+
             #transition_type_alias
             #machine_struct
             #states_enum
+            #(#multi_dest_enums)*
             #states_enum_impl
             #events_enum
             #trait_impl
@@ -525,4 +582,26 @@ impl StateMachineDefinition {
 
         output.into()
     }
+}
+
+/// Merge transition's dest state lists for those with the same from state & handler
+fn merge_transition_dests(transitions: Vec<Transition>) -> Vec<Transition> {
+    let mut map = HashMap::<_, Transition>::new();
+    transitions.into_iter().for_each(|t| {
+        // We want to use the transition sans-destinations as the key
+        let without_dests = {
+            let mut wd = t.clone();
+            wd.to = vec![];
+            wd
+        };
+        match map.entry(without_dests) {
+            Entry::Occupied(mut e) => {
+                e.get_mut().to.extend(t.to.into_iter());
+            }
+            Entry::Vacant(v) => {
+                v.insert(t);
+            }
+        }
+    });
+    map.into_iter().map(|(_, v)| v).collect()
 }

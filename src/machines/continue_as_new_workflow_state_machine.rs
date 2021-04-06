@@ -20,7 +20,7 @@ pub(super) struct ContinueAsNewWorkflowCommandCreated {}
 impl ContinueAsNewWorkflowCommandCreated {
     pub(super) fn on_workflow_execution_continued_as_new(
         self,
-    ) -> ContinueAsNewWorkflowMachineTransition {
+    ) -> ContinueAsNewWorkflowMachineTransition<ContinueAsNewWorkflowCommandRecorded> {
         unimplemented!()
     }
 }
@@ -32,7 +32,9 @@ pub(super) struct ContinueAsNewWorkflowCommandRecorded {}
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_schedule(self) -> ContinueAsNewWorkflowMachineTransition {
+    pub(super) fn on_schedule(
+        self,
+    ) -> ContinueAsNewWorkflowMachineTransition<ContinueAsNewWorkflowCommandCreated> {
         unimplemented!()
     }
 }

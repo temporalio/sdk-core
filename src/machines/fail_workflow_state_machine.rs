@@ -62,14 +62,15 @@ impl FailWorkflowMachine {
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_schedule(self, dat: FailWorkflowExecution) -> FailWorkflowMachineTransition {
+    pub(super) fn on_schedule(
+        self,
+        dat: FailWorkflowExecution,
+    ) -> FailWorkflowMachineTransition<FailWorkflowCommandCreated> {
         let cmd = ProtoCommand {
             command_type: CommandType::FailWorkflowExecution as i32,
             attributes: Some(dat.into()),
         };
-        TransitionResult::commands::<_, FailWorkflowCommandCreated>(vec![
-            FailWFCommand::AddCommand(cmd),
-        ])
+        TransitionResult::commands(vec![FailWFCommand::AddCommand(cmd)])
     }
 }
 
