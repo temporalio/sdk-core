@@ -456,7 +456,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
-    // complete it in this test as activity is try-cancelled.
+    // complete it in this test as activity is wait-cancelled.
     let activity_task = core.poll_activity_task(task_q).await.unwrap();
     assert_matches!(
         activity_task.variant,
@@ -531,7 +531,7 @@ async fn activity_cancellation_abandon() {
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
-    // complete it in this test as activity is try-cancelled.
+    // complete it in this test as activity is abandoned.
     let activity_task = core.poll_activity_task(task_q).await.unwrap();
     assert_matches!(
         activity_task.variant,
