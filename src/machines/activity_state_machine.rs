@@ -1,16 +1,5 @@
 #![allow(clippy::large_enum_variant)]
 
-use crate::protos::coresdk::workflow_activation::wf_activation_job::Variant;
-use crate::protos::coresdk::workflow_commands::{ActivityCancellationType, RequestCancelActivity};
-use crate::protos::coresdk::PayloadsExt;
-use crate::protos::temporal::api::common::v1::ActivityType;
-use crate::protos::temporal::api::enums::v1::RetryState;
-use crate::protos::temporal::api::enums::v1::RetryState::CancelRequested;
-use crate::protos::temporal::api::failure::v1::failure::FailureInfo;
-use crate::protos::temporal::api::failure::v1::{
-    failure, ActivityFailureInfo, CanceledFailureInfo, Failure,
-};
-use crate::protos::temporal::api::history::v1::ActivityTaskCanceledEventAttributes;
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, WFMachinesAdapter,
@@ -21,14 +10,22 @@ use crate::{
             activity_result::{self as ar, activity_result, ActivityResult},
             activity_task,
             workflow_activation::{
-                wf_activation_job, ResolveActivity, StartWorkflow, WfActivationJob,
+                wf_activation_job::{self, Variant},
+                ResolveActivity, StartWorkflow, WfActivationJob,
             },
+            workflow_commands::{
+                ActivityCancellationType, RequestCancelActivity, ScheduleActivity,
+            },
+            PayloadsExt,
         },
         temporal::api::{
             command::v1::Command,
-            common::v1::Payloads,
-            enums::v1::{CommandType, EventType},
-            failure::v1::Failure,
+            common::v1::{ActivityType, Payloads},
+            enums::v1::{CommandType, EventType, RetryState, RetryState::CancelRequested},
+            failure::v1::{
+                failure::{self, FailureInfo},
+                ActivityFailureInfo, CanceledFailureInfo, Failure,
+            },
             history::v1::{
                 history_event, ActivityTaskCanceledEventAttributes,
                 ActivityTaskCompletedEventAttributes, ActivityTaskFailedEventAttributes,
@@ -343,7 +340,7 @@ impl ScheduleCommandCreated {
             ActivityCancellationType::Abandon => {
                 ActivityMachineTransition::ok_shared(vec![], Canceled::default(), canceled_state)
             }
-            _ => notify_lang_activity_cancelled(canceled_state, None, Canceled::default().into()),
+            _ => notify_lang_activity_cancelled(canceled_state, None, Canceled::default()),
         }
     }
 }
@@ -375,11 +372,11 @@ impl ScheduledEventRecorded {
     ) -> ActivityMachineTransition<ScheduledActivityCancelCommandCreated> {
         create_request_cancel_activity_task_command(
             dat,
-            ScheduledActivityCancelCommandCreated::default().into(),
+            ScheduledActivityCancelCommandCreated::default(),
         )
     }
-    pub(super) fn on_abandoned(self, dat: SharedState) -> ActivityMachineTransition {
-        notify_lang_activity_cancelled(dat, None, Canceled::default().into())
+    pub(super) fn on_abandoned(self, dat: SharedState) -> ActivityMachineTransition<Canceled> {
+        notify_lang_activity_cancelled(dat, None, Canceled::default())
     }
 }
 
@@ -414,11 +411,11 @@ impl Started {
     ) -> ActivityMachineTransition<StartedActivityCancelCommandCreated> {
         create_request_cancel_activity_task_command(
             dat,
-            StartedActivityCancelCommandCreated::default().into(),
+            StartedActivityCancelCommandCreated::default(),
         )
     }
     pub(super) fn on_abandoned(self, dat: SharedState) -> ActivityMachineTransition<Canceled> {
-        notify_lang_activity_cancelled(dat, None, Canceled::default().into())
+        notify_lang_activity_cancelled(dat, None, Canceled::default())
     }
 }
 
@@ -434,9 +431,9 @@ impl ScheduledActivityCancelCommandCreated {
             ActivityCancellationType::TryCancel => notify_lang_activity_cancelled(
                 dat,
                 None,
-                ScheduledActivityCancelCommandCreated::default().into(),
+                ScheduledActivityCancelCommandCreated::default(),
             ),
-            _ => ActivityMachineTransition::default::<ScheduledActivityCancelCommandCreated>(),
+            _ => ActivityMachineTransition::default(),
         }
     }
 }
@@ -450,7 +447,7 @@ impl ScheduledActivityCancelEventRecorded {
         dat: SharedState,
         _attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition<Canceled> {
-        notify_lang_activity_cancelled(dat, None, Canceled::default().into())
+        notify_lang_activity_cancelled(dat, None, Canceled::default())
     }
 
     pub(super) fn on_activity_task_timed_out(self) -> ActivityMachineTransition<TimedOut> {
@@ -476,9 +473,9 @@ impl StartedActivityCancelCommandCreated {
             ActivityCancellationType::TryCancel => notify_lang_activity_cancelled(
                 dat,
                 None,
-                StartedActivityCancelEventRecorded::default().into(),
+                StartedActivityCancelEventRecorded::default(),
             ),
-            _ => ActivityMachineTransition::default::<StartedActivityCancelEventRecorded>(),
+            _ => ActivityMachineTransition::default(),
         }
     }
 }
@@ -515,7 +512,7 @@ impl StartedActivityCancelEventRecorded {
     ) -> ActivityMachineTransition<Canceled> {
         match dat.cancellation_type {
             ActivityCancellationType::WaitCancellationCompleted => {
-                notify_lang_activity_cancelled(dat, Some(attrs), Canceled::default().into())
+                notify_lang_activity_cancelled(dat, Some(attrs), Canceled::default())
             }
             _ => ActivityMachineTransition::ok(vec![], Canceled::default()),
         }
@@ -552,10 +549,13 @@ pub(super) struct TimedOut {}
 #[derive(Default, Clone)]
 pub(super) struct Canceled {}
 
-fn create_request_cancel_activity_task_command(
+fn create_request_cancel_activity_task_command<S>(
     dat: SharedState,
-    next_state: ActivityMachineState,
-) -> TransitionResult<ActivityMachine> {
+    next_state: S,
+) -> ActivityMachineTransition<S>
+where
+    S: Into<ActivityMachineState>,
+{
     let cmd = Command {
         command_type: CommandType::RequestCancelActivityTask as i32,
         attributes: Some(
@@ -572,14 +572,17 @@ fn create_request_cancel_activity_task_command(
     )
 }
 
-/// Notifies lang side that activity has been cancelled by sending a failure with cancelled failure as a cause.
-/// Optional cancelled_event, if passed, is used to supply event IDs.
-/// State machine will transition into the `next_state` provided as a parameter.
-fn notify_lang_activity_cancelled(
+/// Notifies lang side that activity has been cancelled by sending a failure with cancelled failure
+/// as a cause. Optional cancelled_event, if passed, is used to supply event IDs. State machine will
+/// transition into the `next_state` provided as a parameter.
+fn notify_lang_activity_cancelled<S>(
     dat: SharedState,
     canceled_event: Option<ActivityTaskCanceledEventAttributes>,
-    next_state: ActivityMachineState,
-) -> TransitionResult<ActivityMachine> {
+    next_state: S,
+) -> ActivityMachineTransition<S>
+where
+    S: Into<ActivityMachineState>,
+{
     let (scheduled_event_id, started_event_id) = match canceled_event {
         None => (dat.scheduled_event_id, dat.started_event_id),
         Some(e) => (e.scheduled_event_id, e.scheduled_event_id),

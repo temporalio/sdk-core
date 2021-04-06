@@ -99,7 +99,6 @@ pub(crate) async fn poll_and_reply<'a>(
                 run_id = res.run_id;
             }
 
-            dbg!(&reply);
             core.complete_workflow_task(WfActivationCompletion::from_status(
                 task_tok,
                 reply.clone(),
