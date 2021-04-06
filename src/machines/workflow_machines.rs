@@ -1,3 +1,4 @@
+use crate::protos::coresdk::workflow_activation::wf_activation_job::Variant;
 use crate::protos::coresdk::PayloadsToPayloadError;
 use crate::{
     core_tracing::VecDisplayer,
@@ -130,7 +131,7 @@ pub enum WFMachinesError {
     #[error("No command was scheduled for event {0:?}")]
     NoCommandScheduledForEvent(HistoryEvent),
     #[error("Machine response {0:?} was not expected: {1}")]
-    UnexpectedMachineResponse(MachineResponse, &'static str),
+    UnexpectedMachineResponse(MachineResponse, String),
     #[error("Command was missing its associated machine: {0}")]
     MissingAssociatedMachine(String),
     #[error("There was {0} when we expected exactly one payload while applying event: {1:?}")]
@@ -561,28 +562,10 @@ impl WorkflowMachines {
                         .insert(CommandID::Timer(tid), timer.machine);
                     self.current_wf_task_commands.push_back(timer);
                 }
-                WFCommand::CancelTimer(attrs) => {
-                    let m_key =
-                        self.get_machine_key(&CommandID::Timer(attrs.timer_id.to_owned()))?;
-                    let res = self.machine_mut(m_key).cancel()?;
-                    // TODO: Dedupe with req cancel activity
-                    for r in res {
-                        match r {
-                            MachineResponse::IssueNewCommand(c) => {
-                                self.current_wf_task_commands.push_back(CommandAndMachine {
-                                    command: c,
-                                    machine: m_key,
-                                })
-                            }
-                            v => {
-                                return Err(WFMachinesError::UnexpectedMachineResponse(
-                                    v,
-                                    "When cancelling timer",
-                                ));
-                            }
-                        }
-                    }
-                }
+                WFCommand::CancelTimer(attrs) => self.process_cancellation(
+                    &CommandID::Timer(attrs.timer_id.to_owned()),
+                    &mut jobs,
+                )?,
                 WFCommand::AddActivity(attrs) => {
                     let aid = attrs.activity_id.clone();
                     let activity = self.add_new_machine(new_activity(attrs));
@@ -590,31 +573,10 @@ impl WorkflowMachines {
                         .insert(CommandID::Activity(aid), activity.machine);
                     self.current_wf_task_commands.push_back(activity);
                 }
-                WFCommand::RequestCancelActivity(attrs) => {
-                    let m_key =
-                        self.get_machine_key(&CommandID::Activity(attrs.activity_id.to_owned()))?;
-                    let res = self.machine_mut(m_key).cancel()?;
-                    debug!(machine_responses = ?res, "Req cancel activity responses");
-                    for r in res {
-                        match r {
-                            MachineResponse::IssueNewCommand(c) => {
-                                self.current_wf_task_commands.push_back(CommandAndMachine {
-                                    command: c,
-                                    machine: m_key,
-                                })
-                            }
-                            MachineResponse::PushWFJob(j) => {
-                                jobs.push(j);
-                            }
-                            v => {
-                                return Err(WFMachinesError::UnexpectedMachineResponse(
-                                    v,
-                                    "When cancelling activity",
-                                ));
-                            }
-                        }
-                    }
-                }
+                WFCommand::RequestCancelActivity(attrs) => self.process_cancellation(
+                    &CommandID::Activity(attrs.activity_id.to_owned()),
+                    &mut jobs,
+                )?,
                 WFCommand::CompleteWorkflow(attrs) => {
                     let cwfm = self.add_new_machine(complete_workflow(attrs));
                     self.current_wf_task_commands.push_back(cwfm);
@@ -627,6 +589,32 @@ impl WorkflowMachines {
             }
         }
         Ok(jobs)
+    }
+
+    fn process_cancellation(&mut self, id: &CommandID, jobs: &mut Vec<Variant>) -> Result<()> {
+        let m_key = self.get_machine_key(id)?;
+        let res = self.machine_mut(m_key).cancel()?;
+        debug!(machine_responses = ?res, format!("Req cancel {:?} responses", id));
+        for r in res {
+            match r {
+                MachineResponse::IssueNewCommand(c) => {
+                    self.current_wf_task_commands.push_back(CommandAndMachine {
+                        command: c,
+                        machine: m_key,
+                    })
+                }
+                MachineResponse::PushWFJob(j) => {
+                    jobs.push(j);
+                }
+                v => {
+                    return Err(WFMachinesError::UnexpectedMachineResponse(
+                        v,
+                        format!("When cancelling {:?}", id),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     fn get_machine_key(&mut self, id: &CommandID) -> Result<MachineKey> {
