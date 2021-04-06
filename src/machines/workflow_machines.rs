@@ -594,7 +594,7 @@ impl WorkflowMachines {
     fn process_cancellation(&mut self, id: &CommandID, jobs: &mut Vec<Variant>) -> Result<()> {
         let m_key = self.get_machine_key(id)?;
         let res = self.machine_mut(m_key).cancel()?;
-        debug!(machine_responses = ?res, format!("Req cancel {:?} responses", id));
+        debug!(machine_responses = ?res, "Req cancel responses");
         for r in res {
             match r {
                 MachineResponse::IssueNewCommand(c) => {
