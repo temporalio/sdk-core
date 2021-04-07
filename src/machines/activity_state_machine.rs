@@ -467,7 +467,16 @@ impl ScheduledActivityCancelEventRecorded {
         dat: SharedState,
         _attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition<Canceled> {
-        notify_lang_activity_cancelled(dat, None, Canceled::default())
+        match dat.cancellation_type {
+            /// At this point if we are in TryCancel mode, we've already sent a cancellation failure
+            /// to lang unblocking it, so there is no need to send another activation.
+            ActivityCancellationType::TryCancel => ActivityMachineTransition::default(),
+            ActivityCancellationType::WaitCancellationCompleted => {
+                notify_lang_activity_cancelled(dat, None, Canceled::default())
+            }
+            /// Abandon results in going into Cancelled immediately, so we should never reach this state.
+            ActivityCancellationType::Abandon => unreachable!(),
+        }
     }
 
     pub(super) fn on_activity_task_timed_out(
@@ -475,7 +484,16 @@ impl ScheduledActivityCancelEventRecorded {
         dat: SharedState,
         attrs: ActivityTaskTimedOutEventAttributes,
     ) -> ActivityMachineTransition<TimedOut> {
-        notify_lang_activity_timed_out(dat, attrs)
+        match dat.cancellation_type {
+            /// At this point if we are in TryCancel mode, we've already sent a cancellation failure
+            /// to lang unblocking it, so there is no need to send another activation for the timeout.
+            ActivityCancellationType::TryCancel => ActivityMachineTransition::default(),
+            ActivityCancellationType::WaitCancellationCompleted => {
+                notify_lang_activity_timed_out(dat, attrs)
+            }
+            /// Abandon results in going into Cancelled immediately, so we should never reach this state.
+            ActivityCancellationType::Abandon => unreachable!(),
+        }
     }
 }
 
@@ -542,7 +560,10 @@ impl StartedActivityCancelEventRecorded {
             ActivityCancellationType::WaitCancellationCompleted => {
                 notify_lang_activity_cancelled(dat, Some(attrs), Canceled::default())
             }
-            _ => ActivityMachineTransition::ok(vec![], Canceled::default()),
+            ActivityCancellationType::TryCancel => {
+                ActivityMachineTransition::ok(vec![], Canceled::default())
+            }
+            ActivityCancellationType::Abandon => unreachable!(),
         }
     }
 }

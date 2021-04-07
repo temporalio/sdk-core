@@ -847,14 +847,15 @@ mod test {
         .await;
     }
 
+    #[rstest(hist_batches, case::incremental(&[1, 3]), case::replay(&[3]))]
     #[tokio::test]
-    async fn cancelled_activity_timeout() {
+    async fn cancelled_activity_timeout(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let activity_id = "fake_activity";
         let signal_id = "signal";
 
         let mut t = canned_histories::scheduled_cancelled_activity_timeout(activity_id, signal_id);
-        let core = build_fake_core(wfid, &mut t, &[3]);
+        let core = build_fake_core(wfid, &mut t, hist_batches);
 
         poll_and_reply(
             &core,
@@ -879,10 +880,7 @@ mod test {
                 ),
                 // Activity is getting resolved right away as it has been timed out.
                 gen_assert_and_reply(
-                    &job_assert!(
-                        wf_activation_job::Variant::ResolveActivity(_),
-                        wf_activation_job::Variant::ResolveActivity(_)
-                    ),
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
                     vec![CompleteWorkflowExecution { result: None }.into()],
                 ),
             ],
@@ -939,10 +937,11 @@ mod test {
         let activity_id = "fake_activity";
         let signal_id = "signal";
 
-        let mut t = canned_histories::cancel_scheduled_activity_with_activity_task_cancel(
-            activity_id,
-            signal_id,
-        );
+        let mut t =
+            canned_histories::cancel_scheduled_activity_with_signal_and_activity_task_cancel(
+                activity_id,
+                signal_id,
+            );
         let core = build_fake_core(wfid, &mut t, hist_batches);
 
         poll_and_reply(
@@ -974,6 +973,51 @@ mod test {
                     vec![],
                 ),
                 // Now ActivityTaskCanceled has been processed and activity can be resolved.
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                    vec![CompleteWorkflowExecution { result: None }.into()],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[rstest(hist_batches, case::incremental(&[1, 3]), case::replay(&[3]))]
+    #[tokio::test]
+    async fn scheduled_activity_cancellation_try_cancel_task_canceled(hist_batches: &[usize]) {
+        let wfid = "fake_wf_id";
+        let activity_id = "fake_activity";
+        let signal_id = "signal";
+
+        let mut t = canned_histories::cancel_scheduled_activity_with_activity_task_cancel(
+            activity_id,
+            signal_id,
+        );
+        let core = build_fake_core(wfid, &mut t, hist_batches);
+
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            false,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    vec![ScheduleActivity {
+                        activity_id: activity_id.to_string(),
+                        cancellation_type: ActivityCancellationType::TryCancel as i32,
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                    vec![RequestCancelActivity {
+                        activity_id: activity_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                // Making sure that activity is not resolved until it's cancelled.
                 gen_assert_and_reply(
                     &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
                     vec![CompleteWorkflowExecution { result: None }.into()],
