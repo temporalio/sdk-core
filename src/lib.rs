@@ -879,7 +879,10 @@ mod test {
                 ),
                 // Activity is getting resolved right away as it has been timed out.
                 gen_assert_and_reply(
-                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                    &job_assert!(
+                        wf_activation_job::Variant::ResolveActivity(_),
+                        wf_activation_job::Variant::ResolveActivity(_)
+                    ),
                     vec![CompleteWorkflowExecution { result: None }.into()],
                 ),
             ],
