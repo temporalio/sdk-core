@@ -200,13 +200,15 @@ impl Parse for StateMachineDefinition {
         // Parse visibility if present
         let visibility = input.parse()?;
         // parse the state machine name, command type, and error type
-        let (name, command_type, error_type, shared_state_type) = parse_machine_types(&input).map_err(|mut e| {
-            e.combine(Error::new(
-                e.span(),
-                "The fsm definition should begin with `name MachineName; command CommandType; error ErrorType;` optionally followed by `shared_state SharedStateType;`",
-            ));
-            e
-        })?;
+        let (name, command_type, error_type, shared_state_type) = parse_machine_types(&input)
+            .map_err(|mut e| {
+                e.combine(Error::new(
+                    e.span(),
+                    "The fsm definition should begin with `name MachineName; command CommandType; \
+                    error ErrorType;` optionally followed by `shared_state SharedStateType;`",
+                ));
+                e
+            })?;
         // Then the state machine definition is simply a sequence of transitions separated by
         // semicolons
         let transitions: Punctuated<Transition, Token![;]> =
@@ -335,15 +337,7 @@ impl StateMachineDefinition {
     fn codegen(&self) -> TokenStream {
         let visibility = self.visibility.clone();
         // First extract all of the states into a set, and build the enum's insides
-        let states: HashSet<_> = self
-            .transitions
-            .iter()
-            .flat_map(|t| {
-                let mut states = t.to.clone();
-                states.push(t.from.clone());
-                states
-            })
-            .collect();
+        let states = self.all_states();
         let state_variants = states.iter().map(|s| {
             let statestr = s.to_string();
             quote! {
@@ -529,6 +523,8 @@ impl StateMachineDefinition {
             }
         }).collect();
 
+        let viz_str = self.visualize();
+
         let trait_impl = quote! {
             impl ::rustfsm::StateMachine for #name {
                 type Error = #err_type;
@@ -566,11 +562,14 @@ impl StateMachineDefinition {
                 fn from_parts(shared: Self::SharedState, state: Self::State) -> Self {
                     Self { shared_state: shared, state }
                 }
+
+                fn visualizer() -> &'static str {
+                    #viz_str
+                }
             }
         };
 
         let output = quote! {
-
             #transition_type_alias
             #machine_struct
             #states_enum
@@ -581,6 +580,37 @@ impl StateMachineDefinition {
         };
 
         output.into()
+    }
+
+    fn all_states(&self) -> HashSet<Ident> {
+        self.transitions
+            .iter()
+            .flat_map(|t| {
+                let mut states = t.to.clone();
+                states.push(t.from.clone());
+                states
+            })
+            .collect()
+    }
+
+    fn visualize(&self) -> String {
+        let transitions: Vec<String> = self
+            .transitions
+            .iter()
+            .flat_map(|t| {
+                t.to.iter()
+                    .map(move |d| format!("{} --> {}: {}", t.from, d, t.event.ident))
+            })
+            // Add all final state transitions
+            .chain(
+                self.all_states()
+                    .iter()
+                    .filter(|s| self.is_final_state(s))
+                    .map(|s| format!("{} --> [*]", s)),
+            )
+            .collect();
+        let transitions = transitions.join("\n");
+        format!("@startuml\n{}\n@enduml", transitions)
     }
 }
 
