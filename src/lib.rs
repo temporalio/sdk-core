@@ -785,6 +785,110 @@ mod test {
 
     #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
     #[tokio::test]
+    async fn scheduled_activity_timeout(hist_batches: &[usize]) {
+        let wfid = "fake_wf_id";
+        let activity_id = "fake_activity";
+
+        let mut t = canned_histories::scheduled_activity_timeout(activity_id);
+        let core = build_fake_core(wfid, &mut t, hist_batches);
+
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            false,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    vec![ScheduleActivity {
+                        activity_id: activity_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                // Activity is getting resolved right away as it has been timed out.
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                    vec![CompleteWorkflowExecution { result: None }.into()],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
+    #[tokio::test]
+    async fn started_activity_timeout(hist_batches: &[usize]) {
+        let wfid = "fake_wf_id";
+        let activity_id = "fake_activity";
+
+        let mut t = canned_histories::started_activity_timeout(activity_id);
+        let core = build_fake_core(wfid, &mut t, hist_batches);
+
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            false,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    vec![ScheduleActivity {
+                        activity_id: activity_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                // Activity is getting resolved right away as it has been timed out.
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                    vec![CompleteWorkflowExecution { result: None }.into()],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_activity_timeout() {
+        let wfid = "fake_wf_id";
+        let activity_id = "fake_activity";
+        let signal_id = "signal";
+
+        let mut t = canned_histories::scheduled_cancelled_activity_timeout(activity_id, signal_id);
+        let core = build_fake_core(wfid, &mut t, &[3]);
+
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            false,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    vec![ScheduleActivity {
+                        activity_id: activity_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                    vec![RequestCancelActivity {
+                        activity_id: activity_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                // Activity is getting resolved right away as it has been timed out.
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                    vec![CompleteWorkflowExecution { result: None }.into()],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
+    #[tokio::test]
     async fn scheduled_activity_cancellation_abandon(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let activity_id = "fake_activity";

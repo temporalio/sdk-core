@@ -1,5 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
+use crate::protos::temporal::api::history::v1::ActivityTaskTimedOutEventAttributes;
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, WFMachinesAdapter,
@@ -53,13 +54,13 @@ fsm! {
     ScheduleCommandCreated --(Cancel, shared on_canceled) --> Canceled;
 
     ScheduledEventRecorded --(ActivityTaskStarted(i64), shared on_task_started) --> Started;
-    ScheduledEventRecorded --(ActivityTaskTimedOut, on_task_timed_out) --> TimedOut;
+    ScheduledEventRecorded --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes), shared on_task_timed_out) --> TimedOut;
     ScheduledEventRecorded --(Cancel, shared on_canceled) --> ScheduledActivityCancelCommandCreated;
     ScheduledEventRecorded --(Abandon, shared on_abandoned) --> Canceled;
 
     Started --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes), on_activity_task_completed) --> Completed;
     Started --(ActivityTaskFailed(ActivityTaskFailedEventAttributes), on_activity_task_failed) --> Failed;
-    Started --(ActivityTaskTimedOut, on_activity_task_timed_out) --> TimedOut;
+    Started --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes), shared on_activity_task_timed_out) --> TimedOut;
     Started --(Cancel, shared on_canceled) --> StartedActivityCancelCommandCreated;
     Started --(Abandon, shared on_abandoned) --> Canceled;
 
@@ -74,7 +75,7 @@ fsm! {
     ScheduledActivityCancelEventRecorded
       --(ActivityTaskStarted(i64)) --> StartedActivityCancelEventRecorded;
     ScheduledActivityCancelEventRecorded
-      --(ActivityTaskTimedOut, on_activity_task_timed_out) --> TimedOut;
+      --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes), shared on_activity_task_timed_out) --> TimedOut;
 
     StartedActivityCancelCommandCreated
       --(CommandRequestCancelActivityTask) --> StartedActivityCancelCommandCreated;
@@ -86,7 +87,7 @@ fsm! {
     StartedActivityCancelEventRecorded
       --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes), on_activity_task_completed) --> Completed;
     StartedActivityCancelEventRecorded
-      --(ActivityTaskTimedOut, on_activity_task_timed_out) --> TimedOut;
+      --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes), shared on_activity_task_timed_out) --> TimedOut;
     StartedActivityCancelEventRecorded
       --(ActivityTaskCanceled(ActivityTaskCanceledEventAttributes), shared on_activity_task_canceled) --> Canceled;
 }
@@ -183,7 +184,18 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                     ));
                 }
             }
-            Some(EventType::ActivityTaskTimedOut) => Self::ActivityTaskTimedOut,
+            Some(EventType::ActivityTaskTimedOut) => {
+                if let Some(history_event::Attributes::ActivityTaskTimedOutEventAttributes(attrs)) =
+                    e.attributes
+                {
+                    Self::ActivityTaskTimedOut(attrs)
+                } else {
+                    return Err(WFMachinesError::MalformedEvent(
+                        e,
+                        "Activity timeout attributes were unset".to_string(),
+                    ));
+                }
+            }
             Some(EventType::ActivityTaskCancelRequested) => Self::ActivityTaskCancelRequested,
             Some(EventType::ActivityTaskCanceled) => {
                 if let Some(history_event::Attributes::ActivityTaskCanceledEventAttributes(attrs)) =
@@ -363,8 +375,12 @@ impl ScheduledEventRecorded {
             },
         )
     }
-    pub(super) fn on_task_timed_out(self) -> ActivityMachineTransition<TimedOut> {
-        ActivityMachineTransition::default()
+    pub(super) fn on_task_timed_out(
+        self,
+        dat: SharedState,
+        attrs: ActivityTaskTimedOutEventAttributes,
+    ) -> ActivityMachineTransition<TimedOut> {
+        notify_lang_activity_timed_out(dat, attrs)
     }
     pub(super) fn on_canceled(
         self,
@@ -402,8 +418,12 @@ impl Started {
             Failed::default(),
         )
     }
-    pub(super) fn on_activity_task_timed_out(self) -> ActivityMachineTransition<TimedOut> {
-        ActivityMachineTransition::default()
+    pub(super) fn on_activity_task_timed_out(
+        self,
+        dat: SharedState,
+        attrs: ActivityTaskTimedOutEventAttributes,
+    ) -> ActivityMachineTransition<TimedOut> {
+        notify_lang_activity_timed_out(dat, attrs)
     }
     pub(super) fn on_canceled(
         self,
@@ -450,8 +470,12 @@ impl ScheduledActivityCancelEventRecorded {
         notify_lang_activity_cancelled(dat, None, Canceled::default())
     }
 
-    pub(super) fn on_activity_task_timed_out(self) -> ActivityMachineTransition<TimedOut> {
-        TransitionResult::default()
+    pub(super) fn on_activity_task_timed_out(
+        self,
+        dat: SharedState,
+        attrs: ActivityTaskTimedOutEventAttributes,
+    ) -> ActivityMachineTransition<TimedOut> {
+        notify_lang_activity_timed_out(dat, attrs)
     }
 }
 
@@ -502,8 +526,12 @@ impl StartedActivityCancelEventRecorded {
             Failed::default(),
         )
     }
-    pub(super) fn on_activity_task_timed_out(self) -> ActivityMachineTransition<TimedOut> {
-        ActivityMachineTransition::default()
+    pub(super) fn on_activity_task_timed_out(
+        self,
+        dat: SharedState,
+        attrs: ActivityTaskTimedOutEventAttributes,
+    ) -> ActivityMachineTransition<TimedOut> {
+        notify_lang_activity_timed_out(dat, attrs)
     }
     pub(super) fn on_activity_task_canceled(
         self,
@@ -543,6 +571,30 @@ pub(super) struct Completed {}
 #[derive(Default, Clone)]
 pub(super) struct Failed {}
 
+impl From<ScheduledEventRecorded> for TimedOut {
+    fn from(_: ScheduledEventRecorded) -> Self {
+        Self::default()
+    }
+}
+
+impl From<Started> for TimedOut {
+    fn from(_: Started) -> Self {
+        Self::default()
+    }
+}
+
+impl From<ScheduledActivityCancelEventRecorded> for TimedOut {
+    fn from(_: ScheduledActivityCancelEventRecorded) -> Self {
+        Self::default()
+    }
+}
+
+impl From<StartedActivityCancelEventRecorded> for TimedOut {
+    fn from(_: StartedActivityCancelEventRecorded) -> Self {
+        Self::default()
+    }
+}
+
 #[derive(Default, Clone)]
 pub(super) struct TimedOut {}
 
@@ -569,6 +621,21 @@ where
     ActivityMachineTransition::ok(
         vec![ActivityMachineCommand::RequestCancellation(cmd)],
         next_state,
+    )
+}
+
+/// Notifies lang side that activity has timed out by sending a failure with timeout error as a cause.
+/// State machine will transition into the TimedOut state.
+fn notify_lang_activity_timed_out(
+    dat: SharedState,
+    attrs: ActivityTaskTimedOutEventAttributes,
+) -> TransitionResult<ActivityMachine, TimedOut> {
+    ActivityMachineTransition::ok_shared(
+        vec![ActivityMachineCommand::Fail(Some(new_timeout_failure(
+            &dat, attrs,
+        )))],
+        TimedOut::default(),
+        dat,
     )
 }
 
@@ -624,6 +691,25 @@ fn new_cancellation_failure(
         failure_info: Some(failure::FailureInfo::ActivityFailureInfo(
             activity_failure_info,
         )),
+        ..Default::default()
+    }
+}
+
+fn new_timeout_failure(dat: &SharedState, attrs: ActivityTaskTimedOutEventAttributes) -> Failure {
+    let failure_info = ActivityFailureInfo {
+        activity_id: dat.attrs.activity_id.to_string(),
+        activity_type: Some(ActivityType {
+            name: dat.attrs.activity_type.to_string(),
+        }),
+        scheduled_event_id: attrs.scheduled_event_id,
+        started_event_id: attrs.started_event_id,
+        identity: "workflow".to_string(),
+        retry_state: attrs.retry_state,
+    };
+    Failure {
+        message: "Activity task timedOut".to_string(),
+        cause: attrs.failure.map(Box::new),
+        failure_info: Some(failure::FailureInfo::ActivityFailureInfo(failure_info)),
         ..Default::default()
     }
 }
