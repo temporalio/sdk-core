@@ -393,8 +393,18 @@ impl StateMachineDefinition {
         // Build the events enum
         let events: HashSet<Variant> = self.transitions.iter().map(|t| t.event.clone()).collect();
         let events_enum_name = Ident::new(&format!("{}Events", name), name.span());
-        let events: Vec<_> = events.into_iter().collect();
+        let events: Vec<_> = events
+            .into_iter()
+            .map(|v| {
+                let vname = v.ident.to_string();
+                quote! {
+                    #[display(fmt=#vname)]
+                    #v
+                }
+            })
+            .collect();
         let events_enum = quote! {
+            #[derive(::derive_more::Display)]
             #visibility enum #events_enum_name {
                 #(#events),*
             }
@@ -444,7 +454,8 @@ impl StateMachineDefinition {
                                     impl ::core::convert::From<#enum_ident> for #state_enum_name {
                                         fn from(v: #enum_ident) -> Self {
                                             match v {
-                                                #(#enum_ident::#multi_dests(sv) => Self::#multi_dests(sv)),*
+                                                #( #enum_ident::#multi_dests(sv) =>
+                                                    Self::#multi_dests(sv) ),*
                                             }
                                         }
                                     }

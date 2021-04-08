@@ -34,6 +34,7 @@ pub(crate) mod test_help;
 
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
+use crate::machines::test_help::add_coverage;
 use crate::{
     core_tracing::VecDisplayer,
     machines::workflow_machines::MachineResponse,
@@ -121,6 +122,8 @@ where
     SM: StateMachine + CheckStateMachineInFinal + WFMachinesAdapter + Cancellable + Clone + Send,
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
+    // TODO: Can't make this condidional?
+    <SM as StateMachine>::Event: Display,
     WFMachinesError: From<<<SM as StateMachine>::Event as TryFrom<HistoryEvent>>::Error>,
     <SM as StateMachine>::Command: Debug + Display,
     <SM as StateMachine>::State: Display,
@@ -161,9 +164,23 @@ where
             state = %self.state(),
             "handling event"
         );
-        let converted_event = event.clone().try_into()?;
+        let converted_event: <Self as StateMachine>::Event = event.clone().try_into()?;
+
+        #[cfg(test)]
+        let from_state = self.state().to_string();
+        #[cfg(test)]
+        let converted_event_str = converted_event.to_string();
+
         match self.on_event_mut(converted_event) {
             Ok(c) => {
+                #[cfg(test)]
+                add_coverage(
+                    self.name().to_owned(),
+                    from_state,
+                    self.state().to_string(),
+                    converted_event_str,
+                );
+
                 if !c.is_empty() {
                     debug!(commands = %c.display(), state = %self.state(),
                            "Machine produced commands");

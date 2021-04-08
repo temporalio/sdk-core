@@ -37,8 +37,6 @@ use crate::{
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::convert::{TryFrom, TryInto};
 
-// Schedule / cancel are "explicit events" (imperative rather than past events?)
-
 fsm! {
     pub(super) name ActivityMachine;
     command ActivityMachineCommand;

@@ -9,10 +9,19 @@ static TRACING_INIT: Once = Once::new();
 /// that consumers and tests have an easy way to initialize tracing.
 pub fn tracing_init() {
     TRACING_INIT.call_once(|| {
+        // Not all low-down unit tests use Tokio
+        #[cfg(test)]
+        let tracer = opentelemetry_jaeger::new_pipeline()
+            .with_service_name("coresdk")
+            .install_simple()
+            .unwrap();
+
+        #[cfg(not(test))]
         let tracer = opentelemetry_jaeger::new_pipeline()
             .with_service_name("coresdk")
             .install_batch(opentelemetry::runtime::Tokio)
             .unwrap();
+
         let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
         let filter_layer = EnvFilter::try_from_default_env()
             .or_else(|_| EnvFilter::try_new("info"))

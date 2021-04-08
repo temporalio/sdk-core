@@ -2,9 +2,11 @@ type Result<T, E = anyhow::Error> = std::result::Result<T, E>;
 
 mod async_workflow_driver;
 mod history_builder;
+mod transition_coverage;
 
 pub(super) use async_workflow_driver::{CommandSender, TestWorkflowDriver};
 pub(crate) use history_builder::TestHistoryBuilder;
+pub(crate) use transition_coverage::add_coverage;
 
 use crate::{
     pollers::MockServerGatewayApis,

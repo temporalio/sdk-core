@@ -46,6 +46,7 @@ path = "fsm"
 assert_matches = "1.4"
 mockall = "0.9"
 rstest = "0.7"
+lazy_static = "1.4"
 
 [build-dependencies]
 tonic-build = "0.4"
