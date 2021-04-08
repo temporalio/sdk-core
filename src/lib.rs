@@ -825,7 +825,7 @@ mod test {
                                         )),
                                     }
                                 ] => {
-                                    assert_eq!(failure.message, "Activity task timedOut".to_string());
+                                    assert_eq!(failure.message, "Activity task timed out".to_string());
                                     assert_eq!(aid, &activity_id.to_string());
                                 }
                             );
@@ -878,7 +878,7 @@ mod test {
                                         )),
                                     }
                                 ] => {
-                                    assert_eq!(failure.message, "Activity task timedOut".to_string());
+                                    assert_eq!(failure.message, "Activity task timed out".to_string());
                                     assert_eq!(aid, &activity_id.to_string());
                                 }
                             );

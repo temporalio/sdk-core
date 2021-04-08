@@ -716,7 +716,7 @@ fn new_timeout_failure(dat: &SharedState, attrs: ActivityTaskTimedOutEventAttrib
         retry_state: attrs.retry_state,
     };
     Failure {
-        message: "Activity task timedOut".to_string(),
+        message: "Activity task timed out".to_string(),
         cause: attrs.failure.map(Box::new),
         failure_info: Some(failure::FailureInfo::ActivityFailureInfo(failure_info)),
         ..Default::default()
