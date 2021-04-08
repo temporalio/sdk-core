@@ -75,8 +75,9 @@ mod machine_coverage_report {
     // it'll just get abandoned.
     #[test]
     fn reporter() {
-        // Need to wait a bit for the thread handle to be initialized
-        std::thread::sleep(Duration::from_millis(200));
+        // Make sure thread handle exists
+        &*COVERAGE_SENDER;
+        // Join it
         THREAD_HANDLE
             .lock()
             .unwrap()
