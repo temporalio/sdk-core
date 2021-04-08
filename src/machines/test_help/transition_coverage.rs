@@ -41,24 +41,21 @@ pub fn add_coverage(machine_name: String, from_state: String, to_state: String, 
 fn spawn_save_coverage_at_end() -> SyncSender<(String, CoveredTransition)> {
     let (tx, rx) = sync_channel(1000);
     let handle = std::thread::spawn(move || {
-        loop {
-            // Assume that, if the entire program hasn't run a state machine transition in the
-            // last second that we are probably done running all the tests. This is to avoid
-            // needing to instrument every single test.
-            match rx.recv_timeout(Duration::from_secs(1)) {
-                Ok((machine_name, ct)) => match COVERED_TRANSITIONS.entry(machine_name) {
-                    Entry::Occupied(o) => {
-                        o.get().insert(ct);
-                    }
-                    Entry::Vacant(v) => {
-                        v.insert({
-                            let ds = DashSet::new();
-                            ds.insert(ct);
-                            ds
-                        });
-                    }
-                },
-                Err(_) => break,
+        // Assume that, if the entire program hasn't run a state machine transition in the
+        // last second that we are probably done running all the tests. This is to avoid
+        // needing to instrument every single test.
+        while let Ok((machine_name, ct)) = rx.recv_timeout(Duration::from_secs(1)) {
+            match COVERED_TRANSITIONS.entry(machine_name) {
+                Entry::Occupied(o) => {
+                    o.get().insert(ct);
+                }
+                Entry::Vacant(v) => {
+                    v.insert({
+                        let ds = DashSet::new();
+                        ds.insert(ct);
+                        ds
+                    });
+                }
             }
         }
         dbg!(&*COVERED_TRANSITIONS);
@@ -76,6 +73,7 @@ mod machine_coverage_report {
     #[test]
     fn reporter() {
         // Make sure thread handle exists
+        #[allow(clippy::no_effect)] // Haha clippy, you'd be wrong here.
         &*COVERAGE_SENDER;
         // Join it
         THREAD_HANDLE
