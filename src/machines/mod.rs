@@ -34,7 +34,6 @@ pub(crate) mod test_help;
 
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
-use crate::machines::test_help::add_coverage;
 use crate::{
     core_tracing::VecDisplayer,
     machines::workflow_machines::MachineResponse,
@@ -52,6 +51,9 @@ use std::{
     convert::{TryFrom, TryInto},
     fmt::{Debug, Display},
 };
+
+#[cfg(test)]
+use crate::machines::test_help::add_coverage;
 
 pub(crate) type ProtoCommand = Command;
 
