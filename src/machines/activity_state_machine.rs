@@ -1,5 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
+use crate::protos::coresdk::common::Payload;
 use crate::protos::temporal::api::history::v1::ActivityTaskTimedOutEventAttributes;
 use crate::{
     machines::{
@@ -98,6 +99,8 @@ pub(super) enum ActivityMachineCommand {
     Complete(Option<Payloads>),
     #[display(fmt = "Fail")]
     Fail(Option<Failure>),
+    #[display(fmt = "Cancel")]
+    Cancel(Option<Payloads>),
     #[display(fmt = "RequestCancellation")]
     RequestCancellation(Command),
 }
@@ -228,14 +231,12 @@ impl WFMachinesAdapter for ActivityMachine {
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
             ActivityMachineCommand::Complete(result) => {
-                let result = result
-                    .map(TryInto::try_into)
-                    .transpose()
-                    .map_err(|pe| WFMachinesError::NotExactlyOnePayload(pe, event.clone()))?;
                 vec![ResolveActivity {
                     activity_id: self.shared_state.attrs.activity_id.clone(),
                     result: Some(ActivityResult {
-                        status: Some(activity_result::Status::Completed(ar::Success { result })),
+                        status: Some(activity_result::Status::Completed(ar::Success {
+                            result: convert_payloads(event, result)?,
+                        })),
                     }),
                 }
                 .into()]
@@ -253,6 +254,17 @@ impl WFMachinesAdapter for ActivityMachine {
             }
             ActivityMachineCommand::RequestCancellation(c) => {
                 self.machine_responses_from_cancel_request(c)
+            }
+            ActivityMachineCommand::Cancel(details) => {
+                vec![ResolveActivity {
+                    activity_id: self.shared_state.attrs.activity_id.clone(),
+                    result: Some(ActivityResult {
+                        status: Some(activity_result::Status::Canceled(ar::Cancelation {
+                            details: convert_payloads(event, details)?,
+                        })),
+                    }),
+                }
+                .into()]
             }
         })
     }
@@ -283,13 +295,13 @@ impl Cancellable for ActivityMachine {
                 ActivityMachineCommand::RequestCancellation(cmd) => {
                     self.machine_responses_from_cancel_request(cmd)
                 }
-                ActivityMachineCommand::Fail(failure) => {
+                ActivityMachineCommand::Cancel(details) => {
                     vec![MachineResponse::PushWFJob(Variant::ResolveActivity(
                         ResolveActivity {
                             activity_id: self.shared_state.attrs.activity_id.clone(),
                             result: Some(ActivityResult {
-                                status: Some(activity_result::Status::Failed(ar::Failure {
-                                    failure: failure.map(Into::into),
+                                status: Some(activity_result::Status::Canceled(ar::Cancelation {
+                                    details: None, // TODO convert paylods
                                 })),
                             }),
                         },
@@ -448,11 +460,12 @@ impl ScheduledActivityCancelCommandCreated {
         dat: SharedState,
     ) -> ActivityMachineTransition<ScheduledActivityCancelCommandCreated> {
         match dat.cancellation_type {
-            ActivityCancellationType::TryCancel => notify_lang_activity_cancelled(
-                dat,
-                None,
-                ScheduledActivityCancelCommandCreated::default(),
+            ActivityCancellationType::Abandon => unreachable!(
+                "Cancellations with type Abandon should go into terminal state immediately."
             ),
+            /// We don't need to notify lang side here as we've already unblocked it by calling `machine_responses_from_cancel_request`
+            /// when `RequestCancellation` has been created for `TryCancel`, while `WaitCancellationCompleted`
+            /// shouldn't unblock lang side until `ActivityTaskCanceled` event has been received.
             _ => ActivityMachineTransition::default(),
         }
     }
@@ -465,17 +478,19 @@ impl ScheduledActivityCancelEventRecorded {
     pub(super) fn on_activity_task_canceled(
         self,
         dat: SharedState,
-        _attrs: ActivityTaskCanceledEventAttributes,
+        attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition<Canceled> {
         match dat.cancellation_type {
             /// At this point if we are in TryCancel mode, we've already sent a cancellation failure
             /// to lang unblocking it, so there is no need to send another activation.
             ActivityCancellationType::TryCancel => ActivityMachineTransition::default(),
             ActivityCancellationType::WaitCancellationCompleted => {
-                notify_lang_activity_cancelled(dat, None, Canceled::default())
+                notify_lang_activity_cancelled(dat, Some(attrs), Canceled::default())
             }
             /// Abandon results in going into Cancelled immediately, so we should never reach this state.
-            ActivityCancellationType::Abandon => unreachable!(),
+            ActivityCancellationType::Abandon => unreachable!(
+                "Cancellations with type Abandon should go into terminal state immediately."
+            ),
         }
     }
 
@@ -492,7 +507,9 @@ impl ScheduledActivityCancelEventRecorded {
                 notify_lang_activity_timed_out(dat, attrs)
             }
             /// Abandon results in going into Cancelled immediately, so we should never reach this state.
-            ActivityCancellationType::Abandon => unreachable!(),
+            ActivityCancellationType::Abandon => unreachable!(
+                "Cancellations with type Abandon should go into terminal state immediately."
+            ),
         }
     }
 }
@@ -517,7 +534,12 @@ impl StartedActivityCancelCommandCreated {
                 None,
                 StartedActivityCancelEventRecorded::default(),
             ),
-            _ => ActivityMachineTransition::default(),
+            ActivityCancellationType::WaitCancellationCompleted => {
+                ActivityMachineTransition::default()
+            }
+            ActivityCancellationType::Abandon => unreachable!(
+                "Cancellations with type Abandon should go into terminal state immediately."
+            ),
         }
     }
 }
@@ -563,7 +585,9 @@ impl StartedActivityCancelEventRecorded {
             ActivityCancellationType::TryCancel => {
                 ActivityMachineTransition::ok(vec![], Canceled::default())
             }
-            ActivityCancellationType::Abandon => unreachable!(),
+            ActivityCancellationType::Abandon => unreachable!(
+                "Cancellations with type Abandon should go into terminal state immediately."
+            ),
         }
     }
 }
@@ -671,49 +695,13 @@ fn notify_lang_activity_cancelled<S>(
 where
     S: Into<ActivityMachineState>,
 {
-    let (scheduled_event_id, started_event_id) = match canceled_event {
-        None => (dat.scheduled_event_id, dat.started_event_id),
-        Some(e) => (e.scheduled_event_id, e.scheduled_event_id),
-    };
     ActivityMachineTransition::ok_shared(
-        vec![ActivityMachineCommand::Fail(Some(
-            new_cancellation_failure(&dat, scheduled_event_id, started_event_id),
-        ))],
+        vec![ActivityMachineCommand::Cancel(
+            canceled_event.map(|e| e.details).flatten(),
+        )],
         next_state,
         dat,
     )
-}
-
-fn new_cancellation_failure(
-    dat: &SharedState,
-    scheduled_event_id: i64,
-    started_event_id: i64,
-) -> Failure {
-    let cancelled_failure = Failure {
-        source: "CoreSDK".to_string(),
-        failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
-            details: None,
-        })),
-        ..Default::default()
-    };
-    let activity_failure_info = ActivityFailureInfo {
-        activity_id: dat.attrs.activity_id.to_string(),
-        activity_type: Some(ActivityType {
-            name: dat.attrs.activity_type.to_string(),
-        }),
-        scheduled_event_id,
-        started_event_id,
-        identity: "workflow".to_string(),
-        retry_state: RetryState::Unspecified as i32,
-    };
-    Failure {
-        message: "Activity canceled".to_string(),
-        cause: Some(Box::new(cancelled_failure)),
-        failure_info: Some(failure::FailureInfo::ActivityFailureInfo(
-            activity_failure_info,
-        )),
-        ..Default::default()
-    }
 }
 
 fn new_timeout_failure(dat: &SharedState, attrs: ActivityTaskTimedOutEventAttributes) -> Failure {
@@ -733,6 +721,16 @@ fn new_timeout_failure(dat: &SharedState, attrs: ActivityTaskTimedOutEventAttrib
         failure_info: Some(failure::FailureInfo::ActivityFailureInfo(failure_info)),
         ..Default::default()
     }
+}
+
+fn convert_payloads(
+    event: &HistoryEvent,
+    result: Option<Payloads>,
+) -> Result<Option<Payload>, WFMachinesError> {
+    result
+        .map(TryInto::try_into)
+        .transpose()
+        .map_err(|pe| WFMachinesError::NotExactlyOnePayload(pe, event.clone()))
 }
 
 #[cfg(test)]
@@ -878,7 +876,7 @@ mod test {
                         ResolveActivity {
                             activity_id,
                             result: Some(ActivityResult {
-                                status: Some(activity_result::Status::Failed(_))
+                                status: Some(activity_result::Status::Canceled(_))
                             })
                         }
                     )),

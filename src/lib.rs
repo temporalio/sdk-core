@@ -523,6 +523,8 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::protos::coresdk::activity_result::ActivityResult;
+    use crate::protos::coresdk::workflow_activation::ResolveActivity;
     use crate::protos::coresdk::workflow_commands::{
         ActivityCancellationType, RequestCancelActivity,
     };
@@ -791,7 +793,6 @@ mod test {
 
         let mut t = canned_histories::scheduled_activity_timeout(activity_id);
         let core = build_fake_core(wfid, &mut t, hist_batches);
-
         poll_and_reply(
             &core,
             TASK_Q,
@@ -807,7 +808,28 @@ mod test {
                 ),
                 // Activity is getting resolved right away as it has been timed out.
                 gen_assert_and_reply(
-                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                    &|res| {
+                        assert_matches!(
+                                res.jobs.as_slice(),
+                                [
+                                    WfActivationJob {
+                                        variant: Some(wf_activation_job::Variant::ResolveActivity(
+                                            ResolveActivity {
+                                                activity_id: aid,
+                                                result: Some(ActivityResult {
+                                                    status: Some(activity_result::Status::Failed(ar::Failure {
+                                                        failure: Some(failure)
+                                                    })),
+                                                })
+                                            }
+                                        )),
+                                    }
+                                ] => {
+                                    assert_eq!(failure.message, "Activity task timedOut".to_string());
+                                    assert_eq!(aid, &activity_id.to_string());
+                                }
+                            );
+                    },
                     vec![CompleteWorkflowExecution { result: None }.into()],
                 ),
             ],
@@ -839,7 +861,28 @@ mod test {
                 ),
                 // Activity is getting resolved right away as it has been timed out.
                 gen_assert_and_reply(
-                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                    &|res| {
+                        assert_matches!(
+                                res.jobs.as_slice(),
+                                [
+                                    WfActivationJob {
+                                        variant: Some(wf_activation_job::Variant::ResolveActivity(
+                                            ResolveActivity {
+                                                activity_id: aid,
+                                                result: Some(ActivityResult {
+                                                    status: Some(activity_result::Status::Failed(ar::Failure {
+                                                        failure: Some(failure)
+                                                    })),
+                                                })
+                                            }
+                                        )),
+                                    }
+                                ] => {
+                                    assert_eq!(failure.message, "Activity task timedOut".to_string());
+                                    assert_eq!(aid, &activity_id.to_string());
+                                }
+                            );
+                    },
                     vec![CompleteWorkflowExecution { result: None }.into()],
                 ),
             ],
@@ -880,7 +923,14 @@ mod test {
                 ),
                 // Activity is getting resolved right away as it has been timed out.
                 gen_assert_and_reply(
-                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(
+                        ResolveActivity {
+                            activity_id: _,
+                            result: Some(ActivityResult {
+                                status: Some(activity_result::Status::Canceled(..)),
+                            })
+                        }
+                    )),
                     vec![CompleteWorkflowExecution { result: None }.into()],
                 ),
             ],
@@ -922,7 +972,14 @@ mod test {
                 ),
                 // Activity is getting resolved right away as we are in the Abandon mode.
                 gen_assert_and_reply(
-                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(
+                        ResolveActivity {
+                            activity_id: _,
+                            result: Some(ActivityResult {
+                                status: Some(activity_result::Status::Canceled(..)),
+                            })
+                        }
+                    )),
                     vec![CompleteWorkflowExecution { result: None }.into()],
                 ),
             ],
@@ -974,7 +1031,14 @@ mod test {
                 ),
                 // Now ActivityTaskCanceled has been processed and activity can be resolved.
                 gen_assert_and_reply(
-                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(
+                        ResolveActivity {
+                            activity_id: _,
+                            result: Some(ActivityResult {
+                                status: Some(activity_result::Status::Canceled(..)),
+                            })
+                        }
+                    )),
                     vec![CompleteWorkflowExecution { result: None }.into()],
                 ),
             ],
@@ -1019,7 +1083,14 @@ mod test {
                 ),
                 // Making sure that activity is not resolved until it's cancelled.
                 gen_assert_and_reply(
-                    &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(
+                        ResolveActivity {
+                            activity_id: _,
+                            result: Some(ActivityResult {
+                                status: Some(activity_result::Status::Canceled(..)),
+                            })
+                        }
+                    )),
                     vec![CompleteWorkflowExecution { result: None }.into()],
                 ),
             ],
