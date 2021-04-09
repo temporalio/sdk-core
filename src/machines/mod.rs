@@ -280,7 +280,7 @@ where
         let converted_event_str = event.to_string();
 
         let res = StateMachine::on_event_mut(self, event);
-        if let Ok(_) = &res {
+        if res.is_ok() {
             #[cfg(test)]
             add_coverage(
                 self.name().to_owned(),
