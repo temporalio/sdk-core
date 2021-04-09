@@ -8,7 +8,7 @@ use crate::{
     protos::temporal::api::enums::v1::EventType,
     protos::temporal::api::history::v1::HistoryEvent,
 };
-use rustfsm::{fsm, StateMachine, TransitionResult};
+use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
 
 fsm! {

@@ -5,6 +5,7 @@
 
 use dashmap::{mapref::entry::Entry, DashMap, DashSet};
 use std::{
+    path::PathBuf,
     sync::{
         mpsc::{sync_channel, SyncSender},
         Mutex,
@@ -73,6 +74,8 @@ mod machine_coverage_report {
         timer_state_machine::TimerMachine, workflow_task_state_machine::WorkflowTaskMachine,
     };
     use rustfsm::StateMachine;
+    use std::fs::File;
+    use std::io::Write;
 
     // This "test" needs to exist so that we have a way to join the spawned thread. Otherwise
     // it'll just get abandoned.
@@ -95,8 +98,6 @@ mod machine_coverage_report {
             .join()
             .unwrap();
 
-        dbg!(&*COVERED_TRANSITIONS);
-
         // Gather visualizations for all machines
         let mut activity = ActivityMachine::visualizer().to_owned();
         let mut timer = TimerMachine::visualizer().to_owned();
@@ -109,20 +110,17 @@ mod machine_coverage_report {
         for item in COVERED_TRANSITIONS.iter() {
             let (machine, coverage) = item.pair();
             match machine.as_ref() {
-                "ActivityMachine" => cover_transitions(&mut activity, coverage),
-                "TimerMachine" => cover_transitions(&mut timer, coverage),
-                "CompleteWorkflowMachine" => cover_transitions(&mut complete_wf, coverage),
-                "WorkflowTaskMachine" => cover_transitions(&mut wf_task, coverage),
-                "FailWorkflowMachine" => cover_transitions(&mut fail_wf, coverage),
+                m @ "ActivityMachine" => cover_transitions(m, &mut activity, coverage),
+                m @ "TimerMachine" => cover_transitions(m, &mut timer, coverage),
+                m @ "CompleteWorkflowMachine" => cover_transitions(m, &mut complete_wf, coverage),
+                m @ "WorkflowTaskMachine" => cover_transitions(m, &mut wf_task, coverage),
+                m @ "FailWorkflowMachine" => cover_transitions(m, &mut fail_wf, coverage),
                 m => panic!("Unknown machine {}", m),
             }
         }
-        println!("{}", activity);
-        println!("{}", timer);
-        println!("{}", wf_task);
     }
 
-    fn cover_transitions(viz: &mut String, cov: &DashSet<CoveredTransition>) {
+    fn cover_transitions(machine: &str, viz: &mut String, cov: &DashSet<CoveredTransition>) {
         for trans in cov.iter() {
             let find_line = format!(
                 "{} --> {}: {}",
@@ -136,5 +134,13 @@ mod machine_coverage_report {
                 viz.replace_range(start..start + find_line.len(), &new_line);
             }
         }
+
+        // Dump the updated viz to a file
+        let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        d.push("machine_coverage");
+        std::fs::create_dir_all(&d).unwrap();
+        d.push(format!("{}_Coverage.puml", machine));
+        let mut file = File::create(d).unwrap();
+        file.write_all(viz.as_bytes()).unwrap();
     }
 }

@@ -12,7 +12,7 @@ use crate::{
         },
     },
 };
-use rustfsm::{fsm, StateMachine, TransitionResult};
+use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
 
 fsm! {

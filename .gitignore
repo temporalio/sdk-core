@@ -11,4 +11,5 @@ Cargo.lock
 src/protos/*.rs
 !src/protos/mod.rs
 /tarpaulin-report.html
+/machine_coverage/
 /.cargo/
