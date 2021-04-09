@@ -1,5 +1,7 @@
-use std::error::Error;
-use std::fmt::{Debug, Display, Formatter};
+use std::{
+    error::Error,
+    fmt::{Debug, Display, Formatter},
+};
 
 /// This trait defines a state machine (more formally, a [finite state
 /// transducer](https://en.wikipedia.org/wiki/Finite-state_transducer)) which accepts events (the
@@ -70,6 +72,9 @@ pub trait StateMachine: Sized {
 
     /// Given the shared data and new state, create a new instance.
     fn from_parts(shared: Self::SharedState, state: Self::State) -> Self;
+
+    /// Return a PlantUML definition of the fsm that can be used to visualize it
+    fn visualizer() -> &'static str;
 }
 
 /// The error returned by [StateMachine]s when handling events

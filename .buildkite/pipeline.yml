@@ -35,9 +35,10 @@ steps:
     agents:
       queue: "default"
       docker: "*"
-    command: "cargo tarpaulin --out Html --workspace"
+    command: "cargo tarpaulin --out Html --workspace && cargo test -- --include-ignored"
     artifact_paths:
       - "tarpaulin-report.html"
+      - "machine_coverage/*"
     timeout_in_minutes: 15
     plugins:
       - docker-compose#v3.0.0:

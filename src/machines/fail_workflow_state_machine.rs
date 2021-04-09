@@ -1,14 +1,14 @@
-use crate::protos::coresdk::workflow_commands::FailWorkflowExecution;
 use crate::{
     machines::{
-        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, ProtoCommand,
-        WFMachinesAdapter, WFMachinesError,
+        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, OnEventWrapper,
+        ProtoCommand, WFMachinesAdapter, WFMachinesError,
     },
+    protos::coresdk::workflow_commands::FailWorkflowExecution,
     protos::temporal::api::enums::v1::CommandType,
     protos::temporal::api::enums::v1::EventType,
     protos::temporal::api::history::v1::HistoryEvent,
 };
-use rustfsm::{fsm, StateMachine, TransitionResult};
+use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
 
 fsm! {
@@ -46,8 +46,7 @@ impl FailWorkflowMachine {
             state: Created {}.into(),
             shared_state: attribs,
         };
-        let cmd = match s
-            .on_event_mut(FailWorkflowMachineEvents::Schedule)
+        let cmd = match OnEventWrapper::on_event_mut(&mut s, FailWorkflowMachineEvents::Schedule)
             .expect("Scheduling fail wf machines doesn't fail")
             .pop()
         {

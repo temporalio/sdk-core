@@ -1,7 +1,7 @@
 use crate::{
     machines::{
-        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, WFMachinesAdapter,
-        WFMachinesError,
+        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, OnEventWrapper,
+        WFMachinesAdapter, WFMachinesError,
     },
     protos::{
         coresdk::workflow_commands::CompleteWorkflowExecution,
@@ -12,7 +12,7 @@ use crate::{
         },
     },
 };
-use rustfsm::{fsm, StateMachine, TransitionResult};
+use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
 
 fsm! {
@@ -53,14 +53,14 @@ impl CompleteWorkflowMachine {
             state: Created {}.into(),
             shared_state: attribs,
         };
-        let cmd = match s
-            .on_event_mut(CompleteWorkflowMachineEvents::Schedule)
-            .expect("Scheduling complete wf machines doesn't fail")
-            .pop()
-        {
-            Some(CompleteWFCommand::AddCommand(c)) => c,
-            _ => panic!("complete wf machine on_schedule must produce command"),
-        };
+        let cmd =
+            match OnEventWrapper::on_event_mut(&mut s, CompleteWorkflowMachineEvents::Schedule)
+                .expect("Scheduling complete wf machines doesn't fail")
+                .pop()
+            {
+                Some(CompleteWFCommand::AddCommand(c)) => c,
+                _ => panic!("complete wf machine on_schedule must produce command"),
+            };
         (s, cmd)
     }
 }
