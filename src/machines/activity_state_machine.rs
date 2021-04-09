@@ -48,34 +48,45 @@ fsm! {
     Created --(Schedule, on_schedule)--> ScheduleCommandCreated;
 
     ScheduleCommandCreated --(CommandScheduleActivityTask) --> ScheduleCommandCreated;
-    ScheduleCommandCreated --(ActivityTaskScheduled(i64), shared on_activity_task_scheduled) --> ScheduledEventRecorded;
+    ScheduleCommandCreated --(ActivityTaskScheduled(i64),
+        shared on_activity_task_scheduled) --> ScheduledEventRecorded;
     ScheduleCommandCreated --(Cancel, shared on_canceled) --> Canceled;
 
     ScheduledEventRecorded --(ActivityTaskStarted(i64), shared on_task_started) --> Started;
-    ScheduledEventRecorded --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes), shared on_task_timed_out) --> TimedOut;
+    ScheduledEventRecorded --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes),
+        shared on_task_timed_out) --> TimedOut;
     ScheduledEventRecorded --(Cancel, shared on_canceled) --> ScheduledActivityCancelCommandCreated;
     ScheduledEventRecorded --(Abandon, shared on_abandoned) --> Canceled;
 
-    Started --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes), on_activity_task_completed) --> Completed;
-    Started --(ActivityTaskFailed(ActivityTaskFailedEventAttributes), on_activity_task_failed) --> Failed;
-    Started --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes), shared on_activity_task_timed_out) --> TimedOut;
+    Started --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes),
+        on_activity_task_completed) --> Completed;
+    Started --(ActivityTaskFailed(ActivityTaskFailedEventAttributes),
+        on_activity_task_failed) --> Failed;
+    Started --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes),
+        shared on_activity_task_timed_out) --> TimedOut;
     Started --(Cancel, shared on_canceled) --> StartedActivityCancelCommandCreated;
     Started --(Abandon, shared on_abandoned) --> Canceled;
 
     ScheduledActivityCancelCommandCreated --(CommandRequestCancelActivityTask) --> ScheduledActivityCancelCommandCreated;
     ScheduledActivityCancelCommandCreated --(ActivityTaskCancelRequested) --> ScheduledActivityCancelEventRecorded;
 
-    ScheduledActivityCancelEventRecorded --(ActivityTaskCanceled(ActivityTaskCanceledEventAttributes), shared on_activity_task_canceled) --> Canceled;
+    ScheduledActivityCancelEventRecorded --(ActivityTaskCanceled(ActivityTaskCanceledEventAttributes),
+        shared on_activity_task_canceled) --> Canceled;
     ScheduledActivityCancelEventRecorded --(ActivityTaskStarted(i64)) --> StartedActivityCancelEventRecorded;
-    ScheduledActivityCancelEventRecorded --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes), shared on_activity_task_timed_out) --> TimedOut;
+    ScheduledActivityCancelEventRecorded --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes),
+        shared on_activity_task_timed_out) --> TimedOut;
 
     StartedActivityCancelCommandCreated --(CommandRequestCancelActivityTask) --> StartedActivityCancelCommandCreated;
     StartedActivityCancelCommandCreated --(ActivityTaskCancelRequested) --> StartedActivityCancelEventRecorded;
 
-    StartedActivityCancelEventRecorded --(ActivityTaskFailed(ActivityTaskFailedEventAttributes), on_activity_task_failed) --> Failed;
-    StartedActivityCancelEventRecorded --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes), on_activity_task_completed) --> Completed;
-    StartedActivityCancelEventRecorded --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes), shared on_activity_task_timed_out) --> TimedOut;
-    StartedActivityCancelEventRecorded --(ActivityTaskCanceled(ActivityTaskCanceledEventAttributes), shared on_activity_task_canceled) --> Canceled;
+    StartedActivityCancelEventRecorded --(ActivityTaskFailed(ActivityTaskFailedEventAttributes),
+        on_activity_task_failed) --> Failed;
+    StartedActivityCancelEventRecorded --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes),
+        on_activity_task_completed) --> Completed;
+    StartedActivityCancelEventRecorded --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes),
+        shared on_activity_task_timed_out) --> TimedOut;
+    StartedActivityCancelEventRecorded --(ActivityTaskCanceled(ActivityTaskCanceledEventAttributes),
+        shared on_activity_task_canceled) --> Canceled;
 }
 
 #[derive(Debug, derive_more::Display)]
