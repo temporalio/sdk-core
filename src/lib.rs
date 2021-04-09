@@ -948,6 +948,23 @@ mod test {
         let mut t = canned_histories::cancel_scheduled_activity_abandon(activity_id, signal_id);
         let core = build_fake_core(wfid, &mut t, hist_batches);
 
+        verify_activity_cancellation_abandon(&activity_id, &core).await;
+    }
+
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
+    #[tokio::test]
+    async fn started_activity_cancellation_abandon(hist_batches: &[usize]) {
+        let wfid = "fake_wf_id";
+        let activity_id = "fake_activity";
+        let signal_id = "signal";
+
+        let mut t = canned_histories::cancel_started_activity_abandon(activity_id, signal_id);
+        let core = build_fake_core(wfid, &mut t, hist_batches);
+
+        verify_activity_cancellation_abandon(&activity_id, &core).await;
+    }
+
+    async fn verify_activity_cancellation_abandon(activity_id: &&str, core: &FakeCore) {
         poll_and_reply(
             &core,
             TASK_Q,
@@ -1001,6 +1018,29 @@ mod test {
             );
         let core = build_fake_core(wfid, &mut t, hist_batches);
 
+        verify_activity_cancellation_wait_for_cancellation(&activity_id, &core).await;
+    }
+
+    #[rstest(hist_batches, case::incremental(&[1, 2, 3, 4]), case::replay(&[4]))]
+    #[tokio::test]
+    async fn started_activity_cancellation_wait_for_cancellation(hist_batches: &[usize]) {
+        let wfid = "fake_wf_id";
+        let activity_id = "fake_activity";
+        let signal_id = "signal";
+
+        let mut t = canned_histories::cancel_started_activity_with_signal_and_activity_task_cancel(
+            activity_id,
+            signal_id,
+        );
+        let core = build_fake_core(wfid, &mut t, hist_batches);
+
+        verify_activity_cancellation_wait_for_cancellation(&activity_id, &core).await;
+    }
+
+    async fn verify_activity_cancellation_wait_for_cancellation(
+        activity_id: &&str,
+        core: &FakeCore,
+    ) {
         poll_and_reply(
             &core,
             TASK_Q,
@@ -1059,6 +1099,29 @@ mod test {
         );
         let core = build_fake_core(wfid, &mut t, hist_batches);
 
+        verify_activity_cancellation_try_cancel_task_canceled(&activity_id, &core).await;
+    }
+
+    #[rstest(hist_batches, case::incremental(&[1, 3]), case::replay(&[3]))]
+    #[tokio::test]
+    async fn started_activity_cancellation_try_cancel_task_canceled(hist_batches: &[usize]) {
+        let wfid = "fake_wf_id";
+        let activity_id = "fake_activity";
+        let signal_id = "signal";
+
+        let mut t = canned_histories::cancel_started_activity_with_activity_task_cancel(
+            activity_id,
+            signal_id,
+        );
+        let core = build_fake_core(wfid, &mut t, hist_batches);
+
+        verify_activity_cancellation_try_cancel_task_canceled(&activity_id, &core).await;
+    }
+
+    async fn verify_activity_cancellation_try_cancel_task_canceled(
+        activity_id: &&str,
+        core: &FakeCore,
+    ) {
         poll_and_reply(
             &core,
             TASK_Q,
