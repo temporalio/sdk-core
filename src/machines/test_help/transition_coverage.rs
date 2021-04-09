@@ -118,6 +118,8 @@ mod machine_coverage_report {
             }
         }
         println!("{}", activity);
+        println!("{}", timer);
+        println!("{}", wf_task);
     }
 
     fn cover_transitions(viz: &mut String, cov: &DashSet<CoveredTransition>) {

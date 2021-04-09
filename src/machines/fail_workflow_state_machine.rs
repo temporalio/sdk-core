@@ -1,9 +1,9 @@
-use crate::protos::coresdk::workflow_commands::FailWorkflowExecution;
 use crate::{
     machines::{
-        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, ProtoCommand,
-        WFMachinesAdapter, WFMachinesError,
+        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, OnEventWrapper,
+        ProtoCommand, WFMachinesAdapter, WFMachinesError,
     },
+    protos::coresdk::workflow_commands::FailWorkflowExecution,
     protos::temporal::api::enums::v1::CommandType,
     protos::temporal::api::enums::v1::EventType,
     protos::temporal::api::history::v1::HistoryEvent,

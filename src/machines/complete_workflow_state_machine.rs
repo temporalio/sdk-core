@@ -1,7 +1,7 @@
 use crate::{
     machines::{
-        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, WFMachinesAdapter,
-        WFMachinesError,
+        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, OnEventWrapper,
+        WFMachinesAdapter, WFMachinesError,
     },
     protos::{
         coresdk::workflow_commands::CompleteWorkflowExecution,
