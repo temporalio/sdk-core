@@ -777,10 +777,4 @@ mod test {
             ]
         )
     }
-
-    #[test]
-    fn viz() {
-        let viz = ActivityMachine::visualizer();
-        println!("{}", viz);
-    }
 }
