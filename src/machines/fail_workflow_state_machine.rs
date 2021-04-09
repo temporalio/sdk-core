@@ -46,8 +46,7 @@ impl FailWorkflowMachine {
             state: Created {}.into(),
             shared_state: attribs,
         };
-        let cmd = match s
-            .on_event_mut(FailWorkflowMachineEvents::Schedule)
+        let cmd = match OnEventWrapper::on_event_mut(&mut s, FailWorkflowMachineEvents::Schedule)
             .expect("Scheduling fail wf machines doesn't fail")
             .pop()
         {

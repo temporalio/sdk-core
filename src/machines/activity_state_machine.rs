@@ -2,8 +2,8 @@
 
 use crate::{
     machines::{
-        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, WFMachinesAdapter,
-        WFMachinesError,
+        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, OnEventWrapper,
+        WFMachinesAdapter, WFMachinesError,
     },
     protos::{
         coresdk::{
@@ -120,7 +120,7 @@ impl ActivityMachine {
                 ..Default::default()
             },
         };
-        s.on_event_mut(ActivityMachineEvents::Schedule)
+        OnEventWrapper::on_event_mut(&mut s, ActivityMachineEvents::Schedule)
             .expect("Scheduling activities doesn't fail");
         let cmd = Command {
             command_type: CommandType::ScheduleActivityTask as i32,
@@ -262,7 +262,7 @@ impl Cancellable for ActivityMachine {
             ActivityCancellationType::Abandon => ActivityMachineEvents::Abandon,
             _ => ActivityMachineEvents::Cancel,
         };
-        let vec = self.on_event_mut(event)?;
+        let vec = OnEventWrapper::on_event_mut(self, event)?;
         let res = vec
             .into_iter()
             .flat_map(|amc| match amc {

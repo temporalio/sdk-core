@@ -121,10 +121,15 @@ trait TemporalStateMachine: CheckStateMachineInFinal + Send {
 
 impl<SM> TemporalStateMachine for SM
 where
-    SM: StateMachine + CheckStateMachineInFinal + WFMachinesAdapter + Cancellable + Clone + Send,
+    SM: StateMachine
+        + CheckStateMachineInFinal
+        + WFMachinesAdapter
+        + Cancellable
+        + OnEventWrapper
+        + Clone
+        + Send,
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
-    // TODO: Can't make this condidional?
     <SM as StateMachine>::Event: Display,
     WFMachinesError: From<<<SM as StateMachine>::Event as TryFrom<HistoryEvent>>::Error>,
     <SM as StateMachine>::Command: Debug + Display,
@@ -143,7 +148,7 @@ where
             "handling command"
         );
         if let Ok(converted_command) = command_type.try_into() {
-            match self.on_event_mut(converted_command) {
+            match OnEventWrapper::on_event_mut(self, converted_command) {
                 Ok(_c) => Ok(()),
                 Err(MachineError::InvalidTransition) => {
                     Err(WFMachinesError::UnexpectedCommand(command_type))
@@ -168,21 +173,8 @@ where
         );
         let converted_event: <Self as StateMachine>::Event = event.clone().try_into()?;
 
-        #[cfg(test)]
-        let from_state = self.state().to_string();
-        #[cfg(test)]
-        let converted_event_str = converted_event.to_string();
-
-        match self.on_event_mut(converted_event) {
+        match OnEventWrapper::on_event_mut(self, converted_event) {
             Ok(c) => {
-                #[cfg(test)]
-                add_coverage(
-                    self.name().to_owned(),
-                    from_state,
-                    self.state().to_string(),
-                    converted_event_str,
-                );
-
                 if !c.is_empty() {
                     debug!(commands = %c.display(), state = %self.state(),
                            "Machine produced commands");
@@ -268,6 +260,46 @@ trait Cancellable: StateMachine {
     fn was_cancelled_before_sent_to_server(&self) -> bool {
         false
     }
+}
+
+/// We need to wrap calls to [StateMachine::on_event_mut] to track coverage, or anything else
+/// we'd like to do on every call.
+pub(crate) trait OnEventWrapper: StateMachine
+where
+    <Self as StateMachine>::State: Display,
+    <Self as StateMachine>::Event: Display,
+    Self: Clone,
+{
+    fn on_event_mut(
+        &mut self,
+        event: Self::Event,
+    ) -> Result<Vec<Self::Command>, MachineError<Self::Error>> {
+        #[cfg(test)]
+        let from_state = self.state().to_string();
+        #[cfg(test)]
+        let converted_event_str = event.to_string();
+
+        let res = StateMachine::on_event_mut(self, event);
+        if let Ok(_) = &res {
+            #[cfg(test)]
+            add_coverage(
+                self.name().to_owned(),
+                from_state,
+                self.state().to_string(),
+                converted_event_str,
+            );
+        }
+        res
+    }
+}
+
+impl<SM> OnEventWrapper for SM
+where
+    SM: StateMachine,
+    <Self as StateMachine>::State: Display,
+    <Self as StateMachine>::Event: Display,
+    Self: Clone,
+{
 }
 
 #[derive(Debug)]

@@ -3,7 +3,7 @@
 use crate::{
     machines::{
         workflow_machines::{MachineResponse, WFMachinesError},
-        Cancellable, NewMachineWithCommand, WFMachinesAdapter,
+        Cancellable, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter,
     },
     protos::{
         coresdk::{
@@ -69,7 +69,7 @@ impl TimerMachine {
     /// Create a new timer and immediately schedule it
     pub(crate) fn new_scheduled(attribs: StartTimer) -> (Self, Command) {
         let mut s = Self::new(attribs);
-        s.on_event_mut(TimerMachineEvents::Schedule)
+        OnEventWrapper::on_event_mut(&mut s, TimerMachineEvents::Schedule)
             .expect("Scheduling timers doesn't fail");
         let cmd = Command {
             command_type: CommandType::StartTimer as i32,
@@ -252,13 +252,15 @@ impl WFMachinesAdapter for TimerMachine {
 
 impl Cancellable for TimerMachine {
     fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
-        Ok(match self.on_event_mut(TimerMachineEvents::Cancel)?.pop() {
-            Some(TimerMachineCommand::IssueCancelCmd(cmd)) => {
-                vec![MachineResponse::IssueNewCommand(cmd)]
-            }
-            Some(TimerMachineCommand::Canceled) => vec![],
-            x => panic!("Invalid cancel event response {:?}", x),
-        })
+        Ok(
+            match OnEventWrapper::on_event_mut(self, TimerMachineEvents::Cancel)?.pop() {
+                Some(TimerMachineCommand::IssueCancelCmd(cmd)) => {
+                    vec![MachineResponse::IssueNewCommand(cmd)]
+                }
+                Some(TimerMachineCommand::Canceled) => vec![],
+                x => panic!("Invalid cancel event response {:?}", x),
+            },
+        )
     }
 
     fn was_cancelled_before_sent_to_server(&self) -> bool {
