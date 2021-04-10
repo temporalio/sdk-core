@@ -48,47 +48,45 @@ fsm! {
     Created --(Schedule, on_schedule)--> ScheduleCommandCreated;
 
     ScheduleCommandCreated --(CommandScheduleActivityTask) --> ScheduleCommandCreated;
-    ScheduleCommandCreated
-      --(ActivityTaskScheduled(i64), shared on_activity_task_scheduled) --> ScheduledEventRecorded;
+    ScheduleCommandCreated --(ActivityTaskScheduled(i64),
+        shared on_activity_task_scheduled) --> ScheduledEventRecorded;
     ScheduleCommandCreated --(Cancel, shared on_canceled) --> Canceled;
 
     ScheduledEventRecorded --(ActivityTaskStarted(i64), shared on_task_started) --> Started;
-    ScheduledEventRecorded --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes), shared on_task_timed_out) --> TimedOut;
+    ScheduledEventRecorded --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes),
+        shared on_task_timed_out) --> TimedOut;
     ScheduledEventRecorded --(Cancel, shared on_canceled) --> ScheduledActivityCancelCommandCreated;
     ScheduledEventRecorded --(Abandon, shared on_abandoned) --> Canceled;
 
-    Started --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes), on_activity_task_completed) --> Completed;
-    Started --(ActivityTaskFailed(ActivityTaskFailedEventAttributes), on_activity_task_failed) --> Failed;
-    Started --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes), shared on_activity_task_timed_out) --> TimedOut;
+    Started --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes),
+        on_activity_task_completed) --> Completed;
+    Started --(ActivityTaskFailed(ActivityTaskFailedEventAttributes),
+        on_activity_task_failed) --> Failed;
+    Started --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes),
+        shared on_activity_task_timed_out) --> TimedOut;
     Started --(Cancel, shared on_canceled) --> StartedActivityCancelCommandCreated;
     Started --(Abandon, shared on_abandoned) --> Canceled;
 
-    ScheduledActivityCancelCommandCreated
-      --(CommandRequestCancelActivityTask,
-         shared on_command_request_cancel_activity_task) --> ScheduledActivityCancelCommandCreated;
-    ScheduledActivityCancelCommandCreated
-      --(ActivityTaskCancelRequested) --> ScheduledActivityCancelEventRecorded;
+    ScheduledActivityCancelCommandCreated --(CommandRequestCancelActivityTask) --> ScheduledActivityCancelCommandCreated;
+    ScheduledActivityCancelCommandCreated --(ActivityTaskCancelRequested) --> ScheduledActivityCancelEventRecorded;
 
-    ScheduledActivityCancelEventRecorded
-      --(ActivityTaskCanceled(ActivityTaskCanceledEventAttributes), shared on_activity_task_canceled) --> Canceled;
-    ScheduledActivityCancelEventRecorded
-      --(ActivityTaskStarted(i64)) --> StartedActivityCancelEventRecorded;
-    ScheduledActivityCancelEventRecorded
-      --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes), shared on_activity_task_timed_out) --> TimedOut;
+    ScheduledActivityCancelEventRecorded --(ActivityTaskCanceled(ActivityTaskCanceledEventAttributes),
+        shared on_activity_task_canceled) --> Canceled;
+    ScheduledActivityCancelEventRecorded --(ActivityTaskStarted(i64)) --> StartedActivityCancelEventRecorded;
+    ScheduledActivityCancelEventRecorded --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes),
+        shared on_activity_task_timed_out) --> TimedOut;
 
-    StartedActivityCancelCommandCreated
-      --(CommandRequestCancelActivityTask) --> StartedActivityCancelCommandCreated;
-    StartedActivityCancelCommandCreated
-      --(ActivityTaskCancelRequested,
-         shared on_activity_task_cancel_requested) --> StartedActivityCancelEventRecorded;
+    StartedActivityCancelCommandCreated --(CommandRequestCancelActivityTask) --> StartedActivityCancelCommandCreated;
+    StartedActivityCancelCommandCreated --(ActivityTaskCancelRequested) --> StartedActivityCancelEventRecorded;
 
-    StartedActivityCancelEventRecorded --(ActivityTaskFailed(ActivityTaskFailedEventAttributes), on_activity_task_failed) --> Failed;
-    StartedActivityCancelEventRecorded
-      --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes), on_activity_task_completed) --> Completed;
-    StartedActivityCancelEventRecorded
-      --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes), shared on_activity_task_timed_out) --> TimedOut;
-    StartedActivityCancelEventRecorded
-      --(ActivityTaskCanceled(ActivityTaskCanceledEventAttributes), shared on_activity_task_canceled) --> Canceled;
+    StartedActivityCancelEventRecorded --(ActivityTaskFailed(ActivityTaskFailedEventAttributes),
+        on_activity_task_failed) --> Failed;
+    StartedActivityCancelEventRecorded --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes),
+        on_activity_task_completed) --> Completed;
+    StartedActivityCancelEventRecorded --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes),
+        shared on_activity_task_timed_out) --> TimedOut;
+    StartedActivityCancelEventRecorded --(ActivityTaskCanceled(ActivityTaskCanceledEventAttributes),
+        shared on_activity_task_canceled) --> Canceled;
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -452,23 +450,6 @@ impl Started {
 #[derive(Default, Clone)]
 pub(super) struct ScheduledActivityCancelCommandCreated {}
 
-impl ScheduledActivityCancelCommandCreated {
-    pub(super) fn on_command_request_cancel_activity_task(
-        self,
-        dat: SharedState,
-    ) -> ActivityMachineTransition<ScheduledActivityCancelCommandCreated> {
-        match dat.cancellation_type {
-            ActivityCancellationType::Abandon => unreachable!(
-                "Cancellations with type Abandon should go into terminal state immediately."
-            ),
-            /// We don't need to notify lang side here as we've already unblocked it by calling `machine_responses_from_cancel_request`
-            /// when `RequestCancellation` has been created for `TryCancel`, while `WaitCancellationCompleted`
-            /// shouldn't unblock lang side until `ActivityTaskCanceled` event has been received.
-            _ => ActivityMachineTransition::default(),
-        }
-    }
-}
-
 #[derive(Default, Clone)]
 pub(super) struct ScheduledActivityCancelEventRecorded {}
 
@@ -478,18 +459,7 @@ impl ScheduledActivityCancelEventRecorded {
         dat: SharedState,
         attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition<Canceled> {
-        match dat.cancellation_type {
-            /// At this point if we are in TryCancel mode, we've already sent a cancellation failure
-            /// to lang unblocking it, so there is no need to send another activation.
-            ActivityCancellationType::TryCancel => ActivityMachineTransition::default(),
-            ActivityCancellationType::WaitCancellationCompleted => {
-                notify_lang_activity_cancelled(dat, Some(attrs), Canceled::default())
-            }
-            /// Abandon results in going into Cancelled immediately, so we should never reach this state.
-            ActivityCancellationType::Abandon => unreachable!(
-                "Cancellations with type Abandon should go into terminal state immediately."
-            ),
-        }
+        on_activity_task_canceled(dat, attrs)
     }
 
     pub(super) fn on_activity_task_timed_out(
@@ -520,27 +490,6 @@ impl From<ScheduledActivityCancelCommandCreated> for ScheduledActivityCancelEven
 
 #[derive(Default, Clone)]
 pub(super) struct StartedActivityCancelCommandCreated {}
-
-impl StartedActivityCancelCommandCreated {
-    pub(super) fn on_activity_task_cancel_requested(
-        self,
-        dat: SharedState,
-    ) -> ActivityMachineTransition<StartedActivityCancelEventRecorded> {
-        match dat.cancellation_type {
-            ActivityCancellationType::TryCancel => notify_lang_activity_cancelled(
-                dat,
-                None,
-                StartedActivityCancelEventRecorded::default(),
-            ),
-            ActivityCancellationType::WaitCancellationCompleted => {
-                ActivityMachineTransition::default()
-            }
-            ActivityCancellationType::Abandon => unreachable!(
-                "Cancellations with type Abandon should go into terminal state immediately."
-            ),
-        }
-    }
-}
 
 #[derive(Default, Clone)]
 pub(super) struct StartedActivityCancelEventRecorded {}
@@ -576,17 +525,25 @@ impl StartedActivityCancelEventRecorded {
         dat: SharedState,
         attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition<Canceled> {
-        match dat.cancellation_type {
-            ActivityCancellationType::WaitCancellationCompleted => {
-                notify_lang_activity_cancelled(dat, Some(attrs), Canceled::default())
-            }
-            ActivityCancellationType::TryCancel => {
-                ActivityMachineTransition::ok(vec![], Canceled::default())
-            }
-            ActivityCancellationType::Abandon => unreachable!(
-                "Cancellations with type Abandon should go into terminal state immediately."
-            ),
+        on_activity_task_canceled(dat, attrs)
+    }
+}
+
+fn on_activity_task_canceled(
+    dat: SharedState,
+    attrs: ActivityTaskCanceledEventAttributes,
+) -> ActivityMachineTransition<Canceled> {
+    match dat.cancellation_type {
+        /// At this point if we are in TryCancel mode, we've already sent a cancellation failure
+        /// to lang unblocking it, so there is no need to send another activation.
+        ActivityCancellationType::TryCancel => ActivityMachineTransition::default(),
+        ActivityCancellationType::WaitCancellationCompleted => {
+            notify_lang_activity_cancelled(dat, Some(attrs), Canceled::default())
         }
+        /// Abandon results in going into Cancelled immediately, so we should never reach this state.
+        ActivityCancellationType::Abandon => unreachable!(
+            "Cancellations with type Abandon should go into terminal state immediately."
+        ),
     }
 }
 
@@ -634,6 +591,12 @@ impl From<ScheduledActivityCancelEventRecorded> for TimedOut {
 
 impl From<StartedActivityCancelEventRecorded> for TimedOut {
     fn from(_: StartedActivityCancelEventRecorded) -> Self {
+        Self::default()
+    }
+}
+
+impl From<StartedActivityCancelCommandCreated> for StartedActivityCancelEventRecorded {
+    fn from(_: StartedActivityCancelCommandCreated) -> Self {
         Self::default()
     }
 }
