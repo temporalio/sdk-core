@@ -25,7 +25,6 @@ prost = "0.7"
 prost-types = "0.7"
 slotmap = "1.0"
 thiserror = "1.0"
-tonic = "0.4"
 tokio = { version = "1.1", features = ["rt", "rt-multi-thread", "parking_lot"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-futures = "0.2"
@@ -35,9 +34,10 @@ url = "2.2"
 rand = "0.8.3"
 uuid = { version = "0.8.2", features = ["v4"] }
 
-[patch.crates-io]
+[dependencies.tonic]
+version = "0.4"
 # Using our fork for now which fixes grpc-timeout header getting stripped
-tonic = { git = "https://github.com/temporalio/tonic" }
+git = "https://github.com/temporalio/tonic"
 
 [dependencies.rustfsm]
 path = "fsm"
