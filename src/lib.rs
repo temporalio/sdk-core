@@ -145,6 +145,8 @@ struct CoreSDK<WP> {
     shutdown_requested: AtomicBool,
     /// Used to wake up future which checks shutdown state
     shutdown_notify: Notify,
+    /// Used to interrupt workflow task polling if there is a new pending activation
+    pending_activation_notify: Notify,
 }
 
 /// Can be used inside the CoreSDK impl to block on any method that polls the server until it
@@ -193,7 +195,34 @@ where
                 return Err(PollWfError::ShutDown);
             }
 
-            match abort_on_shutdown!(self, poll_workflow_task, task_queue.to_owned()) {
+            let shutdownfut = async {
+                loop {
+                    self.shutdown_notify.notified().await;
+                    if self.shutdown_requested.load(Ordering::SeqCst) {
+                        break;
+                    }
+                }
+            };
+            let pa_fut = async {
+                loop {
+                    self.pending_activation_notify.notified().await;
+                    break;
+                }
+            };
+            let poll_result_future = self
+                .server_gateway
+                .poll_workflow_task(task_queue.to_owned());
+            let selected_f = tokio::select! {
+                _ = shutdownfut => {
+                    Err(ShutdownErr.into())
+                }
+                _ = pa_fut => {
+                    continue;
+                }
+                r = poll_result_future => r.map_err(Into::into)
+            };
+
+            match selected_f {
                 Ok(work) => {
                     if let Some(activation) = self.prepare_new_activation(work)? {
                         return Ok(activation);
@@ -319,6 +348,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             pending_activations: Default::default(),
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
+            pending_activation_notify: Notify::new(),
         }
     }
 
@@ -357,7 +387,8 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             self.pending_activations.push(PendingActivation {
                 run_id: next_a.get_run_id().to_owned(),
                 task_token: task_token.clone(),
-            })
+            });
+            self.pending_activation_notify.notify_one();
         }
         next_a.finalize(task_token)
     }
@@ -410,6 +441,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
                 run_id: run_id.to_string(),
                 task_token: task_token.clone(),
             });
+            self.pending_activation_notify.notify_one();
         }
         // We only actually want to send commands back to the server if there are
         // no more pending activations -- in other words the lang SDK has caught
