@@ -363,11 +363,10 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         task_token: Vec<u8>,
     ) -> WfActivation {
         if next_a.more_activations_needed {
-            self.pending_activations.push(PendingActivation {
+            self.add_pending_activation(PendingActivation {
                 run_id: next_a.get_run_id().to_owned(),
                 task_token: task_token.clone(),
             });
-            self.pending_activation_notify.notify_one();
         }
         next_a.finalize(task_token)
     }
@@ -416,11 +415,10 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             })?;
         let push_result = self.push_lang_commands(&run_id, cmds)?;
         if push_result.has_new_lang_jobs {
-            self.pending_activations.push(PendingActivation {
+            self.add_pending_activation(PendingActivation {
                 run_id: run_id.to_string(),
                 task_token: task_token.clone(),
             });
-            self.pending_activation_notify.notify_one();
         }
         // We only actually want to send commands back to the server if there are
         // no more pending activations -- in other words the lang SDK has caught
@@ -553,6 +551,12 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             }
             r = wrap_this => r
         }
+    }
+
+    /// Enqueue a new pending activation, and notify ourselves
+    fn add_pending_activation(&self, pa: PendingActivation) {
+        self.pending_activations.push(pa);
+        self.pending_activation_notify.notify_one();
     }
 }
 
