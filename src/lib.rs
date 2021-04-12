@@ -73,6 +73,10 @@ pub trait Core: Send + Sync {
     /// responsibility to call the appropriate workflow code with the provided inputs. Blocks
     /// indefinitely until such work is available or [Core::shutdown] is called.
     ///
+    /// Note that it is possible to receive work from a task queue that isn't the argument you
+    /// passed if you previously polled that task queue and there is remaining work that the lang
+    /// side must do before core can respond to the server.
+    ///
     /// TODO: Examples
     async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError>;
 
