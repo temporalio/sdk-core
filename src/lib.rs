@@ -51,6 +51,8 @@ use crate::{
     workflow::{NextWfActivation, WorkflowConcurrencyManager, WorkflowError, WorkflowManager},
 };
 use dashmap::DashMap;
+use futures::TryFutureExt;
+use std::future::Future;
 use std::{
     convert::TryInto,
     fmt::Debug,
@@ -149,28 +151,6 @@ struct CoreSDK<WP> {
     pending_activation_notify: Notify,
 }
 
-/// Can be used inside the CoreSDK impl to block on any method that polls the server until it
-/// responds, or until the shutdown flag is set (aborting the poll)
-macro_rules! abort_on_shutdown {
-    ($self:ident, $gateway_fn:tt, $poll_arg:expr) => {{
-        let shutdownfut = async {
-            loop {
-                $self.shutdown_notify.notified().await;
-                if $self.shutdown_requested.load(Ordering::SeqCst) {
-                    break;
-                }
-            }
-        };
-        let poll_result_future = $self.server_gateway.$gateway_fn($poll_arg);
-        tokio::select! {
-            _ = shutdownfut => {
-                Err(ShutdownErr.into())
-            }
-            r = poll_result_future => r.map_err(Into::into)
-        }
-    }};
-}
-
 #[async_trait::async_trait]
 impl<WP> Core for CoreSDK<WP>
 where
@@ -195,31 +175,19 @@ where
                 return Err(PollWfError::ShutDown);
             }
 
-            let shutdownfut = async {
-                loop {
-                    self.shutdown_notify.notified().await;
-                    if self.shutdown_requested.load(Ordering::SeqCst) {
-                        break;
-                    }
-                }
-            };
-            let pa_fut = async {
-                loop {
-                    self.pending_activation_notify.notified().await;
-                    break;
-                }
-            };
-            let poll_result_future = self
-                .server_gateway
-                .poll_workflow_task(task_queue.to_owned());
+            let pa_fut = self.pending_activation_notify.notified();
+            let poll_result_future = self.shutdownable_fut(
+                self.server_gateway
+                    .poll_workflow_task(task_queue.to_owned())
+                    .map_err(Into::into),
+            );
             let selected_f = tokio::select! {
-                _ = shutdownfut => {
-                    Err(ShutdownErr.into())
-                }
+                // If a pending activation comes in while we are waiting on polling, we need to
+                // restart the loop right away to provide it
                 _ = pa_fut => {
                     continue;
                 }
-                r = poll_result_future => r.map_err(Into::into)
+                r = poll_result_future => r
             };
 
             match selected_f {
@@ -244,7 +212,14 @@ where
             return Err(PollActivityError::ShutDown);
         }
 
-        match abort_on_shutdown!(self, poll_activity_task, task_queue.to_owned()) {
+        match self
+            .shutdownable_fut(
+                self.server_gateway
+                    .poll_activity_task(task_queue.to_owned())
+                    .map_err(Into::into),
+            )
+            .await
+        {
             Ok(work) => {
                 let task_token = work.task_token.clone();
                 Ok(ActivityTask::start_from_poll_resp(work, task_token))
@@ -549,6 +524,31 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
                 source,
                 run_id: run_id.to_owned(),
             })
+    }
+
+    /// Wrap a future, making it return early with a shutdown error in the event the shutdown
+    /// flag has been set
+    async fn shutdownable_fut<FOut, FErr>(
+        &self,
+        wrap_this: impl Future<Output = Result<FOut, FErr>>,
+    ) -> Result<FOut, FErr>
+    where
+        FErr: From<ShutdownErr>,
+    {
+        let shutdownfut = async {
+            loop {
+                self.shutdown_notify.notified().await;
+                if self.shutdown_requested.load(Ordering::SeqCst) {
+                    break;
+                }
+            }
+        };
+        tokio::select! {
+            _ = shutdownfut => {
+                Err(ShutdownErr.into())
+            }
+            r = wrap_this => r
+        }
     }
 }
 
