@@ -10,6 +10,7 @@ pub(crate) struct HistoryInfo {
     // This needs to stay private so the struct can't be instantiated outside of the constructor,
     // which enforces some invariants regarding history structure that need to be upheld.
     events: Vec<HistoryEvent>,
+    pub wf_task_count: usize,
 }
 
 type Result<T, E = HistoryInfoError> = std::result::Result<T, E>;
@@ -42,7 +43,7 @@ impl HistoryInfo {
         let to_wf_task_num = to_wf_task_num.unwrap_or(usize::MAX);
         let mut workflow_task_started_event_id = 0;
         let mut previous_started_event_id = 0;
-        let mut count = 0;
+        let mut wf_task_count = 0;
         let mut history = events.iter().peekable();
         let mut events = vec![];
 
@@ -68,12 +69,13 @@ impl HistoryInfo {
                             workflow_task_started_event_id,
                         });
                     }
-                    count += 1;
-                    if count == to_wf_task_num || next_event.is_none() {
+                    wf_task_count += 1;
+                    if wf_task_count == to_wf_task_num || next_event.is_none() {
                         return Ok(Self {
                             previous_started_event_id,
                             workflow_task_started_event_id,
                             events,
+                            wf_task_count,
                         });
                     }
                 } else if next_event.is_some() && !next_is_failed_or_timeout {
@@ -87,6 +89,7 @@ impl HistoryInfo {
                         previous_started_event_id,
                         workflow_task_started_event_id,
                         events,
+                        wf_task_count,
                     });
                 }
                 // No more events

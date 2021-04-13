@@ -52,6 +52,17 @@ pub(crate) fn build_fake_core(
         run_id: run_id.to_string(),
     });
 
+    let full_hist_info = t.get_full_history_info().unwrap();
+    // Ensure no response batch is trying to return more tasks than the history contains
+    for rb_wf_num in response_batches {
+        assert!(
+            *rb_wf_num <= full_hist_info.wf_task_count,
+            "Wf task count {} is not <= total task count {}",
+            rb_wf_num,
+            full_hist_info.wf_task_count
+        );
+    }
+
     let responses: Vec<_> = response_batches
         .iter()
         .map(|to_task_num| {

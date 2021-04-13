@@ -750,7 +750,7 @@ mod test {
         .await;
     }
 
-    #[rstest(hist_batches, case::incremental(&[1, 3]), case::replay(&[3]))]
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
     #[tokio::test]
     async fn timer_cancel_test_across_wf_bridge(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
@@ -795,8 +795,6 @@ mod test {
         .await;
     }
 
-    // TODO: History doesn't go all the way through execution completed -- which is expected in
-    //   real life anyway, but testing that might still be desirable
     #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
     #[tokio::test]
     async fn scheduled_activity_cancellation_try_cancel(hist_batches: &[usize]) {
@@ -1296,11 +1294,8 @@ mod test {
         .await;
     }
 
-    // The incremental version only does one batch here, because the workflow completes right away
-    // and any subsequent poll would block forever with nothing to do.
-    #[rstest(hist_batches, case::incremental(&[1]), case::replay(&[2]))]
     #[tokio::test]
-    async fn cancel_timer_before_sent_wf_bridge(hist_batches: &[usize]) {
+    async fn cancel_timer_before_sent_wf_bridge() {
         let wfid = "fake_wf_id";
         let cancel_timer_id = "cancel_timer";
 
@@ -1309,7 +1304,7 @@ mod test {
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
 
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let core = build_fake_core(wfid, &mut t, &[1]);
 
         poll_and_reply(
             &core,
@@ -1335,10 +1330,10 @@ mod test {
     }
 
     #[rstest]
-    // TODO: There is no 3 here -- batches always include failed tasks
-    #[case::no_evict_inc(&[1, 2, 2, 3], EvictionMode::NotSticky)]
-    #[case::no_evict(&[2, 2, 3], EvictionMode::NotSticky)]
-    #[case::evict(&[2, 3, 3, 3, 3], EvictionMode::AfterEveryReply)]
+    // TODO: Why the extra call needed still...?
+    #[case::no_evict_inc(&[1, 2, 2, 2], EvictionMode::NotSticky)]
+    #[case::no_evict(&[1, 2, 2], EvictionMode::NotSticky)]
+    #[case::evict(&[1, 2, 2, 2, 2], EvictionMode::AfterEveryReply)]
     #[tokio::test]
     async fn complete_activation_with_failure(
         #[case] batches: &[usize],
