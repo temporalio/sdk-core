@@ -30,6 +30,8 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
+use crate::errors::ActivityHeartbeatError;
+use crate::protos::coresdk::ActivityId;
 use crate::{
     errors::{ShutdownErr, WorkflowUpdateError},
     machines::{EmptyWorkflowCommandErr, WFCommand},
@@ -41,7 +43,7 @@ use crate::{
             activity_task::ActivityTask,
             workflow_activation::WfActivation,
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
-            ActivityHeartbeat, ActivityTaskCompletion,
+            ActivityHeartbeat, ActivityTaskCompletion, RecordActivityHeartbeatResponse,
         },
         temporal::api::{
             enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
@@ -98,8 +100,29 @@ pub trait Core: Send + Sync {
         completion: ActivityTaskCompletion,
     ) -> Result<(), CompleteActivityError>;
 
-    /// Indicate that a long running activity is still making progress
-    async fn send_activity_heartbeat(&self, task_token: ActivityHeartbeat) -> Result<(), ()>;
+    /// Notify workflow that activity is still alive. Long running activities that take longer than
+    /// `activity_heartbeat_timeout` to finish must call this function in order to report progress,
+    /// otherwise activity will timeout and new attempt will be scheduled.
+    /// `result` contains latest known activity cancelation status.
+    /// Note that heartbeat requests are getting batched and are sent to the server periodically,
+    /// this function is going to return immediately and cancelation status will be taken from the server response
+    /// to the most recently sent batch.
+    ///
+    /// TODO (@vitarb) consider forcing first call to always call the server,
+    /// this would allow activities that send first heartbeat in the middle of the execution
+    /// receive most recent cancelation status right away.
+    async fn record_activity_heartbeat(
+        &self,
+        details: ActivityHeartbeat,
+    ) -> Result<RecordActivityHeartbeatResponse, ActivityHeartbeatError>;
+
+    /// Returns most recent activity heartbeat details. If `record_activity_heartbeat` hasn't been called
+    /// on this worker then heartbeat details will be taken from the `poll_activity_task` response,
+    /// otherwise most recent invocation of `record_activity_heartbeat` takes precedence.
+    async fn get_last_activity_heartbeat(
+        &self,
+        id: ActivityId,
+    ) -> Result<ActivityHeartbeat, ActivityHeartbeatError>;
 
     /// Returns core's instance of the [ServerGatewayApis] implementor it is using.
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis>;
@@ -355,7 +378,17 @@ where
         Ok(())
     }
 
-    async fn send_activity_heartbeat(&self, _task_token: ActivityHeartbeat) -> Result<(), ()> {
+    async fn record_activity_heartbeat(
+        &self,
+        _details: ActivityHeartbeat,
+    ) -> Result<RecordActivityHeartbeatResponse, ActivityHeartbeatError> {
+        unimplemented!()
+    }
+
+    async fn get_last_activity_heartbeat(
+        &self,
+        _id: ActivityId,
+    ) -> Result<ActivityHeartbeat, ActivityHeartbeatError> {
         unimplemented!()
     }
 

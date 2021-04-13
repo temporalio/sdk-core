@@ -143,3 +143,9 @@ pub enum CompleteActivityError {
     #[error("Unhandled error when calling the temporal server: {0:?}")]
     TonicError(#[from] tonic::Status),
 }
+
+/// Errors thrown by [crate::Core::record_activity_heartbeat] and [crate::Core::get_last_activity_heartbeat]
+#[derive(thiserror::Error, Debug)]
+pub enum ActivityHeartbeatError {
+    // TODO populate
+}
