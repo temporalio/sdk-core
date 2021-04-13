@@ -16,7 +16,7 @@ import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/empty.proto";
 
-// A request as given to [crate::Core::send_activity_heartbeat]
+// A request as given to [crate::Core::record_activity_heartbeat]
 message ActivityHeartbeat {
     ActivityId activity_id = 1;
     repeated common.Payload details = 2;
