@@ -23,10 +23,12 @@ use crate::{
             PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
-    Core, CoreSDK,
+    Core, CoreInitOptions, CoreSDK, ServerGatewayOptions,
 };
 use rand::{thread_rng, Rng};
 use std::collections::VecDeque;
+use std::str::FromStr;
+use url::Url;
 
 #[derive(derive_more::Constructor)]
 pub(crate) struct FakeCore {
@@ -91,7 +93,22 @@ pub(crate) fn build_fake_core(
         .expect_complete_workflow_task()
         .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
 
-    FakeCore::new(CoreSDK::new(mock_gateway), response_batches.len())
+    FakeCore::new(
+        CoreSDK::new(
+            mock_gateway,
+            CoreInitOptions {
+                gateway_opts: ServerGatewayOptions {
+                    target_url: Url::from_str("https://fake").unwrap(),
+                    namespace: "".to_string(),
+                    identity: "".to_string(),
+                    worker_binary_id: "".to_string(),
+                    long_poll_timeout: Default::default(),
+                },
+                evict_after_pending_cleared: true,
+            },
+        ),
+        response_batches.len(),
+    )
 }
 
 type AsserterWithReply<'a> = (&'a dyn Fn(&WfActivation), wf_activation_completion::Status);
