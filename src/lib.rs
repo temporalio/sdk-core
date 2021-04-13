@@ -30,7 +30,6 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::workflow::PushCommandsResult;
 use crate::{
     errors::{ShutdownErr, WorkflowUpdateError},
     machines::{EmptyWorkflowCommandErr, WFCommand},
@@ -48,14 +47,17 @@ use crate::{
         },
     },
     protosext::fmt_task_token,
-    workflow::{NextWfActivation, WorkflowConcurrencyManager, WorkflowError, WorkflowManager},
+    workflow::{
+        NextWfActivation, PushCommandsResult, WorkflowConcurrencyManager, WorkflowError,
+        WorkflowManager,
+    },
 };
 use dashmap::DashMap;
 use futures::TryFutureExt;
-use std::future::Future;
 use std::{
     convert::TryInto,
     fmt::Debug,
+    future::Future,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -1330,9 +1332,8 @@ mod test {
     }
 
     #[rstest]
-    // TODO: Why the extra call needed still...?
-    #[case::no_evict_inc(&[1, 2, 2, 2], EvictionMode::NotSticky)]
-    #[case::no_evict(&[1, 2, 2], EvictionMode::NotSticky)]
+    #[case::no_evict_inc(&[1, 2, 2], EvictionMode::NotSticky)]
+    #[case::no_evict(&[2, 2], EvictionMode::NotSticky)]
     #[case::evict(&[1, 2, 2, 2, 2], EvictionMode::AfterEveryReply)]
     #[tokio::test]
     async fn complete_activation_with_failure(
@@ -1346,9 +1347,6 @@ mod test {
 
         let mut t = canned_histories::workflow_fails_with_failure_after_timer(timer_id);
         let mut core = build_fake_core(wfid, &mut t, batches);
-        // TODO: This is dumb. We have to have an extra poll because of the wft failed call, but
-        //   we can't "expect" it because
-        core.expected_wft_calls -= 1;
         // Need to create an expectation that we will call a failure completion
         Arc::get_mut(&mut core.inner.server_gateway)
             .unwrap()

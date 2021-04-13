@@ -149,15 +149,20 @@ pub(crate) async fn poll_and_reply<'a>(
                 .await
                 .unwrap();
 
+            let last_complete_was_failure = !reply.is_success();
+
             dbg!(&performed_wft_calls);
             dbg!(&core.expected_wft_calls);
             match eviction_mode {
                 EvictionMode::Sticky => unimplemented!(),
                 EvictionMode::NotSticky => {
-                    // If we are in non-sticky mode, we have to replay all expectations every
-                    // time a wft is completed (hence there are no more pending activations)
+                    // If we are in non-sticky mode, we have to replay all expectations every time a
+                    // wft is completed successfully (hence there are no more pending activations).
+                    // Failed completions always evict anyway, so we expect the test to include an
+                    // explicit addition batch for it.
                     if performed_wft_calls < core.expected_wft_calls
                         && !core.inner.pending_activations.has_pending(&res.run_id)
+                        && !last_complete_was_failure
                     {
                         warn!("Nosticky not done");
                         continue 'outer;
