@@ -28,7 +28,12 @@ use crate::{
 use rand::{thread_rng, Rng};
 use std::collections::VecDeque;
 
-pub(crate) type FakeCore = CoreSDK<MockServerGatewayApis>;
+#[derive(derive_more::Constructor)]
+pub(crate) struct FakeCore {
+    pub(crate) inner: CoreSDK<MockServerGatewayApis>,
+    /// Number of times we expect the server to be polled for workflow tasks
+    pub expected_wft_calls: usize,
+}
 
 /// Given identifiers for a workflow/run, and a test history builder, construct an instance of
 /// the core SDK with a mock server gateway that will produce the responses as appropriate.
@@ -66,52 +71,94 @@ pub(crate) fn build_fake_core(
     mock_gateway
         .expect_poll_workflow_task()
         .times(response_batches.len())
-        .returning(move |_| Ok(tasks.pop_front().unwrap()));
+        .returning(move |_| {
+            warn!("Hit 'server'");
+            Ok(tasks.pop_front().unwrap())
+        });
     // Response not really important here
     mock_gateway
         .expect_complete_workflow_task()
         .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
 
-    CoreSDK::new(mock_gateway)
+    FakeCore::new(CoreSDK::new(mock_gateway), response_batches.len())
 }
 
 type AsserterWithReply<'a> = (&'a dyn Fn(&WfActivation), wf_activation_completion::Status);
 
+pub enum EvictionMode {
+    #[allow(dead_code)] // Not used until we have stickyness options implemented
+    /// Core is in sticky mode, and workflows are being cached
+    Sticky,
+    /// Core is not in sticky mode, and workflows are evicted after they finish their pending
+    /// activations
+    NotSticky,
+    /// Not a real mode, but good for imitating crashes. Evict workflows after *every* reply,
+    /// even if there are pending activations
+    AfterEveryReply,
+}
+
 pub(crate) async fn poll_and_reply<'a>(
     core: &'a FakeCore,
     task_queue: &'a str,
-    evict_after_each_reply: bool,
+    eviction_mode: EvictionMode,
     expect_and_reply: &'a [AsserterWithReply<'a>],
 ) {
     let mut run_id = "".to_string();
     let mut evictions = 0;
     let expected_evictions = expect_and_reply.len() - 1;
+    // Counts how many times we have reset the expect/reply iterator
+    let mut performed_wft_calls = 0;
 
     'outer: loop {
         let expect_iter = expect_and_reply.iter();
+        warn!("replaying expectations");
 
         for interaction in expect_iter {
+            warn!("Interaction loop");
+            dbg!(&performed_wft_calls);
+            dbg!(&core.expected_wft_calls);
             let (asserter, reply) = interaction;
-            let res = core.poll_workflow_task(task_queue).await.unwrap();
+            let res = core.inner.poll_workflow_task(task_queue).await.unwrap();
+            if !res.from_pending {
+                performed_wft_calls += 1;
+            }
 
             asserter(&res);
 
             let task_tok = res.task_token;
             if run_id.is_empty() {
-                run_id = res.run_id;
+                run_id = res.run_id.clone();
             }
 
-            core.complete_workflow_task(WfActivationCompletion::from_status(
-                task_tok,
-                reply.clone(),
-            ))
-            .await
-            .unwrap();
+            core.inner
+                .complete_workflow_task(WfActivationCompletion::from_status(
+                    task_tok,
+                    reply.clone(),
+                ))
+                .await
+                .unwrap();
 
-            if evict_after_each_reply && evictions < expected_evictions {
-                core.evict_run(&run_id);
-                evictions += 1;
-                continue 'outer;
+            dbg!(&performed_wft_calls);
+            dbg!(&core.expected_wft_calls);
+            match eviction_mode {
+                EvictionMode::Sticky => unimplemented!(),
+                EvictionMode::NotSticky => {
+                    // If we are in non-sticky mode, we have to replay all expectations every
+                    // time a wft is completed (hence there are no more pending activations)
+                    if performed_wft_calls < core.expected_wft_calls
+                        && !core.inner.pending_activations.has_pending(&res.run_id)
+                    {
+                        warn!("Nosticky not done");
+                        continue 'outer;
+                    }
+                }
+                EvictionMode::AfterEveryReply => {
+                    if evictions < expected_evictions {
+                        core.inner.evict_run(&run_id);
+                        evictions += 1;
+                        continue 'outer;
+                    }
+                }
             }
         }
 

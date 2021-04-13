@@ -46,6 +46,8 @@ pub(crate) struct WorkflowMachines {
     /// The event id of the started event of the last successfully executed workflow task
     previous_started_event_id: i64,
     /// True if the workflow is replaying from history
+    /// TODO: This seems wrong when I try to use it in contexts I expect it to return true, and
+    ///   is currently unused, but some unimplemented state machines need it so kept for now.
     replaying: bool,
     /// Workflow identifier
     pub workflow_id: String,
@@ -418,6 +420,7 @@ impl WorkflowMachines {
                 run_id: self.run_id.clone(),
                 jobs,
                 task_token: vec![],
+                from_pending: false,
             })
         }
     }
