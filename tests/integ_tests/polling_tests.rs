@@ -1,10 +1,11 @@
 use crate::integ_tests::{
-    create_workflow, get_integ_core, simple_wf_tests::schedule_activity_and_timer_cmds,
+    create_workflow, get_integ_core, get_integ_server_options,
+    simple_wf_tests::schedule_activity_and_timer_cmds,
 };
 use assert_matches::assert_matches;
+use crossbeam::channel::{unbounded, RecvTimeoutError};
 use rand::Rng;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 use temporal_sdk_core::protos::coresdk::{
     activity_task::activity_task as act_task,
     workflow_activation::{wf_activation_job, FireTimer, WfActivationJob},
@@ -13,7 +14,7 @@ use temporal_sdk_core::protos::coresdk::{
     },
     workflow_completion::WfActivationCompletion,
 };
-use temporal_sdk_core::Core;
+use temporal_sdk_core::{Core, CoreInitOptions};
 
 #[tokio::test]
 async fn long_poll_interrupted_by_new_pending_activation() {
@@ -95,4 +96,25 @@ async fn long_poll_interrupted_by_new_pending_activation() {
     .unwrap();
 
     jh.await.unwrap();
+}
+
+#[tokio::test]
+async fn long_poll_timeout_is_retried() {
+    let mut gateway_opts = get_integ_server_options();
+    // Server whines unless long poll > 2 seconds
+    gateway_opts.long_poll_timeout = Duration::from_secs(3);
+    let core = temporal_sdk_core::init(CoreInitOptions {
+        gateway_opts,
+        evict_after_pending_cleared: false,
+    })
+    .await
+    .unwrap();
+    // Should block for more than 3 seconds, since we internally retry long poll
+    let (tx, rx) = unbounded();
+    tokio::spawn(async move {
+        core.poll_workflow_task("some_task_q").await.unwrap();
+        tx.send(())
+    });
+    let err = rx.recv_timeout(Duration::from_secs(4)).unwrap_err();
+    assert_matches!(err, RecvTimeoutError::Timeout);
 }
