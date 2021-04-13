@@ -1,39 +1,49 @@
 use itertools::Itertools;
 use std::{collections::VecDeque, sync::Once};
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{layer::SubscriberExt, EnvFilter};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+const ENABLE_OPENTELEM_ENV_VAR: &str = "TEMPORAL_ENABLE_OPENTELEMETRY";
 static TRACING_INIT: Once = Once::new();
 
 /// Initialize tracing subscribers and output. Core will not call this itself, it exists here so
 /// that consumers and tests have an easy way to initialize tracing.
 pub fn tracing_init() {
     TRACING_INIT.call_once(|| {
-        // Not all low-down unit tests use Tokio
-        #[cfg(test)]
-        let tracer = opentelemetry_jaeger::new_pipeline()
-            .with_service_name("coresdk")
-            .install_simple()
-            .unwrap();
+        let opentelem_on = std::env::var(ENABLE_OPENTELEM_ENV_VAR).is_ok();
 
-        #[cfg(not(test))]
-        let tracer = opentelemetry_jaeger::new_pipeline()
-            .with_service_name("coresdk")
-            .install_batch(opentelemetry::runtime::Tokio)
-            .unwrap();
-
-        let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
         let filter_layer = EnvFilter::try_from_default_env()
             .or_else(|_| EnvFilter::try_new("info"))
             .unwrap();
-        let fmt_layer = tracing_subscriber::fmt::layer().with_target(false).pretty();
 
-        tracing_subscriber::registry()
-            .with(opentelemetry)
-            .with(filter_layer)
-            .with(fmt_layer)
-            .try_init()
-            .unwrap();
+        if opentelem_on {
+            // Not all low-down unit tests use Tokio
+            #[cfg(test)]
+            let tracer = opentelemetry_jaeger::new_pipeline()
+                .with_service_name("coresdk")
+                .install_simple()
+                .unwrap();
+
+            #[cfg(not(test))]
+            let tracer = opentelemetry_jaeger::new_pipeline()
+                .with_service_name("coresdk")
+                .install_batch(opentelemetry::runtime::Tokio)
+                .unwrap();
+
+            let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+
+            tracing_subscriber::registry()
+                .with(opentelemetry)
+                .with(filter_layer)
+                .with(tracing_subscriber::fmt::layer().with_target(false).pretty())
+                .try_init()
+                .unwrap();
+        } else {
+            // Because these types don't compose nicely we must repeat ourselves in these branches
+            let reg = tracing_subscriber::registry()
+                .with(filter_layer)
+                .with(tracing_subscriber::fmt::layer().with_target(false).pretty());
+            tracing::subscriber::set_global_default(reg).unwrap();
+        };
     });
 }
 
