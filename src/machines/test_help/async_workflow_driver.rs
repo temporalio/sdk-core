@@ -1,11 +1,10 @@
-use crate::protos::coresdk::workflow_activation::wf_activation_job::Variant;
-use crate::protos::coresdk::workflow_activation::ResolveActivity;
-use crate::protos::coresdk::workflow_commands::{RequestCancelActivity, ScheduleActivity};
 use crate::{
     machines::{workflow_machines::CommandID, WFCommand},
     protos::coresdk::{
-        workflow_activation::{wf_activation_job, FireTimer},
-        workflow_commands::{CancelTimer, StartTimer},
+        workflow_activation::{
+            wf_activation_job, wf_activation_job::Variant, FireTimer, ResolveActivity,
+        },
+        workflow_commands::{CancelTimer, RequestCancelActivity, ScheduleActivity, StartTimer},
     },
     workflow::{ActivationListener, WorkflowFetcher},
 };
@@ -24,8 +23,6 @@ use tokio::{
     runtime::Runtime,
     task::{JoinError, JoinHandle},
 };
-use CommandID::Activity;
-use CommandID::Timer;
 
 pub struct TestWorkflowDriver {
     join_handle: Option<JoinHandle<()>>,
@@ -138,12 +135,15 @@ impl CommandSender {
 
     /// Request to create a timer
     pub fn timer(&mut self, a: StartTimer) -> impl Future {
-        self.send_blocking_cmd(Timer(a.timer_id.clone()), WFCommand::AddTimer(a))
+        self.send_blocking_cmd(CommandID::Timer(a.timer_id.clone()), WFCommand::AddTimer(a))
     }
 
     /// Request to run an activity
     pub fn activity(&mut self, a: ScheduleActivity) -> impl Future {
-        self.send_blocking_cmd(Activity(a.activity_id.clone()), WFCommand::AddActivity(a))
+        self.send_blocking_cmd(
+            CommandID::Activity(a.activity_id.clone()),
+            WFCommand::AddActivity(a),
+        )
     }
 
     fn send_blocking_cmd(&mut self, id: CommandID, c: WFCommand) -> impl Future {
@@ -269,13 +269,14 @@ impl ActivationListener for TestWorkflowDriver {
     fn on_activation_job(&mut self, activation: &wf_activation_job::Variant) {
         match activation {
             Variant::FireTimer(FireTimer { timer_id }) => {
-                self.cache.unblock(Timer(timer_id.to_owned()));
+                self.cache.unblock(CommandID::Timer(timer_id.to_owned()));
             }
             Variant::ResolveActivity(ResolveActivity {
                 activity_id,
                 result: _result,
             }) => {
-                self.cache.unblock(Activity(activity_id.to_owned()));
+                self.cache
+                    .unblock(CommandID::Activity(activity_id.to_owned()));
             }
             _ => {}
         }

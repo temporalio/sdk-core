@@ -121,6 +121,10 @@ pub trait Core: Send + Sync {
 pub struct CoreInitOptions {
     /// Options for the connection to the temporal server
     pub gateway_opts: ServerGatewayOptions,
+    /// If set to true (which should be the default choice until sticky task queues are implemented)
+    /// workflows are evicted after they no longer have any pending activations. IE: After they
+    /// have sent new commands to the server.
+    pub evict_after_pending_cleared: bool,
 }
 
 /// Initializes an instance of the core sdk and establishes a connection to the temporal server.
@@ -134,10 +138,12 @@ pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
     // Initialize server client
     let work_provider = opts.gateway_opts.connect().await?;
 
-    Ok(CoreSDK::new(work_provider))
+    Ok(CoreSDK::new(work_provider, opts))
 }
 
 struct CoreSDK<WP> {
+    /// Options provided at initialization time
+    init_options: CoreInitOptions,
     /// Provides work in the form of responses the server would send from polling task Qs
     server_gateway: Arc<WP>,
     /// Key is run id
@@ -270,7 +276,9 @@ where
         };
 
         // Blow up workflows with no more pending activations (IE: They have completed a WFT)
-        if !self.pending_activations.has_pending(&run_id) {
+        if self.init_options.evict_after_pending_cleared
+            && !self.pending_activations.has_pending(&run_id)
+        {
             warn!("Evicting");
             self.evict_run(&run_id);
         }
@@ -327,8 +335,9 @@ where
 }
 
 impl<WP: ServerGatewayApis> CoreSDK<WP> {
-    pub(crate) fn new(wp: WP) -> Self {
+    pub(crate) fn new(wp: WP, init_options: CoreInitOptions) -> Self {
         Self {
+            init_options,
             server_gateway: Arc::new(wp),
             workflow_machines: WorkflowConcurrencyManager::new(),
             workflow_task_tokens: Default::default(),
@@ -458,7 +467,6 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         run_id: &str,
         failure: workflow_completion::Failure,
     ) -> Result<(), CompleteWfError> {
-        warn!("Failed!");
         // Blow up any cached data associated with the workflow
         self.evict_run(&run_id);
 

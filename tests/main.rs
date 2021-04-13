@@ -55,8 +55,11 @@ mod integ_tests {
 
     pub async fn get_integ_core() -> impl Core {
         let gateway_opts = get_integ_server_options();
-        temporal_sdk_core::init(CoreInitOptions { gateway_opts })
-            .await
-            .unwrap()
+        temporal_sdk_core::init(CoreInitOptions {
+            gateway_opts,
+            evict_after_pending_cleared: false,
+        })
+        .await
+        .unwrap()
     }
 }

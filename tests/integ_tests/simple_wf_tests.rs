@@ -1,8 +1,5 @@
-use crate::integ_tests::{
-    create_workflow, get_integ_core, get_integ_server_options, with_gw, GwApi, NAMESPACE,
-};
+use crate::integ_tests::{create_workflow, get_integ_core, with_gw, GwApi, NAMESPACE};
 use assert_matches::assert_matches;
-use crossbeam::channel::{unbounded, RecvTimeoutError};
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
 use rand::{self, Rng};
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -22,7 +19,7 @@ use temporal_sdk_core::{
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
-    tracing_init, CompleteWfError, Core, CoreInitOptions, PollWfError,
+    tracing_init, CompleteWfError, Core, PollWfError,
 };
 
 // TODO: These tests can get broken permanently if they break one time and the server is not
@@ -81,7 +78,7 @@ async fn activity_workflow() {
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
-    let task = dbg!(core.poll_activity_task(task_q).await.unwrap());
+    let task = core.poll_activity_task(task_q).await.unwrap();
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -145,7 +142,7 @@ async fn activity_non_retryable_failure() {
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
-    let task = dbg!(core.poll_activity_task(task_q).await.unwrap());
+    let task = core.poll_activity_task(task_q).await.unwrap();
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -241,7 +238,7 @@ async fn activity_retry() {
     .await
     .unwrap();
     // Poll 2nd time
-    let task = dbg!(core.poll_activity_task(task_q).await.unwrap());
+    let task = core.poll_activity_task(task_q).await.unwrap();
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -689,7 +686,7 @@ async fn timer_cancel_workflow() {
     ))
     .await
     .unwrap();
-    let task = dbg!(core.poll_workflow_task(task_q).await.unwrap());
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![
             CancelTimer {
