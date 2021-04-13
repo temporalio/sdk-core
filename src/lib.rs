@@ -800,7 +800,6 @@ mod test {
     #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
     #[tokio::test]
     async fn scheduled_activity_cancellation_try_cancel(hist_batches: &[usize]) {
-        tracing_init();
         let wfid = "fake_wf_id";
         let activity_id = "fake_activity";
         let signal_id = "signal";
@@ -1062,8 +1061,6 @@ mod test {
     #[rstest(hist_batches, case::incremental(&[1, 2, 3, 4]), case::replay(&[4]))]
     #[tokio::test]
     async fn scheduled_activity_cancellation_wait_for_cancellation(hist_batches: &[usize]) {
-        tracing_init();
-
         let wfid = "fake_wf_id";
         let activity_id = "fake_activity";
         let signal_id = "signal";
@@ -1340,8 +1337,6 @@ mod test {
         #[case] batches: &[usize],
         #[case] evict: EvictionMode,
     ) {
-        tracing_init();
-
         let wfid = "fake_wf_id";
         let timer_id = "timer";
 

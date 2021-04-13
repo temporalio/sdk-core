@@ -117,17 +117,12 @@ pub(crate) async fn poll_and_reply<'a>(
     let mut run_id = "".to_string();
     let mut evictions = 0;
     let expected_evictions = expect_and_reply.len() - 1;
-    // Counts how many times we have reset the expect/reply iterator
     let mut performed_wft_calls = 0;
 
     'outer: loop {
         let expect_iter = expect_and_reply.iter();
-        warn!("replaying expectations");
 
         for interaction in expect_iter {
-            warn!("Interaction loop");
-            dbg!(&performed_wft_calls);
-            dbg!(&core.expected_wft_calls);
             let (asserter, reply) = interaction;
             let res = core.inner.poll_workflow_task(task_queue).await.unwrap();
             if !res.from_pending {
@@ -151,8 +146,6 @@ pub(crate) async fn poll_and_reply<'a>(
 
             let last_complete_was_failure = !reply.is_success();
 
-            dbg!(&performed_wft_calls);
-            dbg!(&core.expected_wft_calls);
             match eviction_mode {
                 EvictionMode::Sticky => unimplemented!(),
                 EvictionMode::NotSticky => {
@@ -164,7 +157,6 @@ pub(crate) async fn poll_and_reply<'a>(
                         && !core.inner.pending_activations.has_pending(&res.run_id)
                         && !last_complete_was_failure
                     {
-                        warn!("Nosticky not done");
                         continue 'outer;
                     }
                 }
