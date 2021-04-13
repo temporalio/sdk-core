@@ -1,10 +1,11 @@
+use crate::integ_tests::{
+    create_workflow, get_integ_core, get_integ_server_options, with_gw, GwApi, NAMESPACE,
+};
 use assert_matches::assert_matches;
 use crossbeam::channel::{unbounded, RecvTimeoutError};
-use futures::{channel::mpsc::UnboundedReceiver, future, Future, SinkExt, StreamExt};
+use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
 use rand::{self, Rng};
-use std::{collections::HashMap, convert::TryFrom, env, sync::Arc, time::Duration};
-use temporal_sdk_core::protos::coresdk::workflow_commands::ActivityCancellationType;
-use temporal_sdk_core::protos::coresdk::ActivityTaskCompletion;
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use temporal_sdk_core::{
     protos::coresdk::{
         activity_result::{self, activity_result as act_res, ActivityResult},
@@ -15,13 +16,13 @@ use temporal_sdk_core::{
             WfActivationJob,
         },
         workflow_commands::{
-            CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution, RequestCancelActivity,
-            ScheduleActivity, StartTimer,
+            ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
+            FailWorkflowExecution, RequestCancelActivity, ScheduleActivity, StartTimer,
         },
         workflow_completion::WfActivationCompletion,
+        ActivityTaskCompletion,
     },
-    tracing_init, CompleteWfError, Core, CoreInitOptions, PollWfError, ServerGatewayApis,
-    ServerGatewayOptions, Url,
+    tracing_init, CompleteWfError, Core, CoreInitOptions, PollWfError,
 };
 
 // TODO: These tests can get broken permanently if they break one time and the server is not
@@ -30,56 +31,6 @@ use temporal_sdk_core::{
 
 // TODO: We should also get expected histories for these tests and confirm that the history
 //   at the end matches.
-
-const NAMESPACE: &str = "default";
-type GwApi = Arc<dyn ServerGatewayApis>;
-
-async fn create_workflow(
-    core: &dyn Core,
-    task_q: &str,
-    workflow_id: &str,
-    wf_type: Option<&str>,
-) -> String {
-    with_gw(core, |gw: GwApi| async move {
-        gw.start_workflow(
-            NAMESPACE.to_owned(),
-            task_q.to_owned(),
-            workflow_id.to_owned(),
-            wf_type.unwrap_or("test-workflow").to_owned(),
-        )
-        .await
-        .unwrap()
-        .run_id
-    })
-    .await
-}
-
-async fn with_gw<F: FnOnce(GwApi) -> Fout, Fout: Future>(core: &dyn Core, fun: F) -> Fout::Output {
-    let gw = core.server_gateway();
-    fun(gw).await
-}
-
-fn get_integ_server_options() -> ServerGatewayOptions {
-    let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
-        Ok(addr) => addr,
-        Err(_) => "http://localhost:7233".to_owned(),
-    };
-    let url = Url::try_from(&*temporal_server_address).unwrap();
-    ServerGatewayOptions {
-        namespace: NAMESPACE.to_string(),
-        identity: "integ_tester".to_string(),
-        worker_binary_id: "".to_string(),
-        long_poll_timeout: Duration::from_secs(60),
-        target_url: url,
-    }
-}
-
-async fn get_integ_core() -> impl Core {
-    let gateway_opts = get_integ_server_options();
-    temporal_sdk_core::init(CoreInitOptions { gateway_opts })
-        .await
-        .unwrap()
-}
 
 #[tokio::test]
 async fn timer_workflow() {
@@ -356,7 +307,8 @@ fn schedule_activity_cmd(
         task.task_token,
     )
 }
-fn schedule_activity_and_timer_cmds(
+
+pub fn schedule_activity_and_timer_cmds(
     task_q: &str,
     activity_id: &str,
     timer_id: &str,
@@ -392,8 +344,6 @@ fn schedule_activity_and_timer_cmds(
 
 #[tokio::test]
 async fn activity_cancellation_try_cancel() {
-    tracing_init();
-
     let mut rng = rand::thread_rng();
     let task_q_salt: u32 = rng.gen();
     let task_q = &format!("activity_cancelled_workflow_{}", task_q_salt.to_string());
@@ -459,8 +409,6 @@ async fn activity_cancellation_try_cancel() {
 
 #[tokio::test]
 async fn started_activity_timeout() {
-    tracing_init();
-
     let mut rng = rand::thread_rng();
     let task_q_salt: u32 = rng.gen();
     let task_q = &format!("activity_cancelled_workflow_{}", task_q_salt.to_string());

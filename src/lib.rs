@@ -51,6 +51,8 @@ use crate::{
     workflow::{NextWfActivation, WorkflowConcurrencyManager, WorkflowError, WorkflowManager},
 };
 use dashmap::DashMap;
+use futures::TryFutureExt;
+use std::future::Future;
 use std::{
     convert::TryInto,
     fmt::Debug,
@@ -70,6 +72,10 @@ pub trait Core: Send + Sync {
     /// Ask the core for some work, returning a [WfActivation]. It is then the language SDK's
     /// responsibility to call the appropriate workflow code with the provided inputs. Blocks
     /// indefinitely until such work is available or [Core::shutdown] is called.
+    ///
+    /// Note that it is possible to receive work from a task queue that isn't the argument you
+    /// passed if you previously polled that task queue and there is remaining work that the lang
+    /// side must do before core can respond to the server.
     ///
     /// TODO: Examples
     async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError>;
@@ -145,28 +151,8 @@ struct CoreSDK<WP> {
     shutdown_requested: AtomicBool,
     /// Used to wake up future which checks shutdown state
     shutdown_notify: Notify,
-}
-
-/// Can be used inside the CoreSDK impl to block on any method that polls the server until it
-/// responds, or until the shutdown flag is set (aborting the poll)
-macro_rules! abort_on_shutdown {
-    ($self:ident, $gateway_fn:tt, $poll_arg:expr) => {{
-        let shutdownfut = async {
-            loop {
-                $self.shutdown_notify.notified().await;
-                if $self.shutdown_requested.load(Ordering::SeqCst) {
-                    break;
-                }
-            }
-        };
-        let poll_result_future = $self.server_gateway.$gateway_fn($poll_arg);
-        tokio::select! {
-            _ = shutdownfut => {
-                Err(ShutdownErr.into())
-            }
-            r = poll_result_future => r.map_err(Into::into)
-        }
-    }};
+    /// Used to interrupt workflow task polling if there is a new pending activation
+    pending_activation_notify: Notify,
 }
 
 #[async_trait::async_trait]
@@ -193,7 +179,22 @@ where
                 return Err(PollWfError::ShutDown);
             }
 
-            match abort_on_shutdown!(self, poll_workflow_task, task_queue.to_owned()) {
+            let pa_fut = self.pending_activation_notify.notified();
+            let poll_result_future = self.shutdownable_fut(
+                self.server_gateway
+                    .poll_workflow_task(task_queue.to_owned())
+                    .map_err(Into::into),
+            );
+            let selected_f = tokio::select! {
+                // If a pending activation comes in while we are waiting on polling, we need to
+                // restart the loop right away to provide it
+                _ = pa_fut => {
+                    continue;
+                }
+                r = poll_result_future => r
+            };
+
+            match selected_f {
                 Ok(work) => {
                     if let Some(activation) = self.prepare_new_activation(work)? {
                         return Ok(activation);
@@ -215,7 +216,14 @@ where
             return Err(PollActivityError::ShutDown);
         }
 
-        match abort_on_shutdown!(self, poll_activity_task, task_queue.to_owned()) {
+        match self
+            .shutdownable_fut(
+                self.server_gateway
+                    .poll_activity_task(task_queue.to_owned())
+                    .map_err(Into::into),
+            )
+            .await
+        {
             Ok(work) => {
                 let task_token = work.task_token.clone();
                 Ok(ActivityTask::start_from_poll_resp(work, task_token))
@@ -319,6 +327,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             pending_activations: Default::default(),
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
+            pending_activation_notify: Notify::new(),
         }
     }
 
@@ -354,10 +363,10 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         task_token: Vec<u8>,
     ) -> WfActivation {
         if next_a.more_activations_needed {
-            self.pending_activations.push(PendingActivation {
+            self.add_pending_activation(PendingActivation {
                 run_id: next_a.get_run_id().to_owned(),
                 task_token: task_token.clone(),
-            })
+            });
         }
         next_a.finalize(task_token)
     }
@@ -406,7 +415,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             })?;
         let push_result = self.push_lang_commands(&run_id, cmds)?;
         if push_result.has_new_lang_jobs {
-            self.pending_activations.push(PendingActivation {
+            self.add_pending_activation(PendingActivation {
                 run_id: run_id.to_string(),
                 task_token: task_token.clone(),
             });
@@ -517,6 +526,37 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
                 source,
                 run_id: run_id.to_owned(),
             })
+    }
+
+    /// Wrap a future, making it return early with a shutdown error in the event the shutdown
+    /// flag has been set
+    async fn shutdownable_fut<FOut, FErr>(
+        &self,
+        wrap_this: impl Future<Output = Result<FOut, FErr>>,
+    ) -> Result<FOut, FErr>
+    where
+        FErr: From<ShutdownErr>,
+    {
+        let shutdownfut = async {
+            loop {
+                self.shutdown_notify.notified().await;
+                if self.shutdown_requested.load(Ordering::SeqCst) {
+                    break;
+                }
+            }
+        };
+        tokio::select! {
+            _ = shutdownfut => {
+                Err(ShutdownErr.into())
+            }
+            r = wrap_this => r
+        }
+    }
+
+    /// Enqueue a new pending activation, and notify ourselves
+    fn add_pending_activation(&self, pa: PendingActivation) {
+        self.pending_activations.push(pa);
+        self.pending_activation_notify.notify_one();
     }
 }
 

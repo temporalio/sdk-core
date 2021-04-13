@@ -45,6 +45,8 @@ let _enter = s.enter();
 
 To run the Jaeger instance:
 `docker run --rm -p6831:6831/udp -p6832:6832/udp -p16686:16686 jaegertracing/all-in-one:latest`
+Jaeger collection is off by default, you must set `TEMPORAL_ENABLE_OPENTELEMENTRY=true` in the
+environment to enable it.
 
 To show logs in the console, set the `RUST_LOG` environment variable to `temporal_sdk_core=DEBUG`
 or whatever level you desire. The env var is parsed according to tracing's 
