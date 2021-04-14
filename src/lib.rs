@@ -206,6 +206,10 @@ where
 
             match selected_f {
                 Ok(work) => {
+                    if !work.next_page_token.is_empty() {
+                        // TODO: Support history pagination
+                        unimplemented!("History pagination not yet implemented");
+                    }
                     if let Some(activation) = self.prepare_new_activation(work)? {
                         return Ok(activation);
                     }
