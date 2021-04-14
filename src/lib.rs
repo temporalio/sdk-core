@@ -1384,15 +1384,6 @@ mod test {
                     .into()],
                 ),
                 gen_assert_and_fail(&|_| {}),
-                // gen_assert_and_reply(
-                //     &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
-                //     // Need to re-issue the start timer command (we are replaying)
-                //     vec![StartTimer {
-                //         timer_id: timer_id.to_string(),
-                //         ..Default::default()
-                //     }
-                //     .into()],
-                // ),
                 gen_assert_and_reply(
                     &job_assert!(wf_activation_job::Variant::FireTimer(_)),
                     vec![CompleteWorkflowExecution { result: None }.into()],
