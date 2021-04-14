@@ -26,7 +26,7 @@ use crate::{
     Core, CoreInitOptions, CoreSDK, ServerGatewayOptions,
 };
 use rand::{thread_rng, Rng};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::str::FromStr;
 use url::Url;
 
@@ -84,10 +84,7 @@ pub(crate) fn build_fake_core(
     mock_gateway
         .expect_poll_workflow_task()
         .times(response_batches.len())
-        .returning(move |_| {
-            warn!("Hit 'server'");
-            Ok(tasks.pop_front().unwrap())
-        });
+        .returning(move |_| Ok(tasks.pop_front().unwrap()));
     // Response not really important here
     mock_gateway
         .expect_complete_workflow_task()
@@ -125,6 +122,13 @@ pub enum EvictionMode {
     AfterEveryReply,
 }
 
+/// This function accepts a list of asserts and replies to workflow activations to run against the
+/// provided instance of fake core.
+///
+/// It handles the business of re-sending the same activation replies over again in the event
+/// of eviction or workflow activation failure. Activation failures specifically are only run once,
+/// since they clearly can't be returned every time we replay the workflow, or it could never
+/// proceed
 pub(crate) async fn poll_and_reply<'a>(
     core: &'a FakeCore,
     task_queue: &'a str,
@@ -135,12 +139,19 @@ pub(crate) async fn poll_and_reply<'a>(
     let mut evictions = 0;
     let expected_evictions = expect_and_reply.len() - 1;
     let mut performed_wft_calls = 0;
+    let mut executed_failures = HashSet::new();
 
     'outer: loop {
         let expect_iter = expect_and_reply.iter();
 
-        for interaction in expect_iter {
+        for (i, interaction) in expect_iter.enumerate() {
             let (asserter, reply) = interaction;
+            let complete_is_failure = !reply.is_success();
+            // Only send activation failures once
+            if executed_failures.contains(&i) {
+                continue;
+            }
+
             let res = core.inner.poll_workflow_task(task_queue).await.unwrap();
             if !res.from_pending {
                 performed_wft_calls += 1;
@@ -161,7 +172,11 @@ pub(crate) async fn poll_and_reply<'a>(
                 .await
                 .unwrap();
 
-            let last_complete_was_failure = !reply.is_success();
+            if complete_is_failure {
+                executed_failures.insert(i);
+                // restart b/c we evicted due to failure and need to start all over again
+                continue 'outer;
+            }
 
             match eviction_mode {
                 EvictionMode::Sticky => unimplemented!(),
@@ -169,10 +184,10 @@ pub(crate) async fn poll_and_reply<'a>(
                     // If we are in non-sticky mode, we have to replay all expectations every time a
                     // wft is completed successfully (hence there are no more pending activations).
                     // Failed completions always evict anyway, so we expect the test to include an
-                    // explicit addition batch for it.
+                    // explicit additional batch for it.
                     if performed_wft_calls < core.expected_wft_calls
                         && !core.inner.pending_activations.has_pending(&res.run_id)
-                        && !last_complete_was_failure
+                        && !complete_is_failure
                     {
                         continue 'outer;
                     }

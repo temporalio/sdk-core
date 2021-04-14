@@ -159,6 +159,59 @@ pub fn workflow_fails_with_failure_after_timer(timer_id: &str) -> TestHistoryBui
 ///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
 ///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
 ///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_TIMER_STARTED
+///  6: EVENT_TYPE_TIMER_FIRED
+///  7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  9: EVENT_TYPE_WORKFLOW_TASK_FAILED
+/// 10: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 11: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 12: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 13: EVENT_TYPE_TIMER_STARTED
+/// 14: EVENT_TYPE_TIMER_FIRED
+/// 15: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 16: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 17: EVENT_TYPE_WORKFLOW_TASK_FAILED
+/// 18: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 19: EVENT_TYPE_WORKFLOW_TASK_STARTED
+pub fn workflow_fails_with_failure_two_different_points(
+    timer_1: &str,
+    timer_2: &str,
+) -> TestHistoryBuilder {
+    let mut t = single_timer(timer_1);
+    t.add_workflow_task_failed_with_failure(
+        WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure,
+        Failure {
+            message: "boom 1".to_string(),
+            ..Default::default()
+        },
+    );
+    t.add_full_wf_task();
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add(
+        EventType::TimerFired,
+        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+            started_event_id: timer_started_event_id,
+            timer_id: timer_2.to_string(),
+        }),
+    );
+    t.add_workflow_task_scheduled_and_started();
+    t.add_workflow_task_failed_with_failure(
+        WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure,
+        Failure {
+            message: "boom 2".to_string(),
+            ..Default::default()
+        },
+    );
+    t.add_workflow_task_scheduled_and_started();
+
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
 ///  5: EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
 ///  6: EVENT_TYPE_ACTIVITY_TASK_STARTED
 ///  7: EVENT_TYPE_ACTIVITY_TASK_COMPLETED

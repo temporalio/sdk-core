@@ -36,7 +36,7 @@ pub fn add_coverage(machine_name: String, from_state: String, to_state: String, 
         to_state,
         event,
     };
-    COVERAGE_SENDER.send((machine_name, ct)).unwrap();
+    let _ = COVERAGE_SENDER.send((machine_name, ct));
 }
 
 fn spawn_save_coverage_at_end() -> SyncSender<(String, CoveredTransition)> {
