@@ -24,7 +24,17 @@ pub mod coresdk {
         include!("coresdk.workflow_activation.rs");
     }
     pub mod workflow_completion {
+        use crate::protos::coresdk::workflow_completion::wf_activation_completion::Status;
         include!("coresdk.workflow_completion.rs");
+
+        impl wf_activation_completion::Status {
+            pub fn is_success(&self) -> bool {
+                match &self {
+                    Status::Successful(_) => true,
+                    Status::Failed(_) => false,
+                }
+            }
+        }
     }
     pub mod workflow_commands {
         include!("coresdk.workflow_commands.rs");

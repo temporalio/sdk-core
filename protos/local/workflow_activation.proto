@@ -22,6 +22,8 @@ message WFActivation {
     string run_id = 3;
     /// The things to do upon activating the workflow
     repeated WFActivationJob jobs = 4;
+    /// True if this activation was internally generated rather than from the server
+    bool from_pending = 5;
 }
 
 message WFActivationJob {

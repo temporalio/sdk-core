@@ -23,12 +23,19 @@ use crate::{
             PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
-    Core, CoreSDK,
+    Core, CoreInitOptions, CoreSDK, ServerGatewayOptions,
 };
 use rand::{thread_rng, Rng};
 use std::collections::VecDeque;
+use std::str::FromStr;
+use url::Url;
 
-pub(crate) type FakeCore = CoreSDK<MockServerGatewayApis>;
+#[derive(derive_more::Constructor)]
+pub(crate) struct FakeCore {
+    pub(crate) inner: CoreSDK<MockServerGatewayApis>,
+    /// Number of times we expect the server to be polled for workflow tasks
+    pub expected_wft_calls: usize,
+}
 
 /// Given identifiers for a workflow/run, and a test history builder, construct an instance of
 /// the core SDK with a mock server gateway that will produce the responses as appropriate.
@@ -46,6 +53,17 @@ pub(crate) fn build_fake_core(
         workflow_id: wf_id.to_string(),
         run_id: run_id.to_string(),
     });
+
+    let full_hist_info = t.get_full_history_info().unwrap();
+    // Ensure no response batch is trying to return more tasks than the history contains
+    for rb_wf_num in response_batches {
+        assert!(
+            *rb_wf_num <= full_hist_info.wf_task_count,
+            "Wf task count {} is not <= total task count {}",
+            rb_wf_num,
+            full_hist_info.wf_task_count
+        );
+    }
 
     let responses: Vec<_> = response_batches
         .iter()
@@ -66,52 +84,106 @@ pub(crate) fn build_fake_core(
     mock_gateway
         .expect_poll_workflow_task()
         .times(response_batches.len())
-        .returning(move |_| Ok(tasks.pop_front().unwrap()));
+        .returning(move |_| {
+            warn!("Hit 'server'");
+            Ok(tasks.pop_front().unwrap())
+        });
     // Response not really important here
     mock_gateway
         .expect_complete_workflow_task()
         .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
 
-    CoreSDK::new(mock_gateway)
+    FakeCore::new(
+        CoreSDK::new(
+            mock_gateway,
+            CoreInitOptions {
+                gateway_opts: ServerGatewayOptions {
+                    target_url: Url::from_str("https://fake").unwrap(),
+                    namespace: "".to_string(),
+                    identity: "".to_string(),
+                    worker_binary_id: "".to_string(),
+                    long_poll_timeout: Default::default(),
+                },
+                evict_after_pending_cleared: true,
+            },
+        ),
+        response_batches.len(),
+    )
 }
 
 type AsserterWithReply<'a> = (&'a dyn Fn(&WfActivation), wf_activation_completion::Status);
 
+pub enum EvictionMode {
+    #[allow(dead_code)] // Not used until we have stickyness options implemented
+    /// Core is in sticky mode, and workflows are being cached
+    Sticky,
+    /// Core is not in sticky mode, and workflows are evicted after they finish their pending
+    /// activations
+    NotSticky,
+    /// Not a real mode, but good for imitating crashes. Evict workflows after *every* reply,
+    /// even if there are pending activations
+    AfterEveryReply,
+}
+
 pub(crate) async fn poll_and_reply<'a>(
     core: &'a FakeCore,
     task_queue: &'a str,
-    evict_after_each_reply: bool,
+    eviction_mode: EvictionMode,
     expect_and_reply: &'a [AsserterWithReply<'a>],
 ) {
     let mut run_id = "".to_string();
     let mut evictions = 0;
     let expected_evictions = expect_and_reply.len() - 1;
+    let mut performed_wft_calls = 0;
 
     'outer: loop {
         let expect_iter = expect_and_reply.iter();
 
         for interaction in expect_iter {
             let (asserter, reply) = interaction;
-            let res = core.poll_workflow_task(task_queue).await.unwrap();
+            let res = core.inner.poll_workflow_task(task_queue).await.unwrap();
+            if !res.from_pending {
+                performed_wft_calls += 1;
+            }
 
             asserter(&res);
 
             let task_tok = res.task_token;
             if run_id.is_empty() {
-                run_id = res.run_id;
+                run_id = res.run_id.clone();
             }
 
-            core.complete_workflow_task(WfActivationCompletion::from_status(
-                task_tok,
-                reply.clone(),
-            ))
-            .await
-            .unwrap();
+            core.inner
+                .complete_workflow_task(WfActivationCompletion::from_status(
+                    task_tok,
+                    reply.clone(),
+                ))
+                .await
+                .unwrap();
 
-            if evict_after_each_reply && evictions < expected_evictions {
-                core.evict_run(&run_id);
-                evictions += 1;
-                continue 'outer;
+            let last_complete_was_failure = !reply.is_success();
+
+            match eviction_mode {
+                EvictionMode::Sticky => unimplemented!(),
+                EvictionMode::NotSticky => {
+                    // If we are in non-sticky mode, we have to replay all expectations every time a
+                    // wft is completed successfully (hence there are no more pending activations).
+                    // Failed completions always evict anyway, so we expect the test to include an
+                    // explicit addition batch for it.
+                    if performed_wft_calls < core.expected_wft_calls
+                        && !core.inner.pending_activations.has_pending(&res.run_id)
+                        && !last_complete_was_failure
+                    {
+                        continue 'outer;
+                    }
+                }
+                EvictionMode::AfterEveryReply => {
+                    if evictions < expected_evictions {
+                        core.inner.evict_run(&run_id);
+                        evictions += 1;
+                        continue 'outer;
+                    }
+                }
             }
         }
 

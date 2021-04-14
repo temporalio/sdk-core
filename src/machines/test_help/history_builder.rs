@@ -183,6 +183,12 @@ impl TestHistoryBuilder {
         HistoryInfo::new_from_events(&self.events, Some(to_wf_task_num))
     }
 
+    /// Iterates over the events in this builder to return a [HistoryInfo] representing *all*
+    /// events in the history
+    pub(crate) fn get_full_history_info(&self) -> Result<HistoryInfo, HistoryInfoError> {
+        HistoryInfo::new_from_events(&self.events, None)
+    }
+
     fn build_and_push_event(&mut self, event_type: EventType, attribs: Attributes) {
         self.current_event_id += 1;
         let evt = HistoryEvent {
