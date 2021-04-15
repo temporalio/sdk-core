@@ -18,24 +18,8 @@ import "google/protobuf/empty.proto";
 
 // A request as given to [crate::Core::record_activity_heartbeat]
 message ActivityHeartbeat {
-    ActivityId activity_id = 1;
+    bytes task_token = 1;
     repeated common.Payload details = 2;
-}
-
-message ActivityId {
-    oneof id {
-        bytes task_token = 1;
-        ManualCompletionActivityTaskToken manual_completion_task_token = 2;
-    }
-}
-
-message ManualCompletionActivityTaskToken {
-    common.WorkflowExecution workflow_execution = 1;
-    string activity_id = 2;
-}
-
-message RecordActivityHeartbeatResponse {
-    bool cancel_requested = 1;
 }
 
 // A request as given to [crate::Core::complete_activity_task]
