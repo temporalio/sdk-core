@@ -80,8 +80,7 @@ impl ActivityHeartbeatManager {
         // 2. join the futures and for any future that becomes ready:
         // - send heartbeat details to the server (if any)
         // - clear details from the local cache
-        // - schedule next task
-        //in case if heartbeat has been sent
+        // - schedule next task in case if heartbeat has been sent, otherwise clear task token from scheduled_heartbeats
         unimplemented!()
     }
 }
