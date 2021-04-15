@@ -52,7 +52,7 @@ use crate::{
         WorkflowManager,
     },
 };
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use futures::TryFutureExt;
 use std::{
     convert::TryInto,
@@ -150,6 +150,8 @@ struct CoreSDK<WP> {
     workflow_machines: WorkflowConcurrencyManager,
     /// Maps task tokens to workflow run ids
     workflow_task_tokens: DashMap<Vec<u8>, String>,
+    /// Workflows (by run id) for which the last task completion we sent was a failure
+    workflows_last_task_failed: DashSet<String>,
 
     /// Workflows that are currently under replay will queue here, indicating that there are more
     /// workflow tasks / activations to be performed.
@@ -283,7 +285,6 @@ where
         if self.init_options.evict_after_pending_cleared
             && !self.pending_activations.has_pending(&run_id)
         {
-            warn!("Evicting");
             self.evict_run(&run_id);
         }
         res
@@ -345,6 +346,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             server_gateway: Arc::new(wp),
             workflow_machines: WorkflowConcurrencyManager::new(),
             workflow_task_tokens: Default::default(),
+            workflows_last_task_failed: Default::default(),
             pending_activations: Default::default(),
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
@@ -447,7 +449,10 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         // We only actually want to send commands back to the server if there are
         // no more pending activations -- in other words the lang SDK has caught
         // up on replay.
-        if !self.pending_activations.has_pending(&run_id) {
+        if !self.pending_activations.has_pending(run_id) {
+            // Since we're telling the server about a wft success, we can remove it from the
+            // last failed map (if it was present)
+            self.workflows_last_task_failed.remove(run_id);
             self.server_gateway
                 .complete_workflow_task(task_token, push_result.server_commands)
                 .await
@@ -474,13 +479,17 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         // Blow up any cached data associated with the workflow
         self.evict_run(&run_id);
 
-        self.server_gateway
-            .fail_workflow_task(
-                task_token,
-                WorkflowTaskFailedCause::Unspecified,
-                failure.failure.map(Into::into),
-            )
-            .await?;
+        if !self.workflows_last_task_failed.contains(run_id) {
+            self.server_gateway
+                .fail_workflow_task(
+                    task_token,
+                    WorkflowTaskFailedCause::Unspecified,
+                    failure.failure.map(Into::into),
+                )
+                .await?;
+            self.workflows_last_task_failed.insert(run_id.to_owned());
+        }
+
         Ok(())
     }
 
@@ -1343,7 +1352,7 @@ mod test {
     #[rstest]
     #[case::no_evict_inc(&[1, 2, 2], EvictionMode::NotSticky)]
     #[case::no_evict(&[2, 2], EvictionMode::NotSticky)]
-    #[case::evict(&[1, 2, 2, 2, 2], EvictionMode::AfterEveryReply)]
+    #[case::evict(&[1, 2, 2, 2], EvictionMode::AfterEveryReply)]
     #[tokio::test]
     async fn complete_activation_with_failure(
         #[case] batches: &[usize],
@@ -1358,8 +1367,7 @@ mod test {
         Arc::get_mut(&mut core.inner.server_gateway)
             .unwrap()
             .expect_fail_workflow_task()
-            // TODO: Re-enable this once we turn on only-fail-wft-once?
-            // .times(1)
+            .times(1)
             .returning(|_, _, _| Ok(RespondWorkflowTaskFailedResponse {}));
 
         poll_and_reply(
@@ -1376,15 +1384,6 @@ mod test {
                     .into()],
                 ),
                 gen_assert_and_fail(&|_| {}),
-                gen_assert_and_reply(
-                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
-                    // Need to re-issue the start timer command (we are replaying)
-                    vec![StartTimer {
-                        timer_id: timer_id.to_string(),
-                        ..Default::default()
-                    }
-                    .into()],
-                ),
                 gen_assert_and_reply(
                     &job_assert!(wf_activation_job::Variant::FireTimer(_)),
                     vec![CompleteWorkflowExecution { result: None }.into()],
@@ -1455,6 +1454,69 @@ mod test {
                         wf_activation_job::Variant::SignalWorkflow(_)
                     ),
                     vec![],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn workflow_failures_only_reported_once() {
+        tracing_init();
+        let wfid = "fake_wf_id";
+        let timer_1 = "timer1";
+        let timer_2 = "timer2";
+
+        let mut t =
+            canned_histories::workflow_fails_with_failure_two_different_points(timer_1, timer_2);
+        let mut core = build_fake_core(
+            wfid,
+            &mut t,
+            &[
+                1, 2, // Start then first good reply
+                2, 2, 2, // Poll for every failure
+                // Poll again after evicting after second good reply, then two more fails
+                3, 3, 3,
+            ],
+        );
+        Arc::get_mut(&mut core.inner.server_gateway)
+            .unwrap()
+            .expect_fail_workflow_task()
+            // We should only call the server to say we failed twice (once after each success)
+            .times(2)
+            .returning(|_, _, _| Ok(RespondWorkflowTaskFailedResponse {}));
+
+        poll_and_reply(
+            &core,
+            TASK_Q,
+            EvictionMode::NotSticky,
+            &[
+                gen_assert_and_reply(
+                    &|_| {},
+                    vec![StartTimer {
+                        timer_id: timer_1.to_owned(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                // Fail a few times in a row (only one of which should be reported)
+                gen_assert_and_fail(&|_| {}),
+                gen_assert_and_fail(&|_| {}),
+                gen_assert_and_fail(&|_| {}),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::FireTimer(_)),
+                    vec![StartTimer {
+                        timer_id: timer_2.to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                // Again (a new fail should be reported here)
+                gen_assert_and_fail(&|_| {}),
+                gen_assert_and_fail(&|_| {}),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::FireTimer(_)),
+                    vec![CompleteWorkflowExecution { result: None }.into()],
                 ),
             ],
         )
