@@ -20,6 +20,7 @@ import "google/protobuf/empty.proto";
 message ActivityHeartbeat {
     bytes task_token = 1;
     repeated common.Payload details = 2;
+    google.protobuf.Duration heartbeat_timeout = 3;
 }
 
 // A request as given to [crate::Core::complete_activity_task]
