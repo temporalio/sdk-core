@@ -117,9 +117,6 @@ pub enum EvictionMode {
     /// Core is not in sticky mode, and workflows are evicted after they finish their pending
     /// activations
     NotSticky,
-    /// Not a real mode, but good for imitating crashes. Evict workflows after *every* reply,
-    /// even if there are pending activations
-    AfterEveryReply,
 }
 
 /// This function accepts a list of asserts and replies to workflow activations to run against the
@@ -136,8 +133,6 @@ pub(crate) async fn poll_and_reply<'a>(
     expect_and_reply: &'a [AsserterWithReply<'a>],
 ) {
     let mut run_id = "".to_string();
-    let mut evictions = 0;
-    let expected_evictions = expect_and_reply.len() - 1;
     let mut performed_wft_calls = 0;
     let mut executed_failures = HashSet::new();
 
@@ -145,57 +140,36 @@ pub(crate) async fn poll_and_reply<'a>(
         let expect_iter = expect_and_reply.iter();
 
         for (i, interaction) in expect_iter.enumerate() {
-            let (asserter, reply) = interaction;
-            let complete_is_failure = !reply.is_success();
-            // Only send activation failures once
-            if executed_failures.contains(&i) {
-                continue;
-            }
-
+            let (asserter, _) = interaction;
             let res = core.inner.poll_workflow_task(task_queue).await.unwrap();
-            if !res.from_pending {
-                performed_wft_calls += 1;
-            }
+            performed_wft_calls += 1;
 
             asserter(&res);
 
-            let task_tok = res.task_token;
             if run_id.is_empty() {
                 run_id = res.run_id.clone();
             }
 
-            core.inner
-                .complete_workflow_task(WfActivationCompletion::from_status(
-                    task_tok,
-                    reply.clone(),
-                ))
-                .await
-                .unwrap();
+            let finished_all_replies = complete_and_reply_to_all_activations(
+                core,
+                i,
+                expect_and_reply,
+                res.task_token,
+                &mut executed_failures,
+            )
+            .await;
 
-            if complete_is_failure {
-                executed_failures.insert(i);
-                // restart b/c we evicted due to failure and need to start all over again
-                continue 'outer;
+            if finished_all_replies {
+                break;
             }
 
             match eviction_mode {
+                // Currently the "inner" loop never is triggered -- it will be in sticky mode
                 EvictionMode::Sticky => unimplemented!(),
                 EvictionMode::NotSticky => {
                     // If we are in non-sticky mode, we have to replay all expectations every time a
                     // wft is completed successfully (hence there are no more pending activations).
-                    // Failed completions always evict anyway, so we expect the test to include an
-                    // explicit additional batch for it.
-                    if performed_wft_calls < core.expected_wft_calls
-                        && !core.inner.pending_activations.has_pending(&res.run_id)
-                        && !complete_is_failure
-                    {
-                        continue 'outer;
-                    }
-                }
-                EvictionMode::AfterEveryReply => {
-                    if evictions < expected_evictions {
-                        core.inner.evict_run(&run_id);
-                        evictions += 1;
+                    if performed_wft_calls < core.expected_wft_calls {
                         continue 'outer;
                     }
                 }
@@ -204,6 +178,50 @@ pub(crate) async fn poll_and_reply<'a>(
 
         break;
     }
+}
+
+async fn complete_and_reply_to_all_activations<'a>(
+    core: &'a FakeCore,
+    start_at: usize,
+    expect_and_reply: &'a [AsserterWithReply<'a>],
+    task_tok: Vec<u8>,
+    executed_failures: &mut HashSet<usize>,
+) -> bool {
+    let mut iter = expect_and_reply
+        .iter()
+        .enumerate()
+        .skip(start_at)
+        .peekable();
+    while let Some((i, interaction)) = iter.next() {
+        // Only send activation failures once
+        if executed_failures.contains(&i) {
+            continue;
+        }
+        let (_, reply) = interaction;
+        let complete_is_failure = !reply.is_success();
+
+        let maybe_pending_activation = core
+            .inner
+            .complete_workflow_task(WfActivationCompletion::from_status(
+                task_tok.clone(),
+                reply.clone(),
+            ))
+            .await
+            .unwrap();
+
+        if complete_is_failure {
+            executed_failures.insert(i);
+        }
+
+        if let Some(next_activation) = maybe_pending_activation {
+            if let Some((_, (next_asserter, _))) = iter.peek() {
+                next_asserter(&next_activation);
+            }
+        } else {
+            break;
+        }
+    }
+    return iter.peek().is_none();
 }
 
 pub(crate) fn gen_assert_and_reply(

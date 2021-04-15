@@ -89,15 +89,10 @@ pub(crate) struct NextWfActivation {
 
 impl NextWfActivation {
     /// Attach a task token to the activation so it can be sent out to the lang sdk
-    pub(crate) fn finalize(self, task_token: Vec<u8>, from_pending: bool) -> WfActivation {
+    pub(crate) fn finalize(self, task_token: Vec<u8>) -> WfActivation {
         let mut a = self.activation;
         a.task_token = task_token;
-        a.from_pending = from_pending;
         a
-    }
-
-    pub(crate) fn get_run_id(&self) -> &str {
-        &self.activation.run_id
     }
 }
 
@@ -140,6 +135,7 @@ impl WorkflowManager {
         self.machines.apply_history_events(&task_hist)?;
         let activation = self.machines.get_wf_activation();
 
+        // TODO: Do we only increment this if activation is not none?
         self.current_wf_task_num += 1;
         let more_activations_needed = self.current_wf_task_num <= self.last_history_task_count;
         if more_activations_needed {

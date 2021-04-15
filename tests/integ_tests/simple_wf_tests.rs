@@ -118,7 +118,7 @@ async fn activity_workflow() {
         task.task_token,
     ))
     .await
-    .unwrap()
+    .unwrap();
 }
 
 #[tokio::test]
@@ -188,7 +188,7 @@ async fn activity_non_retryable_failure() {
         task.task_token,
     ))
     .await
-    .unwrap()
+    .unwrap();
 }
 
 #[tokio::test]
@@ -277,7 +277,7 @@ async fn activity_retry() {
         task.task_token,
     ))
     .await
-    .unwrap()
+    .unwrap();
 }
 
 fn schedule_activity_cmd(
@@ -385,17 +385,18 @@ async fn activity_cancellation_try_cancel() {
             assert_eq!(t_id, &timer_id);
         }
     );
-    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-        vec![RequestCancelActivity {
-            activity_id,
-            ..Default::default()
-        }
-        .into()],
-        task.task_token,
-    ))
-    .await
-    .unwrap();
-    let task = core.poll_workflow_task(task_q).await.unwrap();
+    let task = core
+        .complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+            vec![RequestCancelActivity {
+                activity_id,
+                ..Default::default()
+            }
+            .into()],
+            task.task_token,
+        ))
+        .await
+        .unwrap()
+        .expect("Should return a follow-on task");
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
@@ -581,19 +582,18 @@ async fn activity_cancellation_abandon() {
             assert_eq!(t_id, &timer_id);
         }
     );
-    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-        vec![RequestCancelActivity {
-            activity_id,
-            ..Default::default()
-        }
-        .into()],
-        task.task_token,
-    ))
-    .await
-    .unwrap();
-    // Poll workflow task expecting that activation has been created by the state machine
-    // immediately after the cancellation request.
-    let task = core.poll_workflow_task(task_q).await.unwrap();
+    let task = core
+        .complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+            vec![RequestCancelActivity {
+                activity_id,
+                ..Default::default()
+            }
+            .into()],
+            task.task_token,
+        ))
+        .await
+        .unwrap()
+        .expect("Should return a follow-on task");
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
@@ -867,19 +867,20 @@ async fn fail_wf_task() {
     .unwrap();
 
     // The server will want to retry the task. This time we finish the workflow -- but we need
-    // to poll a couple of times as there will be more than one required workflow activation.
+    // to complete a couple of times as there will be more than one required workflow activation.
     let task = core.poll_workflow_task(task_q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-        vec![StartTimer {
-            timer_id: "best-timer".to_string(),
-            start_to_fire_timeout: Some(Duration::from_millis(200).into()),
-        }
-        .into()],
-        task.task_token,
-    ))
-    .await
-    .unwrap();
-    let task = core.poll_workflow_task(task_q).await.unwrap();
+    let task = core
+        .complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+            vec![StartTimer {
+                timer_id: "best-timer".to_string(),
+                start_to_fire_timeout: Some(Duration::from_millis(200).into()),
+            }
+            .into()],
+            task.task_token,
+        ))
+        .await
+        .unwrap()
+        .expect("Should be follow on task");
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
