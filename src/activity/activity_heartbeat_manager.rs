@@ -46,7 +46,10 @@ impl ActivityHeartbeatManager {
         self.heartbeat_details
             .insert(heartbeat.task_token.clone(), heartbeat.details);
 
-        if !self.scheduled_heartbeats.contains(&heartbeat.task_token) {
+        if self
+            .scheduled_heartbeats
+            .insert(heartbeat.task_token.clone())
+        {
             let initial_delay = time::Duration::from_millis(0);
             let heartbeat_timeout: time::Duration = heartbeat
                 .heartbeat_timeout
