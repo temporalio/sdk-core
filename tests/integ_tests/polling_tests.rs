@@ -11,7 +11,7 @@ async fn long_poll_timeout_is_retried() {
     gateway_opts.long_poll_timeout = Duration::from_secs(3);
     let core = temporal_sdk_core::init(CoreInitOptions {
         gateway_opts,
-        evict_after_pending_cleared: false,
+        evict_after_each_workflow_task: false,
     })
     .await
     .unwrap();

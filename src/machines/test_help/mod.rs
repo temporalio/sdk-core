@@ -101,7 +101,7 @@ pub(crate) fn build_fake_core(
                     worker_binary_id: "".to_string(),
                     long_poll_timeout: Default::default(),
                 },
-                evict_after_pending_cleared: true,
+                evict_after_each_workflow_task: true,
             },
         ),
         response_batches.len(),
@@ -125,7 +125,7 @@ pub enum EvictionMode {
 /// It handles the business of re-sending the same activation replies over again in the event
 /// of eviction or workflow activation failure. Activation failures specifically are only run once,
 /// since they clearly can't be returned every time we replay the workflow, or it could never
-/// proceed
+/// proceed. If you want to fail more than once, put multiple failures in the expectations.
 pub(crate) async fn poll_and_reply<'a>(
     core: &'a FakeCore,
     task_queue: &'a str,
@@ -213,6 +213,7 @@ async fn complete_and_reply_to_all_activations<'a>(
             executed_failures.insert(i);
         }
 
+        // Because we just sent a reply, we actually need to check against the *next* assertion
         if let Some(next_activation) = maybe_pending_activation {
             if let Some((_, (next_asserter, _))) = iter.peek() {
                 next_asserter(&next_activation);

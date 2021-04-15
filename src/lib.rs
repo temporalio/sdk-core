@@ -121,10 +121,8 @@ pub struct CoreInitOptions {
     /// Options for the connection to the temporal server
     pub gateway_opts: ServerGatewayOptions,
     /// If set to true (which should be the default choice until sticky task queues are implemented)
-    /// workflows are evicted after they no longer have any pending activations. IE: After they
-    /// have sent new commands to the server.
-    // TODO: Rename
-    pub evict_after_pending_cleared: bool,
+    /// workflows are evicted after each completion which does not return a new activation.
+    pub evict_after_each_workflow_task: bool,
 }
 
 /// Initializes an instance of the core sdk and establishes a connection to the temporal server.
@@ -258,7 +256,7 @@ where
 
         // Blow up workflows with no more activations (IE: They have completed a WFT)
         let has_another_activation = res.as_ref().map_or(false, |o| o.is_some());
-        if self.init_options.evict_after_pending_cleared && !has_another_activation {
+        if self.init_options.evict_after_each_workflow_task && !has_another_activation {
             self.evict_run(&run_id);
         }
         res
@@ -638,28 +636,6 @@ mod test {
             ],
         )
         .await;
-    }
-
-    #[rstest]
-    #[case::incremental(single_timer_setup(&[2]))]
-    #[tokio::test]
-    async fn single_timer_full_manual(#[case] core: FakeCore) {
-        tracing_init();
-        let res = dbg!(core.inner.poll_workflow_task(TASK_Q).await.unwrap());
-        let complete_res = core
-            .inner
-            .complete_workflow_task(WfActivationCompletion::from_status(
-                res.task_token,
-                workflow_completion::Success::from_cmds(vec![StartTimer {
-                    timer_id: "fake_timer".to_string(),
-                    ..Default::default()
-                }
-                .into()])
-                .into(),
-            ))
-            .await
-            .unwrap();
-        dbg!(&complete_res);
     }
 
     #[rstest(core,
@@ -1438,7 +1414,6 @@ mod test {
 
     #[tokio::test]
     async fn workflow_failures_only_reported_once() {
-        tracing_init();
         let wfid = "fake_wf_id";
         let timer_1 = "timer1";
         let timer_2 = "timer2";

@@ -57,7 +57,7 @@ mod integ_tests {
         let gateway_opts = get_integ_server_options();
         temporal_sdk_core::init(CoreInitOptions {
             gateway_opts,
-            evict_after_pending_cleared: false,
+            evict_after_each_workflow_task: false,
         })
         .await
         .unwrap()
