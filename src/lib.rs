@@ -407,7 +407,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             shutdown_notify: Notify::new(),
             workflow_task_complete_notify: Notify::new(),
             activity_task_complete_notify: Notify::new(),
-            activity_heartbeat_manager: ActivityHeartbeatManager::new(),
+            activity_heartbeat_manager: ActivityHeartbeatManager::new(), // todo pass server gateway
         }
     }
 

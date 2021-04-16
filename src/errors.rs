@@ -151,4 +151,6 @@ pub enum ActivityHeartbeatError {
     HeartbeatTimeoutNotSet,
     #[error("Heartbeat request must contain valid heartbeat timeout.")]
     InvalidHeartbeatTimeout,
+    #[error("New heartbeat requests are not accepted while shutting down")]
+    ShuttingDown,
 }

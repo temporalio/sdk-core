@@ -1,86 +1,119 @@
 use crate::errors::ActivityHeartbeatError;
 use crate::protos::coresdk::{common, ActivityHeartbeat};
 use crate::ServerGatewayApis;
-use crossbeam::channel::{bounded, unbounded, Receiver, Select, Sender, TryRecvError};
+use dashmap::mapref::one::Ref;
 use dashmap::{DashMap, DashSet};
 use futures::FutureExt;
+use std::borrow::BorrowMut;
+use std::collections::hash_map::RandomState;
 use std::convert::TryInto;
 use std::future::Future;
 use std::ops::Div;
 use std::sync::Arc;
 use std::{thread, time};
+use tokio::select;
+use tokio::sync::watch::{channel, Receiver, Sender};
+use tokio::task::JoinHandle;
 use tokio::time::{sleep, Sleep};
 
 pub(crate) struct ActivityHeartbeatManager {
     /// Core will aggregate activity heartbeats and send them to the server periodically.
-    /// This map contains latest heartbeat details for each activity that reported them.
-    heartbeat_details: DashMap<Vec<u8>, Vec<common::Payload>>,
-
-    scheduled_heartbeats: DashSet<Vec<u8>>,
-
-    heartbeat_tx: Sender<ActivityHeartbeatTask>,
-
+    /// This map contains sender channel for each activity that has an active heartbeat processor.
+    heartbeat_processors: DashMap<Vec<u8>, ActivityHeartbeatProcessorHandle>,
     shutdown_tx: Sender<bool>,
+    shutdown_rx: Receiver<bool>,
 }
 
-struct ActivityHeartbeatTask {
-    task_token: Vec<u8>,
-    next_delay: time::Duration,
-    trigger: Sleep,
+struct ActivityHeartbeatProcessorHandle {
+    heartbeat_tx: Sender<Vec<common::Payload>>,
+    join_handle: JoinHandle<()>,
+}
+
+struct ActivityHeartbeatProcessor {
+    delay: time::Duration,
+    heartbeat_rx: Receiver<Vec<common::Payload>>,
+    shutdown_rx: Receiver<bool>,
 }
 
 impl ActivityHeartbeatManager {
     pub fn new() -> Self {
-        let (heartbeat_tx, heartbeat_rx) = unbounded::<ActivityHeartbeatTask>();
-        let (shutdown_tx, shutdown_rx) = bounded(1);
-        thread::spawn(move || Self::processor(heartbeat_rx, shutdown_rx));
+        let (shutdown_tx, shutdown_rx) = channel(false);
         Self {
-            heartbeat_details: Default::default(),
-            scheduled_heartbeats: Default::default(),
-            heartbeat_tx,
+            heartbeat_processors: Default::default(),
             shutdown_tx,
+            shutdown_rx,
         }
     }
 
     pub fn record(&self, heartbeat: ActivityHeartbeat) -> Result<(), ActivityHeartbeatError> {
-        self.heartbeat_details
-            .insert(heartbeat.task_token.clone(), heartbeat.details);
-
-        if self
-            .scheduled_heartbeats
-            .insert(heartbeat.task_token.clone())
-        {
-            let initial_delay = time::Duration::from_millis(0);
-            let heartbeat_timeout: time::Duration = heartbeat
-                .heartbeat_timeout
-                .ok_or(ActivityHeartbeatError::HeartbeatTimeoutNotSet)?
-                .try_into()
-                .or(Err(ActivityHeartbeatError::InvalidHeartbeatTimeout))?;
-            let next_delay = heartbeat_timeout.div(2);
-
-            self.heartbeat_tx
-                .send(ActivityHeartbeatTask {
-                    task_token: heartbeat.task_token,
-                    next_delay,
-                    trigger: sleep(initial_delay),
-                })
-                .expect("failed to send activity task into the channel");
-        };
-
+        /// Do not accept new heartbeat requests if core is shutting down, this is because we
+        /// don't want to spawn new processors and existing processors won't be accepting new work.
+        if *self.shutdown_rx.borrow() {
+            return Err(ActivityHeartbeatError::ShuttingDown);
+        }
+        match self.heartbeat_processors.get(&heartbeat.task_token) {
+            Some(handle) => {
+                handle.heartbeat_tx.send(heartbeat.details);
+            }
+            None => {
+                let heartbeat_timeout: time::Duration = heartbeat
+                    .heartbeat_timeout
+                    .ok_or(ActivityHeartbeatError::HeartbeatTimeoutNotSet)?
+                    .try_into()
+                    .or(Err(ActivityHeartbeatError::InvalidHeartbeatTimeout))?;
+                let delay = heartbeat_timeout.div(2);
+                let (heartbeat_tx, heartbeat_rx) = channel(heartbeat.details);
+                let processor = ActivityHeartbeatProcessor {
+                    delay,
+                    heartbeat_rx,
+                    shutdown_rx: self.shutdown_rx.clone(),
+                };
+                let join_handle = tokio::spawn(processor.run());
+                let handle = ActivityHeartbeatProcessorHandle {
+                    heartbeat_tx,
+                    join_handle,
+                };
+                self.heartbeat_processors
+                    .insert(heartbeat.task_token, handle);
+            }
+        }
         Ok(())
     }
 
     pub fn shutdown(&self) {
         self.shutdown_tx.send(true);
+        // TODO join on join handles
     }
+}
 
-    fn processor(heartbeat_rx: Receiver<ActivityHeartbeatTask>, shutdown_rx: Receiver<bool>) {
-        // TODO this function should:
-        // 1. consume heartbeat tasks
-        // 2. join the futures and for any future that becomes ready:
-        // - send heartbeat details to the server (if any)
-        // - clear details from the local cache
-        // - schedule next task in case if heartbeat has been sent, otherwise clear task token from scheduled_heartbeats
-        unimplemented!()
+impl ActivityHeartbeatProcessor {
+    async fn run(mut self) {
+        // TODO borrow and send details available in the heartbeat_rx once.
+        loop {
+            sleep(self.delay).await;
+            let stop = select! {
+                _ = self.shutdown_rx.changed() => {
+                    // Shutting down core, need to break the loop. Previous details has been sent,
+                    // so there is nothing else to do.
+                    true
+                }
+                _ = sleep(self.delay) => {
+                    // Timed out while waiting for the next heartbeat.
+                    // We waited 2 * delay in total, where delay is 1/2 of the activity heartbeat timeout.
+                    // This means that activity has either timed out or completed by now.
+                    true
+                }
+                _ = self.heartbeat_rx.changed() => {
+                    // Received new heartbeat details.
+                    let details = self.heartbeat_rx.borrow();
+                    // TODO send details right away since enough time has passed since previous call
+                    false
+                }
+            };
+            if stop {
+                break;
+            }
+        }
+        // TODO cleanup handle from the map
     }
 }
