@@ -268,11 +268,11 @@ where
             })?;
         let res = match wfstatus {
             Some(wf_activation_completion::Status::Successful(success)) => {
-                self.wf_activation_success(task_token, &run_id, success)
+                self.wf_activation_success(task_token.clone(), &run_id, success)
                     .await
             }
             Some(wf_activation_completion::Status::Failed(failure)) => {
-                self.wf_activation_failed(task_token, &run_id, failure)
+                self.wf_activation_failed(task_token.clone(), &run_id, failure)
                     .await
             }
             None => Err(CompleteWfError::MalformedWorkflowCompletion {
@@ -285,7 +285,7 @@ where
         if self.init_options.evict_after_pending_cleared
             && !self.pending_activations.has_pending(&run_id)
         {
-            self.evict_run(&run_id);
+            self.evict_run(&task_token);
         }
         res
     }
@@ -357,9 +357,11 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
     /// Evict a workflow from the cache by it's run id
     ///
     /// TODO: Very likely needs to be in Core public api
-    pub(crate) fn evict_run(&self, run_id: &str) {
-        self.workflow_machines.evict(run_id);
-        self.pending_activations.remove_all_with_run_id(run_id);
+    pub(crate) fn evict_run(&self, task_token: &[u8]) {
+        if let Some((_, run_id)) = self.workflow_task_tokens.remove(task_token) {
+            self.workflow_machines.evict(&run_id);
+            self.pending_activations.remove_all_with_run_id(&run_id);
+        }
     }
 
     /// Given a pending activation, prepare it to be sent to lang
@@ -477,7 +479,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
         failure: workflow_completion::Failure,
     ) -> Result<(), CompleteWfError> {
         // Blow up any cached data associated with the workflow
-        self.evict_run(&run_id);
+        self.evict_run(&task_token);
 
         if !self.workflows_last_task_failed.contains(run_id) {
             self.server_gateway

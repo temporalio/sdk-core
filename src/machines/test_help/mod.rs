@@ -166,7 +166,7 @@ pub(crate) async fn poll_and_reply<'a>(
 
             core.inner
                 .complete_workflow_task(WfActivationCompletion::from_status(
-                    task_tok,
+                    task_tok.clone(),
                     reply.clone(),
                 ))
                 .await
@@ -194,7 +194,7 @@ pub(crate) async fn poll_and_reply<'a>(
                 }
                 EvictionMode::AfterEveryReply => {
                     if evictions < expected_evictions {
-                        core.inner.evict_run(&run_id);
+                        core.inner.evict_run(&task_tok);
                         evictions += 1;
                         continue 'outer;
                     }
