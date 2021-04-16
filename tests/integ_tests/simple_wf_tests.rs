@@ -19,7 +19,7 @@ use temporal_sdk_core::{
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
-    tracing_init, CompleteWfError, Core, PollWfError,
+    CompleteWfError, Core, PollWfError,
 };
 
 // TODO: These tests can get broken permanently if they break one time and the server is not
@@ -458,8 +458,6 @@ async fn started_activity_timeout() {
 
 #[tokio::test]
 async fn activity_cancellation_wait_cancellation_completed() {
-    tracing_init();
-
     let mut rng = rand::thread_rng();
     let task_q_salt: u32 = rng.gen();
     let task_q = &format!("activity_cancelled_workflow_{}", task_q_salt.to_string());
@@ -535,8 +533,6 @@ async fn activity_cancellation_wait_cancellation_completed() {
 
 #[tokio::test]
 async fn activity_cancellation_abandon() {
-    tracing_init();
-
     let mut rng = rand::thread_rng();
     let task_q_salt: u32 = rng.gen();
     let task_q = &format!("activity_cancelled_workflow_{}", task_q_salt.to_string());

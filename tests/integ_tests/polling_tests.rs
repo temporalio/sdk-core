@@ -17,7 +17,7 @@ use temporal_sdk_core::protos::coresdk::{
 use temporal_sdk_core::{Core, CoreInitOptions};
 
 #[tokio::test]
-async fn long_poll_interrupted_by_new_pending_activation() {
+async fn poll_blocks_until_wft_completed() {
     let mut rng = rand::thread_rng();
     let task_q_salt: u32 = rng.gen();
     let task_q = format!("activity_cancelled_workflow_{}", task_q_salt.to_string());

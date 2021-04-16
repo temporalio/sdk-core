@@ -148,10 +148,15 @@ struct CoreSDK<WP> {
     server_gateway: Arc<WP>,
     /// Key is run id
     workflow_machines: WorkflowConcurrencyManager,
+    // TODO: Probably move all workflow stuff inside wf manager?
     /// Maps task tokens to workflow run ids
     workflow_task_tokens: DashMap<Vec<u8>, String>,
     /// Workflows (by run id) for which the last task completion we sent was a failure
     workflows_last_task_failed: DashSet<String>,
+    /// Distinguished from `workflow_task_tokens` by the fact that when we are caching workflows
+    /// in sticky mode, we need to know if there are any outstanding workflow tasks since they
+    /// must all be handled first before we poll the server again.
+    outstanding_workflow_tasks: DashSet<Vec<u8>>,
 
     /// Workflows that are currently under replay will queue here, indicating that there are more
     /// workflow tasks / activations to be performed.
@@ -161,8 +166,8 @@ struct CoreSDK<WP> {
     shutdown_requested: AtomicBool,
     /// Used to wake up future which checks shutdown state
     shutdown_notify: Notify,
-    /// Used to interrupt workflow task polling if there is a new pending activation
-    pending_activation_notify: Notify,
+    /// Used to wake blocked workflow task polling when tasks complete
+    workflow_task_complete_notify: Notify,
 }
 
 #[async_trait::async_trait]
@@ -189,30 +194,29 @@ where
                 return Err(PollWfError::ShutDown);
             }
 
-            let pa_fut = self.pending_activation_notify.notified();
-            let poll_result_future = self.shutdownable_fut(
-                self.server_gateway
-                    .poll_workflow_task(task_queue.to_owned())
-                    .map_err(Into::into),
-            );
-            debug!("Polling server");
-            let selected_f = tokio::select! {
-                // If a pending activation comes in while we are waiting on polling, we need to
-                // restart the loop right away to provide it
-                _ = pa_fut => {
-                    debug!("Poll interrupted by new pending activation");
-                    continue;
-                }
-                r = poll_result_future => r
-            };
+            if !self.outstanding_workflow_tasks.is_empty() {
+                self.workflow_task_complete_notify.notified().await;
+                continue;
+            }
 
-            match selected_f {
+            debug!("Polling server");
+
+            match self
+                .shutdownable_fut(
+                    self.server_gateway
+                        .poll_workflow_task(task_queue.to_owned())
+                        .map_err(Into::into),
+                )
+                .await
+            {
                 Ok(work) => {
                     if !work.next_page_token.is_empty() {
                         // TODO: Support history pagination
                         unimplemented!("History pagination not yet implemented");
                     }
                     if let Some(activation) = self.prepare_new_activation(work)? {
+                        self.outstanding_workflow_tasks
+                            .insert(activation.task_token.clone());
                         return Ok(activation);
                     }
                 }
@@ -281,12 +285,17 @@ where
             }),
         };
 
-        // Blow up workflows with no more pending activations (IE: They have completed a WFT)
-        if self.init_options.evict_after_pending_cleared
-            && !self.pending_activations.has_pending(&run_id)
-        {
-            self.evict_run(&task_token);
+        // Workflows with no more pending activations (IE: They have completed a WFT) must be
+        // removed from the outstanding tasks map
+        if !self.pending_activations.has_pending(&run_id) {
+            self.outstanding_workflow_tasks.remove(&task_token);
+
+            // Blow them up if we're in non-sticky mode as well
+            if self.init_options.evict_after_pending_cleared {
+                self.evict_run(&task_token);
+            }
         }
+        self.workflow_task_complete_notify.notify_one();
         res
     }
 
@@ -347,10 +356,11 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
             workflow_machines: WorkflowConcurrencyManager::new(),
             workflow_task_tokens: Default::default(),
             workflows_last_task_failed: Default::default(),
+            outstanding_workflow_tasks: Default::default(),
             pending_activations: Default::default(),
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
-            pending_activation_notify: Notify::new(),
+            workflow_task_complete_notify: Notify::new(),
         }
     }
 
@@ -359,6 +369,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
     /// TODO: Very likely needs to be in Core public api
     pub(crate) fn evict_run(&self, task_token: &[u8]) {
         if let Some((_, run_id)) = self.workflow_task_tokens.remove(task_token) {
+            self.outstanding_workflow_tasks.remove(task_token);
             self.workflow_machines.evict(&run_id);
             self.pending_activations.remove_all_with_run_id(&run_id);
         }
@@ -591,7 +602,7 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
     /// Enqueue a new pending activation, and notify ourselves
     fn add_pending_activation(&self, pa: PendingActivation) {
         self.pending_activations.push(pa);
-        self.pending_activation_notify.notify_waiters();
+        self.workflow_task_complete_notify.notify_one();
     }
 }
 
@@ -1464,7 +1475,6 @@ mod test {
 
     #[tokio::test]
     async fn workflow_failures_only_reported_once() {
-        tracing_init();
         let wfid = "fake_wf_id";
         let timer_1 = "timer1";
         let timer_2 = "timer2";
