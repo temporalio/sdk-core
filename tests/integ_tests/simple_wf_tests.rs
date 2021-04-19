@@ -3,6 +3,7 @@ use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
 use rand::{self, Rng};
 use std::{collections::HashMap, sync::Arc, time::Duration};
+use temporal_sdk_core::protos::coresdk::ActivityHeartbeat;
 use temporal_sdk_core::{
     protos::coresdk::{
         activity_result::{self, activity_result as act_res, ActivityResult},
@@ -21,6 +22,7 @@ use temporal_sdk_core::{
     },
     CompleteWfError, Core, PollWfError,
 };
+use tokio::time::sleep;
 
 // TODO: These tests can get broken permanently if they break one time and the server is not
 //  restarted, because pulling from the same task queue produces tasks for the previous failed
@@ -73,6 +75,7 @@ async fn activity_workflow() {
         &activity_id,
         ActivityCancellationType::TryCancel,
         task,
+        Duration::from_secs(60),
         Duration::from_secs(60),
     ))
     .await
@@ -137,6 +140,7 @@ async fn activity_non_retryable_failure() {
         &activity_id,
         ActivityCancellationType::TryCancel,
         task,
+        Duration::from_secs(60),
         Duration::from_secs(60),
     ))
     .await
@@ -207,6 +211,7 @@ async fn activity_retry() {
         &activity_id,
         ActivityCancellationType::TryCancel,
         task,
+        Duration::from_secs(60),
         Duration::from_secs(60),
     ))
     .await
@@ -280,12 +285,92 @@ async fn activity_retry() {
     .unwrap()
 }
 
+#[tokio::test]
+async fn activity_heartbeat() {
+    let mut rng = rand::thread_rng();
+    let task_q_salt: u32 = rng.gen();
+    let task_q = &format!("activity_workflow_{}", task_q_salt.to_string());
+    let core = get_integ_core().await;
+    let workflow_id: u32 = dbg!(rng.gen());
+    create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
+    let activity_id: String = rng.gen::<u32>().to_string();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
+    // Complete workflow task and schedule activity
+    core.complete_workflow_task(schedule_activity_cmd(
+        task_q,
+        &activity_id,
+        ActivityCancellationType::TryCancel,
+        task,
+        Duration::from_secs(60),
+        Duration::from_secs(1),
+    ))
+    .await
+    .unwrap();
+    // Poll activity and verify that it's been scheduled with correct parameters
+    let task = core.poll_activity_task(task_q).await.unwrap();
+    assert_matches!(
+        task.variant,
+        Some(act_task::Variant::Start(start_activity)) => {
+            assert_eq!(start_activity.activity_type, "test_activity".to_string())
+        }
+    );
+    // Heartbeat timeout is set to 1 second, this loop is going to send heartbeat every 100ms.
+    // Activity shouldn't timeout since we are sending heartbeats regularly, however if we didn't send
+    // heartbeats activity would have timed out as it takes 2 sec to execute this loop.
+    for _ in 0..20 {
+        sleep(Duration::from_millis(100)).await;
+        core.record_activity_heartbeat(ActivityHeartbeat {
+            task_token: task.task_token.clone(),
+            details: vec![],
+            heartbeat_timeout: Some(Duration::from_secs(1).into()),
+        })
+        .await
+        .unwrap();
+    }
+
+    let response_payload = Payload {
+        data: b"hello ".to_vec(),
+        metadata: Default::default(),
+    };
+    // Complete activity successfully.
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: task.task_token,
+        result: Some(ActivityResult::ok(response_payload.clone())),
+    })
+    .await
+    .unwrap();
+    // Poll workflow task and verify that activity has succeeded.
+    let task = core.poll_workflow_task(task_q).await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveActivity(
+                    ResolveActivity {activity_id: a_id, result: Some(ActivityResult{
+                    status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)})),
+                     ..})}
+                )),
+            },
+        ] => {
+            assert_eq!(a_id, &activity_id);
+            assert_eq!(r, &response_payload);
+        }
+    );
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
+        task.task_token,
+    ))
+    .await
+    .unwrap()
+}
+
 fn schedule_activity_cmd(
     task_q: &str,
     activity_id: &str,
     cancellation_type: ActivityCancellationType,
     task: WfActivation,
     activity_timeout: Duration,
+    heartbeat_timeout: Duration,
 ) -> WfActivationCompletion {
     WfActivationCompletion::ok_from_cmds(
         vec![ScheduleActivity {
@@ -296,7 +381,7 @@ fn schedule_activity_cmd(
             schedule_to_start_timeout: Some(activity_timeout.into()),
             start_to_close_timeout: Some(activity_timeout.into()),
             schedule_to_close_timeout: Some(activity_timeout.into()),
-            heartbeat_timeout: Some(activity_timeout.into()),
+            heartbeat_timeout: Some(heartbeat_timeout.into()),
             cancellation_type: cancellation_type as i32,
             ..Default::default()
         }
@@ -421,6 +506,7 @@ async fn started_activity_timeout() {
         ActivityCancellationType::TryCancel,
         task,
         Duration::from_secs(1),
+        Duration::from_secs(60),
     ))
     .await
     .unwrap();

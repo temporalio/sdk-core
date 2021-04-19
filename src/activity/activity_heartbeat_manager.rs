@@ -106,7 +106,8 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
         let details = self.heartbeat_rx.borrow().clone();
         let _ = self
             .server_gateway
-            .record_activity_heartbeat(self.task_token.clone(), details.into_payloads());
+            .record_activity_heartbeat(self.task_token.clone(), details.into_payloads())
+            .await;
         loop {
             sleep(self.delay).await;
             let stop = select! {
@@ -123,10 +124,9 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
                 }
                 _ = self.heartbeat_rx.changed() => {
                     // Received new heartbeat details.
-                    let details = self.heartbeat_rx.borrow();
-                    // TODO see if we can get rid of cloning details.
+                    let details = self.heartbeat_rx.borrow().clone();
                     let _ = self.server_gateway
-                        .record_activity_heartbeat(self.task_token.clone(), details.clone().into_payloads());
+                        .record_activity_heartbeat(self.task_token.clone(), details.into_payloads()).await;
                     false
                 }
             };
