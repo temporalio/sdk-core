@@ -2,21 +2,16 @@ use crate::errors::ActivityHeartbeatError;
 use crate::protos::coresdk::PayloadsExt;
 use crate::protos::coresdk::{common, ActivityHeartbeat};
 use crate::ServerGatewayApis;
-use dashmap::mapref::one::Ref;
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 use futures::future::join_all;
-use futures::FutureExt;
-use std::borrow::BorrowMut;
-use std::collections::hash_map::RandomState;
 use std::convert::TryInto;
-use std::future::Future;
 use std::ops::Div;
 use std::sync::Arc;
-use std::{thread, time};
+use std::time;
 use tokio::select;
 use tokio::sync::watch::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
-use tokio::time::{sleep, Sleep};
+use tokio::time::sleep;
 
 pub(crate) struct ActivityHeartbeatManager<SG> {
     /// Core will aggregate activity heartbeats and send them to the server periodically.
