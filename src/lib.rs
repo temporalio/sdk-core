@@ -1278,7 +1278,7 @@ mod test {
         let res = single_timer_setup.inner.poll_workflow_task().await.unwrap();
         assert_eq!(res.jobs.len(), 1);
 
-        single_timer_setup.inner.shutdown();
+        single_timer_setup.inner.shutdown().await;
         assert_matches!(
             single_timer_setup
                 .inner

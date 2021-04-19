@@ -809,17 +809,17 @@ async fn shutdown_aborts_actively_blocked_poll() {
     let core = Arc::new(get_integ_core(task_q).await);
     // Begin the poll, and request shutdown from another thread after a small period of time.
     let tcore = core.clone();
-    let handle = std::thread::spawn(move || {
+    let handle = tokio::spawn(async move {
         std::thread::sleep(Duration::from_millis(100));
-        tcore.shutdown();
+        tcore.shutdown().await;
     });
     assert_matches!(
         core.poll_workflow_task().await.unwrap_err(),
         PollWfError::ShutDown
     );
-    handle.join().unwrap();
+    let _ = handle.await;
     // Ensure double-shutdown doesn't explode
-    core.shutdown();
+    core.shutdown().await;
     assert_matches!(
         core.poll_workflow_task().await.unwrap_err(),
         PollWfError::ShutDown

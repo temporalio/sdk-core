@@ -50,7 +50,10 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
     pub fn record(&self, heartbeat: ActivityHeartbeat) -> Result<(), ActivityHeartbeatError> {
         match self.heartbeat_processors.get(&heartbeat.task_token) {
             Some(handle) => {
-                handle.heartbeat_tx.send(heartbeat.details);
+                handle
+                    .heartbeat_tx
+                    .send(heartbeat.details)
+                    .expect("heartbeat channel can't be dropped if we are inside this method");
             }
             None => {
                 let heartbeat_timeout: time::Duration = heartbeat
@@ -81,7 +84,9 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
     }
 
     pub async fn shutdown(&self) {
-        self.shutdown_tx.send(true);
+        self.shutdown_tx
+            .send(true)
+            .expect("shutdown channel can't be dropped before shutdown is complete");
         let mut pending_handles = vec![];
         for v in self.heartbeat_processors.iter() {
             self.heartbeat_processors.remove(v.key()).map(|v| {
@@ -99,7 +104,8 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
     async fn run(mut self) {
         // Each processor is initialized with heartbeat payloads, first thing we need to do is send it out.
         let details = self.heartbeat_rx.borrow().clone();
-        self.server_gateway
+        let _ = self
+            .server_gateway
             .record_activity_heartbeat(self.task_token.clone(), details.into_payloads());
         loop {
             sleep(self.delay).await;
@@ -119,7 +125,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
                     // Received new heartbeat details.
                     let details = self.heartbeat_rx.borrow();
                     // TODO see if we can get rid of cloning details.
-                    self.server_gateway
+                    let _ = self.server_gateway
                         .record_activity_heartbeat(self.task_token.clone(), details.clone().into_payloads());
                     false
                 }
