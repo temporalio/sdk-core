@@ -84,7 +84,7 @@ pub(crate) fn build_fake_core(
     mock_gateway
         .expect_poll_workflow_task()
         .times(response_batches.len())
-        .returning(move |_| Ok(tasks.pop_front().unwrap()));
+        .returning(move || Ok(tasks.pop_front().unwrap()));
     // Response not really important here
     mock_gateway
         .expect_complete_workflow_task()
@@ -97,11 +97,14 @@ pub(crate) fn build_fake_core(
                 gateway_opts: ServerGatewayOptions {
                     target_url: Url::from_str("https://fake").unwrap(),
                     namespace: "".to_string(),
+                    task_queue: "task_queue".to_string(),
                     identity: "".to_string(),
                     worker_binary_id: "".to_string(),
                     long_poll_timeout: Default::default(),
                 },
                 evict_after_pending_cleared: true,
+                // TODO: Make a sensible number here?
+                max_outstanding_workflow_tasks: 5,
             },
         ),
         response_batches.len(),
@@ -131,7 +134,6 @@ pub enum EvictionMode {
 /// proceed
 pub(crate) async fn poll_and_reply<'a>(
     core: &'a FakeCore,
-    task_queue: &'a str,
     eviction_mode: EvictionMode,
     expect_and_reply: &'a [AsserterWithReply<'a>],
 ) {
@@ -152,7 +154,7 @@ pub(crate) async fn poll_and_reply<'a>(
                 continue;
             }
 
-            let res = core.inner.poll_workflow_task(task_queue).await.unwrap();
+            let res = core.inner.poll_workflow_task().await.unwrap();
             if !res.from_pending {
                 performed_wft_calls += 1;
             }

@@ -14,10 +14,13 @@ use temporal_sdk_core::protos::coresdk::{
     },
     workflow_completion::WfActivationCompletion,
 };
-use temporal_sdk_core::{Core, CoreInitOptions};
+use temporal_sdk_core::{tracing_init, Core, CoreInitOptions};
+use tokio::time::timeout;
 
 #[tokio::test]
-async fn poll_blocks_until_wft_completed() {
+async fn out_of_order_completion_doesnt_hang() {
+    tracing_init();
+
     let mut rng = rand::thread_rng();
     let task_q_salt: u32 = rng.gen();
     let task_q = format!("activity_cancelled_workflow_{}", task_q_salt.to_string());
@@ -66,7 +69,11 @@ async fn poll_blocks_until_wft_completed() {
     // Start polling again *before* we complete the WFT
     let cc = core.clone();
     let jh = tokio::spawn(async move {
-        let task = cc.poll_workflow_task(&task_q).await.unwrap();
+        // We want to fail the test if this takes too long -- we should not hit long poll timeout
+        let task = timeout(Duration::from_secs(1), cc.poll_workflow_task(&task_q))
+            .await
+            .expect("Poll should come back right away")
+            .unwrap();
         assert_matches!(
             task.jobs.as_slice(),
             [WfActivationJob {
@@ -96,6 +103,7 @@ async fn poll_blocks_until_wft_completed() {
     .unwrap();
 
     jh.await.unwrap();
+    dbg!("done");
 }
 
 #[tokio::test]
@@ -106,6 +114,7 @@ async fn long_poll_timeout_is_retried() {
     let core = temporal_sdk_core::init(CoreInitOptions {
         gateway_opts,
         evict_after_pending_cleared: false,
+        max_outstanding_workflow_tasks: 1,
     })
     .await
     .unwrap();

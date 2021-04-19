@@ -1,4 +1,4 @@
-use std::time::Duration;
+mod poll_buffer;
 
 use crate::{
     machines::ProtoCommand,
@@ -22,6 +22,7 @@ use crate::{
     },
     CoreInitError,
 };
+use std::time::Duration;
 use tonic::{transport::Channel, Request, Status};
 use url::Url;
 use uuid::Uuid;
@@ -36,6 +37,9 @@ pub struct ServerGatewayOptions {
 
     /// What namespace will we operate under
     pub namespace: String,
+
+    /// The task queue this worker is operating on
+    pub task_queue: String,
 
     /// A human-readable string that can identify your worker
     ///
@@ -107,12 +111,10 @@ pub trait ServerGatewayApis {
     ) -> Result<StartWorkflowExecutionResponse>;
 
     /// Fetch new workflow tasks. Should block indefinitely if there is no work.
-    async fn poll_workflow_task(&self, task_queue: String)
-        -> Result<PollWorkflowTaskQueueResponse>;
+    async fn poll_workflow_task(&self) -> Result<PollWorkflowTaskQueueResponse>;
 
     /// Fetch new activity tasks. Should block indefinitely if there is no work.
-    async fn poll_activity_task(&self, task_queue: String)
-        -> Result<PollActivityTaskQueueResponse>;
+    async fn poll_activity_task(&self) -> Result<PollActivityTaskQueueResponse>;
 
     /// Complete a workflow activation. `task_token` is the task token that would've been received
     /// from [crate::Core::poll_workflow_task] API. `commands` is a list of new commands to send to
@@ -208,14 +210,11 @@ impl ServerGatewayApis for ServerGateway {
             .into_inner())
     }
 
-    async fn poll_workflow_task(
-        &self,
-        task_queue: String,
-    ) -> Result<PollWorkflowTaskQueueResponse> {
+    async fn poll_workflow_task(&self) -> Result<PollWorkflowTaskQueueResponse> {
         let request = PollWorkflowTaskQueueRequest {
             namespace: self.opts.namespace.clone(),
             task_queue: Some(TaskQueue {
-                name: task_queue,
+                name: self.opts.task_queue.clone(),
                 kind: TaskQueueKind::Unspecified as i32,
             }),
             identity: self.opts.identity.clone(),
@@ -230,14 +229,11 @@ impl ServerGatewayApis for ServerGateway {
             .into_inner())
     }
 
-    async fn poll_activity_task(
-        &self,
-        task_queue: String,
-    ) -> Result<PollActivityTaskQueueResponse> {
+    async fn poll_activity_task(&self) -> Result<PollActivityTaskQueueResponse> {
         let request = PollActivityTaskQueueRequest {
             namespace: self.opts.namespace.clone(),
             task_queue: Some(TaskQueue {
-                name: task_queue,
+                name: self.opts.task_queue.clone(),
                 kind: TaskQueueKind::Normal as i32,
             }),
             identity: self.opts.identity.clone(),
@@ -372,5 +368,82 @@ impl ServerGatewayApis for ServerGateway {
             })
             .await?
             .into_inner())
+    }
+}
+
+#[cfg(test)]
+mod manual_mock {
+    use super::*;
+    use std::future::Future;
+
+    // Need a version of the mock that can return futures so we can return potentially pending
+    // results. This is really annoying b/c of the async trait stuff. Need
+    // https://github.com/asomers/mockall/issues/189 to be fixed for it to go away.
+
+    mockall::mock! {
+        pub ManualGateway {}
+        impl ServerGatewayApis for ManualGateway {
+            fn start_workflow<'a, 'b>(
+                &self,
+                namespace: String,
+                task_queue: String,
+                workflow_id: String,
+                workflow_type: String,
+            ) -> impl Future<Output = Result<StartWorkflowExecutionResponse>> + Send + 'b
+                where 'a: 'b, Self: 'b;
+
+            fn poll_workflow_task<'a, 'b>(&'a self)
+                -> impl Future<Output = Result<PollWorkflowTaskQueueResponse>> + Send + 'b
+                where 'a: 'b, Self: 'b;
+
+            fn poll_activity_task<'a, 'b>(&self)
+                -> impl Future<Output = Result<PollActivityTaskQueueResponse>> + Send + 'b
+                where 'a: 'b, Self: 'b;
+
+            fn complete_workflow_task<'a, 'b>(
+                &self,
+                task_token: Vec<u8>,
+                commands: Vec<ProtoCommand>,
+            ) -> impl Future<Output = Result<RespondWorkflowTaskCompletedResponse>> + Send + 'b
+                where 'a: 'b, Self: 'b;
+
+            fn complete_activity_task<'a, 'b>(
+                &self,
+                task_token: Vec<u8>,
+                result: Option<Payloads>,
+            ) -> impl Future<Output = Result<RespondActivityTaskCompletedResponse>> + Send + 'b
+                where 'a: 'b, Self: 'b;
+
+            fn cancel_activity_task<'a, 'b>(
+                &self,
+                task_token: Vec<u8>,
+                details: Option<Payloads>,
+            ) -> impl Future<Output = Result<RespondActivityTaskCanceledResponse>> + Send + 'b
+                where 'a: 'b, Self: 'b;
+
+            fn fail_activity_task<'a, 'b>(
+                &self,
+                task_token: Vec<u8>,
+                failure: Option<Failure>,
+            ) -> impl Future<Output = Result<RespondActivityTaskFailedResponse>> + Send + 'b
+                where 'a: 'b, Self: 'b;
+
+            fn fail_workflow_task<'a, 'b>(
+                &self,
+                task_token: Vec<u8>,
+                cause: WorkflowTaskFailedCause,
+                failure: Option<Failure>,
+            ) -> impl Future<Output = Result<RespondWorkflowTaskFailedResponse>> + Send + 'b
+                where 'a: 'b, Self: 'b;
+
+            fn signal_workflow_execution<'a, 'b>(
+                &self,
+                workflow_id: String,
+                run_id: String,
+                signal_name: String,
+                payloads: Option<Payloads>,
+            ) -> impl Future<Output = Result<SignalWorkflowExecutionResponse>> + Send + 'b
+                where 'a: 'b, Self: 'b;
+        }
     }
 }

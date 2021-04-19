@@ -75,20 +75,15 @@ pub trait Core: Send + Sync {
     /// responsibility to call the appropriate workflow code with the provided inputs. Blocks
     /// indefinitely until such work is available or [Core::shutdown] is called.
     ///
-    /// Note that it is possible to receive work from a task queue that isn't the argument you
-    /// passed if you previously polled that task queue and there is remaining work that the lang
-    /// side must do before core can respond to the server.
-    ///
     /// TODO: Examples
-    async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError>;
+    async fn poll_workflow_task(&self) -> Result<WfActivation, PollWfError>;
 
     /// Ask the core for some work, returning an [ActivityTask]. It is then the language SDK's
     /// responsibility to call the appropriate activity code with the provided inputs. Blocks
     /// indefinitely until such work is available or [Core::shutdown] is called.
     ///
     /// TODO: Examples
-    async fn poll_activity_task(&self, task_queue: &str)
-        -> Result<ActivityTask, PollActivityError>;
+    async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError>;
 
     /// Tell the core that a workflow activation has completed
     async fn complete_workflow_task(
@@ -125,6 +120,10 @@ pub struct CoreInitOptions {
     /// workflows are evicted after they no longer have any pending activations. IE: After they
     /// have sent new commands to the server.
     pub evict_after_pending_cleared: bool,
+    /// The maximum allowed number of workflow tasks that will ever be given to lang at one
+    /// time. Note that one workflow task may require multiple activations - so the WFT counts as
+    /// "outstanding" until all activations it requires have been completed.
+    pub max_outstanding_workflow_tasks: usize,
 }
 
 /// Initializes an instance of the core sdk and establishes a connection to the temporal server.
@@ -176,7 +175,7 @@ where
     WP: ServerGatewayApis + Send + Sync + 'static,
 {
     #[instrument(skip(self))]
-    async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError> {
+    async fn poll_workflow_task(&self) -> Result<WfActivation, PollWfError> {
         // The poll needs to be in a loop because we can't guarantee tail call optimization in Rust
         // (simply) and we really, really need that for long-poll retries.
         loop {
@@ -194,7 +193,10 @@ where
                 return Err(PollWfError::ShutDown);
             }
 
-            if !self.outstanding_workflow_tasks.is_empty() {
+            // Do not proceed to poll unless we are below the outstanding WFT limit
+            if self.outstanding_workflow_tasks.len()
+                >= self.init_options.max_outstanding_workflow_tasks
+            {
                 self.workflow_task_complete_notify.notified().await;
                 continue;
             }
@@ -202,11 +204,7 @@ where
             debug!("Polling server");
 
             match self
-                .shutdownable_fut(
-                    self.server_gateway
-                        .poll_workflow_task(task_queue.to_owned())
-                        .map_err(Into::into),
-                )
+                .shutdownable_fut(self.server_gateway.poll_workflow_task().map_err(Into::into))
                 .await
             {
                 Ok(work) => {
@@ -228,20 +226,13 @@ where
     }
 
     #[instrument(skip(self))]
-    async fn poll_activity_task(
-        &self,
-        task_queue: &str,
-    ) -> Result<ActivityTask, PollActivityError> {
+    async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError> {
         if self.shutdown_requested.load(Ordering::SeqCst) {
             return Err(PollActivityError::ShutDown);
         }
 
         match self
-            .shutdownable_fut(
-                self.server_gateway
-                    .poll_activity_task(task_queue.to_owned())
-                    .map_err(Into::into),
-            )
+            .shutdownable_fut(self.server_gateway.poll_activity_task().map_err(Into::into))
             .await
         {
             Ok(work) => {
@@ -640,8 +631,6 @@ mod test {
     use rstest::{fixture, rstest};
     use std::sync::atomic::AtomicU64;
 
-    const TASK_Q: &str = "test-task-queue";
-
     #[fixture(hist_batches = &[])]
     fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
         let wfid = "fake_wf_id";
@@ -678,7 +667,6 @@ mod test {
     ) {
         poll_and_reply(
             &core,
-            TASK_Q,
             evict,
             &[
                 gen_assert_and_reply(
@@ -708,7 +696,6 @@ mod test {
     async fn single_activity_completion(core: FakeCore) {
         poll_and_reply(
             &core,
-            TASK_Q,
             EvictionMode::NotSticky,
             &[
                 gen_assert_and_reply(
@@ -740,7 +727,6 @@ mod test {
 
         poll_and_reply(
             &core,
-            TASK_Q,
             EvictionMode::NotSticky,
             &[
                 gen_assert_and_reply(
@@ -798,7 +784,6 @@ mod test {
 
         poll_and_reply(
             &core,
-            TASK_Q,
             EvictionMode::NotSticky,
             &[
                 gen_assert_and_reply(
@@ -843,7 +828,6 @@ mod test {
 
         poll_and_reply(
             &core,
-            TASK_Q,
             EvictionMode::NotSticky,
             &[
                 gen_assert_and_reply(
@@ -883,7 +867,6 @@ mod test {
         let core = build_fake_core(wfid, &mut t, hist_batches);
         poll_and_reply(
             &core,
-            TASK_Q,
             EvictionMode::NotSticky,
             &[
                 gen_assert_and_reply(
@@ -936,7 +919,6 @@ mod test {
 
         poll_and_reply(
             &core,
-            TASK_Q,
             EvictionMode::NotSticky,
             &[
                 gen_assert_and_reply(
@@ -990,7 +972,6 @@ mod test {
 
         poll_and_reply(
             &core,
-            TASK_Q,
             EvictionMode::NotSticky,
             &[
                 gen_assert_and_reply(
@@ -1055,7 +1036,6 @@ mod test {
     async fn verify_activity_cancellation_abandon(activity_id: &&str, core: &FakeCore) {
         poll_and_reply(
             &core,
-            TASK_Q,
             EvictionMode::NotSticky,
             &[
                 gen_assert_and_reply(
@@ -1131,7 +1111,6 @@ mod test {
     ) {
         poll_and_reply(
             &core,
-            TASK_Q,
             EvictionMode::NotSticky,
             &[
                 gen_assert_and_reply(
@@ -1212,7 +1191,6 @@ mod test {
     ) {
         poll_and_reply(
             &core,
-            TASK_Q,
             EvictionMode::NotSticky,
             &[
                 gen_assert_and_reply(
@@ -1252,18 +1230,14 @@ mod test {
     #[rstest(single_timer_setup(&[1]))]
     #[tokio::test]
     async fn after_shutdown_server_is_not_polled(single_timer_setup: FakeCore) {
-        let res = single_timer_setup
-            .inner
-            .poll_workflow_task(TASK_Q)
-            .await
-            .unwrap();
+        let res = single_timer_setup.inner.poll_workflow_task().await.unwrap();
         assert_eq!(res.jobs.len(), 1);
 
         single_timer_setup.inner.shutdown();
         assert_matches!(
             single_timer_setup
                 .inner
-                .poll_workflow_task(TASK_Q)
+                .poll_workflow_task()
                 .await
                 .unwrap_err(),
             PollWfError::ShutDown
@@ -1282,7 +1256,6 @@ mod test {
 
         poll_and_reply(
             &core,
-            TASK_Q,
             EvictionMode::NotSticky,
             &[
                 gen_assert_and_reply(
@@ -1341,7 +1314,6 @@ mod test {
 
         poll_and_reply(
             &core,
-            TASK_Q,
             EvictionMode::NotSticky,
             &[gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
@@ -1385,7 +1357,6 @@ mod test {
 
         poll_and_reply(
             &core,
-            TASK_Q,
             evict,
             &[
                 gen_assert_and_reply(
@@ -1417,7 +1388,6 @@ mod test {
 
         poll_and_reply(
             &core,
-            TASK_Q,
             EvictionMode::NotSticky,
             &[
                 gen_assert_and_reply(
@@ -1453,7 +1423,6 @@ mod test {
 
         poll_and_reply(
             &core,
-            TASK_Q,
             EvictionMode::NotSticky,
             &[
                 gen_assert_and_reply(
@@ -1500,7 +1469,6 @@ mod test {
 
         poll_and_reply(
             &core,
-            TASK_Q,
             EvictionMode::NotSticky,
             &[
                 gen_assert_and_reply(
