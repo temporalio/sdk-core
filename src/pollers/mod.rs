@@ -1,5 +1,7 @@
 mod poll_buffer;
 
+pub use poll_buffer::PollWorkflowTaskBuffer;
+
 use crate::{
     machines::ProtoCommand,
     protos::temporal::api::{

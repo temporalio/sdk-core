@@ -6,13 +6,14 @@ use futures::{stream::repeat_with, Stream, StreamExt};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-struct PollWorkflowTaskBuffer {
-    buffered_polls:
-        Mutex<Box<dyn Stream<Item = pollers::Result<PollWorkflowTaskQueueResponse>> + Unpin>>,
+pub struct PollWorkflowTaskBuffer {
+    buffered_polls: Mutex<
+        Box<dyn Stream<Item = pollers::Result<PollWorkflowTaskQueueResponse>> + Unpin + Send>,
+    >,
 }
 
 impl PollWorkflowTaskBuffer {
-    pub fn new(sg: Arc<impl ServerGatewayApis + 'static>) -> Self {
+    pub fn new(sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>) -> Self {
         // This is not the world's most efficient thing, but given we're wrapping IO it's unlikely
         // to be of any significance.
         let pbuff = repeat_with(move || {

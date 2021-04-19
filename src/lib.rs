@@ -30,6 +30,7 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
+use crate::pollers::PollWorkflowTaskBuffer;
 use crate::{
     errors::{ShutdownErr, WorkflowUpdateError},
     machines::{EmptyWorkflowCommandErr, WFCommand},
@@ -157,6 +158,10 @@ struct CoreSDK<WP> {
     /// must all be handled first before we poll the server again.
     outstanding_workflow_tasks: DashSet<Vec<u8>>,
 
+    /// Buffers workflow task polling in the event we need to return a pending activation while
+    /// a poll is ongoing
+    wf_task_poll_buffer: PollWorkflowTaskBuffer,
+
     /// Workflows that are currently under replay will queue here, indicating that there are more
     /// workflow tasks / activations to be performed.
     pending_activations: PendingActivations,
@@ -201,12 +206,25 @@ where
                 continue;
             }
 
+            let task_complete_fut = self.workflow_task_complete_notify.notified();
+            let poll_result_future = self.shutdownable_fut(
+                self.wf_task_poll_buffer
+                    .poll_workflow_task()
+                    .map_err(Into::into),
+            );
+
             debug!("Polling server");
 
-            match self
-                .shutdownable_fut(self.server_gateway.poll_workflow_task().map_err(Into::into))
-                .await
-            {
+            let selected_f = tokio::select! {
+                // If a task is completed while we are waiting on polling, we need to restart the
+                // loop right away to provide any potential new pending activation
+                _ = task_complete_fut => {
+                    continue;
+                }
+                r = poll_result_future => r
+            };
+
+            match selected_f {
                 Ok(work) => {
                     if !work.next_page_token.is_empty() {
                         // TODO: Support history pagination
@@ -339,15 +357,17 @@ where
     }
 }
 
-impl<WP: ServerGatewayApis> CoreSDK<WP> {
+impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
     pub(crate) fn new(wp: WP, init_options: CoreInitOptions) -> Self {
+        let sg = Arc::new(wp);
         Self {
             init_options,
-            server_gateway: Arc::new(wp),
+            server_gateway: sg.clone(),
             workflow_machines: WorkflowConcurrencyManager::new(),
             workflow_task_tokens: Default::default(),
             workflows_last_task_failed: Default::default(),
             outstanding_workflow_tasks: Default::default(),
+            wf_task_poll_buffer: PollWorkflowTaskBuffer::new(sg),
             pending_activations: Default::default(),
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
@@ -600,26 +620,23 @@ impl<WP: ServerGatewayApis> CoreSDK<WP> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::machines::test_help::EvictionMode;
-    use crate::protos::coresdk::activity_result::ActivityResult;
-    use crate::protos::coresdk::workflow_activation::ResolveActivity;
-    use crate::protos::coresdk::workflow_commands::{
-        ActivityCancellationType, RequestCancelActivity,
-    };
+    use crate::machines::test_help::{build_mock_sg, fake_core_from_mock_sg};
     use crate::{
         machines::test_help::{
-            build_fake_core, gen_assert_and_fail, gen_assert_and_reply, poll_and_reply, FakeCore,
-            TestHistoryBuilder,
+            build_fake_core, gen_assert_and_fail, gen_assert_and_reply, poll_and_reply,
+            EvictionMode, FakeCore, TestHistoryBuilder,
         },
         protos::{
             coresdk::{
+                activity_result::ActivityResult,
                 common::UserCodeFailure,
                 workflow_activation::{
-                    wf_activation_job, FireTimer, StartWorkflow, UpdateRandomSeed, WfActivationJob,
+                    wf_activation_job, FireTimer, ResolveActivity, StartWorkflow, UpdateRandomSeed,
+                    WfActivationJob,
                 },
                 workflow_commands::{
-                    CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution,
-                    ScheduleActivity, StartTimer,
+                    ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
+                    FailWorkflowExecution, RequestCancelActivity, ScheduleActivity, StartTimer,
                 },
             },
             temporal::api::{
@@ -1347,13 +1364,13 @@ mod test {
         let timer_id = "timer";
 
         let mut t = canned_histories::workflow_fails_with_failure_after_timer(timer_id);
-        let mut core = build_fake_core(wfid, &mut t, batches);
+        let mut mock_sg = build_mock_sg(wfid, &mut t, batches);
         // Need to create an expectation that we will call a failure completion
-        Arc::get_mut(&mut core.inner.server_gateway)
-            .unwrap()
+        mock_sg
             .expect_fail_workflow_task()
             .times(1)
             .returning(|_, _, _| Ok(RespondWorkflowTaskFailedResponse {}));
+        let core = fake_core_from_mock_sg(mock_sg, batches);
 
         poll_and_reply(
             &core,
@@ -1450,22 +1467,19 @@ mod test {
 
         let mut t =
             canned_histories::workflow_fails_with_failure_two_different_points(timer_1, timer_2);
-        let mut core = build_fake_core(
-            wfid,
-            &mut t,
-            &[
-                1, 2, // Start then first good reply
-                2, 2, 2, // Poll for every failure
-                // Poll again after evicting after second good reply, then two more fails
-                3, 3, 3,
-            ],
-        );
-        Arc::get_mut(&mut core.inner.server_gateway)
-            .unwrap()
+        let batches = &[
+            1, 2, // Start then first good reply
+            2, 2, 2, // Poll for every failure
+            // Poll again after evicting after second good reply, then two more fails
+            3, 3, 3,
+        ];
+        let mut mock_sg = build_mock_sg(wfid, &mut t, batches);
+        mock_sg
             .expect_fail_workflow_task()
             // We should only call the server to say we failed twice (once after each success)
             .times(2)
             .returning(|_, _, _| Ok(RespondWorkflowTaskFailedResponse {}));
+        let core = fake_core_from_mock_sg(mock_sg, batches);
 
         poll_and_reply(
             &core,

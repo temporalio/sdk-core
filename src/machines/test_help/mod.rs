@@ -48,6 +48,42 @@ pub(crate) fn build_fake_core(
     t: &mut TestHistoryBuilder,
     response_batches: &[usize],
 ) -> FakeCore {
+    let mock_gateway = build_mock_sg(wf_id, t, response_batches);
+    fake_core_from_mock_sg(mock_gateway, response_batches)
+}
+
+/// See [build_fake_core] -- assemble a mock gateway into the final fake core
+pub(crate) fn fake_core_from_mock_sg(
+    sg: MockServerGatewayApis,
+    response_batches: &[usize],
+) -> FakeCore {
+    FakeCore::new(
+        CoreSDK::new(
+            sg,
+            CoreInitOptions {
+                gateway_opts: ServerGatewayOptions {
+                    target_url: Url::from_str("https://fake").unwrap(),
+                    namespace: "".to_string(),
+                    task_queue: "task_queue".to_string(),
+                    identity: "".to_string(),
+                    worker_binary_id: "".to_string(),
+                    long_poll_timeout: Default::default(),
+                },
+                evict_after_pending_cleared: true,
+                // TODO: Make a sensible number here?
+                max_outstanding_workflow_tasks: 5,
+            },
+        ),
+        response_batches.len(),
+    )
+}
+
+/// See [build_fake_core] -- manual version to get the mock server gateway first
+pub fn build_mock_sg(
+    wf_id: &str,
+    t: &mut TestHistoryBuilder,
+    response_batches: &[usize],
+) -> MockServerGatewayApis {
     let run_id = t.get_orig_run_id();
     let wf = Some(WorkflowExecution {
         workflow_id: wf_id.to_string(),
@@ -89,26 +125,7 @@ pub(crate) fn build_fake_core(
     mock_gateway
         .expect_complete_workflow_task()
         .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
-
-    FakeCore::new(
-        CoreSDK::new(
-            mock_gateway,
-            CoreInitOptions {
-                gateway_opts: ServerGatewayOptions {
-                    target_url: Url::from_str("https://fake").unwrap(),
-                    namespace: "".to_string(),
-                    task_queue: "task_queue".to_string(),
-                    identity: "".to_string(),
-                    worker_binary_id: "".to_string(),
-                    long_poll_timeout: Default::default(),
-                },
-                evict_after_pending_cleared: true,
-                // TODO: Make a sensible number here?
-                max_outstanding_workflow_tasks: 5,
-            },
-        ),
-        response_batches.len(),
-    )
+    mock_gateway
 }
 
 type AsserterWithReply<'a> = (&'a dyn Fn(&WfActivation), wf_activation_completion::Status);
