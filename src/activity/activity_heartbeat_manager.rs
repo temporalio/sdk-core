@@ -1,8 +1,10 @@
 use crate::errors::ActivityHeartbeatError;
+use crate::protos::coresdk::PayloadsExt;
 use crate::protos::coresdk::{common, ActivityHeartbeat};
 use crate::ServerGatewayApis;
 use dashmap::mapref::one::Ref;
 use dashmap::{DashMap, DashSet};
+use futures::future::join_all;
 use futures::FutureExt;
 use std::borrow::BorrowMut;
 use std::collections::hash_map::RandomState;
@@ -16,12 +18,13 @@ use tokio::sync::watch::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, Sleep};
 
-pub(crate) struct ActivityHeartbeatManager {
+pub(crate) struct ActivityHeartbeatManager<SG> {
     /// Core will aggregate activity heartbeats and send them to the server periodically.
     /// This map contains sender channel for each activity that has an active heartbeat processor.
-    heartbeat_processors: DashMap<Vec<u8>, ActivityHeartbeatProcessorHandle>,
+    heartbeat_processors: Arc<DashMap<Vec<u8>, ActivityHeartbeatProcessorHandle>>,
     shutdown_tx: Sender<bool>,
     shutdown_rx: Receiver<bool>,
+    server_gateway: Arc<SG>,
 }
 
 struct ActivityHeartbeatProcessorHandle {
@@ -29,28 +32,27 @@ struct ActivityHeartbeatProcessorHandle {
     join_handle: JoinHandle<()>,
 }
 
-struct ActivityHeartbeatProcessor {
+struct ActivityHeartbeatProcessor<SG> {
+    heartbeat_processors: Arc<DashMap<Vec<u8>, ActivityHeartbeatProcessorHandle>>,
+    task_token: Vec<u8>,
     delay: time::Duration,
     heartbeat_rx: Receiver<Vec<common::Payload>>,
     shutdown_rx: Receiver<bool>,
+    server_gateway: Arc<SG>,
 }
 
-impl ActivityHeartbeatManager {
-    pub fn new() -> Self {
+impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG> {
+    pub fn new(sg: Arc<SG>) -> Self {
         let (shutdown_tx, shutdown_rx) = channel(false);
         Self {
-            heartbeat_processors: Default::default(),
+            heartbeat_processors: Arc::new(Default::default()),
             shutdown_tx,
             shutdown_rx,
+            server_gateway: sg,
         }
     }
 
     pub fn record(&self, heartbeat: ActivityHeartbeat) -> Result<(), ActivityHeartbeatError> {
-        /// Do not accept new heartbeat requests if core is shutting down, this is because we
-        /// don't want to spawn new processors and existing processors won't be accepting new work.
-        if *self.shutdown_rx.borrow() {
-            return Err(ActivityHeartbeatError::ShuttingDown);
-        }
         match self.heartbeat_processors.get(&heartbeat.task_token) {
             Some(handle) => {
                 handle.heartbeat_tx.send(heartbeat.details);
@@ -64,9 +66,12 @@ impl ActivityHeartbeatManager {
                 let delay = heartbeat_timeout.div(2);
                 let (heartbeat_tx, heartbeat_rx) = channel(heartbeat.details);
                 let processor = ActivityHeartbeatProcessor {
+                    heartbeat_processors: self.heartbeat_processors.clone(),
+                    task_token: heartbeat.task_token.clone(),
                     delay,
                     heartbeat_rx,
                     shutdown_rx: self.shutdown_rx.clone(),
+                    server_gateway: self.server_gateway.clone(),
                 };
                 let join_handle = tokio::spawn(processor.run());
                 let handle = ActivityHeartbeatProcessorHandle {
@@ -80,15 +85,27 @@ impl ActivityHeartbeatManager {
         Ok(())
     }
 
-    pub fn shutdown(&self) {
+    pub async fn shutdown(&self) {
         self.shutdown_tx.send(true);
-        // TODO join on join handles
+        let mut pending_handles = vec![];
+        for v in self.heartbeat_processors.iter() {
+            self.heartbeat_processors.remove(v.key()).map(|v| {
+                pending_handles.push(v.1.join_handle);
+            });
+        }
+        join_all(pending_handles)
+            .await
+            .into_iter()
+            .for_each(|r| r.expect("Doesn't fail"));
     }
 }
 
-impl ActivityHeartbeatProcessor {
+impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<SG> {
     async fn run(mut self) {
-        // TODO borrow and send details available in the heartbeat_rx once.
+        // Each processor is initialized with heartbeat payloads, first thing we need to do is send it out.
+        let details = self.heartbeat_rx.borrow().clone();
+        self.server_gateway
+            .record_activity_heartbeat(self.task_token.clone(), details.into_payloads());
         loop {
             sleep(self.delay).await;
             let stop = select! {
@@ -106,7 +123,9 @@ impl ActivityHeartbeatProcessor {
                 _ = self.heartbeat_rx.changed() => {
                     // Received new heartbeat details.
                     let details = self.heartbeat_rx.borrow();
-                    // TODO send details right away since enough time has passed since previous call
+                    // TODO see if we can get rid of cloning details.
+                    self.server_gateway
+                        .record_activity_heartbeat(self.task_token.clone(), details.clone().into_payloads());
                     false
                 }
             };
@@ -114,6 +133,11 @@ impl ActivityHeartbeatProcessor {
                 break;
             }
         }
-        // TODO cleanup handle from the map
+        // Doing cleanup at the end of the processor loop ensures that we are not leaking memory.
+        // There is a small race condition possible where new heartbeat may come in before this line is called,
+        // in this case old processor will be used once again and new one will be created for the next heartbeat,
+        // resulting in no delay between two heartbeats, and no lost data. This is fine because such race
+        // condition should be extremely rare.
+        self.heartbeat_processors.remove(&self.task_token);
     }
 }

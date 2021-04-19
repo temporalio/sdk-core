@@ -126,7 +126,7 @@ pub trait Core: Send + Sync {
     /// call [Core::complete_workflow_task] for those workflows until they are done. At that point,
     /// the lang SDK can end the process, or drop the [Core] instance, which will close the
     /// connection.
-    fn shutdown(&self);
+    async fn shutdown(&self);
 }
 
 /// Holds various configuration information required to call [init]
@@ -184,7 +184,7 @@ struct CoreSDK<WP> {
     /// or when cancelling an activity in try-cancel/abandon mode). They queue here.
     pending_activations: PendingActivations,
 
-    activity_heartbeat_manager: ActivityHeartbeatManager,
+    activity_heartbeat_manager: ActivityHeartbeatManager<WP>,
     /// Activities that have been issued to lang but not yet completed
     outstanding_activity_tasks: DashSet<Vec<u8>>,
     /// Has shutdown been called?
@@ -382,11 +382,11 @@ where
         self.server_gateway.clone()
     }
 
-    fn shutdown(&self) {
+    async fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_one();
         self.workflow_machines.shutdown();
-        self.activity_heartbeat_manager.shutdown();
+        self.activity_heartbeat_manager.shutdown().await;
     }
 }
 
@@ -407,7 +407,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             shutdown_notify: Notify::new(),
             workflow_task_complete_notify: Notify::new(),
             activity_task_complete_notify: Notify::new(),
-            activity_heartbeat_manager: ActivityHeartbeatManager::new(), // todo pass server gateway
+            activity_heartbeat_manager: ActivityHeartbeatManager::new(sg), // todo pass server gateway
         }
     }
 
