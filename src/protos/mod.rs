@@ -19,6 +19,15 @@ pub mod coresdk {
     }
     pub mod common {
         include!("coresdk.common.rs");
+
+        impl From<Vec<u8>> for Payload {
+            fn from(data: Vec<u8>) -> Self {
+                Self {
+                    metadata: Default::default(),
+                    data,
+                }
+            }
+        }
     }
     pub mod workflow_activation {
         include!("coresdk.workflow_activation.rs");

@@ -71,6 +71,7 @@ pub(crate) fn fake_core_from_mock_sg(
                 },
                 evict_after_pending_cleared: true,
                 max_outstanding_workflow_tasks: 5,
+                max_outstanding_activities: 5,
             },
         ),
         response_batches.len(),
