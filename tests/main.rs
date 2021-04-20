@@ -60,6 +60,7 @@ mod integ_tests {
             gateway_opts,
             evict_after_pending_cleared: false,
             max_outstanding_workflow_tasks: 5,
+            max_outstanding_activities: 5,
         })
         .await
         .unwrap()

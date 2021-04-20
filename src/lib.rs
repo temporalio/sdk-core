@@ -125,6 +125,8 @@ pub struct CoreInitOptions {
     /// time. Note that one workflow task may require multiple activations - so the WFT counts as
     /// "outstanding" until all activations it requires have been completed.
     pub max_outstanding_workflow_tasks: usize,
+    /// The maximum allowed number of activity tasks that will ever be given to lang at one time.
+    pub max_outstanding_activities: usize,
 }
 
 /// Initializes an instance of the core sdk and establishes a connection to the temporal server.
@@ -166,12 +168,17 @@ struct CoreSDK<WP> {
     /// or when cancelling an activity in try-cancel/abandon mode). They queue here.
     pending_activations: PendingActivations,
 
+    /// Activities that have been issued to lang but not yet completed
+    outstanding_activity_tasks: DashSet<Vec<u8>>,
+
     /// Has shutdown been called?
     shutdown_requested: AtomicBool,
     /// Used to wake up future which checks shutdown state
     shutdown_notify: Notify,
     /// Used to wake blocked workflow task polling when tasks complete
     workflow_task_complete_notify: Notify,
+    /// Used to wake blocked activity task polling when tasks complete
+    activity_task_complete_notify: Notify,
 }
 
 #[async_trait::async_trait]
@@ -246,12 +253,18 @@ where
             return Err(PollActivityError::ShutDown);
         }
 
+        while self.outstanding_activity_tasks.len() >= self.init_options.max_outstanding_activities
+        {
+            self.activity_task_complete_notify.notified().await
+        }
+
         match self
             .shutdownable_fut(self.server_gateway.poll_activity_task().map_err(Into::into))
             .await
         {
             Ok(work) => {
                 let task_token = work.task_token.clone();
+                self.outstanding_activity_tasks.insert(task_token.clone());
                 Ok(ActivityTask::start_from_poll_resp(work, task_token))
             }
             Err(e) => Err(e),
@@ -319,6 +332,7 @@ where
                 completion: None,
             });
         };
+        let tt = task_token.clone();
         match status {
             activity_result::Status::Completed(ar::Success { result }) => {
                 self.server_gateway
@@ -336,6 +350,8 @@ where
                     .await?;
             }
         }
+        self.outstanding_activity_tasks.remove(&tt);
+        self.activity_task_complete_notify.notify_waiters();
         Ok(())
     }
 
@@ -366,9 +382,11 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             outstanding_workflow_tasks: Default::default(),
             wf_task_poll_buffer: PollWorkflowTaskBuffer::new(sg),
             pending_activations: Default::default(),
+            outstanding_activity_tasks: Default::default(),
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
             workflow_task_complete_notify: Notify::new(),
+            activity_task_complete_notify: Notify::new(),
         }
     }
 
@@ -601,6 +619,10 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::machines::test_help::fake_sg_opts;
+    use crate::protos::temporal::api::workflowservice::v1::{
+        PollActivityTaskQueueResponse, RespondActivityTaskCompletedResponse,
+    };
     use crate::{
         machines::test_help::{
             build_fake_core, gen_assert_and_fail, gen_assert_and_reply, poll_and_reply,
@@ -631,9 +653,7 @@ mod test {
         test_help::canned_histories,
     };
     use rstest::{fixture, rstest};
-    use std::time::Duration;
-    use std::{collections::VecDeque, str::FromStr, sync::atomic::AtomicU64};
-    use tokio::time::sleep;
+    use std::{collections::VecDeque, sync::atomic::AtomicU64, sync::atomic::AtomicUsize};
 
     #[fixture(hist_batches = &[])]
     fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
@@ -1528,27 +1548,21 @@ mod test {
         let core = CoreSDK::new(
             mock_gateway,
             CoreInitOptions {
-                gateway_opts: ServerGatewayOptions {
-                    target_url: Url::from_str("https://fake").unwrap(),
-                    namespace: "".to_string(),
-                    task_queue: "task_queue".to_string(),
-                    identity: "".to_string(),
-                    worker_binary_id: "".to_string(),
-                    long_poll_timeout: Default::default(),
-                },
+                gateway_opts: fake_sg_opts(),
                 evict_after_pending_cleared: true,
                 max_outstanding_workflow_tasks: 2,
+                max_outstanding_activities: 1,
             },
         );
 
         // Poll twice in a row before completing -- we should be at limit
         let r1 = core.poll_workflow_task().await.unwrap();
         let _r2 = core.poll_workflow_task().await.unwrap();
-        // Now we immediately poll for new work, and complete one of the existing activations after
-        // a small delay. The poll must not unblock until the completion goes through.
+        // Now we immediately poll for new work, and complete one of the existing activations. The
+        // poll must not unblock until the completion goes through.
+        let last_finisher = AtomicUsize::new(0);
         let (_, mut r1) = tokio::join! {
             async {
-                sleep(Duration::from_millis(100)).await;
                 core.complete_workflow_task(WfActivationCompletion::from_status(
                     r1.task_token,
                     workflow_completion::Success::from_cmds(vec![StartTimer {
@@ -1557,11 +1571,16 @@ mod test {
                     }
                     .into()]).into()
                 )).await.unwrap();
+                last_finisher.store(1, Ordering::SeqCst);
             },
             async {
-                core.poll_workflow_task().await.unwrap()
+                let r = core.poll_workflow_task().await.unwrap();
+                last_finisher.store(2, Ordering::SeqCst);
+                r
             }
         };
+        // So that we know we blocked
+        assert_eq!(last_finisher.load(Ordering::Acquire), 2);
 
         // Since we never did anything with r2, all subsequent activations should be for wf1
         for i in 2..19 {
@@ -1578,5 +1597,65 @@ mod test {
             .unwrap();
             r1 = core.poll_workflow_task().await.unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn max_activites_respected() {
+        let mut tasks = VecDeque::from(vec![
+            PollActivityTaskQueueResponse {
+                task_token: vec![1],
+                activity_id: "act1".to_string(),
+                ..Default::default()
+            },
+            PollActivityTaskQueueResponse {
+                task_token: vec![2],
+                activity_id: "act2".to_string(),
+                ..Default::default()
+            },
+            PollActivityTaskQueueResponse {
+                task_token: vec![3],
+                activity_id: "act3".to_string(),
+                ..Default::default()
+            },
+        ]);
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_poll_activity_task()
+            .times(3)
+            .returning(move || Ok(tasks.pop_front().unwrap()));
+        mock_gateway
+            .expect_complete_activity_task()
+            .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
+
+        let core = CoreSDK::new(
+            mock_gateway,
+            CoreInitOptions {
+                gateway_opts: fake_sg_opts(),
+                evict_after_pending_cleared: true,
+                max_outstanding_workflow_tasks: 1,
+                max_outstanding_activities: 2,
+            },
+        );
+
+        // We allow two outstanding activities, therefore first two polls should return right away
+        let r1 = core.poll_activity_task().await.unwrap();
+        let _r2 = core.poll_activity_task().await.unwrap();
+        // Third should block until we complete one of the first two
+        let last_finisher = AtomicUsize::new(0);
+        tokio::join! {
+            async {
+                core.complete_activity_task(ActivityTaskCompletion {
+                    task_token: r1.task_token,
+                    result: Some(ActivityResult::ok(vec![1].into()))
+                }).await.unwrap();
+                last_finisher.store(1, Ordering::SeqCst);
+            },
+            async {
+                core.poll_activity_task().await.unwrap();
+                last_finisher.store(2, Ordering::SeqCst);
+            }
+        };
+        // So that we know we blocked
+        assert_eq!(last_finisher.load(Ordering::Acquire), 2);
     }
 }

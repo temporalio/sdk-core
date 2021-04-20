@@ -114,6 +114,7 @@ async fn long_poll_timeout_is_retried() {
         gateway_opts,
         evict_after_pending_cleared: false,
         max_outstanding_workflow_tasks: 1,
+        max_outstanding_activities: 1,
     })
     .await
     .unwrap();
