@@ -332,8 +332,7 @@ where
                 completion: None,
             });
         };
-        self.outstanding_activity_tasks.remove(&task_token);
-        self.activity_task_complete_notify.notify_waiters();
+        let tt = task_token.clone();
         match status {
             activity_result::Status::Completed(ar::Success { result }) => {
                 self.server_gateway
@@ -351,6 +350,8 @@ where
                     .await?;
             }
         }
+        self.outstanding_activity_tasks.remove(&tt);
+        self.activity_task_complete_notify.notify_waiters();
         Ok(())
     }
 
@@ -651,9 +652,9 @@ mod test {
         test_help::canned_histories,
     };
     use rstest::{fixture, rstest};
-    use std::time::Duration;
-    use std::{collections::VecDeque, str::FromStr, sync::atomic::AtomicU64};
-    use tokio::time::sleep;
+    use std::{
+        collections::VecDeque, str::FromStr, sync::atomic::AtomicU64, sync::atomic::AtomicUsize,
+    };
 
     #[fixture(hist_batches = &[])]
     fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
@@ -1565,11 +1566,11 @@ mod test {
         // Poll twice in a row before completing -- we should be at limit
         let r1 = core.poll_workflow_task().await.unwrap();
         let _r2 = core.poll_workflow_task().await.unwrap();
-        // Now we immediately poll for new work, and complete one of the existing activations after
-        // a small delay. The poll must not unblock until the completion goes through.
+        // Now we immediately poll for new work, and complete one of the existing activations. The
+        // poll must not unblock until the completion goes through.
+        let last_finisher = AtomicUsize::new(0);
         let (_, mut r1) = tokio::join! {
             async {
-                sleep(Duration::from_millis(100)).await;
                 core.complete_workflow_task(WfActivationCompletion::from_status(
                     r1.task_token,
                     workflow_completion::Success::from_cmds(vec![StartTimer {
@@ -1578,11 +1579,16 @@ mod test {
                     }
                     .into()]).into()
                 )).await.unwrap();
+                last_finisher.store(1, Ordering::SeqCst);
             },
             async {
-                core.poll_workflow_task().await.unwrap()
+                let r = core.poll_workflow_task().await.unwrap();
+                last_finisher.store(2, Ordering::SeqCst);
+                r
             }
         };
+        // So that we know we blocked
+        assert_eq!(last_finisher.load(Ordering::Acquire), 2);
 
         // Since we never did anything with r2, all subsequent activations should be for wf1
         for i in 2..19 {
@@ -1650,17 +1656,21 @@ mod test {
         let r1 = core.poll_activity_task().await.unwrap();
         let _r2 = core.poll_activity_task().await.unwrap();
         // Third should block until we complete one of the first two
+        let last_finisher = AtomicUsize::new(0);
         tokio::join! {
             async {
-                sleep(Duration::from_millis(100)).await;
                 core.complete_activity_task(ActivityTaskCompletion {
                     task_token: r1.task_token,
                     result: Some(ActivityResult::ok(vec![1].into()))
-                }).await.unwrap()
+                }).await.unwrap();
+                last_finisher.store(1, Ordering::SeqCst);
             },
             async {
                 core.poll_activity_task().await.unwrap();
+                last_finisher.store(2, Ordering::SeqCst);
             }
         };
+        // So that we know we blocked
+        assert_eq!(last_finisher.load(Ordering::Acquire), 2);
     }
 }
