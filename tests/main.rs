@@ -38,7 +38,7 @@ mod integ_tests {
         fun(gw).await
     }
 
-    pub fn get_integ_server_options() -> ServerGatewayOptions {
+    pub fn get_integ_server_options(task_q: &str) -> ServerGatewayOptions {
         let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
             Ok(addr) => addr,
             Err(_) => "http://localhost:7233".to_owned(),
@@ -46,6 +46,7 @@ mod integ_tests {
         let url = Url::try_from(&*temporal_server_address).unwrap();
         ServerGatewayOptions {
             namespace: NAMESPACE.to_string(),
+            task_queue: task_q.to_string(),
             identity: "integ_tester".to_string(),
             worker_binary_id: "".to_string(),
             long_poll_timeout: Duration::from_secs(60),
@@ -53,11 +54,12 @@ mod integ_tests {
         }
     }
 
-    pub async fn get_integ_core() -> impl Core {
-        let gateway_opts = get_integ_server_options();
+    pub async fn get_integ_core(task_q: &str) -> impl Core {
+        let gateway_opts = get_integ_server_options(task_q);
         temporal_sdk_core::init(CoreInitOptions {
             gateway_opts,
             evict_after_pending_cleared: false,
+            max_outstanding_workflow_tasks: 5,
         })
         .await
         .unwrap()

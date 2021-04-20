@@ -84,6 +84,7 @@ impl WorkflowManager {
 pub(crate) struct NextWfActivation {
     /// Keep this private, so we can ensure task tokens are attached via [Self::finalize]
     activation: WfActivation,
+    // TODO: Becomes unneeded?
     pub more_activations_needed: bool,
 }
 
@@ -95,15 +96,12 @@ impl NextWfActivation {
         a.from_pending = from_pending;
         a
     }
-
-    pub(crate) fn get_run_id(&self) -> &str {
-        &self.activation.run_id
-    }
 }
 
 #[derive(Debug)]
 pub(crate) struct PushCommandsResult {
     pub server_commands: Vec<ProtoCommand>,
+    // TODO: Becomes unneeded?
     pub has_new_lang_jobs: bool,
 }
 
@@ -140,6 +138,7 @@ impl WorkflowManager {
         self.machines.apply_history_events(&task_hist)?;
         let activation = self.machines.get_wf_activation();
 
+        // TODO: Only increment this if there is an activation?
         self.current_wf_task_num += 1;
         let more_activations_needed = self.current_wf_task_num <= self.last_history_task_count;
         if more_activations_needed {

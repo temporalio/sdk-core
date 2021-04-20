@@ -48,12 +48,41 @@ pub(crate) fn build_fake_core(
     t: &mut TestHistoryBuilder,
     response_batches: &[usize],
 ) -> FakeCore {
-    let run_id = t.get_orig_run_id();
-    let wf = Some(WorkflowExecution {
-        workflow_id: wf_id.to_string(),
-        run_id: run_id.to_string(),
-    });
+    let mock_gateway = build_mock_sg(wf_id, t, response_batches);
+    fake_core_from_mock_sg(mock_gateway, response_batches)
+}
 
+/// See [build_fake_core] -- assemble a mock gateway into the final fake core
+pub(crate) fn fake_core_from_mock_sg(
+    sg: MockServerGatewayApis,
+    response_batches: &[usize],
+) -> FakeCore {
+    FakeCore::new(
+        CoreSDK::new(
+            sg,
+            CoreInitOptions {
+                gateway_opts: ServerGatewayOptions {
+                    target_url: Url::from_str("https://fake").unwrap(),
+                    namespace: "".to_string(),
+                    task_queue: "task_queue".to_string(),
+                    identity: "".to_string(),
+                    worker_binary_id: "".to_string(),
+                    long_poll_timeout: Default::default(),
+                },
+                evict_after_pending_cleared: true,
+                max_outstanding_workflow_tasks: 5,
+            },
+        ),
+        response_batches.len(),
+    )
+}
+
+/// See [build_fake_core] -- manual version to get the mock server gateway first
+pub fn build_mock_sg(
+    wf_id: &str,
+    t: &mut TestHistoryBuilder,
+    response_batches: &[usize],
+) -> MockServerGatewayApis {
     let full_hist_info = t.get_full_history_info().unwrap();
     // Ensure no response batch is trying to return more tasks than the history contains
     for rb_wf_num in response_batches {
@@ -67,16 +96,7 @@ pub(crate) fn build_fake_core(
 
     let responses: Vec<_> = response_batches
         .iter()
-        .map(|to_task_num| {
-            let batch = t.get_history_info(*to_task_num).unwrap().events().to_vec();
-            let task_token: [u8; 16] = thread_rng().gen();
-            PollWorkflowTaskQueueResponse {
-                history: Some(History { events: batch }),
-                workflow_execution: wf.clone(),
-                task_token: task_token.to_vec(),
-                ..Default::default()
-            }
-        })
+        .map(|to_task_num| hist_to_poll_resp(t, wf_id, *to_task_num))
         .collect();
 
     let mut tasks = VecDeque::from(responses);
@@ -84,28 +104,32 @@ pub(crate) fn build_fake_core(
     mock_gateway
         .expect_poll_workflow_task()
         .times(response_batches.len())
-        .returning(move |_| Ok(tasks.pop_front().unwrap()));
+        .returning(move || Ok(tasks.pop_front().unwrap()));
     // Response not really important here
     mock_gateway
         .expect_complete_workflow_task()
         .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
+    mock_gateway
+}
 
-    FakeCore::new(
-        CoreSDK::new(
-            mock_gateway,
-            CoreInitOptions {
-                gateway_opts: ServerGatewayOptions {
-                    target_url: Url::from_str("https://fake").unwrap(),
-                    namespace: "".to_string(),
-                    identity: "".to_string(),
-                    worker_binary_id: "".to_string(),
-                    long_poll_timeout: Default::default(),
-                },
-                evict_after_pending_cleared: true,
-            },
-        ),
-        response_batches.len(),
-    )
+pub fn hist_to_poll_resp(
+    t: &mut TestHistoryBuilder,
+    wf_id: &str,
+    to_task_num: usize,
+) -> PollWorkflowTaskQueueResponse {
+    let run_id = t.get_orig_run_id();
+    let wf = WorkflowExecution {
+        workflow_id: wf_id.to_string(),
+        run_id: run_id.to_string(),
+    };
+    let batch = t.get_history_info(to_task_num).unwrap().events().to_vec();
+    let task_token: [u8; 16] = thread_rng().gen();
+    PollWorkflowTaskQueueResponse {
+        history: Some(History { events: batch }),
+        workflow_execution: Some(wf),
+        task_token: task_token.to_vec(),
+        ..Default::default()
+    }
 }
 
 type AsserterWithReply<'a> = (&'a dyn Fn(&WfActivation), wf_activation_completion::Status);
@@ -131,7 +155,6 @@ pub enum EvictionMode {
 /// proceed
 pub(crate) async fn poll_and_reply<'a>(
     core: &'a FakeCore,
-    task_queue: &'a str,
     eviction_mode: EvictionMode,
     expect_and_reply: &'a [AsserterWithReply<'a>],
 ) {
@@ -152,7 +175,7 @@ pub(crate) async fn poll_and_reply<'a>(
                 continue;
             }
 
-            let res = core.inner.poll_workflow_task(task_queue).await.unwrap();
+            let res = core.inner.poll_workflow_task().await.unwrap();
             if !res.from_pending {
                 performed_wft_calls += 1;
             }
@@ -166,7 +189,7 @@ pub(crate) async fn poll_and_reply<'a>(
 
             core.inner
                 .complete_workflow_task(WfActivationCompletion::from_status(
-                    task_tok,
+                    task_tok.clone(),
                     reply.clone(),
                 ))
                 .await
@@ -194,7 +217,7 @@ pub(crate) async fn poll_and_reply<'a>(
                 }
                 EvictionMode::AfterEveryReply => {
                     if evictions < expected_evictions {
-                        core.inner.evict_run(&run_id);
+                        core.inner.evict_run(&task_tok);
                         evictions += 1;
                         continue 'outer;
                     }

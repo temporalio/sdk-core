@@ -1,9 +1,6 @@
-use crate::protosext::fmt_task_token;
+use crate::protos::coresdk::workflow_activation::WfActivation;
 use parking_lot::RwLock;
-use std::{
-    collections::{HashMap, VecDeque},
-    fmt::{Display, Formatter},
-};
+use std::collections::{HashMap, VecDeque};
 
 /// Tracks pending activations using an internal queue, while also allowing lookup and removal of
 /// any pending activations by run ID.
@@ -14,13 +11,13 @@ pub struct PendingActivations {
 
 #[derive(Default)]
 struct PaInner {
-    queue: VecDeque<PendingActivation>,
+    queue: VecDeque<WfActivation>,
     // Keys are run ids
     count_by_id: HashMap<String, usize>,
 }
 
 impl PendingActivations {
-    pub fn push(&self, v: PendingActivation) {
+    pub fn push(&self, v: WfActivation) {
         let mut inner = self.inner.write();
         *inner
             .count_by_id
@@ -29,7 +26,7 @@ impl PendingActivations {
         inner.queue.push_back(v);
     }
 
-    pub fn pop(&self) -> Option<PendingActivation> {
+    pub fn pop(&self) -> Option<WfActivation> {
         let mut inner = self.inner.write();
         let rme = inner.queue.pop_front();
         if let Some(pa) = &rme {
@@ -60,23 +57,6 @@ impl PendingActivations {
     }
 }
 
-#[derive(Debug)]
-pub struct PendingActivation {
-    pub run_id: String,
-    pub task_token: Vec<u8>,
-}
-
-impl Display for PendingActivation {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "PendingActivation(run_id: {}, task_token: {})",
-            &self.run_id,
-            fmt_task_token(&self.task_token)
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,21 +66,21 @@ mod tests {
         let pas = PendingActivations::default();
         let rid1 = "1".to_string();
         let rid2 = "2".to_string();
-        pas.push(PendingActivation {
+        pas.push(WfActivation {
             run_id: rid1.clone(),
-            task_token: vec![],
+            ..Default::default()
         });
-        pas.push(PendingActivation {
+        pas.push(WfActivation {
             run_id: rid2.clone(),
-            task_token: vec![],
+            ..Default::default()
         });
-        pas.push(PendingActivation {
+        pas.push(WfActivation {
             run_id: rid2.clone(),
-            task_token: vec![],
+            ..Default::default()
         });
-        pas.push(PendingActivation {
+        pas.push(WfActivation {
             run_id: rid2.clone(),
-            task_token: vec![],
+            ..Default::default()
         });
         assert!(pas.has_pending(&rid1));
         assert!(pas.has_pending(&rid2));
@@ -120,21 +100,21 @@ mod tests {
     fn can_remove_all_with_id() {
         let pas = PendingActivations::default();
         let remove_me = "2".to_string();
-        pas.push(PendingActivation {
+        pas.push(WfActivation {
             run_id: "1".to_owned(),
-            task_token: vec![],
+            ..Default::default()
         });
-        pas.push(PendingActivation {
+        pas.push(WfActivation {
             run_id: remove_me.clone(),
-            task_token: vec![],
+            ..Default::default()
         });
-        pas.push(PendingActivation {
+        pas.push(WfActivation {
             run_id: remove_me.clone(),
-            task_token: vec![],
+            ..Default::default()
         });
-        pas.push(PendingActivation {
+        pas.push(WfActivation {
             run_id: "3".to_owned(),
-            task_token: vec![],
+            ..Default::default()
         });
         pas.remove_all_with_run_id(&remove_me);
         assert!(!pas.has_pending(&remove_me));

@@ -14,19 +14,22 @@ use temporal_sdk_core::protos::coresdk::{
     },
     workflow_completion::WfActivationCompletion,
 };
-use temporal_sdk_core::{Core, CoreInitOptions};
+use temporal_sdk_core::{tracing_init, Core, CoreInitOptions};
+use tokio::time::timeout;
 
 #[tokio::test]
-async fn long_poll_interrupted_by_new_pending_activation() {
+async fn out_of_order_completion_doesnt_hang() {
+    tracing_init();
+
     let mut rng = rand::thread_rng();
     let task_q_salt: u32 = rng.gen();
     let task_q = format!("activity_cancelled_workflow_{}", task_q_salt.to_string());
-    let core = Arc::new(get_integ_core().await);
+    let core = Arc::new(get_integ_core(&task_q).await);
     let workflow_id: u32 = rng.gen();
     create_workflow(&*core, &task_q, &workflow_id.to_string(), None).await;
     let activity_id: String = rng.gen::<u32>().to_string();
     let timer_id: String = rng.gen::<u32>().to_string();
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_task().await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
     core.complete_workflow_task(schedule_activity_and_timer_cmds(
         &task_q,
@@ -41,7 +44,7 @@ async fn long_poll_interrupted_by_new_pending_activation() {
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
     // complete it in this test as activity is try-cancelled.
-    let activity_task = core.poll_activity_task(&task_q).await.unwrap();
+    let activity_task = core.poll_activity_task().await.unwrap();
     assert_matches!(
         activity_task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -49,7 +52,7 @@ async fn long_poll_interrupted_by_new_pending_activation() {
         }
     );
     // Poll workflow task and verify that activity has failed.
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_task().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -66,7 +69,11 @@ async fn long_poll_interrupted_by_new_pending_activation() {
     // Start polling again *before* we complete the WFT
     let cc = core.clone();
     let jh = tokio::spawn(async move {
-        let task = cc.poll_workflow_task(&task_q).await.unwrap();
+        // We want to fail the test if this takes too long -- we should not hit long poll timeout
+        let task = timeout(Duration::from_secs(1), cc.poll_workflow_task())
+            .await
+            .expect("Poll should come back right away")
+            .unwrap();
         assert_matches!(
             task.jobs.as_slice(),
             [WfActivationJob {
@@ -100,19 +107,20 @@ async fn long_poll_interrupted_by_new_pending_activation() {
 
 #[tokio::test]
 async fn long_poll_timeout_is_retried() {
-    let mut gateway_opts = get_integ_server_options();
+    let mut gateway_opts = get_integ_server_options("some_task_q");
     // Server whines unless long poll > 2 seconds
     gateway_opts.long_poll_timeout = Duration::from_secs(3);
     let core = temporal_sdk_core::init(CoreInitOptions {
         gateway_opts,
         evict_after_pending_cleared: false,
+        max_outstanding_workflow_tasks: 1,
     })
     .await
     .unwrap();
     // Should block for more than 3 seconds, since we internally retry long poll
     let (tx, rx) = unbounded();
     tokio::spawn(async move {
-        core.poll_workflow_task("some_task_q").await.unwrap();
+        core.poll_workflow_task().await.unwrap();
         tx.send(())
     });
     let err = rx.recv_timeout(Duration::from_secs(4)).unwrap_err();
