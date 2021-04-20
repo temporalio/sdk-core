@@ -25,7 +25,7 @@ pub(crate) struct ActivityHeartbeatManager<SG> {
 }
 
 pub(crate) struct ActivityHeartbeatManagerHandle {
-    heartbeat_tx: UnboundedSender<LifecycleEvent>,
+    events: UnboundedSender<LifecycleEvent>,
     join_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -61,7 +61,7 @@ impl ActivityHeartbeatManagerHandle {
             .try_into()
             .or(Err(ActivityHeartbeatError::InvalidHeartbeatTimeout))?;
 
-        self.heartbeat_tx
+        self.events
             .send(LifecycleEvent::Heartbeat(ValidActivityHeartbeat {
                 task_token: details.task_token,
                 details: details.details,
@@ -72,10 +72,10 @@ impl ActivityHeartbeatManagerHandle {
     }
 
     pub async fn shutdown(&self) {
-        self.heartbeat_tx.send(LifecycleEvent::Shutdown);
+        self.events.send(LifecycleEvent::Shutdown);
         let mut handle = self.join_handle.lock().await;
         if let Some(h) = handle.take() {
-            h.await.expect("");
+            h.await.expect("shutdown should exit cleanly");
         }
     }
 }
@@ -93,7 +93,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
         };
         let join_handle = tokio::spawn(s.lifecycle());
         ActivityHeartbeatManagerHandle {
-            heartbeat_tx,
+            events: heartbeat_tx,
             join_handle: Mutex::new(Some(join_handle)),
         }
     }
@@ -157,22 +157,26 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
     async fn run(mut self) {
         // Each processor is initialized with heartbeat payloads, first thing we need to do is send it out.
         let details = self.heartbeat_rx.borrow().clone();
+        dbg!("sending heartbeat first time");
         let _ = self
             .server_gateway
             .record_activity_heartbeat(self.task_token.clone(), details.into_payloads())
             .await;
         loop {
+            dbg!("waiting...");
             sleep(self.delay).await;
             let stop = select! {
                 _ = self.shutdown_rx.changed() => {
                     // Shutting down core, need to break the loop. Previous details has been sent,
                     // so there is nothing else to do.
+                    dbg!("shutting down");
                     true
                 }
                 _ = sleep(self.delay) => {
                     // Timed out while waiting for the next heartbeat.
                     // We waited 2 * delay in total, where delay is 1/2 of the activity heartbeat timeout.
                     // This means that activity has either timed out or completed by now.
+                    dbg!("timed out waiting");
                     true
                 }
                 _ = self.heartbeat_rx.changed() => {
@@ -180,6 +184,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
                     let details = self.heartbeat_rx.borrow().clone();
                     let _ = self.server_gateway
                         .record_activity_heartbeat(self.task_token.clone(), details.into_payloads()).await;
+                    dbg!("sending heartbeat after delay");
                     false
                 }
             };
@@ -219,6 +224,7 @@ mod test {
             })
             .expect("hearbeat recording should not fail");
         }
+        sleep(Duration::from_millis(500));
         hm.shutdown().await;
     }
 }
