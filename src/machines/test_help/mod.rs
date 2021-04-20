@@ -61,14 +61,7 @@ pub(crate) fn fake_core_from_mock_sg(
         CoreSDK::new(
             sg,
             CoreInitOptions {
-                gateway_opts: ServerGatewayOptions {
-                    target_url: Url::from_str("https://fake").unwrap(),
-                    namespace: "".to_string(),
-                    task_queue: "task_queue".to_string(),
-                    identity: "".to_string(),
-                    worker_binary_id: "".to_string(),
-                    long_poll_timeout: Default::default(),
-                },
+                gateway_opts: fake_sg_opts(),
                 evict_after_pending_cleared: true,
                 max_outstanding_workflow_tasks: 5,
                 max_outstanding_activities: 5,
@@ -130,6 +123,17 @@ pub fn hist_to_poll_resp(
         workflow_execution: Some(wf),
         task_token: task_token.to_vec(),
         ..Default::default()
+    }
+}
+
+pub fn fake_sg_opts() -> ServerGatewayOptions {
+    ServerGatewayOptions {
+        target_url: Url::from_str("https://fake").unwrap(),
+        namespace: "".to_string(),
+        task_queue: "task_queue".to_string(),
+        identity: "".to_string(),
+        worker_binary_id: "".to_string(),
+        long_poll_timeout: Default::default(),
     }
 }
 

@@ -619,6 +619,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::machines::test_help::fake_sg_opts;
     use crate::protos::temporal::api::workflowservice::v1::{
         PollActivityTaskQueueResponse, RespondActivityTaskCompletedResponse,
     };
@@ -652,9 +653,7 @@ mod test {
         test_help::canned_histories,
     };
     use rstest::{fixture, rstest};
-    use std::{
-        collections::VecDeque, str::FromStr, sync::atomic::AtomicU64, sync::atomic::AtomicUsize,
-    };
+    use std::{collections::VecDeque, sync::atomic::AtomicU64, sync::atomic::AtomicUsize};
 
     #[fixture(hist_batches = &[])]
     fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
@@ -1549,14 +1548,7 @@ mod test {
         let core = CoreSDK::new(
             mock_gateway,
             CoreInitOptions {
-                gateway_opts: ServerGatewayOptions {
-                    target_url: Url::from_str("https://fake").unwrap(),
-                    namespace: "".to_string(),
-                    task_queue: "task_queue".to_string(),
-                    identity: "".to_string(),
-                    worker_binary_id: "".to_string(),
-                    long_poll_timeout: Default::default(),
-                },
+                gateway_opts: fake_sg_opts(),
                 evict_after_pending_cleared: true,
                 max_outstanding_workflow_tasks: 2,
                 max_outstanding_activities: 1,
@@ -1638,14 +1630,7 @@ mod test {
         let core = CoreSDK::new(
             mock_gateway,
             CoreInitOptions {
-                gateway_opts: ServerGatewayOptions {
-                    target_url: Url::from_str("https://fake").unwrap(),
-                    namespace: "".to_string(),
-                    task_queue: "task_queue".to_string(),
-                    identity: "".to_string(),
-                    worker_binary_id: "".to_string(),
-                    long_poll_timeout: Default::default(),
-                },
+                gateway_opts: fake_sg_opts(),
                 evict_after_pending_cleared: true,
                 max_outstanding_workflow_tasks: 1,
                 max_outstanding_activities: 2,
