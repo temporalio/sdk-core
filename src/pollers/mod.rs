@@ -3,7 +3,6 @@ mod poll_buffer;
 pub use poll_buffer::PollWorkflowTaskBuffer;
 
 use crate::protos::temporal::api::workflowservice::v1::{
-    RecordActivityTaskHeartbeatByIdRequest, RecordActivityTaskHeartbeatByIdResponse,
     RecordActivityTaskHeartbeatRequest, RecordActivityTaskHeartbeatResponse,
 };
 use crate::{
@@ -148,18 +147,6 @@ pub trait ServerGatewayApis {
         task_token: Vec<u8>,
         details: Option<Payloads>,
     ) -> Result<RecordActivityTaskHeartbeatResponse>;
-
-    /// Report activity task heartbeat by sending details to the server. This function should only be used
-    /// when task token is not available, such as in case of manual completion, otherwise use `record_activity_heartbeat`.
-    /// `activity_id`, `workflow_id` and `run_id` must be set to respective IDs of activity, workflow and workflow run.
-    /// `result` contains `cancel_requested` flag, which if set to true indicates that activity has been cancelled.
-    async fn record_activity_heartbeat_by_id(
-        &self,
-        activity_id: String,
-        workflow_id: String,
-        run_id: String,
-        details: Option<Payloads>,
-    ) -> Result<RecordActivityTaskHeartbeatByIdResponse>;
 
     /// Cancel activity task by sending response to the server. `task_token` contains activity
     /// identifier that would've been received from [crate::Core::poll_activity_task] API. `details`
@@ -332,28 +319,6 @@ impl ServerGatewayApis for ServerGateway {
             .into_inner())
     }
 
-    async fn record_activity_heartbeat_by_id(
-        &self,
-        activity_id: String,
-        workflow_id: String,
-        run_id: String,
-        details: Option<Payloads>,
-    ) -> Result<RecordActivityTaskHeartbeatByIdResponse> {
-        Ok(self
-            .service
-            .clone()
-            .record_activity_task_heartbeat_by_id(RecordActivityTaskHeartbeatByIdRequest {
-                activity_id,
-                details,
-                workflow_id,
-                run_id,
-                identity: self.opts.identity.clone(),
-                namespace: self.opts.namespace.clone(),
-            })
-            .await?
-            .into_inner())
-    }
-
     async fn cancel_activity_task(
         &self,
         task_token: Vec<u8>,
@@ -510,6 +475,13 @@ mod manual_mock {
                 signal_name: String,
                 payloads: Option<Payloads>,
             ) -> impl Future<Output = Result<SignalWorkflowExecutionResponse>> + Send + 'b
+                where 'a: 'b, Self: 'b;
+
+            fn record_activity_heartbeat<'a, 'b>(
+               &self,
+               task_token: Vec<u8>,
+               details: Option<Payloads>,
+            ) -> impl Future<Output = Result<RecordActivityTaskHeartbeatResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;
         }
     }
