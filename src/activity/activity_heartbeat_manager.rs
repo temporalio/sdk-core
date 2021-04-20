@@ -2,24 +2,31 @@ use crate::errors::ActivityHeartbeatError;
 use crate::protos::coresdk::PayloadsExt;
 use crate::protos::coresdk::{common, ActivityHeartbeat};
 use crate::ServerGatewayApis;
-use dashmap::DashMap;
-use futures::future::join_all;
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::ops::Div;
 use std::sync::Arc;
 use std::time;
 use tokio::select;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch::{channel, Receiver, Sender};
-use tokio::task::JoinHandle;
+use tokio::sync::Mutex;
+use tokio::task::{JoinError, JoinHandle};
 use tokio::time::sleep;
 
 pub(crate) struct ActivityHeartbeatManager<SG> {
     /// Core will aggregate activity heartbeats and send them to the server periodically.
     /// This map contains sender channel for each activity that has an active heartbeat processor.
-    heartbeat_processors: Arc<DashMap<Vec<u8>, ActivityHeartbeatProcessorHandle>>,
+    heartbeat_processors: HashMap<Vec<u8>, ActivityHeartbeatProcessorHandle>,
+    heartbeat_rx: UnboundedReceiver<LifecycleEvent>,
     shutdown_tx: Sender<bool>,
     shutdown_rx: Receiver<bool>,
     server_gateway: Arc<SG>,
+}
+
+pub(crate) struct ActivityHeartbeatManagerHandle {
+    heartbeat_tx: UnboundedSender<LifecycleEvent>,
+    join_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
 struct ActivityHeartbeatProcessorHandle {
@@ -35,18 +42,73 @@ struct ActivityHeartbeatProcessor<SG> {
     server_gateway: Arc<SG>,
 }
 
+enum LifecycleEvent {
+    Heartbeat(ValidActivityHeartbeat),
+    Shutdown,
+}
+
+pub struct ValidActivityHeartbeat {
+    pub task_token: Vec<u8>,
+    pub details: Vec<common::Payload>,
+    pub delay: time::Duration,
+}
+
+impl ActivityHeartbeatManagerHandle {
+    pub fn record(&self, details: ActivityHeartbeat) -> Result<(), ActivityHeartbeatError> {
+        let heartbeat_timeout: time::Duration = details
+            .heartbeat_timeout
+            .ok_or(ActivityHeartbeatError::HeartbeatTimeoutNotSet)?
+            .try_into()
+            .or(Err(ActivityHeartbeatError::InvalidHeartbeatTimeout))?;
+
+        self.heartbeat_tx
+            .send(LifecycleEvent::Heartbeat(ValidActivityHeartbeat {
+                task_token: details.task_token,
+                details: details.details,
+                delay: heartbeat_timeout.div(2),
+            }));
+
+        Ok(())
+    }
+
+    pub async fn shutdown(&self) {
+        self.heartbeat_tx.send(LifecycleEvent::Shutdown);
+        let mut handle = self.join_handle.lock().await;
+        if let Some(h) = handle.take() {
+            h.await.expect("");
+        }
+    }
+}
+
 impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG> {
-    pub fn new(sg: Arc<SG>) -> Self {
+    pub fn new(sg: Arc<SG>) -> ActivityHeartbeatManagerHandle {
         let (shutdown_tx, shutdown_rx) = channel(false);
-        Self {
-            heartbeat_processors: Arc::new(Default::default()),
+        let (heartbeat_tx, heartbeat_rx) = unbounded_channel();
+        let s = Self {
+            heartbeat_processors: Default::default(),
+            heartbeat_rx,
             shutdown_tx,
             shutdown_rx,
             server_gateway: sg,
+        };
+        let join_handle = tokio::spawn(s.lifecycle());
+        ActivityHeartbeatManagerHandle {
+            heartbeat_tx,
+            join_handle: Mutex::new(Some(join_handle)),
         }
     }
 
-    pub fn record(&self, heartbeat: ActivityHeartbeat) -> Result<(), ActivityHeartbeatError> {
+    async fn lifecycle(mut self) {
+        while let Some(event) = self.heartbeat_rx.recv().await {
+            match event {
+                LifecycleEvent::Heartbeat(heartbeat) => self.record(heartbeat),
+                LifecycleEvent::Shutdown => break,
+            }
+        }
+        self.shutdown().await.expect("shutdown should exit cleanly")
+    }
+
+    pub fn record(&mut self, heartbeat: ValidActivityHeartbeat) {
         match self.heartbeat_processors.get(&heartbeat.task_token) {
             Some(handle) => {
                 handle
@@ -55,26 +117,15 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
                     .expect("heartbeat channel can't be dropped if we are inside this method");
             }
             None => {
-                let heartbeat_timeout: time::Duration = heartbeat
-                    .heartbeat_timeout
-                    .ok_or(ActivityHeartbeatError::HeartbeatTimeoutNotSet)?
-                    .try_into()
-                    .or(Err(ActivityHeartbeatError::InvalidHeartbeatTimeout))?;
-                let delay = heartbeat_timeout.div(2);
                 let (heartbeat_tx, heartbeat_rx) = channel(heartbeat.details);
                 let processor = ActivityHeartbeatProcessor {
                     task_token: heartbeat.task_token.clone(),
-                    delay,
+                    delay: heartbeat.delay,
                     heartbeat_rx,
                     shutdown_rx: self.shutdown_rx.clone(),
                     server_gateway: self.server_gateway.clone(),
                 };
-                let p = self.heartbeat_processors.clone();
-                let tt = heartbeat.task_token.clone();
-                let join_handle = tokio::spawn(async move {
-                    processor.run().await;
-                    p.remove(&tt);
-                });
+                let join_handle = tokio::spawn(processor.run());
                 let handle = ActivityHeartbeatProcessorHandle {
                     heartbeat_tx,
                     join_handle,
@@ -83,10 +134,9 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
                     .insert(heartbeat.task_token, handle);
             }
         }
-        Ok(())
     }
 
-    pub async fn shutdown(&self) {
+    pub async fn shutdown(mut self) -> Result<(), JoinError> {
         self.shutdown_tx
             .send(true)
             .expect("shutdown channel can't be dropped before shutdown is complete");
@@ -157,7 +207,8 @@ mod test {
             .times(2);
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
         let fake_task_token = vec![1, 2, 3];
-        for i in 0..100 {
+        for i in 0..30 {
+            sleep(Duration::from_millis(10)).await;
             hm.record(ActivityHeartbeat {
                 task_token: fake_task_token.clone(),
                 details: vec![Payload {

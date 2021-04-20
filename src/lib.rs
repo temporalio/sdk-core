@@ -31,7 +31,7 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::activity::ActivityHeartbeatManager;
+use crate::activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle};
 use crate::errors::ActivityHeartbeatError;
 use crate::{
     errors::{ShutdownErr, WorkflowUpdateError},
@@ -184,7 +184,7 @@ struct CoreSDK<WP> {
     /// or when cancelling an activity in try-cancel/abandon mode). They queue here.
     pending_activations: PendingActivations,
 
-    activity_heartbeat_manager: ActivityHeartbeatManager<WP>,
+    activity_heartbeat_manager_handle: ActivityHeartbeatManagerHandle,
     /// Activities that have been issued to lang but not yet completed
     outstanding_activity_tasks: DashSet<Vec<u8>>,
     /// Has shutdown been called?
@@ -375,7 +375,7 @@ where
         &self,
         details: ActivityHeartbeat,
     ) -> Result<(), ActivityHeartbeatError> {
-        self.activity_heartbeat_manager.record(details)
+        self.activity_heartbeat_manager_handle.record(details)
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {
@@ -386,7 +386,7 @@ where
         self.shutdown_requested.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_one();
         self.workflow_machines.shutdown();
-        self.activity_heartbeat_manager.shutdown().await;
+        self.activity_heartbeat_manager_handle.shutdown().await;
     }
 }
 
@@ -407,7 +407,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             shutdown_notify: Notify::new(),
             workflow_task_complete_notify: Notify::new(),
             activity_task_complete_notify: Notify::new(),
-            activity_heartbeat_manager: ActivityHeartbeatManager::new(sg),
+            activity_heartbeat_manager_handle: ActivityHeartbeatManager::new(sg),
         }
     }
 
