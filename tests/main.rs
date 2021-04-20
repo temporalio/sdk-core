@@ -59,7 +59,6 @@ mod integ_tests {
         temporal_sdk_core::init(CoreInitOptions {
             gateway_opts,
             evict_after_pending_cleared: false,
-            // TODO: Configurable / sensible number
             max_outstanding_workflow_tasks: 5,
         })
         .await

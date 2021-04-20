@@ -70,7 +70,6 @@ pub(crate) fn fake_core_from_mock_sg(
                     long_poll_timeout: Default::default(),
                 },
                 evict_after_pending_cleared: true,
-                // TODO: Make a sensible number here?
                 max_outstanding_workflow_tasks: 5,
             },
         ),
@@ -84,12 +83,6 @@ pub fn build_mock_sg(
     t: &mut TestHistoryBuilder,
     response_batches: &[usize],
 ) -> MockServerGatewayApis {
-    let run_id = t.get_orig_run_id();
-    let wf = Some(WorkflowExecution {
-        workflow_id: wf_id.to_string(),
-        run_id: run_id.to_string(),
-    });
-
     let full_hist_info = t.get_full_history_info().unwrap();
     // Ensure no response batch is trying to return more tasks than the history contains
     for rb_wf_num in response_batches {
@@ -103,16 +96,7 @@ pub fn build_mock_sg(
 
     let responses: Vec<_> = response_batches
         .iter()
-        .map(|to_task_num| {
-            let batch = t.get_history_info(*to_task_num).unwrap().events().to_vec();
-            let task_token: [u8; 16] = thread_rng().gen();
-            PollWorkflowTaskQueueResponse {
-                history: Some(History { events: batch }),
-                workflow_execution: wf.clone(),
-                task_token: task_token.to_vec(),
-                ..Default::default()
-            }
-        })
+        .map(|to_task_num| hist_to_poll_resp(t, wf_id, *to_task_num))
         .collect();
 
     let mut tasks = VecDeque::from(responses);
@@ -126,6 +110,26 @@ pub fn build_mock_sg(
         .expect_complete_workflow_task()
         .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
     mock_gateway
+}
+
+pub fn hist_to_poll_resp(
+    t: &mut TestHistoryBuilder,
+    wf_id: &str,
+    to_task_num: usize,
+) -> PollWorkflowTaskQueueResponse {
+    let run_id = t.get_orig_run_id();
+    let wf = WorkflowExecution {
+        workflow_id: wf_id.to_string(),
+        run_id: run_id.to_string(),
+    };
+    let batch = t.get_history_info(to_task_num).unwrap().events().to_vec();
+    let task_token: [u8; 16] = thread_rng().gen();
+    PollWorkflowTaskQueueResponse {
+        history: Some(History { events: batch }),
+        workflow_execution: Some(wf.clone()),
+        task_token: task_token.to_vec(),
+        ..Default::default()
+    }
 }
 
 type AsserterWithReply<'a> = (&'a dyn Fn(&WfActivation), wf_activation_completion::Status);

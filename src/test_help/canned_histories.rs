@@ -929,3 +929,37 @@ pub fn two_signals(sig_1_id: &str, sig_2_id: &str) -> TestHistoryBuilder {
     t.add_workflow_task_scheduled_and_started();
     t
 }
+
+/// Can produce long histories that look like below. `num_tasks` must be > 1.
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// --- Repeat num_tasks - 1 (the above is counted) times ---
+///  x: EVENT_TYPE_TIMER_STARTED
+///  x: EVENT_TYPE_TIMER_FIRED
+///  x: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  x: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// --- End repeat ---
+/// 4 + (num tasks - 1) * 4 + 1: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+pub fn long_sequential_timers(num_tasks: usize) -> TestHistoryBuilder {
+    assert!(num_tasks > 1);
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+
+    for i in 1..num_tasks {
+        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        t.add(
+            EventType::TimerFired,
+            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                started_event_id: timer_started_event_id,
+                timer_id: format!("timer-{}", i),
+            }),
+        );
+        t.add_full_wf_task();
+    }
+
+    t.add_workflow_execution_completed();
+    t
+}

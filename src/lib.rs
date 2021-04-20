@@ -30,11 +30,11 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::pollers::PollWorkflowTaskBuffer;
 use crate::{
     errors::{ShutdownErr, WorkflowUpdateError},
     machines::{EmptyWorkflowCommandErr, WFCommand},
-    pending_activations::{PendingActivation, PendingActivations},
+    pending_activations::PendingActivations,
+    pollers::PollWorkflowTaskBuffer,
     protos::{
         coresdk::{
             activity_result::{self as ar, activity_result},
@@ -184,14 +184,11 @@ where
         // The poll needs to be in a loop because we can't guarantee tail call optimization in Rust
         // (simply) and we really, really need that for long-poll retries.
         loop {
-            // We must first check if there are pending workflow tasks for workflows that are
-            // currently replaying, and issue those tasks before bothering the server.
-            if let Some(pa) = self
-                .pending_activations
-                .pop()
-                .and_then(|p| self.prepare_pending_activation(p).transpose())
-            {
-                return pa;
+            // We must first check if there are pending workflow activations for workflows that are
+            // currently replaying or otherwise need immediate jobs, and issue those before
+            // bothering the server.
+            if let Some(pa) = self.pending_activations.pop() {
+                return Ok(pa);
             }
 
             if self.shutdown_requested.load(Ordering::SeqCst) {
@@ -386,24 +383,6 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         }
     }
 
-    /// Given a pending activation, prepare it to be sent to lang
-    #[instrument(skip(self))]
-    fn prepare_pending_activation(
-        &self,
-        pa: PendingActivation,
-    ) -> Result<Option<WfActivation>, PollWfError> {
-        if let Some(next_activation) =
-            self.access_wf_machine(&pa.run_id, move |mgr| mgr.get_next_activation())?
-        {
-            return Ok(Some(self.finalize_next_activation(
-                next_activation,
-                pa.task_token,
-                true,
-            )));
-        }
-        Ok(None)
-    }
-
     /// Prepare an activation we've just pulled out of a workflow machines instance to be shipped
     /// to the lang sdk
     fn finalize_next_activation(
@@ -412,12 +391,6 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         task_token: Vec<u8>,
         from_pending: bool,
     ) -> WfActivation {
-        if next_a.more_activations_needed {
-            self.add_pending_activation(PendingActivation {
-                run_id: next_a.get_run_id().to_owned(),
-                task_token: task_token.clone(),
-            });
-        }
         next_a.finalize(task_token, from_pending)
     }
 
@@ -463,13 +436,8 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
                     .to_owned(),
                 completion: None,
             })?;
-        let push_result = self.push_lang_commands(&run_id, cmds)?;
-        if push_result.has_new_lang_jobs {
-            self.add_pending_activation(PendingActivation {
-                run_id: run_id.to_string(),
-                task_token: task_token.clone(),
-            });
-        }
+        let push_result = self.push_lang_commands(run_id, cmds)?;
+        self.enqueue_next_activation_if_needed(run_id, task_token.clone())?;
         // We only actually want to send commands back to the server if there are
         // no more pending activations -- in other words the lang SDK has caught
         // up on replay.
@@ -610,22 +578,36 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         }
     }
 
-    /// Enqueue a new pending activation, and notify ourselves
-    fn add_pending_activation(&self, pa: PendingActivation) {
-        self.pending_activations.push(pa);
+    /// Check if the machine needs another activation and queue it up if there is one
+    fn enqueue_next_activation_if_needed(
+        &self,
+        run_id: &str,
+        task_token: Vec<u8>,
+    ) -> Result<(), CompleteWfError> {
+        if let Some(next_activation) =
+            self.access_wf_machine(run_id, move |mgr| mgr.get_next_activation())?
+        {
+            self.pending_activations.push(self.finalize_next_activation(
+                next_activation,
+                task_token,
+                true,
+            ));
+        }
         self.workflow_task_complete_notify.notify_one();
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::machines::test_help::{build_mock_sg, fake_core_from_mock_sg};
     use crate::{
         machines::test_help::{
             build_fake_core, gen_assert_and_fail, gen_assert_and_reply, poll_and_reply,
             EvictionMode, FakeCore, TestHistoryBuilder,
         },
+        machines::test_help::{build_mock_sg, fake_core_from_mock_sg, hist_to_poll_resp},
+        pollers::MockServerGatewayApis,
         protos::{
             coresdk::{
                 activity_result::ActivityResult,
@@ -640,13 +622,16 @@ mod test {
                 },
             },
             temporal::api::{
-                enums::v1::EventType, workflowservice::v1::RespondWorkflowTaskFailedResponse,
+                enums::v1::EventType,
+                workflowservice::v1::{
+                    RespondWorkflowTaskCompletedResponse, RespondWorkflowTaskFailedResponse,
+                },
             },
         },
         test_help::canned_histories,
     };
     use rstest::{fixture, rstest};
-    use std::sync::atomic::AtomicU64;
+    use std::{collections::VecDeque, str::FromStr, sync::atomic::AtomicU64};
 
     #[fixture(hist_batches = &[])]
     fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
@@ -1515,5 +1500,49 @@ mod test {
             ],
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn max_concurrent_wft_respected() {
+        // Create long histories for three workflows
+        let mut t1 = canned_histories::long_sequential_timers(20);
+        let mut t2 = canned_histories::long_sequential_timers(20);
+        let mut tasks = VecDeque::from(vec![
+            hist_to_poll_resp(&mut t1, "wf1", 100),
+            hist_to_poll_resp(&mut t2, "wf2", 100),
+        ]);
+        // Limit the core to two outstanding workflow tasks, hence we should only see polling
+        // happen twice, since we will not actually finish the two workflows
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_poll_workflow_task()
+            .times(2)
+            .returning(move || Ok(tasks.pop_front().unwrap()));
+        // Response not really important here
+        mock_gateway
+            .expect_complete_workflow_task()
+            .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
+
+        let core = CoreSDK::new(
+            mock_gateway,
+            CoreInitOptions {
+                gateway_opts: ServerGatewayOptions {
+                    target_url: Url::from_str("https://fake").unwrap(),
+                    namespace: "".to_string(),
+                    task_queue: "task_queue".to_string(),
+                    identity: "".to_string(),
+                    worker_binary_id: "".to_string(),
+                    long_poll_timeout: Default::default(),
+                },
+                evict_after_pending_cleared: true,
+                max_outstanding_workflow_tasks: 2,
+            },
+        );
+
+        // Poll twice in a row before completing -- we should be at limit
+        let r1 = core.poll_workflow_task().await.unwrap();
+        let r2 = core.poll_workflow_task().await.unwrap();
+        // This one should block forever
+        // let r3 = core.poll_workflow_task().await.unwrap();
     }
 }
