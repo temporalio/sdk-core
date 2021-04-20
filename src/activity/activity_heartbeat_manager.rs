@@ -3,6 +3,7 @@ use crate::protos::coresdk::PayloadsExt;
 use crate::protos::coresdk::{common, ActivityHeartbeat};
 use crate::ServerGatewayApis;
 use dashmap::DashMap;
+use futures::future::join_all;
 use std::convert::TryInto;
 use std::ops::Div;
 use std::sync::Arc;
@@ -27,7 +28,6 @@ struct ActivityHeartbeatProcessorHandle {
 }
 
 struct ActivityHeartbeatProcessor<SG> {
-    heartbeat_processors: Arc<DashMap<Vec<u8>, ActivityHeartbeatProcessorHandle>>,
     task_token: Vec<u8>,
     delay: time::Duration,
     heartbeat_rx: Receiver<Vec<common::Payload>>,
@@ -63,14 +63,18 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
                 let delay = heartbeat_timeout.div(2);
                 let (heartbeat_tx, heartbeat_rx) = channel(heartbeat.details);
                 let processor = ActivityHeartbeatProcessor {
-                    heartbeat_processors: self.heartbeat_processors.clone(),
                     task_token: heartbeat.task_token.clone(),
                     delay,
                     heartbeat_rx,
                     shutdown_rx: self.shutdown_rx.clone(),
                     server_gateway: self.server_gateway.clone(),
                 };
-                let join_handle = tokio::spawn(processor.run());
+                let p = self.heartbeat_processors.clone();
+                let tt = heartbeat.task_token.clone();
+                let join_handle = tokio::spawn(async move {
+                    processor.run().await;
+                    p.remove(&tt);
+                });
                 let handle = ActivityHeartbeatProcessorHandle {
                     heartbeat_tx,
                     join_handle,
@@ -86,6 +90,16 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
         self.shutdown_tx
             .send(true)
             .expect("shutdown channel can't be dropped before shutdown is complete");
+        let mut pending_handles = vec![];
+        for v in self.heartbeat_processors.iter() {
+            self.heartbeat_processors.remove(v.key()).map(|v| {
+                pending_handles.push(v.1.join_handle);
+            });
+        }
+        join_all(pending_handles)
+            .await
+            .into_iter()
+            .for_each(|r| r.expect("Doesn't fail"));
     }
 }
 
@@ -123,12 +137,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
                 break;
             }
         }
-        // Doing cleanup at the end of the processor loop ensures that we are not leaking memory.
-        // There is a small race condition possible where new heartbeat may come in before this line is called,
-        // in this case old processor will be used once again and new one will be created for the next heartbeat,
-        // resulting in no delay between two heartbeats, and no lost data. This is fine because such race
-        // condition should be extremely rare.
-        self.heartbeat_processors.remove(&self.task_token);
     }
 }
 
@@ -160,7 +168,6 @@ mod test {
             })
             .expect("hearbeat recording should not fail");
         }
-        sleep(Duration::from_secs(1)).await;
         hm.shutdown().await;
     }
 }

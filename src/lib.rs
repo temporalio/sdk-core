@@ -400,14 +400,14 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             workflow_task_tokens: Default::default(),
             workflows_last_task_failed: Default::default(),
             outstanding_workflow_tasks: Default::default(),
-            wf_task_poll_buffer: PollWorkflowTaskBuffer::new(sg),
+            wf_task_poll_buffer: PollWorkflowTaskBuffer::new(sg.clone()),
             pending_activations: Default::default(),
             outstanding_activity_tasks: Default::default(),
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
             workflow_task_complete_notify: Notify::new(),
             activity_task_complete_notify: Notify::new(),
-            activity_heartbeat_manager: ActivityHeartbeatManager::new(sg.clone()),
+            activity_heartbeat_manager: ActivityHeartbeatManager::new(sg),
         }
     }
 
