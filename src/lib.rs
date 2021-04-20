@@ -162,8 +162,8 @@ struct CoreSDK<WP> {
     /// a poll is ongoing
     wf_task_poll_buffer: PollWorkflowTaskBuffer,
 
-    /// Workflows that are currently under replay will queue here, indicating that there are more
-    /// workflow tasks / activations to be performed.
+    /// Workflows may generate new activations immediately upon completion (ex: while replaying,
+    /// or when cancelling an activity in try-cancel/abandon mode). They queue here.
     pending_activations: PendingActivations,
 
     /// Has shutdown been called?
@@ -631,7 +631,9 @@ mod test {
         test_help::canned_histories,
     };
     use rstest::{fixture, rstest};
+    use std::time::Duration;
     use std::{collections::VecDeque, str::FromStr, sync::atomic::AtomicU64};
+    use tokio::time::sleep;
 
     #[fixture(hist_batches = &[])]
     fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
@@ -1541,8 +1543,40 @@ mod test {
 
         // Poll twice in a row before completing -- we should be at limit
         let r1 = core.poll_workflow_task().await.unwrap();
-        let r2 = core.poll_workflow_task().await.unwrap();
-        // This one should block forever
-        // let r3 = core.poll_workflow_task().await.unwrap();
+        let _r2 = core.poll_workflow_task().await.unwrap();
+        // Now we immediately poll for new work, and complete one of the existing activations after
+        // a small delay. The poll must not unblock until the completion goes through.
+        let (_, mut r1) = tokio::join! {
+            async {
+                sleep(Duration::from_millis(100)).await;
+                core.complete_workflow_task(WfActivationCompletion::from_status(
+                    r1.task_token,
+                    workflow_completion::Success::from_cmds(vec![StartTimer {
+                        timer_id: "timer-1".to_string(),
+                        ..Default::default()
+                    }
+                    .into()]).into()
+                )).await.unwrap();
+            },
+            async {
+                core.poll_workflow_task().await.unwrap()
+            }
+        };
+
+        // Since we never did anything with r2, all subsequent activations should be for wf1
+        for i in 2..19 {
+            core.complete_workflow_task(WfActivationCompletion::from_status(
+                r1.task_token,
+                workflow_completion::Success::from_cmds(vec![StartTimer {
+                    timer_id: format!("timer-{}", i),
+                    ..Default::default()
+                }
+                .into()])
+                .into(),
+            ))
+            .await
+            .unwrap();
+            r1 = core.poll_workflow_task().await.unwrap();
+        }
     }
 }

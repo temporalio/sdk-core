@@ -126,7 +126,7 @@ pub fn hist_to_poll_resp(
     let task_token: [u8; 16] = thread_rng().gen();
     PollWorkflowTaskQueueResponse {
         history: Some(History { events: batch }),
-        workflow_execution: Some(wf.clone()),
+        workflow_execution: Some(wf),
         task_token: task_token.to_vec(),
         ..Default::default()
     }
