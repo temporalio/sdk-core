@@ -87,16 +87,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
         self.shutdown_tx
             .send(true)
             .expect("shutdown channel can't be dropped before shutdown is complete");
-        let mut pending_handles = vec![];
-        for v in self.heartbeat_processors.iter() {
-            self.heartbeat_processors.remove(v.key()).map(|v| {
-                pending_handles.push(v.1.join_handle);
-            });
-        }
-        join_all(pending_handles)
-            .await
-            .into_iter()
-            .for_each(|r| r.expect("Doesn't fail"));
     }
 }
 
@@ -140,5 +130,37 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
         // resulting in no delay between two heartbeats, and no lost data. This is fine because such race
         // condition should be extremely rare.
         self.heartbeat_processors.remove(&self.task_token);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::pollers::MockServerGatewayApis;
+    use crate::protos::coresdk::common::Payload;
+    use crate::protos::temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn process_heartbeats_and_shutdown() {
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_record_activity_heartbeat()
+            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
+            .times(2);
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
+        let fake_task_token = vec![1, 2, 3];
+        for i in 0..100 {
+            hm.record(ActivityHeartbeat {
+                task_token: fake_task_token.clone(),
+                details: vec![Payload {
+                    metadata: Default::default(),
+                    data: vec![i],
+                }],
+                heartbeat_timeout: Some(Duration::from_millis(1000).into()),
+            });
+        }
+        sleep(Duration::from_secs(1)).await;
+        hm.shutdown().await;
     }
 }
