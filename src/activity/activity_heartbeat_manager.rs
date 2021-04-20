@@ -3,7 +3,6 @@ use crate::protos::coresdk::PayloadsExt;
 use crate::protos::coresdk::{common, ActivityHeartbeat};
 use crate::ServerGatewayApis;
 use dashmap::DashMap;
-use futures::future::join_all;
 use std::convert::TryInto;
 use std::ops::Div;
 use std::sync::Arc;
@@ -158,7 +157,8 @@ mod test {
                     data: vec![i],
                 }],
                 heartbeat_timeout: Some(Duration::from_millis(1000).into()),
-            });
+            })
+            .expect("hearbeat recording should not fail");
         }
         sleep(Duration::from_secs(1)).await;
         hm.shutdown().await;
