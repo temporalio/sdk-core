@@ -20,7 +20,8 @@ pub(crate) struct ActivityHeartbeatManager<SG> {
     /// This map contains sender channel for each activity, identified by the task token,
     /// that has an active heartbeat processor.
     heartbeat_processors: HashMap<Vec<u8>, ActivityHeartbeatProcessorHandle>,
-    heartbeat_rx: UnboundedReceiver<LifecycleEvent>,
+    events_tx: UnboundedSender<LifecycleEvent>,
+    events_rx: UnboundedReceiver<LifecycleEvent>,
     shutdown_tx: Sender<bool>,
     shutdown_rx: Receiver<bool>,
     server_gateway: Arc<SG>,
@@ -44,14 +45,16 @@ struct ActivityHeartbeatProcessor<SG> {
     task_token: Vec<u8>,
     delay: time::Duration,
     grace_period: time::Duration,
-    heartbeat_rx: Receiver<Vec<common::Payload>>,
-    shutdown_rx: Receiver<bool>,
+    heartbeat_rx: Receiver<Vec<common::Payload>>, // Used to receive heartbeat events.
+    shutdown_rx: Receiver<bool>,                  // Used to receive shutdown notifications.
+    events_tx: UnboundedSender<LifecycleEvent>, // Used to send CleanupProcessor event at the end of the processor loop.
     server_gateway: Arc<SG>,
 }
 
 #[derive(Debug)]
 pub enum LifecycleEvent {
     Heartbeat(ValidActivityHeartbeat),
+    CleanupProcessor(Vec<u8>),
     Shutdown,
 }
 
@@ -109,27 +112,31 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
     /// which allows to send new heartbeats and initiate the shutdown.
     pub fn new(sg: Arc<SG>) -> ActivityHeartbeatManagerHandle {
         let (shutdown_tx, shutdown_rx) = channel(false);
-        let (heartbeat_tx, heartbeat_rx) = unbounded_channel();
+        let (events_tx, events_rx) = unbounded_channel();
         let s = Self {
             heartbeat_processors: Default::default(),
-            heartbeat_rx,
+            events_tx: events_tx.clone(),
+            events_rx,
             shutdown_tx,
             shutdown_rx,
             server_gateway: sg,
         };
         let join_handle = tokio::spawn(s.lifecycle());
         ActivityHeartbeatManagerHandle {
-            events: heartbeat_tx,
+            events: events_tx,
             join_handle: Mutex::new(Some(join_handle)),
         }
     }
 
     /// Main loop, that handles all heartbeat requests and dispatches them to processors.
     async fn lifecycle(mut self) {
-        while let Some(event) = self.heartbeat_rx.recv().await {
+        while let Some(event) = self.events_rx.recv().await {
             match event {
                 LifecycleEvent::Heartbeat(heartbeat) => self.record(heartbeat),
                 LifecycleEvent::Shutdown => break,
+                LifecycleEvent::CleanupProcessor(task_token) => {
+                    self.heartbeat_processors.remove(&task_token);
+                }
             }
         }
         self.shutdown().await.expect("shutdown should exit cleanly")
@@ -154,6 +161,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
                     grace_period: Duration::from_millis(100),
                     heartbeat_rx,
                     shutdown_rx: self.shutdown_rx.clone(),
+                    events_tx: self.events_tx.clone(),
                     server_gateway: self.server_gateway.clone(),
                 };
                 let join_handle = tokio::spawn(processor.run());
@@ -219,6 +227,9 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
                 }
             };
         }
+        self.events_tx
+            .send(LifecycleEvent::CleanupProcessor(self.task_token))
+            .expect("cleanup requests should not be dropped");
     }
 }
 
@@ -245,7 +256,7 @@ mod test {
         // requests should be aggregated and last one should be sent to the server in 500ms (1/2 of heartbeat timeout).
         for i in 0u8..40 {
             sleep(Duration::from_millis(10)).await;
-            record_heartbeat(&hm, fake_task_token.clone(), i);
+            record_heartbeat(&hm, fake_task_token.clone(), i, Duration::from_millis(1000));
         }
         hm.shutdown().await;
     }
@@ -264,8 +275,25 @@ mod test {
         // Sending heartbeat requests for 400ms, this should send first hearbeat right away, and all other
         // requests should be aggregated and last one should be sent to the server in 500ms (1/2 of heartbeat timeout).
         for i in 0u8..u8::MAX {
-            record_heartbeat(&hm, fake_task_token.clone(), i);
+            record_heartbeat(&hm, fake_task_token.clone(), i, Duration::from_millis(1000));
         }
+        hm.shutdown().await;
+    }
+
+    /// This test reports one heartbeat and waits until processor times out and exits then sends another one.
+    /// Expectation is that new processor should be spawned and heartbeat shouldn't get lost.
+    #[tokio::test]
+    async fn report_heartbeat_after_timeout() {
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_record_activity_heartbeat()
+            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
+            .times(2);
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
+        let fake_task_token = vec![1, 2, 3];
+        record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
+        sleep(Duration::from_millis(500)).await;
+        record_heartbeat(&hm, fake_task_token.clone(), 1, Duration::from_millis(100));
         hm.shutdown().await;
     }
 
@@ -323,14 +351,19 @@ mod test {
         hm.shutdown().await;
     }
 
-    fn record_heartbeat(hm: &ActivityHeartbeatManagerHandle, task_token: Vec<u8>, i: u8) {
+    fn record_heartbeat(
+        hm: &ActivityHeartbeatManagerHandle,
+        task_token: Vec<u8>,
+        i: u8,
+        delay: Duration,
+    ) {
         hm.record(ActivityHeartbeat {
             task_token,
             details: vec![Payload {
                 metadata: Default::default(),
                 data: vec![i],
             }],
-            heartbeat_timeout: Some(Duration::from_millis(1000).into()),
+            heartbeat_timeout: Some(delay.into()),
         })
         .expect("hearbeat recording should not fail");
     }
