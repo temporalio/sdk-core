@@ -297,6 +297,7 @@ mod test {
         hm.shutdown().await;
     }
 
+    /// Recording new heartbeats after shutdown is not allowed, and will result in error.
     #[tokio::test]
     async fn record_after_shutdown() {
         let mut mock_gateway = MockServerGatewayApis::new();
