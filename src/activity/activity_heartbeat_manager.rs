@@ -145,16 +145,10 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
         self.shutdown_tx
             .send(true)
             .expect("shutdown channel can't be dropped before shutdown is complete");
-        let mut pending_handles = vec![];
-        for v in self.heartbeat_processors.iter() {
-            self.heartbeat_processors.remove(v.key()).map(|v| {
-                pending_handles.push(v.1.join_handle);
-            });
+        for v in self.heartbeat_processors.drain() {
+            v.1.join_handle.await?;
         }
-        join_all(pending_handles)
-            .await
-            .into_iter()
-            .for_each(|r| r.expect("Doesn't fail"));
+        Ok(())
     }
 }
 
