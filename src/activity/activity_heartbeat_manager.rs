@@ -39,6 +39,7 @@ struct ActivityHeartbeatProcessorHandle {
     join_handle: JoinHandle<()>,
 }
 
+/// Heartbeat processor, that aggregates and periodically sends heartbeat requests for a single activity to the server.
 struct ActivityHeartbeatProcessor<SG> {
     task_token: Vec<u8>,
     delay: time::Duration,
