@@ -2,6 +2,9 @@ mod poll_buffer;
 
 pub use poll_buffer::PollWorkflowTaskBuffer;
 
+use crate::protos::temporal::api::workflowservice::v1::{
+    RecordActivityTaskHeartbeatRequest, RecordActivityTaskHeartbeatResponse,
+};
 use crate::{
     machines::ProtoCommand,
     protos::temporal::api::{
@@ -135,6 +138,15 @@ pub trait ServerGatewayApis {
         task_token: Vec<u8>,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse>;
+
+    /// Report activity task heartbeat by sending details to the server. `task_token` contains activity
+    /// identifier that would've been received from [crate::Core::poll_activity_task] API.
+    /// `result` contains `cancel_requested` flag, which if set to true indicates that activity has been cancelled.
+    async fn record_activity_heartbeat(
+        &self,
+        task_token: Vec<u8>,
+        details: Option<Payloads>,
+    ) -> Result<RecordActivityTaskHeartbeatResponse>;
 
     /// Cancel activity task by sending response to the server. `task_token` contains activity
     /// identifier that would've been received from [crate::Core::poll_activity_task] API. `details`
@@ -282,6 +294,24 @@ impl ServerGatewayApis for ServerGateway {
             .respond_activity_task_completed(RespondActivityTaskCompletedRequest {
                 task_token,
                 result,
+                identity: self.opts.identity.clone(),
+                namespace: self.opts.namespace.clone(),
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn record_activity_heartbeat(
+        &self,
+        task_token: Vec<u8>,
+        details: Option<Payloads>,
+    ) -> Result<RecordActivityTaskHeartbeatResponse> {
+        Ok(self
+            .service
+            .clone()
+            .record_activity_task_heartbeat(RecordActivityTaskHeartbeatRequest {
+                task_token,
+                details,
                 identity: self.opts.identity.clone(),
                 namespace: self.opts.namespace.clone(),
             })
@@ -445,6 +475,13 @@ mod manual_mock {
                 signal_name: String,
                 payloads: Option<Payloads>,
             ) -> impl Future<Output = Result<SignalWorkflowExecutionResponse>> + Send + 'b
+                where 'a: 'b, Self: 'b;
+
+            fn record_activity_heartbeat<'a, 'b>(
+               &self,
+               task_token: Vec<u8>,
+               details: Option<Payloads>,
+            ) -> impl Future<Output = Result<RecordActivityTaskHeartbeatResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;
         }
     }

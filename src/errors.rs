@@ -143,3 +143,16 @@ pub enum CompleteActivityError {
     #[error("Unhandled error when calling the temporal server: {0:?}")]
     TonicError(#[from] tonic::Status),
 }
+
+/// Errors thrown by [crate::Core::record_activity_heartbeat] and [crate::Core::get_last_activity_heartbeat]
+#[derive(thiserror::Error, Debug)]
+pub enum ActivityHeartbeatError {
+    #[error("Heartbeat request must contain heartbeat timeout.")]
+    HeartbeatTimeoutNotSet,
+    #[error("Heartbeat request must contain valid heartbeat timeout.")]
+    InvalidHeartbeatTimeout,
+    #[error("New heartbeat requests are not accepted while shutting down")]
+    ShuttingDown,
+    #[error("Unable to dispatch heartbeat.")]
+    SendError,
+}

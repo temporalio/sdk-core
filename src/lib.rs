@@ -12,6 +12,7 @@ extern crate tracing;
 
 pub mod protos;
 
+mod activity;
 pub(crate) mod core_tracing;
 mod errors;
 mod machines;
@@ -30,6 +31,8 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
+use crate::activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle};
+use crate::errors::ActivityHeartbeatError;
 use crate::{
     errors::{ShutdownErr, WorkflowUpdateError},
     machines::{EmptyWorkflowCommandErr, WFCommand},
@@ -98,19 +101,32 @@ pub trait Core: Send + Sync {
         completion: ActivityTaskCompletion,
     ) -> Result<(), CompleteActivityError>;
 
-    /// Indicate that a long running activity is still making progress
-    async fn send_activity_heartbeat(&self, task_token: ActivityHeartbeat) -> Result<(), ()>;
+    /// Notify workflow that activity is still alive. Long running activities that take longer than
+    /// `activity_heartbeat_timeout` to finish must call this function in order to report progress,
+    /// otherwise activity will timeout and new attempt will be scheduled.
+    /// `result` contains latest known activity cancelation status.
+    /// Note that heartbeat requests are getting batched and are sent to the server periodically,
+    /// this function is going to return immediately and request will be queued in the core.
+    /// Unlike java/go SDKs we are not going to return cancellation status as part of heartbeat response
+    /// and instead will send it as a separate activity task to the lang, decoupling heartbeat and
+    /// cancellation processing.
+    /// For now activity still needs to heartbeat if it wants to receive cancellation requests.
+    /// In the future we are going to change this and will dispatch cancellations more proactively.
+    async fn record_activity_heartbeat(
+        &self,
+        details: ActivityHeartbeat,
+    ) -> Result<(), ActivityHeartbeatError>;
 
     /// Returns core's instance of the [ServerGatewayApis] implementor it is using.
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis>;
 
-    /// Eventually ceases all polling of the server. [Core::poll_workflow_task] should be called
-    /// until it returns [PollWfError::ShutDown] to ensure that any workflows which are still
-    /// undergoing replay have an opportunity to finish. This means that the lang sdk will need to
-    /// call [Core::complete_workflow_task] for those workflows until they are done. At that point,
-    /// the lang SDK can end the process, or drop the [Core] instance, which will close the
-    /// connection.
-    fn shutdown(&self);
+    /// Initiates async shutdown procedure, eventually ceases all polling of the server.
+    /// [Core::poll_workflow_task] should be called until it returns [PollWfError::ShutDown]
+    /// to ensure that any workflows which are still undergoing replay have an opportunity to finish.
+    /// This means that the lang sdk will need to call [Core::complete_workflow_task] for those
+    /// workflows until they are done. At that point, the lang SDK can end the process,
+    /// or drop the [Core] instance, which will close the connection.
+    async fn shutdown(&self);
 }
 
 /// Holds various configuration information required to call [init]
@@ -168,9 +184,9 @@ struct CoreSDK<WP> {
     /// or when cancelling an activity in try-cancel/abandon mode). They queue here.
     pending_activations: PendingActivations,
 
+    activity_heartbeat_manager_handle: ActivityHeartbeatManagerHandle,
     /// Activities that have been issued to lang but not yet completed
     outstanding_activity_tasks: DashSet<Vec<u8>>,
-
     /// Has shutdown been called?
     shutdown_requested: AtomicBool,
     /// Used to wake up future which checks shutdown state
@@ -355,18 +371,22 @@ where
         Ok(())
     }
 
-    async fn send_activity_heartbeat(&self, _task_token: ActivityHeartbeat) -> Result<(), ()> {
-        unimplemented!()
+    async fn record_activity_heartbeat(
+        &self,
+        details: ActivityHeartbeat,
+    ) -> Result<(), ActivityHeartbeatError> {
+        self.activity_heartbeat_manager_handle.record(details)
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {
         self.server_gateway.clone()
     }
 
-    fn shutdown(&self) {
+    async fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_one();
         self.workflow_machines.shutdown();
+        self.activity_heartbeat_manager_handle.shutdown().await;
     }
 }
 
@@ -380,13 +400,14 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             workflow_task_tokens: Default::default(),
             workflows_last_task_failed: Default::default(),
             outstanding_workflow_tasks: Default::default(),
-            wf_task_poll_buffer: PollWorkflowTaskBuffer::new(sg),
+            wf_task_poll_buffer: PollWorkflowTaskBuffer::new(sg.clone()),
             pending_activations: Default::default(),
             outstanding_activity_tasks: Default::default(),
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
             workflow_task_complete_notify: Notify::new(),
             activity_task_complete_notify: Notify::new(),
+            activity_heartbeat_manager_handle: ActivityHeartbeatManager::new(sg),
         }
     }
 
@@ -1257,7 +1278,7 @@ mod test {
         let res = single_timer_setup.inner.poll_workflow_task().await.unwrap();
         assert_eq!(res.jobs.len(), 1);
 
-        single_timer_setup.inner.shutdown();
+        single_timer_setup.inner.shutdown().await;
         assert_matches!(
             single_timer_setup
                 .inner
