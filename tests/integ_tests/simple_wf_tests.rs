@@ -903,7 +903,7 @@ async fn shutdown_aborts_actively_blocked_poll() {
         core.poll_workflow_task().await.unwrap_err(),
         PollWfError::ShutDown
     );
-    let _ = handle.await;
+    handle.await.unwrap();
     // Ensure double-shutdown doesn't explode
     core.shutdown().await;
     assert_matches!(

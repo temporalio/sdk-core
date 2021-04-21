@@ -120,12 +120,12 @@ pub trait Core: Send + Sync {
     /// Returns core's instance of the [ServerGatewayApis] implementor it is using.
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis>;
 
-    /// Eventually ceases all polling of the server. [Core::poll_workflow_task] should be called
-    /// until it returns [PollWfError::ShutDown] to ensure that any workflows which are still
-    /// undergoing replay have an opportunity to finish. This means that the lang sdk will need to
-    /// call [Core::complete_workflow_task] for those workflows until they are done. At that point,
-    /// the lang SDK can end the process, or drop the [Core] instance, which will close the
-    /// connection.
+    /// Initiates async shutdown procedure, eventually ceases all polling of the server.
+    /// [Core::poll_workflow_task] should be called until it returns [PollWfError::ShutDown]
+    /// to ensure that any workflows which are still undergoing replay have an opportunity to finish.
+    /// This means that the lang sdk will need to call [Core::complete_workflow_task] for those
+    /// workflows until they are done. At that point, the lang SDK can end the process,
+    /// or drop the [Core] instance, which will close the connection.
     async fn shutdown(&self);
 }
 

@@ -16,8 +16,9 @@ use tokio::task::{JoinError, JoinHandle};
 use tokio::time::sleep;
 
 pub(crate) struct ActivityHeartbeatManager<SG> {
-    /// Core will aggregate activity heartbeats and send them to the server periodically.
-    /// This map contains sender channel for each activity that has an active heartbeat processor.
+    /// Core will aggregate activity heartbeats for each activity and send them to the server periodically.
+    /// This map contains sender channel for each activity, identified by the task token,
+    /// that has an active heartbeat processor.
     heartbeat_processors: HashMap<Vec<u8>, ActivityHeartbeatProcessorHandle>,
     heartbeat_rx: UnboundedReceiver<LifecycleEvent>,
     shutdown_tx: Sender<bool>,
@@ -187,42 +188,35 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
             .await;
         loop {
             sleep(self.delay).await;
-            let stop = select! {
+            select! {
                 _ = self.shutdown_rx.changed() => {
-                    // Shutting down core, need to break the loop. Previous details has been sent,
-                    // so there is nothing else to do.
-                    true
+                    // New heartbeat requests might have been sent while processor was asleep, followed by a termination,
+                    // since select doesn't guarantee the order, we could have processed shutdown signal without
+                    // sending last heartbeat. We'll send that heartbeat so we don't lose the data.
+                    select! {
+                        _ = sleep(self.grace_period) => {}
+                        _ = self.heartbeat_rx.changed() => {
+                            // Received new heartbeat details.
+                            let details = self.heartbeat_rx.borrow().clone();
+                            let _ = self.server_gateway
+                                .record_activity_heartbeat(self.task_token.clone(), details.into_payloads()).await;
+                        }
+                    }
+                    break;
                 }
                 _ = sleep(self.delay) => {
                     // Timed out while waiting for the next heartbeat.
                     // We waited 2 * delay in total, where delay is 1/2 of the activity heartbeat timeout.
                     // This means that activity has either timed out or completed by now.
-                    true
+                    break;
                 }
                 _ = self.heartbeat_rx.changed() => {
                     // Received new heartbeat details.
                     let details = self.heartbeat_rx.borrow().clone();
                     let _ = self.server_gateway
                         .record_activity_heartbeat(self.task_token.clone(), details.into_payloads()).await;
-                    false
                 }
             };
-            // Either shutdown signal was received or delay has passed, this means that processor should complete.
-            if stop {
-                // New heartbeat requests might have been sent while processor was asleep, followed by a termination,
-                // since select doesn't guarantee the order, we could have processed shutdown signal without
-                // sending last heartbeat. We'll send that heartbeat so we don't lose the data.
-                select! {
-                    _ = sleep(self.grace_period) => {}
-                    _ = self.heartbeat_rx.changed() => {
-                        // Received new heartbeat details.
-                        let details = self.heartbeat_rx.borrow().clone();
-                        let _ = self.server_gateway
-                            .record_activity_heartbeat(self.task_token.clone(), details.into_payloads()).await;
-                    }
-                }
-                break;
-            }
         }
     }
 }
