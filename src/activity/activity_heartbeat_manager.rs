@@ -235,6 +235,8 @@ mod test {
     use crate::protos::temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse;
     use std::time::Duration;
 
+    /// Ensure that hearbeats that are sent with a small delay are aggregated and sent roughly once
+    /// every 1/2 of the heartbeat timeout.
     #[tokio::test]
     async fn process_heartbeats_and_shutdown() {
         let mut mock_gateway = MockServerGatewayApis::new();
@@ -244,7 +246,9 @@ mod test {
             .times(2);
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
         let fake_task_token = vec![1, 2, 3];
-        for i in 0u8..45 {
+        // Sending heartbeat requests for 400ms, this should send first hearbeat right away, and all other
+        // requests should be aggregated and last one should be sent to the server in 500ms (1/2 of heartbeat timeout).
+        for i in 0u8..40 {
             sleep(Duration::from_millis(10)).await;
             hm.record(ActivityHeartbeat {
                 task_token: fake_task_token.clone(),
