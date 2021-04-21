@@ -153,4 +153,6 @@ pub enum ActivityHeartbeatError {
     InvalidHeartbeatTimeout,
     #[error("New heartbeat requests are not accepted while shutting down")]
     ShuttingDown,
+    #[error("Unable to dispatch heartbeat.")]
+    SendError,
 }

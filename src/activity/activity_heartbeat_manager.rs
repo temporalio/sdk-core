@@ -42,11 +42,13 @@ struct ActivityHeartbeatProcessor<SG> {
     server_gateway: Arc<SG>,
 }
 
-enum LifecycleEvent {
+#[derive(Debug)]
+pub enum LifecycleEvent {
     Heartbeat(ValidActivityHeartbeat),
     Shutdown,
 }
 
+#[derive(Debug)]
 pub struct ValidActivityHeartbeat {
     pub task_token: Vec<u8>,
     pub details: Vec<common::Payload>,
@@ -66,13 +68,16 @@ impl ActivityHeartbeatManagerHandle {
                 task_token: details.task_token,
                 details: details.details,
                 delay: heartbeat_timeout.div(2),
-            }));
+            }))
+            .map_err(|_| ActivityHeartbeatError::SendError)?;
 
         Ok(())
     }
 
     pub async fn shutdown(&self) {
-        self.events.send(LifecycleEvent::Shutdown);
+        self.events
+            .send(LifecycleEvent::Shutdown)
+            .expect("should be able to send shutdown event");
         let mut handle = self.join_handle.lock().await;
         if let Some(h) = handle.take() {
             h.await.expect("shutdown should exit cleanly");
@@ -224,7 +229,7 @@ mod test {
             })
             .expect("hearbeat recording should not fail");
         }
-        sleep(Duration::from_millis(500));
+        sleep(Duration::from_millis(500)).await;
         hm.shutdown().await;
     }
 }
