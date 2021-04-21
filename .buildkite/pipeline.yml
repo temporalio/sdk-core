@@ -25,6 +25,7 @@ steps:
     agents:
       queue: "default"
       docker: "*"
+      aws:instance-type: "c5a.2xlarge"
     command: "cargo clippy --workspace --all-features --all-targets -- -D warnings && cargo clippy --test integ_tests --all-features -- --D warnings"
     timeout_in_minutes: 15
     plugins:
@@ -35,6 +36,7 @@ steps:
     agents:
       queue: "default"
       docker: "*"
+      aws:instance-type: "c5a.2xlarge"
     command: "cargo tarpaulin --out Html --workspace && cargo test -- --include-ignored"
     artifact_paths:
       - "tarpaulin-report.html"
@@ -48,6 +50,7 @@ steps:
     agents:
       queue: "default"
       docker: "*"
+      aws:instance-type: "c5a.2xlarge"
     command: "cargo test --test integ_tests"
     timeout_in_minutes: 15
     plugins:
