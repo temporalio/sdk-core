@@ -5,6 +5,7 @@ use crate::ServerGatewayApis;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::ops::Div;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time;
 use std::time::Duration;
@@ -30,6 +31,7 @@ pub(crate) struct ActivityHeartbeatManager<SG> {
 /// Used to supply new heartbeat events to the activity heartbeat manager, or to send a shutdown request.
 /// Join handle is used in the `shutdown` to await until all inflight requests are sent.
 pub(crate) struct ActivityHeartbeatManagerHandle {
+    shutting_down: AtomicBool,
     events: UnboundedSender<LifecycleEvent>,
     join_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -96,9 +98,15 @@ impl ActivityHeartbeatManagerHandle {
     /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all heartbeat
     /// processors to terminate gracefully.
     pub async fn shutdown(&self) {
-        self.events
-            .send(LifecycleEvent::Shutdown)
-            .expect("should be able to send shutdown event");
+        // If shutdown was called multiple times, shutdown signal has been sent already and consumer
+        // might have been dropped already, meaning that sending to the channel may fail.
+        // All we need to do is to simply await on handle for the completion.
+        if !self.shutting_down.load(Ordering::Relaxed) {
+            self.events
+                .send(LifecycleEvent::Shutdown)
+                .expect("should be able to send shutdown event");
+            self.shutting_down.store(true, Ordering::Relaxed);
+        }
         let mut handle = self.join_handle.lock().await;
         if let Some(h) = handle.take() {
             h.await.expect("shutdown should exit cleanly");
@@ -123,6 +131,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
         };
         let join_handle = tokio::spawn(s.lifecycle());
         ActivityHeartbeatManagerHandle {
+            shutting_down: AtomicBool::new(false),
             events: events_tx,
             join_handle: Mutex::new(Some(join_handle)),
         }
