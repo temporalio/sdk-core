@@ -250,16 +250,93 @@ mod test {
         // requests should be aggregated and last one should be sent to the server in 500ms (1/2 of heartbeat timeout).
         for i in 0u8..40 {
             sleep(Duration::from_millis(10)).await;
-            hm.record(ActivityHeartbeat {
-                task_token: fake_task_token.clone(),
-                details: vec![Payload {
-                    metadata: Default::default(),
-                    data: vec![i],
-                }],
-                heartbeat_timeout: Some(Duration::from_millis(1000).into()),
-            })
-            .expect("hearbeat recording should not fail");
+            record_heartbeat(&hm, fake_task_token.clone(), i);
         }
         hm.shutdown().await;
+    }
+
+    /// Ensure that heartbeat can be called from a tight loop without any delays, resulting in two
+    /// interactions with the server - one immediately and one after 500ms after the delay.
+    #[tokio::test]
+    async fn process_tight_loop_and_shutdown() {
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_record_activity_heartbeat()
+            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
+            .times(2);
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
+        let fake_task_token = vec![1, 2, 3];
+        // Sending heartbeat requests for 400ms, this should send first hearbeat right away, and all other
+        // requests should be aggregated and last one should be sent to the server in 500ms (1/2 of heartbeat timeout).
+        for i in 0u8..u8::MAX {
+            record_heartbeat(&hm, fake_task_token.clone(), i);
+        }
+        hm.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn record_after_shutdown() {
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_record_activity_heartbeat()
+            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
+            .times(0);
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
+        hm.shutdown().await;
+        match hm.record(ActivityHeartbeat {
+            task_token: vec![1, 2, 3],
+            details: vec![Payload {
+                // payload doesn't matter in this case, as it shouldn't get sent anyways.
+                ..Default::default()
+            }],
+            heartbeat_timeout: Some(Duration::from_millis(1000).into()),
+        }) {
+            Ok(_) => {
+                assert!(false, "heartbeat should not be recorded after the shutdown")
+            }
+            Err(e) => {
+                matches!(e, ActivityHeartbeatError::ShuttingDown);
+            }
+        }
+    }
+
+    /// Ensure that error is returned if heartbeat timeout is not set. Heartbeat timeout is required
+    /// because it's used to derive aggregation delay.
+    #[tokio::test]
+    async fn record_without_heartbeat_timeout() {
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_record_activity_heartbeat()
+            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
+            .times(0);
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
+        match hm.record(ActivityHeartbeat {
+            task_token: vec![1, 2, 3],
+            details: vec![Payload {
+                // payload doesn't matter in this case, as it shouldn't get sent anyways.
+                ..Default::default()
+            }],
+            heartbeat_timeout: None,
+        }) {
+            Ok(_) => {
+                assert!(false, "heartbeat should not be recorded without timeout")
+            }
+            Err(e) => {
+                matches!(e, ActivityHeartbeatError::HeartbeatTimeoutNotSet);
+            }
+        }
+        hm.shutdown().await;
+    }
+
+    fn record_heartbeat(hm: &ActivityHeartbeatManagerHandle, task_token: Vec<u8>, i: u8) {
+        hm.record(ActivityHeartbeat {
+            task_token,
+            details: vec![Payload {
+                metadata: Default::default(),
+                data: vec![i],
+            }],
+            heartbeat_timeout: Some(Duration::from_millis(1000).into()),
+        })
+        .expect("hearbeat recording should not fail");
     }
 }
