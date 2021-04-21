@@ -292,7 +292,7 @@ mod test {
             heartbeat_timeout: Some(Duration::from_millis(1000).into()),
         }) {
             Ok(_) => {
-                assert!(false, "heartbeat should not be recorded after the shutdown")
+                unreachable!("heartbeat should not be recorded after the shutdown")
             }
             Err(e) => {
                 matches!(e, ActivityHeartbeatError::ShuttingDown);
@@ -319,7 +319,7 @@ mod test {
             heartbeat_timeout: None,
         }) {
             Ok(_) => {
-                assert!(false, "heartbeat should not be recorded without timeout")
+                unreachable!("heartbeat should not be recorded without timeout")
             }
             Err(e) => {
                 matches!(e, ActivityHeartbeatError::HeartbeatTimeoutNotSet);
