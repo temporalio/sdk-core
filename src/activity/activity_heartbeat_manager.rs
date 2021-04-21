@@ -7,6 +7,7 @@ use std::convert::TryInto;
 use std::ops::Div;
 use std::sync::Arc;
 use std::time;
+use std::time::Duration;
 use tokio::select;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch::{channel, Receiver, Sender};
@@ -24,11 +25,14 @@ pub(crate) struct ActivityHeartbeatManager<SG> {
     server_gateway: Arc<SG>,
 }
 
+/// Used to supply new heartbeat events to the activity heartbeat manager, or to send a shutdown request.
+/// Join handle is used in the `shutdown` to await until all inflight requests are sent.
 pub(crate) struct ActivityHeartbeatManagerHandle {
     events: UnboundedSender<LifecycleEvent>,
     join_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
+/// Used to supply heartbeat details to the heartbeat processor, which periodically sends them to the server.
 struct ActivityHeartbeatProcessorHandle {
     heartbeat_tx: Sender<Vec<common::Payload>>,
     join_handle: JoinHandle<()>,
@@ -37,6 +41,7 @@ struct ActivityHeartbeatProcessorHandle {
 struct ActivityHeartbeatProcessor<SG> {
     task_token: Vec<u8>,
     delay: time::Duration,
+    grace_period: time::Duration,
     heartbeat_rx: Receiver<Vec<common::Payload>>,
     shutdown_rx: Receiver<bool>,
     server_gateway: Arc<SG>,
@@ -55,7 +60,16 @@ pub struct ValidActivityHeartbeat {
     pub delay: time::Duration,
 }
 
+/// Handle that is used by the core for all interactions with the manager, allows sending new heartbeats
+/// or requesting and awaiting for the shutdown.
+/// When shutdown is requested, signal gets sent to all processors, which allows them to
+/// complete gracefully.
 impl ActivityHeartbeatManagerHandle {
+    /// Records a new heartbeat, note that first call would result in an immediate call to the server,
+    /// while rapid successive calls would accumulate for up to 1/2 of the heartbeat timeout and then
+    /// latest heartbeat details will be sent to the server. If there is no activity for 1/2 of the
+    /// heartbeat timeout then heartbeat processor will be reset and process would start over again,
+    /// meaning that next heartbeat will be sent immediately.
     pub fn record(&self, details: ActivityHeartbeat) -> Result<(), ActivityHeartbeatError> {
         let heartbeat_timeout: time::Duration = details
             .heartbeat_timeout
@@ -74,6 +88,8 @@ impl ActivityHeartbeatManagerHandle {
         Ok(())
     }
 
+    /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all heartbeat
+    /// processors to terminate gracefully.
     pub async fn shutdown(&self) {
         self.events
             .send(LifecycleEvent::Shutdown)
@@ -87,6 +103,8 @@ impl ActivityHeartbeatManagerHandle {
 
 impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG> {
     #![allow(clippy::new_ret_no_self)]
+    /// Creates a new instance of an activity heartbeat manager and returns a handle to the user,
+    /// which allows to send new heartbeats and initiate the shutdown.
     pub fn new(sg: Arc<SG>) -> ActivityHeartbeatManagerHandle {
         let (shutdown_tx, shutdown_rx) = channel(false);
         let (heartbeat_tx, heartbeat_rx) = unbounded_channel();
@@ -104,6 +122,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
         }
     }
 
+    /// Main loop, that handles all heartbeat requests and dispatches them to processors.
     async fn lifecycle(mut self) {
         while let Some(event) = self.heartbeat_rx.recv().await {
             match event {
@@ -114,7 +133,10 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
         self.shutdown().await.expect("shutdown should exit cleanly")
     }
 
-    pub fn record(&mut self, heartbeat: ValidActivityHeartbeat) {
+    /// Records heartbeat, by sending it to the processor.
+    /// New processor is created if one doesn't exist, otherwise new event is dispatched to the
+    /// existing processor's receiver channel.
+    fn record(&mut self, heartbeat: ValidActivityHeartbeat) {
         match self.heartbeat_processors.get(&heartbeat.task_token) {
             Some(handle) => {
                 handle
@@ -127,6 +149,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
                 let processor = ActivityHeartbeatProcessor {
                     task_token: heartbeat.task_token.clone(),
                     delay: heartbeat.delay,
+                    grace_period: Duration::from_millis(100),
                     heartbeat_rx,
                     shutdown_rx: self.shutdown_rx.clone(),
                     server_gateway: self.server_gateway.clone(),
@@ -142,6 +165,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
         }
     }
 
+    /// Initiates termination of all hearbeat processors by sending a signal and awaits termination.
     pub async fn shutdown(mut self) -> Result<(), JoinError> {
         self.shutdown_tx
             .send(true)
@@ -183,7 +207,20 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
                     false
                 }
             };
+            // Either shutdown signal was received or delay has passed, this means that processor should complete.
             if stop {
+                // New heartbeat requests might have been sent while processor was asleep, followed by a termination,
+                // since select doesn't guarantee the order, we could have processed shutdown signal without
+                // sending last heartbeat. We'll send that heartbeat so we don't lose the data.
+                select! {
+                    _ = sleep(self.grace_period) => {}
+                    _ = self.heartbeat_rx.changed() => {
+                        // Received new heartbeat details.
+                        let details = self.heartbeat_rx.borrow().clone();
+                        let _ = self.server_gateway
+                            .record_activity_heartbeat(self.task_token.clone(), details.into_payloads()).await;
+                    }
+                }
                 break;
             }
         }
@@ -207,7 +244,7 @@ mod test {
             .times(2);
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
         let fake_task_token = vec![1, 2, 3];
-        for i in 0u8..30 {
+        for i in 0u8..45 {
             sleep(Duration::from_millis(10)).await;
             hm.record(ActivityHeartbeat {
                 task_token: fake_task_token.clone(),
@@ -219,7 +256,6 @@ mod test {
             })
             .expect("hearbeat recording should not fail");
         }
-        sleep(Duration::from_millis(500)).await;
         hm.shutdown().await;
     }
 }
