@@ -290,11 +290,11 @@ async fn activity_heartbeat() {
     let mut rng = rand::thread_rng();
     let task_q_salt: u32 = rng.gen();
     let task_q = &format!("activity_workflow_{}", task_q_salt.to_string());
-    let core = get_integ_core().await;
+    let core = get_integ_core(task_q).await;
     let workflow_id: u32 = dbg!(rng.gen());
     create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
     let activity_id: String = rng.gen::<u32>().to_string();
-    let task = core.poll_workflow_task(task_q).await.unwrap();
+    let task = core.poll_workflow_task().await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_task(schedule_activity_cmd(
         task_q,
@@ -307,7 +307,7 @@ async fn activity_heartbeat() {
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
-    let task = core.poll_activity_task(task_q).await.unwrap();
+    let task = core.poll_activity_task().await.unwrap();
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -317,7 +317,7 @@ async fn activity_heartbeat() {
     // Heartbeat timeout is set to 1 second, this loop is going to send heartbeat every 100ms.
     // Activity shouldn't timeout since we are sending heartbeats regularly, however if we didn't send
     // heartbeats activity would have timed out as it takes 2 sec to execute this loop.
-    for _ in 0..20 {
+    for _ in 0u8..20 {
         sleep(Duration::from_millis(100)).await;
         core.record_activity_heartbeat(ActivityHeartbeat {
             task_token: task.task_token.clone(),
@@ -340,7 +340,7 @@ async fn activity_heartbeat() {
     .await
     .unwrap();
     // Poll workflow task and verify that activity has succeeded.
-    let task = core.poll_workflow_task(task_q).await.unwrap();
+    let task = core.poll_workflow_task().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [

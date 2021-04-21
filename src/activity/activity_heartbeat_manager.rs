@@ -86,6 +86,7 @@ impl ActivityHeartbeatManagerHandle {
 }
 
 impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG> {
+    #![allow(clippy::new_ret_no_self)]
     pub fn new(sg: Arc<SG>) -> ActivityHeartbeatManagerHandle {
         let (shutdown_tx, shutdown_rx) = channel(false);
         let (heartbeat_tx, heartbeat_rx) = unbounded_channel();
@@ -206,7 +207,7 @@ mod test {
             .times(2);
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
         let fake_task_token = vec![1, 2, 3];
-        for i in 0..30 {
+        for i in 0u8..30 {
             sleep(Duration::from_millis(10)).await;
             hm.record(ActivityHeartbeat {
                 task_token: fake_task_token.clone(),
