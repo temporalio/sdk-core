@@ -162,26 +162,22 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
     async fn run(mut self) {
         // Each processor is initialized with heartbeat payloads, first thing we need to do is send it out.
         let details = self.heartbeat_rx.borrow().clone();
-        dbg!("sending heartbeat first time");
         let _ = self
             .server_gateway
             .record_activity_heartbeat(self.task_token.clone(), details.into_payloads())
             .await;
         loop {
-            dbg!("waiting...");
             sleep(self.delay).await;
             let stop = select! {
                 _ = self.shutdown_rx.changed() => {
                     // Shutting down core, need to break the loop. Previous details has been sent,
                     // so there is nothing else to do.
-                    dbg!("shutting down");
                     true
                 }
                 _ = sleep(self.delay) => {
                     // Timed out while waiting for the next heartbeat.
                     // We waited 2 * delay in total, where delay is 1/2 of the activity heartbeat timeout.
                     // This means that activity has either timed out or completed by now.
-                    dbg!("timed out waiting");
                     true
                 }
                 _ = self.heartbeat_rx.changed() => {
@@ -189,7 +185,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
                     let details = self.heartbeat_rx.borrow().clone();
                     let _ = self.server_gateway
                         .record_activity_heartbeat(self.task_token.clone(), details.into_payloads()).await;
-                    dbg!("sending heartbeat after delay");
                     false
                 }
             };
