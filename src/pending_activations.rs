@@ -1,5 +1,6 @@
 use crate::protos::coresdk::workflow_activation::WfActivation;
 use parking_lot::RwLock;
+use slotmap::SlotMap;
 use std::collections::{HashMap, VecDeque};
 
 /// Tracks pending activations using an internal queue, while also allowing lookup and removal of
@@ -9,83 +10,65 @@ pub struct PendingActivations {
     inner: RwLock<PaInner>,
 }
 
-// An activation is identified by it's task token / run id combo. There could potentially be
-// pending activations for the same workflow run, but with different task tokens if for example
-// the workflow times out while we are relaying a task we were issued, and we poll again
-// TODO: In theory we should never actually queue them though since we handle PAs first. Assert?
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-struct ActivationId {
-    task_token: Vec<u8>,
-    run_id: String,
-}
+slotmap::new_key_type! { struct ActivationKey; }
 
 // This could be made more memory efficient with an arena or something if ever needed
 #[derive(Default)]
 struct PaInner {
-    queue: VecDeque<ActivationId>,
-    activations: HashMap<ActivationId, WfActivation>,
-    count_by_run_id: HashMap<String, usize>,
+    queue: VecDeque<ActivationKey>,
+    activations: SlotMap<ActivationKey, WfActivation>,
+    by_run_id: HashMap<String, ActivationKey>,
 }
 
 impl PendingActivations {
     pub fn push(&self, v: WfActivation) {
         let mut inner = self.inner.write();
-        let wf_id = ActivationId {
-            run_id: v.run_id.clone(),
-            task_token: v.task_token.clone(),
-        };
 
         // Check if an activation with the same ID already exists, and merge joblist if so
-        if let Some(act) = inner.activations.get_mut(&wf_id) {
+        if let Some(key) = inner.by_run_id.get(&v.run_id).copied() {
+            let act = inner
+                .activations
+                .get_mut(key)
+                .expect("PA run id mapping is always in sync with slot map");
+            assert_eq!(
+                v.task_token, act.task_token,
+                "New PAs that match an existing PA's run id must have the same task token"
+            );
             act.jobs.extend(v.jobs);
         } else {
-            // Incr run id count
-            *inner
-                .count_by_run_id
-                .entry(v.run_id.clone())
-                .or_insert_with(|| 0) += 1;
-            // TODO: Make better if true
-            assert!(
-                *inner.count_by_run_id.get(&v.run_id).unwrap() < 2,
-                "Should never be multiple PAs with same run id"
-            );
-
-            inner.activations.insert(wf_id.clone(), v);
-        }
-
-        inner.queue.push_back(wf_id);
+            let run_id = v.run_id.clone();
+            let key = inner.activations.insert(v);
+            inner.by_run_id.insert(run_id, key);
+            inner.queue.push_back(key);
+        };
     }
 
     pub fn pop(&self) -> Option<WfActivation> {
         let mut inner = self.inner.write();
         let rme = inner.queue.pop_front();
-        if let Some(pa) = &rme {
-            let do_remove = if let Some(c) = inner.count_by_run_id.get_mut(&pa.run_id) {
-                *c -= 1;
-                *c == 0
-            } else {
-                false
-            };
-            if do_remove {
-                inner.count_by_run_id.remove(&pa.run_id);
-            }
-            inner.activations.remove(&pa)
+        if let Some(key) = rme {
+            let pa = inner
+                .activations
+                .remove(key)
+                .expect("PAs in queue exist in slot map");
+            inner.by_run_id.remove(&pa.run_id);
+            Some(pa)
         } else {
             None
         }
     }
 
     pub fn has_pending(&self, run_id: &str) -> bool {
-        self.inner.read().count_by_run_id.contains_key(run_id)
+        self.inner.read().by_run_id.contains_key(run_id)
     }
 
     pub fn remove_all_with_run_id(&self, run_id: &str) {
         let mut inner = self.inner.write();
 
-        // The perf here can obviously be improved if it ever becomes an issue, but is left for
-        // later since it would require some careful fiddling
-        inner.queue.retain(|pa| pa.run_id != run_id);
-        inner.count_by_run_id.remove(run_id);
+        if let Some(k) = inner.by_run_id.remove(run_id) {
+            inner.queue.retain(|pa_k| *pa_k != k);
+            inner.activations.remove(k);
+        }
     }
 }
 
@@ -94,7 +77,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn counts_run_ids() {
+    fn merges_same_ids() {
         let pas = PendingActivations::default();
         let rid1 = "1".to_string();
         let rid2 = "2".to_string();
@@ -125,6 +108,24 @@ mod tests {
         assert_eq!(&last.run_id, &rid2);
         assert!(!pas.has_pending(&rid2));
         assert!(pas.pop().is_none());
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "New PAs that match an existing PA's run id must have the same task token"
+    )]
+    fn panics_on_same_run_id_different_tokens() {
+        let pas = PendingActivations::default();
+        let rid = "1".to_string();
+        pas.push(WfActivation {
+            run_id: rid.clone(),
+            ..Default::default()
+        });
+        pas.push(WfActivation {
+            run_id: rid.clone(),
+            task_token: vec![9],
+            ..Default::default()
+        });
     }
 
     #[test]

@@ -44,8 +44,9 @@ message WFActivationJob {
         /// Remove the workflow identified by the [WFActivation] containing this job from the cache
         /// after performing the activation.
         ///
-        /// If other job variant are present in the list, this variant must be the last job in the
-        /// job list. The actual value is irrelevant, and should always be true.
+        /// If other job variant are present in the list, this variant will be the last job in the
+        /// job list. The boolean value is irrelevant, since the variant type is what matters. It
+        /// will be set to true if this is the variant.
         bool remove_from_cache = 50;
     }
 }
