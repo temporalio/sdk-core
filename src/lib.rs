@@ -268,6 +268,16 @@ where
             return Err(PollActivityError::ShutDown);
         }
 
+        // Issue cancellations for anything we noticed was cancelled during heartbeating
+        if let Some(task_token) = self
+            .activity_heartbeat_manager_handle
+            .pending_cancels()
+            .next()
+        {
+            // TODO: Attach activity ID as well when merged with PR that tracks that
+            return Ok(ActivityTask::from_task_token(task_token));
+        }
+
         while self.outstanding_activity_tasks.len() >= self.init_options.max_outstanding_activities
         {
             self.activity_task_complete_notify.notified().await
@@ -638,20 +648,17 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::machines::test_help::fake_sg_opts;
-    use crate::protos::temporal::api::workflowservice::v1::{
-        PollActivityTaskQueueResponse, RespondActivityTaskCompletedResponse,
-    };
     use crate::{
         machines::test_help::{
-            build_fake_core, gen_assert_and_fail, gen_assert_and_reply, poll_and_reply,
+            build_fake_core, build_mock_sg, fake_core_from_mock_sg, fake_sg_opts,
+            gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, poll_and_reply,
             EvictionMode, FakeCore, TestHistoryBuilder,
         },
-        machines::test_help::{build_mock_sg, fake_core_from_mock_sg, hist_to_poll_resp},
         pollers::MockServerGatewayApis,
         protos::{
             coresdk::{
                 activity_result::ActivityResult,
+                activity_task::activity_task,
                 common::UserCodeFailure,
                 workflow_activation::{
                     wf_activation_job, FireTimer, ResolveActivity, StartWorkflow, UpdateRandomSeed,
@@ -661,6 +668,10 @@ mod test {
                     ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
                     FailWorkflowExecution, RequestCancelActivity, ScheduleActivity, StartTimer,
                 },
+            },
+            temporal::api::workflowservice::v1::{
+                PollActivityTaskQueueResponse, RecordActivityTaskHeartbeatResponse,
+                RespondActivityTaskCompletedResponse,
             },
             temporal::api::{
                 enums::v1::EventType,
@@ -672,7 +683,12 @@ mod test {
         test_help::canned_histories,
     };
     use rstest::{fixture, rstest};
-    use std::{collections::VecDeque, sync::atomic::AtomicU64, sync::atomic::AtomicUsize};
+    use std::{
+        collections::VecDeque,
+        sync::atomic::{AtomicU64, AtomicUsize},
+        time::Duration,
+    };
+    use tokio::time::sleep;
 
     #[fixture(hist_batches = &[])]
     fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
@@ -1676,5 +1692,58 @@ mod test {
         };
         // So that we know we blocked
         assert_eq!(last_finisher.load(Ordering::Acquire), 2);
+    }
+
+    #[tokio::test]
+    async fn heartbeats_report_cancels() {
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_poll_activity_task()
+            .times(1)
+            .returning(|| {
+                Ok(PollActivityTaskQueueResponse {
+                    task_token: vec![1],
+                    activity_id: "act1".to_string(),
+                    ..Default::default()
+                })
+            });
+        mock_gateway
+            .expect_record_activity_heartbeat()
+            .times(1)
+            .returning(|_, _| {
+                Ok(RecordActivityTaskHeartbeatResponse {
+                    cancel_requested: true,
+                })
+            });
+
+        let core = CoreSDK::new(
+            mock_gateway,
+            CoreInitOptions {
+                gateway_opts: fake_sg_opts(),
+                evict_after_pending_cleared: true,
+                max_outstanding_workflow_tasks: 5,
+                max_outstanding_activities: 5,
+            },
+        );
+
+        let act = core.poll_activity_task().await.unwrap();
+        core.record_activity_heartbeat(ActivityHeartbeat {
+            task_token: act.task_token,
+            details: vec![vec![1u8, 2, 3].into()],
+            heartbeat_timeout: Some(Duration::from_secs(1).into()),
+        })
+        .await
+        .unwrap();
+        // We have to wait a beat for the heartbeat to be processed
+        sleep(Duration::from_millis(50)).await;
+        let act = core.poll_activity_task().await.unwrap();
+        assert_matches!(
+            act,
+            ActivityTask {
+                task_token,
+                variant: Some(activity_task::Variant::Cancel(_)),
+                ..
+            } => { task_token == vec![1] }
+        );
     }
 }

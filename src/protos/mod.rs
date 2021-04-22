@@ -12,6 +12,16 @@ pub mod coresdk {
     #[allow(clippy::module_inception)]
     pub mod activity_task {
         tonic::include_proto!("coresdk.activity_task");
+
+        impl ActivityTask {
+            pub fn from_task_token(task_token: Vec<u8>) -> Self {
+                ActivityTask {
+                    task_token,
+                    activity_id: "".to_string(),
+                    variant: Some(activity_task::Variant::Cancel(Cancel {})),
+                }
+            }
+        }
     }
     #[allow(clippy::module_inception)]
     pub mod activity_result {
