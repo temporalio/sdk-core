@@ -90,10 +90,9 @@ pub(crate) struct NextWfActivation {
 
 impl NextWfActivation {
     /// Attach a task token to the activation so it can be sent out to the lang sdk
-    pub(crate) fn finalize(self, task_token: Vec<u8>, from_pending: bool) -> WfActivation {
+    pub(crate) fn finalize(self, task_token: Vec<u8>) -> WfActivation {
         let mut a = self.activation;
         a.task_token = task_token;
-        a.from_pending = from_pending;
         a
     }
 }

@@ -22,8 +22,6 @@ message WFActivation {
     string run_id = 3;
     /// The things to do upon activating the workflow
     repeated WFActivationJob jobs = 4;
-    /// True if this activation was internally generated rather than from the server
-    bool from_pending = 5;
 }
 
 message WFActivationJob {
@@ -42,6 +40,14 @@ message WFActivationJob {
         SignalWorkflow signal_workflow = 7;
         /// An activity was resolved with, result could be completed, failed or cancelled
         ResolveActivity resolve_activity = 8;
+
+        /// Remove the workflow identified by the [WFActivation] containing this job from the cache
+        /// after performing the activation.
+        ///
+        /// If other job variant are present in the list, this variant will be the last job in the
+        /// job list. The boolean value is irrelevant, since the variant type is what matters. It
+        /// will be set to true if this is the variant.
+        bool remove_from_cache = 50;
     }
 }
 

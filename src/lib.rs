@@ -31,10 +31,9 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle};
-use crate::errors::ActivityHeartbeatError;
 use crate::{
-    errors::{ShutdownErr, WorkflowUpdateError},
+    activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle},
+    errors::{ActivityHeartbeatError, ShutdownErr, WorkflowUpdateError},
     machines::{EmptyWorkflowCommandErr, WFCommand},
     pending_activations::PendingActivations,
     pollers::PollWorkflowTaskBuffer,
@@ -42,7 +41,7 @@ use crate::{
         coresdk::{
             activity_result::{self as ar, activity_result},
             activity_task::ActivityTask,
-            workflow_activation::WfActivation,
+            workflow_activation::{create_evict_activation, WfActivation},
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
             ActivityHeartbeat, ActivityTaskCompletion,
         },
@@ -419,6 +418,9 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             self.outstanding_workflow_tasks.remove(task_token);
             self.workflow_machines.evict(&run_id);
             self.pending_activations.remove_all_with_run_id(&run_id);
+            // Queue up an eviction activation
+            self.pending_activations
+                .push(create_evict_activation(task_token.to_owned(), run_id))
         }
     }
 
@@ -428,9 +430,8 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         &self,
         next_a: NextWfActivation,
         task_token: Vec<u8>,
-        from_pending: bool,
     ) -> WfActivation {
-        next_a.finalize(task_token, from_pending)
+        next_a.finalize(task_token)
     }
 
     /// Given a wf task from the server, prepare an activation (if there is one) to be sent to lang
@@ -451,7 +452,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         let next_activation = self.instantiate_or_update_workflow(work)?;
 
         if let Some(na) = next_activation {
-            return Ok(Some(self.finalize_next_activation(na, task_token, false)));
+            return Ok(Some(self.finalize_next_activation(na, task_token)));
         }
         Ok(None)
     }
@@ -626,11 +627,8 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         if let Some(next_activation) =
             self.access_wf_machine(run_id, move |mgr| mgr.get_next_activation())?
         {
-            self.pending_activations.push(self.finalize_next_activation(
-                next_activation,
-                task_token,
-                true,
-            ));
+            self.pending_activations
+                .push(self.finalize_next_activation(next_activation, task_token));
         }
         self.workflow_task_complete_notify.notify_one();
         Ok(())

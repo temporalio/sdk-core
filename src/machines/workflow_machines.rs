@@ -420,7 +420,6 @@ impl WorkflowMachines {
                 run_id: self.run_id.clone(),
                 jobs,
                 task_token: vec![],
-                from_pending: false,
             })
         }
     }
