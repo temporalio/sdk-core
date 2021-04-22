@@ -1,9 +1,14 @@
 [package]
 name = "temporal-sdk-core"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 authors = ["Spencer Judge <spencer@temporal.io>", "Vitaly Arbuzov <vitaly@temporal.io>"]
 edition = "2018"
 license-file = "LICENSE.txt"
+description = "Library for building new Temporal SDKs"
+homepage = "https://temporal.io/"
+repository = "https://github.com/temporalio/sdk-core"
+keywords = ["temporal", "workflow"]
+categories = ["development-tools"]
 
 [lib]
 
@@ -42,6 +47,7 @@ git = "https://github.com/temporalio/tonic"
 
 [dependencies.rustfsm]
 path = "fsm"
+version = "0.1"
 
 [dev-dependencies]
 assert_matches = "1.4"

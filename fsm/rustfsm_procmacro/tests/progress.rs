@@ -1,4 +1,4 @@
-extern crate state_machine_trait as rustfsm;
+extern crate rustfsm_trait as rustfsm;
 
 #[test]
 fn tests() {
