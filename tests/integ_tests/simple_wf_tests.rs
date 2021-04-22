@@ -322,7 +322,6 @@ async fn activity_heartbeat() {
         core.record_activity_heartbeat(ActivityHeartbeat {
             task_token: task.task_token.clone(),
             details: vec![],
-            heartbeat_timeout: Some(Duration::from_secs(1).into()),
         })
         .await
         .unwrap();

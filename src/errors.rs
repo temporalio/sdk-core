@@ -147,6 +147,8 @@ pub enum CompleteActivityError {
 /// Errors thrown by [crate::Core::record_activity_heartbeat] and [crate::Core::get_last_activity_heartbeat]
 #[derive(thiserror::Error, Debug)]
 pub enum ActivityHeartbeatError {
+    #[error("Heartbeat has been sent for activity that either completed or never started on this worker.")]
+    UnknownActivity,
     #[error("Heartbeat request must contain heartbeat timeout.")]
     HeartbeatTimeoutNotSet,
     #[error("Heartbeat request must contain valid heartbeat timeout.")]

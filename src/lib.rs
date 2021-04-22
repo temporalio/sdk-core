@@ -31,6 +31,7 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
+use crate::activity::InflightActivityDetails;
 use crate::{
     activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle},
     errors::{ActivityHeartbeatError, ShutdownErr, WorkflowUpdateError},
@@ -57,6 +58,7 @@ use crate::{
 };
 use dashmap::{DashMap, DashSet};
 use futures::TryFutureExt;
+use std::ops::Div;
 use std::{
     convert::TryInto,
     fmt::Debug,
@@ -65,6 +67,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
+    time,
 };
 use tokio::sync::Notify;
 use tracing::Span;
@@ -185,7 +188,7 @@ struct CoreSDK<WP> {
 
     activity_heartbeat_manager_handle: ActivityHeartbeatManagerHandle,
     /// Activities that have been issued to lang but not yet completed
-    outstanding_activity_tasks: DashSet<Vec<u8>>,
+    outstanding_activity_tasks: DashMap<Vec<u8>, InflightActivityDetails>,
     /// Has shutdown been called?
     shutdown_requested: AtomicBool,
     /// Used to wake up future which checks shutdown state
@@ -289,7 +292,10 @@ where
         {
             Ok(work) => {
                 let task_token = work.task_token.clone();
-                self.outstanding_activity_tasks.insert(task_token.clone());
+                self.outstanding_activity_tasks.insert(
+                    task_token.clone(),
+                    InflightActivityDetails::new(work.heartbeat_timeout.clone()),
+                );
                 Ok(ActivityTask::start_from_poll_resp(work, task_token))
             }
             Err(e) => Err(e),
@@ -384,7 +390,17 @@ where
         &self,
         details: ActivityHeartbeat,
     ) -> Result<(), ActivityHeartbeatError> {
-        self.activity_heartbeat_manager_handle.record(details)
+        let t: time::Duration = self
+            .outstanding_activity_tasks
+            .get(&details.task_token)
+            .ok_or(ActivityHeartbeatError::UnknownActivity)?
+            .heartbeat_timeout
+            .clone()
+            .ok_or(ActivityHeartbeatError::HeartbeatTimeoutNotSet)?
+            .try_into()
+            .or(Err(ActivityHeartbeatError::InvalidHeartbeatTimeout))?;
+        self.activity_heartbeat_manager_handle
+            .record(details, t.div(2))
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {
