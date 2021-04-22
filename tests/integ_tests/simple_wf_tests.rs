@@ -951,6 +951,15 @@ async fn fail_wf_task() {
     // The server will want to retry the task. This time we finish the workflow -- but we need
     // to poll a couple of times as there will be more than one required workflow activation.
     let task = core.poll_workflow_task().await.unwrap();
+    // The first poll response will tell us to evict
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+        }]
+    );
+    // So poll again
+    let task = core.poll_workflow_task().await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![StartTimer {
             timer_id: "best-timer".to_string(),

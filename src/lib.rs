@@ -31,10 +31,9 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle};
-use crate::errors::ActivityHeartbeatError;
 use crate::{
-    errors::{ShutdownErr, WorkflowUpdateError},
+    activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle},
+    errors::{ActivityHeartbeatError, ShutdownErr, WorkflowUpdateError},
     machines::{EmptyWorkflowCommandErr, WFCommand},
     pending_activations::PendingActivations,
     pollers::PollWorkflowTaskBuffer,
@@ -42,7 +41,7 @@ use crate::{
         coresdk::{
             activity_result::{self as ar, activity_result},
             activity_task::ActivityTask,
-            workflow_activation::WfActivation,
+            workflow_activation::{create_evict_activation, WfActivation},
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
             ActivityHeartbeat, ActivityTaskCompletion,
         },
@@ -419,6 +418,9 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             self.outstanding_workflow_tasks.remove(task_token);
             self.workflow_machines.evict(&run_id);
             self.pending_activations.remove_all_with_run_id(&run_id);
+            // Queue up an eviction activation
+            self.pending_activations
+                .push(create_evict_activation(task_token.to_owned(), run_id))
         }
     }
 

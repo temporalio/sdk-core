@@ -9,42 +9,74 @@ pub struct PendingActivations {
     inner: RwLock<PaInner>,
 }
 
+// An activation is identified by it's task token / run id combo. There could potentially be
+// pending activations for the same workflow run, but with different task tokens if for example
+// the workflow times out while we are relaying a task we were issued, and we poll again
+// TODO: In theory we should never actually queue them though since we handle PAs first. Assert?
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+struct ActivationId {
+    task_token: Vec<u8>,
+    run_id: String,
+}
+
+// This could be made more memory efficient with an arena or something if ever needed
 #[derive(Default)]
 struct PaInner {
-    queue: VecDeque<WfActivation>,
-    // Keys are run ids
-    count_by_id: HashMap<String, usize>,
+    queue: VecDeque<ActivationId>,
+    activations: HashMap<ActivationId, WfActivation>,
+    count_by_run_id: HashMap<String, usize>,
 }
 
 impl PendingActivations {
     pub fn push(&self, v: WfActivation) {
         let mut inner = self.inner.write();
-        *inner
-            .count_by_id
-            .entry(v.run_id.clone())
-            .or_insert_with(|| 0) += 1;
-        inner.queue.push_back(v);
+        let wf_id = ActivationId {
+            run_id: v.run_id.clone(),
+            task_token: v.task_token.clone(),
+        };
+
+        // Check if an activation with the same ID already exists, and merge joblist if so
+        if let Some(act) = inner.activations.get_mut(&wf_id) {
+            act.jobs.extend(v.jobs);
+        } else {
+            // Incr run id count
+            *inner
+                .count_by_run_id
+                .entry(v.run_id.clone())
+                .or_insert_with(|| 0) += 1;
+            // TODO: Make better if true
+            assert!(
+                *inner.count_by_run_id.get(&v.run_id).unwrap() < 2,
+                "Should never be multiple PAs with same run id"
+            );
+
+            inner.activations.insert(wf_id.clone(), v);
+        }
+
+        inner.queue.push_back(wf_id);
     }
 
     pub fn pop(&self) -> Option<WfActivation> {
         let mut inner = self.inner.write();
         let rme = inner.queue.pop_front();
         if let Some(pa) = &rme {
-            let do_remove = if let Some(c) = inner.count_by_id.get_mut(&pa.run_id) {
+            let do_remove = if let Some(c) = inner.count_by_run_id.get_mut(&pa.run_id) {
                 *c -= 1;
                 *c == 0
             } else {
                 false
             };
             if do_remove {
-                inner.count_by_id.remove(&pa.run_id);
+                inner.count_by_run_id.remove(&pa.run_id);
             }
+            inner.activations.remove(&pa)
+        } else {
+            None
         }
-        rme
     }
 
     pub fn has_pending(&self, run_id: &str) -> bool {
-        self.inner.read().count_by_id.contains_key(run_id)
+        self.inner.read().count_by_run_id.contains_key(run_id)
     }
 
     pub fn remove_all_with_run_id(&self, run_id: &str) {
@@ -53,7 +85,7 @@ impl PendingActivations {
         // The perf here can obviously be improved if it ever becomes an issue, but is left for
         // later since it would require some careful fiddling
         inner.queue.retain(|pa| pa.run_id != run_id);
-        inner.count_by_id.remove(run_id);
+        inner.count_by_run_id.remove(run_id);
     }
 }
 
@@ -88,10 +120,9 @@ mod tests {
         assert_eq!(&last.run_id, &rid1);
         assert!(!pas.has_pending(&rid1));
         assert!(pas.has_pending(&rid2));
-        for _ in 0..3 {
-            let last = pas.pop().unwrap();
-            assert_eq!(&last.run_id, &rid2);
-        }
+        // Should only be one id 2, they are all merged
+        let last = pas.pop().unwrap();
+        assert_eq!(&last.run_id, &rid2);
         assert!(!pas.has_pending(&rid2));
         assert!(pas.pop().is_none());
     }

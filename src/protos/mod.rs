@@ -31,6 +31,17 @@ pub mod coresdk {
     }
     pub mod workflow_activation {
         include!("coresdk.workflow_activation.rs");
+        pub fn create_evict_activation(task_token: Vec<u8>, run_id: String) -> WfActivation {
+            WfActivation {
+                task_token,
+                timestamp: None,
+                run_id,
+                jobs: vec![WfActivationJob::from(
+                    wf_activation_job::Variant::RemoveFromCache(true),
+                )],
+                from_pending: true,
+            }
+        }
     }
     pub mod workflow_completion {
         use crate::protos::coresdk::workflow_completion::wf_activation_completion::Status;

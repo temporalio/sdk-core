@@ -42,6 +42,13 @@ message WFActivationJob {
         SignalWorkflow signal_workflow = 7;
         /// An activity was resolved with, result could be completed, failed or cancelled
         ResolveActivity resolve_activity = 8;
+
+        /// Remove the workflow identified by the [WFActivation] containing this job from the cache
+        /// after performing the activation.
+        ///
+        /// If other job variant are present in the list, this variant must be the last job in the
+        /// job list. The actual value is irrelevant, and should always be true.
+        bool remove_from_cache = 50;
     }
 }
 

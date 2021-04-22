@@ -8,6 +8,7 @@ pub(super) use async_workflow_driver::{CommandSender, TestWorkflowDriver};
 pub(crate) use history_builder::TestHistoryBuilder;
 pub(crate) use transition_coverage::add_coverage;
 
+use crate::protos::coresdk::workflow_activation::{wf_activation_job, WfActivationJob};
 use crate::{
     pollers::MockServerGatewayApis,
     protos::{
@@ -163,10 +164,8 @@ pub(crate) async fn poll_and_reply<'a>(
     eviction_mode: EvictionMode,
     expect_and_reply: &'a [AsserterWithReply<'a>],
 ) {
-    let mut run_id = "".to_string();
     let mut evictions = 0;
     let expected_evictions = expect_and_reply.len() - 1;
-    let mut performed_wft_calls = 0;
     let mut executed_failures = HashSet::new();
 
     'outer: loop {
@@ -180,17 +179,34 @@ pub(crate) async fn poll_and_reply<'a>(
                 continue;
             }
 
-            let res = core.inner.poll_workflow_task().await.unwrap();
-            if !res.from_pending {
-                performed_wft_calls += 1;
+            let mut res = core.inner.poll_workflow_task().await.unwrap();
+            let contains_eviction = res.jobs.iter().position(|j| {
+                matches!(
+                    j,
+                    WfActivationJob {
+                        variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+                    }
+                )
+            });
+
+            if let Some(eviction_job_ix) = contains_eviction {
+                // If the job list has an eviction, make sure it was the last item in the list
+                // then remove it and run the asserter against that smaller list, and then restart
+                // expectations from the beginning.
+                assert!(
+                    eviction_job_ix == res.jobs.len() - 1,
+                    "Eviction job was not last job in job list"
+                );
+                res.jobs.remove(eviction_job_ix);
+                if !res.jobs.is_empty() {
+                    asserter(&res);
+                }
+                continue 'outer;
             }
 
             asserter(&res);
 
             let task_tok = res.task_token;
-            if run_id.is_empty() {
-                run_id = res.run_id.clone();
-            }
 
             core.inner
                 .complete_workflow_task(WfActivationCompletion::from_status(
@@ -208,23 +224,11 @@ pub(crate) async fn poll_and_reply<'a>(
 
             match eviction_mode {
                 EvictionMode::Sticky => unimplemented!(),
-                EvictionMode::NotSticky => {
-                    // If we are in non-sticky mode, we have to replay all expectations every time a
-                    // wft is completed successfully (hence there are no more pending activations).
-                    // Failed completions always evict anyway, so we expect the test to include an
-                    // explicit additional batch for it.
-                    if performed_wft_calls < core.expected_wft_calls
-                        && !core.inner.pending_activations.has_pending(&res.run_id)
-                        && !complete_is_failure
-                    {
-                        continue 'outer;
-                    }
-                }
+                EvictionMode::NotSticky => (),
                 EvictionMode::AfterEveryReply => {
                     if evictions < expected_evictions {
                         core.inner.evict_run(&task_tok);
                         evictions += 1;
-                        continue 'outer;
                     }
                 }
             }
