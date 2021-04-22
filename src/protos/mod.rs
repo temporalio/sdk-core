@@ -8,17 +8,17 @@
 pub mod coresdk {
     //! Contains all protobufs relating to communication between core and lang-specific SDKs
 
-    include!("coresdk.rs");
+    tonic::include_proto!("coresdk");
     #[allow(clippy::module_inception)]
     pub mod activity_task {
-        include!("coresdk.activity_task.rs");
+        tonic::include_proto!("coresdk.activity_task");
     }
     #[allow(clippy::module_inception)]
     pub mod activity_result {
-        include!("coresdk.activity_result.rs");
+        tonic::include_proto!("coresdk.activity_result");
     }
     pub mod common {
-        include!("coresdk.common.rs");
+        tonic::include_proto!("coresdk.common");
 
         impl From<Vec<u8>> for Payload {
             fn from(data: Vec<u8>) -> Self {
@@ -30,7 +30,7 @@ pub mod coresdk {
         }
     }
     pub mod workflow_activation {
-        include!("coresdk.workflow_activation.rs");
+        tonic::include_proto!("coresdk.workflow_activation");
         pub fn create_evict_activation(task_token: Vec<u8>, run_id: String) -> WfActivation {
             WfActivation {
                 task_token,
@@ -44,7 +44,7 @@ pub mod coresdk {
     }
     pub mod workflow_completion {
         use crate::protos::coresdk::workflow_completion::wf_activation_completion::Status;
-        include!("coresdk.workflow_completion.rs");
+        tonic::include_proto!("coresdk.workflow_completion");
 
         impl wf_activation_completion::Status {
             pub fn is_success(&self) -> bool {
@@ -56,7 +56,7 @@ pub mod coresdk {
         }
     }
     pub mod workflow_commands {
-        include!("coresdk.workflow_commands.rs");
+        tonic::include_proto!("coresdk.workflow_commands");
     }
 
     use crate::protos::{
@@ -317,7 +317,7 @@ pub mod temporal {
     pub mod api {
         pub mod command {
             pub mod v1 {
-                include!("temporal.api.command.v1.rs");
+                tonic::include_proto!("temporal.api.command.v1");
 
                 use crate::protos::{
                     coresdk::{workflow_commands, PayloadsExt},
@@ -439,24 +439,24 @@ pub mod temporal {
         }
         pub mod enums {
             pub mod v1 {
-                include!("temporal.api.enums.v1.rs");
+                tonic::include_proto!("temporal.api.enums.v1");
             }
         }
         pub mod failure {
             pub mod v1 {
-                include!("temporal.api.failure.v1.rs");
+                tonic::include_proto!("temporal.api.failure.v1");
             }
         }
         pub mod filter {
             pub mod v1 {
-                include!("temporal.api.filter.v1.rs");
+                tonic::include_proto!("temporal.api.filter.v1");
             }
         }
         pub mod common {
             pub mod v1 {
                 use crate::protos::coresdk::common;
                 use std::collections::HashMap;
-                include!("temporal.api.common.v1.rs");
+                tonic::include_proto!("temporal.api.common.v1");
 
                 impl From<HashMap<String, common::Payload>> for Header {
                     fn from(h: HashMap<String, common::Payload>) -> Self {
@@ -506,7 +506,7 @@ pub mod temporal {
                 use prost::alloc::fmt::Formatter;
                 use std::fmt::Display;
 
-                include!("temporal.api.history.v1.rs");
+                tonic::include_proto!("temporal.api.history.v1");
 
                 impl History {
                     /// Counts the number of whole workflow tasks. Looks for WFTaskStarted followed
@@ -654,26 +654,26 @@ pub mod temporal {
 
         pub mod namespace {
             pub mod v1 {
-                include!("temporal.api.namespace.v1.rs");
+                tonic::include_proto!("temporal.api.namespace.v1");
             }
         }
 
         pub mod query {
             pub mod v1 {
-                include!("temporal.api.query.v1.rs");
+                tonic::include_proto!("temporal.api.query.v1");
             }
         }
 
         pub mod replication {
             pub mod v1 {
-                include!("temporal.api.replication.v1.rs");
+                tonic::include_proto!("temporal.api.replication.v1");
             }
         }
 
         pub mod taskqueue {
             pub mod v1 {
                 use crate::protos::temporal::api::enums::v1::TaskQueueKind;
-                include!("temporal.api.taskqueue.v1.rs");
+                tonic::include_proto!("temporal.api.taskqueue.v1");
 
                 impl From<String> for TaskQueue {
                     fn from(name: String) -> Self {
@@ -688,19 +688,19 @@ pub mod temporal {
 
         pub mod version {
             pub mod v1 {
-                include!("temporal.api.version.v1.rs");
+                tonic::include_proto!("temporal.api.version.v1");
             }
         }
 
         pub mod workflow {
             pub mod v1 {
-                include!("temporal.api.workflow.v1.rs");
+                tonic::include_proto!("temporal.api.workflow.v1");
             }
         }
 
         pub mod workflowservice {
             pub mod v1 {
-                include!("temporal.api.workflowservice.v1.rs");
+                tonic::include_proto!("temporal.api.workflowservice.v1");
             }
         }
     }

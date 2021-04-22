@@ -4,7 +4,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Just build the message structs.
         .build_server(false)
         .build_client(true)
-        .out_dir("src/protos")
+        // .out_dir("src/protos")
         // Make conversions easier for some types
         .type_attribute(
             "temporal.api.history.v1.HistoryEvent.attributes",
