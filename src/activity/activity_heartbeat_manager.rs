@@ -1,7 +1,9 @@
-use crate::protos::temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse;
 use crate::{
     errors::ActivityHeartbeatError,
-    protos::coresdk::{common, ActivityHeartbeat, PayloadsExt},
+    protos::{
+        coresdk::{common, ActivityHeartbeat, PayloadsExt},
+        temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
+    },
     ServerGatewayApis,
 };
 use crossbeam::channel as cb_channel;
@@ -13,7 +15,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::{self, Duration},
+    time::{self},
 };
 use tokio::{
     select,
@@ -63,7 +65,6 @@ struct ActivityHeartbeatProcessorHandle {
 struct ActivityHeartbeatProcessor<SG> {
     task_token: Vec<u8>,
     delay: time::Duration,
-    grace_period: time::Duration,
     /// Used to receive heartbeat events.
     heartbeat_rx: Receiver<Vec<common::Payload>>,
     /// Used to receive shutdown notifications.
@@ -197,7 +198,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
                 let processor = ActivityHeartbeatProcessor {
                     task_token: heartbeat.task_token.clone(),
                     delay: heartbeat.delay,
-                    grace_period: Duration::from_millis(100),
                     heartbeat_rx,
                     shutdown_rx: self.shutdown_rx.clone(),
                     events_tx: self.events_tx.clone(),
@@ -235,17 +235,12 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
         loop {
             sleep(self.delay).await;
             select! {
+                biased;
+
+                _ = self.heartbeat_rx.changed() => {
+                    self.record_heartbeat().await;
+                }
                 _ = self.shutdown_rx.changed() => {
-                    // New heartbeat requests might have been sent while processor was asleep,
-                    // followed by a termination, since select doesn't guarantee the order, we could
-                    // have processed shutdown signal without sending last heartbeat. We'll send
-                    // that heartbeat so we don't lose the data.
-                    select! {
-                        _ = sleep(self.grace_period) => {}
-                        _ = self.heartbeat_rx.changed() => {
-                            self.record_heartbeat().await;
-                        }
-                    }
                     break;
                 }
                 _ = sleep(self.delay) => {
@@ -253,9 +248,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
                     // where delay is 1/2 of the activity heartbeat timeout. This means that
                     // activity has either timed out or completed by now.
                     break;
-                }
-                _ = self.heartbeat_rx.changed() => {
-                    self.record_heartbeat().await;
                 }
             };
         }
