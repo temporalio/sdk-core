@@ -17,10 +17,10 @@ use syn::{
 ///
 /// An example state machine definition of a card reader for unlocking a door:
 /// ```
-/// # extern crate state_machine_trait as rustfsm;
-/// use state_machine_procmacro::fsm;
+/// # extern crate rustfsm_trait as rustfsm;
+/// use rustfsm_procmacro::fsm;
 /// use std::convert::Infallible;
-/// use state_machine_trait::{StateMachine, TransitionResult};
+/// use rustfsm_trait::{StateMachine, TransitionResult};
 ///
 /// fsm! {
 ///     name CardReader; command Commands; error Infallible; shared_state SharedState;

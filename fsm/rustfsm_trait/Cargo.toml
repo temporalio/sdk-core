@@ -1,10 +1,14 @@
 [package]
-name = "state_machine_trait"
+name = "rustfsm_trait"
 version = "0.1.0"
-authors = ["Spencer Judge <sjudge@hey.com>"]
+authors = ["Spencer Judge <spencer@temporal.io>"]
 edition = "2018"
 license-file = "LICENSE.txt"
+description = "Trait sub-crate of the `rustfsm` crate"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+
+[package.metadata.workspaces]
+independent = true

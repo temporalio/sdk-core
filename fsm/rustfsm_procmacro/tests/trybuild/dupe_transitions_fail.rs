@@ -1,6 +1,6 @@
-extern crate state_machine_trait as rustfsm;
+extern crate rustfsm_trait as rustfsm;
 
-use state_machine_procmacro::fsm;
+use rustfsm_procmacro::fsm;
 
 fsm! {
     name SimpleMachine; command SimpleMachineCommand; error Infallible;
