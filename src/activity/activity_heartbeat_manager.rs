@@ -1,8 +1,10 @@
+use crate::protos::temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse;
 use crate::{
     errors::ActivityHeartbeatError,
     protos::coresdk::{common, ActivityHeartbeat, PayloadsExt},
     ServerGatewayApis,
 };
+use crossbeam::channel as cb_channel;
 use std::{
     collections::HashMap,
     convert::TryInto,
@@ -33,6 +35,7 @@ pub(crate) struct ActivityHeartbeatManager<SG> {
     events_rx: UnboundedReceiver<LifecycleEvent>,
     shutdown_tx: Sender<bool>,
     shutdown_rx: Receiver<bool>,
+    cancels_tx: cb_channel::Sender<Vec<u8>>,
     server_gateway: Arc<SG>,
 }
 
@@ -41,6 +44,9 @@ pub(crate) struct ActivityHeartbeatManager<SG> {
 pub(crate) struct ActivityHeartbeatManagerHandle {
     shutting_down: AtomicBool,
     events: UnboundedSender<LifecycleEvent>,
+    /// Cancellations that have been received when heartbeating are queued here and can be consumed
+    /// by [fetch_cancellations]
+    incoming_cancels: cb_channel::Receiver<Vec<u8>>,
     /// Used during `shutdown` to await until all inflight requests are sent.
     join_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -64,6 +70,8 @@ struct ActivityHeartbeatProcessor<SG> {
     shutdown_rx: Receiver<bool>,
     /// Used to send CleanupProcessor event at the end of the processor loop.
     events_tx: UnboundedSender<LifecycleEvent>,
+    /// Used to send cancellation notices that we learned about when heartbeating back up to core
+    cancels_tx: cb_channel::Sender<Vec<u8>>,
     server_gateway: Arc<SG>,
 }
 
@@ -108,6 +116,12 @@ impl ActivityHeartbeatManagerHandle {
         Ok(())
     }
 
+    /// Returns an iterator over any currently pending activity cancels (by task token). Consuming
+    /// an item from the iterator also removes it from the pending list.
+    pub fn pending_cancels(&self) -> impl Iterator<Item = Vec<u8>> + '_ {
+        self.incoming_cancels.try_iter()
+    }
+
     /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all heartbeat
     /// processors to terminate gracefully.
     pub async fn shutdown(&self) {
@@ -134,18 +148,21 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
     pub fn new(sg: Arc<SG>) -> ActivityHeartbeatManagerHandle {
         let (shutdown_tx, shutdown_rx) = channel(false);
         let (events_tx, events_rx) = unbounded_channel();
+        let (cancels_tx, cancels_rx) = cb_channel::unbounded();
         let s = Self {
             heartbeat_processors: Default::default(),
             events_tx: events_tx.clone(),
             events_rx,
             shutdown_tx,
             shutdown_rx,
+            cancels_tx,
             server_gateway: sg,
         };
         let join_handle = tokio::spawn(s.lifecycle());
         ActivityHeartbeatManagerHandle {
             shutting_down: AtomicBool::new(false),
             events: events_tx,
+            incoming_cancels: cancels_rx,
             join_handle: Mutex::new(Some(join_handle)),
         }
     }
@@ -184,6 +201,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
                     heartbeat_rx,
                     shutdown_rx: self.shutdown_rx.clone(),
                     events_tx: self.events_tx.clone(),
+                    cancels_tx: self.cancels_tx.clone(),
                     server_gateway: self.server_gateway.clone(),
                 };
                 let join_handle = tokio::spawn(processor.run());
@@ -248,10 +266,20 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
 
     async fn record_heartbeat(&mut self) {
         let details = self.heartbeat_rx.borrow().clone();
-        let _ = self
+        match self
             .server_gateway
             .record_activity_heartbeat(self.task_token.clone(), details.into_payloads())
-            .await;
+            .await
+        {
+            Ok(RecordActivityTaskHeartbeatResponse { cancel_requested }) => {
+                if cancel_requested {
+                    let _ = self.cancels_tx.send(self.task_token.clone());
+                }
+            }
+            Err(e) => {
+                warn!("Error when recording heartbeat: {:?}", e)
+            }
+        }
     }
 }
 
