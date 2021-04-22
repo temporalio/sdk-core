@@ -122,7 +122,7 @@ mod tests {
             ..Default::default()
         });
         pas.push(WfActivation {
-            run_id: rid.clone(),
+            run_id: rid,
             task_token: vec![9],
             ..Default::default()
         });
