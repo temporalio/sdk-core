@@ -291,7 +291,7 @@ async fn activity_heartbeat() {
     let task_q_salt: u32 = rng.gen();
     let task_q = &format!("activity_workflow_{}", task_q_salt.to_string());
     let core = get_integ_core(task_q).await;
-    let workflow_id: u32 = dbg!(rng.gen());
+    let workflow_id: u32 = rng.gen();
     create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
     let activity_id: String = rng.gen::<u32>().to_string();
     let task = core.poll_workflow_task().await.unwrap();

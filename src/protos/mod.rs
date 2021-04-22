@@ -39,7 +39,6 @@ pub mod coresdk {
                 jobs: vec![WfActivationJob::from(
                     wf_activation_job::Variant::RemoveFromCache(true),
                 )],
-                from_pending: true,
             }
         }
     }

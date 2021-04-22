@@ -430,9 +430,8 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         &self,
         next_a: NextWfActivation,
         task_token: Vec<u8>,
-        from_pending: bool,
     ) -> WfActivation {
-        next_a.finalize(task_token, from_pending)
+        next_a.finalize(task_token)
     }
 
     /// Given a wf task from the server, prepare an activation (if there is one) to be sent to lang
@@ -453,7 +452,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         let next_activation = self.instantiate_or_update_workflow(work)?;
 
         if let Some(na) = next_activation {
-            return Ok(Some(self.finalize_next_activation(na, task_token, false)));
+            return Ok(Some(self.finalize_next_activation(na, task_token)));
         }
         Ok(None)
     }
@@ -628,11 +627,8 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         if let Some(next_activation) =
             self.access_wf_machine(run_id, move |mgr| mgr.get_next_activation())?
         {
-            self.pending_activations.push(self.finalize_next_activation(
-                next_activation,
-                task_token,
-                true,
-            ));
+            self.pending_activations
+                .push(self.finalize_next_activation(next_activation, task_token));
         }
         self.workflow_task_complete_notify.notify_one();
         Ok(())
