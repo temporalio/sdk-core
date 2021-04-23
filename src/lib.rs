@@ -378,9 +378,7 @@ where
         };
         let (res, should_remove) = match maybe_net_err {
             Some(e) if e.code() == tonic::Code::NotFound => {
-                // TODO: Does this make sense? Lang might care if, ex, it's wasting effort somehow
-                //  doing activities that don't exist, though in theory it'd be our fault for
-                //  telling them they do.
+                warn!(task_token = ?tt, details = ?e, "Activity not found on completion");
                 (Ok(()), true)
             }
             Some(err) => (Err(err), false),
