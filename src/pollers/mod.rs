@@ -1,6 +1,9 @@
 mod poll_buffer;
 
-pub use poll_buffer::PollWorkflowTaskBuffer;
+pub use poll_buffer::{
+    new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
+    PollWorkflowTaskBuffer,
+};
 
 use crate::protos::temporal::api::workflowservice::v1::{
     RecordActivityTaskHeartbeatRequest, RecordActivityTaskHeartbeatResponse,

@@ -31,9 +31,9 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::activity::InflightActivityDetails;
+use crate::pollers::{new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer};
 use crate::{
-    activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle},
+    activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle, InflightActivityDetails},
     errors::{ActivityHeartbeatError, ShutdownErr, WorkflowUpdateError},
     machines::{EmptyWorkflowCommandErr, WFCommand},
     pending_activations::PendingActivations,
@@ -58,11 +58,11 @@ use crate::{
 };
 use dashmap::{DashMap, DashSet};
 use futures::TryFutureExt;
-use std::ops::Div;
 use std::{
     convert::TryInto,
     fmt::Debug,
     future::Future,
+    ops::Div,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -183,6 +183,9 @@ struct CoreSDK<WP> {
     /// Buffers workflow task polling in the event we need to return a pending activation while
     /// a poll is ongoing
     wf_task_poll_buffer: PollWorkflowTaskBuffer,
+    /// Buffers workflow task polling in the event we need to return a pending activation while
+    /// a poll is ongoing
+    at_task_poll_buffer: PollActivityTaskBuffer,
 
     /// Workflows may generate new activations immediately upon completion (ex: while replaying,
     /// or when cancelling an activity in try-cancel/abandon mode). They queue here.
@@ -231,11 +234,8 @@ where
             }
 
             let task_complete_fut = self.workflow_task_complete_notify.notified();
-            let poll_result_future = self.shutdownable_fut(
-                self.wf_task_poll_buffer
-                    .poll_workflow_task()
-                    .map_err(Into::into),
-            );
+            let poll_result_future =
+                self.shutdownable_fut(self.wf_task_poll_buffer.poll().map_err(Into::into));
 
             debug!("Polling server");
 
@@ -269,10 +269,6 @@ where
 
     #[instrument(skip(self))]
     async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError> {
-        if self.shutdown_requested.load(Ordering::SeqCst) {
-            return Err(PollActivityError::ShutDown);
-        }
-
         tokio::select! {
             biased;
 
@@ -290,8 +286,9 @@ where
                         ));
                     }
                 }
-                // TODO: Cleanup
-                unreachable!("Channel shouldn't return none");
+                // The only situation where the next cancel would return none is if the manager
+                // was dropped, which should be impossible.
+                return Err(PollActivityError::ShutDown);
             }
             _ = self.shutdown_notifier() => {
                 return Err(PollActivityError::ShutDown);
@@ -429,7 +426,8 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             workflow_task_tokens: Default::default(),
             workflows_last_task_failed: Default::default(),
             outstanding_workflow_tasks: Default::default(),
-            wf_task_poll_buffer: PollWorkflowTaskBuffer::new(sg.clone()),
+            wf_task_poll_buffer: new_workflow_task_buffer(sg.clone()),
+            at_task_poll_buffer: new_activity_task_buffer(sg.clone()),
             pending_activations: Default::default(),
             outstanding_activity_tasks: Default::default(),
             shutdown_requested: AtomicBool::new(false),
@@ -461,7 +459,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         }
 
         match self
-            .shutdownable_fut(self.server_gateway.poll_activity_task().map_err(Into::into))
+            .shutdownable_fut(self.at_task_poll_buffer.poll().map_err(Into::into))
             .await
         {
             Ok(work) => {
