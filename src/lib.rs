@@ -1752,7 +1752,6 @@ mod test {
         core.record_activity_heartbeat(ActivityHeartbeat {
             task_token: act.task_token,
             details: vec![vec![1u8, 2, 3].into()],
-            heartbeat_timeout: Some(Duration::from_secs(1).into()),
         })
         .await
         .unwrap();
