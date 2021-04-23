@@ -107,13 +107,15 @@ pub trait Core: Send + Sync {
     /// `activity_heartbeat_timeout` to finish must call this function in order to report progress,
     /// otherwise activity will timeout and new attempt will be scheduled.
     /// `result` contains latest known activity cancelation status.
-    /// Note that heartbeat requests are getting batched and are sent to the server periodically,
-    /// this function is going to return immediately and request will be queued in the core.
+    /// First heartbeat request will be sent immediately, sub-sequent rapid calls to this
+    /// function would result in heartbeat requests being aggregated and the last one received during
+    /// the aggregation period will be sent to the server.
     /// Unlike java/go SDKs we are not going to return cancellation status as part of heartbeat response
     /// and instead will send it as a separate activity task to the lang, decoupling heartbeat and
     /// cancellation processing.
     /// For now activity still needs to heartbeat if it wants to receive cancellation requests.
     /// In the future we are going to change this and will dispatch cancellations more proactively.
+    /// Note that this function is not blocking on the server call and will return immediately.
     async fn record_activity_heartbeat(
         &self,
         details: ActivityHeartbeat,
