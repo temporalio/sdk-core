@@ -31,6 +31,7 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
+use crate::activity::InflightActivityDetails;
 use crate::{
     activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle},
     errors::{ActivityHeartbeatError, ShutdownErr, WorkflowUpdateError},
@@ -57,6 +58,7 @@ use crate::{
 };
 use dashmap::{DashMap, DashSet};
 use futures::TryFutureExt;
+use std::ops::Div;
 use std::{
     convert::TryInto,
     fmt::Debug,
@@ -65,6 +67,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
+    time,
 };
 use tokio::sync::Notify;
 use tracing::Span;
@@ -104,13 +107,15 @@ pub trait Core: Send + Sync {
     /// `activity_heartbeat_timeout` to finish must call this function in order to report progress,
     /// otherwise activity will timeout and new attempt will be scheduled.
     /// `result` contains latest known activity cancelation status.
-    /// Note that heartbeat requests are getting batched and are sent to the server periodically,
-    /// this function is going to return immediately and request will be queued in the core.
+    /// First heartbeat request will be sent immediately, sub-sequent rapid calls to this
+    /// function would result in heartbeat requests being aggregated and the last one received during
+    /// the aggregation period will be sent to the server.
     /// Unlike java/go SDKs we are not going to return cancellation status as part of heartbeat response
     /// and instead will send it as a separate activity task to the lang, decoupling heartbeat and
     /// cancellation processing.
     /// For now activity still needs to heartbeat if it wants to receive cancellation requests.
     /// In the future we are going to change this and will dispatch cancellations more proactively.
+    /// Note that this function is not blocking on the server call and will return immediately.
     async fn record_activity_heartbeat(
         &self,
         details: ActivityHeartbeat,
@@ -185,7 +190,7 @@ struct CoreSDK<WP> {
 
     activity_heartbeat_manager_handle: ActivityHeartbeatManagerHandle,
     /// Activities that have been issued to lang but not yet completed
-    outstanding_activity_tasks: DashSet<Vec<u8>>,
+    outstanding_activity_tasks: DashMap<Vec<u8>, InflightActivityDetails>,
     /// Has shutdown been called?
     shutdown_requested: AtomicBool,
     /// Used to wake up future which checks shutdown state
@@ -269,13 +274,20 @@ where
         }
 
         // Issue cancellations for anything we noticed was cancelled during heartbeating
-        if let Some(task_token) = self
+        while let Some(task_token) = self
             .activity_heartbeat_manager_handle
             .pending_cancels()
             .next()
         {
-            // TODO: Attach activity ID as well when merged with PR that tracks that
-            return Ok(ActivityTask::from_task_token(task_token));
+            // It's possible that activity has been completed and we no longer have an outstanding activity task.
+            // This is fine because it means that we no longer need to cancel this activity, so we'll just ignore
+            // such orphaned cancellation.
+            if let Some(details) = self.outstanding_activity_tasks.get(&task_token) {
+                return Ok(ActivityTask::from_ids(
+                    task_token.clone(),
+                    details.activity_id.clone(),
+                ));
+            }
         }
 
         while self.outstanding_activity_tasks.len() >= self.init_options.max_outstanding_activities
@@ -289,7 +301,13 @@ where
         {
             Ok(work) => {
                 let task_token = work.task_token.clone();
-                self.outstanding_activity_tasks.insert(task_token.clone());
+                self.outstanding_activity_tasks.insert(
+                    task_token.clone(),
+                    InflightActivityDetails::new(
+                        work.activity_id.clone(),
+                        work.heartbeat_timeout.clone(),
+                    ),
+                );
                 Ok(ActivityTask::start_from_poll_resp(work, task_token))
             }
             Err(e) => Err(e),
@@ -384,7 +402,23 @@ where
         &self,
         details: ActivityHeartbeat,
     ) -> Result<(), ActivityHeartbeatError> {
-        self.activity_heartbeat_manager_handle.record(details)
+        let t: time::Duration = self
+            .outstanding_activity_tasks
+            .get(&details.task_token)
+            .ok_or(ActivityHeartbeatError::UnknownActivity)?
+            .heartbeat_timeout
+            .clone()
+            .ok_or(ActivityHeartbeatError::HeartbeatTimeoutNotSet)?
+            .try_into()
+            .or(Err(ActivityHeartbeatError::InvalidHeartbeatTimeout))?;
+        // There is a bug in the server that translates non-set heartbeat timeouts into 0 duration.
+        // That's why we treat 0 the same way as None, otherwise we wouldn't know which aggregation
+        // delay to use, and using 0 is not a good idea as SDK would hammer the server too hard.
+        if t.as_millis() == 0 {
+            return Err(ActivityHeartbeatError::HeartbeatTimeoutNotSet);
+        }
+        self.activity_heartbeat_manager_handle
+            .record(details, t.div(2))
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {
@@ -1704,6 +1738,7 @@ mod test {
                 Ok(PollActivityTaskQueueResponse {
                     task_token: vec![1],
                     activity_id: "act1".to_string(),
+                    heartbeat_timeout: Some(Duration::from_secs(1).into()),
                     ..Default::default()
                 })
             });
@@ -1730,7 +1765,6 @@ mod test {
         core.record_activity_heartbeat(ActivityHeartbeat {
             task_token: act.task_token,
             details: vec![vec![1u8, 2, 3].into()],
-            heartbeat_timeout: Some(Duration::from_secs(1).into()),
         })
         .await
         .unwrap();

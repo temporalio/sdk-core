@@ -7,10 +7,9 @@ use crate::{
     ServerGatewayApis,
 };
 use crossbeam::channel as cb_channel;
+use std::time::Duration;
 use std::{
     collections::HashMap,
-    convert::TryInto,
-    ops::Div,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -95,22 +94,20 @@ pub struct ValidActivityHeartbeat {
 /// sent to all processors, which allows them to complete gracefully.
 impl ActivityHeartbeatManagerHandle {
     /// Records a new heartbeat, note that first call would result in an immediate call to the
-    /// server, while rapid successive calls would accumulate for up to 1/2 of the heartbeat timeout
+    /// server, while rapid successive calls would accumulate for up to `delay`
     /// and then latest heartbeat details will be sent to the server. If there is no activity for
-    /// 1/2 of the heartbeat timeout then heartbeat processor will be reset and process would start
-    /// over again, meaning that next heartbeat will be sent immediately.
-    pub fn record(&self, details: ActivityHeartbeat) -> Result<(), ActivityHeartbeatError> {
-        let heartbeat_timeout: time::Duration = details
-            .heartbeat_timeout
-            .ok_or(ActivityHeartbeatError::HeartbeatTimeoutNotSet)?
-            .try_into()
-            .or(Err(ActivityHeartbeatError::InvalidHeartbeatTimeout))?;
-
+    /// `delay` then heartbeat processor will be reset and process would start
+    /// over again, meaning that next heartbeat will be sent immediately, creating a new processor.
+    pub fn record(
+        &self,
+        details: ActivityHeartbeat,
+        delay: Duration,
+    ) -> Result<(), ActivityHeartbeatError> {
         self.events
             .send(LifecycleEvent::Heartbeat(ValidActivityHeartbeat {
                 task_token: details.task_token,
                 details: details.details,
-                delay: heartbeat_timeout.div(2),
+                delay,
             }))
             .map_err(|_| ActivityHeartbeatError::SendError)?;
 
@@ -349,14 +346,16 @@ mod test {
             .times(0);
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
         hm.shutdown().await;
-        match hm.record(ActivityHeartbeat {
-            task_token: vec![1, 2, 3],
-            details: vec![Payload {
-                // payload doesn't matter in this case, as it shouldn't get sent anyways.
-                ..Default::default()
-            }],
-            heartbeat_timeout: Some(Duration::from_millis(1000).into()),
-        }) {
+        match hm.record(
+            ActivityHeartbeat {
+                task_token: vec![1, 2, 3],
+                details: vec![Payload {
+                    // payload doesn't matter in this case, as it shouldn't get sent anyways.
+                    ..Default::default()
+                }],
+            },
+            Duration::from_millis(1000),
+        ) {
             Ok(_) => {
                 unreachable!("heartbeat should not be recorded after the shutdown")
             }
@@ -366,48 +365,22 @@ mod test {
         }
     }
 
-    /// Ensure that error is returned if heartbeat timeout is not set. Heartbeat timeout is required
-    /// because it's used to derive aggregation delay.
-    #[tokio::test]
-    async fn record_without_heartbeat_timeout() {
-        let mut mock_gateway = MockServerGatewayApis::new();
-        mock_gateway
-            .expect_record_activity_heartbeat()
-            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
-            .times(0);
-        let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
-        match hm.record(ActivityHeartbeat {
-            task_token: vec![1, 2, 3],
-            details: vec![Payload {
-                // payload doesn't matter in this case, as it shouldn't get sent anyways.
-                ..Default::default()
-            }],
-            heartbeat_timeout: None,
-        }) {
-            Ok(_) => {
-                unreachable!("heartbeat should not be recorded without timeout")
-            }
-            Err(e) => {
-                matches!(e, ActivityHeartbeatError::HeartbeatTimeoutNotSet);
-            }
-        }
-        hm.shutdown().await;
-    }
-
     fn record_heartbeat(
         hm: &ActivityHeartbeatManagerHandle,
         task_token: Vec<u8>,
         i: u8,
         delay: Duration,
     ) {
-        hm.record(ActivityHeartbeat {
-            task_token,
-            details: vec![Payload {
-                metadata: Default::default(),
-                data: vec![i],
-            }],
-            heartbeat_timeout: Some(delay.into()),
-        })
+        hm.record(
+            ActivityHeartbeat {
+                task_token,
+                details: vec![Payload {
+                    metadata: Default::default(),
+                    data: vec![i],
+                }],
+            },
+            delay,
+        )
         .expect("hearbeat recording should not fail");
     }
 }
