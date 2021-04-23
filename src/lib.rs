@@ -359,26 +359,38 @@ where
             });
         };
         let tt = task_token.clone();
-        match status {
-            activity_result::Status::Completed(ar::Success { result }) => {
-                self.server_gateway
-                    .complete_activity_task(task_token, result.map(Into::into))
-                    .await?;
+        let maybe_net_err = match status {
+            activity_result::Status::Completed(ar::Success { result }) => self
+                .server_gateway
+                .complete_activity_task(task_token, result.map(Into::into))
+                .await
+                .err(),
+            activity_result::Status::Failed(ar::Failure { failure }) => self
+                .server_gateway
+                .fail_activity_task(task_token, failure.map(Into::into))
+                .await
+                .err(),
+            activity_result::Status::Canceled(ar::Cancelation { details }) => self
+                .server_gateway
+                .cancel_activity_task(task_token, details.map(Into::into))
+                .await
+                .err(),
+        };
+        let (res, should_remove) = match maybe_net_err {
+            Some(e) if e.code() == tonic::Code::NotFound => {
+                // TODO: Does this make sense? Lang might care if, ex, it's wasting effort somehow
+                //  doing activities that don't exist, though in theory it'd be our fault for
+                //  telling them they do.
+                (Ok(()), true)
             }
-            activity_result::Status::Failed(ar::Failure { failure }) => {
-                self.server_gateway
-                    .fail_activity_task(task_token, failure.map(Into::into))
-                    .await?;
-            }
-            activity_result::Status::Canceled(ar::Cancelation { details }) => {
-                self.server_gateway
-                    .cancel_activity_task(task_token, details.map(Into::into))
-                    .await?;
-            }
+            Some(err) => (Err(err), false),
+            None => (Ok(()), true),
+        };
+        if should_remove {
+            self.outstanding_activity_tasks.remove(&tt);
         }
-        self.outstanding_activity_tasks.remove(&tt);
         self.activity_task_complete_notify.notify_waiters();
-        Ok(())
+        Ok(res?)
     }
 
     async fn record_activity_heartbeat(
