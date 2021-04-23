@@ -708,7 +708,7 @@ mod test {
             gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, poll_and_reply,
             EvictionMode, FakeCore, TestHistoryBuilder,
         },
-        pollers::MockServerGatewayApis,
+        pollers::{MockManualGateway, MockServerGatewayApis},
         protos::{
             coresdk::{
                 activity_result::ActivityResult,
@@ -736,6 +736,7 @@ mod test {
         },
         test_help::canned_histories,
     };
+    use futures::FutureExt;
     use rstest::{fixture, rstest};
     use std::{
         collections::VecDeque,
@@ -1799,5 +1800,97 @@ mod test {
                 ..
             } => { task_token == vec![1] }
         );
+    }
+
+    #[tokio::test]
+    async fn activity_not_found_returns_ok() {
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_complete_activity_task()
+            .times(1)
+            .returning(|_, _| Err(tonic::Status::not_found("unimportant")));
+
+        let core = CoreSDK::new(
+            mock_gateway,
+            CoreInitOptions {
+                gateway_opts: fake_sg_opts(),
+                evict_after_pending_cleared: true,
+                max_outstanding_workflow_tasks: 5,
+                max_outstanding_activities: 5,
+            },
+        );
+
+        core.complete_activity_task(ActivityTaskCompletion {
+            task_token: vec![1],
+            result: Some(ActivityResult::ok(vec![1].into())),
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn activity_cancel_interrupts_poll() {
+        let mut mock_gateway = MockManualGateway::new();
+        let mut poll_resps = VecDeque::from(vec![
+            async {
+                Ok(PollActivityTaskQueueResponse {
+                    task_token: vec![1],
+                    heartbeat_timeout: Some(Duration::from_secs(1).into()),
+                    ..Default::default()
+                })
+            }
+            .boxed(),
+            async {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                Ok(Default::default())
+            }
+            .boxed(),
+        ]);
+        mock_gateway
+            .expect_poll_activity_task()
+            .times(2)
+            .returning(move || poll_resps.pop_front().unwrap());
+        mock_gateway
+            .expect_record_activity_heartbeat()
+            .times(1)
+            .returning(|_, _| {
+                async {
+                    Ok(RecordActivityTaskHeartbeatResponse {
+                        cancel_requested: true,
+                    })
+                }
+                .boxed()
+            });
+
+        let core = CoreSDK::new(
+            mock_gateway,
+            CoreInitOptions {
+                gateway_opts: fake_sg_opts(),
+                evict_after_pending_cleared: true,
+                max_outstanding_workflow_tasks: 5,
+                max_outstanding_activities: 5,
+            },
+        );
+        let last_finisher = AtomicUsize::new(0);
+        // Perform first poll to get the activity registered
+        let act = core.poll_activity_task().await.unwrap();
+        // Poll should block until heartbeat is sent, issuing the cancel, and interrupting the poll
+        tokio::join! {
+            async {
+                core.record_activity_heartbeat(ActivityHeartbeat {
+                    task_token: act.task_token,
+                    details: vec![vec![1u8, 2, 3].into()],
+                })
+                .await
+                .unwrap();
+                last_finisher.store(1, Ordering::SeqCst);
+            },
+            async {
+                core.poll_activity_task().await.unwrap();
+                last_finisher.store(2, Ordering::SeqCst);
+            }
+        };
+        // So that we know we blocked
+        assert_eq!(last_finisher.load(Ordering::Acquire), 2);
     }
 }

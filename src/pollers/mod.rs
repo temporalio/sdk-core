@@ -407,6 +407,9 @@ impl ServerGatewayApis for ServerGateway {
 }
 
 #[cfg(test)]
+pub use manual_mock::MockManualGateway;
+
+#[cfg(test)]
 mod manual_mock {
     use super::*;
     use std::future::Future;
