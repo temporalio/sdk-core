@@ -9,6 +9,7 @@ pub mod coresdk {
     //! Contains all protobufs relating to communication between core and lang-specific SDKs
 
     tonic::include_proto!("coresdk");
+
     #[allow(clippy::module_inception)]
     pub mod activity_task {
         tonic::include_proto!("coresdk.activity_task");

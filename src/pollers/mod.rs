@@ -1,6 +1,9 @@
 mod poll_buffer;
 
-pub use poll_buffer::PollWorkflowTaskBuffer;
+pub use poll_buffer::{
+    new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
+    PollWorkflowTaskBuffer,
+};
 
 use crate::protos::temporal::api::workflowservice::v1::{
     RecordActivityTaskHeartbeatRequest, RecordActivityTaskHeartbeatResponse,
@@ -402,6 +405,9 @@ impl ServerGatewayApis for ServerGateway {
             .into_inner())
     }
 }
+
+#[cfg(test)]
+pub use manual_mock::MockManualGateway;
 
 #[cfg(test)]
 mod manual_mock {

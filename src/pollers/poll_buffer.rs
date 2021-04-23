@@ -1,39 +1,59 @@
 use crate::{
-    pollers, protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
-    ServerGatewayApis,
+    pollers, protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
+    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse, ServerGatewayApis,
 };
 use futures::{stream::repeat_with, Stream, StreamExt};
+use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub struct PollWorkflowTaskBuffer {
-    buffered_polls: Mutex<
-        Box<dyn Stream<Item = pollers::Result<PollWorkflowTaskQueueResponse>> + Unpin + Send>,
-    >,
+pub struct LongPollBuffer<T> {
+    buffered_polls: Mutex<Box<dyn Stream<Item = pollers::Result<T>> + Unpin + Send>>,
 }
 
-impl PollWorkflowTaskBuffer {
-    pub fn new(sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>) -> Self {
+impl<T> LongPollBuffer<T>
+where
+    T: Send,
+{
+    pub fn new<FT>(poll_fn: impl Fn() -> FT + Send + 'static) -> Self
+    where
+        FT: Future<Output = pollers::Result<T>> + Send,
+    {
         // This is not the world's most efficient thing, but given we're wrapping IO it's unlikely
         // to be of any significance.
-        let pbuff = repeat_with(move || {
-            let sg = sg.clone();
-            async move { sg.poll_workflow_task().await }
-        })
-        .buffered(1);
+        let pbuff = repeat_with(poll_fn).buffered(1);
         Self {
             buffered_polls: Mutex::new(Box::new(pbuff)),
         }
     }
 
-    // TODO: Task queue.
-    pub async fn poll_workflow_task(&self) -> pollers::Result<PollWorkflowTaskQueueResponse> {
+    pub async fn poll(&self) -> pollers::Result<T> {
         let mut locked = self.buffered_polls.lock().await;
         (*locked)
             .next()
             .await
             .expect("There is always another item in the stream")
     }
+}
+
+pub type PollWorkflowTaskBuffer = LongPollBuffer<PollWorkflowTaskQueueResponse>;
+pub fn new_workflow_task_buffer(
+    sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>,
+) -> PollWorkflowTaskBuffer {
+    LongPollBuffer::new(move || {
+        let sg = sg.clone();
+        async move { sg.poll_workflow_task().await }
+    })
+}
+
+pub type PollActivityTaskBuffer = LongPollBuffer<PollActivityTaskQueueResponse>;
+pub fn new_activity_task_buffer(
+    sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>,
+) -> PollActivityTaskBuffer {
+    LongPollBuffer::new(move || {
+        let sg = sg.clone();
+        async move { sg.poll_activity_task().await }
+    })
 }
 
 #[cfg(test)]
@@ -59,7 +79,7 @@ mod tests {
             });
         let mock_gateway = Arc::new(mock_gateway);
 
-        let pb = PollWorkflowTaskBuffer::new(mock_gateway);
+        let pb = new_workflow_task_buffer(mock_gateway);
 
         // Poll a bunch of times, "interrupting" it each time, we should only actually have polled
         // once since the poll takes a while
@@ -73,13 +93,13 @@ mod tests {
             select! {
                 _ = interrupter_rx.recv() => {
                 }
-                _ = pb.poll_workflow_task() => {
+                _ = pb.poll() => {
                     last_val = true;
                 }
             }
         }
         assert!(last_val);
         // Now we poll for the second time here, fulfilling our 2 times expectation
-        pb.poll_workflow_task().await.unwrap();
+        pb.poll().await.unwrap();
     }
 }
