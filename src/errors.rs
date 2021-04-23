@@ -149,9 +149,9 @@ pub enum CompleteActivityError {
 pub enum ActivityHeartbeatError {
     #[error("Heartbeat has been sent for activity that either completed or never started on this worker.")]
     UnknownActivity,
-    #[error("Heartbeat request must contain heartbeat timeout.")]
+    #[error("Heartbeat is only allowed on activities with heartbeat timeout.")]
     HeartbeatTimeoutNotSet,
-    #[error("Heartbeat request must contain valid heartbeat timeout.")]
+    #[error("Unable to parse activity heartbeat timeout.")]
     InvalidHeartbeatTimeout,
     #[error("New heartbeat requests are not accepted while shutting down")]
     ShuttingDown,
