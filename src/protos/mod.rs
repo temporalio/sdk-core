@@ -14,10 +14,10 @@ pub mod coresdk {
         tonic::include_proto!("coresdk.activity_task");
 
         impl ActivityTask {
-            pub fn from_task_token(task_token: Vec<u8>) -> Self {
+            pub fn from_ids(task_token: Vec<u8>, activity_id: String) -> Self {
                 ActivityTask {
                     task_token,
-                    activity_id: "".to_string(),
+                    activity_id,
                     variant: Some(activity_task::Variant::Cancel(Cancel {})),
                 }
             }

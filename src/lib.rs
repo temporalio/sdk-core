@@ -274,13 +274,20 @@ where
         }
 
         // Issue cancellations for anything we noticed was cancelled during heartbeating
-        if let Some(task_token) = self
+        while let Some(task_token) = self
             .activity_heartbeat_manager_handle
             .pending_cancels()
             .next()
         {
-            // TODO: Attach activity ID as well when merged with PR that tracks that
-            return Ok(ActivityTask::from_task_token(task_token));
+            // It's possible that activity has been completed and we no longer have an outstanding activity task.
+            // This is fine because it means that we no longer need to cancel this activity, so we'll just ignore
+            // such orphaned cancellation.
+            if let Some(details) = self.outstanding_activity_tasks.get(&task_token) {
+                return Ok(ActivityTask::from_ids(
+                    task_token.clone(),
+                    details.activity_id.clone(),
+                ));
+            }
         }
 
         while self.outstanding_activity_tasks.len() >= self.init_options.max_outstanding_activities
@@ -296,7 +303,10 @@ where
                 let task_token = work.task_token.clone();
                 self.outstanding_activity_tasks.insert(
                     task_token.clone(),
-                    InflightActivityDetails::new(work.heartbeat_timeout.clone()),
+                    InflightActivityDetails::new(
+                        work.activity_id.clone(),
+                        work.heartbeat_timeout.clone(),
+                    ),
                 );
                 Ok(ActivityTask::start_from_poll_resp(work, task_token))
             }
