@@ -306,6 +306,7 @@ where
                     InflightActivityDetails::new(
                         work.activity_id.clone(),
                         work.heartbeat_timeout.clone(),
+                        None,
                     ),
                 );
                 Ok(ActivityTask::start_from_poll_resp(work, task_token))
@@ -417,8 +418,30 @@ where
         if t.as_millis() == 0 {
             return Err(ActivityHeartbeatError::HeartbeatTimeoutNotSet);
         }
+        let task_token = details.task_token.clone();
+        // Record activity heartbeat
         self.activity_heartbeat_manager_handle
-            .record(details, t.div(2))
+            .record(details, t.div(2))?;
+        // Drain pending errors and store them in outstanding activities task.
+        while let Some((task_token, err)) = self
+            .activity_heartbeat_manager_handle
+            .pending_errors()
+            .next()
+        {
+            if let Some(mut details) = self.outstanding_activity_tasks.get_mut(&task_token) {
+                details.last_heartbeat_error = Some(err);
+            }
+        }
+        let h = self
+            .outstanding_activity_tasks
+            .get(&task_token)
+            .map(|d| d.last_heartbeat_error.clone())
+            .flatten();
+
+        if let Some(e) = h {
+            return Err(e);
+        }
+        Ok(())
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {

@@ -5,6 +5,7 @@ use crate::{
     workflow::WorkflowError,
 };
 use tonic::codegen::http::uri::InvalidUri;
+use tonic::Status;
 
 pub(crate) struct ShutdownErr;
 pub(crate) struct WorkflowUpdateError {
@@ -145,7 +146,7 @@ pub enum CompleteActivityError {
 }
 
 /// Errors thrown by [crate::Core::record_activity_heartbeat] and [crate::Core::get_last_activity_heartbeat]
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum ActivityHeartbeatError {
     #[error("Heartbeat has been sent for activity that either completed or never started on this worker.")]
     UnknownActivity,
@@ -157,4 +158,6 @@ pub enum ActivityHeartbeatError {
     ShuttingDown,
     #[error("Unable to dispatch heartbeat.")]
     SendError,
+    #[error("Attempt to send heartbeat has been made but server has returned an error.")]
+    NonRetryableServerError(Status),
 }

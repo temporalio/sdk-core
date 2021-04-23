@@ -26,6 +26,7 @@ use tokio::{
     task::{JoinError, JoinHandle},
     time::sleep,
 };
+use tonic::Code;
 
 pub(crate) struct ActivityHeartbeatManager<SG> {
     /// Core will aggregate activity heartbeats for each activity and send them to the server
@@ -37,6 +38,7 @@ pub(crate) struct ActivityHeartbeatManager<SG> {
     shutdown_tx: Sender<bool>,
     shutdown_rx: Receiver<bool>,
     cancels_tx: cb_channel::Sender<Vec<u8>>,
+    errors_tx: cb_channel::Sender<(Vec<u8>, ActivityHeartbeatError)>,
     server_gateway: Arc<SG>,
 }
 
@@ -48,6 +50,8 @@ pub(crate) struct ActivityHeartbeatManagerHandle {
     /// Cancellations that have been received when heartbeating are queued here and can be consumed
     /// by [fetch_cancellations]
     incoming_cancels: cb_channel::Receiver<Vec<u8>>,
+    /// Heartbeat processing errors that should be propagated to the caller.
+    incoming_errors: cb_channel::Receiver<(Vec<u8>, ActivityHeartbeatError)>,
     /// Used during `shutdown` to await until all inflight requests are sent.
     join_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -64,6 +68,8 @@ struct ActivityHeartbeatProcessorHandle {
 struct ActivityHeartbeatProcessor<SG> {
     task_token: Vec<u8>,
     delay: time::Duration,
+    /// Time between retries to the server in case of transient errors.
+    retry_delay: time::Duration,
     /// Used to receive heartbeat events.
     heartbeat_rx: Receiver<Vec<common::Payload>>,
     /// Used to receive shutdown notifications.
@@ -72,6 +78,9 @@ struct ActivityHeartbeatProcessor<SG> {
     events_tx: UnboundedSender<LifecycleEvent>,
     /// Used to send cancellation notices that we learned about when heartbeating back up to core
     cancels_tx: cb_channel::Sender<Vec<u8>>,
+    /// Used to send errors back to the lang.
+    errors_tx: cb_channel::Sender<(Vec<u8>, ActivityHeartbeatError)>,
+    /// API gateway for server interactions.
     server_gateway: Arc<SG>,
 }
 
@@ -120,6 +129,12 @@ impl ActivityHeartbeatManagerHandle {
         self.incoming_cancels.try_iter()
     }
 
+    /// Returns an iterator over heartbeat errors that should be propagated to the user. Consuming
+    /// an item from the iterator also removes it from the pending list.
+    pub fn pending_errors(&self) -> impl Iterator<Item = (Vec<u8>, ActivityHeartbeatError)> + '_ {
+        self.incoming_errors.try_iter()
+    }
+
     /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all heartbeat
     /// processors to terminate gracefully.
     pub async fn shutdown(&self) {
@@ -147,6 +162,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
         let (shutdown_tx, shutdown_rx) = channel(false);
         let (events_tx, events_rx) = unbounded_channel();
         let (cancels_tx, cancels_rx) = cb_channel::unbounded();
+        let (errors_tx, errors_rx) = cb_channel::unbounded();
         let s = Self {
             heartbeat_processors: Default::default(),
             events_tx: events_tx.clone(),
@@ -154,6 +170,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
             shutdown_tx,
             shutdown_rx,
             cancels_tx,
+            errors_tx,
             server_gateway: sg,
         };
         let join_handle = tokio::spawn(s.lifecycle());
@@ -161,6 +178,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
             shutting_down: AtomicBool::new(false),
             events: events_tx,
             incoming_cancels: cancels_rx,
+            incoming_errors: errors_rx,
             join_handle: Mutex::new(Some(join_handle)),
         }
     }
@@ -195,10 +213,12 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
                 let processor = ActivityHeartbeatProcessor {
                     task_token: heartbeat.task_token.clone(),
                     delay: heartbeat.delay,
+                    retry_delay: Duration::from_secs(1),
                     heartbeat_rx,
                     shutdown_rx: self.shutdown_rx.clone(),
                     events_tx: self.events_tx.clone(),
                     cancels_tx: self.cancels_tx.clone(),
+                    errors_tx: self.errors_tx.clone(),
                     server_gateway: self.server_gateway.clone(),
                 };
                 let join_handle = tokio::spawn(processor.run());
@@ -254,19 +274,52 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
     }
 
     async fn record_heartbeat(&mut self) {
-        let details = self.heartbeat_rx.borrow().clone();
-        match self
-            .server_gateway
-            .record_activity_heartbeat(self.task_token.clone(), details.into_payloads())
-            .await
-        {
-            Ok(RecordActivityTaskHeartbeatResponse { cancel_requested }) => {
-                if cancel_requested {
-                    let _ = self.cancels_tx.send(self.task_token.clone());
+        loop {
+            let details = self.heartbeat_rx.borrow().clone();
+            match self
+                .server_gateway
+                .record_activity_heartbeat(self.task_token.clone(), details.into_payloads())
+                .await
+            {
+                Ok(RecordActivityTaskHeartbeatResponse { cancel_requested }) => {
+                    if cancel_requested {
+                        let _ = self.cancels_tx.send(self.task_token.clone());
+                    }
+                    return; // activity heartbeat has been successfully sent to the server.
                 }
-            }
-            Err(e) => {
-                warn!("Error when recording heartbeat: {:?}", e)
+                Err(e) => {
+                    warn!("Error when recording heartbeat: {:?}", e);
+                    match e.code() {
+                        Code::InvalidArgument => {
+                            self.errors_tx
+                                .send((
+                                    self.task_token.clone(),
+                                    ActivityHeartbeatError::NonRetryableServerError(e),
+                                ))
+                                .expect("errors should not be dropped");
+                            break;
+                        }
+                        Code::NotFound => {
+                            self.errors_tx
+                                .send((
+                                    self.task_token.clone(),
+                                    ActivityHeartbeatError::NonRetryableServerError(e),
+                                ))
+                                .expect("errors should not be dropped");
+                            break;
+                        }
+                        Code::FailedPrecondition => {
+                            self.errors_tx
+                                .send((
+                                    self.task_token.clone(),
+                                    ActivityHeartbeatError::NonRetryableServerError(e),
+                                ))
+                                .expect("errors should not be dropped");
+                            break;
+                        }
+                        _ => sleep(self.retry_delay).await, // sleep before the next retry
+                    }
+                }
             }
         }
     }
@@ -279,6 +332,7 @@ mod test {
     use crate::protos::coresdk::common::Payload;
     use crate::protos::temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse;
     use std::time::Duration;
+    use tonic::Status;
 
     /// Ensure that hearbeats that are sent with a small delay are aggregated and sent roughly once
     /// every 1/2 of the heartbeat timeout.
@@ -293,6 +347,27 @@ mod test {
         let fake_task_token = vec![1, 2, 3];
         // Sending heartbeat requests for 400ms, this should send first hearbeat right away, and all other
         // requests should be aggregated and last one should be sent to the server in 500ms (1/2 of heartbeat timeout).
+        for i in 0u8..40 {
+            sleep(Duration::from_millis(10)).await;
+            record_heartbeat(&hm, fake_task_token.clone(), i, Duration::from_millis(1000));
+        }
+        hm.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn process_heartbeats_retry_on_failure_and_shutdown() {
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_record_activity_heartbeat()
+            .returning(|_, _| {
+                Err(Status::new(
+                    Code::DeadlineExceeded,
+                    "invalid argument error",
+                ))
+            })
+            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()));
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
+        let fake_task_token = vec![1, 2, 3];
         for i in 0u8..40 {
             sleep(Duration::from_millis(10)).await;
             record_heartbeat(&hm, fake_task_token.clone(), i, Duration::from_millis(1000));
