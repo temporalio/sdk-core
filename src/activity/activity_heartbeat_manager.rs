@@ -6,15 +6,13 @@ use crate::{
     },
     ServerGatewayApis,
 };
-use crossbeam::channel as cb_channel;
-use std::time::Duration;
 use std::{
     collections::HashMap,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::{self},
+    time::{self, Duration},
 };
 use tokio::{
     select,
@@ -36,7 +34,7 @@ pub(crate) struct ActivityHeartbeatManager<SG> {
     events_rx: UnboundedReceiver<LifecycleEvent>,
     shutdown_tx: Sender<bool>,
     shutdown_rx: Receiver<bool>,
-    cancels_tx: cb_channel::Sender<Vec<u8>>,
+    cancels_tx: UnboundedSender<Vec<u8>>,
     server_gateway: Arc<SG>,
 }
 
@@ -47,7 +45,7 @@ pub(crate) struct ActivityHeartbeatManagerHandle {
     events: UnboundedSender<LifecycleEvent>,
     /// Cancellations that have been received when heartbeating are queued here and can be consumed
     /// by [fetch_cancellations]
-    incoming_cancels: cb_channel::Receiver<Vec<u8>>,
+    incoming_cancels: Mutex<UnboundedReceiver<Vec<u8>>>,
     /// Used during `shutdown` to await until all inflight requests are sent.
     join_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -71,7 +69,7 @@ struct ActivityHeartbeatProcessor<SG> {
     /// Used to send CleanupProcessor event at the end of the processor loop.
     events_tx: UnboundedSender<LifecycleEvent>,
     /// Used to send cancellation notices that we learned about when heartbeating back up to core
-    cancels_tx: cb_channel::Sender<Vec<u8>>,
+    cancels_tx: UnboundedSender<Vec<u8>>,
     server_gateway: Arc<SG>,
 }
 
@@ -114,10 +112,10 @@ impl ActivityHeartbeatManagerHandle {
         Ok(())
     }
 
-    /// Returns an iterator over any currently pending activity cancels (by task token). Consuming
-    /// an item from the iterator also removes it from the pending list.
-    pub fn pending_cancels(&self) -> impl Iterator<Item = Vec<u8>> + '_ {
-        self.incoming_cancels.try_iter()
+    /// Returns a future that resolves any time there is a new activity cancel that must be
+    /// dispatched to lang
+    pub async fn next_pending_cancel(&self) -> Option<Vec<u8>> {
+        self.incoming_cancels.lock().await.recv().await
     }
 
     /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all heartbeat
@@ -146,7 +144,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
     pub fn new(sg: Arc<SG>) -> ActivityHeartbeatManagerHandle {
         let (shutdown_tx, shutdown_rx) = channel(false);
         let (events_tx, events_rx) = unbounded_channel();
-        let (cancels_tx, cancels_rx) = cb_channel::unbounded();
+        let (cancels_tx, cancels_rx) = unbounded_channel();
         let s = Self {
             heartbeat_processors: Default::default(),
             events_tx: events_tx.clone(),
@@ -160,7 +158,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
         ActivityHeartbeatManagerHandle {
             shutting_down: AtomicBool::new(false),
             events: events_tx,
-            incoming_cancels: cancels_rx,
+            incoming_cancels: Mutex::new(cancels_rx),
             join_handle: Mutex::new(Some(join_handle)),
         }
     }

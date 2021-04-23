@@ -273,44 +273,30 @@ where
             return Err(PollActivityError::ShutDown);
         }
 
-        // Issue cancellations for anything we noticed was cancelled during heartbeating
-        while let Some(task_token) = self
-            .activity_heartbeat_manager_handle
-            .pending_cancels()
-            .next()
-        {
-            // It's possible that activity has been completed and we no longer have an outstanding activity task.
-            // This is fine because it means that we no longer need to cancel this activity, so we'll just ignore
-            // such orphaned cancellation.
-            if let Some(details) = self.outstanding_activity_tasks.get(&task_token) {
-                return Ok(ActivityTask::from_ids(
-                    task_token.clone(),
-                    details.activity_id.clone(),
-                ));
-            }
-        }
+        tokio::select! {
+            biased;
 
-        while self.outstanding_activity_tasks.len() >= self.init_options.max_outstanding_activities
-        {
-            self.activity_task_complete_notify.notified().await
-        }
-
-        match self
-            .shutdownable_fut(self.server_gateway.poll_activity_task().map_err(Into::into))
-            .await
-        {
-            Ok(work) => {
-                let task_token = work.task_token.clone();
-                self.outstanding_activity_tasks.insert(
-                    task_token.clone(),
-                    InflightActivityDetails::new(
-                        work.activity_id.clone(),
-                        work.heartbeat_timeout.clone(),
-                    ),
-                );
-                Ok(ActivityTask::start_from_poll_resp(work, task_token))
+            maybe_tt = self.activity_heartbeat_manager_handle.next_pending_cancel() => {
+                // Issue cancellations for anything we noticed was cancelled during heartbeating
+                if let Some(task_token) = maybe_tt {
+                    // It's possible that activity has been completed and we no longer have an
+                    // outstanding activity task. This is fine because it means that we no longer
+                    // need to cancel this activity, so we'll just ignore such orphaned
+                    // cancellation.
+                    if let Some(details) = self.outstanding_activity_tasks.get(&task_token) {
+                        return Ok(ActivityTask::from_ids(
+                            task_token.clone(),
+                            details.activity_id.clone(),
+                        ));
+                    }
+                }
+                // TODO: Cleanup
+                unreachable!("Channel shouldn't return none");
             }
-            Err(e) => Err(e),
+            _ = self.shutdown_notifier() => {
+                return Err(PollActivityError::ShutDown);
+            }
+            r = self.do_activity_poll() => r
         }
     }
 
@@ -465,6 +451,31 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             // Queue up an eviction activation
             self.pending_activations
                 .push(create_evict_activation(task_token.to_owned(), run_id))
+        }
+    }
+
+    async fn do_activity_poll(&self) -> Result<ActivityTask, PollActivityError> {
+        while self.outstanding_activity_tasks.len() >= self.init_options.max_outstanding_activities
+        {
+            self.activity_task_complete_notify.notified().await
+        }
+
+        match self
+            .shutdownable_fut(self.server_gateway.poll_activity_task().map_err(Into::into))
+            .await
+        {
+            Ok(work) => {
+                let task_token = work.task_token.clone();
+                self.outstanding_activity_tasks.insert(
+                    task_token.clone(),
+                    InflightActivityDetails::new(
+                        work.activity_id.clone(),
+                        work.heartbeat_timeout.clone(),
+                    ),
+                );
+                Ok(ActivityTask::start_from_poll_resp(work, task_token))
+            }
+            Err(e) => Err(e),
         }
     }
 
@@ -637,6 +648,15 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             })
     }
 
+    async fn shutdown_notifier(&self) {
+        loop {
+            self.shutdown_notify.notified().await;
+            if self.shutdown_requested.load(Ordering::SeqCst) {
+                break;
+            }
+        }
+    }
+
     /// Wrap a future, making it return early with a shutdown error in the event the shutdown
     /// flag has been set
     async fn shutdownable_fut<FOut, FErr>(
@@ -646,16 +666,8 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
     where
         FErr: From<ShutdownErr>,
     {
-        let shutdownfut = async {
-            loop {
-                self.shutdown_notify.notified().await;
-                if self.shutdown_requested.load(Ordering::SeqCst) {
-                    break;
-                }
-            }
-        };
         tokio::select! {
-            _ = shutdownfut => {
+            _ = self.shutdown_notifier() => {
                 Err(ShutdownErr.into())
             }
             r = wrap_this => r
