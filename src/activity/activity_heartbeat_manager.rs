@@ -290,16 +290,16 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
                 Err(e) => {
                     warn!("Error when recording heartbeat: {:?}", e);
                     match e.code() {
-                        Code::InvalidArgument => {
+                        Code::NotFound => {
                             self.errors_tx
                                 .send((
                                     self.task_token.clone(),
-                                    ActivityHeartbeatError::NonRetryableServerError(e),
+                                    ActivityHeartbeatError::UnknownActivity,
                                 ))
                                 .expect("errors should not be dropped");
                             break;
                         }
-                        Code::NotFound => {
+                        Code::InvalidArgument => {
                             self.errors_tx
                                 .send((
                                     self.task_token.clone(),
