@@ -403,7 +403,7 @@ where
         // That's why we treat 0 the same way as None, otherwise we wouldn't know which aggregation
         // delay to use, and using 0 is not a good idea as SDK would hammer the server too hard.
         if t.as_millis() == 0 {
-            Err(ActivityHeartbeatError::HeartbeatTimeoutNotSet)?;
+            return Err(ActivityHeartbeatError::HeartbeatTimeoutNotSet);
         }
         self.activity_heartbeat_manager_handle
             .record(details, t.div(2))
