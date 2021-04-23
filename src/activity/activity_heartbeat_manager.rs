@@ -94,10 +94,10 @@ pub struct ValidActivityHeartbeat {
 /// sent to all processors, which allows them to complete gracefully.
 impl ActivityHeartbeatManagerHandle {
     /// Records a new heartbeat, note that first call would result in an immediate call to the
-    /// server, while rapid successive calls would accumulate for up to 1/2 of the heartbeat timeout
+    /// server, while rapid successive calls would accumulate for up to `delay`
     /// and then latest heartbeat details will be sent to the server. If there is no activity for
-    /// 1/2 of the heartbeat timeout then heartbeat processor will be reset and process would start
-    /// over again, meaning that next heartbeat will be sent immediately.
+    /// `delay` then heartbeat processor will be reset and process would start
+    /// over again, meaning that next heartbeat will be sent immediately, creating a new processor.
     pub fn record(
         &self,
         details: ActivityHeartbeat,

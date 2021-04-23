@@ -1726,6 +1726,7 @@ mod test {
                 Ok(PollActivityTaskQueueResponse {
                     task_token: vec![1],
                     activity_id: "act1".to_string(),
+                    heartbeat_timeout: Some(Duration::from_secs(1).into()),
                     ..Default::default()
                 })
             });
