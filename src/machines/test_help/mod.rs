@@ -193,8 +193,9 @@ pub(crate) async fn poll_and_reply<'a>(
                 // If the job list has an eviction, make sure it was the last item in the list
                 // then remove it and run the asserter against that smaller list, and then restart
                 // expectations from the beginning.
-                assert!(
-                    eviction_job_ix == res.jobs.len() - 1,
+                assert_eq!(
+                    eviction_job_ix,
+                    res.jobs.len() - 1,
                     "Eviction job was not last job in job list"
                 );
                 res.jobs.remove(eviction_job_ix);
@@ -227,7 +228,7 @@ pub(crate) async fn poll_and_reply<'a>(
                 EvictionMode::NotSticky => (),
                 EvictionMode::AfterEveryReply => {
                     if evictions < expected_evictions {
-                        core.inner.evict_run(&task_tok);
+                        core.inner.evict_run(&task_tok.into());
                         evictions += 1;
                     }
                 }

@@ -1,3 +1,4 @@
+use crate::task_token::TaskToken;
 use crate::{
     errors::ActivityHeartbeatError,
     protos::{
@@ -29,12 +30,12 @@ pub(crate) struct ActivityHeartbeatManager<SG> {
     /// Core will aggregate activity heartbeats for each activity and send them to the server
     /// periodically. This map contains sender channel for each activity, identified by the task
     /// token, that has an active heartbeat processor.
-    heartbeat_processors: HashMap<Vec<u8>, ActivityHeartbeatProcessorHandle>,
+    heartbeat_processors: HashMap<TaskToken, ActivityHeartbeatProcessorHandle>,
     events_tx: UnboundedSender<LifecycleEvent>,
     events_rx: UnboundedReceiver<LifecycleEvent>,
     shutdown_tx: Sender<bool>,
     shutdown_rx: Receiver<bool>,
-    cancels_tx: UnboundedSender<Vec<u8>>,
+    cancels_tx: UnboundedSender<TaskToken>,
     server_gateway: Arc<SG>,
 }
 
@@ -45,7 +46,7 @@ pub(crate) struct ActivityHeartbeatManagerHandle {
     events: UnboundedSender<LifecycleEvent>,
     /// Cancellations that have been received when heartbeating are queued here and can be consumed
     /// by [fetch_cancellations]
-    incoming_cancels: Mutex<UnboundedReceiver<Vec<u8>>>,
+    incoming_cancels: Mutex<UnboundedReceiver<TaskToken>>,
     /// Used during `shutdown` to await until all inflight requests are sent.
     join_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -60,7 +61,7 @@ struct ActivityHeartbeatProcessorHandle {
 /// Heartbeat processor, that aggregates and periodically sends heartbeat requests for a single
 /// activity to the server.
 struct ActivityHeartbeatProcessor<SG> {
-    task_token: Vec<u8>,
+    task_token: TaskToken,
     delay: time::Duration,
     /// Used to receive heartbeat events.
     heartbeat_rx: Receiver<Vec<common::Payload>>,
@@ -69,20 +70,20 @@ struct ActivityHeartbeatProcessor<SG> {
     /// Used to send CleanupProcessor event at the end of the processor loop.
     events_tx: UnboundedSender<LifecycleEvent>,
     /// Used to send cancellation notices that we learned about when heartbeating back up to core
-    cancels_tx: UnboundedSender<Vec<u8>>,
+    cancels_tx: UnboundedSender<TaskToken>,
     server_gateway: Arc<SG>,
 }
 
 #[derive(Debug)]
 pub enum LifecycleEvent {
     Heartbeat(ValidActivityHeartbeat),
-    CleanupProcessor(Vec<u8>),
+    CleanupProcessor(TaskToken),
     Shutdown,
 }
 
 #[derive(Debug)]
 pub struct ValidActivityHeartbeat {
-    pub task_token: Vec<u8>,
+    pub task_token: TaskToken,
     pub details: Vec<common::Payload>,
     pub delay: time::Duration,
 }
@@ -103,7 +104,7 @@ impl ActivityHeartbeatManagerHandle {
     ) -> Result<(), ActivityHeartbeatError> {
         self.events
             .send(LifecycleEvent::Heartbeat(ValidActivityHeartbeat {
-                task_token: details.task_token,
+                task_token: TaskToken(details.task_token),
                 details: details.details,
                 delay,
             }))
@@ -114,7 +115,7 @@ impl ActivityHeartbeatManagerHandle {
 
     /// Returns a future that resolves any time there is a new activity cancel that must be
     /// dispatched to lang
-    pub async fn next_pending_cancel(&self) -> Option<Vec<u8>> {
+    pub async fn next_pending_cancel(&self) -> Option<TaskToken> {
         self.incoming_cancels.lock().await.recv().await
     }
 

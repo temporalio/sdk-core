@@ -19,6 +19,7 @@ mod machines;
 mod pending_activations;
 mod pollers;
 mod protosext;
+pub(crate) mod task_token;
 mod workflow;
 
 #[cfg(test)]
@@ -32,6 +33,7 @@ pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatew
 pub use url::Url;
 
 use crate::pollers::{new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer};
+use crate::task_token::TaskToken;
 use crate::{
     activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle, InflightActivityDetails},
     errors::{ActivityHeartbeatError, ShutdownErr, WorkflowUpdateError},
@@ -50,7 +52,6 @@ use crate::{
             enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
         },
     },
-    protosext::fmt_task_token,
     workflow::{
         NextWfActivation, PushCommandsResult, WorkflowConcurrencyManager, WorkflowError,
         WorkflowManager,
@@ -172,13 +173,13 @@ struct CoreSDK<WP> {
     workflow_machines: WorkflowConcurrencyManager,
     // TODO: Probably move all workflow stuff inside wf manager?
     /// Maps task tokens to workflow run ids
-    workflow_task_tokens: DashMap<Vec<u8>, String>,
+    workflow_task_tokens: DashMap<TaskToken, String>,
     /// Workflows (by run id) for which the last task completion we sent was a failure
     workflows_last_task_failed: DashSet<String>,
     /// Distinguished from `workflow_task_tokens` by the fact that when we are caching workflows
     /// in sticky mode, we need to know if there are any outstanding workflow tasks since they
     /// must all be handled first before we poll the server again.
-    outstanding_workflow_tasks: DashSet<Vec<u8>>,
+    outstanding_workflow_tasks: DashSet<TaskToken>,
 
     /// Buffers workflow task polling in the event we need to return a pending activation while
     /// a poll is ongoing
@@ -193,7 +194,7 @@ struct CoreSDK<WP> {
 
     activity_heartbeat_manager_handle: ActivityHeartbeatManagerHandle,
     /// Activities that have been issued to lang but not yet completed
-    outstanding_activity_tasks: DashMap<Vec<u8>, InflightActivityDetails>,
+    outstanding_activity_tasks: DashMap<TaskToken, InflightActivityDetails>,
     /// Has shutdown been called?
     shutdown_requested: AtomicBool,
     /// Used to wake up future which checks shutdown state
@@ -256,7 +257,7 @@ where
                     }
                     if let Some(activation) = self.prepare_new_activation(work)? {
                         self.outstanding_workflow_tasks
-                            .insert(activation.task_token.clone());
+                            .insert(TaskToken(activation.task_token.clone()));
                         return Ok(activation);
                     }
                 }
@@ -280,7 +281,7 @@ where
                     // need to cancel this activity, so we'll just ignore such orphaned
                     // cancellation.
                     if let Some(details) = self.outstanding_activity_tasks.get(&task_token) {
-                        return Ok(ActivityTask::from_ids(
+                        return Ok(ActivityTask::cancel_from_ids(
                             task_token.clone(),
                             details.activity_id.clone(),
                         ));
@@ -302,7 +303,7 @@ where
         &self,
         completion: WfActivationCompletion,
     ) -> Result<(), CompleteWfError> {
-        let task_token = completion.task_token;
+        let task_token = TaskToken(completion.task_token);
         let wfstatus = completion.status;
         let run_id = self
             .workflow_task_tokens
@@ -311,7 +312,7 @@ where
             .ok_or_else(|| CompleteWfError::MalformedWorkflowCompletion {
                 reason: format!(
                     "Task token {} had no workflow run associated with it",
-                    fmt_task_token(&task_token)
+                    &task_token
                 ),
                 completion: None,
             })?;
@@ -349,7 +350,7 @@ where
         &self,
         completion: ActivityTaskCompletion,
     ) -> Result<(), CompleteActivityError> {
-        let task_token = completion.task_token;
+        let task_token = TaskToken(completion.task_token);
         let status = if let Some(s) = completion.result.and_then(|r| r.status) {
             s
         } else {
@@ -397,7 +398,8 @@ where
     ) -> Result<(), ActivityHeartbeatError> {
         let t: time::Duration = self
             .outstanding_activity_tasks
-            .get(&details.task_token)
+            // TODO: Clone here dumb
+            .get(&TaskToken(details.task_token.clone()))
             .ok_or(ActivityHeartbeatError::UnknownActivity)?
             .heartbeat_timeout
             .clone()
@@ -451,7 +453,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
     /// Evict a workflow from the cache by it's run id
     ///
     /// TODO: Very likely needs to be in Core public api
-    pub(crate) fn evict_run(&self, task_token: &[u8]) {
+    pub(crate) fn evict_run(&self, task_token: &TaskToken) {
         if let Some((_, run_id)) = self.workflow_task_tokens.remove(task_token) {
             self.outstanding_workflow_tasks.remove(task_token);
             self.workflow_machines.evict(&run_id);
@@ -473,7 +475,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             .await
         {
             Ok(work) => {
-                let task_token = work.task_token.clone();
+                let task_token = TaskToken(work.task_token.clone());
                 self.outstanding_activity_tasks.insert(
                     task_token.clone(),
                     InflightActivityDetails::new(
@@ -492,7 +494,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
     fn finalize_next_activation(
         &self,
         next_a: NextWfActivation,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
     ) -> WfActivation {
         next_a.finalize(task_token)
     }
@@ -506,9 +508,9 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             // We get the default proto in the event that the long poll times out.
             return Ok(None);
         }
-        let task_token = work.task_token.clone();
+        let task_token = TaskToken(work.task_token.clone());
         debug!(
-            task_token = %fmt_task_token(&task_token),
+            task_token = %&task_token,
             "Received workflow task from server"
         );
 
@@ -523,7 +525,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
     /// Handle a successful workflow completion
     async fn wf_activation_success(
         &self,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
         run_id: &str,
         success: workflow_completion::Success,
     ) -> Result<(), CompleteWfError> {
@@ -567,7 +569,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
     /// Handle a failed workflow completion
     async fn wf_activation_failed(
         &self,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
         run_id: &str,
         failure: workflow_completion::Failure,
     ) -> Result<(), CompleteWfError> {
@@ -608,7 +610,8 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             } => {
                 let run_id = workflow_execution.run_id.clone();
                 // Correlate task token w/ run ID
-                self.workflow_task_tokens.insert(task_token, run_id.clone());
+                self.workflow_task_tokens
+                    .insert(task_token.into(), run_id.clone());
 
                 match self
                     .workflow_machines
@@ -686,7 +689,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
     fn enqueue_next_activation_if_needed(
         &self,
         run_id: &str,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
     ) -> Result<(), CompleteWfError> {
         if let Some(next_activation) =
             self.access_wf_machine(run_id, move |mgr| mgr.get_next_activation())?

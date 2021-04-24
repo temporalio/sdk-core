@@ -12,12 +12,14 @@ pub mod coresdk {
 
     #[allow(clippy::module_inception)]
     pub mod activity_task {
+        use crate::task_token::TaskToken;
+
         tonic::include_proto!("coresdk.activity_task");
 
         impl ActivityTask {
-            pub fn from_ids(task_token: Vec<u8>, activity_id: String) -> Self {
+            pub fn cancel_from_ids(task_token: TaskToken, activity_id: String) -> Self {
                 ActivityTask {
-                    task_token,
+                    task_token: task_token.0,
                     activity_id,
                     variant: Some(activity_task::Variant::Cancel(Cancel {})),
                 }
@@ -41,10 +43,12 @@ pub mod coresdk {
         }
     }
     pub mod workflow_activation {
+        use crate::task_token::TaskToken;
+
         tonic::include_proto!("coresdk.workflow_activation");
-        pub fn create_evict_activation(task_token: Vec<u8>, run_id: String) -> WfActivation {
+        pub fn create_evict_activation(task_token: TaskToken, run_id: String) -> WfActivation {
             WfActivation {
-                task_token,
+                task_token: task_token.0,
                 timestamp: None,
                 run_id,
                 jobs: vec![WfActivationJob::from(
@@ -87,6 +91,7 @@ pub mod coresdk {
             workflowservice::v1::PollActivityTaskQueueResponse,
         },
     };
+    use crate::task_token::TaskToken;
     use std::convert::TryFrom;
     use workflow_activation::{wf_activation_job, WfActivationJob};
     use workflow_commands::{workflow_command, WorkflowCommand};
@@ -157,9 +162,12 @@ pub mod coresdk {
     }
 
     impl ActivityTask {
-        pub fn start_from_poll_resp(r: PollActivityTaskQueueResponse, task_token: Vec<u8>) -> Self {
+        pub fn start_from_poll_resp(
+            r: PollActivityTaskQueueResponse,
+            task_token: TaskToken,
+        ) -> Self {
             ActivityTask {
-                task_token,
+                task_token: task_token.0,
                 activity_id: r.activity_id,
                 variant: Some(activity_task::activity_task::Variant::Start(
                     activity_task::Start {

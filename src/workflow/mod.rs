@@ -6,6 +6,7 @@ pub(crate) use bridge::WorkflowBridge;
 pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
 pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFetcher};
 
+use crate::task_token::TaskToken;
 use crate::{
     machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
     protos::{
@@ -84,15 +85,13 @@ impl WorkflowManager {
 pub(crate) struct NextWfActivation {
     /// Keep this private, so we can ensure task tokens are attached via [Self::finalize]
     activation: WfActivation,
-    // TODO: Becomes unneeded?
-    pub more_activations_needed: bool,
 }
 
 impl NextWfActivation {
     /// Attach a task token to the activation so it can be sent out to the lang sdk
-    pub(crate) fn finalize(self, task_token: Vec<u8>) -> WfActivation {
+    pub(crate) fn finalize(self, task_token: TaskToken) -> WfActivation {
         let mut a = self.activation;
-        a.task_token = task_token;
+        a.task_token = task_token.0;
         a
     }
 }
@@ -125,10 +124,7 @@ impl WorkflowManager {
 
         self.current_wf_task_num += 1;
 
-        Ok(activation.map(|activation| NextWfActivation {
-            activation,
-            more_activations_needed,
-        }))
+        Ok(activation.map(|activation| NextWfActivation { activation }))
     }
 
     pub fn get_next_activation(&mut self) -> Result<Option<NextWfActivation>> {
@@ -139,15 +135,8 @@ impl WorkflowManager {
 
         // TODO: Only increment this if there is an activation?
         self.current_wf_task_num += 1;
-        let more_activations_needed = self.current_wf_task_num <= self.last_history_task_count;
-        if more_activations_needed {
-            debug!("More activations needed");
-        }
 
-        Ok(activation.map(|activation| NextWfActivation {
-            activation,
-            more_activations_needed,
-        }))
+        Ok(activation.map(|activation| NextWfActivation { activation }))
     }
 
     /// Feed the workflow machines new commands issued by the executing workflow code, iterate the
