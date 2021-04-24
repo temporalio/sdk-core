@@ -1470,7 +1470,7 @@ mod test {
             .expect_fail_workflow_task()
             .times(1)
             .returning(|_, _, _| Ok(RespondWorkflowTaskFailedResponse {}));
-        let core = fake_core_from_mock_sg(mock_sg, batches);
+        let core = fake_core_from_mock_sg(mock_sg);
 
         poll_and_reply(
             &core,
@@ -1579,7 +1579,7 @@ mod test {
             // We should only call the server to say we failed twice (once after each success)
             .times(2)
             .returning(|_, _, _| Ok(RespondWorkflowTaskFailedResponse {}));
-        let core = fake_core_from_mock_sg(mock_sg, batches);
+        let core = fake_core_from_mock_sg(mock_sg);
 
         poll_and_reply(
             &core,

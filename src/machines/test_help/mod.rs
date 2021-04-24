@@ -34,8 +34,6 @@ use url::Url;
 #[derive(derive_more::Constructor)]
 pub(crate) struct FakeCore {
     pub(crate) inner: CoreSDK<MockServerGatewayApis>,
-    /// Number of times we expect the server to be polled for workflow tasks
-    pub expected_wft_calls: usize,
 }
 
 /// Given identifiers for a workflow/run, and a test history builder, construct an instance of
@@ -50,26 +48,20 @@ pub(crate) fn build_fake_core(
     response_batches: &[usize],
 ) -> FakeCore {
     let mock_gateway = build_mock_sg(wf_id, t, response_batches);
-    fake_core_from_mock_sg(mock_gateway, response_batches)
+    fake_core_from_mock_sg(mock_gateway)
 }
 
 /// See [build_fake_core] -- assemble a mock gateway into the final fake core
-pub(crate) fn fake_core_from_mock_sg(
-    sg: MockServerGatewayApis,
-    response_batches: &[usize],
-) -> FakeCore {
-    FakeCore::new(
-        CoreSDK::new(
-            sg,
-            CoreInitOptions {
-                gateway_opts: fake_sg_opts(),
-                evict_after_pending_cleared: true,
-                max_outstanding_workflow_tasks: 5,
-                max_outstanding_activities: 5,
-            },
-        ),
-        response_batches.len(),
-    )
+pub(crate) fn fake_core_from_mock_sg(sg: MockServerGatewayApis) -> FakeCore {
+    FakeCore::new(CoreSDK::new(
+        sg,
+        CoreInitOptions {
+            gateway_opts: fake_sg_opts(),
+            evict_after_pending_cleared: true,
+            max_outstanding_workflow_tasks: 5,
+            max_outstanding_activities: 5,
+        },
+    ))
 }
 
 /// See [build_fake_core] -- manual version to get the mock server gateway first
