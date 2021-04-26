@@ -8,13 +8,12 @@ pub(super) use async_workflow_driver::{CommandSender, TestWorkflowDriver};
 pub(crate) use history_builder::TestHistoryBuilder;
 pub(crate) use transition_coverage::add_coverage;
 
-use crate::protos::coresdk::workflow_activation::{wf_activation_job, WfActivationJob};
 use crate::{
     pollers::MockServerGatewayApis,
     protos::{
         coresdk::{
             common::UserCodeFailure,
-            workflow_activation::WfActivation,
+            workflow_activation::{wf_activation_job, WfActivation, WfActivationJob},
             workflow_commands::workflow_command,
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
         },
@@ -26,9 +25,14 @@ use crate::{
     },
     Core, CoreInitOptions, CoreSDK, ServerGatewayOptions,
 };
+use bimap::BiMap;
+use parking_lot::RwLock;
 use rand::{thread_rng, Rng};
-use std::collections::{HashSet, VecDeque};
-use std::str::FromStr;
+use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, HashSet, VecDeque},
+    str::FromStr,
+};
 use url::Url;
 
 #[derive(derive_more::Constructor)]
@@ -83,7 +87,7 @@ pub fn build_mock_sg(
 
     let responses: Vec<_> = response_batches
         .iter()
-        .map(|to_task_num| hist_to_poll_resp(t, wf_id, *to_task_num))
+        .map(|to_task_num| hist_to_poll_resp(t, wf_id.to_owned(), *to_task_num))
         .collect();
 
     let mut tasks = VecDeque::from(responses);
@@ -99,14 +103,76 @@ pub fn build_mock_sg(
     mock_gateway
 }
 
+pub struct FakeWfResponses {
+    pub wf_id: String,
+    pub hist: TestHistoryBuilder,
+    pub response_batches: Vec<usize>,
+}
+
+pub fn build_multihist_mock_sg(
+    hists: impl Iterator<Item = FakeWfResponses>,
+) -> MockServerGatewayApis {
+    let mut ids_to_resps = BTreeMap::new();
+    let outstanding_wf_task_tokens = Arc::new(RwLock::new(BiMap::new()));
+
+    for hist in hists {
+        let full_hist_info = hist.hist.get_full_history_info().unwrap();
+        // Ensure no response batch is trying to return more tasks than the history contains
+        for rb_wf_num in &hist.response_batches {
+            assert!(
+                *rb_wf_num <= full_hist_info.wf_task_count,
+                "Wf task count {} is not <= total task count {}",
+                rb_wf_num,
+                full_hist_info.wf_task_count
+            );
+        }
+
+        let responses: Vec<_> = hist
+            .response_batches
+            .iter()
+            .map(|to_task_num| hist_to_poll_resp(&hist.hist, hist.wf_id.to_owned(), *to_task_num))
+            .collect();
+
+        let tasks = VecDeque::from(responses);
+        ids_to_resps.insert(hist.wf_id, tasks);
+    }
+
+    // The gateway will return history from any workflows that do not have currently outstanding
+    // tasks. Order proceeds as sorted by workflow id
+    let outstanding = outstanding_wf_task_tokens.clone();
+
+    let mut mock_gateway = MockServerGatewayApis::new();
+    mock_gateway.expect_poll_workflow_task().returning(move || {
+        for (wfid, tasks) in ids_to_resps.iter_mut() {
+            if !outstanding.read().contains_left(wfid) {
+                if let Some(t) = tasks.pop_front() {
+                    outstanding
+                        .write()
+                        .insert(wfid.to_owned(), t.task_token.clone());
+                    return Ok(t);
+                }
+            }
+        }
+        Err(tonic::Status::cancelled("No more work to do"))
+    });
+
+    mock_gateway
+        .expect_complete_workflow_task()
+        .returning(move |tt, _| {
+            outstanding_wf_task_tokens.write().remove_by_right(&tt.0);
+            Ok(RespondWorkflowTaskCompletedResponse::default())
+        });
+    mock_gateway
+}
+
 pub fn hist_to_poll_resp(
-    t: &mut TestHistoryBuilder,
-    wf_id: &str,
+    t: &TestHistoryBuilder,
+    wf_id: String,
     to_task_num: usize,
 ) -> PollWorkflowTaskQueueResponse {
     let run_id = t.get_orig_run_id();
     let wf = WorkflowExecution {
-        workflow_id: wf_id.to_string(),
+        workflow_id: wf_id,
         run_id: run_id.to_string(),
     };
     let batch = t.get_history_info(to_task_num).unwrap().events().to_vec();

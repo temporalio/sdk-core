@@ -705,6 +705,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::machines::test_help::{build_multihist_mock_sg, FakeWfResponses};
     use crate::{
         machines::test_help::{
             build_fake_core, build_mock_sg, fake_core_from_mock_sg, fake_sg_opts,
@@ -1623,8 +1624,8 @@ mod test {
         let mut t1 = canned_histories::long_sequential_timers(20);
         let mut t2 = canned_histories::long_sequential_timers(20);
         let mut tasks = VecDeque::from(vec![
-            hist_to_poll_resp(&mut t1, "wf1", 100),
-            hist_to_poll_resp(&mut t2, "wf2", 100),
+            hist_to_poll_resp(&mut t1, "wf1".to_owned(), 100),
+            hist_to_poll_resp(&mut t2, "wf2".to_owned(), 100),
         ]);
         // Limit the core to two outstanding workflow tasks, hence we should only see polling
         // happen twice, since we will not actually finish the two workflows
@@ -1895,5 +1896,57 @@ mod test {
         };
         // So that we know we blocked
         assert_eq!(last_finisher.load(Ordering::Acquire), 2);
+    }
+
+    #[tokio::test]
+    async fn lots_of_workflows() {
+        let hists = (0..500).into_iter().map(|i| {
+            let wf_id = format!("fake-wf-{}", i);
+            let hist = canned_histories::single_timer("fake_timer");
+            FakeWfResponses {
+                wf_id,
+                hist,
+                response_batches: vec![1, 2],
+            }
+        });
+
+        let mock = build_multihist_mock_sg(hists);
+        let core = CoreSDK::new(
+            mock,
+            CoreInitOptions {
+                gateway_opts: fake_sg_opts(),
+                evict_after_pending_cleared: true,
+                max_outstanding_workflow_tasks: 20,
+                max_outstanding_activities: 5,
+            },
+        );
+
+        let core = Arc::new(core);
+        let handles = (0..5).map(|_| {
+            let core = core.clone();
+            tokio::spawn(async move {
+                while let Ok(wft) = core.poll_workflow_task().await {
+                    let job = &wft.jobs[0];
+                    let reply = match job.variant {
+                        Some(wf_activation_job::Variant::StartWorkflow(_)) => StartTimer {
+                            timer_id: "fake_timer".to_string(),
+                            ..Default::default()
+                        }
+                        .into(),
+                        Some(wf_activation_job::Variant::RemoveFromCache(_)) => continue,
+                        _ => CompleteWorkflowExecution { result: None }.into(),
+                    };
+                    core.complete_workflow_task(WfActivationCompletion::from_status(
+                        wft.task_token,
+                        workflow_completion::Success::from_cmds(vec![reply]).into(),
+                    ))
+                    .await
+                    .unwrap();
+                }
+            })
+        });
+        for h in handles {
+            h.await.unwrap()
+        }
     }
 }
