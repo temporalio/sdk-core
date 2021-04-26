@@ -31,13 +31,15 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::pollers::{new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer};
 use crate::{
     activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle, InflightActivityDetails},
     errors::{ActivityHeartbeatError, ShutdownErr, WorkflowUpdateError},
     machines::{EmptyWorkflowCommandErr, WFCommand},
     pending_activations::PendingActivations,
-    pollers::PollWorkflowTaskBuffer,
+    pollers::{
+        new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
+        PollWorkflowTaskBuffer,
+    },
     protos::{
         coresdk::{
             activity_result::{self as ar, activity_result},
@@ -47,7 +49,8 @@ use crate::{
             ActivityHeartbeat, ActivityTaskCompletion,
         },
         temporal::api::{
-            enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
+            enums::v1::WorkflowTaskFailedCause,
+            workflowservice::v1::{PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse},
         },
     },
     protosext::fmt_task_token,
@@ -269,31 +272,42 @@ where
 
     #[instrument(skip(self))]
     async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError> {
-        tokio::select! {
-            biased;
+        loop {
+            if self.shutdown_requested.load(Ordering::SeqCst) {
+                return Err(PollActivityError::ShutDown);
+            }
 
-            maybe_tt = self.activity_heartbeat_manager_handle.next_pending_cancel() => {
-                // Issue cancellations for anything we noticed was cancelled during heartbeating
-                if let Some(task_token) = maybe_tt {
-                    // It's possible that activity has been completed and we no longer have an
-                    // outstanding activity task. This is fine because it means that we no longer
-                    // need to cancel this activity, so we'll just ignore such orphaned
-                    // cancellation.
-                    if let Some(details) = self.outstanding_activity_tasks.get(&task_token) {
-                        return Ok(ActivityTask::from_ids(
-                            task_token.clone(),
-                            details.activity_id.clone(),
-                        ));
+            tokio::select! {
+                biased;
+
+                maybe_tt = self.activity_heartbeat_manager_handle.next_pending_cancel() => {
+                    // Issue cancellations for anything we noticed was cancelled during heartbeating
+                    if let Some(task_token) = maybe_tt {
+                        // It's possible that activity has been completed and we no longer have an
+                        // outstanding activity task. This is fine because it means that we no
+                        // longer need to cancel this activity, so we'll just ignore such orphaned
+                        // cancellation.
+                        if let Some(details) = self.outstanding_activity_tasks.get(&task_token) {
+                            return Ok(ActivityTask::from_ids(
+                                task_token.clone(),
+                                details.activity_id.clone(),
+                            ));
+                        }
+                    }
+                    // The only situation where the next cancel would return none is if the manager
+                    // was dropped, which should be impossible.
+                    return Err(PollActivityError::ShutDown);
+                }
+                _ = self.shutdown_notifier() => {
+                    return Err(PollActivityError::ShutDown);
+                }
+                r = self.do_activity_poll() => {
+                    match r.transpose() {
+                        None => continue,
+                        Some(r) => return r
                     }
                 }
-                // The only situation where the next cancel would return none is if the manager
-                // was dropped, which should be impossible.
-                return Err(PollActivityError::ShutDown);
             }
-            _ = self.shutdown_notifier() => {
-                return Err(PollActivityError::ShutDown);
-            }
-            r = self.do_activity_poll() => r
         }
     }
 
@@ -420,7 +434,7 @@ where
 
     async fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
-        self.shutdown_notify.notify_one();
+        self.shutdown_notify.notify_waiters();
         self.workflow_machines.shutdown();
         self.activity_heartbeat_manager_handle.shutdown().await;
     }
@@ -462,7 +476,10 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         }
     }
 
-    async fn do_activity_poll(&self) -> Result<ActivityTask, PollActivityError> {
+    /// Wait until not at the outstanding activity limit, and then poll for new activities.
+    ///
+    /// Returns Ok(None) if the long poll timeout is hit
+    async fn do_activity_poll(&self) -> Result<Option<ActivityTask>, PollActivityError> {
         while self.outstanding_activity_tasks.len() >= self.init_options.max_outstanding_activities
         {
             self.activity_task_complete_notify.notified().await
@@ -473,6 +490,9 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             .await
         {
             Ok(work) => {
+                if work == PollActivityTaskQueueResponse::default() {
+                    return Ok(None);
+                }
                 let task_token = work.task_token.clone();
                 self.outstanding_activity_tasks.insert(
                     task_token.clone(),
@@ -481,7 +501,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
                         work.heartbeat_timeout.clone(),
                     ),
                 );
-                Ok(ActivityTask::start_from_poll_resp(work, task_token))
+                Ok(Some(ActivityTask::start_from_poll_resp(work, task_token)))
             }
             Err(e) => Err(e),
         }
@@ -1892,5 +1912,80 @@ mod test {
         };
         // So that we know we blocked
         assert_eq!(last_finisher.load(Ordering::Acquire), 2);
+    }
+
+    #[tokio::test]
+    async fn shutdown_interrupts_both_polls() {
+        let mut mock_gateway = MockManualGateway::new();
+        mock_gateway
+            .expect_poll_activity_task()
+            .times(1)
+            .returning(move || {
+                async move {
+                    sleep(Duration::from_secs(1)).await;
+                    Ok(PollActivityTaskQueueResponse {
+                        task_token: vec![1],
+                        heartbeat_timeout: Some(Duration::from_secs(1).into()),
+                        ..Default::default()
+                    })
+                }
+                .boxed()
+            });
+        mock_gateway
+            .expect_poll_workflow_task()
+            .times(1)
+            .returning(move || {
+                async move {
+                    let mut t = canned_histories::single_timer("hi");
+                    sleep(Duration::from_secs(1)).await;
+                    Ok(hist_to_poll_resp(&mut t, "wf", 100))
+                }
+                .boxed()
+            });
+
+        let core = CoreSDK::new(
+            mock_gateway,
+            CoreInitOptions {
+                gateway_opts: fake_sg_opts(),
+                evict_after_pending_cleared: true,
+                max_outstanding_workflow_tasks: 5,
+                max_outstanding_activities: 5,
+            },
+        );
+        tokio::join! {
+            async {
+                assert_matches!(core.poll_activity_task().await.unwrap_err(),
+                                PollActivityError::ShutDown);
+            },
+            async {
+                assert_matches!(core.poll_workflow_task().await.unwrap_err(),
+                                PollWfError::ShutDown);
+            },
+            async {
+                // Give polling a bit to get stuck, then shutdown
+                sleep(Duration::from_millis(200)).await;
+                core.shutdown().await;
+            }
+        };
+    }
+
+    #[tokio::test]
+    async fn activity_poll_timeout_retries() {
+        let mut mock_gateway = MockServerGatewayApis::new();
+        let mut calls = 0;
+        mock_gateway
+            .expect_poll_activity_task()
+            .times(3)
+            .returning(move || {
+                calls += 1;
+                if calls <= 2 {
+                    Ok(PollActivityTaskQueueResponse::default())
+                } else {
+                    Err(tonic::Status::unknown("Test done"))
+                }
+            });
+        let core = fake_core_from_mock_sg(mock_gateway, &[]);
+        let r = core.inner.poll_activity_task().await;
+        assert_matches!(r.unwrap_err(), PollActivityError::TonicError(_));
     }
 }
