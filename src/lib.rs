@@ -560,6 +560,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
                 completion: None,
             })?;
         let push_result = self.push_lang_commands(run_id, cmds)?;
+        dbg!(&push_result);
         self.enqueue_next_activation_if_needed(run_id, task_token.clone())?;
         // We only actually want to send commands back to the server if there are
         // no more pending activations -- in other words the lang SDK has caught
@@ -1988,4 +1989,9 @@ mod test {
         let r = core.inner.poll_activity_task().await;
         assert_matches!(r.unwrap_err(), PollActivityError::TonicError(_));
     }
+
+    // #[tokio::test]
+    // async fn avoid_double_resolving_activities() {
+    //
+    // }
 }

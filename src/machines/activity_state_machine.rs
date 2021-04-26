@@ -82,7 +82,7 @@ fsm! {
     StartedActivityCancelEventRecorded --(ActivityTaskFailed(ActivityTaskFailedEventAttributes),
         on_activity_task_failed) --> Failed;
     StartedActivityCancelEventRecorded --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes),
-        on_activity_task_completed) --> Completed;
+        shared on_activity_task_completed) --> Completed;
     StartedActivityCancelEventRecorded --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes),
         shared on_activity_task_timed_out) --> TimedOut;
     StartedActivityCancelEventRecorded --(ActivityTaskCanceled(ActivityTaskCanceledEventAttributes),
@@ -497,12 +497,17 @@ pub(super) struct StartedActivityCancelEventRecorded {}
 impl StartedActivityCancelEventRecorded {
     pub(super) fn on_activity_task_completed(
         self,
+        dat: SharedState,
         attrs: ActivityTaskCompletedEventAttributes,
     ) -> ActivityMachineTransition<Completed> {
-        ActivityMachineTransition::ok(
-            vec![ActivityMachineCommand::Complete(attrs.result)],
-            Completed::default(),
-        )
+        // We don want to tell lang about completions if we already pre-emptively canceled the
+        // activity
+        let cmds = if dat.cancellation_type == ActivityCancellationType::WaitCancellationCompleted {
+            vec![ActivityMachineCommand::Complete(attrs.result)]
+        } else {
+            vec![]
+        };
+        ActivityMachineTransition::ok(cmds, Completed::default())
     }
     pub(super) fn on_activity_task_failed(
         self,
