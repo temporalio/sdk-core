@@ -269,6 +269,10 @@ where
 
     #[instrument(skip(self))]
     async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError> {
+        if self.shutdown_requested.load(Ordering::SeqCst) {
+            return Err(PollActivityError::ShutDown);
+        }
+
         tokio::select! {
             biased;
 
@@ -420,7 +424,7 @@ where
 
     async fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
-        self.shutdown_notify.notify_one();
+        self.shutdown_notify.notify_waiters();
         self.workflow_machines.shutdown();
         self.activity_heartbeat_manager_handle.shutdown().await;
     }
@@ -1892,5 +1896,60 @@ mod test {
         };
         // So that we know we blocked
         assert_eq!(last_finisher.load(Ordering::Acquire), 2);
+    }
+
+    #[tokio::test]
+    async fn shutdown_interrupts_both_polls() {
+        let mut mock_gateway = MockManualGateway::new();
+        mock_gateway
+            .expect_poll_activity_task()
+            .times(1)
+            .returning(move || {
+                async move {
+                    sleep(Duration::from_secs(1)).await;
+                    Ok(PollActivityTaskQueueResponse {
+                        task_token: vec![1],
+                        heartbeat_timeout: Some(Duration::from_secs(1).into()),
+                        ..Default::default()
+                    })
+                }
+                .boxed()
+            });
+        mock_gateway
+            .expect_poll_workflow_task()
+            .times(1)
+            .returning(move || {
+                async move {
+                    let mut t = canned_histories::single_timer("hi");
+                    sleep(Duration::from_secs(1)).await;
+                    Ok(hist_to_poll_resp(&mut t, "wf", 100))
+                }
+                .boxed()
+            });
+
+        let core = CoreSDK::new(
+            mock_gateway,
+            CoreInitOptions {
+                gateway_opts: fake_sg_opts(),
+                evict_after_pending_cleared: true,
+                max_outstanding_workflow_tasks: 5,
+                max_outstanding_activities: 5,
+            },
+        );
+        tokio::join! {
+            async {
+                assert_matches!(core.poll_activity_task().await.unwrap_err(),
+                                PollActivityError::ShutDown);
+            },
+            async {
+                assert_matches!(core.poll_workflow_task().await.unwrap_err(),
+                                PollWfError::ShutDown);
+            },
+            async {
+                // Give polling a bit to get stuck, then shutdown
+                sleep(Duration::from_millis(200)).await;
+                core.shutdown().await;
+            }
+        };
     }
 }
