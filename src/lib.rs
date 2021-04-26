@@ -261,6 +261,10 @@ where
                         self.outstanding_workflow_tasks
                             .insert(activation.task_token.clone());
                         return Ok(activation);
+                    } else {
+                        // TODO: This can be triggered when an activity is completed that we
+                        //   already canceled, for example.
+                        warn!("No work for lang to perform after polling server!");
                     }
                 }
                 // Drain pending activations in case of shutdown.
@@ -560,7 +564,6 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
                 completion: None,
             })?;
         let push_result = self.push_lang_commands(run_id, cmds)?;
-        dbg!(&push_result);
         self.enqueue_next_activation_if_needed(run_id, task_token.clone())?;
         // We only actually want to send commands back to the server if there are
         // no more pending activations -- in other words the lang SDK has caught
@@ -696,10 +699,11 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         FErr: From<ShutdownErr>,
     {
         tokio::select! {
+            biased;
+            r = wrap_this => r,
             _ = self.shutdown_notifier() => {
                 Err(ShutdownErr.into())
             }
-            r = wrap_this => r
         }
     }
 

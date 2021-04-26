@@ -554,7 +554,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![StartTimer {
             timer_id: "timer2".to_string(),
-            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+            start_to_fire_timeout: Some(Duration::from_millis(100).into()),
         }
         .into()],
         task.task_token,
@@ -577,7 +577,8 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     .unwrap();
     dbg!("Completed AT");
     // Ensure we do not get a wakeup with the activity being resolved completed, and instead get
-    // the timer fired event
+    // the timer fired event (also wait for timer to fire)
+    sleep(Duration::from_secs(1)).await;
     let task = core.poll_workflow_task().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
