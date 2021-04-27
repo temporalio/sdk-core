@@ -83,9 +83,8 @@ impl WorkflowManager {
 #[derive(Debug)]
 pub(crate) struct NextWfActivation {
     /// Keep this private, so we can ensure task tokens are attached via [Self::finalize]
-    activation: WfActivation,
-    // TODO: Becomes unneeded?
-    pub more_activations_needed: bool,
+    // TODO: UNDO
+    pub activation: WfActivation,
 }
 
 impl NextWfActivation {
@@ -117,37 +116,27 @@ impl WorkflowManager {
         self.last_history_from_server = hist;
         self.machines.apply_history_events(&task_hist)?;
         let activation = self.machines.get_wf_activation();
-        let more_activations_needed = task_ct > self.current_wf_task_num;
-
-        if more_activations_needed {
-            debug!("More activations needed");
-        }
 
         self.current_wf_task_num += 1;
-
-        Ok(activation.map(|activation| NextWfActivation {
-            activation,
-            more_activations_needed,
-        }))
+        Ok(activation.map(|activation| NextWfActivation { activation }))
     }
 
     pub fn get_next_activation(&mut self) -> Result<Option<NextWfActivation>> {
+        // First check if there are already some pending jobs, which can be a result of replay.
+        let activation = self.machines.get_wf_activation();
+        if let Some(act) = activation {
+            let cmds = self.machines.get_commands();
+            warn!("Commands in pending get next: {:?}", cmds);
+            return Ok(Some(NextWfActivation { activation: act }));
+        }
+
         let hist = &self.last_history_from_server;
         let task_hist = HistoryInfo::new_from_history(hist, Some(self.current_wf_task_num))?;
         self.machines.apply_history_events(&task_hist)?;
         let activation = self.machines.get_wf_activation();
 
-        // TODO: Only increment this if there is an activation?
         self.current_wf_task_num += 1;
-        let more_activations_needed = self.current_wf_task_num <= self.last_history_task_count;
-        if more_activations_needed {
-            debug!("More activations needed");
-        }
-
-        Ok(activation.map(|activation| NextWfActivation {
-            activation,
-            more_activations_needed,
-        }))
+        Ok(activation.map(|activation| NextWfActivation { activation }))
     }
 
     /// Feed the workflow machines new commands issued by the executing workflow code, iterate the

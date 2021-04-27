@@ -963,3 +963,50 @@ pub fn long_sequential_timers(num_tasks: usize) -> TestHistoryBuilder {
     t.add_workflow_execution_completed();
     t
 }
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+///  6: EVENT_TYPE_TIMER_STARTED
+///  7: EVENT_TYPE_TIMER_FIRED
+///  8: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  9: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 10: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 11: EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED
+/// 12: EVENT_TYPE_TIMER_STARTED
+/// 13: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 14: EVENT_TYPE_WORKFLOW_TASK_STARTED
+pub fn unsent_at_cancel_repro() -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+
+    let scheduled_event_id = t.add_get_event_id(
+        EventType::ActivityTaskScheduled,
+        Some(
+            history_event::Attributes::ActivityTaskScheduledEventAttributes(
+                ActivityTaskScheduledEventAttributes {
+                    activity_id: "act-1".to_string(),
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add(
+        EventType::TimerFired,
+        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+            started_event_id: timer_started_event_id,
+            timer_id: "timer-1".to_string(),
+        }),
+    );
+
+    t.add_full_wf_task();
+    t.add_activity_task_cancel_requested(scheduled_event_id);
+    t.add_get_event_id(EventType::TimerStarted, None);
+    t.add_workflow_task_scheduled_and_started();
+
+    t
+}

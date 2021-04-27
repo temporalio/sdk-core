@@ -253,6 +253,8 @@ where
 
             match selected_f {
                 Ok(work) => {
+                    debug!(history_length = %work.history.as_ref().map_or(0, |h| h.events.len()),
+                          "Got new work from server");
                     if !work.next_page_token.is_empty() {
                         // TODO: Support history pagination
                         unimplemented!("History pagination not yet implemented");
@@ -572,6 +574,10 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             // Since we're telling the server about a wft success, we can remove it from the
             // last failed map (if it was present)
             self.workflows_last_task_failed.remove(run_id);
+            debug!(
+                "Sending commands to server: {:?}",
+                &push_result.server_commands
+            );
             self.server_gateway
                 .complete_workflow_task(task_token, push_result.server_commands)
                 .await
@@ -713,9 +719,14 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         run_id: &str,
         task_token: Vec<u8>,
     ) -> Result<(), CompleteWfError> {
+        warn!("Get next activation in enqueue_if_needed");
         if let Some(next_activation) =
             self.access_wf_machine(run_id, move |mgr| mgr.get_next_activation())?
         {
+            warn!(
+                "New activation during completion: {:?}",
+                next_activation.activation.jobs
+            );
             self.pending_activations
                 .push(self.finalize_next_activation(next_activation, task_token));
         }
@@ -1994,8 +2005,59 @@ mod test {
         assert_matches!(r.unwrap_err(), PollActivityError::TonicError(_));
     }
 
-    // #[tokio::test]
-    // async fn avoid_double_resolving_activities() {
-    //
-    // }
+    #[tokio::test]
+    async fn activity_not_canceled_on_replay_repro() {
+        let wfid = "fake_wf_id";
+        let mut t = canned_histories::unsent_at_cancel_repro();
+        let core = build_fake_core(wfid, &mut t, &[3]);
+        let activity_id = "act-1";
+
+        poll_and_reply(
+            &core,
+            EvictionMode::NotSticky,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    // Start timer and activity
+                    vec![
+                        ScheduleActivity {
+                            activity_id: activity_id.to_string(),
+                            cancellation_type: ActivityCancellationType::TryCancel as i32,
+                            ..Default::default()
+                        }
+                        .into(),
+                        StartTimer {
+                            timer_id: "timer-1".to_owned(),
+                            ..Default::default()
+                        }
+                        .into(),
+                    ],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::FireTimer(_)),
+                    vec![RequestCancelActivity {
+                        activity_id: activity_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(
+                        ResolveActivity {
+                            result: Some(ActivityResult {
+                                status: Some(activity_result::Status::Canceled(..)),
+                            }),
+                            ..
+                        }
+                    )),
+                    vec![StartTimer {
+                        timer_id: "timer-2".to_owned(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+            ],
+        )
+        .await;
+    }
 }

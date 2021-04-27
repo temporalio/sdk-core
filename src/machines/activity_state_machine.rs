@@ -390,6 +390,7 @@ impl ScheduledEventRecorded {
     ) -> ActivityMachineTransition<TimedOut> {
         notify_lang_activity_timed_out(dat, attrs)
     }
+
     pub(super) fn on_canceled(
         self,
         dat: SharedState,
@@ -426,6 +427,7 @@ impl Started {
             Failed::default(),
         )
     }
+
     pub(super) fn on_activity_task_timed_out(
         self,
         dat: SharedState,
@@ -433,6 +435,7 @@ impl Started {
     ) -> ActivityMachineTransition<TimedOut> {
         notify_lang_activity_timed_out(dat, attrs)
     }
+
     pub(super) fn on_canceled(
         self,
         dat: SharedState,
