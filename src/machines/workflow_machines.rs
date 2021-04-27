@@ -641,6 +641,7 @@ impl WorkflowMachines {
             {
                 self.machine_mut(c.machine).handle_command(cmd_type)?;
             }
+            warn!("Pushing cmd {:?}", c);
             self.commands.push_back(c);
         }
         debug!(commands = %self.commands.display(), "prepared commands");

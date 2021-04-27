@@ -565,8 +565,13 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
                     .to_owned(),
                 completion: None,
             })?;
-        let push_result = self.push_lang_commands(run_id, cmds)?;
+        self.push_lang_commands(run_id, cmds)?;
         self.enqueue_next_activation_if_needed(run_id, task_token.clone())?;
+        // TODO: Clean up
+        let server_cmds = self
+            .workflow_machines
+            .access(run_id, |w| Ok(w.machines.get_commands()))
+            .unwrap();
         // We only actually want to send commands back to the server if there are
         // no more pending activations -- in other words the lang SDK has caught
         // up on replay.
@@ -574,12 +579,9 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             // Since we're telling the server about a wft success, we can remove it from the
             // last failed map (if it was present)
             self.workflows_last_task_failed.remove(run_id);
-            debug!(
-                "Sending commands to server: {:?}",
-                &push_result.server_commands
-            );
+            debug!("Sending commands to server: {:?}", &server_cmds);
             self.server_gateway
-                .complete_workflow_task(task_token, push_result.server_commands)
+                .complete_workflow_task(task_token, server_cmds)
                 .await
                 .map_err(|ts| {
                     if ts.code() == tonic::Code::InvalidArgument
