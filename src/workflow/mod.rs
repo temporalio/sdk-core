@@ -83,8 +83,7 @@ impl WorkflowManager {
 #[derive(Debug)]
 pub(crate) struct NextWfActivation {
     /// Keep this private, so we can ensure task tokens are attached via [Self::finalize]
-    // TODO: UNDO
-    pub activation: WfActivation,
+    activation: WfActivation,
 }
 
 impl NextWfActivation {
