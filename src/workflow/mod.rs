@@ -46,7 +46,7 @@ pub enum WorkflowError {
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
 /// associated with that specific workflow run.
 pub(crate) struct WorkflowManager {
-    pub machines: WorkflowMachines,
+    machines: WorkflowMachines,
     command_sink: Sender<Vec<WFCommand>>,
     /// The last recorded history we received from the server for this workflow run. This must be
     /// kept because the lang side polls & completes for every workflow task, but we do not need
@@ -96,13 +96,6 @@ impl NextWfActivation {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct PushCommandsResult {
-    pub server_commands: Vec<ProtoCommand>,
-    // TODO: Becomes unneeded?
-    pub has_new_lang_jobs: bool,
-}
-
 impl WorkflowManager {
     /// Given history that was just obtained from the server, pipe it into this workflow's machines.
     ///
@@ -121,12 +114,18 @@ impl WorkflowManager {
         Ok(activation.map(|activation| NextWfActivation { activation }))
     }
 
+    /// Fetch any pending commands that should be sent to the server
+    pub fn get_server_commands(&self) -> Vec<ProtoCommand> {
+        self.machines.get_commands()
+    }
+
+    /// Fetch the next workflow activation for this workflow if one is required. Callers may
+    /// also need to call [get_server_commands] after this to issue any pending commands to the
+    /// server.
     pub fn get_next_activation(&mut self) -> Result<Option<NextWfActivation>> {
         // First check if there are already some pending jobs, which can be a result of replay.
         let activation = self.machines.get_wf_activation();
         if let Some(act) = activation {
-            let cmds = self.machines.get_commands();
-            warn!("Commands in pending get next: {:?}", cmds);
             return Ok(Some(NextWfActivation { activation: act }));
         }
 
@@ -139,15 +138,11 @@ impl WorkflowManager {
         Ok(activation.map(|activation| NextWfActivation { activation }))
     }
 
-    /// Feed the workflow machines new commands issued by the executing workflow code, iterate the
-    /// workflow machines, and spit out the commands which are ready to be sent off to the server,
-    /// as well as a possible indication that there are new jobs that must be sent to lang.
-    pub fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<PushCommandsResult> {
+    /// Feed the workflow machines new commands issued by the executing workflow code, and iterate
+    /// the machines.
+    pub fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<()> {
         self.command_sink.send(cmds)?;
-        let has_new_lang_jobs = self.machines.iterate_machines()?;
-        Ok(PushCommandsResult {
-            server_commands: self.machines.get_commands(),
-            has_new_lang_jobs,
-        })
+        self.machines.iterate_machines()?;
+        Ok(())
     }
 }

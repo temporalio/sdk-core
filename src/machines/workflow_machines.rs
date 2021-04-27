@@ -390,7 +390,7 @@ impl WorkflowMachines {
     /// Fetches commands which are ready for processing from the state machines, generally to be
     /// sent off to the server. They are not removed from the internal queue, that happens when
     /// corresponding history events from the server are being handled.
-    pub(crate) fn get_commands(&mut self) -> Vec<ProtoCommand> {
+    pub(crate) fn get_commands(&self) -> Vec<ProtoCommand> {
         self.commands
             .iter()
             .filter_map(|c| {
@@ -641,7 +641,6 @@ impl WorkflowMachines {
             {
                 self.machine_mut(c.machine).handle_command(cmd_type)?;
             }
-            warn!("Pushing cmd {:?}", c);
             self.commands.push_back(c);
         }
         debug!(commands = %self.commands.display(), "prepared commands");

@@ -54,10 +54,7 @@ use crate::{
         },
     },
     protosext::fmt_task_token,
-    workflow::{
-        NextWfActivation, PushCommandsResult, WorkflowConcurrencyManager, WorkflowError,
-        WorkflowManager,
-    },
+    workflow::{NextWfActivation, WorkflowConcurrencyManager, WorkflowError, WorkflowManager},
 };
 use dashmap::{DashMap, DashSet};
 use futures::TryFutureExt;
@@ -253,6 +250,10 @@ where
 
             match selected_f {
                 Ok(work) => {
+                    if work == PollWorkflowTaskQueueResponse::default() {
+                        // We get the default proto in the event that the long poll times out.
+                        continue;
+                    }
                     debug!(history_length = %work.history.as_ref().map_or(0, |h| h.events.len()),
                           "Got new work from server");
                     if !work.next_page_token.is_empty() {
@@ -528,10 +529,6 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         &self,
         work: PollWorkflowTaskQueueResponse,
     ) -> Result<Option<WfActivation>, PollWfError> {
-        if work == PollWorkflowTaskQueueResponse::default() {
-            // We get the default proto in the event that the long poll times out.
-            return Ok(None);
-        }
         let task_token = work.task_token.clone();
         debug!(
             task_token = %fmt_task_token(&task_token),
@@ -567,15 +564,13 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             })?;
         self.push_lang_commands(run_id, cmds)?;
         self.enqueue_next_activation_if_needed(run_id, task_token.clone())?;
-        // TODO: Clean up
-        let server_cmds = self
-            .workflow_machines
-            .access(run_id, |w| Ok(w.machines.get_commands()))
-            .unwrap();
-        // We only actually want to send commands back to the server if there are
-        // no more pending activations -- in other words the lang SDK has caught
-        // up on replay.
-        if !self.pending_activations.has_pending(run_id) {
+        // We want to fetch the outgoing commands only after any new activation has been queued,
+        // as doing so may have altered the outgoing commands.
+        let server_cmds = self.access_wf_machine(run_id, |w| Ok(w.get_server_commands()))?;
+        // We only actually want to send command?s back to the server if there are no more pending
+        // activations (IE: the lang SDK has caught up on replay) and there are actually some
+        // commands to send.
+        if !self.pending_activations.has_pending(run_id) && !server_cmds.is_empty() {
             // Since we're telling the server about a wft success, we can remove it from the
             // last failed map (if it was present)
             self.workflows_last_task_failed.remove(run_id);
@@ -660,7 +655,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         &self,
         run_id: &str,
         cmds: Vec<WFCommand>,
-    ) -> Result<PushCommandsResult, WorkflowUpdateError> {
+    ) -> Result<(), WorkflowUpdateError> {
         self.access_wf_machine(run_id, move |mgr| mgr.push_commands(cmds))
     }
 
@@ -720,20 +715,17 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         &self,
         run_id: &str,
         task_token: Vec<u8>,
-    ) -> Result<(), CompleteWfError> {
-        warn!("Get next activation in enqueue_if_needed");
+    ) -> Result<bool, CompleteWfError> {
+        let mut new_activation = false;
         if let Some(next_activation) =
             self.access_wf_machine(run_id, move |mgr| mgr.get_next_activation())?
         {
-            warn!(
-                "New activation during completion: {:?}",
-                next_activation.activation.jobs
-            );
             self.pending_activations
                 .push(self.finalize_next_activation(next_activation, task_token));
+            new_activation = true;
         }
         self.workflow_task_complete_notify.notify_one();
-        Ok(())
+        Ok(new_activation)
     }
 }
 
