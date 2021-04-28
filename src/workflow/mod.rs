@@ -95,6 +95,12 @@ impl NextWfActivation {
     }
 }
 
+#[derive(Debug)]
+pub struct OutgoingServerCommands {
+    pub commands: Vec<ProtoCommand>,
+    pub at_final_workflow_task: bool,
+}
+
 impl WorkflowManager {
     /// Given history that was just obtained from the server, pipe it into this workflow's machines.
     ///
@@ -113,9 +119,19 @@ impl WorkflowManager {
         Ok(activation.map(|activation| NextWfActivation { activation }))
     }
 
-    /// Fetch any pending commands that should be sent to the server
-    pub fn get_server_commands(&self) -> Vec<ProtoCommand> {
-        self.machines.get_commands()
+    /// Fetch any pending commands that should be sent to the server, as well as if this workflow
+    /// is at it's final workflow task in current history.
+    pub fn get_server_commands(&self) -> OutgoingServerCommands {
+        OutgoingServerCommands {
+            commands: self.machines.get_commands(),
+            at_final_workflow_task: self.at_latest_wf_task(),
+        }
+    }
+
+    /// Return true if the workflow has reached the final workflow task in the latest history
+    /// we have from server
+    pub fn at_latest_wf_task(&self) -> bool {
+        self.current_wf_task_num >= self.last_history_task_count
     }
 
     /// Fetch the next workflow activation for this workflow if one is required. Callers may
@@ -133,7 +149,10 @@ impl WorkflowManager {
         self.machines.apply_history_events(&task_hist)?;
         let activation = self.machines.get_wf_activation();
 
-        self.current_wf_task_num += 1;
+        if activation.is_some() {
+            self.current_wf_task_num += 1;
+        }
+
         Ok(activation.map(|activation| NextWfActivation { activation }))
     }
 

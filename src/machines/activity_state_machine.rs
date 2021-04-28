@@ -136,18 +136,20 @@ impl ActivityMachine {
         if self.shared_state.cancellation_type
             != ActivityCancellationType::WaitCancellationCompleted
         {
-            r.push(MachineResponse::PushWFJob(Variant::ResolveActivity(
-                ResolveActivity {
-                    activity_id: self.shared_state.attrs.activity_id.clone(),
-                    result: Some(ActivityResult {
-                        status: Some(activity_result::Status::Canceled(ar::Cancelation {
-                            details: None,
-                        })),
-                    }),
-                },
-            )))
+            r.push(self.create_cancelation_resolve(None).into())
         }
         r
+    }
+
+    fn create_cancelation_resolve(&self, details: Option<Payload>) -> ResolveActivity {
+        ResolveActivity {
+            activity_id: self.shared_state.attrs.activity_id.clone(),
+            result: Some(ActivityResult {
+                status: Some(activity_result::Status::Canceled(ar::Cancelation {
+                    details,
+                })),
+            }),
+        }
     }
 }
 
@@ -231,7 +233,7 @@ impl WFMachinesAdapter for ActivityMachine {
                     activity_id: self.shared_state.attrs.activity_id.clone(),
                     result: Some(ActivityResult {
                         status: Some(activity_result::Status::Completed(ar::Success {
-                            result: convert_payloads(event, result)?,
+                            result: convert_payloads(event.clone(), result)?,
                         })),
                     }),
                 }
@@ -252,15 +254,9 @@ impl WFMachinesAdapter for ActivityMachine {
                 self.machine_responses_from_cancel_request(c)
             }
             ActivityMachineCommand::Cancel(details) => {
-                vec![ResolveActivity {
-                    activity_id: self.shared_state.attrs.activity_id.clone(),
-                    result: Some(ActivityResult {
-                        status: Some(activity_result::Status::Canceled(ar::Cancelation {
-                            details: convert_payloads(event, details)?,
-                        })),
-                    }),
-                }
-                .into()]
+                vec![self
+                    .create_cancelation_resolve(convert_payloads(event.clone(), details)?)
+                    .into()]
             }
         })
     }
@@ -292,16 +288,8 @@ impl Cancellable for ActivityMachine {
                     self.machine_responses_from_cancel_request(cmd)
                 }
                 ActivityMachineCommand::Cancel(details) => {
-                    vec![MachineResponse::PushWFJob(Variant::ResolveActivity(
-                        ResolveActivity {
-                            activity_id: self.shared_state.attrs.activity_id.clone(),
-                            result: Some(ActivityResult {
-                                status: Some(activity_result::Status::Canceled(ar::Cancelation {
-                                    details: None, // TODO convert paylods
-                                })),
-                            }),
-                        },
-                    ))]
+                    // TODO: Convert payloads
+                    vec![self.create_cancelation_resolve(None).into()]
                 }
                 x => panic!("Invalid cancel event response {:?}", x),
             })
@@ -693,13 +681,13 @@ fn new_timeout_failure(dat: &SharedState, attrs: ActivityTaskTimedOutEventAttrib
 }
 
 fn convert_payloads(
-    event: &HistoryEvent,
+    event: HistoryEvent,
     result: Option<Payloads>,
 ) -> Result<Option<Payload>, WFMachinesError> {
     result
         .map(TryInto::try_into)
         .transpose()
-        .map_err(|pe| WFMachinesError::NotExactlyOnePayload(pe, event.clone()))
+        .map_err(|pe| WFMachinesError::NotExactlyOnePayload(pe, event))
 }
 
 #[cfg(test)]

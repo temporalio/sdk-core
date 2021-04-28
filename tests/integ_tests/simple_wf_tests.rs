@@ -20,7 +20,7 @@ use temporal_sdk_core::{
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
-    CompleteWfError, Core, PollWfError,
+    Core, PollWfError,
 };
 use tokio::time::sleep;
 
@@ -1223,15 +1223,14 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
     })
     .await;
 
-    // Send completion - not having seen a poll response with a signal in it yet
-    let unhandled = core
-        .complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
-            task_token,
-        ))
-        .await
-        .unwrap_err();
-    assert_matches!(unhandled, CompleteWfError::UnhandledCommandWhenCompleting);
+    // Send completion - not having seen a poll response with a signal in it yet (unhandled command
+    // error will be silenced)
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
+        task_token,
+    ))
+    .await
+    .unwrap();
 
     // We should get a new task with the signal
     let res = core.poll_workflow_task().await.unwrap();

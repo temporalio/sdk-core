@@ -140,7 +140,7 @@ pub enum WFMachinesError {
     NotExactlyOnePayload(PayloadsToPayloadError, HistoryEvent),
 
     #[error("Machine encountered an invalid transition: {0}")]
-    InvalidTransition(&'static str),
+    InvalidTransition(String),
     #[error("Invalid cancelation type: {0}")]
     InvalidCancelationType(i32),
 }

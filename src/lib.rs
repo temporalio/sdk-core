@@ -254,6 +254,7 @@ where
                         // We get the default proto in the event that the long poll times out.
                         continue;
                     }
+                    let tt = work.task_token.clone();
                     debug!(history_length = %work.history.as_ref().map_or(0, |h| h.events.len()),
                           "Got new work from server");
                     if !work.next_page_token.is_empty() {
@@ -265,9 +266,16 @@ where
                             .insert(activation.task_token.clone());
                         return Ok(activation);
                     } else {
-                        // TODO: This can be triggered when an activity is completed that we
-                        //   already canceled, for example.
-                        warn!("No work for lang to perform after polling server!");
+                        // This can be triggered when an activity is completed that we already
+                        // canceled, for example. There is no work for lang to do so we autocomplete
+                        // the task
+                        // TODO: Handle error
+                        debug!("No work for lang to perform after polling server!");
+                        self.complete_workflow_task(WfActivationCompletion {
+                            task_token: tt,
+                            status: Some(workflow_completion::Success::from_cmds(vec![]).into()),
+                        })
+                        .await?;
                     }
                 }
                 // Drain pending activations in case of shutdown.
@@ -280,7 +288,7 @@ where
     #[instrument(skip(self))]
     async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError> {
         loop {
-            if self.shutdown_requested.load(Ordering::SeqCst) {
+            if self.shutdown_requested.load(Ordering::Relaxed) {
                 return Err(PollActivityError::ShutDown);
             }
 
@@ -295,14 +303,23 @@ where
                         // longer need to cancel this activity, so we'll just ignore such orphaned
                         // cancellation.
                         if let Some(details) = self.outstanding_activity_tasks.get(&task_token) {
-                            return Ok(ActivityTask::from_ids(
-                                task_token.clone(),
+                            return Ok(ActivityTask::cancel_from_ids(
+                                task_token,
                                 details.activity_id.clone(),
+                            ));
+                        } else {
+                            // TODO: Unless we return this JS seems to just give up on polling.
+                            //   -- we shouldn't need to return it?
+                            warn!(task_token = ?task_token,
+                                  "Unknown activity task when issuing cancel");
+                            return Ok(ActivityTask::cancel_from_ids(
+                                task_token,
+                                "unknown".to_owned(),
                             ));
                         }
                     }
                     // The only situation where the next cancel would return none is if the manager
-                    // was dropped, which should be impossible.
+                    // was dropped, which can only happen on shutdown.
                     return Err(PollActivityError::ShutDown);
                 }
                 _ = self.shutdown_notifier() => {
@@ -567,26 +584,27 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         // We want to fetch the outgoing commands only after any new activation has been queued,
         // as doing so may have altered the outgoing commands.
         let server_cmds = self.access_wf_machine(run_id, |w| Ok(w.get_server_commands()))?;
-        // We only actually want to send command?s back to the server if there are no more pending
-        // activations (IE: the lang SDK has caught up on replay) and there are actually some
-        // commands to send.
-        if !self.pending_activations.has_pending(run_id) && !server_cmds.is_empty() {
+        // We only actually want to send commands back to the server if there are no more pending
+        // activations and we are at the final workflow task (IE: the lang SDK has caught up on
+        // replay)
+        if !self.pending_activations.has_pending(run_id) && server_cmds.at_final_workflow_task {
             // Since we're telling the server about a wft success, we can remove it from the
             // last failed map (if it was present)
             self.workflows_last_task_failed.remove(run_id);
-            debug!("Sending commands to server: {:?}", &server_cmds);
-            self.server_gateway
-                .complete_workflow_task(task_token, server_cmds)
-                .await
-                .map_err(|ts| {
-                    if ts.code() == tonic::Code::InvalidArgument
-                        && ts.message() == "UnhandledCommand"
-                    {
-                        CompleteWfError::UnhandledCommandWhenCompleting
-                    } else {
-                        ts.into()
-                    }
-                })?;
+            debug!("Sending commands to server: {:?}", &server_cmds.commands);
+            let res = self
+                .server_gateway
+                .complete_workflow_task(task_token, server_cmds.commands)
+                .await;
+            // Silence unhandled command errors since the lang SDK cannot do anything about them
+            // besides poll again, which it will do anyway.
+            if let Err(ts) = res {
+                if ts.code() == tonic::Code::InvalidArgument && ts.message() == "UnhandledCommand" {
+                    warn!("Unhandled command response when completing");
+                } else {
+                    return Err(ts.into());
+                }
+            }
         }
         Ok(())
     }
@@ -1999,11 +2017,14 @@ mod test {
         assert_matches!(r.unwrap_err(), PollActivityError::TonicError(_));
     }
 
+    // TODO: Test doesn't fail when mock not called enough times (even though it panics??), but it
+    //   actually only should be called two times (with 1,2,3)
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[3]))]
     #[tokio::test]
-    async fn activity_not_canceled_on_replay_repro() {
+    async fn activity_not_canceled_on_replay_repro(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
         let mut t = canned_histories::unsent_at_cancel_repro();
-        let core = build_fake_core(wfid, &mut t, &[3]);
+        let core = build_fake_core(wfid, &mut t, hist_batches);
         let activity_id = "act-1";
 
         poll_and_reply(
@@ -2049,6 +2070,59 @@ mod test {
                         ..Default::default()
                     }
                     .into()],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[3]))]
+    #[tokio::test]
+    async fn activity_not_canceled_when_also_completed_repro(hist_batches: &[usize]) {
+        let wfid = "fake_wf_id";
+        let mut t = canned_histories::cancel_not_sent_when_also_complete_repro();
+        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let activity_id = "act-1";
+
+        poll_and_reply(
+            &core,
+            EvictionMode::NotSticky,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    // Start timer and activity
+                    vec![ScheduleActivity {
+                        activity_id: activity_id.to_string(),
+                        cancellation_type: ActivityCancellationType::TryCancel as i32,
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                    vec![
+                        RequestCancelActivity {
+                            activity_id: activity_id.to_string(),
+                            ..Default::default()
+                        }
+                        .into(),
+                        StartTimer {
+                            timer_id: "timer-1".to_owned(),
+                            ..Default::default()
+                        }
+                        .into(),
+                    ],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(
+                        ResolveActivity {
+                            result: Some(ActivityResult {
+                                status: Some(activity_result::Status::Canceled(..)),
+                            }),
+                            ..
+                        }
+                    )),
+                    vec![CompleteWorkflowExecution { result: None }.into()],
                 ),
             ],
         )

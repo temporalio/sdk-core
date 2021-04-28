@@ -260,13 +260,17 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
         {
             Ok(RecordActivityTaskHeartbeatResponse { cancel_requested }) => {
                 if cancel_requested {
-                    let _ = self.cancels_tx.send(self.task_token.clone());
+                    self.cancels_tx
+                        .send(self.task_token.clone())
+                        .expect("Receive half of heartbeat cancels not blocked");
                 }
             }
             // Send cancels for any activity that learns its workflow already finished (which is
             // one thing not found implies - other reasons would seem equally valid).
             Err(s) if s.code() == tonic::Code::NotFound => {
-                let _ = self.cancels_tx.send(self.task_token.clone());
+                self.cancels_tx
+                    .send(self.task_token.clone())
+                    .expect("Receive half of heartbeat cancels not blocked");
             }
             Err(e) => {
                 warn!("Error when recording heartbeat: {:?}", e)
