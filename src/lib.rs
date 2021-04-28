@@ -301,12 +301,18 @@ where
                         // It's possible that activity has been completed and we no longer have an
                         // outstanding activity task. This is fine because it means that we no
                         // longer need to cancel this activity, so we'll just ignore such orphaned
-                        // cancellation.
-                        if let Some(details) = self.outstanding_activity_tasks.get(&task_token) {
-                            return Ok(ActivityTask::cancel_from_ids(
-                                task_token,
-                                details.activity_id.clone(),
-                            ));
+                        // cancellations.
+                        if let Some(mut details) =
+                            self.outstanding_activity_tasks.get_mut(&task_token) {
+                                if details.issued_cancel_to_lang {
+                                    // Don't double-issue cancellations
+                                    continue;
+                                }
+                                details.issued_cancel_to_lang = true;
+                                return Ok(ActivityTask::cancel_from_ids(
+                                    task_token,
+                                    details.activity_id.clone(),
+                                ));
                         } else {
                             warn!(task_token = ?task_token,
                                   "Unknown activity task when issuing cancel");
@@ -523,6 +529,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
                     InflightActivityDetails::new(
                         work.activity_id.clone(),
                         work.heartbeat_timeout.clone(),
+                        false,
                     ),
                 );
                 Ok(Some(ActivityTask::start_from_poll_resp(work, task_token)))
@@ -2225,11 +2232,14 @@ mod test {
             handles.push(jh);
         }
 
+        // Wait for all the heartbeating to finish, which should result in a bunch of pending
+        // cancellations
         for h in handles.drain(..) {
             h.await.unwrap()
         }
         let mut handles = vec![];
 
+        // Read all the cancellations and reply to them concurrently
         for _ in 0..CONCURRENCY_NUM {
             let core = core.clone();
             let jh = tokio::spawn(async move {
