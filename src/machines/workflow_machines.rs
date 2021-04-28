@@ -140,7 +140,7 @@ pub enum WFMachinesError {
     NotExactlyOnePayload(PayloadsToPayloadError, HistoryEvent),
 
     #[error("Machine encountered an invalid transition: {0}")]
-    InvalidTransition(&'static str),
+    InvalidTransition(String),
     #[error("Invalid cancelation type: {0}")]
     InvalidCancelationType(i32),
 }
@@ -276,7 +276,6 @@ impl WorkflowMachines {
         //     if (handleLocalActivityMarker(event)) {
         //       return;
         //     }
-        debug!(current_commands = ?self.commands, "handling command event");
 
         let consumed_cmd = loop {
             // handleVersionMarker can skip a marker event if the getVersion call was removed.
@@ -391,7 +390,7 @@ impl WorkflowMachines {
     /// Fetches commands which are ready for processing from the state machines, generally to be
     /// sent off to the server. They are not removed from the internal queue, that happens when
     /// corresponding history events from the server are being handled.
-    pub(crate) fn get_commands(&mut self) -> Vec<ProtoCommand> {
+    pub(crate) fn get_commands(&self) -> Vec<ProtoCommand> {
         self.commands
             .iter()
             .filter_map(|c| {
@@ -596,7 +595,7 @@ impl WorkflowMachines {
     fn process_cancellation(&mut self, id: &CommandID, jobs: &mut Vec<Variant>) -> Result<()> {
         let m_key = self.get_machine_key(id)?;
         let res = self.machine_mut(m_key).cancel()?;
-        debug!(machine_responses = ?res, cmd_id = ?id, "Req cancel responses");
+        debug!(machine_responses = ?res, cmd_id = ?id, "Cancel request responses");
         for r in res {
             match r {
                 MachineResponse::IssueNewCommand(c) => {

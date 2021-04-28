@@ -202,9 +202,10 @@ where
     fn cancel(&mut self) -> Result<Vec<MachineResponse>, WFMachinesError> {
         let res = self.cancel();
         res.map_err(|e| match e {
-            MachineError::InvalidTransition => {
-                WFMachinesError::InvalidTransition("while attempting to cancel")
-            }
+            MachineError::InvalidTransition => WFMachinesError::InvalidTransition(format!(
+                "while attempting to cancel in {}",
+                self.state(),
+            )),
             MachineError::Underlying(e) => e.into(),
         })
     }

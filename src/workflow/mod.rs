@@ -46,7 +46,7 @@ pub enum WorkflowError {
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
 /// associated with that specific workflow run.
 pub(crate) struct WorkflowManager {
-    pub machines: WorkflowMachines,
+    machines: WorkflowMachines,
     command_sink: Sender<Vec<WFCommand>>,
     /// The last recorded history we received from the server for this workflow run. This must be
     /// kept because the lang side polls & completes for every workflow task, but we do not need
@@ -84,8 +84,6 @@ impl WorkflowManager {
 pub(crate) struct NextWfActivation {
     /// Keep this private, so we can ensure task tokens are attached via [Self::finalize]
     activation: WfActivation,
-    // TODO: Becomes unneeded?
-    pub more_activations_needed: bool,
 }
 
 impl NextWfActivation {
@@ -98,10 +96,9 @@ impl NextWfActivation {
 }
 
 #[derive(Debug)]
-pub(crate) struct PushCommandsResult {
-    pub server_commands: Vec<ProtoCommand>,
-    // TODO: Becomes unneeded?
-    pub has_new_lang_jobs: bool,
+pub struct OutgoingServerCommands {
+    pub commands: Vec<ProtoCommand>,
+    pub at_final_workflow_task: bool,
 }
 
 impl WorkflowManager {
@@ -117,48 +114,53 @@ impl WorkflowManager {
         self.last_history_from_server = hist;
         self.machines.apply_history_events(&task_hist)?;
         let activation = self.machines.get_wf_activation();
-        let more_activations_needed = task_ct > self.current_wf_task_num;
-
-        if more_activations_needed {
-            debug!("More activations needed");
-        }
 
         self.current_wf_task_num += 1;
-
-        Ok(activation.map(|activation| NextWfActivation {
-            activation,
-            more_activations_needed,
-        }))
+        Ok(activation.map(|activation| NextWfActivation { activation }))
     }
 
+    /// Fetch any pending commands that should be sent to the server, as well as if this workflow
+    /// is at it's final workflow task in current history.
+    pub fn get_server_commands(&self) -> OutgoingServerCommands {
+        OutgoingServerCommands {
+            commands: self.machines.get_commands(),
+            at_final_workflow_task: self.at_latest_wf_task(),
+        }
+    }
+
+    /// Return true if the workflow has reached the final workflow task in the latest history
+    /// we have from server
+    pub fn at_latest_wf_task(&self) -> bool {
+        self.current_wf_task_num >= self.last_history_task_count
+    }
+
+    /// Fetch the next workflow activation for this workflow if one is required. Callers may
+    /// also need to call [get_server_commands] after this to issue any pending commands to the
+    /// server.
     pub fn get_next_activation(&mut self) -> Result<Option<NextWfActivation>> {
+        // First check if there are already some pending jobs, which can be a result of replay.
+        let activation = self.machines.get_wf_activation();
+        if let Some(act) = activation {
+            return Ok(Some(NextWfActivation { activation: act }));
+        }
+
         let hist = &self.last_history_from_server;
         let task_hist = HistoryInfo::new_from_history(hist, Some(self.current_wf_task_num))?;
         self.machines.apply_history_events(&task_hist)?;
         let activation = self.machines.get_wf_activation();
 
-        // TODO: Only increment this if there is an activation?
-        self.current_wf_task_num += 1;
-        let more_activations_needed = self.current_wf_task_num <= self.last_history_task_count;
-        if more_activations_needed {
-            debug!("More activations needed");
+        if activation.is_some() {
+            self.current_wf_task_num += 1;
         }
 
-        Ok(activation.map(|activation| NextWfActivation {
-            activation,
-            more_activations_needed,
-        }))
+        Ok(activation.map(|activation| NextWfActivation { activation }))
     }
 
-    /// Feed the workflow machines new commands issued by the executing workflow code, iterate the
-    /// workflow machines, and spit out the commands which are ready to be sent off to the server, as
-    /// well as a possible indication that there are new jobs that must be sent to lang.
-    pub fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<PushCommandsResult> {
+    /// Feed the workflow machines new commands issued by the executing workflow code, and iterate
+    /// the machines.
+    pub fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<()> {
         self.command_sink.send(cmds)?;
-        let has_new_lang_jobs = self.machines.iterate_machines()?;
-        Ok(PushCommandsResult {
-            server_commands: self.machines.get_commands(),
-            has_new_lang_jobs,
-        })
+        self.machines.iterate_machines()?;
+        Ok(())
     }
 }

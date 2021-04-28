@@ -50,6 +50,11 @@ pub enum PollWfError {
     /// errors, so lang should consider this fatal.
     #[error("Unhandled error when calling the temporal server: {0:?}")]
     TonicError(#[from] tonic::Status),
+    /// Unhandled error when completing a workflow during a poll -- this can happen when there is no
+    /// work for lang to perform, but the server sent us a workflow task (EX: An activity completed
+    /// even though we already cancelled it)
+    #[error("Unhandled error when auto-completing workflow task: {0:?}")]
+    AutocompleteError(#[from] CompleteWfError),
 }
 
 impl From<WorkflowUpdateError> for PollWfError {
@@ -107,11 +112,6 @@ pub enum CompleteWfError {
         /// The run id of the erring workflow
         run_id: String,
     },
-    /// There exists a pending command in this workflow's history which has not yet been handled.
-    /// When thrown from [crate::Core::complete_workflow_task], it means you should poll for a new
-    /// task, receive a new task token, and complete that new task.
-    #[error("Unhandled command when completing workflow activation")]
-    UnhandledCommandWhenCompleting,
     /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
     /// errors, so lang should consider this fatal.
     #[error("Unhandled error when calling the temporal server: {0:?}")]
