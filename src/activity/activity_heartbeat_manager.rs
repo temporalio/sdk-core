@@ -101,13 +101,17 @@ impl ActivityHeartbeatManagerHandle {
         details: ActivityHeartbeat,
         delay: Duration,
     ) -> Result<(), ActivityHeartbeatError> {
+        if self.shutting_down.load(Ordering::Relaxed) {
+            return Err(ActivityHeartbeatError::ShuttingDown);
+        }
+
         self.events
             .send(LifecycleEvent::Heartbeat(ValidActivityHeartbeat {
                 task_token: details.task_token,
                 details: details.details,
                 delay,
             }))
-            .map_err(|_| ActivityHeartbeatError::SendError)?;
+            .expect("Receive half of the heartbeats event channel must not be dropped");
 
         Ok(())
     }
