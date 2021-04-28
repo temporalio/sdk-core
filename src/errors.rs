@@ -144,7 +144,7 @@ pub enum CompleteActivityError {
     TonicError(#[from] tonic::Status),
 }
 
-/// Errors thrown by [crate::Core::record_activity_heartbeat] and [crate::Core::get_last_activity_heartbeat]
+/// Errors thrown by [crate::Core::record_activity_heartbeat]
 #[derive(thiserror::Error, Debug)]
 pub enum ActivityHeartbeatError {
     /// Heartbeat referenced an activity that we don't think exists. It may have completed already.
