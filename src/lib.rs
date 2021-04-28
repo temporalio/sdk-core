@@ -269,7 +269,6 @@ where
                         // This can be triggered when an activity is completed that we already
                         // canceled, for example. There is no work for lang to do so we autocomplete
                         // the task
-                        // TODO: Handle error
                         debug!("No work for lang to perform after polling server!");
                         self.complete_workflow_task(WfActivationCompletion {
                             task_token: tt,
