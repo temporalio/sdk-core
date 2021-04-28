@@ -25,7 +25,8 @@ mod workflow;
 mod test_help;
 
 pub use crate::errors::{
-    CompleteActivityError, CompleteWfError, CoreInitError, PollActivityError, PollWfError,
+    ActivityHeartbeatError, CompleteActivityError, CompleteWfError, CoreInitError,
+    PollActivityError, PollWfError,
 };
 pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
@@ -33,7 +34,7 @@ pub use url::Url;
 
 use crate::{
     activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle, InflightActivityDetails},
-    errors::{ActivityHeartbeatError, ShutdownErr, WorkflowUpdateError},
+    errors::{ShutdownErr, WorkflowUpdateError},
     machines::{EmptyWorkflowCommandErr, WFCommand},
     pending_activations::PendingActivations,
     pollers::{
@@ -495,7 +496,8 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             self.pending_activations.remove_all_with_run_id(&run_id);
             // Queue up an eviction activation
             self.pending_activations
-                .push(create_evict_activation(task_token.to_owned(), run_id))
+                .push(create_evict_activation(task_token.to_owned(), run_id));
+            self.workflow_task_complete_notify.notify_waiters();
         }
     }
 
