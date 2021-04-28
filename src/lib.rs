@@ -2171,9 +2171,9 @@ mod test {
                 let calls = match calls_map.entry(tt) {
                     Entry::Occupied(mut e) => {
                         *e.get_mut() += 1;
-                        e.get().clone()
+                        *e.get()
                     }
-                    Entry::Vacant(v) => v.insert(1).clone(),
+                    Entry::Vacant(v) => *v.insert(1),
                 };
                 async move {
                     if calls < 5 {
