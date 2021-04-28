@@ -298,33 +298,19 @@ where
                 maybe_tt = self.activity_heartbeat_manager_handle.next_pending_cancel() => {
                     // Issue cancellations for anything we noticed was cancelled during heartbeating
                     if let Some(task_token) = maybe_tt {
-                        // Remove the outstanding activity task, since we are issuing a cancel.
-                        // If we don't, lang side might (reasonably) not complete any outstanding
-                        // ATs, because it was cancelled, but by not doing so it will leave those
-                        // tasks outstanding forever and eventually we'll stall when we hit the
-                        // outstanding limit. Lang can still complete them, and they will be sent
-                        // to server, where they may or may not actually be found.
-
                         // It's possible that activity has been completed and we no longer have an
                         // outstanding activity task. This is fine because it means that we no
                         // longer need to cancel this activity, so we'll just ignore such orphaned
                         // cancellation.
-                        if let Some((_, details)) =
-                            self.outstanding_activity_tasks.remove(&task_token) {
-                                return Ok(ActivityTask::cancel_from_ids(
-                                    task_token,
-                                    details.activity_id,
-                                ));
-                        } else {
-                            // TODO: Unless we return this JS seems to just give up on polling.
-                            //   -- we shouldn't need to return it?
-                            // TODO: NEW TODO: (lol) -- This may be fixed now. Confirm.
-                            warn!(task_token = ?task_token,
-                                  "Unknown activity task when issuing cancel");
+                        if let Some(details) = self.outstanding_activity_tasks.get(&task_token) {
                             return Ok(ActivityTask::cancel_from_ids(
                                 task_token,
-                                "unknown".to_owned(),
+                                details.activity_id.clone(),
                             ));
+                        } else {
+                            warn!(task_token = ?task_token,
+                                  "Unknown activity task when issuing cancel");
+                            continue;
                         }
                     }
                     // The only situation where the next cancel would return none is if the manager
@@ -2141,35 +2127,44 @@ mod test {
         .await;
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn many_heartbeat_cancels() {
-        tracing_init();
-
+    #[tokio::test]
+    async fn many_concurrent_heartbeat_cancels() {
         // Run a whole bunch of activities in parallel, having the server return cancellations for
         // them after a few successful heartbeats
         const CONCURRENCY_NUM: u32 = 1000;
-        let special_final_token = vec![9, 8, 7, 6, 5, 4, 3, 2, 1];
 
-        let mut mock_gateway = MockServerGatewayApis::new();
+        let mut mock_gateway = MockManualGateway::new();
         let mut poll_resps = VecDeque::from(
             (0..CONCURRENCY_NUM)
                 .map(|i| {
-                    Ok(PollActivityTaskQueueResponse {
-                        task_token: i.to_be_bytes().to_vec(),
-                        heartbeat_timeout: Some(Duration::from_millis(500).into()),
-                        ..Default::default()
-                    })
+                    async move {
+                        Ok(PollActivityTaskQueueResponse {
+                            task_token: i.to_be_bytes().to_vec(),
+                            heartbeat_timeout: Some(Duration::from_millis(500).into()),
+                            ..Default::default()
+                        })
+                    }
+                    .boxed()
                 })
                 .collect::<Vec<_>>(),
         );
-        poll_resps.push_back(Ok(PollActivityTaskQueueResponse {
-            task_token: special_final_token.clone(),
-            ..Default::default()
-        }));
+        // Because the mock is so fast, it's possible it can return before the cancel channel in
+        // the activity task poll selector. So, the final poll when there are no more tasks must
+        // take a while.
+        poll_resps.push_back(
+            async {
+                sleep(Duration::from_secs(10)).await;
+                unreachable!("Long poll")
+            }
+            .boxed(),
+        );
         let mut calls_map = HashMap::<_, i32>::new();
         mock_gateway
             .expect_poll_activity_task()
             .returning(move || poll_resps.pop_front().unwrap());
+        mock_gateway
+            .expect_cancel_activity_task()
+            .returning(move |_, _| async move { Ok(Default::default()) }.boxed());
         mock_gateway
             .expect_record_activity_heartbeat()
             .returning(move |tt, _| {
@@ -2180,16 +2175,18 @@ mod test {
                     }
                     Entry::Vacant(v) => v.insert(1).clone(),
                 };
-
-                if calls < 5 {
-                    Ok(RecordActivityTaskHeartbeatResponse {
-                        cancel_requested: false,
-                    })
-                } else {
-                    Ok(RecordActivityTaskHeartbeatResponse {
-                        cancel_requested: true,
-                    })
+                async move {
+                    if calls < 5 {
+                        Ok(RecordActivityTaskHeartbeatResponse {
+                            cancel_requested: false,
+                        })
+                    } else {
+                        Ok(RecordActivityTaskHeartbeatResponse {
+                            cancel_requested: true,
+                        })
+                    }
                 }
+                .boxed()
             });
 
         let core = CoreSDK::new(
@@ -2208,7 +2205,7 @@ mod test {
             core.poll_activity_task().await.unwrap();
         }
 
-        // Spawn 1k "activities"
+        // Spawn "activities"
         let mut handles = vec![];
         for i in 0..CONCURRENCY_NUM {
             let core = core.clone();
@@ -2226,22 +2223,35 @@ mod test {
             handles.push(jh);
         }
 
-        for h in handles {
+        for h in handles.drain(..) {
             h.await.unwrap()
         }
+        let mut handles = vec![];
 
         for _ in 0..CONCURRENCY_NUM {
-            let r = core.poll_activity_task().await.unwrap();
-            assert_matches!(
-                r,
-                ActivityTask {
-                    variant: Some(activity_task::Variant::Cancel(_)),
-                    ..
-                }
-            );
+            let core = core.clone();
+            let jh = tokio::spawn(async move {
+                let r = core.poll_activity_task().await.unwrap();
+                assert_matches!(
+                    r,
+                    ActivityTask {
+                        variant: Some(activity_task::Variant::Cancel(_)),
+                        ..
+                    }
+                );
+                core.complete_activity_task(ActivityTaskCompletion {
+                    task_token: r.task_token.clone(),
+                    result: Some(ActivityResult::cancel_from_details(None)),
+                })
+                .await
+                .unwrap();
+            });
+            handles.push(jh);
         }
 
-        let r = core.poll_activity_task().await.unwrap();
-        assert_eq!(r.task_token, special_final_token);
+        for h in handles.drain(..) {
+            h.await.unwrap();
+        }
+        assert!(core.outstanding_activity_tasks.is_empty());
     }
 }
