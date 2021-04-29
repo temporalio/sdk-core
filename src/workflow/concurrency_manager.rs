@@ -45,9 +45,10 @@ impl WorkflowConcurrencyManager {
         let (machine_creator, create_rcv) = unbounded::<MachineCreatorMsg>();
         let (shutdown_chan, shutdown_rx) = bounded(1);
 
-        let wf_thread = thread::spawn(move || {
-            WorkflowConcurrencyManager::workflow_thread(create_rcv, shutdown_rx)
-        });
+        let wf_thread = thread::Builder::new()
+            .name("workflow-manager".to_string())
+            .spawn(move || WorkflowConcurrencyManager::workflow_thread(create_rcv, shutdown_rx))
+            .expect("must be able to spawn workflow manager thread");
 
         Self {
             machines: Default::default(),

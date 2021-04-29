@@ -29,6 +29,17 @@ pub mod coresdk {
     #[allow(clippy::module_inception)]
     pub mod activity_result {
         tonic::include_proto!("coresdk.activity_result");
+        use super::common::Payload;
+
+        impl ActivityResult {
+            pub fn cancel_from_details(payload: Option<Payload>) -> Self {
+                Self {
+                    status: Some(activity_result::Status::Canceled(Cancelation {
+                        details: payload,
+                    })),
+                }
+            }
+        }
     }
     pub mod common {
         tonic::include_proto!("coresdk.common");
