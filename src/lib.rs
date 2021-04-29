@@ -33,8 +33,6 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::pollers::{new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer};
-use crate::task_token::TaskToken;
 use crate::{
     activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle, InflightActivityDetails},
     errors::{ShutdownErr, WorkflowUpdateError},
@@ -57,6 +55,7 @@ use crate::{
             workflowservice::v1::{PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse},
         },
     },
+    task_token::TaskToken,
     workflow::{NextWfActivation, WorkflowConcurrencyManager, WorkflowError, WorkflowManager},
 };
 use dashmap::{DashMap, DashSet};
@@ -1978,7 +1977,7 @@ mod test {
                 async move {
                     let mut t = canned_histories::single_timer("hi");
                     sleep(Duration::from_secs(1)).await;
-                    Ok(hist_to_poll_resp(&mut t, "wf", 100))
+                    Ok(hist_to_poll_resp(&mut t, "wf".to_string(), 100))
                 }
                 .boxed()
             });
@@ -2024,7 +2023,7 @@ mod test {
                     Err(tonic::Status::unknown("Test done"))
                 }
             });
-        let core = fake_core_from_mock_sg(mock_gateway, &[]);
+        let core = fake_core_from_mock_sg(mock_gateway);
         let r = core.inner.poll_activity_task().await;
         assert_matches!(r.unwrap_err(), PollActivityError::TonicError(_));
     }
