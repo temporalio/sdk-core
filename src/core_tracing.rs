@@ -14,6 +14,9 @@ pub fn tracing_init() {
         let filter_layer = EnvFilter::try_from_default_env()
             .or_else(|_| EnvFilter::try_new("info"))
             .unwrap();
+        let pretty_fmt = tracing_subscriber::fmt::format()
+            .pretty()
+            .with_source_location(false);
 
         if opentelem_on {
             // Not all low-down unit tests use Tokio
@@ -34,14 +37,20 @@ pub fn tracing_init() {
             tracing_subscriber::registry()
                 .with(opentelemetry)
                 .with(filter_layer)
-                .with(tracing_subscriber::fmt::layer().with_target(false).pretty())
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .with_target(false)
+                        .event_format(pretty_fmt),
+                )
                 .try_init()
                 .unwrap();
         } else {
             // Because these types don't compose nicely we must repeat ourselves in these branches
-            let reg = tracing_subscriber::registry()
-                .with(filter_layer)
-                .with(tracing_subscriber::fmt::layer().with_target(false).pretty());
+            let reg = tracing_subscriber::registry().with(filter_layer).with(
+                tracing_subscriber::fmt::layer()
+                    .with_target(false)
+                    .event_format(pretty_fmt),
+            );
             tracing::subscriber::set_global_default(reg).unwrap();
         };
     });
