@@ -1533,6 +1533,7 @@ mod test {
                 hist,
                 response_batches: batches.to_vec(),
             }],
+            true,
             Some(1),
         );
         let core = fake_core_from_mock_sg(mock_sg);
@@ -1644,6 +1645,7 @@ mod test {
                 hist,
                 response_batches,
             }],
+            true,
             // We should only call the server to say we failed twice (once after each success)
             Some(2),
         );
@@ -2295,7 +2297,7 @@ mod test {
             }
         });
 
-        let mock = build_multihist_mock_sg(hists, None);
+        let mock = build_multihist_mock_sg(hists, false, None);
         let core = CoreSDK::new(
             mock.sg,
             CoreInitOptions {

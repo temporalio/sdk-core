@@ -65,6 +65,7 @@ pub(crate) fn build_fake_core(
             hist: t,
             response_batches: response_batches.to_vec(),
         }],
+        true,
         None,
     );
     fake_core_from_mock_sg(mock_gateway)
@@ -120,12 +121,12 @@ pub struct MockSGAndTasks {
 /// sent to the server.
 pub fn build_multihist_mock_sg(
     hists: impl IntoIterator<Item = FakeWfResponses>,
+    enforce_correct_number_of_polls: bool,
     num_expected_fails: Option<usize>,
 ) -> MockSGAndTasks {
-    // TODO: allow passing flag to enforce correct number of poll calls
-
     let mut ids_to_resps = BTreeMap::new();
     let outstanding_wf_task_tokens = Arc::new(RwLock::new(BiMap::new()));
+    let mut correct_num_polls = None;
 
     for hist in hists {
         let full_hist_info = hist.hist.get_full_history_info().unwrap();
@@ -137,6 +138,10 @@ pub fn build_multihist_mock_sg(
                 rb_wf_num,
                 full_hist_info.wf_task_count
             );
+        }
+
+        if enforce_correct_number_of_polls {
+            *correct_num_polls.get_or_insert(0) += hist.response_batches.len();
         }
 
         let responses: Vec<_> = hist
@@ -154,19 +159,26 @@ pub fn build_multihist_mock_sg(
     let outstanding = outstanding_wf_task_tokens.clone();
 
     let mut mock_gateway = MockServerGatewayApis::new();
-    mock_gateway.expect_poll_workflow_task().returning(move || {
-        for (wfid, tasks) in ids_to_resps.iter_mut() {
-            if !outstanding.read().contains_left(wfid) {
-                if let Some(t) = tasks.pop_front() {
-                    outstanding
-                        .write()
-                        .insert(wfid.to_owned(), TaskToken(t.task_token.clone()));
-                    return Ok(t);
+    mock_gateway
+        .expect_poll_workflow_task()
+        .times(
+            correct_num_polls
+                .map::<TimesRange, _>(Into::into)
+                .unwrap_or(RangeFull.into()),
+        )
+        .returning(move || {
+            for (wfid, tasks) in ids_to_resps.iter_mut() {
+                if !outstanding.read().contains_left(wfid) {
+                    if let Some(t) = tasks.pop_front() {
+                        outstanding
+                            .write()
+                            .insert(wfid.to_owned(), TaskToken(t.task_token.clone()));
+                        return Ok(t);
+                    }
                 }
             }
-        }
-        Err(tonic::Status::cancelled("No more work to do"))
-    });
+            Err(tonic::Status::cancelled("No more work to do"))
+        });
 
     let outstanding = outstanding_wf_task_tokens.clone();
     mock_gateway
