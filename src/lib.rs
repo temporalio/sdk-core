@@ -26,7 +26,8 @@ mod workflow;
 mod test_help;
 
 pub use crate::errors::{
-    CompleteActivityError, CompleteWfError, CoreInitError, PollActivityError, PollWfError,
+    ActivityHeartbeatError, CompleteActivityError, CompleteWfError, CoreInitError,
+    PollActivityError, PollWfError,
 };
 pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
@@ -36,10 +37,13 @@ use crate::pollers::{new_activity_task_buffer, new_workflow_task_buffer, PollAct
 use crate::task_token::TaskToken;
 use crate::{
     activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle, InflightActivityDetails},
-    errors::{ActivityHeartbeatError, ShutdownErr, WorkflowUpdateError},
+    errors::{ShutdownErr, WorkflowUpdateError},
     machines::{EmptyWorkflowCommandErr, WFCommand},
     pending_activations::PendingActivations,
-    pollers::PollWorkflowTaskBuffer,
+    pollers::{
+        new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
+        PollWorkflowTaskBuffer,
+    },
     protos::{
         coresdk::{
             activity_result::{self as ar, activity_result},
@@ -49,13 +53,11 @@ use crate::{
             ActivityHeartbeat, ActivityTaskCompletion,
         },
         temporal::api::{
-            enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
+            enums::v1::WorkflowTaskFailedCause,
+            workflowservice::v1::{PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse},
         },
     },
-    workflow::{
-        NextWfActivation, PushCommandsResult, WorkflowConcurrencyManager, WorkflowError,
-        WorkflowManager,
-    },
+    workflow::{NextWfActivation, WorkflowConcurrencyManager, WorkflowError, WorkflowManager},
 };
 use dashmap::{DashMap, DashSet};
 use futures::TryFutureExt;
@@ -251,6 +253,13 @@ where
 
             match selected_f {
                 Ok(work) => {
+                    if work == PollWorkflowTaskQueueResponse::default() {
+                        // We get the default proto in the event that the long poll times out.
+                        continue;
+                    }
+                    let tt = work.task_token.clone();
+                    debug!(history_length = %work.history.as_ref().map_or(0, |h| h.events.len()),
+                          "Got new work from server");
                     if !work.next_page_token.is_empty() {
                         // TODO: Support history pagination
                         unimplemented!("History pagination not yet implemented");
@@ -259,6 +268,16 @@ where
                         self.outstanding_workflow_tasks
                             .insert(TaskToken(activation.task_token.clone()));
                         return Ok(activation);
+                    } else {
+                        // This can be triggered when an activity is completed that we already
+                        // canceled, for example. There is no work for lang to do so we autocomplete
+                        // the task
+                        debug!("No work for lang to perform after polling server!");
+                        self.complete_workflow_task(WfActivationCompletion {
+                            task_token: tt,
+                            status: Some(workflow_completion::Success::from_cmds(vec![]).into()),
+                        })
+                        .await?;
                     }
                 }
                 // Drain pending activations in case of shutdown.
@@ -270,31 +289,51 @@ where
 
     #[instrument(skip(self))]
     async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError> {
-        tokio::select! {
-            biased;
+        loop {
+            if self.shutdown_requested.load(Ordering::Relaxed) {
+                return Err(PollActivityError::ShutDown);
+            }
 
-            maybe_tt = self.activity_heartbeat_manager_handle.next_pending_cancel() => {
-                // Issue cancellations for anything we noticed was cancelled during heartbeating
-                if let Some(task_token) = maybe_tt {
-                    // It's possible that activity has been completed and we no longer have an
-                    // outstanding activity task. This is fine because it means that we no longer
-                    // need to cancel this activity, so we'll just ignore such orphaned
-                    // cancellation.
-                    if let Some(details) = self.outstanding_activity_tasks.get(&task_token) {
-                        return Ok(ActivityTask::cancel_from_ids(
-                            task_token.clone(),
-                            details.activity_id.clone(),
-                        ));
+            tokio::select! {
+                biased;
+
+                maybe_tt = self.activity_heartbeat_manager_handle.next_pending_cancel() => {
+                    // Issue cancellations for anything we noticed was cancelled during heartbeating
+                    if let Some(task_token) = maybe_tt {
+                        // It's possible that activity has been completed and we no longer have an
+                        // outstanding activity task. This is fine because it means that we no
+                        // longer need to cancel this activity, so we'll just ignore such orphaned
+                        // cancellation.
+                        if let Some(details) = self.outstanding_activity_tasks.get(&task_token) {
+                            return Ok(ActivityTask::cancel_from_ids(
+                                task_token,
+                                details.activity_id.clone(),
+                            ));
+                        } else {
+                            // TODO: Unless we return this JS seems to just give up on polling.
+                            //   -- we shouldn't need to return it?
+                            warn!(task_token = ?task_token,
+                                  "Unknown activity task when issuing cancel");
+                            return Ok(ActivityTask::cancel_from_ids(
+                                task_token,
+                                "unknown".to_owned(),
+                            ));
+                        }
+                    }
+                    // The only situation where the next cancel would return none is if the manager
+                    // was dropped, which can only happen on shutdown.
+                    return Err(PollActivityError::ShutDown);
+                }
+                _ = self.shutdown_notifier() => {
+                    return Err(PollActivityError::ShutDown);
+                }
+                r = self.do_activity_poll() => {
+                    match r.transpose() {
+                        None => continue,
+                        Some(r) => return r
                     }
                 }
-                // The only situation where the next cancel would return none is if the manager
-                // was dropped, which should be impossible.
-                return Err(PollActivityError::ShutDown);
             }
-            _ = self.shutdown_notifier() => {
-                return Err(PollActivityError::ShutDown);
-            }
-            r = self.do_activity_poll() => r
         }
     }
 
@@ -422,7 +461,7 @@ where
 
     async fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
-        self.shutdown_notify.notify_one();
+        self.shutdown_notify.notify_waiters();
         self.workflow_machines.shutdown();
         self.activity_heartbeat_manager_handle.shutdown().await;
     }
@@ -460,11 +499,15 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             self.pending_activations.remove_all_with_run_id(&run_id);
             // Queue up an eviction activation
             self.pending_activations
-                .push(create_evict_activation(task_token.to_owned(), run_id))
+                .push(create_evict_activation(task_token.to_owned(), run_id));
+            self.workflow_task_complete_notify.notify_waiters();
         }
     }
 
-    async fn do_activity_poll(&self) -> Result<ActivityTask, PollActivityError> {
+    /// Wait until not at the outstanding activity limit, and then poll for new activities.
+    ///
+    /// Returns Ok(None) if the long poll timeout is hit
+    async fn do_activity_poll(&self) -> Result<Option<ActivityTask>, PollActivityError> {
         while self.outstanding_activity_tasks.len() >= self.init_options.max_outstanding_activities
         {
             self.activity_task_complete_notify.notified().await
@@ -475,6 +518,9 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             .await
         {
             Ok(work) => {
+                if work == PollActivityTaskQueueResponse::default() {
+                    return Ok(None);
+                }
                 let task_token = TaskToken(work.task_token.clone());
                 self.outstanding_activity_tasks.insert(
                     task_token.clone(),
@@ -483,7 +529,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
                         work.heartbeat_timeout.clone(),
                     ),
                 );
-                Ok(ActivityTask::start_from_poll_resp(work, task_token))
+                Ok(Some(ActivityTask::start_from_poll_resp(work, task_token)))
             }
             Err(e) => Err(e),
         }
@@ -504,10 +550,6 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         &self,
         work: PollWorkflowTaskQueueResponse,
     ) -> Result<Option<WfActivation>, PollWfError> {
-        if work == PollWorkflowTaskQueueResponse::default() {
-            // We get the default proto in the event that the long poll times out.
-            return Ok(None);
-        }
         let task_token = TaskToken(work.task_token.clone());
         debug!(
             task_token = %&task_token,
@@ -541,27 +583,32 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
                     .to_owned(),
                 completion: None,
             })?;
-        let push_result = self.push_lang_commands(run_id, cmds)?;
+        self.push_lang_commands(run_id, cmds)?;
         self.enqueue_next_activation_if_needed(run_id, task_token.clone())?;
-        // We only actually want to send commands back to the server if there are
-        // no more pending activations -- in other words the lang SDK has caught
-        // up on replay.
-        if !self.pending_activations.has_pending(run_id) {
+        // We want to fetch the outgoing commands only after any new activation has been queued,
+        // as doing so may have altered the outgoing commands.
+        let server_cmds = self.access_wf_machine(run_id, |w| Ok(w.get_server_commands()))?;
+        // We only actually want to send commands back to the server if there are no more pending
+        // activations and we are at the final workflow task (IE: the lang SDK has caught up on
+        // replay)
+        if !self.pending_activations.has_pending(run_id) && server_cmds.at_final_workflow_task {
             // Since we're telling the server about a wft success, we can remove it from the
             // last failed map (if it was present)
             self.workflows_last_task_failed.remove(run_id);
-            self.server_gateway
-                .complete_workflow_task(task_token, push_result.server_commands)
-                .await
-                .map_err(|ts| {
-                    if ts.code() == tonic::Code::InvalidArgument
-                        && ts.message() == "UnhandledCommand"
-                    {
-                        CompleteWfError::UnhandledCommandWhenCompleting
-                    } else {
-                        ts.into()
-                    }
-                })?;
+            debug!("Sending commands to server: {:?}", &server_cmds.commands);
+            let res = self
+                .server_gateway
+                .complete_workflow_task(task_token, server_cmds.commands)
+                .await;
+            // Silence unhandled command errors since the lang SDK cannot do anything about them
+            // besides poll again, which it will do anyway.
+            if let Err(ts) = res {
+                if ts.code() == tonic::Code::InvalidArgument && ts.message() == "UnhandledCommand" {
+                    warn!("Unhandled command response when completing");
+                } else {
+                    return Err(ts.into());
+                }
+            }
         }
         Ok(())
     }
@@ -631,7 +678,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         &self,
         run_id: &str,
         cmds: Vec<WFCommand>,
-    ) -> Result<PushCommandsResult, WorkflowUpdateError> {
+    ) -> Result<(), WorkflowUpdateError> {
         self.access_wf_machine(run_id, move |mgr| mgr.push_commands(cmds))
     }
 
@@ -678,10 +725,11 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         FErr: From<ShutdownErr>,
     {
         tokio::select! {
+            biased;
+            r = wrap_this => r,
             _ = self.shutdown_notifier() => {
                 Err(ShutdownErr.into())
             }
-            r = wrap_this => r
         }
     }
 
@@ -690,15 +738,17 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         &self,
         run_id: &str,
         task_token: TaskToken,
-    ) -> Result<(), CompleteWfError> {
+    ) -> Result<bool, CompleteWfError> {
+        let mut new_activation = false;
         if let Some(next_activation) =
             self.access_wf_machine(run_id, move |mgr| mgr.get_next_activation())?
         {
             self.pending_activations
                 .push(self.finalize_next_activation(next_activation, task_token));
+            new_activation = true;
         }
         self.workflow_task_complete_notify.notify_one();
-        Ok(())
+        Ok(new_activation)
     }
 }
 
@@ -1896,6 +1946,193 @@ mod test {
         };
         // So that we know we blocked
         assert_eq!(last_finisher.load(Ordering::Acquire), 2);
+    }
+
+    #[tokio::test]
+    async fn shutdown_interrupts_both_polls() {
+        let mut mock_gateway = MockManualGateway::new();
+        mock_gateway
+            .expect_poll_activity_task()
+            .times(1)
+            .returning(move || {
+                async move {
+                    sleep(Duration::from_secs(1)).await;
+                    Ok(PollActivityTaskQueueResponse {
+                        task_token: vec![1],
+                        heartbeat_timeout: Some(Duration::from_secs(1).into()),
+                        ..Default::default()
+                    })
+                }
+                .boxed()
+            });
+        mock_gateway
+            .expect_poll_workflow_task()
+            .times(1)
+            .returning(move || {
+                async move {
+                    let mut t = canned_histories::single_timer("hi");
+                    sleep(Duration::from_secs(1)).await;
+                    Ok(hist_to_poll_resp(&mut t, "wf", 100))
+                }
+                .boxed()
+            });
+
+        let core = CoreSDK::new(
+            mock_gateway,
+            CoreInitOptions {
+                gateway_opts: fake_sg_opts(),
+                evict_after_pending_cleared: true,
+                max_outstanding_workflow_tasks: 5,
+                max_outstanding_activities: 5,
+            },
+        );
+        tokio::join! {
+            async {
+                assert_matches!(core.poll_activity_task().await.unwrap_err(),
+                                PollActivityError::ShutDown);
+            },
+            async {
+                assert_matches!(core.poll_workflow_task().await.unwrap_err(),
+                                PollWfError::ShutDown);
+            },
+            async {
+                // Give polling a bit to get stuck, then shutdown
+                sleep(Duration::from_millis(200)).await;
+                core.shutdown().await;
+            }
+        };
+    }
+
+    #[tokio::test]
+    async fn activity_poll_timeout_retries() {
+        let mut mock_gateway = MockServerGatewayApis::new();
+        let mut calls = 0;
+        mock_gateway
+            .expect_poll_activity_task()
+            .times(3)
+            .returning(move || {
+                calls += 1;
+                if calls <= 2 {
+                    Ok(PollActivityTaskQueueResponse::default())
+                } else {
+                    Err(tonic::Status::unknown("Test done"))
+                }
+            });
+        let core = fake_core_from_mock_sg(mock_gateway, &[]);
+        let r = core.inner.poll_activity_task().await;
+        assert_matches!(r.unwrap_err(), PollActivityError::TonicError(_));
+    }
+
+    // TODO: Test doesn't fail when mock not called enough times (even though it panics??), but it
+    //   actually only should be called two times (with 1,2,3)
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[3]))]
+    #[tokio::test]
+    async fn activity_not_canceled_on_replay_repro(hist_batches: &[usize]) {
+        let wfid = "fake_wf_id";
+        let mut t = canned_histories::unsent_at_cancel_repro();
+        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let activity_id = "act-1";
+
+        poll_and_reply(
+            &core,
+            EvictionMode::NotSticky,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    // Start timer and activity
+                    vec![
+                        ScheduleActivity {
+                            activity_id: activity_id.to_string(),
+                            cancellation_type: ActivityCancellationType::TryCancel as i32,
+                            ..Default::default()
+                        }
+                        .into(),
+                        StartTimer {
+                            timer_id: "timer-1".to_owned(),
+                            ..Default::default()
+                        }
+                        .into(),
+                    ],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::FireTimer(_)),
+                    vec![RequestCancelActivity {
+                        activity_id: activity_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(
+                        ResolveActivity {
+                            result: Some(ActivityResult {
+                                status: Some(activity_result::Status::Canceled(..)),
+                            }),
+                            ..
+                        }
+                    )),
+                    vec![StartTimer {
+                        timer_id: "timer-2".to_owned(),
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[3]))]
+    #[tokio::test]
+    async fn activity_not_canceled_when_also_completed_repro(hist_batches: &[usize]) {
+        let wfid = "fake_wf_id";
+        let mut t = canned_histories::cancel_not_sent_when_also_complete_repro();
+        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let activity_id = "act-1";
+
+        poll_and_reply(
+            &core,
+            EvictionMode::NotSticky,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    // Start timer and activity
+                    vec![ScheduleActivity {
+                        activity_id: activity_id.to_string(),
+                        cancellation_type: ActivityCancellationType::TryCancel as i32,
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                    vec![
+                        RequestCancelActivity {
+                            activity_id: activity_id.to_string(),
+                            ..Default::default()
+                        }
+                        .into(),
+                        StartTimer {
+                            timer_id: "timer-1".to_owned(),
+                            ..Default::default()
+                        }
+                        .into(),
+                    ],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::ResolveActivity(
+                        ResolveActivity {
+                            result: Some(ActivityResult {
+                                status: Some(activity_result::Status::Canceled(..)),
+                            }),
+                            ..
+                        }
+                    )),
+                    vec![CompleteWorkflowExecution { result: None }.into()],
+                ),
+            ],
+        )
+        .await;
     }
 
     #[tokio::test]

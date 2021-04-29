@@ -20,7 +20,7 @@ use temporal_sdk_core::{
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
-    CompleteWfError, Core, PollWfError,
+    Core, PollWfError,
 };
 use tokio::time::sleep;
 
@@ -480,6 +480,112 @@ async fn activity_cancellation_try_cancel() {
     .await
     .unwrap();
     let task = core.poll_workflow_task().await.unwrap();
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
+        task.task_token,
+    ))
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
+    let mut rng = rand::thread_rng();
+    let task_q_salt: u32 = rng.gen();
+    let task_q = &format!(
+        "activity_cancellation_plus_complete_doesnt_double_resolve_{}",
+        task_q_salt.to_string()
+    );
+    let core = get_integ_core(task_q).await;
+    let activity_id = "activity_id";
+    create_workflow(&core, task_q, "wfid", None).await;
+    let task = core.poll_workflow_task().await.unwrap();
+    // Complete workflow task and schedule activity and a timer that fires immediately
+    core.complete_workflow_task(schedule_activity_and_timer_cmds(
+        task_q,
+        activity_id,
+        "timer_id",
+        ActivityCancellationType::TryCancel,
+        task,
+        Duration::from_secs(60),
+        Duration::from_millis(50),
+    ))
+    .await
+    .unwrap();
+    let activity_task = core.poll_activity_task().await.unwrap();
+    assert_matches!(activity_task.variant, Some(act_task::Variant::Start(_)));
+    dbg!("Got activity task");
+    let task = core.poll_workflow_task().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::FireTimer(_)),
+        }]
+    );
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![RequestCancelActivity {
+            activity_id: activity_id.to_owned(),
+            ..Default::default()
+        }
+        .into()],
+        task.task_token,
+    ))
+    .await
+    .unwrap();
+    dbg!("Completed w/ cancel");
+    let task = core.poll_workflow_task().await.unwrap();
+    // Should get cancel task
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::ResolveActivity(
+                ResolveActivity {
+                    result: Some(ActivityResult {
+                        status: Some(activity_result::activity_result::Status::Canceled(_))
+                    }),
+                    ..
+                }
+            )),
+        }]
+    );
+    dbg!("Got cancel task");
+    // We need to complete the wf task to send the activity cancel command to the server, so start
+    // another short timer
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![StartTimer {
+            timer_id: "timer2".to_string(),
+            start_to_fire_timeout: Some(Duration::from_millis(100).into()),
+        }
+        .into()],
+        task.task_token,
+    ))
+    .await
+    .unwrap();
+    // Now say the activity completes anyways
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: activity_task.task_token,
+        result: Some(ActivityResult {
+            status: Some(
+                activity_result::Success {
+                    result: Some(vec![1].into()),
+                }
+                .into(),
+            ),
+        }),
+    })
+    .await
+    .unwrap();
+    dbg!("Completed AT");
+    // Ensure we do not get a wakeup with the activity being resolved completed, and instead get
+    // the timer fired event (also wait for timer to fire)
+    sleep(Duration::from_secs(1)).await;
+    let task = core.poll_workflow_task().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::FireTimer(_)),
+        }]
+    );
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
         task.task_token,
@@ -1117,15 +1223,14 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
     })
     .await;
 
-    // Send completion - not having seen a poll response with a signal in it yet
-    let unhandled = core
-        .complete_workflow_task(WfActivationCompletion::ok_from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
-            task_token,
-        ))
-        .await
-        .unwrap_err();
-    assert_matches!(unhandled, CompleteWfError::UnhandledCommandWhenCompleting);
+    // Send completion - not having seen a poll response with a signal in it yet (unhandled command
+    // error will be silenced)
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
+        task_token,
+    ))
+    .await
+    .unwrap();
 
     // We should get a new task with the signal
     let res = core.poll_workflow_task().await.unwrap();

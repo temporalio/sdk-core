@@ -102,13 +102,17 @@ impl ActivityHeartbeatManagerHandle {
         details: ActivityHeartbeat,
         delay: Duration,
     ) -> Result<(), ActivityHeartbeatError> {
+        if self.shutting_down.load(Ordering::Relaxed) {
+            return Err(ActivityHeartbeatError::ShuttingDown);
+        }
+
         self.events
             .send(LifecycleEvent::Heartbeat(ValidActivityHeartbeat {
                 task_token: TaskToken(details.task_token),
                 details: details.details,
                 delay,
             }))
-            .map_err(|_| ActivityHeartbeatError::SendError)?;
+            .expect("Receive half of the heartbeats event channel must not be dropped");
 
         Ok(())
     }
@@ -261,13 +265,17 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
         {
             Ok(RecordActivityTaskHeartbeatResponse { cancel_requested }) => {
                 if cancel_requested {
-                    let _ = self.cancels_tx.send(self.task_token.clone());
+                    self.cancels_tx
+                        .send(self.task_token.clone())
+                        .expect("Receive half of heartbeat cancels not blocked");
                 }
             }
             // Send cancels for any activity that learns its workflow already finished (which is
             // one thing not found implies - other reasons would seem equally valid).
             Err(s) if s.code() == tonic::Code::NotFound => {
-                let _ = self.cancels_tx.send(self.task_token.clone());
+                self.cancels_tx
+                    .send(self.task_token.clone())
+                    .expect("Receive half of heartbeat cancels not blocked");
             }
             Err(e) => {
                 warn!("Error when recording heartbeat: {:?}", e)
