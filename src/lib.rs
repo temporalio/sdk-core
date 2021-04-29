@@ -339,7 +339,7 @@ where
         }
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, completion), fields(completion=%&completion))]
     async fn complete_workflow_task(
         &self,
         completion: WfActivationCompletion,

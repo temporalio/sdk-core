@@ -82,7 +82,33 @@ pub mod coresdk {
         }
     }
     pub mod workflow_commands {
+        use std::fmt::{Display, Formatter};
         tonic::include_proto!("coresdk.workflow_commands");
+
+        impl Display for WorkflowCommand {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                match &self.variant {
+                    None => write!(f, "Empty"),
+                    Some(v) => match v {
+                        workflow_command::Variant::StartTimer(_) => write!(f, "StartTimer"),
+                        workflow_command::Variant::ScheduleActivity(_) => {
+                            write!(f, "ScheduleActivity")
+                        }
+                        workflow_command::Variant::RespondToQuery(_) => write!(f, "RespondToQuery"),
+                        workflow_command::Variant::RequestCancelActivity(_) => {
+                            write!(f, "RequestCancelActivity")
+                        }
+                        workflow_command::Variant::CancelTimer(_) => write!(f, "CancelTimer"),
+                        workflow_command::Variant::CompleteWorkflowExecution(_) => {
+                            write!(f, "CompleteWorkflowExecution")
+                        }
+                        workflow_command::Variant::FailWorkflowExecution(_) => {
+                            write!(f, "FailWorkflowExecution")
+                        }
+                    },
+                }
+            }
+        }
     }
 
     use crate::protos::{
@@ -102,8 +128,9 @@ pub mod coresdk {
             workflowservice::v1::PollActivityTaskQueueResponse,
         },
     };
-    use crate::task_token::TaskToken;
+    use crate::task_token::{fmt_tt, TaskToken};
     use std::convert::TryFrom;
+    use std::fmt::{Display, Formatter};
     use workflow_activation::{wf_activation_job, WfActivationJob};
     use workflow_commands::{workflow_command, WorkflowCommand};
     use workflow_completion::{wf_activation_completion, WfActivationCompletion};
@@ -156,6 +183,38 @@ pub mod coresdk {
             Self {
                 task_token,
                 status: Some(status),
+            }
+        }
+    }
+
+    impl Display for WfActivationCompletion {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "WfActivationCompletion(task_token: {}, status: ",
+                fmt_tt(&self.task_token),
+            )?;
+            match &self.status {
+                None => write!(f, "empty")?,
+                Some(s) => write!(f, "{}", s)?,
+            };
+            write!(f, ")")
+        }
+    }
+
+    impl Display for wf_activation_completion::Status {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            match self {
+                wf_activation_completion::Status::Successful(Success { commands }) => {
+                    write!(f, "Success(")?;
+                    for c in commands {
+                        write!(f, " {} ", c)?;
+                    }
+                    write!(f, ")")
+                }
+                wf_activation_completion::Status::Failed(_) => {
+                    write!(f, "Failed")
+                }
             }
         }
     }

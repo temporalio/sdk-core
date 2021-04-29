@@ -20,7 +20,7 @@ use temporal_sdk_core::{
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
-    Core, PollWfError,
+    tracing_init, Core, PollWfError,
 };
 use tokio::time::sleep;
 
@@ -490,6 +490,7 @@ async fn activity_cancellation_try_cancel() {
 
 #[tokio::test]
 async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
+    tracing_init();
     let mut rng = rand::thread_rng();
     let task_q_salt: u32 = rng.gen();
     let task_q = &format!(
