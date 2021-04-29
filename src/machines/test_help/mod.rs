@@ -23,22 +23,30 @@ use crate::{
             PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
-    Core, CoreInitOptions, CoreSDK, ServerGatewayOptions,
+    task_token::TaskToken,
+    Core, CoreInitOptions, CoreSDK, ServerGatewayApis, ServerGatewayOptions,
 };
 use bimap::BiMap;
+use mockall::TimesRange;
 use parking_lot::RwLock;
 use rand::{thread_rng, Rng};
-use std::sync::Arc;
 use std::{
     collections::{BTreeMap, HashSet, VecDeque},
+    ops::RangeFull,
     str::FromStr,
+    sync::Arc,
 };
 use url::Url;
 
-#[derive(derive_more::Constructor)]
+/// This wrapper around core is required when using [build_multihist_mock_sg] with [poll_and_reply].
+/// It allows the latter to update the mock's understanding of workflows with outstanding tasks
+/// by removing those which have been evicted.
 pub(crate) struct FakeCore {
     pub(crate) inner: CoreSDK<MockServerGatewayApis>,
+    pub(crate) outstanding_wf_tasks: OutstandingWfTaskMap,
 }
+
+pub type OutstandingWfTaskMap = Arc<RwLock<BiMap<String, TaskToken>>>;
 
 /// Given identifiers for a workflow/run, and a test history builder, construct an instance of
 /// the core SDK with a mock server gateway that will produce the responses as appropriate.
@@ -48,16 +56,38 @@ pub(crate) struct FakeCore {
 /// workflow task with that number, as in [TestHistoryBuilder::get_history_info].
 pub(crate) fn build_fake_core(
     wf_id: &str,
-    t: &mut TestHistoryBuilder,
+    t: TestHistoryBuilder,
     response_batches: &[usize],
 ) -> FakeCore {
-    let mock_gateway = build_mock_sg(wf_id, t, response_batches);
+    let mock_gateway = build_multihist_mock_sg(
+        vec![FakeWfResponses {
+            wf_id: wf_id.to_owned(),
+            hist: t,
+            response_batches: response_batches.to_vec(),
+        }],
+        None,
+    );
     fake_core_from_mock_sg(mock_gateway)
 }
 
 /// See [build_fake_core] -- assemble a mock gateway into the final fake core
-pub(crate) fn fake_core_from_mock_sg(sg: MockServerGatewayApis) -> FakeCore {
-    FakeCore::new(CoreSDK::new(
+pub(crate) fn fake_core_from_mock_sg(mock_and_tasks: MockSGAndTasks) -> FakeCore {
+    FakeCore {
+        inner: CoreSDK::new(
+            mock_and_tasks.sg,
+            CoreInitOptions {
+                gateway_opts: fake_sg_opts(),
+                evict_after_pending_cleared: true,
+                max_outstanding_workflow_tasks: 5,
+                max_outstanding_activities: 5,
+            },
+        ),
+        outstanding_wf_tasks: mock_and_tasks.task_map,
+    }
+}
+
+pub(crate) fn mock_core(sg: MockServerGatewayApis) -> CoreSDK<impl ServerGatewayApis> {
+    CoreSDK::new(
         sg,
         CoreInitOptions {
             gateway_opts: fake_sg_opts(),
@@ -65,42 +95,7 @@ pub(crate) fn fake_core_from_mock_sg(sg: MockServerGatewayApis) -> FakeCore {
             max_outstanding_workflow_tasks: 5,
             max_outstanding_activities: 5,
         },
-    ))
-}
-
-/// See [build_fake_core] -- manual version to get the mock server gateway first
-pub fn build_mock_sg(
-    wf_id: &str,
-    t: &mut TestHistoryBuilder,
-    response_batches: &[usize],
-) -> MockServerGatewayApis {
-    let full_hist_info = t.get_full_history_info().unwrap();
-    // Ensure no response batch is trying to return more tasks than the history contains
-    for rb_wf_num in response_batches {
-        assert!(
-            *rb_wf_num <= full_hist_info.wf_task_count,
-            "Wf task count {} is not <= total task count {}",
-            rb_wf_num,
-            full_hist_info.wf_task_count
-        );
-    }
-
-    let responses: Vec<_> = response_batches
-        .iter()
-        .map(|to_task_num| hist_to_poll_resp(t, wf_id.to_owned(), *to_task_num))
-        .collect();
-
-    let mut tasks = VecDeque::from(responses);
-    let mut mock_gateway = MockServerGatewayApis::new();
-    mock_gateway
-        .expect_poll_workflow_task()
-        .times(response_batches.len())
-        .returning(move || Ok(tasks.pop_front().unwrap()));
-    // Response not really important here
-    mock_gateway
-        .expect_complete_workflow_task()
-        .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
-    mock_gateway
+    )
 }
 
 pub struct FakeWfResponses {
@@ -109,9 +104,26 @@ pub struct FakeWfResponses {
     pub response_batches: Vec<usize>,
 }
 
+pub struct MockSGAndTasks {
+    pub sg: MockServerGatewayApis,
+    pub task_map: OutstandingWfTaskMap,
+}
+
+/// Build a mock server gateway capable of returning multiple different histories for different
+/// workflows. It does so by tracking outstanding workflow tasks like is also happening in core
+/// (which is unfortunately a bit redundant, we could provide hooks in core but that feels a little
+/// nasty). If there is an outstanding task for a given workflow, new chunks of its history are not
+/// returned. If there is not, the next batch of history is returned for any workflow without an
+/// outstanding task. Outstanding tasks are cleared on completion, failure, or eviction.
+///
+/// `num_expected_fails` can be provided to set a specific number of expected failed workflow tasks
+/// sent to the server.
 pub fn build_multihist_mock_sg(
-    hists: impl Iterator<Item = FakeWfResponses>,
-) -> MockServerGatewayApis {
+    hists: impl IntoIterator<Item = FakeWfResponses>,
+    num_expected_fails: Option<usize>,
+) -> MockSGAndTasks {
+    // TODO: allow passing flag to enforce correct number of poll calls
+
     let mut ids_to_resps = BTreeMap::new();
     let outstanding_wf_task_tokens = Arc::new(RwLock::new(BiMap::new()));
 
@@ -148,7 +160,7 @@ pub fn build_multihist_mock_sg(
                 if let Some(t) = tasks.pop_front() {
                     outstanding
                         .write()
-                        .insert(wfid.to_owned(), t.task_token.clone());
+                        .insert(wfid.to_owned(), TaskToken(t.task_token.clone()));
                     return Ok(t);
                 }
             }
@@ -156,13 +168,30 @@ pub fn build_multihist_mock_sg(
         Err(tonic::Status::cancelled("No more work to do"))
     });
 
+    let outstanding = outstanding_wf_task_tokens.clone();
     mock_gateway
         .expect_complete_workflow_task()
         .returning(move |tt, _| {
-            outstanding_wf_task_tokens.write().remove_by_right(&tt.0);
+            outstanding.write().remove_by_right(&tt);
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
+    let outstanding = outstanding_wf_task_tokens.clone();
     mock_gateway
+        .expect_fail_workflow_task()
+        .times(
+            num_expected_fails
+                .map::<TimesRange, _>(Into::into)
+                .unwrap_or(RangeFull.into()),
+        )
+        .returning(move |tt, _, _| {
+            outstanding.write().remove_by_right(&tt);
+            Ok(Default::default())
+        });
+
+    MockSGAndTasks {
+        sg: mock_gateway,
+        task_map: outstanding_wf_task_tokens,
+    }
 }
 
 pub fn hist_to_poll_resp(
@@ -260,6 +289,9 @@ pub(crate) async fn poll_and_reply<'a>(
                 if !res.jobs.is_empty() {
                     asserter(&res);
                 }
+                core.outstanding_wf_tasks
+                    .write()
+                    .remove_by_right(&TaskToken(res.task_token));
                 continue 'outer;
             }
 
@@ -295,6 +327,7 @@ pub(crate) async fn poll_and_reply<'a>(
 
         break;
     }
+    assert!(core.inner.outstanding_workflow_tasks.is_empty());
 }
 
 pub(crate) fn gen_assert_and_reply(

@@ -665,6 +665,17 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
                 self.workflow_task_tokens
                     .insert(task_token.into(), run_id.clone());
 
+                // TODO: Remove this
+                let mut seen_rids = std::collections::HashSet::new();
+                for rid in self.workflow_task_tokens.iter() {
+                    let rid = rid.value().to_string();
+                    if seen_rids.contains(&rid) {
+                        dbg!("AHHHHHH MULTIPLE TASKS SAME RUN ID {}", &rid);
+                        break;
+                    }
+                    seen_rids.insert(rid);
+                }
+
                 match self
                     .workflow_machines
                     .create_or_update(&run_id, history, workflow_execution)
@@ -760,12 +771,12 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::machines::test_help::{build_multihist_mock_sg, FakeWfResponses};
+    use crate::machines::test_help::mock_core;
     use crate::{
         machines::test_help::{
-            build_fake_core, build_mock_sg, fake_core_from_mock_sg, fake_sg_opts,
+            build_fake_core, build_multihist_mock_sg, fake_core_from_mock_sg, fake_sg_opts,
             gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, poll_and_reply,
-            EvictionMode, FakeCore, TestHistoryBuilder,
+            EvictionMode, FakeCore, FakeWfResponses, TestHistoryBuilder,
         },
         pollers::{MockManualGateway, MockServerGatewayApis},
         protos::{
@@ -787,10 +798,7 @@ mod test {
                 RespondActivityTaskCompletedResponse,
             },
             temporal::api::{
-                enums::v1::EventType,
-                workflowservice::v1::{
-                    RespondWorkflowTaskCompletedResponse, RespondWorkflowTaskFailedResponse,
-                },
+                enums::v1::EventType, workflowservice::v1::RespondWorkflowTaskCompletedResponse,
             },
         },
         test_help::canned_histories,
@@ -808,24 +816,24 @@ mod test {
     fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
         let wfid = "fake_wf_id";
 
-        let mut t = canned_histories::single_timer("fake_timer");
-        build_fake_core(wfid, &mut t, hist_batches)
+        let t = canned_histories::single_timer("fake_timer");
+        build_fake_core(wfid, t, hist_batches)
     }
 
     #[fixture(hist_batches = &[])]
     fn single_activity_setup(hist_batches: &[usize]) -> FakeCore {
         let wfid = "fake_wf_id";
 
-        let mut t = canned_histories::single_activity("fake_activity");
-        build_fake_core(wfid, &mut t, hist_batches)
+        let t = canned_histories::single_activity("fake_activity");
+        build_fake_core(wfid, t, hist_batches)
     }
 
     #[fixture(hist_batches = &[])]
     fn single_activity_failure_setup(hist_batches: &[usize]) -> FakeCore {
         let wfid = "fake_wf_id";
 
-        let mut t = canned_histories::single_failed_activity("fake_activity");
-        build_fake_core(wfid, &mut t, hist_batches)
+        let t = canned_histories::single_failed_activity("fake_activity");
+        build_fake_core(wfid, t, hist_batches)
     }
 
     #[rstest]
@@ -895,8 +903,8 @@ mod test {
         let timer_1_id = "timer1";
         let timer_2_id = "timer2";
 
-        let mut t = canned_histories::parallel_timer(timer_1_id, timer_2_id);
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let t = canned_histories::parallel_timer(timer_1_id, timer_2_id);
+        let core = build_fake_core(wfid, t, hist_batches);
 
         poll_and_reply(
             &core,
@@ -952,8 +960,8 @@ mod test {
         let timer_id = "wait_timer";
         let cancel_timer_id = "cancel_timer";
 
-        let mut t = canned_histories::cancel_timer(timer_id, cancel_timer_id);
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let t = canned_histories::cancel_timer(timer_id, cancel_timer_id);
+        let core = build_fake_core(wfid, t, hist_batches);
 
         poll_and_reply(
             &core,
@@ -996,8 +1004,8 @@ mod test {
         let activity_id = "fake_activity";
         let signal_id = "signal";
 
-        let mut t = canned_histories::cancel_scheduled_activity(activity_id, signal_id);
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let t = canned_histories::cancel_scheduled_activity(activity_id, signal_id);
+        let core = build_fake_core(wfid, t, hist_batches);
 
         poll_and_reply(
             &core,
@@ -1036,8 +1044,8 @@ mod test {
         let wfid = "fake_wf_id";
         let activity_id = "fake_activity";
 
-        let mut t = canned_histories::scheduled_activity_timeout(activity_id);
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let t = canned_histories::scheduled_activity_timeout(activity_id);
+        let core = build_fake_core(wfid, t, hist_batches);
         poll_and_reply(
             &core,
             EvictionMode::NotSticky,
@@ -1087,8 +1095,8 @@ mod test {
         let wfid = "fake_wf_id";
         let activity_id = "fake_activity";
 
-        let mut t = canned_histories::started_activity_timeout(activity_id);
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let t = canned_histories::started_activity_timeout(activity_id);
+        let core = build_fake_core(wfid, t, hist_batches);
 
         poll_and_reply(
             &core,
@@ -1140,8 +1148,8 @@ mod test {
         let activity_id = "fake_activity";
         let signal_id = "signal";
 
-        let mut t = canned_histories::scheduled_cancelled_activity_timeout(activity_id, signal_id);
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let t = canned_histories::scheduled_cancelled_activity_timeout(activity_id, signal_id);
+        let core = build_fake_core(wfid, t, hist_batches);
 
         poll_and_reply(
             &core,
@@ -1187,8 +1195,8 @@ mod test {
         let activity_id = "fake_activity";
         let signal_id = "signal";
 
-        let mut t = canned_histories::cancel_scheduled_activity_abandon(activity_id, signal_id);
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let t = canned_histories::cancel_scheduled_activity_abandon(activity_id, signal_id);
+        let core = build_fake_core(wfid, t, hist_batches);
 
         verify_activity_cancellation_abandon(&activity_id, &core).await;
     }
@@ -1200,8 +1208,8 @@ mod test {
         let activity_id = "fake_activity";
         let signal_id = "signal";
 
-        let mut t = canned_histories::cancel_started_activity_abandon(activity_id, signal_id);
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let t = canned_histories::cancel_started_activity_abandon(activity_id, signal_id);
+        let core = build_fake_core(wfid, t, hist_batches);
 
         verify_activity_cancellation_abandon(&activity_id, &core).await;
     }
@@ -1252,12 +1260,11 @@ mod test {
         let activity_id = "fake_activity";
         let signal_id = "signal";
 
-        let mut t =
-            canned_histories::cancel_scheduled_activity_with_signal_and_activity_task_cancel(
-                activity_id,
-                signal_id,
-            );
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let t = canned_histories::cancel_scheduled_activity_with_signal_and_activity_task_cancel(
+            activity_id,
+            signal_id,
+        );
+        let core = build_fake_core(wfid, t, hist_batches);
 
         verify_activity_cancellation_wait_for_cancellation(activity_id, &core).await;
     }
@@ -1269,11 +1276,11 @@ mod test {
         let activity_id = "fake_activity";
         let signal_id = "signal";
 
-        let mut t = canned_histories::cancel_started_activity_with_signal_and_activity_task_cancel(
+        let t = canned_histories::cancel_started_activity_with_signal_and_activity_task_cancel(
             activity_id,
             signal_id,
         );
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let core = build_fake_core(wfid, t, hist_batches);
 
         verify_activity_cancellation_wait_for_cancellation(activity_id, &core).await;
     }
@@ -1333,11 +1340,11 @@ mod test {
         let activity_id = "fake_activity";
         let signal_id = "signal";
 
-        let mut t = canned_histories::cancel_scheduled_activity_with_activity_task_cancel(
+        let t = canned_histories::cancel_scheduled_activity_with_activity_task_cancel(
             activity_id,
             signal_id,
         );
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let core = build_fake_core(wfid, t, hist_batches);
 
         verify_activity_cancellation_try_cancel_task_canceled(&activity_id, &core).await;
     }
@@ -1349,11 +1356,11 @@ mod test {
         let activity_id = "fake_activity";
         let signal_id = "signal";
 
-        let mut t = canned_histories::cancel_started_activity_with_activity_task_cancel(
+        let t = canned_histories::cancel_started_activity_with_activity_task_cancel(
             activity_id,
             signal_id,
         );
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let core = build_fake_core(wfid, t, hist_batches);
 
         verify_activity_cancellation_try_cancel_task_canceled(&activity_id, &core).await;
     }
@@ -1424,8 +1431,8 @@ mod test {
         let timer_1_id = "timer1";
         let randomness_seed_from_start = AtomicU64::new(0);
 
-        let mut t = canned_histories::workflow_fails_with_reset_after_timer(timer_1_id, new_run_id);
-        let core = build_fake_core(wfid, &mut t, &[2]);
+        let t = canned_histories::workflow_fails_with_reset_after_timer(timer_1_id, new_run_id);
+        let core = build_fake_core(wfid, t, &[2]);
 
         poll_and_reply(
             &core,
@@ -1483,7 +1490,7 @@ mod test {
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
 
-        let core = build_fake_core(wfid, &mut t, &[1]);
+        let core = build_fake_core(wfid, t, &[1]);
 
         poll_and_reply(
             &core,
@@ -1519,13 +1526,15 @@ mod test {
         let wfid = "fake_wf_id";
         let timer_id = "timer";
 
-        let mut t = canned_histories::workflow_fails_with_failure_after_timer(timer_id);
-        let mut mock_sg = build_mock_sg(wfid, &mut t, batches);
-        // Need to create an expectation that we will call a failure completion
-        mock_sg
-            .expect_fail_workflow_task()
-            .times(1)
-            .returning(|_, _, _| Ok(RespondWorkflowTaskFailedResponse {}));
+        let hist = canned_histories::workflow_fails_with_failure_after_timer(timer_id);
+        let mock_sg = build_multihist_mock_sg(
+            vec![FakeWfResponses {
+                wf_id: wfid.to_string(),
+                hist,
+                response_batches: batches.to_vec(),
+            }],
+            Some(1),
+        );
         let core = fake_core_from_mock_sg(mock_sg);
 
         poll_and_reply(
@@ -1556,8 +1565,8 @@ mod test {
         let wfid = "fake_wf_id";
         let timer_id = "timer1";
 
-        let mut t = canned_histories::single_timer(timer_id);
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let t = canned_histories::single_timer(timer_id);
+        let core = build_fake_core(wfid, t, hist_batches);
 
         poll_and_reply(
             &core,
@@ -1591,8 +1600,8 @@ mod test {
     async fn two_signals(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
 
-        let mut t = canned_histories::two_signals("sig1", "sig2");
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let t = canned_histories::two_signals("sig1", "sig2");
+        let core = build_fake_core(wfid, t, hist_batches);
 
         poll_and_reply(
             &core,
@@ -1621,20 +1630,23 @@ mod test {
         let timer_1 = "timer1";
         let timer_2 = "timer2";
 
-        let mut t =
+        let hist =
             canned_histories::workflow_fails_with_failure_two_different_points(timer_1, timer_2);
-        let batches = &[
+        let response_batches = vec![
             1, 2, // Start then first good reply
             2, 2, 2, // Poll for every failure
             // Poll again after evicting after second good reply, then two more fails
             3, 3, 3,
         ];
-        let mut mock_sg = build_mock_sg(wfid, &mut t, batches);
-        mock_sg
-            .expect_fail_workflow_task()
+        let mock_sg = build_multihist_mock_sg(
+            vec![FakeWfResponses {
+                wf_id: wfid.to_string(),
+                hist,
+                response_batches,
+            }],
             // We should only call the server to say we failed twice (once after each success)
-            .times(2)
-            .returning(|_, _, _| Ok(RespondWorkflowTaskFailedResponse {}));
+            Some(2),
+        );
         let core = fake_core_from_mock_sg(mock_sg);
 
         poll_and_reply(
@@ -2023,8 +2035,8 @@ mod test {
                     Err(tonic::Status::unknown("Test done"))
                 }
             });
-        let core = fake_core_from_mock_sg(mock_gateway);
-        let r = core.inner.poll_activity_task().await;
+        let core = mock_core(mock_gateway);
+        let r = core.poll_activity_task().await;
         assert_matches!(r.unwrap_err(), PollActivityError::TonicError(_));
     }
 
@@ -2034,8 +2046,8 @@ mod test {
     #[tokio::test]
     async fn activity_not_canceled_on_replay_repro(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
-        let mut t = canned_histories::unsent_at_cancel_repro();
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let t = canned_histories::unsent_at_cancel_repro();
+        let core = build_fake_core(wfid, t, hist_batches);
         let activity_id = "act-1";
 
         poll_and_reply(
@@ -2091,8 +2103,8 @@ mod test {
     #[tokio::test]
     async fn activity_not_canceled_when_also_completed_repro(hist_batches: &[usize]) {
         let wfid = "fake_wf_id";
-        let mut t = canned_histories::cancel_not_sent_when_also_complete_repro();
-        let core = build_fake_core(wfid, &mut t, hist_batches);
+        let t = canned_histories::cancel_not_sent_when_also_complete_repro();
+        let core = build_fake_core(wfid, t, hist_batches);
         let activity_id = "act-1";
 
         poll_and_reply(
@@ -2283,9 +2295,9 @@ mod test {
             }
         });
 
-        let mock = build_multihist_mock_sg(hists);
+        let mock = build_multihist_mock_sg(hists, None);
         let core = CoreSDK::new(
-            mock,
+            mock.sg,
             CoreInitOptions {
                 gateway_opts: fake_sg_opts(),
                 evict_after_pending_cleared: true,
@@ -2295,9 +2307,10 @@ mod test {
         );
 
         let core = Arc::new(core);
-        let handles = (0..5).map(|_| {
+        let mut handles = vec![];
+        for _ in 0..5 {
             let core = core.clone();
-            tokio::spawn(async move {
+            let h = tokio::spawn(async move {
                 while let Ok(wft) = core.poll_workflow_task().await {
                     let job = &wft.jobs[0];
                     let reply = match job.variant {
@@ -2316,10 +2329,12 @@ mod test {
                     .await
                     .unwrap();
                 }
-            })
-        });
+            });
+            handles.push(h);
+        }
         for h in handles {
             h.await.unwrap()
         }
+        assert!(core.outstanding_workflow_tasks.is_empty());
     }
 }
