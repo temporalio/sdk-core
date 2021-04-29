@@ -3,7 +3,6 @@ use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
 use rand::{self, Rng};
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use temporal_sdk_core::protos::coresdk::ActivityHeartbeat;
 use temporal_sdk_core::{
     protos::coresdk::{
         activity_result::{self, activity_result as act_res, ActivityResult},
@@ -18,9 +17,9 @@ use temporal_sdk_core::{
             FailWorkflowExecution, RequestCancelActivity, ScheduleActivity, StartTimer,
         },
         workflow_completion::WfActivationCompletion,
-        ActivityTaskCompletion,
+        ActivityHeartbeat, ActivityTaskCompletion,
     },
-    tracing_init, Core, PollWfError,
+    Core, PollWfError,
 };
 use tokio::time::sleep;
 
@@ -490,7 +489,6 @@ async fn activity_cancellation_try_cancel() {
 
 #[tokio::test]
 async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
-    tracing_init();
     let mut rng = rand::thread_rng();
     let task_q_salt: u32 = rng.gen();
     let task_q = &format!(

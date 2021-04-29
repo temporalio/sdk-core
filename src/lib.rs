@@ -1690,11 +1690,11 @@ mod test {
     #[tokio::test]
     async fn max_concurrent_wft_respected() {
         // Create long histories for three workflows
-        let mut t1 = canned_histories::long_sequential_timers(20);
-        let mut t2 = canned_histories::long_sequential_timers(20);
+        let t1 = canned_histories::long_sequential_timers(20);
+        let t2 = canned_histories::long_sequential_timers(20);
         let mut tasks = VecDeque::from(vec![
-            hist_to_poll_resp(&mut t1, "wf1".to_owned(), 100),
-            hist_to_poll_resp(&mut t2, "wf2".to_owned(), 100),
+            hist_to_poll_resp(&t1, "wf1".to_owned(), 100),
+            hist_to_poll_resp(&t2, "wf2".to_owned(), 100),
         ]);
         // Limit the core to two outstanding workflow tasks, hence we should only see polling
         // happen twice, since we will not actually finish the two workflows
@@ -1989,9 +1989,9 @@ mod test {
             .times(1)
             .returning(move || {
                 async move {
-                    let mut t = canned_histories::single_timer("hi");
+                    let t = canned_histories::single_timer("hi");
                     sleep(Duration::from_secs(1)).await;
-                    Ok(hist_to_poll_resp(&mut t, "wf".to_string(), 100))
+                    Ok(hist_to_poll_resp(&t, "wf".to_string(), 100))
                 }
                 .boxed()
             });

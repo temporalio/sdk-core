@@ -164,7 +164,7 @@ pub fn build_multihist_mock_sg(
         .times(
             correct_num_polls
                 .map::<TimesRange, _>(Into::into)
-                .unwrap_or(RangeFull.into()),
+                .unwrap_or_else(|| RangeFull.into()),
         )
         .returning(move || {
             for (wfid, tasks) in ids_to_resps.iter_mut() {
@@ -193,7 +193,7 @@ pub fn build_multihist_mock_sg(
         .times(
             num_expected_fails
                 .map::<TimesRange, _>(Into::into)
-                .unwrap_or(RangeFull.into()),
+                .unwrap_or_else(|| RangeFull.into()),
         )
         .returning(move |tt, _, _| {
             outstanding.write().remove_by_right(&tt);
