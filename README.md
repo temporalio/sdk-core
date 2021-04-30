@@ -1,4 +1,4 @@
-[![Build status](https://badge.buildkite.com/c23f47f4a827f04daece909963bd3a248496f0cdbabfbecee4.svg)](https://buildkite.com/temporal/core-sdk?branch=master)
+[![Build status](https://badge.buildkite.com/c23f47f4a827f04daece909963bd3a248496f0cdbabfbecee4.svg?branch=master)](https://buildkite.com/temporal/core-sdk?branch=master)
 
 Core SDK that can be used as a base for all other Temporal SDKs.
 

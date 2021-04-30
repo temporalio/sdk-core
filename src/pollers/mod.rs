@@ -8,6 +8,7 @@ pub use poll_buffer::{
 use crate::protos::temporal::api::workflowservice::v1::{
     RecordActivityTaskHeartbeatRequest, RecordActivityTaskHeartbeatResponse,
 };
+use crate::task_token::TaskToken;
 use crate::{
     machines::ProtoCommand,
     protos::temporal::api::{
@@ -129,7 +130,7 @@ pub trait ServerGatewayApis {
     /// the server, such as starting a timer.
     async fn complete_workflow_task(
         &self,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
         commands: Vec<ProtoCommand>,
     ) -> Result<RespondWorkflowTaskCompletedResponse>;
 
@@ -138,7 +139,7 @@ pub trait ServerGatewayApis {
     /// is a blob that contains activity response.
     async fn complete_activity_task(
         &self,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse>;
 
@@ -147,7 +148,7 @@ pub trait ServerGatewayApis {
     /// `result` contains `cancel_requested` flag, which if set to true indicates that activity has been cancelled.
     async fn record_activity_heartbeat(
         &self,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RecordActivityTaskHeartbeatResponse>;
 
@@ -156,7 +157,7 @@ pub trait ServerGatewayApis {
     /// is a blob that provides arbitrary user defined cancellation info.
     async fn cancel_activity_task(
         &self,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse>;
 
@@ -165,7 +166,7 @@ pub trait ServerGatewayApis {
     /// provides failure details, such as message, cause and stack trace.
     async fn fail_activity_task(
         &self,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
         failure: Option<Failure>,
     ) -> Result<RespondActivityTaskFailedResponse>;
 
@@ -173,7 +174,7 @@ pub trait ServerGatewayApis {
     /// been received from [crate::Core::poll_workflow_task].
     async fn fail_workflow_task(
         &self,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
         cause: WorkflowTaskFailedCause,
         failure: Option<Failure>,
     ) -> Result<RespondWorkflowTaskFailedResponse>;
@@ -267,11 +268,11 @@ impl ServerGatewayApis for ServerGateway {
 
     async fn complete_workflow_task(
         &self,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
         commands: Vec<ProtoCommand>,
     ) -> Result<RespondWorkflowTaskCompletedResponse> {
         let request = RespondWorkflowTaskCompletedRequest {
-            task_token,
+            task_token: task_token.0,
             commands,
             identity: self.opts.identity.clone(),
             binary_checksum: self.opts.worker_binary_id.clone(),
@@ -288,14 +289,14 @@ impl ServerGatewayApis for ServerGateway {
 
     async fn complete_activity_task(
         &self,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse> {
         Ok(self
             .service
             .clone()
             .respond_activity_task_completed(RespondActivityTaskCompletedRequest {
-                task_token,
+                task_token: task_token.0,
                 result,
                 identity: self.opts.identity.clone(),
                 namespace: self.opts.namespace.clone(),
@@ -306,14 +307,14 @@ impl ServerGatewayApis for ServerGateway {
 
     async fn record_activity_heartbeat(
         &self,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RecordActivityTaskHeartbeatResponse> {
         Ok(self
             .service
             .clone()
             .record_activity_task_heartbeat(RecordActivityTaskHeartbeatRequest {
-                task_token,
+                task_token: task_token.0,
                 details,
                 identity: self.opts.identity.clone(),
                 namespace: self.opts.namespace.clone(),
@@ -324,14 +325,14 @@ impl ServerGatewayApis for ServerGateway {
 
     async fn cancel_activity_task(
         &self,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse> {
         Ok(self
             .service
             .clone()
             .respond_activity_task_canceled(RespondActivityTaskCanceledRequest {
-                task_token,
+                task_token: task_token.0,
                 details,
                 identity: self.opts.identity.clone(),
                 namespace: self.opts.namespace.clone(),
@@ -342,14 +343,14 @@ impl ServerGatewayApis for ServerGateway {
 
     async fn fail_activity_task(
         &self,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
         failure: Option<Failure>,
     ) -> Result<RespondActivityTaskFailedResponse> {
         Ok(self
             .service
             .clone()
             .respond_activity_task_failed(RespondActivityTaskFailedRequest {
-                task_token,
+                task_token: task_token.0,
                 failure,
                 identity: self.opts.identity.clone(),
                 namespace: self.opts.namespace.clone(),
@@ -360,12 +361,12 @@ impl ServerGatewayApis for ServerGateway {
 
     async fn fail_workflow_task(
         &self,
-        task_token: Vec<u8>,
+        task_token: TaskToken,
         cause: WorkflowTaskFailedCause,
         failure: Option<Failure>,
     ) -> Result<RespondWorkflowTaskFailedResponse> {
         let request = RespondWorkflowTaskFailedRequest {
-            task_token,
+            task_token: task_token.0,
             cause: cause as i32,
             failure,
             identity: self.opts.identity.clone(),
@@ -440,35 +441,35 @@ mod manual_mock {
 
             fn complete_workflow_task<'a, 'b>(
                 &self,
-                task_token: Vec<u8>,
+                task_token: TaskToken,
                 commands: Vec<ProtoCommand>,
             ) -> impl Future<Output = Result<RespondWorkflowTaskCompletedResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;
 
             fn complete_activity_task<'a, 'b>(
                 &self,
-                task_token: Vec<u8>,
+                task_token: TaskToken,
                 result: Option<Payloads>,
             ) -> impl Future<Output = Result<RespondActivityTaskCompletedResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;
 
             fn cancel_activity_task<'a, 'b>(
                 &self,
-                task_token: Vec<u8>,
+                task_token: TaskToken,
                 details: Option<Payloads>,
             ) -> impl Future<Output = Result<RespondActivityTaskCanceledResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;
 
             fn fail_activity_task<'a, 'b>(
                 &self,
-                task_token: Vec<u8>,
+                task_token: TaskToken,
                 failure: Option<Failure>,
             ) -> impl Future<Output = Result<RespondActivityTaskFailedResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;
 
             fn fail_workflow_task<'a, 'b>(
                 &self,
-                task_token: Vec<u8>,
+                task_token: TaskToken,
                 cause: WorkflowTaskFailedCause,
                 failure: Option<Failure>,
             ) -> impl Future<Output = Result<RespondWorkflowTaskFailedResponse>> + Send + 'b
@@ -485,7 +486,7 @@ mod manual_mock {
 
             fn record_activity_heartbeat<'a, 'b>(
                &self,
-               task_token: Vec<u8>,
+               task_token: TaskToken,
                details: Option<Payloads>,
             ) -> impl Future<Output = Result<RecordActivityTaskHeartbeatResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;

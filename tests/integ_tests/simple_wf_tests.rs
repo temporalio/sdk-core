@@ -3,7 +3,6 @@ use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
 use rand::{self, Rng};
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use temporal_sdk_core::protos::coresdk::ActivityHeartbeat;
 use temporal_sdk_core::{
     protos::coresdk::{
         activity_result::{self, activity_result as act_res, ActivityResult},
@@ -18,7 +17,7 @@ use temporal_sdk_core::{
             FailWorkflowExecution, RequestCancelActivity, ScheduleActivity, StartTimer,
         },
         workflow_completion::WfActivationCompletion,
-        ActivityTaskCompletion,
+        ActivityHeartbeat, ActivityTaskCompletion,
     },
     Core, PollWfError,
 };

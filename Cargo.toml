@@ -51,6 +51,7 @@ version = "0.1"
 
 [dev-dependencies]
 assert_matches = "1.4"
+bimap = "0.6.1"
 mockall = "0.9"
 rstest = "0.7"
 lazy_static = "1.4"

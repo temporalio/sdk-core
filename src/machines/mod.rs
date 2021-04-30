@@ -176,7 +176,7 @@ where
         match OnEventWrapper::on_event_mut(self, converted_event) {
             Ok(c) => {
                 if !c.is_empty() {
-                    debug!(commands = %c.display(), state = %self.state(),
+                    debug!(commands=%c.display(), state=%self.state(), machine_name=%self.name(),
                            "Machine produced commands");
                 }
                 let mut machine_responses = vec![];

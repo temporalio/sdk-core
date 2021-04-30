@@ -174,7 +174,7 @@ impl WorkflowMachines {
     /// is the last event in the history.
     ///
     /// TODO: Describe what actually happens in here
-    #[instrument(level = "debug", skip(self), fields(run_id = % self.run_id))]
+    #[instrument(level = "debug", skip(self, event), fields(event=%event))]
     pub(crate) fn handle_event(
         &mut self,
         event: &HistoryEvent,
@@ -512,7 +512,7 @@ impl WorkflowMachines {
             }
         })?;
         if !machine_responses.is_empty() {
-            debug!(responses = %machine_responses.display(),
+            debug!(responses = %machine_responses.display(), machine_name = %sm.name(),
                    "Machine produced responses");
         }
         for response in machine_responses {
