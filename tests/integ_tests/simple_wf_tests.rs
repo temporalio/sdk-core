@@ -1,4 +1,6 @@
-use crate::integ_tests::{create_workflow, get_integ_core, with_gw, GwApi, NAMESPACE};
+use crate::integ_tests::{
+    create_workflow, get_integ_core, get_integ_server_options, with_gw, GwApi, NAMESPACE,
+};
 use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
 use rand::{self, Rng};
@@ -19,7 +21,7 @@ use temporal_sdk_core::{
         workflow_completion::WfActivationCompletion,
         ActivityHeartbeat, ActivityTaskCompletion,
     },
-    Core, PollWfError,
+    tracing_init, Core, CoreInitOptions, PollWfError,
 };
 use tokio::time::sleep;
 
@@ -1245,4 +1247,119 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
     ))
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
+    tracing_init();
+    let task_q = "wft_timeout_doesnt_create_unsolvable_autocomplete";
+    let gateway_opts = get_integ_server_options(task_q);
+    let core = temporal_sdk_core::init(CoreInitOptions {
+        gateway_opts,
+        // Eviction needs to be on in this test
+        evict_after_pending_cleared: true,
+        max_outstanding_workflow_tasks: 5,
+        max_outstanding_activities: 5,
+    })
+    .await
+    .unwrap();
+
+    let mut rng = rand::thread_rng();
+    let workflow_id: u32 = rng.gen();
+    create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
+
+    let activity_id = "act-1";
+    let signal_at_start = "at-start";
+    let signal_at_complete = "at-complete";
+    let wf_task = core.poll_workflow_task().await.unwrap();
+    core.complete_workflow_task(schedule_activity_cmd(
+        task_q,
+        activity_id,
+        ActivityCancellationType::TryCancel,
+        wf_task.clone(),
+        Duration::from_secs(1),
+        Duration::from_secs(60),
+    ))
+    .await
+    .unwrap();
+
+    // Before polling for a task again, we start and complete the activity and send the
+    // corresponding signals.
+    let ac_task = core.poll_activity_task().await.unwrap();
+    let rid = wf_task.run_id.clone();
+    // Send the signals to the server -- sometimes this happens too fast
+    sleep(Duration::from_millis(200)).await;
+    with_gw(&core, |gw: GwApi| async move {
+        gw.signal_workflow_execution(
+            workflow_id.to_string(),
+            rid,
+            signal_at_start.to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+    })
+    .await;
+    // Complete activity successfully.
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: ac_task.task_token,
+        result: Some(ActivityResult::ok(Default::default())),
+    })
+    .await
+    .unwrap();
+    let rid = wf_task.run_id.clone();
+    with_gw(&core, |gw: GwApi| async move {
+        gw.signal_workflow_execution(
+            workflow_id.to_string(),
+            rid,
+            signal_at_complete.to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+    })
+    .await;
+
+    // Now poll again, it will be an eviction
+    let wf_task = core.poll_workflow_task().await.unwrap();
+    assert_matches!(
+        wf_task.jobs.as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+        }]
+    );
+    // Poll *again*, getting start workflow
+    let wf_task = core.poll_workflow_task().await.unwrap();
+    // Complete it
+    core.complete_workflow_task(schedule_activity_cmd(
+        task_q,
+        activity_id,
+        ActivityCancellationType::TryCancel,
+        wf_task.clone(),
+        Duration::from_secs(1),
+        Duration::from_secs(60),
+    ))
+    .await
+    .unwrap();
+    // Poll one more time, now we should get the completion and signals
+    let wf_task = core.poll_workflow_task().await.unwrap();
+    assert_matches!(
+        wf_task.jobs.as_slice(),
+        [
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+            },
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveActivity(_)),
+            },
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+            }
+        ]
+    );
+    // Time out this time
+    sleep(Duration::from_secs(15)).await;
+    // Poll again -- this should immediately return with the same jobs as the last poll that we
+    // timed out.
+    let wf_task = core.poll_workflow_task().await.unwrap();
 }

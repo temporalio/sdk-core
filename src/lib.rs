@@ -220,6 +220,7 @@ where
             // currently replaying or otherwise need immediate jobs, and issue those before
             // bothering the server.
             if let Some(pa) = self.pending_activations.pop() {
+                debug!(activation=%pa, "Sending pending activation to lang");
                 return Ok(pa);
             }
 
@@ -263,14 +264,17 @@ where
                         // TODO: Support history pagination
                         unimplemented!("History pagination not yet implemented");
                     }
+                    let we = work.workflow_execution.clone();
                     if let Some(activation) = self.prepare_new_activation(work)? {
                         self.outstanding_workflow_tasks
                             .insert(TaskToken(activation.task_token.clone()));
+                        debug!(activation=%activation, "Sending activation to lang");
                         return Ok(activation);
                     } else {
                         // This can be triggered when an activity is completed that we already
                         // canceled, for example. There is no work for lang to do so we autocomplete
                         // the task
+                        dbg!("AUTOCOMPLETE", we);
                         debug!("No work for lang to perform after polling server!");
                         self.complete_workflow_task(WfActivationCompletion {
                             task_token: tt,
@@ -375,13 +379,18 @@ where
         // Workflows with no more pending activations (IE: They have completed a WFT) must be
         // removed from the outstanding tasks map
         if !self.pending_activations.has_pending(&run_id) {
+            warn!("No more pending");
             self.outstanding_workflow_tasks.remove(&task_token);
-            self.workflow_task_tokens.remove(&task_token);
 
             // Blow them up if we're in non-sticky mode as well
             if self.init_options.evict_after_pending_cleared {
+                warn!("Evict");
                 self.evict_run(&task_token);
             }
+
+            // The evict may or may not have already done this, but even when we aren't evicting
+            // we want to remove from the run id mapping if we completed the wft.
+            self.workflow_task_tokens.remove(&task_token);
         }
         self.workflow_task_complete_notify.notify_one();
         res
@@ -2326,5 +2335,46 @@ mod test {
             h.await.unwrap()
         }
         assert!(core.outstanding_workflow_tasks.is_empty());
+    }
+
+    #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
+    #[tokio::test]
+    async fn wft_timeout_repro(hist_batches: &[usize]) {
+        tracing_init();
+        let wfid = "fake_wf_id";
+        let t = canned_histories::wft_timeout_repro();
+        let core = build_fake_core(wfid, t, hist_batches);
+        let activity_id = "act-1";
+
+        poll_and_reply(
+            &core,
+            EvictionMode::NotSticky,
+            &[
+                gen_assert_and_reply(
+                    &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                    // Start timer and activity
+                    vec![ScheduleActivity {
+                        activity_id: activity_id.to_string(),
+                        cancellation_type: ActivityCancellationType::TryCancel as i32,
+                        ..Default::default()
+                    }
+                    .into()],
+                ),
+                gen_assert_and_reply(
+                    &job_assert!(
+                        wf_activation_job::Variant::SignalWorkflow(_),
+                        wf_activation_job::Variant::SignalWorkflow(_),
+                        wf_activation_job::Variant::ResolveActivity(ResolveActivity {
+                            result: Some(ActivityResult {
+                                status: Some(activity_result::Status::Completed(..)),
+                            }),
+                            ..
+                        })
+                    ),
+                    vec![CompleteWorkflowExecution { result: None }.into()],
+                ),
+            ],
+        )
+        .await;
     }
 }
