@@ -441,7 +441,6 @@ where
     ) -> Result<(), ActivityHeartbeatError> {
         let t: time::Duration = self
             .outstanding_activity_tasks
-            // TODO: Clone here dumb
             .get(&TaskToken(details.task_token.clone()))
             .ok_or(ActivityHeartbeatError::UnknownActivity)?
             .heartbeat_timeout
@@ -664,17 +663,6 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
                 // Correlate task token w/ run ID
                 self.workflow_task_tokens
                     .insert(task_token.into(), run_id.clone());
-
-                // TODO: Remove this
-                let mut seen_rids = std::collections::HashSet::new();
-                for rid in self.workflow_task_tokens.iter() {
-                    let rid = rid.value().to_string();
-                    if seen_rids.contains(&rid) {
-                        dbg!("AHHHHHH MULTIPLE TASKS SAME RUN ID {}", &rid);
-                        break;
-                    }
-                    seen_rids.insert(rid);
-                }
 
                 match self
                     .workflow_machines
