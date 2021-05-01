@@ -389,12 +389,10 @@ where
         // Workflows with no more pending activations (IE: They have completed a WFT) must be
         // removed from the outstanding tasks map
         if !self.pending_activations.has_pending(&run_id) {
-            warn!("No more pending");
             self.outstanding_workflow_tasks.remove(&run_id);
 
             // Blow them up if we're in non-sticky mode as well
             if self.init_options.evict_after_pending_cleared {
-                warn!("Evict");
                 self.evict_run(&task_token);
             }
 
