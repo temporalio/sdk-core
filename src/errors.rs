@@ -112,6 +112,11 @@ pub enum CompleteWfError {
         /// The run id of the erring workflow
         run_id: String,
     },
+    // TODO: Do we actually need to send this to lang? Probably not?
+    /// The workflow task wasn't found on the server when we tried to complete it. This generally
+    /// means that there is a more recent workflow task, and the one being completed has expired.
+    #[error("Server said workflow task was not found")]
+    WorkflowTaskNotFound,
     /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
     /// errors, so lang should consider this fatal.
     #[error("Unhandled error when calling the temporal server: {0:?}")]

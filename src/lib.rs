@@ -172,15 +172,16 @@ struct CoreSDK<WP> {
     server_gateway: Arc<WP>,
     /// Key is run id
     workflow_machines: WorkflowConcurrencyManager,
-    // TODO: Probably move all workflow stuff inside wf manager?
+    // TODO: move all workflow stuff inside wf manager
     /// Maps task tokens to workflow run ids
     workflow_task_tokens: DashMap<TaskToken, String>,
     /// Workflows (by run id) for which the last task completion we sent was a failure
     workflows_last_task_failed: DashSet<String>,
+    // TODO: Fix docstring
     /// Distinguished from `workflow_task_tokens` by the fact that when we are caching workflows
     /// in sticky mode, we need to know if there are any outstanding workflow tasks since they
     /// must all be handled first before we poll the server again.
-    outstanding_workflow_tasks: DashSet<TaskToken>,
+    outstanding_workflow_tasks: DashSet<String>,
 
     /// Buffers workflow task polling in the event we need to return a pending activation while
     /// a poll is ongoing
@@ -258,6 +259,15 @@ where
                         continue;
                     }
                     let tt = work.task_token.clone();
+
+                    // TODO: Make prettier. Do validation earlier than prepare_new
+                    if let Some(run_id) = work.workflow_execution.as_ref().map(|we| &we.run_id) {
+                        if self.outstanding_workflow_tasks.contains(run_id) {
+                            error!("Got new WFT for a run with one outstanding");
+                            continue;
+                        }
+                    }
+
                     debug!(history_length = %work.history.as_ref().map_or(0, |h| h.events.len()),
                           "Got new work from server");
                     if !work.next_page_token.is_empty() {
@@ -267,7 +277,7 @@ where
                     let we = work.workflow_execution.clone();
                     if let Some(activation) = self.prepare_new_activation(work)? {
                         self.outstanding_workflow_tasks
-                            .insert(TaskToken(activation.task_token.clone()));
+                            .insert(activation.run_id.clone());
                         debug!(activation=%activation, "Sending activation to lang");
                         return Ok(activation);
                     } else {
@@ -380,7 +390,7 @@ where
         // removed from the outstanding tasks map
         if !self.pending_activations.has_pending(&run_id) {
             warn!("No more pending");
-            self.outstanding_workflow_tasks.remove(&task_token);
+            self.outstanding_workflow_tasks.remove(&run_id);
 
             // Blow them up if we're in non-sticky mode as well
             if self.init_options.evict_after_pending_cleared {
@@ -501,12 +511,12 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         }
     }
 
-    /// Evict a workflow from the cache by it's run id
+    /// Evict a workflow from the cache by its task token
     ///
     /// TODO: Very likely needs to be in Core public api
     pub(crate) fn evict_run(&self, task_token: &TaskToken) {
         if let Some((_, run_id)) = self.workflow_task_tokens.remove(task_token) {
-            self.outstanding_workflow_tasks.remove(task_token);
+            self.outstanding_workflow_tasks.remove(&run_id);
             self.workflow_machines.evict(&run_id);
             self.pending_activations.remove_all_with_run_id(&run_id);
             // Queue up an eviction activation
@@ -611,15 +621,12 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             debug!("Sending commands to server: {:?}", &server_cmds.commands);
             let res = self
                 .server_gateway
-                .complete_workflow_task(task_token, server_cmds.commands)
+                .complete_workflow_task(task_token.clone(), server_cmds.commands)
                 .await;
-            // Silence unhandled command errors since the lang SDK cannot do anything about them
-            // besides poll again, which it will do anyway.
             if let Err(ts) = res {
-                if ts.code() == tonic::Code::InvalidArgument && ts.message() == "UnhandledCommand" {
-                    warn!("Unhandled command response when completing");
-                } else {
-                    return Err(ts.into());
+                let should_evict = self.handle_wft_complete_errs(ts)?;
+                if should_evict {
+                    self.evict_run(&task_token);
                 }
             }
         }
@@ -636,6 +643,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         // Blow up any cached data associated with the workflow
         self.evict_run(&task_token);
 
+        // TODO: Handle errors
         if !self.workflows_last_task_failed.contains(run_id) {
             self.server_gateway
                 .fail_workflow_task(
@@ -672,6 +680,19 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
                 // Correlate task token w/ run ID
                 self.workflow_task_tokens
                     .insert(task_token.into(), run_id.clone());
+
+                // TODO: When this does happen, which is definitely bad, it maybe means that
+                //   the existing workflow task is superseded by the new one
+                // TODO: Remove this
+                let mut seen_rids = std::collections::HashSet::new();
+                for rid in self.workflow_task_tokens.iter() {
+                    let rid = rid.value().to_string();
+                    if seen_rids.contains(&rid) {
+                        dbg!("AHHHHHH MULTIPLE TASKS SAME RUN ID {}", &rid);
+                        break;
+                    }
+                    seen_rids.insert(rid);
+                }
 
                 match self
                     .workflow_machines
@@ -762,6 +783,26 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         }
         self.workflow_task_complete_notify.notify_one();
         Ok(new_activation)
+    }
+
+    /// Handle server errors from either completing or failing a workflow task
+    ///
+    /// Returns `Ok(true)` if the workflow should be evicted, `Err(_)` if the error should be
+    /// propagated, and `Ok(false)` if it is safe to ignore entirely.
+    fn handle_wft_complete_errs(&self, err: tonic::Status) -> Result<bool, CompleteWfError> {
+        match err.code() {
+            // Silence unhandled command errors since the lang SDK cannot do anything about them
+            // besides poll again, which it will do anyway.
+            tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
+                warn!("Unhandled command response when completing");
+                Ok(false)
+            }
+            tonic::Code::NotFound => {
+                warn!("Task not found when completing");
+                Ok(true)
+            }
+            _ => Err(err.into()),
+        }
     }
 }
 

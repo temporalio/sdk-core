@@ -1358,8 +1358,56 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         ]
     );
     // Time out this time
-    sleep(Duration::from_secs(15)).await;
-    // Poll again -- this should immediately return with the same jobs as the last poll that we
-    // timed out.
+    sleep(Duration::from_secs(12)).await;
+    // Poll again, which should not have any work to do and spin, until the complete goes through.
+    // Which will be rejected with not found, producing an eviction.
+    let (wf_task, _) = tokio::join!(async { core.poll_workflow_task().await.unwrap() }, async {
+        sleep(Duration::from_secs(1)).await;
+        // Reply to the first one, finally
+        core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+            vec![CompleteWorkflowExecution { result: None }.into()],
+            wf_task.task_token,
+        ))
+        .await
+        .unwrap();
+    });
+    assert_matches!(
+        wf_task.jobs.as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+        }]
+    );
+    // Do it all over again, without timing out this time. TODO: Dedupe
     let wf_task = core.poll_workflow_task().await.unwrap();
+    core.complete_workflow_task(schedule_activity_cmd(
+        task_q,
+        activity_id,
+        ActivityCancellationType::TryCancel,
+        wf_task.clone(),
+        Duration::from_secs(1),
+        Duration::from_secs(60),
+    ))
+    .await
+    .unwrap();
+    let wf_task = core.poll_workflow_task().await.unwrap();
+    assert_matches!(
+        wf_task.jobs.as_slice(),
+        [
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+            },
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveActivity(_)),
+            },
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+            }
+        ]
+    );
+    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
+        wf_task.task_token,
+    ))
+    .await
+    .unwrap();
 }
