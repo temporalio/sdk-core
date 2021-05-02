@@ -244,9 +244,12 @@ where
             debug!("Polling server");
 
             let selected_f = tokio::select! {
+                biased;
+
                 // If a task is completed while we are waiting on polling, we need to restart the
                 // loop right away to provide any potential new pending activation
                 _ = task_complete_fut => {
+                    debug!("Task complete while polling");
                     continue;
                 }
                 r = poll_result_future => r
@@ -256,6 +259,7 @@ where
                 Ok(work) => {
                     if work == PollWorkflowTaskQueueResponse::default() {
                         // We get the default proto in the event that the long poll times out.
+                        debug!("Poll timeout");
                         continue;
                     }
                     let tt = work.task_token.clone();
@@ -400,7 +404,7 @@ where
             // we want to remove from the run id mapping if we completed the wft.
             self.workflow_task_tokens.remove(&task_token);
         }
-        self.workflow_task_complete_notify.notify_one();
+        self.workflow_task_complete_notify.notify_waiters();
         res
     }
 
@@ -514,6 +518,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
     /// TODO: Very likely needs to be in Core public api
     pub(crate) fn evict_run(&self, task_token: &TaskToken) {
         if let Some((_, run_id)) = self.workflow_task_tokens.remove(task_token) {
+            debug!(run_id=%run_id, "Evicting run");
             self.outstanding_workflow_tasks.remove(&run_id);
             self.workflow_machines.evict(&run_id);
             self.pending_activations.remove_all_with_run_id(&run_id);
@@ -779,7 +784,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
                 .push(self.finalize_next_activation(next_activation, task_token));
             new_activation = true;
         }
-        self.workflow_task_complete_notify.notify_one();
+        self.workflow_task_complete_notify.notify_waiters();
         Ok(new_activation)
     }
 
