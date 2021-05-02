@@ -4,6 +4,7 @@ use crate::integ_tests::{
 use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
 use rand::{self, Rng};
+use std::time::Instant;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use temporal_sdk_core::{
     protos::coresdk::{
@@ -1378,7 +1379,15 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         }]
     );
     // Do it all over again, without timing out this time. TODO: Dedupe
+    let after_timeout_poll = Instant::now();
     let wf_task = core.poll_workflow_task().await.unwrap();
+    dbg!(after_timeout_poll.elapsed());
+    assert_matches!(
+        wf_task.jobs.as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
+        }]
+    );
     core.complete_workflow_task(schedule_activity_cmd(
         task_q,
         activity_id,
