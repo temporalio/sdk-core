@@ -49,7 +49,7 @@ version = "0.1"
 assert_matches = "1.4"
 bimap = "0.6.1"
 mockall = "0.9"
-rstest = "0.7"
+rstest = "0.9"
 lazy_static = "1.4"
 
 [build-dependencies]
