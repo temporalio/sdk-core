@@ -10,6 +10,7 @@ use crate::{
 };
 use std::convert::TryFrom;
 
+/// A validated version of a [PollWorkflowTaskQueueResponse]
 pub(crate) struct ValidPollWFTQResponse {
     pub task_token: TaskToken,
     pub workflow_execution: WorkflowExecution,

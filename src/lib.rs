@@ -174,17 +174,20 @@ struct CoreSDK<WP> {
     server_gateway: Arc<WP>,
     /// Key is run id
     workflow_machines: WorkflowConcurrencyManager,
-    // TODO: move all workflow stuff inside wf manager
+    // TODO: move all workflow stuff inside a wft manager
     /// Maps task tokens to workflow run ids
     workflow_task_tokens: DashMap<TaskToken, String>,
     /// Workflows (by run id) for which the last task completion we sent was a failure
     workflows_last_task_failed: DashSet<String>,
-    // TODO: Fix docstring
-    /// Distinguished from `workflow_task_tokens` by the fact that when we are caching workflows
-    /// in sticky mode, we need to know if there are any outstanding workflow tasks since they
-    /// must all be handled first before we poll the server again.
+    /// Used to track which workflows (by run id) have outstanding workflow tasks. Additionally,
+    /// if the value is set, it indicates there is a buffered poll response from the server that
+    /// applies to this run. This can happen when lang takes too long to complete a task and
+    /// the task times out, for example. Upon next completion, the buffered response will be
+    /// removed and pushed into [ready_buffered_wft].
+    ///
+    /// Only the most recent such reply from the server for a given run is kept.
     outstanding_workflow_tasks: DashMap<String, Option<ValidPollWFTQResponse>>,
-    // TODO: This sucks but whatever just to see if it works
+    /// Holds poll wft responses from the server that need to be applied
     ready_buffered_wft: SegQueue<ValidPollWFTQResponse>,
 
     /// Buffers workflow task polling in the event we need to return a pending activation while
@@ -229,18 +232,17 @@ where
                 return Ok(pa);
             }
 
-            // TODO: More notes
-            // Must come after pending activations, since there may be an eviction etc for whatever
-            // run is popped here.
+            if self.shutdown_requested.load(Ordering::SeqCst) {
+                return Err(PollWfError::ShutDown);
+            }
+
+            // Apply any buffered poll responses from the server. Must come after pending
+            // activations, since there may be an eviction etc for whatever run is popped here.
             if let Some(buff_wft) = self.ready_buffered_wft.pop() {
                 match self.apply_server_work(buff_wft).await? {
                     ActivtionOrContinue::Activation(a) => return Ok(a),
                     ActivtionOrContinue::Continue => continue,
                 }
-            }
-
-            if self.shutdown_requested.load(Ordering::SeqCst) {
-                return Err(PollWfError::ShutDown);
             }
 
             // Do not proceed to poll unless we are below the outstanding WFT limit
@@ -251,12 +253,11 @@ where
                 continue;
             }
 
+            debug!("Polling server");
+
             let task_complete_fut = self.workflow_task_complete_notify.notified();
             let poll_result_future =
                 self.shutdownable_fut(self.wf_task_poll_buffer.poll().map_err(Into::into));
-
-            debug!("Polling server");
-
             let selected_f = tokio::select! {
                 biased;
 
@@ -278,7 +279,7 @@ where
 
                     let work: ValidPollWFTQResponse = work
                         .try_into()
-                        .map_err(|p| PollWfError::BadPollResponseFromServer(p))?;
+                        .map_err(PollWfError::BadPollResponseFromServer)?;
 
                     if let Some(mut outstanding_entry) = self
                         .outstanding_workflow_tasks
@@ -717,7 +718,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         let run_id = poll_wf_resp.workflow_execution.run_id.clone();
         // Correlate task token w/ run ID
         self.workflow_task_tokens
-            .insert(poll_wf_resp.task_token.into(), run_id.clone());
+            .insert(poll_wf_resp.task_token, run_id.clone());
 
         match self.workflow_machines.create_or_update(
             &run_id,
