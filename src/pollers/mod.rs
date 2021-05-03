@@ -117,6 +117,7 @@ pub trait ServerGatewayApis {
         task_queue: String,
         workflow_id: String,
         workflow_type: String,
+        task_timeout: Option<Duration>,
     ) -> Result<StartWorkflowExecutionResponse>;
 
     /// Fetch new workflow tasks. Should block indefinitely if there is no work.
@@ -205,6 +206,7 @@ impl ServerGatewayApis for ServerGateway {
         task_queue: String,
         workflow_id: String,
         workflow_type: String,
+        task_timeout: Option<Duration>,
     ) -> Result<StartWorkflowExecutionResponse> {
         let request_id = Uuid::new_v4().to_string();
 
@@ -222,6 +224,7 @@ impl ServerGatewayApis for ServerGateway {
                     kind: 0,
                 }),
                 request_id,
+                workflow_task_timeout: task_timeout.map(Into::into),
                 ..Default::default()
             })
             .await?

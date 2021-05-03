@@ -2405,7 +2405,6 @@ mod test {
     #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
     #[tokio::test]
     async fn wft_timeout_repro(hist_batches: &[usize]) {
-        tracing_init();
         let wfid = "fake_wf_id";
         let t = canned_histories::wft_timeout_repro();
         let core = build_fake_core(wfid, t, hist_batches);

@@ -1,5 +1,6 @@
 use crate::integ_tests::{
-    create_workflow, get_integ_core, get_integ_server_options, with_gw, GwApi, NAMESPACE,
+    create_workflow, create_workflow_custom_timeout, get_integ_core, get_integ_server_options,
+    with_gw, GwApi, NAMESPACE,
 };
 use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
@@ -1303,7 +1304,14 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
 
     let mut rng = rand::thread_rng();
     let workflow_id: u32 = rng.gen();
-    create_workflow(&core, task_q, &workflow_id.to_string(), None).await;
+    create_workflow_custom_timeout(
+        &core,
+        task_q,
+        &workflow_id.to_string(),
+        // Use a short task timeout
+        Duration::from_secs(1),
+    )
+    .await;
 
     // Poll and schedule the activity
     let wf_task = poll_sched_act().await;
@@ -1354,11 +1362,11 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     // Start from the beginning
     let wf_task = poll_sched_act_poll().await;
     // Time out this time
-    sleep(Duration::from_secs(12)).await;
+    sleep(Duration::from_secs(2)).await;
     // Poll again, which should not have any work to do and spin, until the complete goes through.
     // Which will be rejected with not found, producing an eviction.
     let (wf_task, _) = tokio::join!(async { core.poll_workflow_task().await.unwrap() }, async {
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_millis(500)).await;
         // Reply to the first one, finally
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
             vec![CompleteWorkflowExecution { result: None }.into()],
