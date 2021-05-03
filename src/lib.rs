@@ -58,6 +58,7 @@ use crate::{
     task_token::TaskToken,
     workflow::{NextWfActivation, WorkflowConcurrencyManager, WorkflowError, WorkflowManager},
 };
+use crossbeam::queue::SegQueue;
 use dashmap::{DashMap, DashSet};
 use futures::TryFutureExt;
 use std::{
@@ -181,7 +182,9 @@ struct CoreSDK<WP> {
     /// Distinguished from `workflow_task_tokens` by the fact that when we are caching workflows
     /// in sticky mode, we need to know if there are any outstanding workflow tasks since they
     /// must all be handled first before we poll the server again.
-    outstanding_workflow_tasks: DashSet<String>,
+    outstanding_workflow_tasks: DashMap<String, Option<PollWorkflowTaskQueueResponse>>,
+    // TODO: This sucks but whatever just to see if it works
+    ready_buffered_wft: SegQueue<PollWorkflowTaskQueueResponse>,
 
     /// Buffers workflow task polling in the event we need to return a pending activation while
     /// a poll is ongoing
@@ -225,6 +228,16 @@ where
                 return Ok(pa);
             }
 
+            // TODO: More notes
+            // Must come after pending activations, since there may be an eviction etc for whatever
+            // run is popped here.
+            if let Some(buff_wft) = self.ready_buffered_wft.pop() {
+                match self.apply_server_work(buff_wft).await? {
+                    ActivtionOrContinue::Activation(a) => return Ok(a),
+                    ActivtionOrContinue::Continue => continue,
+                }
+            }
+
             if self.shutdown_requested.load(Ordering::SeqCst) {
                 return Err(PollWfError::ShutDown);
             }
@@ -262,39 +275,23 @@ where
                         debug!("Poll timeout");
                         continue;
                     }
-                    let tt = work.task_token.clone();
 
                     // TODO: Make prettier. Do validation earlier than prepare_new
                     if let Some(run_id) = work.workflow_execution.as_ref().map(|we| &we.run_id) {
-                        if self.outstanding_workflow_tasks.contains(run_id) {
+                        if let Some(mut outstanding_entry) =
+                            self.outstanding_workflow_tasks.get_mut(run_id)
+                        {
                             error!("Got new WFT for a run with one outstanding");
+                            *outstanding_entry.value_mut() = Some(work);
                             continue;
                         }
                     }
 
                     debug!(history_length = %work.history.as_ref().map_or(0, |h| h.events.len()),
                           "Got new work from server");
-                    if !work.next_page_token.is_empty() {
-                        // TODO: Support history pagination
-                        unimplemented!("History pagination not yet implemented");
-                    }
-                    let we = work.workflow_execution.clone();
-                    if let Some(activation) = self.prepare_new_activation(work)? {
-                        self.outstanding_workflow_tasks
-                            .insert(activation.run_id.clone());
-                        debug!(activation=%activation, "Sending activation to lang");
-                        return Ok(activation);
-                    } else {
-                        // This can be triggered when an activity is completed that we already
-                        // canceled, for example. There is no work for lang to do so we autocomplete
-                        // the task
-                        dbg!("AUTOCOMPLETE", we);
-                        debug!("No work for lang to perform after polling server!");
-                        self.complete_workflow_task(WfActivationCompletion {
-                            task_token: tt,
-                            status: Some(workflow_completion::Success::from_cmds(vec![]).into()),
-                        })
-                        .await?;
+                    match self.apply_server_work(work).await? {
+                        ActivtionOrContinue::Activation(a) => return Ok(a),
+                        ActivtionOrContinue::Continue => continue,
                     }
                 }
                 // Drain pending activations in case of shutdown.
@@ -491,6 +488,12 @@ where
     }
 }
 
+#[derive(Debug, derive_more::From)]
+enum ActivtionOrContinue {
+    Activation(WfActivation),
+    Continue,
+}
+
 impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
     pub(crate) fn new(wp: WP, init_options: CoreInitOptions) -> Self {
         let sg = Arc::new(wp);
@@ -501,6 +504,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             workflow_task_tokens: Default::default(),
             workflows_last_task_failed: Default::default(),
             outstanding_workflow_tasks: Default::default(),
+            ready_buffered_wft: Default::default(),
             wf_task_poll_buffer: new_workflow_task_buffer(sg.clone()),
             at_task_poll_buffer: new_activity_task_buffer(sg.clone()),
             pending_activations: Default::default(),
@@ -516,17 +520,22 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
     /// Evict a workflow from the cache by its task token
     ///
     /// TODO: Very likely needs to be in Core public api
-    pub(crate) fn evict_run(&self, task_token: &TaskToken) {
+    pub(crate) fn evict_run(
+        &self,
+        task_token: &TaskToken,
+    ) -> Option<PollWorkflowTaskQueueResponse> {
         if let Some((_, run_id)) = self.workflow_task_tokens.remove(task_token) {
             debug!(run_id=%run_id, "Evicting run");
-            self.outstanding_workflow_tasks.remove(&run_id);
+            let maybe_buffered = self.outstanding_workflow_tasks.remove(&run_id);
             self.workflow_machines.evict(&run_id);
             self.pending_activations.remove_all_with_run_id(&run_id);
             // Queue up an eviction activation
             self.pending_activations
                 .push(create_evict_activation(task_token.to_owned(), run_id));
             self.workflow_task_complete_notify.notify_waiters();
+            return maybe_buffered.and_then(|mb| mb.1);
         }
+        None
     }
 
     /// Wait until not at the outstanding activity limit, and then poll for new activities.
@@ -569,6 +578,36 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         task_token: TaskToken,
     ) -> WfActivation {
         next_a.finalize(task_token)
+    }
+
+    async fn apply_server_work(
+        &self,
+        work: PollWorkflowTaskQueueResponse,
+    ) -> Result<ActivtionOrContinue, PollWfError> {
+        let tt = work.task_token.clone();
+        if !work.next_page_token.is_empty() {
+            // TODO: Support history pagination
+            unimplemented!("History pagination not yet implemented");
+        }
+        let we = work.workflow_execution.clone();
+        if let Some(activation) = self.prepare_new_activation(work)? {
+            self.outstanding_workflow_tasks
+                .insert(activation.run_id.clone(), None);
+            debug!(activation=%activation, "Sending activation to lang");
+            Ok(activation.into())
+        } else {
+            // This can be triggered when an activity is completed that we already
+            // canceled, for example. There is no work for lang to do so we autocomplete
+            // the task
+            dbg!("AUTOCOMPLETE", we);
+            debug!("No work for lang to perform after polling server!");
+            self.complete_workflow_task(WfActivationCompletion {
+                task_token: tt,
+                status: Some(workflow_completion::Success::from_cmds(vec![]).into()),
+            })
+            .await?;
+            Ok(ActivtionOrContinue::Continue)
+        }
     }
 
     /// Given a wf task from the server, prepare an activation (if there is one) to be sent to lang
@@ -629,7 +668,9 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             if let Err(ts) = res {
                 let should_evict = self.handle_wft_complete_errs(ts)?;
                 if should_evict {
-                    self.evict_run(&task_token);
+                    if let Some(maybe_buffered_work) = self.evict_run(&task_token) {
+                        self.ready_buffered_wft.push(maybe_buffered_work);
+                    }
                 }
             }
         }
