@@ -147,7 +147,7 @@ impl WorkflowTaskManager {
         if let Some(na) = next_activation {
             self.outstanding_workflow_tasks
                 .insert(na.run_id().to_owned(), None);
-            return Ok(NewWfTaskOutcome::IssueActivation(na.finalize(task_token)));
+            Ok(NewWfTaskOutcome::IssueActivation(na.finalize(task_token)))
         } else {
             Ok(NewWfTaskOutcome::Autocomplete)
         }

@@ -123,10 +123,7 @@ pub trait Core: Send + Sync {
     /// immediately. Underlying validation errors are swallowed and logged, this has been agreed to
     /// be optimal behavior for the user as we don't want to break activity execution due to badly
     /// configured heartbeat options.
-    async fn record_activity_heartbeat(
-        &self,
-        details: ActivityHeartbeat,
-    ) -> Result<(), ActivityHeartbeatError>;
+    async fn record_activity_heartbeat(&self, details: ActivityHeartbeat);
 
     /// Returns core's instance of the [ServerGatewayApis] implementor it is using.
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis>;
@@ -412,12 +409,11 @@ where
         Ok(res?)
     }
 
-    async fn record_activity_heartbeat(&self, details: ActivityHeartbeat) -> Result<(), ()> {
+    async fn record_activity_heartbeat(&self, details: ActivityHeartbeat) {
         let tt = details.task_token.clone();
         if let Err(e) = self.record_activity_heartbeat_with_errors(details) {
             warn!(task_token = ?tt, details = ?e, "Activity heartbeat failed.")
         }
-        Ok(())
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {
@@ -1741,8 +1737,7 @@ mod test {
             task_token: act.task_token,
             details: vec![vec![1u8, 2, 3].into()],
         })
-        .await
-        .unwrap();
+        .await;
         // We have to wait a beat for the heartbeat to be processed
         sleep(Duration::from_millis(50)).await;
         let act = core.poll_activity_task().await.unwrap();
@@ -1835,8 +1830,7 @@ mod test {
                     task_token: act.task_token,
                     details: vec![vec![1u8, 2, 3].into()],
                 })
-                .await
-                .unwrap();
+                .await;
                 last_finisher.store(1, Ordering::SeqCst);
             },
             async {
@@ -2123,8 +2117,7 @@ mod test {
                         task_token: i.to_be_bytes().to_vec(),
                         details: vec![],
                     })
-                    .await
-                    .unwrap();
+                    .await;
                     sleep(Duration::from_millis(100)).await;
                 }
             });
