@@ -1,6 +1,5 @@
 use crate::integ_tests::{
-    create_workflow, get_integ_core, init_core_and_create_wf, with_gw, CoreWfStarter, GwApi,
-    NAMESPACE,
+    get_integ_core, init_core_and_create_wf, with_gw, CoreWfStarter, GwApi, NAMESPACE,
 };
 use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
@@ -11,8 +10,7 @@ use temporal_sdk_core::{
         activity_task::activity_task as act_task,
         common::{Payload, UserCodeFailure},
         workflow_activation::{
-            wf_activation_job, FireTimer, ResolveActivity, StartWorkflow, WfActivation,
-            WfActivationJob,
+            wf_activation_job, FireTimer, ResolveActivity, WfActivation, WfActivationJob,
         },
         workflow_commands::{
             ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
@@ -851,33 +849,23 @@ async fn timer_immediate_cancel_workflow() {
 
 #[tokio::test]
 async fn parallel_workflows_same_queue() {
-    let task_q = "parallel_workflows_same_queue";
-    let core = get_integ_core(task_q).await;
-    let num_workflows = 25;
+    let mut starter = CoreWfStarter::new("parallel_workflows_same_queue");
+    let core = starter.get_core().await;
+    let num_workflows = 25usize;
 
-    let run_ids: Vec<_> =
-        future::join_all((0..num_workflows).map(|i| {
-            let core = &core;
-            async move {
-                create_workflow(core, task_q, &format!("wf-id-{}", i), Some("wf-type-1")).await
-            }
-        }))
-        .await;
+    let run_ids: Vec<_> = future::join_all(
+        (0..num_workflows).map(|i| starter.start_wf_with_id(format!("wf-id-{}", i))),
+    )
+    .await;
 
     let mut send_chans = HashMap::new();
-
     async fn wf_task(core: Arc<dyn Core>, mut task_chan: UnboundedReceiver<WfActivation>) {
         let task = task_chan.next().await.unwrap();
         assert_matches!(
             task.jobs.as_slice(),
             [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::StartWorkflow(
-                    StartWorkflow {
-                        workflow_type,
-                        ..
-                    }
-                )),
-            }] => assert_eq!(&workflow_type, &"wf-type-1")
+                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
+            }]
         );
         core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
             vec![StartTimer {
@@ -898,14 +886,12 @@ async fn parallel_workflows_same_queue() {
         .unwrap();
     }
 
-    let core = Arc::new(core);
     let handles: Vec<_> = run_ids
         .iter()
         .map(|run_id| {
             let (tx, rx) = futures::channel::mpsc::unbounded();
             send_chans.insert(run_id.clone(), tx);
-            let core_c = core.clone();
-            tokio::spawn(wf_task(core_c, rx))
+            tokio::spawn(wf_task(core.clone(), rx))
         })
         .collect();
 

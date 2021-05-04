@@ -1,11 +1,10 @@
 use crate::integ_tests::{
-    create_workflow, get_integ_core, get_integ_server_options,
+    get_integ_server_options, init_core_and_create_wf,
     simple_wf_tests::schedule_activity_and_timer_cmds,
 };
 use assert_matches::assert_matches;
 use crossbeam::channel::{unbounded, RecvTimeoutError};
-use rand::Rng;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use temporal_sdk_core::protos::coresdk::{
     activity_task::activity_task as act_task,
     workflow_activation::{wf_activation_job, FireTimer, WfActivationJob},
@@ -14,27 +13,20 @@ use temporal_sdk_core::protos::coresdk::{
     },
     workflow_completion::WfActivationCompletion,
 };
-use temporal_sdk_core::{tracing_init, Core, CoreInitOptions};
+use temporal_sdk_core::{Core, CoreInitOptions};
 use tokio::time::timeout;
 
 #[tokio::test]
 async fn out_of_order_completion_doesnt_hang() {
-    tracing_init();
-
-    let mut rng = rand::thread_rng();
-    let task_q_salt: u32 = rng.gen();
-    let task_q = format!("activity_cancelled_workflow_{}", task_q_salt.to_string());
-    let core = Arc::new(get_integ_core(&task_q).await);
-    let workflow_id: u32 = rng.gen();
-    create_workflow(&*core, &task_q, &workflow_id.to_string(), None).await;
-    let activity_id: String = rng.gen::<u32>().to_string();
-    let timer_id: String = rng.gen::<u32>().to_string();
+    let (core, task_q) = init_core_and_create_wf("out_of_order_completion_doesnt_hang").await;
+    let activity_id = "act-1";
+    let timer_id = "timer-1";
     let task = core.poll_workflow_task().await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
     core.complete_workflow_task(schedule_activity_and_timer_cmds(
         &task_q,
-        &activity_id,
-        &timer_id,
+        activity_id,
+        timer_id,
         ActivityCancellationType::TryCancel,
         task,
         Duration::from_secs(60),
@@ -62,7 +54,7 @@ async fn out_of_order_completion_doesnt_hang() {
                 )),
             },
         ] => {
-            assert_eq!(t_id, &timer_id);
+            assert_eq!(t_id, timer_id);
         }
     );
 
@@ -93,7 +85,7 @@ async fn out_of_order_completion_doesnt_hang() {
     // pending activation, unblocking the (already started) poll
     core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
         vec![RequestCancelActivity {
-            activity_id,
+            activity_id: activity_id.to_string(),
             ..Default::default()
         }
         .into()],

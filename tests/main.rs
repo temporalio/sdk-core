@@ -3,8 +3,7 @@ mod integ_tests {
     mod polling_tests;
     mod simple_wf_tests;
 
-    use rand::distributions::Standard;
-    use rand::Rng;
+    use rand::{distributions::Standard, Rng};
     use std::{convert::TryFrom, env, future::Future, sync::Arc, time::Duration};
     use temporal_sdk_core::{Core, CoreInitOptions, ServerGatewayApis, ServerGatewayOptions};
     use url::Url;
@@ -45,19 +44,32 @@ mod integ_tests {
         }
 
         /// Start the workflow defined by the builder and return run id
-        pub async fn start_wf(&mut self) -> String {
-            with_gw(self.get_core().await.as_ref(), |gw: GwApi| async move {
-                gw.start_workflow(
-                    NAMESPACE.to_owned(),
-                    self.task_queue.clone(),
-                    self.test_name.clone(),
-                    self.test_name.clone(),
-                    self.wft_timeout,
-                )
-                .await
-                .unwrap()
-                .run_id
-            })
+        pub async fn start_wf(&self) -> String {
+            self.start_wf_with_id(self.test_name.clone()).await
+        }
+
+        pub async fn start_wf_with_id(&self, workflow_id: String) -> String {
+            with_gw(
+                self.initted_core
+                    .as_ref()
+                    .expect(
+                        "Core must be initted before starting a workflow.\
+                             Tests must call `get_core` first.",
+                    )
+                    .as_ref(),
+                |gw: GwApi| async move {
+                    gw.start_workflow(
+                        NAMESPACE.to_owned(),
+                        self.task_queue.clone(),
+                        workflow_id,
+                        self.test_name.clone(),
+                        self.wft_timeout,
+                    )
+                    .await
+                    .unwrap()
+                    .run_id
+                },
+            )
             .await
         }
 
@@ -96,27 +108,6 @@ mod integ_tests {
         let core = starter.get_core().await;
         starter.start_wf().await;
         (core, starter.get_task_queue().to_string())
-    }
-
-    pub async fn create_workflow(
-        core: &dyn Core,
-        task_q: &str,
-        workflow_id: &str,
-        wf_type: Option<&str>,
-    ) -> String {
-        with_gw(core, |gw: GwApi| async move {
-            gw.start_workflow(
-                NAMESPACE.to_owned(),
-                task_q.to_owned(),
-                workflow_id.to_owned(),
-                wf_type.unwrap_or("test-workflow").to_owned(),
-                None,
-            )
-            .await
-            .unwrap()
-            .run_id
-        })
-        .await
     }
 
     pub async fn with_gw<F: FnOnce(GwApi) -> Fout, Fout: Future>(
