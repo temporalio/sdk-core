@@ -21,6 +21,7 @@ mod pollers;
 mod protosext;
 pub(crate) mod task_token;
 mod workflow;
+mod workflow_tasks;
 
 #[cfg(test)]
 mod test_help;
@@ -34,6 +35,7 @@ pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatew
 pub use url::Url;
 
 use crate::protosext::ValidPollWFTQResponse;
+use crate::workflow_tasks::{NewWfTaskOutcome, WorkflowTaskManager};
 use crate::{
     activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle, InflightActivityDetails},
     errors::{ShutdownErr, WorkflowUpdateError},
@@ -107,19 +109,23 @@ pub trait Core: Send + Sync {
         completion: ActivityTaskCompletion,
     ) -> Result<(), CompleteActivityError>;
 
-    /// Notify workflow that activity is still alive. Long running activities that take longer than
-    /// `activity_heartbeat_timeout` to finish must call this function in order to report progress,
-    /// otherwise activity will timeout and new attempt will be scheduled.
-    /// `result` contains latest known activity cancelation status.
-    /// First heartbeat request will be sent immediately, sub-sequent rapid calls to this
-    /// function would result in heartbeat requests being aggregated and the last one received during
-    /// the aggregation period will be sent to the server.
-    /// Unlike java/go SDKs we are not going to return cancellation status as part of heartbeat response
-    /// and instead will send it as a separate activity task to the lang, decoupling heartbeat and
+    /// Notify workflow that an activity is still alive. Long running activities that take longer
+    /// than `activity_heartbeat_timeout` to finish must call this function in order to report
+    /// progress, otherwise the activity will timeout and a new attempt will be scheduled.
+    ///
+    /// The first heartbeat request will be sent immediately, subsequent rapid calls to this
+    /// function will result in heartbeat requests being aggregated and the last one received during
+    /// the aggregation period will be sent to the server, where that period is defined as half the
+    /// heartbeat timeout.
+    ///
+    /// Unlike java/go SDKs we do not return cancellation status as part of heartbeat response and
+    /// instead send it as a separate activity task to the lang, decoupling heartbeat and
     /// cancellation processing.
-    /// For now activity still needs to heartbeat if it wants to receive cancellation requests.
-    /// In the future we are going to change this and will dispatch cancellations more proactively.
-    /// Note that this function is not blocking on the server call and will return immediately.
+    ///
+    /// For now activity still need to send heartbeats if they want to receive cancellation
+    /// requests. In the future we will change this and will dispatch cancellations more
+    /// proactively. Note that this function does not block on the server call and returns
+    /// immediately.
     async fn record_activity_heartbeat(
         &self,
         details: ActivityHeartbeat,
@@ -172,23 +178,8 @@ struct CoreSDK<WP> {
     init_options: CoreInitOptions,
     /// Provides work in the form of responses the server would send from polling task Qs
     server_gateway: Arc<WP>,
-    /// Key is run id
-    workflow_machines: WorkflowConcurrencyManager,
-    // TODO: move all workflow stuff inside a wft manager
-    /// Maps task tokens to workflow run ids
-    workflow_task_tokens: DashMap<TaskToken, String>,
-    /// Workflows (by run id) for which the last task completion we sent was a failure
-    workflows_last_task_failed: DashSet<String>,
-    /// Used to track which workflows (by run id) have outstanding workflow tasks. Additionally,
-    /// if the value is set, it indicates there is a buffered poll response from the server that
-    /// applies to this run. This can happen when lang takes too long to complete a task and
-    /// the task times out, for example. Upon next completion, the buffered response will be
-    /// removed and pushed into [ready_buffered_wft].
-    ///
-    /// Only the most recent such reply from the server for a given run is kept.
-    outstanding_workflow_tasks: DashMap<String, Option<ValidPollWFTQResponse>>,
-    /// Holds poll wft responses from the server that need to be applied
-    ready_buffered_wft: SegQueue<ValidPollWFTQResponse>,
+    /// Workflow task management
+    wft_manager: WorkflowTaskManager,
 
     /// Buffers workflow task polling in the event we need to return a pending activation while
     /// a poll is ongoing
@@ -196,10 +187,6 @@ struct CoreSDK<WP> {
     /// Buffers workflow task polling in the event we need to return a pending activation while
     /// a poll is ongoing
     at_task_poll_buffer: PollActivityTaskBuffer,
-
-    /// Workflows may generate new activations immediately upon completion (ex: while replaying,
-    /// or when cancelling an activity in try-cancel/abandon mode). They queue here.
-    pending_activations: PendingActivations,
 
     activity_heartbeat_manager_handle: ActivityHeartbeatManagerHandle,
     /// Activities that have been issued to lang but not yet completed
@@ -209,7 +196,7 @@ struct CoreSDK<WP> {
     /// Used to wake up future which checks shutdown state
     shutdown_notify: Notify,
     /// Used to wake blocked workflow task polling when tasks complete
-    workflow_task_complete_notify: Notify,
+    workflow_task_complete_notify: Arc<Notify>,
     /// Used to wake blocked activity task polling when tasks complete
     activity_task_complete_notify: Notify,
 }
@@ -227,7 +214,7 @@ where
             // We must first check if there are pending workflow activations for workflows that are
             // currently replaying or otherwise need immediate jobs, and issue those before
             // bothering the server.
-            if let Some(pa) = self.pending_activations.pop() {
+            if let Some(pa) = self.wft_manager.next_pending_activation() {
                 debug!(activation=%pa, "Sending pending activation to lang");
                 return Ok(pa);
             }
@@ -238,15 +225,15 @@ where
 
             // Apply any buffered poll responses from the server. Must come after pending
             // activations, since there may be an eviction etc for whatever run is popped here.
-            if let Some(buff_wft) = self.ready_buffered_wft.pop() {
+            if let Some(buff_wft) = self.wft_manager.next_buffered_poll() {
                 match self.apply_server_work(buff_wft).await? {
-                    ActivtionOrContinue::Activation(a) => return Ok(a),
-                    ActivtionOrContinue::Continue => continue,
+                    Some(a) => return Ok(a),
+                    None => continue,
                 }
             }
 
             // Do not proceed to poll unless we are below the outstanding WFT limit
-            if self.outstanding_workflow_tasks.len()
+            if self.wft_manager.outstanding_wft()
                 >= self.init_options.max_outstanding_workflow_tasks
             {
                 self.workflow_task_complete_notify.notified().await;
@@ -281,19 +268,9 @@ where
                         .try_into()
                         .map_err(PollWfError::BadPollResponseFromServer)?;
 
-                    if let Some(mut outstanding_entry) = self
-                        .outstanding_workflow_tasks
-                        .get_mut(&work.workflow_execution.run_id)
-                    {
-                        debug!("Got new WFT for a run with one outstanding");
-                        *outstanding_entry.value_mut() = Some(work);
-                        continue;
-                    }
-
-                    debug!(history_length = %work.history.events.len(), "Got new work from server");
                     match self.apply_server_work(work).await? {
-                        ActivtionOrContinue::Activation(a) => return Ok(a),
-                        ActivtionOrContinue::Continue => continue,
+                        Some(a) => return Ok(a),
+                        None => continue,
                     }
                 }
                 // Drain pending activations in case of shutdown.
@@ -364,9 +341,8 @@ where
         let task_token = TaskToken(completion.task_token);
         let wfstatus = completion.status;
         let run_id = self
-            .workflow_task_tokens
-            .get(&task_token)
-            .map(|x| x.value().clone())
+            .wft_manager
+            .run_id_for_task(&task_token)
             .ok_or_else(|| CompleteWfError::MalformedWorkflowCompletion {
                 reason: format!(
                     "Task token {} had no workflow run associated with it",
@@ -374,7 +350,8 @@ where
                 ),
                 completion: None,
             })?;
-        let res = match wfstatus {
+
+        match wfstatus {
             Some(wf_activation_completion::Status::Successful(success)) => {
                 self.wf_activation_success(task_token.clone(), &run_id, success)
                     .await
@@ -387,24 +364,7 @@ where
                 reason: "Workflow completion had empty status field".to_owned(),
                 completion: None,
             }),
-        };
-
-        // Workflows with no more pending activations (IE: They have completed a WFT) must be
-        // removed from the outstanding tasks map
-        if !self.pending_activations.has_pending(&run_id) {
-            self.outstanding_workflow_tasks.remove(&run_id);
-
-            // Blow them up if we're in non-sticky mode as well
-            if self.init_options.evict_after_pending_cleared {
-                self.evict_run(&task_token);
-            }
-
-            // The evict may or may not have already done this, but even when we aren't evicting
-            // we want to remove from the run id mapping if we completed the wft.
-            self.workflow_task_tokens.remove(&task_token);
         }
-        self.workflow_task_complete_notify.notify_waiters();
-        res
     }
 
     #[instrument(skip(self))]
@@ -485,56 +445,31 @@ where
     async fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
-        self.workflow_machines.shutdown();
+        self.wft_manager.shutdown();
         self.activity_heartbeat_manager_handle.shutdown().await;
     }
 }
 
-#[derive(Debug, derive_more::From)]
-enum ActivtionOrContinue {
-    Activation(WfActivation),
-    Continue,
-}
-
-impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
-    pub(crate) fn new(wp: WP, init_options: CoreInitOptions) -> Self {
-        let sg = Arc::new(wp);
+impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
+    pub(crate) fn new(server_gateway: SG, init_options: CoreInitOptions) -> Self {
+        let sg = Arc::new(server_gateway);
+        let workflow_task_complete_notify = Arc::new(Notify::new());
         Self {
+            wft_manager: WorkflowTaskManager::new(
+                workflow_task_complete_notify.clone(),
+                init_options.evict_after_pending_cleared,
+            ),
             init_options,
             server_gateway: sg.clone(),
-            workflow_machines: WorkflowConcurrencyManager::new(),
-            workflow_task_tokens: Default::default(),
-            workflows_last_task_failed: Default::default(),
-            outstanding_workflow_tasks: Default::default(),
-            ready_buffered_wft: Default::default(),
             wf_task_poll_buffer: new_workflow_task_buffer(sg.clone()),
             at_task_poll_buffer: new_activity_task_buffer(sg.clone()),
-            pending_activations: Default::default(),
             outstanding_activity_tasks: Default::default(),
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
-            workflow_task_complete_notify: Notify::new(),
+            workflow_task_complete_notify,
             activity_task_complete_notify: Notify::new(),
             activity_heartbeat_manager_handle: ActivityHeartbeatManager::new(sg),
         }
-    }
-
-    /// Evict a workflow from the cache by its task token
-    ///
-    /// TODO: Very likely needs to be in Core public api
-    pub(crate) fn evict_run(&self, task_token: &TaskToken) -> Option<ValidPollWFTQResponse> {
-        if let Some((_, run_id)) = self.workflow_task_tokens.remove(task_token) {
-            debug!(run_id=%run_id, "Evicting run");
-            let maybe_buffered = self.outstanding_workflow_tasks.remove(&run_id);
-            self.workflow_machines.evict(&run_id);
-            self.pending_activations.remove_all_with_run_id(&run_id);
-            // Queue up an eviction activation
-            self.pending_activations
-                .push(create_evict_activation(task_token.to_owned(), run_id));
-            self.workflow_task_complete_notify.notify_waiters();
-            return maybe_buffered.and_then(|mb| mb.1);
-        }
-        None
     }
 
     /// Wait until not at the outstanding activity limit, and then poll for new activities.
@@ -569,66 +504,33 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         }
     }
 
-    /// Prepare an activation we've just pulled out of a workflow machines instance to be shipped
-    /// to the lang sdk
-    fn finalize_next_activation(
-        &self,
-        next_a: NextWfActivation,
-        task_token: TaskToken,
-    ) -> WfActivation {
-        next_a.finalize(task_token)
-    }
-
+    // TODO: Doc /rename
     /// Given an already validated workflow task from the server, apply it to the associated
     /// workflow machines and return an activation if appropriate, or possibly a signal that
     /// the poll loop should be restarted.
     async fn apply_server_work(
         &self,
         work: ValidPollWFTQResponse,
-    ) -> Result<ActivtionOrContinue, CompleteWfError> {
+    ) -> Result<Option<WfActivation>, CompleteWfError> {
         let tt = work.task_token.clone();
-        if !work.next_page_token.is_empty() {
-            // TODO: Support history pagination
-            unimplemented!("History pagination not yet implemented");
-        }
         let we = work.workflow_execution.clone();
-        if let Some(activation) = self.prepare_new_activation(work)? {
-            self.outstanding_workflow_tasks
-                .insert(activation.run_id.clone(), None);
-            debug!(activation=%activation, "Sending activation to lang");
-            Ok(activation.into())
-        } else {
-            // This can be triggered when an activity is completed that we already
-            // canceled, for example. There is no work for lang to do so we autocomplete
-            // the task
-            debug!(workflow_execution=?we,
-                   "No work for lang to perform after polling server. Sending autocomplete.");
-            self.complete_workflow_task(WfActivationCompletion {
-                task_token: tt.0,
-                status: Some(workflow_completion::Success::from_cmds(vec![]).into()),
-            })
-            .await?;
-            Ok(ActivtionOrContinue::Continue)
+        match self.wft_manager.apply_new_wft(work)? {
+            NewWfTaskOutcome::IssueActivation(a) => {
+                debug!(activation=%a, "Sending activation to lang");
+                return Ok(Some(a));
+            }
+            NewWfTaskOutcome::RestartPollLoop => Ok(None),
+            NewWfTaskOutcome::Autocomplete => {
+                debug!(workflow_execution=?we,
+                       "No work for lang to perform after polling server. Sending autocomplete.");
+                self.complete_workflow_task(WfActivationCompletion {
+                    task_token: tt.0,
+                    status: Some(workflow_completion::Success::from_cmds(vec![]).into()),
+                })
+                .await?;
+                Ok(None)
+            }
         }
-    }
-
-    /// Given a wf task from the server, prepare an activation (if there is one) to be sent to lang
-    fn prepare_new_activation(
-        &self,
-        work: ValidPollWFTQResponse,
-    ) -> Result<Option<WfActivation>, WorkflowUpdateError> {
-        debug!(
-            task_token = %&work.task_token,
-            "Received workflow task from server"
-        );
-
-        let task_token = work.task_token.clone();
-        let next_activation = self.instantiate_or_update_workflow(work)?;
-
-        if let Some(na) = next_activation {
-            return Ok(Some(self.finalize_next_activation(na, task_token)));
-        }
-        Ok(None)
     }
 
     /// Handle a successful workflow completion
@@ -650,18 +552,11 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
                     .to_owned(),
                 completion: None,
             })?;
-        self.push_lang_commands(run_id, cmds)?;
-        self.enqueue_next_activation_if_needed(run_id, task_token.clone())?;
-        // We want to fetch the outgoing commands only after any new activation has been queued,
-        // as doing so may have altered the outgoing commands.
-        let server_cmds = self.access_wf_machine(run_id, |w| Ok(w.get_server_commands()))?;
-        // We only actually want to send commands back to the server if there are no more pending
-        // activations and we are at the final workflow task (IE: the lang SDK has caught up on
-        // replay)
-        if !self.pending_activations.has_pending(run_id) && server_cmds.at_final_workflow_task {
-            // Since we're telling the server about a wft success, we can remove it from the
-            // last failed map (if it was present)
-            self.workflows_last_task_failed.remove(run_id);
+
+        if let Some(server_cmds) =
+            self.wft_manager
+                .successful_activation(run_id, task_token.clone(), cmds)?
+        {
             debug!("Sending commands to server: {:?}", &server_cmds.commands);
             let res = self
                 .server_gateway
@@ -670,9 +565,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             if let Err(ts) = res {
                 let should_evict = self.handle_wft_complete_errs(ts)?;
                 if should_evict {
-                    if let Some(maybe_buffered_work) = self.evict_run(&task_token) {
-                        self.ready_buffered_wft.push(maybe_buffered_work);
-                    }
+                    self.wft_manager.evict_run(&task_token)
                 }
             }
         }
@@ -686,11 +579,8 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
         run_id: &str,
         failure: workflow_completion::Failure,
     ) -> Result<(), CompleteWfError> {
-        // Blow up any cached data associated with the workflow
-        self.evict_run(&task_token);
-
-        // TODO: Handle errors
-        if !self.workflows_last_task_failed.contains(run_id) {
+        if self.wft_manager.failed_activation(run_id, &task_token) {
+            // TODO: Handle errors
             self.server_gateway
                 .fail_workflow_task(
                     task_token,
@@ -698,75 +588,16 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
                     failure.failure.map(Into::into),
                 )
                 .await?;
-            self.workflows_last_task_failed.insert(run_id.to_owned());
         }
 
         Ok(())
     }
 
-    /// Will create a new workflow manager if needed for the workflow activation, if not, it will
-    /// feed the existing manager the updated history we received from the server.
-    ///
-    /// Also updates [CoreSDK::workflow_task_tokens] and validates the
-    /// [PollWorkflowTaskQueueResponse]
-    ///
-    /// Returns the next workflow activation and the workflow's run id
-    fn instantiate_or_update_workflow(
-        &self,
-        poll_wf_resp: ValidPollWFTQResponse,
-    ) -> Result<Option<NextWfActivation>, WorkflowUpdateError> {
-        let run_id = poll_wf_resp.workflow_execution.run_id.clone();
-        // Correlate task token w/ run ID
-        self.workflow_task_tokens
-            .insert(poll_wf_resp.task_token, run_id.clone());
-
-        match self.workflow_machines.create_or_update(
-            &run_id,
-            poll_wf_resp.history,
-            poll_wf_resp.workflow_execution,
-        ) {
-            Ok(activation) => Ok(activation),
-            Err(source) => Err(WorkflowUpdateError { source, run_id }),
-        }
-    }
-
-    /// Feed commands from the lang sdk into appropriate workflow manager which will iterate
-    /// the state machines and return commands ready to be sent to the server
-    fn push_lang_commands(
-        &self,
-        run_id: &str,
-        cmds: Vec<WFCommand>,
-    ) -> Result<(), WorkflowUpdateError> {
-        self.access_wf_machine(run_id, move |mgr| mgr.push_commands(cmds))
-    }
-
-    /// Wraps access to `self.workflow_machines.access`, properly passing in the current tracing
-    /// span to the wf machines thread.
-    fn access_wf_machine<F, Fout>(
-        &self,
-        run_id: &str,
-        mutator: F,
-    ) -> Result<Fout, WorkflowUpdateError>
-    where
-        F: FnOnce(&mut WorkflowManager) -> Result<Fout, WorkflowError> + Send + 'static,
-        Fout: Send + Debug + 'static,
-    {
-        let curspan = Span::current();
-        let mutator = move |wfm: &mut WorkflowManager| {
-            let _e = curspan.enter();
-            mutator(wfm)
-        };
-        self.workflow_machines
-            .access(run_id, mutator)
-            .map_err(|source| WorkflowUpdateError {
-                source,
-                run_id: run_id.to_owned(),
-            })
-    }
-
+    /// A future that resolves when the shutdown flag has been set to true
     async fn shutdown_notifier(&self) {
         loop {
             self.shutdown_notify.notified().await;
+            // TODO: Move above previous line?
             if self.shutdown_requested.load(Ordering::SeqCst) {
                 break;
             }
@@ -789,24 +620,6 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
                 Err(ShutdownErr.into())
             }
         }
-    }
-
-    /// Check if the machine needs another activation and queue it up if there is one
-    fn enqueue_next_activation_if_needed(
-        &self,
-        run_id: &str,
-        task_token: TaskToken,
-    ) -> Result<bool, CompleteWfError> {
-        let mut new_activation = false;
-        if let Some(next_activation) =
-            self.access_wf_machine(run_id, move |mgr| mgr.get_next_activation())?
-        {
-            self.pending_activations
-                .push(self.finalize_next_activation(next_activation, task_token));
-            new_activation = true;
-        }
-        self.workflow_task_complete_notify.notify_waiters();
-        Ok(new_activation)
     }
 
     /// Handle server errors from either completing or failing a workflow task
@@ -2399,7 +2212,7 @@ mod test {
         for h in handles {
             h.await.unwrap()
         }
-        assert!(core.outstanding_workflow_tasks.is_empty());
+        assert_eq!(core.wft_manager.outstanding_wft(), 0);
     }
 
     #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]

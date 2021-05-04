@@ -330,7 +330,7 @@ pub(crate) async fn poll_and_reply<'a>(
                 EvictionMode::NotSticky => (),
                 EvictionMode::AfterEveryReply => {
                     if evictions < expected_evictions {
-                        core.inner.evict_run(&task_tok.into());
+                        core.inner.wft_manager.evict_run(&task_tok.into());
                         evictions += 1;
                     }
                 }
@@ -339,7 +339,7 @@ pub(crate) async fn poll_and_reply<'a>(
 
         break;
     }
-    assert!(core.inner.outstanding_workflow_tasks.is_empty());
+    assert_eq!(core.inner.wft_manager.outstanding_wft(), 0);
 }
 
 pub(crate) fn gen_assert_and_reply(
