@@ -812,12 +812,7 @@ impl<WP: ServerGatewayApis + Send + Sync + 'static> CoreSDK<WP> {
             _ => Err(err.into()),
         }
     }
-}
 
-impl<WP> CoreSDK<WP>
-where
-    WP: ServerGatewayApis + Send + Sync + 'static,
-{
     fn record_activity_heartbeat_with_errors(
         &self,
         details: ActivityHeartbeat,
