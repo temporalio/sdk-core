@@ -161,7 +161,8 @@ impl WorkflowTaskManager {
         task_token: TaskToken,
         commands: Vec<WFCommand>,
     ) -> Result<Option<OutgoingServerCommands>, WorkflowUpdateError> {
-        self.push_lang_commands(run_id, commands)?;
+        // Send commands from lang into the machines
+        self.access_wf_machine(run_id, move |mgr| mgr.push_commands(commands))?;
         self.enqueue_next_activation_if_needed(run_id, task_token.clone())?;
         // We want to fetch the outgoing commands only after any new activation has been queued,
         // as doing so may have altered the outgoing commands.
@@ -219,17 +220,6 @@ impl WorkflowTaskManager {
             Ok(activation) => Ok(activation),
             Err(source) => Err(WorkflowUpdateError { source, run_id }),
         }
-    }
-
-    // TODO: Probably inline now?
-    /// Feed commands from the lang sdk into appropriate workflow manager which will iterate
-    /// the state machines and return commands ready to be sent to the server
-    fn push_lang_commands(
-        &self,
-        run_id: &str,
-        cmds: Vec<WFCommand>,
-    ) -> Result<(), WorkflowUpdateError> {
-        self.access_wf_machine(run_id, move |mgr| mgr.push_commands(cmds))
     }
 
     /// Check if thew workflow run needs another activation and queue it up if there is one by

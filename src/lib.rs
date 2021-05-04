@@ -482,10 +482,8 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         }
     }
 
-    // TODO: Doc /rename
-    /// Given an already validated workflow task from the server, apply it to the associated
-    /// workflow machines and return an activation if appropriate, or possibly a signal that
-    /// the poll loop should be restarted.
+    /// Apply validated WFTs from the server. Returns an activation if one should be issued to
+    /// lang, or returns `None` in which case the polling loop should be restarted.
     async fn apply_server_work(
         &self,
         work: ValidPollWFTQResponse,
@@ -574,11 +572,10 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     /// A future that resolves when the shutdown flag has been set to true
     async fn shutdown_notifier(&self) {
         loop {
-            self.shutdown_notify.notified().await;
-            // TODO: Move above previous line?
-            if self.shutdown_requested.load(Ordering::SeqCst) {
+            if self.shutdown_requested.load(Ordering::Relaxed) {
                 break;
             }
+            self.shutdown_notify.notified().await;
         }
     }
 
