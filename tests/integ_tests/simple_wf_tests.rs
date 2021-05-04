@@ -317,16 +317,14 @@ async fn activity_heartbeat() {
         }
     );
     // Heartbeat timeout is set to 1 second, this loop is going to send heartbeat every 100ms.
-    // Activity shouldn't timeout since we are sending heartbeats regularly, however if we didn't send
-    // heartbeats activity would have timed out as it takes 2 sec to execute this loop.
+    // Activity shouldn't timeout since we are sending heartbeats regularly, however if we didn't
+    // send heartbeats activity would have timed out as it takes 2 sec to execute this loop.
     for _ in 0u8..20 {
         sleep(Duration::from_millis(100)).await;
         core.record_activity_heartbeat(ActivityHeartbeat {
             task_token: task.task_token.clone(),
             details: vec![],
-        })
-        .await
-        .unwrap();
+        });
     }
 
     let response_payload = Payload {
