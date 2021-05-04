@@ -1,14 +1,102 @@
 #[cfg(test)]
 mod integ_tests {
+    mod polling_tests;
+    mod simple_wf_tests;
+
+    use rand::distributions::Standard;
+    use rand::Rng;
     use std::{convert::TryFrom, env, future::Future, sync::Arc, time::Duration};
     use temporal_sdk_core::{Core, CoreInitOptions, ServerGatewayApis, ServerGatewayOptions};
     use url::Url;
 
-    mod polling_tests;
-    mod simple_wf_tests;
-
     const NAMESPACE: &str = "default";
     type GwApi = Arc<dyn ServerGatewayApis>;
+
+    /// Implements a builder pattern to help integ tests initialize core and create workflows
+    pub struct CoreWfStarter {
+        test_name: String,
+        task_queue: String,
+        core_options: CoreInitOptions,
+        wft_timeout: Option<Duration>,
+        initted_core: Option<Arc<dyn Core>>,
+    }
+
+    impl CoreWfStarter {
+        pub fn new(test_name: &str) -> Self {
+            let rand_bytes: Vec<u8> = rand::thread_rng().sample_iter(&Standard).take(6).collect();
+            let task_q_salt = base64::encode(rand_bytes);
+            let task_queue = format!("{}_{}", test_name, task_q_salt);
+            Self {
+                test_name: test_name.to_owned(),
+                core_options: CoreInitOptions {
+                    gateway_opts: get_integ_server_options(&task_queue),
+                    evict_after_pending_cleared: false,
+                    max_outstanding_workflow_tasks: 5,
+                    max_outstanding_activities: 5,
+                },
+                task_queue,
+                wft_timeout: None,
+                initted_core: None,
+            }
+        }
+
+        pub async fn get_core(&mut self) -> Arc<dyn Core> {
+            self.get_or_init_core().await
+        }
+
+        /// Start the workflow defined by the builder and return run id
+        pub async fn start_wf(&mut self) -> String {
+            with_gw(self.get_core().await.as_ref(), |gw: GwApi| async move {
+                gw.start_workflow(
+                    NAMESPACE.to_owned(),
+                    self.task_queue.clone(),
+                    self.test_name.clone(),
+                    self.test_name.clone(),
+                    self.wft_timeout,
+                )
+                .await
+                .unwrap()
+                .run_id
+            })
+            .await
+        }
+
+        pub fn get_task_queue(&self) -> &str {
+            &self.task_queue
+        }
+
+        pub fn get_wf_id(&self) -> &str {
+            &self.test_name
+        }
+
+        pub fn evict_after_pending_cleared(
+            &mut self,
+            evict_after_pending_cleared: bool,
+        ) -> &mut Self {
+            self.core_options.evict_after_pending_cleared = evict_after_pending_cleared;
+            self
+        }
+
+        pub fn wft_timeout(&mut self, timeout: Duration) -> &mut Self {
+            self.wft_timeout = Some(timeout);
+            self
+        }
+
+        async fn get_or_init_core(&mut self) -> Arc<dyn Core> {
+            let opts = self.core_options.clone();
+            if self.initted_core.is_none() {
+                self.initted_core = Some(Arc::new(temporal_sdk_core::init(opts).await.unwrap()));
+            }
+            self.initted_core.as_ref().unwrap().clone()
+        }
+    }
+
+    pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn Core>, String) {
+        let mut starter = CoreWfStarter::new(test_name);
+        let core = starter.get_core().await;
+        starter.start_wf().await;
+        (core, starter.get_task_queue().to_string())
+    }
 
     pub async fn create_workflow(
         core: &dyn Core,
@@ -23,28 +111,6 @@ mod integ_tests {
                 workflow_id.to_owned(),
                 wf_type.unwrap_or("test-workflow").to_owned(),
                 None,
-            )
-            .await
-            .unwrap()
-            .run_id
-        })
-        .await
-    }
-
-    // TODO: Builder pattern
-    pub async fn create_workflow_custom_timeout(
-        core: &dyn Core,
-        task_q: &str,
-        workflow_id: &str,
-        task_timeout: Duration,
-    ) -> String {
-        with_gw(core, |gw: GwApi| async move {
-            gw.start_workflow(
-                NAMESPACE.to_owned(),
-                task_q.to_owned(),
-                workflow_id.to_owned(),
-                "test-workflow".to_owned(),
-                Some(task_timeout),
             )
             .await
             .unwrap()

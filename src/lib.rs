@@ -140,6 +140,7 @@ pub trait Core: Send + Sync {
 }
 
 /// Holds various configuration information required to call [init]
+#[derive(Debug, Clone)]
 pub struct CoreInitOptions {
     /// Options for the connection to the temporal server
     pub gateway_opts: ServerGatewayOptions,
