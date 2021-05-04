@@ -120,7 +120,9 @@ pub trait Core: Send + Sync {
     /// For now activity still need to send heartbeats if they want to receive cancellation
     /// requests. In the future we will change this and will dispatch cancellations more
     /// proactively. Note that this function does not block on the server call and returns
-    /// immediately.
+    /// immediately. Underlying validation errors are swallowed and logged, this has been agreed to
+    /// be optimal behavior for the user as we don't want to break activity execution due to badly
+    /// configured heartbeat options.
     async fn record_activity_heartbeat(
         &self,
         details: ActivityHeartbeat,
@@ -410,27 +412,12 @@ where
         Ok(res?)
     }
 
-    async fn record_activity_heartbeat(
-        &self,
-        details: ActivityHeartbeat,
-    ) -> Result<(), ActivityHeartbeatError> {
-        let t: time::Duration = self
-            .outstanding_activity_tasks
-            .get(&TaskToken(details.task_token.clone()))
-            .ok_or(ActivityHeartbeatError::UnknownActivity)?
-            .heartbeat_timeout
-            .clone()
-            .ok_or(ActivityHeartbeatError::HeartbeatTimeoutNotSet)?
-            .try_into()
-            .or(Err(ActivityHeartbeatError::InvalidHeartbeatTimeout))?;
-        // There is a bug in the server that translates non-set heartbeat timeouts into 0 duration.
-        // That's why we treat 0 the same way as None, otherwise we wouldn't know which aggregation
-        // delay to use, and using 0 is not a good idea as SDK would hammer the server too hard.
-        if t.as_millis() == 0 {
-            return Err(ActivityHeartbeatError::HeartbeatTimeoutNotSet);
+    async fn record_activity_heartbeat(&self, details: ActivityHeartbeat) -> Result<(), ()> {
+        let tt = details.task_token.clone();
+        if let Err(e) = self.record_activity_heartbeat_with_errors(details) {
+            warn!(task_token = ?tt, details = ?e, "Activity heartbeat failed.")
         }
-        self.activity_heartbeat_manager_handle
-            .record(details, t.div(2))
+        Ok(())
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {
@@ -635,6 +622,29 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             }
             _ => Err(err.into()),
         }
+    }
+
+    fn record_activity_heartbeat_with_errors(
+        &self,
+        details: ActivityHeartbeat,
+    ) -> Result<(), ActivityHeartbeatError> {
+        let t: time::Duration = self
+            .outstanding_activity_tasks
+            .get(&TaskToken(details.task_token.clone()))
+            .ok_or(ActivityHeartbeatError::UnknownActivity)?
+            .heartbeat_timeout
+            .clone()
+            .ok_or(ActivityHeartbeatError::HeartbeatTimeoutNotSet)?
+            .try_into()
+            .or(Err(ActivityHeartbeatError::InvalidHeartbeatTimeout))?;
+        // There is a bug in the server that translates non-set heartbeat timeouts into 0 duration.
+        // That's why we treat 0 the same way as None, otherwise we wouldn't know which aggregation
+        // delay to use, and using 0 is not a good idea as SDK would hammer the server too hard.
+        if t.as_millis() == 0 {
+            return Err(ActivityHeartbeatError::HeartbeatTimeoutNotSet);
+        }
+        self.activity_heartbeat_manager_handle
+            .record(details, t.div(2))
     }
 }
 
