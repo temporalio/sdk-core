@@ -1,16 +1,16 @@
 //! Management of workflow tasks
 
-use crate::pending_activations::PendingActivations;
-use crate::protos::coresdk::workflow_activation::{create_evict_activation, WfActivation};
-use crate::workflow::{NextWfActivation, OutgoingServerCommands};
 use crate::{
     errors::WorkflowUpdateError,
     machines::WFCommand,
-    pollers::{new_workflow_task_buffer, PollWorkflowTaskBuffer},
+    pending_activations::PendingActivations,
+    protos::coresdk::workflow_activation::{create_evict_activation, WfActivation},
     protosext::ValidPollWFTQResponse,
     task_token::TaskToken,
-    workflow::{WorkflowConcurrencyManager, WorkflowError, WorkflowManager},
-    ServerGatewayApis,
+    workflow::{
+        NextWfActivation, OutgoingServerCommands, WorkflowConcurrencyManager, WorkflowError,
+        WorkflowManager,
+    },
 };
 use crossbeam::queue::SegQueue;
 use dashmap::{DashMap, DashSet};
@@ -169,14 +169,18 @@ impl WorkflowTaskManager {
         // We only actually want to send commands back to the server if there are no more pending
         // activations and we are at the final workflow task (IE: the lang SDK has caught up on
         // replay)
-        if !self.pending_activations.has_pending(run_id) && server_cmds.at_final_workflow_task {
+        let ret = if !self.pending_activations.has_pending(run_id)
+            && server_cmds.at_final_workflow_task
+        {
             // Since we're telling the server about a wft success, we can remove it from the
             // last failed map (if it was present)
             self.workflows_last_task_failed.remove(run_id);
-            return Ok(Some(server_cmds));
-        }
+            Some(server_cmds)
+        } else {
+            None
+        };
         self.after_wft_report(run_id, &task_token);
-        Ok(None)
+        Ok(ret)
     }
 
     /// Record that an activation failed, returns true if the failure should be reported to the

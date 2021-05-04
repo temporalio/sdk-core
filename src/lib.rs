@@ -34,13 +34,10 @@ pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
 pub use url::Url;
 
-use crate::protosext::ValidPollWFTQResponse;
-use crate::workflow_tasks::{NewWfTaskOutcome, WorkflowTaskManager};
 use crate::{
     activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle, InflightActivityDetails},
-    errors::{ShutdownErr, WorkflowUpdateError},
-    machines::{EmptyWorkflowCommandErr, WFCommand},
-    pending_activations::PendingActivations,
+    errors::ShutdownErr,
+    machines::EmptyWorkflowCommandErr,
     pollers::{
         new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
         PollWorkflowTaskBuffer,
@@ -49,7 +46,7 @@ use crate::{
         coresdk::{
             activity_result::{self as ar, activity_result},
             activity_task::ActivityTask,
-            workflow_activation::{create_evict_activation, WfActivation},
+            workflow_activation::WfActivation,
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
             ActivityHeartbeat, ActivityTaskCompletion,
         },
@@ -58,15 +55,14 @@ use crate::{
             workflowservice::v1::{PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse},
         },
     },
+    protosext::ValidPollWFTQResponse,
     task_token::TaskToken,
-    workflow::{NextWfActivation, WorkflowConcurrencyManager, WorkflowError, WorkflowManager},
+    workflow_tasks::{NewWfTaskOutcome, WorkflowTaskManager},
 };
-use crossbeam::queue::SegQueue;
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 use futures::TryFutureExt;
 use std::{
     convert::TryInto,
-    fmt::Debug,
     future::Future,
     ops::Div,
     sync::{
@@ -76,7 +72,6 @@ use std::{
     time,
 };
 use tokio::sync::Notify;
-use tracing::Span;
 
 /// This trait is the primary way by which language specific SDKs interact with the core SDK. It is
 /// expected that only one instance of an implementation will exist for the lifetime of the
@@ -721,6 +716,7 @@ mod test {
         #[case] core: FakeCore,
         #[case] evict: EvictionMode,
     ) {
+        tracing_init();
         poll_and_reply(
             &core,
             evict,
