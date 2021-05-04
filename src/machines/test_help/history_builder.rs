@@ -11,7 +11,7 @@ use crate::{
             HistoryEvent, TimerStartedEventAttributes, WorkflowExecutionCompletedEventAttributes,
             WorkflowExecutionStartedEventAttributes, WorkflowTaskCompletedEventAttributes,
             WorkflowTaskFailedEventAttributes, WorkflowTaskScheduledEventAttributes,
-            WorkflowTaskStartedEventAttributes,
+            WorkflowTaskStartedEventAttributes, WorkflowTaskTimedOutEventAttributes,
         },
     },
     protosext::{HistoryInfo, HistoryInfoError},
@@ -94,6 +94,14 @@ impl TestHistoryBuilder {
         };
         let id = self.add_get_event_id(EventType::WorkflowTaskCompleted, Some(attrs.into()));
         self.previous_task_completed_id = id;
+    }
+
+    pub(crate) fn add_workflow_task_timed_out(&mut self) {
+        let attrs = WorkflowTaskTimedOutEventAttributes {
+            scheduled_event_id: self.workflow_task_scheduled_event_id,
+            ..Default::default()
+        };
+        self.build_and_push_event(EventType::WorkflowTaskTimedOut, attrs.into());
     }
 
     pub fn add_workflow_execution_completed(&mut self) {

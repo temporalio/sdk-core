@@ -54,7 +54,9 @@ pub mod coresdk {
         }
     }
     pub mod workflow_activation {
-        use crate::task_token::TaskToken;
+        use crate::core_tracing::VecDisplayer;
+        use crate::task_token::{fmt_tt, TaskToken};
+        use std::fmt::{Display, Formatter};
 
         tonic::include_proto!("coresdk.workflow_activation");
         pub fn create_evict_activation(task_token: TaskToken, run_id: String) -> WfActivation {
@@ -65,6 +67,42 @@ pub mod coresdk {
                 jobs: vec![WfActivationJob::from(
                     wf_activation_job::Variant::RemoveFromCache(true),
                 )],
+            }
+        }
+
+        impl Display for WfActivation {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "WfActivation({}, ", fmt_tt(&self.task_token),)?;
+                write!(f, "run_id: {}, ", self.run_id)?;
+                write!(f, "jobs: {})", self.jobs.display())
+            }
+        }
+
+        impl Display for WfActivationJob {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                match &self.variant {
+                    None => write!(f, "Empty"),
+                    Some(v) => match v {
+                        wf_activation_job::Variant::StartWorkflow(_) => write!(f, "StartWorkflow"),
+                        wf_activation_job::Variant::FireTimer(_) => write!(f, "FireTimer"),
+                        wf_activation_job::Variant::UpdateRandomSeed(_) => {
+                            write!(f, "UpdateRandomSeed")
+                        }
+                        wf_activation_job::Variant::QueryWorkflow(_) => write!(f, "QueryWorkflow"),
+                        wf_activation_job::Variant::CancelWorkflow(_) => {
+                            write!(f, "CancelWorkflow")
+                        }
+                        wf_activation_job::Variant::SignalWorkflow(_) => {
+                            write!(f, "SignalWorkflow")
+                        }
+                        wf_activation_job::Variant::ResolveActivity(_) => {
+                            write!(f, "ResolveActivity")
+                        }
+                        wf_activation_job::Variant::RemoveFromCache(_) => {
+                            write!(f, "RemoveFromCache")
+                        }
+                    },
+                }
             }
         }
     }

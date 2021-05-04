@@ -22,6 +22,29 @@ mod integ_tests {
                 task_q.to_owned(),
                 workflow_id.to_owned(),
                 wf_type.unwrap_or("test-workflow").to_owned(),
+                None,
+            )
+            .await
+            .unwrap()
+            .run_id
+        })
+        .await
+    }
+
+    // TODO: Builder pattern
+    pub async fn create_workflow_custom_timeout(
+        core: &dyn Core,
+        task_q: &str,
+        workflow_id: &str,
+        task_timeout: Duration,
+    ) -> String {
+        with_gw(core, |gw: GwApi| async move {
+            gw.start_workflow(
+                NAMESPACE.to_owned(),
+                task_q.to_owned(),
+                workflow_id.to_owned(),
+                "test-workflow".to_owned(),
+                Some(task_timeout),
             )
             .await
             .unwrap()
