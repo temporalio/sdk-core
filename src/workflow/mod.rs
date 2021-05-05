@@ -44,6 +44,13 @@ pub enum WorkflowError {
     MachineWasCreatedWithNoActivations { run_id: String },
 }
 
+/// Lang/user created identifiers for commands issued by workflows
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub enum CommandID {
+    Timer(String),
+    Activity(String),
+}
+
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
 /// associated with that specific workflow run.
 pub(crate) struct WorkflowManager {
