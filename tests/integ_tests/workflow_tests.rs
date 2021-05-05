@@ -3,22 +3,17 @@ mod timers;
 
 use crate::integ_tests::{
     get_integ_core, init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreWfStarter, GwApi,
-    NAMESPACE,
 };
 use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use temporal_sdk_core::{
     protos::coresdk::{
-        activity_result::{self, activity_result as act_res, ActivityResult},
-        activity_task::activity_task as act_task,
-        common::{Payload, UserCodeFailure},
-        workflow_activation::{
-            wf_activation_job, FireTimer, ResolveActivity, WfActivation, WfActivationJob,
-        },
+        activity_result::ActivityResult,
+        common::UserCodeFailure,
+        workflow_activation::{wf_activation_job, WfActivation, WfActivationJob},
         workflow_commands::{
-            ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
-            FailWorkflowExecution, RequestCancelActivity, ScheduleActivity, StartTimer,
+            ActivityCancellationType, CompleteWorkflowExecution, FailWorkflowExecution, StartTimer,
         },
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,

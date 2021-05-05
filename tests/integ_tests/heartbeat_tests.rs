@@ -5,7 +5,7 @@ use temporal_sdk_core::protos::coresdk::{
     activity_result::{self, activity_result as act_res, ActivityResult},
     activity_task::activity_task as act_task,
     common::Payload,
-    workflow_activation::{wf_activation_job, FireTimer, ResolveActivity, WfActivationJob},
+    workflow_activation::{wf_activation_job, ResolveActivity, WfActivationJob},
     workflow_commands::{ActivityCancellationType, CompleteWorkflowExecution},
     workflow_completion::WfActivationCompletion,
     ActivityHeartbeat, ActivityTaskCompletion,

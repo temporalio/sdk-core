@@ -2,8 +2,7 @@ use crate::integ_tests::init_core_and_create_wf;
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_sdk_core::protos::coresdk::{
-    activity_task::activity_task as act_task,
-    workflow_activation::{wf_activation_job, FireTimer, WfActivation, WfActivationJob},
+    workflow_activation::{wf_activation_job, FireTimer, WfActivationJob},
     workflow_commands::{CancelTimer, CompleteWorkflowExecution, StartTimer},
     workflow_completion::WfActivationCompletion,
 };
