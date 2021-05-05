@@ -3,6 +3,9 @@ pub(crate) use history_info::HistoryInfo;
 pub(crate) use history_info::HistoryInfoError;
 
 use crate::{
+    protos::coresdk::{
+        workflow_commands::workflow_command, workflow_completion::WfActivationCompletion,
+    },
     protos::temporal::api::common::v1::WorkflowExecution,
     protos::temporal::api::history::v1::History,
     protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
@@ -45,5 +48,23 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
             }
             _ => Err(value),
         }
+    }
+}
+
+/// Makes converting outgoing lang commands into [WfActivationCompletion]s easier
+pub trait IntoCompletion {
+    /// The conversion function
+    fn into_completion(self, task_token: Vec<u8>) -> WfActivationCompletion;
+}
+
+impl IntoCompletion for workflow_command::Variant {
+    fn into_completion(self, task_token: Vec<u8>) -> WfActivationCompletion {
+        WfActivationCompletion::from_cmd(self, task_token)
+    }
+}
+
+impl IntoCompletion for Vec<workflow_command::Variant> {
+    fn into_completion(self, task_token: Vec<u8>) -> WfActivationCompletion {
+        WfActivationCompletion::from_cmds(self, task_token)
     }
 }

@@ -1,6 +1,5 @@
 use crate::integ_tests::{
-    get_integ_server_options, init_core_and_create_wf,
-    simple_wf_tests::schedule_activity_and_timer_cmds,
+    get_integ_server_options, init_core_and_create_wf, schedule_activity_cmd,
 };
 use assert_matches::assert_matches;
 use crossbeam::channel::{unbounded, RecvTimeoutError};
@@ -9,11 +8,11 @@ use temporal_sdk_core::protos::coresdk::{
     activity_task::activity_task as act_task,
     workflow_activation::{wf_activation_job, FireTimer, WfActivationJob},
     workflow_commands::{
-        ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity,
+        ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity, StartTimer,
     },
     workflow_completion::WfActivationCompletion,
 };
-use temporal_sdk_core::{Core, CoreInitOptions};
+use temporal_sdk_core::{Core, CoreInitOptions, IntoCompletion};
 use tokio::time::timeout;
 
 #[tokio::test]
@@ -23,15 +22,23 @@ async fn out_of_order_completion_doesnt_hang() {
     let timer_id = "timer-1";
     let task = core.poll_workflow_task().await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
-    core.complete_workflow_task(schedule_activity_and_timer_cmds(
-        &task_q,
-        activity_id,
-        timer_id,
-        ActivityCancellationType::TryCancel,
-        task,
-        Duration::from_secs(60),
-        Duration::from_millis(50),
-    ))
+    core.complete_workflow_task(
+        vec![
+            schedule_activity_cmd(
+                &task_q,
+                activity_id,
+                ActivityCancellationType::TryCancel,
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+            ),
+            StartTimer {
+                timer_id: timer_id.to_owned(),
+                start_to_fire_timeout: Some(Duration::from_millis(50).into()),
+            }
+            .into(),
+        ]
+        .into_completion(task.task_token),
+    )
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
@@ -72,7 +79,7 @@ async fn out_of_order_completion_doesnt_hang() {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(_)),
             }]
         );
-        cc.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+        cc.complete_workflow_task(WfActivationCompletion::from_cmds(
             vec![CompleteWorkflowExecution { result: None }.into()],
             task.task_token,
         ))
@@ -83,7 +90,7 @@ async fn out_of_order_completion_doesnt_hang() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     // Then complete the (last) WFT with a request to cancel the AT, which should produce a
     // pending activation, unblocking the (already started) poll
-    core.complete_workflow_task(WfActivationCompletion::ok_from_cmds(
+    core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![RequestCancelActivity {
             activity_id: activity_id.to_string(),
             ..Default::default()

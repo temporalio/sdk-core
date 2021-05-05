@@ -198,8 +198,18 @@ pub mod coresdk {
     }
 
     impl WfActivationCompletion {
-        pub fn ok_from_cmds(cmds: Vec<workflow_command::Variant>, task_token: Vec<u8>) -> Self {
+        /// Create a successful activation from a list of commands
+        pub fn from_cmds(cmds: Vec<workflow_command::Variant>, task_token: Vec<u8>) -> Self {
             let success = Success::from_cmds(cmds);
+            Self {
+                task_token,
+                status: Some(wf_activation_completion::Status::Successful(success)),
+            }
+        }
+
+        /// Create a successful activation from just one command
+        pub fn from_cmd(cmds: workflow_command::Variant, task_token: Vec<u8>) -> Self {
+            let success = Success::from_cmds(vec![cmds]);
             Self {
                 task_token,
                 status: Some(wf_activation_completion::Status::Successful(success)),

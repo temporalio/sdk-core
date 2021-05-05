@@ -1,11 +1,17 @@
 #[cfg(test)]
 mod integ_tests {
+    mod heartbeat_tests;
     mod polling_tests;
-    mod simple_wf_tests;
+    mod workflow_tests;
 
     use rand::{distributions::Standard, Rng};
     use std::{convert::TryFrom, env, future::Future, sync::Arc, time::Duration};
-    use temporal_sdk_core::{Core, CoreInitOptions, ServerGatewayApis, ServerGatewayOptions};
+    use temporal_sdk_core::{
+        protos::coresdk::workflow_commands::{
+            workflow_command, ActivityCancellationType, ScheduleActivity,
+        },
+        Core, CoreInitOptions, ServerGatewayApis, ServerGatewayOptions,
+    };
     use url::Url;
 
     const NAMESPACE: &str = "default";
@@ -144,5 +150,27 @@ mod integ_tests {
         })
         .await
         .unwrap()
+    }
+
+    pub fn schedule_activity_cmd(
+        task_q: &str,
+        activity_id: &str,
+        cancellation_type: ActivityCancellationType,
+        activity_timeout: Duration,
+        heartbeat_timeout: Duration,
+    ) -> workflow_command::Variant {
+        ScheduleActivity {
+            activity_id: activity_id.to_string(),
+            activity_type: "test_activity".to_string(),
+            namespace: NAMESPACE.to_owned(),
+            task_queue: task_q.to_owned(),
+            schedule_to_start_timeout: Some(activity_timeout.into()),
+            start_to_close_timeout: Some(activity_timeout.into()),
+            schedule_to_close_timeout: Some(activity_timeout.into()),
+            heartbeat_timeout: Some(heartbeat_timeout.into()),
+            cancellation_type: cancellation_type as i32,
+            ..Default::default()
+        }
+        .into()
     }
 }

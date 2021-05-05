@@ -34,6 +34,7 @@ pub use crate::errors::{
 };
 pub use core_tracing::tracing_init;
 pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
+pub use protosext::IntoCompletion;
 pub use url::Url;
 
 use crate::{
