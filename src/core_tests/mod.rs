@@ -1,0 +1,83 @@
+mod activity_tasks;
+mod workflow_tasks;
+
+use crate::{
+    errors::{PollActivityError, PollWfError},
+    machines::test_help::{build_fake_core, fake_sg_opts, hist_to_poll_resp},
+    pollers::MockManualGateway,
+    test_help::canned_histories,
+    Core, CoreInitOptions, CoreSDK, PollActivityTaskQueueResponse,
+};
+use futures::FutureExt;
+use std::time::Duration;
+use tokio::time::sleep;
+
+#[tokio::test]
+async fn after_shutdown_server_is_not_polled() {
+    let wfid = "fake_wf_id";
+    let t = canned_histories::single_timer("fake_timer");
+    let core = build_fake_core(wfid, t, &[1]);
+    let res = core.inner.poll_workflow_task().await.unwrap();
+    assert_eq!(res.jobs.len(), 1);
+
+    core.inner.shutdown().await;
+    assert_matches!(
+        core.inner.poll_workflow_task().await.unwrap_err(),
+        PollWfError::ShutDown
+    );
+}
+
+#[tokio::test]
+async fn shutdown_interrupts_both_polls() {
+    let mut mock_gateway = MockManualGateway::new();
+    mock_gateway
+        .expect_poll_activity_task()
+        .times(1)
+        .returning(move || {
+            async move {
+                sleep(Duration::from_secs(1)).await;
+                Ok(PollActivityTaskQueueResponse {
+                    task_token: vec![1],
+                    heartbeat_timeout: Some(Duration::from_secs(1).into()),
+                    ..Default::default()
+                })
+            }
+            .boxed()
+        });
+    mock_gateway
+        .expect_poll_workflow_task()
+        .times(1)
+        .returning(move || {
+            async move {
+                let t = canned_histories::single_timer("hi");
+                sleep(Duration::from_secs(1)).await;
+                Ok(hist_to_poll_resp(&t, "wf".to_string(), 100))
+            }
+            .boxed()
+        });
+
+    let core = CoreSDK::new(
+        mock_gateway,
+        CoreInitOptions {
+            gateway_opts: fake_sg_opts(),
+            evict_after_pending_cleared: true,
+            max_outstanding_workflow_tasks: 5,
+            max_outstanding_activities: 5,
+        },
+    );
+    tokio::join! {
+        async {
+            assert_matches!(core.poll_activity_task().await.unwrap_err(),
+                            PollActivityError::ShutDown);
+        },
+        async {
+            assert_matches!(core.poll_workflow_task().await.unwrap_err(),
+                            PollWfError::ShutDown);
+        },
+        async {
+            // Give polling a bit to get stuck, then shutdown
+            sleep(Duration::from_millis(200)).await;
+            core.shutdown().await;
+        }
+    };
+}

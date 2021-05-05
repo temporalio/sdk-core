@@ -11,7 +11,7 @@ use crate::{
 use std::convert::TryFrom;
 
 /// A validated version of a [PollWorkflowTaskQueueResponse]
-pub(crate) struct ValidPollWFTQResponse {
+pub struct ValidPollWFTQResponse {
     pub task_token: TaskToken,
     pub workflow_execution: WorkflowExecution,
     pub history: History,
@@ -30,12 +30,19 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                 history: Some(history),
                 next_page_token,
                 ..
-            } => Ok(Self {
-                task_token: TaskToken(task_token),
-                workflow_execution,
-                history,
-                next_page_token,
-            }),
+            } => {
+                if !next_page_token.is_empty() {
+                    // TODO: Support history pagination
+                    unimplemented!("History pagination not yet implemented");
+                }
+
+                Ok(Self {
+                    task_token: TaskToken(task_token),
+                    workflow_execution,
+                    history,
+                    next_page_token,
+                })
+            }
             _ => Err(value),
         }
     }
