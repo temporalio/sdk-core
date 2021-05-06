@@ -1,4 +1,4 @@
-use crate::integ_tests::init_core_and_create_wf;
+use crate::integ_tests::{init_core_and_create_wf, CoreWfStarter, NAMESPACE};
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_sdk_core::protos::coresdk::{
@@ -6,6 +6,29 @@ use temporal_sdk_core::protos::coresdk::{
     workflow_commands::{CancelTimer, CompleteWorkflowExecution, StartTimer},
     workflow_completion::WfActivationCompletion,
 };
+use temporal_sdk_core::test_workflow_driver::{CommandSender, TestRustWorker, TestWorkflowDriver};
+
+#[tokio::test]
+async fn timer_workflow_new_way() {
+    let mut starter = CoreWfStarter::new("timer_wf_new");
+    let tq = starter.task_queue.clone();
+    let core = starter.get_core().await;
+
+    let mut worker = TestRustWorker::new(core, NAMESPACE.to_owned(), tq);
+    let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
+        let timer = StartTimer {
+            timer_id: "super_timer_id".to_string(),
+            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+        };
+        command_sink.timer(timer).await;
+        command_sink.complete_workflow_execution();
+    });
+    worker
+        .submit_wf("timer_wf_new".to_owned(), twd)
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
 
 #[tokio::test]
 async fn timer_workflow() {

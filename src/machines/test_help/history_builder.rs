@@ -173,22 +173,13 @@ impl TestHistoryBuilder {
         wf_machines: &mut WorkflowMachines,
         to_wf_task_num: Option<usize>,
     ) -> Result<Vec<ProtoCommand>> {
-        self.handle_workflow_task(wf_machines, to_wf_task_num)?;
+        let histinfo = HistoryInfo::new_from_events(&self.events, to_wf_task_num)?;
+        wf_machines.apply_history_events(&histinfo)?;
         Ok(wf_machines.get_commands())
     }
 
     pub fn get_orig_run_id(&self) -> &str {
         &self.original_run_id
-    }
-
-    fn handle_workflow_task(
-        &self,
-        wf_machines: &mut WorkflowMachines,
-        to_wf_task_num: Option<usize>,
-    ) -> Result<()> {
-        let histinfo = HistoryInfo::new_from_events(&self.events, to_wf_task_num)?;
-        wf_machines.apply_history_events(&histinfo)?;
-        Ok(())
     }
 
     /// Iterates over the events in this builder to return a [HistoryInfo] including events up to

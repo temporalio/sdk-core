@@ -17,12 +17,17 @@ use crate::{
 use anyhow::bail;
 use crossbeam::channel::{Receiver, Sender};
 use futures::channel::oneshot;
-use parking_lot::{Condvar, Mutex};
-use std::collections::HashSet;
-use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
+use parking_lot::Mutex;
+use std::{
+    collections::{HashMap, HashSet},
+    future::Future,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
-    runtime::Runtime,
+    sync::Notify,
     task::{JoinError, JoinHandle},
+    time::sleep,
 };
 
 pub struct TestRustWorker {
@@ -99,7 +104,7 @@ impl TestRustWorker {
                 }
                 // After the workflow has been advanced, grab any outgoing commands and send them to
                 // the server
-                let wf_is_done = twd.wait_until_wf_iteration_done();
+                let wf_is_done = twd.wait_until_wf_iteration_done().await;
                 if wf_is_done {
                     incomplete_wfs.remove(&activation.run_id);
                 }
@@ -123,41 +128,38 @@ pub struct TestWorkflowDriver {
     join_handle: Option<JoinHandle<()>>,
     commands_from_wf: Receiver<WorkflowCommand>,
     cache: Arc<TestWfDriverCache>,
-    runtime: Runtime,
 }
 
 impl TestWorkflowDriver {
     /// Create a new test workflow driver from a workflow "function" which is really a closure
     /// that returns an async block.
     ///
-    /// Creates a tokio runtime to execute the workflow on.
+    /// Expects to be called within the context of a tokio runtime, since it spawns the workflow
+    /// code into a new task.
     pub fn new<F, Fut>(workflow_fn: F) -> Self
     where
         F: Fn(CommandSender) -> Fut,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        let blocking_condvar = Arc::new((Default::default(), Default::default()));
-        let bc_clone = blocking_condvar.clone();
-        let twd_cache = Arc::new(TestWfDriverCache { blocking_condvar });
+        let twd_cache = Arc::new(TestWfDriverCache::default());
         let (sender, receiver) = CommandSender::new(twd_cache.clone());
 
+        let twd_clone = twd_cache.clone();
         let wf_inner_fut = workflow_fn(sender);
         let wf_future = async move {
             wf_inner_fut.await;
 
-            let mut bc = bc_clone.0.lock();
+            let mut bc = twd_clone.blocking_info.lock();
             bc.wf_is_done = true;
             // Wake up the fetcher thread, since we have finished the workflow and that would mean
             // we've finished sending what we can.
-            bc_clone.1.notify_one();
+            twd_clone.notifier.notify_one();
         };
-        let runtime = Runtime::new().unwrap();
-        let join_handle = Some(runtime.spawn(wf_future));
+        let join_handle = Some(tokio::spawn(wf_future));
         Self {
             join_handle,
             commands_from_wf: receiver,
             cache: twd_cache,
-            runtime,
         }
     }
 
@@ -180,40 +182,46 @@ impl TestWorkflowDriver {
     //  somehow need to check that specifically the top-level task (the main wf function) is
     //  blocked waiting on a command. If the workflow spawns a concurrent task, and it blocks
     //  on a command before the main wf code path does, it will cause a spurious wakeup.
-    pub fn wait_until_wf_iteration_done(&mut self) -> bool {
-        let mut bc_lock = self.cache.blocking_condvar.0.lock();
-        while !bc_lock.wf_is_done && bc_lock.num_blocked_cmds() == 0 {
-            let timeout_res = self
-                .cache
-                .blocking_condvar
-                .1
-                .wait_for(&mut bc_lock, Duration::from_secs(1));
-            if timeout_res.timed_out() {
-                panic!("Workflow deadlocked (1 second)")
+    pub async fn wait_until_wf_iteration_done(&mut self) -> bool {
+        loop {
+            dbg!("Lewp");
+            let bc_lock = self.cache.blocking_info.lock();
+            dbg!("Lock aq");
+            if bc_lock.wf_is_done || bc_lock.num_blocked_cmds() != 0 {
+                break bc_lock.wf_is_done;
+            }
+            drop(bc_lock);
+            dbg!("Lock rel");
+            tokio::select! {
+                _ = sleep(Duration::from_secs(1)) => {
+                    dbg!("wat");
+                    panic!("Workflow deadlock (1 second)");
+                }
+                _ = self.cache.notifier.notified() => {}
             }
         }
-        bc_lock.wf_is_done
     }
 
     /// Wait for the test workflow to exit
-    pub fn join(&mut self) -> Result<(), JoinError> {
+    pub async fn join(&mut self) -> Result<(), JoinError> {
         if let Some(jh) = self.join_handle.take() {
-            self.runtime.block_on(jh)
+            jh.await
         } else {
             Ok(())
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct TestWfDriverCache {
-    blocking_condvar: Arc<(Mutex<BlockingCondInfo>, Condvar)>,
+    blocking_info: Mutex<BlockingCondInfo>,
+    notifier: Notify,
 }
 
 impl TestWfDriverCache {
     /// Unblock a command by ID
     fn unblock(&self, id: CommandID) {
-        let mut bc = self.blocking_condvar.0.lock();
+        let mut bc = self.blocking_info.lock();
         if let Some(t) = bc.issued_commands.remove(&id) {
             t.unblocker.send(()).unwrap()
         };
@@ -222,13 +230,13 @@ impl TestWfDriverCache {
     /// Cancel a timer by ID. Timers get some special handling here since they are always
     /// removed from the "lang" side without needing a response from core.
     fn cancel_timer(&self, id: &str) {
-        let mut bc = self.blocking_condvar.0.lock();
+        let mut bc = self.blocking_info.lock();
         bc.issued_commands.remove(&CommandID::Timer(id.to_owned()));
     }
 
     /// Cancel activity by ID.
     fn cancel_activity(&self, id: &str) {
-        let mut bc = self.blocking_condvar.0.lock();
+        let mut bc = self.blocking_info.lock();
         bc.issued_commands
             .remove(&CommandID::Activity(id.to_owned()));
     }
@@ -237,7 +245,7 @@ impl TestWfDriverCache {
     /// [CommandStatus::Sent] and will be marked blocked once it is `await`ed
     fn add_sent_cmd(&self, id: CommandID) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
-        let mut bc = self.blocking_condvar.0.lock();
+        let mut bc = self.blocking_info.lock();
         bc.issued_commands.insert(
             id,
             IssuedCommand {
@@ -250,13 +258,14 @@ impl TestWfDriverCache {
 
     /// Indicate that a command is being `await`ed
     fn set_cmd_blocked(&self, id: CommandID) {
-        let mut bc = self.blocking_condvar.0.lock();
+        dbg!("set cmd blocked");
+        let mut bc = self.blocking_info.lock();
         if let Some(cmd) = bc.issued_commands.get_mut(&id) {
             cmd.status = CommandStatus::Blocked;
         }
         // Wake up the fetcher thread, since we have blocked on a command and that would mean we've
         // finished sending what we can.
-        self.blocking_condvar.1.notify_one();
+        self.notifier.notify_one();
     }
 }
 
@@ -324,6 +333,7 @@ impl CommandSender {
     }
 
     fn send_blocking_cmd(&mut self, id: CommandID, c: WorkflowCommand) -> impl Future {
+        dbg!("send blcoking");
         self.send(c);
         let rx = self.twd_cache.add_sent_cmd(id.clone());
         let cache_clone = self.twd_cache.clone();

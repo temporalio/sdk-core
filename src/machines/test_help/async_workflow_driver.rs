@@ -8,14 +8,14 @@ use crate::{
     workflow::{ActivationListener, WorkflowFetcher},
     CommandID,
 };
+use futures::executor::block_on;
 use std::convert::TryInto;
 
 impl WorkflowFetcher for TestWorkflowDriver {
     fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
+        let wf_is_done = block_on(self.wait_until_wf_iteration_done());
+
         let mut emit_these = vec![];
-
-        let wf_is_done = self.wait_until_wf_iteration_done();
-
         for c in self.drain_pending_commands() {
             emit_these.push(
                 c.try_into()
@@ -25,7 +25,7 @@ impl WorkflowFetcher for TestWorkflowDriver {
 
         if wf_is_done {
             // TODO: Eventually upgrade to return workflow failures on panic
-            self.join().expect("Workflow completes without panic");
+            block_on(self.join()).expect("Workflow completes without panic");
         }
 
         debug!(emit_these = ?emit_these, "Test wf driver emitting");
