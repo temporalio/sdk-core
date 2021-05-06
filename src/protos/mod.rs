@@ -187,8 +187,14 @@ pub mod coresdk {
         }
     }
 
+    impl From<workflow_command::Variant> for WorkflowCommand {
+        fn from(v: workflow_command::Variant) -> Self {
+            WorkflowCommand { variant: Some(v) }
+        }
+    }
+
     impl Success {
-        pub fn from_cmds(cmds: Vec<Variant>) -> Self {
+        pub fn from_variants(cmds: Vec<Variant>) -> Self {
             let cmds: Vec<_> = cmds
                 .into_iter()
                 .map(|c| WorkflowCommand { variant: Some(c) })
@@ -200,7 +206,7 @@ pub mod coresdk {
     impl WfActivationCompletion {
         /// Create a successful activation from a list of commands
         pub fn from_cmds(cmds: Vec<workflow_command::Variant>, task_token: Vec<u8>) -> Self {
-            let success = Success::from_cmds(cmds);
+            let success = Success::from_variants(cmds);
             Self {
                 task_token,
                 status: Some(wf_activation_completion::Status::Successful(success)),
@@ -209,7 +215,7 @@ pub mod coresdk {
 
         /// Create a successful activation from just one command
         pub fn from_cmd(cmds: workflow_command::Variant, task_token: Vec<u8>) -> Self {
-            let success = Success::from_cmds(vec![cmds]);
+            let success = Success::from_variants(vec![cmds]);
             Self {
                 task_token,
                 status: Some(wf_activation_completion::Status::Successful(success)),

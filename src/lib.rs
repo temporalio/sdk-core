@@ -507,7 +507,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                        "No work for lang to perform after polling server. Sending autocomplete.");
                 self.complete_workflow_task(WfActivationCompletion {
                     task_token: tt.0,
-                    status: Some(workflow_completion::Success::from_cmds(vec![]).into()),
+                    status: Some(workflow_completion::Success::from_variants(vec![]).into()),
                 })
                 .await?;
                 Ok(None)

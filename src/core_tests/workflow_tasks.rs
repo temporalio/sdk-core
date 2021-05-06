@@ -922,7 +922,7 @@ async fn max_concurrent_wft_respected() {
         async {
             core.complete_workflow_task(WfActivationCompletion::from_status(
                 r1.task_token,
-                workflow_completion::Success::from_cmds(vec![StartTimer {
+                workflow_completion::Success::from_variants(vec![StartTimer {
                     timer_id: "timer-1".to_string(),
                     ..Default::default()
                 }
@@ -943,7 +943,7 @@ async fn max_concurrent_wft_respected() {
     for i in 2..19 {
         core.complete_workflow_task(WfActivationCompletion::from_status(
             r1.task_token,
-            workflow_completion::Success::from_cmds(vec![StartTimer {
+            workflow_completion::Success::from_variants(vec![StartTimer {
                 timer_id: format!("timer-{}", i),
                 ..Default::default()
             }
@@ -1109,7 +1109,7 @@ async fn lots_of_workflows() {
                 };
                 core.complete_workflow_task(WfActivationCompletion::from_status(
                     wft.task_token,
-                    workflow_completion::Success::from_cmds(vec![reply]).into(),
+                    workflow_completion::Success::from_variants(vec![reply]).into(),
                 ))
                 .await
                 .unwrap();

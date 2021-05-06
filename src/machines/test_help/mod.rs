@@ -347,7 +347,7 @@ pub(crate) fn gen_assert_and_reply(
 ) -> AsserterWithReply<'_> {
     (
         asserter,
-        workflow_completion::Success::from_cmds(reply_commands).into(),
+        workflow_completion::Success::from_variants(reply_commands).into(),
     )
 }
 

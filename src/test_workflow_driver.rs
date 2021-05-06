@@ -3,27 +3,121 @@
 //! are already publicly exposed.
 
 use crate::{
-    protos::coresdk::workflow_commands::{
-        CancelTimer, CompleteWorkflowExecution, RequestCancelActivity, ScheduleActivity,
-        StartTimer, WorkflowCommand,
+    protos::coresdk::{
+        workflow_activation::{
+            wf_activation_job::Variant, FireTimer, ResolveActivity, WfActivationJob,
+        },
+        workflow_commands::{
+            CancelTimer, CompleteWorkflowExecution, RequestCancelActivity, ScheduleActivity,
+            StartTimer, WorkflowCommand,
+        },
     },
-    CommandID,
+    CommandID, Core, IntoCompletion,
 };
+use anyhow::bail;
+use crossbeam::channel::{Receiver, Sender};
 use futures::channel::oneshot;
 use parking_lot::{Condvar, Mutex};
-use std::{
-    collections::HashMap,
-    future::Future,
-    sync::{
-        mpsc::{self, Receiver, Sender},
-        Arc,
-    },
-    time::Duration,
-};
+use std::collections::HashSet;
+use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
 use tokio::{
     runtime::Runtime,
     task::{JoinError, JoinHandle},
 };
+
+pub struct TestRustWorker {
+    core: Arc<dyn Core>,
+    namespace: String,
+    task_queue: String,
+    // Maps run id to the driver
+    workflows: HashMap<String, TestWorkflowDriver>,
+}
+
+impl TestRustWorker {
+    pub fn new(core: Arc<dyn Core>, namespace: String, task_queue: String) -> Self {
+        Self {
+            core,
+            namespace,
+            task_queue,
+            workflows: Default::default(),
+        }
+    }
+
+    /// Create a workflow, asking the server to start it with the provided workflow ID and using the
+    /// provided [TestWorkflowDriver] as the workflow code.
+    pub async fn submit_wf(
+        &mut self,
+        workflow_id: String,
+        twd: TestWorkflowDriver,
+    ) -> Result<(), tonic::Status> {
+        let res = self
+            .core
+            .server_gateway()
+            .start_workflow(
+                self.namespace.clone(),
+                self.task_queue.clone(),
+                workflow_id.clone(),
+                workflow_id,
+                None,
+            )
+            .await?;
+        self.workflows.insert(res.run_id, twd);
+        Ok(())
+    }
+
+    /// Drives all workflows until they have all finished, repeatedly polls server to fetch work
+    /// for them.
+    pub async fn run_until_done(mut self) -> Result<(), anyhow::Error> {
+        let mut incomplete_wfs: HashSet<_> = self.workflows.keys().cloned().collect();
+
+        loop {
+            let activation = self.core.poll_workflow_task().await?;
+            // The activation is expected to apply to some workflow we know about. Use it to unblock
+            // things and advance the workflow.
+            if let Some(twd) = self.workflows.get_mut(&activation.run_id) {
+                for WfActivationJob { variant } in activation.jobs {
+                    if let Some(v) = variant {
+                        match v {
+                            Variant::StartWorkflow(_) => {}
+                            Variant::FireTimer(FireTimer { timer_id }) => {
+                                twd.unblock(CommandID::Timer(timer_id))
+                            }
+                            Variant::ResolveActivity(ResolveActivity {
+                                activity_id,
+                                // TODO: Propagate results
+                                ..
+                            }) => twd.unblock(CommandID::Activity(activity_id)),
+                            Variant::UpdateRandomSeed(_) => {}
+                            Variant::QueryWorkflow(_) => {}
+                            Variant::CancelWorkflow(_) => {}
+                            Variant::SignalWorkflow(_) => {}
+                            Variant::RemoveFromCache(_) => {}
+                        }
+                    } else {
+                        bail!("Empty activation job variant");
+                    }
+                }
+                // After the workflow has been advanced, grab any outgoing commands and send them to
+                // the server
+                let wf_is_done = twd.wait_until_wf_iteration_done();
+                if wf_is_done {
+                    incomplete_wfs.remove(&activation.run_id);
+                }
+                let outgoing = twd.drain_pending_commands();
+                self.core
+                    .complete_workflow_task(outgoing.into_completion(activation.task_token))
+                    .await?;
+            } else {
+                bail!("Got activation for unknown workflow");
+            }
+
+            if incomplete_wfs.is_empty() {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
 
 pub struct TestWorkflowDriver {
     join_handle: Option<JoinHandle<()>>,
@@ -67,6 +161,8 @@ impl TestWorkflowDriver {
         }
     }
 
+    /// Drains all pending commands that the workflow has produced since the last time this was
+    /// called.
     pub fn drain_pending_commands(&mut self) -> impl Iterator<Item = WorkflowCommand> + '_ {
         self.commands_from_wf.try_iter()
     }
@@ -203,7 +299,7 @@ pub struct CommandSender {
 impl CommandSender {
     fn new(twd_cache: Arc<TestWfDriverCache>) -> (Self, Receiver<WorkflowCommand>) {
         // We need to use a normal std channel since our receiving side is non-async
-        let (chan, rx) = mpsc::channel();
+        let (chan, rx) = crossbeam::channel::unbounded();
         (Self { chan, twd_cache }, rx)
     }
 

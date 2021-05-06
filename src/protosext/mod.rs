@@ -4,7 +4,8 @@ pub(crate) use history_info::HistoryInfoError;
 
 use crate::{
     protos::coresdk::{
-        workflow_commands::workflow_command, workflow_completion::WfActivationCompletion,
+        workflow_commands::{workflow_command, WorkflowCommand},
+        workflow_completion::{wf_activation_completion, WfActivationCompletion},
     },
     protos::temporal::api::common::v1::WorkflowExecution,
     protos::temporal::api::history::v1::History,
@@ -63,8 +64,16 @@ impl IntoCompletion for workflow_command::Variant {
     }
 }
 
-impl IntoCompletion for Vec<workflow_command::Variant> {
+impl<I, V> IntoCompletion for I
+where
+    I: IntoIterator<Item = V>,
+    V: Into<WorkflowCommand>,
+{
     fn into_completion(self, task_token: Vec<u8>) -> WfActivationCompletion {
-        WfActivationCompletion::from_cmds(self, task_token)
+        let success = self.into_iter().map(Into::into).collect::<Vec<_>>().into();
+        WfActivationCompletion {
+            task_token,
+            status: Some(wf_activation_completion::Status::Successful(success)),
+        }
     }
 }
