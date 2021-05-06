@@ -17,18 +17,15 @@ use crate::{
 use anyhow::bail;
 use crossbeam::channel::{Receiver, Sender};
 use futures::channel::oneshot;
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
     sync::Arc,
     time::Duration,
 };
-use tokio::{
-    sync::Notify,
-    task::{JoinError, JoinHandle},
-    time::sleep,
-};
+use tokio::runtime::Runtime;
+use tokio::task::{JoinError, JoinHandle};
 
 pub struct TestRustWorker {
     core: Arc<dyn Core>,
@@ -104,7 +101,7 @@ impl TestRustWorker {
                 }
                 // After the workflow has been advanced, grab any outgoing commands and send them to
                 // the server
-                let wf_is_done = twd.wait_until_wf_iteration_done().await;
+                let wf_is_done = twd.wait_until_wf_iteration_done();
                 if wf_is_done {
                     incomplete_wfs.remove(&activation.run_id);
                 }
@@ -128,6 +125,7 @@ pub struct TestWorkflowDriver {
     join_handle: Option<JoinHandle<()>>,
     commands_from_wf: Receiver<WorkflowCommand>,
     cache: Arc<TestWfDriverCache>,
+    _runtime: Option<Runtime>,
 }
 
 impl TestWorkflowDriver {
@@ -153,13 +151,25 @@ impl TestWorkflowDriver {
             bc.wf_is_done = true;
             // Wake up the fetcher thread, since we have finished the workflow and that would mean
             // we've finished sending what we can.
-            twd_clone.notifier.notify_one();
+            twd_clone.condvar.notify_one();
         };
-        let join_handle = Some(tokio::spawn(wf_future));
+
+        // This allows us to use the test workflow driver from inside an async context, or not.
+        // If we are not in an async context we create a new tokio runtime and store it in ourselves
+        // to run the workflow future. If we are in one, we use that instead.
+        let (maybe_rt, join_handle) = if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            (None, Some(handle.spawn(wf_future)))
+        } else {
+            let runtime = Runtime::new().unwrap();
+            let jh = runtime.spawn(wf_future);
+            (Some(runtime), Some(jh))
+        };
+
         Self {
             join_handle,
             commands_from_wf: receiver,
             cache: twd_cache,
+            _runtime: maybe_rt,
         }
     }
 
@@ -182,24 +192,18 @@ impl TestWorkflowDriver {
     //  somehow need to check that specifically the top-level task (the main wf function) is
     //  blocked waiting on a command. If the workflow spawns a concurrent task, and it blocks
     //  on a command before the main wf code path does, it will cause a spurious wakeup.
-    pub async fn wait_until_wf_iteration_done(&mut self) -> bool {
-        loop {
-            dbg!("Lewp");
-            let bc_lock = self.cache.blocking_info.lock();
-            dbg!("Lock aq");
-            if bc_lock.wf_is_done || bc_lock.num_blocked_cmds() != 0 {
-                break bc_lock.wf_is_done;
-            }
-            drop(bc_lock);
-            dbg!("Lock rel");
-            tokio::select! {
-                _ = sleep(Duration::from_secs(1)) => {
-                    dbg!("wat");
-                    panic!("Workflow deadlock (1 second)");
-                }
-                _ = self.cache.notifier.notified() => {}
+    pub fn wait_until_wf_iteration_done(&mut self) -> bool {
+        let mut bc_lock = self.cache.blocking_info.lock();
+        while !bc_lock.wf_is_done && bc_lock.num_blocked_cmds() == 0 {
+            let timeout_res = self
+                .cache
+                .condvar
+                .wait_for(&mut bc_lock, Duration::from_secs(1));
+            if timeout_res.timed_out() {
+                panic!("Workflow deadlocked (1 second)")
             }
         }
+        bc_lock.wf_is_done
     }
 
     /// Wait for the test workflow to exit
@@ -215,7 +219,7 @@ impl TestWorkflowDriver {
 #[derive(Debug, Default)]
 struct TestWfDriverCache {
     blocking_info: Mutex<BlockingCondInfo>,
-    notifier: Notify,
+    condvar: Condvar,
 }
 
 impl TestWfDriverCache {
@@ -265,7 +269,7 @@ impl TestWfDriverCache {
         }
         // Wake up the fetcher thread, since we have blocked on a command and that would mean we've
         // finished sending what we can.
-        self.notifier.notify_one();
+        self.condvar.notify_one();
     }
 }
 

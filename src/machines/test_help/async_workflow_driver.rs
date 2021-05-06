@@ -13,7 +13,7 @@ use std::convert::TryInto;
 
 impl WorkflowFetcher for TestWorkflowDriver {
     fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
-        let wf_is_done = block_on(self.wait_until_wf_iteration_done());
+        let wf_is_done = self.wait_until_wf_iteration_done();
 
         let mut emit_these = vec![];
         for c in self.drain_pending_commands() {
