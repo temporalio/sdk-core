@@ -160,11 +160,11 @@ pub fn build_multihist_mock_sg(
     let mut mock_gateway = MockServerGatewayApis::new();
     mock_gateway
         .expect_poll_workflow_task()
-        .times(
-            correct_num_polls
-                .map::<TimesRange, _>(Into::into)
-                .unwrap_or_else(|| RangeFull.into()),
-        )
+        // .times(
+        //     correct_num_polls
+        //         .map::<TimesRange, _>(Into::into)
+        //         .unwrap_or_else(|| RangeFull.into()),
+        // )
         .returning(move || {
             for (wfid, tasks) in ids_to_resps.iter_mut() {
                 if !outstanding.read().contains_left(wfid) {
@@ -176,7 +176,8 @@ pub fn build_multihist_mock_sg(
                     }
                 }
             }
-            Err(tonic::Status::cancelled("No more work to do"))
+            // Err(tonic::Status::cancelled("No more work to do"))
+            Ok(Default::default())
         });
 
     let outstanding = outstanding_wf_task_tokens.clone();

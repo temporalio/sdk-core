@@ -1,6 +1,6 @@
-use crate::integ_tests::CoreWfStarter;
 use assert_matches::assert_matches;
 use futures::future::join_all;
+use integ_test_helpers::CoreWfStarter;
 use std::time::{Duration, Instant};
 use temporal_sdk_core::protos::coresdk::{
     activity_result::ActivityResult,

@@ -1,11 +1,11 @@
 mod activities;
 mod timers;
 
-use crate::integ_tests::{
-    get_integ_core, init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreWfStarter, GwApi,
-};
 use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
+use integ_test_helpers::{
+    get_integ_core, init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreWfStarter, GwApi,
+};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use temporal_sdk_core::{
     protos::coresdk::{
@@ -390,7 +390,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     // corresponding signals.
     let ac_task = core.poll_activity_task().await.unwrap();
     let rid = wf_task.run_id.clone();
-    // Send the signals to the server -- sometimes this happens too fast
+    // Send the signals to the server & resolve activity -- sometimes this happens too fast
     sleep(Duration::from_millis(200)).await;
     with_gw(core.as_ref(), |gw: GwApi| async move {
         gw.signal_workflow_execution(wf_id.to_string(), rid, signal_at_start.to_string(), None)

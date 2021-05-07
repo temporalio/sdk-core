@@ -444,8 +444,9 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             ),
             init_options,
             server_gateway: sg.clone(),
-            wf_task_poll_buffer: new_workflow_task_buffer(sg.clone()),
-            at_task_poll_buffer: new_activity_task_buffer(sg.clone()),
+            // TODO: Make poll options configurable, use builder for init options.
+            wf_task_poll_buffer: new_workflow_task_buffer(sg.clone(), 10, 100),
+            at_task_poll_buffer: new_activity_task_buffer(sg.clone(), 10, 100),
             outstanding_activity_tasks: Default::default(),
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),

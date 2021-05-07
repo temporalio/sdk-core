@@ -51,16 +51,22 @@ bimap = "0.6.1"
 mockall = "0.9"
 rstest = "0.9"
 lazy_static = "1.4"
+integ_test_helpers = { path = "integ_test_helpers" }
 
 [build-dependencies]
 tonic-build = "0.4"
 
 [workspace]
-members = [".", "fsm"]
+members = [".", "fsm", "integ_test_helpers"]
 
 [[test]]
 name = "integ_tests"
 path = "tests/main.rs"
 # Prevents autodiscovery, and hence these getting run with `cargo test`. Run with
 # `cargo test --test integ_tests`
+test = false
+
+[[test]]
+name = "load_tests"
+path = "tests/load_tests.rs"
 test = false

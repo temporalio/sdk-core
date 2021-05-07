@@ -25,7 +25,7 @@ steps:
     agents:
       queue: "default"
       docker: "*"
-    command: "cargo clippy --workspace --all-features --all-targets -- -D warnings && cargo clippy --test integ_tests --all-features -- --D warnings"
+    command: "cargo clippy --workspace --all-features --all-targets -- -D warnings && cargo clippy --test integ_tests --test load_tests --all-features -- --D warnings"
     timeout_in_minutes: 15
     plugins:
       - docker-compose#v3.0.0:

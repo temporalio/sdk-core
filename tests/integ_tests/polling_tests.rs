@@ -1,8 +1,8 @@
-use crate::integ_tests::{
-    get_integ_server_options, init_core_and_create_wf, schedule_activity_cmd,
-};
 use assert_matches::assert_matches;
 use crossbeam::channel::{unbounded, RecvTimeoutError};
+use integ_test_helpers::{
+    get_integ_server_options, init_core_and_create_wf, schedule_activity_cmd,
+};
 use std::time::Duration;
 use temporal_sdk_core::protos::coresdk::{
     activity_task::activity_task as act_task,

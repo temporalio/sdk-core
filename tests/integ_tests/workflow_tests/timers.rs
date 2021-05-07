@@ -1,5 +1,5 @@
-use crate::integ_tests::{init_core_and_create_wf, CoreWfStarter, NAMESPACE};
 use assert_matches::assert_matches;
+use integ_test_helpers::{init_core_and_create_wf, CoreWfStarter, NAMESPACE};
 use std::time::Duration;
 use temporal_sdk_core::protos::coresdk::{
     workflow_activation::{wf_activation_job, FireTimer, WfActivationJob},
@@ -8,11 +8,11 @@ use temporal_sdk_core::protos::coresdk::{
 };
 use temporal_sdk_core::test_workflow_driver::{CommandSender, TestRustWorker, TestWorkflowDriver};
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn timer_workflow_new_way() {
     let wf_name = "timer_wf_new";
     let mut starter = CoreWfStarter::new(wf_name);
-    let tq = starter.task_queue.clone();
+    let tq = starter.get_task_queue().to_owned();
     let core = starter.get_core().await;
 
     let worker = TestRustWorker::new(core, NAMESPACE.to_owned(), tq);

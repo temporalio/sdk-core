@@ -956,8 +956,6 @@ async fn max_concurrent_wft_respected() {
     }
 }
 
-// TODO: Test doesn't fail when mock not called enough times (even though it panics??), but it
-//   actually only should be called two times (with 1,2,3)
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[3]))]
 #[tokio::test]
 async fn activity_not_canceled_on_replay_repro(hist_batches: &[usize]) {
