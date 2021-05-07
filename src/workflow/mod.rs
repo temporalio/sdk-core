@@ -44,9 +44,8 @@ pub enum WorkflowError {
     MachineWasCreatedWithNoActivations { run_id: String },
 }
 
-/// Lang/user created identifiers for commands issued by workflows
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub enum CommandID {
+pub(crate) enum CommandID {
     Timer(String),
     Activity(String),
 }

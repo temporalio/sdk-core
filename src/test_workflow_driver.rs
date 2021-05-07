@@ -13,7 +13,8 @@ use crate::{
             StartTimer, WorkflowCommand,
         },
     },
-    CommandID, Core, IntoCompletion,
+    workflow::CommandID,
+    Core, IntoCompletion,
 };
 use anyhow::bail;
 use crossbeam::channel::{Receiver, Sender};
@@ -40,6 +41,7 @@ pub struct TestRustWorker {
 }
 
 impl TestRustWorker {
+    /// Create a new rust worker using the provided core instance, namespace, and task queue
     pub fn new(core: Arc<dyn Core>, namespace: String, task_queue: String) -> Self {
         Self {
             core,
@@ -136,6 +138,7 @@ pub(crate) enum UnblockEvent {
     Activity { id: String, result: ActivityResult },
 }
 
+/// Allows implementing workflows in a reasonably natural looking way in Rust
 pub struct TestWorkflowDriver {
     join_handle: Option<JoinHandle<()>>,
     commands_from_wf: Receiver<WorkflowCommand>,
@@ -350,6 +353,7 @@ enum CommandStatus {
     Blocked,
 }
 
+/// Used within workflows to issue commands
 pub struct CommandSender {
     chan: Sender<WorkflowCommand>,
     twd_cache: Arc<TestWfDriverCache>,
@@ -433,6 +437,8 @@ impl CommandSender {
         self.send(c);
     }
 
+    /// Finish the workflow execution
+    // TODO: Make automatic
     pub fn complete_workflow_execution(&self) {
         let c = WorkflowCommand {
             variant: Some(CompleteWorkflowExecution::default().into()),

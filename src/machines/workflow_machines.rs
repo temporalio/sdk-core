@@ -20,8 +20,7 @@ use crate::{
         },
     },
     protosext::HistoryInfo,
-    workflow::{DrivenWorkflow, WorkflowFetcher},
-    CommandID,
+    workflow::{CommandID, DrivenWorkflow, WorkflowFetcher},
 };
 use slotmap::SlotMap;
 use std::{

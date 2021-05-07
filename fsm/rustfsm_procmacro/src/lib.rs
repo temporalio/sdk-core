@@ -228,9 +228,9 @@ impl Parse for StateMachineDefinition {
             visibility,
             name,
             shared_state_type,
-            transitions,
             command_type,
             error_type,
+            transitions,
         })
     }
 }
