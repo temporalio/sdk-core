@@ -1,35 +1,27 @@
 use crate::integ_tests::CoreWfStarter;
 use assert_matches::assert_matches;
+use futures::future::join_all;
 use std::time::{Duration, Instant};
-use temporal_sdk_core::test_workflow_driver::{CommandSender, TestWorkflowDriver};
-use temporal_sdk_core::{
-    protos::coresdk::{
-        activity_result::{self, activity_result as act_res, ActivityResult},
-        activity_task::activity_task as act_task,
-        common::{Payload, UserCodeFailure},
-        workflow_activation::{wf_activation_job, FireTimer, ResolveActivity, WfActivationJob},
-        workflow_commands::{
-            ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity,
-            ScheduleActivity, StartTimer,
-        },
-        workflow_completion::WfActivationCompletion,
-        ActivityTaskCompletion,
-    },
-    IntoCompletion,
+use temporal_sdk_core::protos::coresdk::{
+    activity_result::ActivityResult,
+    activity_task::activity_task as act_task,
+    workflow_commands::{ActivityCancellationType, ScheduleActivity},
+    ActivityTaskCompletion,
 };
+use temporal_sdk_core::test_workflow_driver::{CommandSender, TestWorkflowDriver};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn activity_load() {
     let mut starter = CoreWfStarter::new("activity_load");
     starter.max_wft(1000).max_at(1000);
-    let mut worker = starter.worker().await;
+    let worker = starter.worker().await;
 
     let activity_id = "act-1";
     let activity_timeout = Duration::from_secs(5);
     let payload_dat = b"hello".to_vec();
 
     let starting = Instant::now();
-    for i in 0..1000 {
+    join_all((0..1000usize).map(|i| {
         let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| {
             let task_queue = starter.get_task_queue().to_owned();
             let payload_dat = payload_dat.clone();
@@ -54,11 +46,15 @@ async fn activity_load() {
                 command_sink.complete_workflow_execution();
             }
         });
-        worker
-            .submit_wf(format!("activity_load_{}", i), twd)
-            .await
-            .unwrap();
-    }
+        let worker = &worker;
+        async move {
+            worker
+                .submit_wf(format!("activity_load_{}", i), twd)
+                .await
+                .unwrap();
+        }
+    }))
+    .await;
     dbg!(starting.elapsed());
 
     let running = Instant::now();

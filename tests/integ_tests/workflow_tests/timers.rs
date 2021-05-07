@@ -15,7 +15,7 @@ async fn timer_workflow_new_way() {
     let tq = starter.task_queue.clone();
     let core = starter.get_core().await;
 
-    let mut worker = TestRustWorker::new(core, NAMESPACE.to_owned(), tq);
+    let worker = TestRustWorker::new(core, NAMESPACE.to_owned(), tq);
     let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
         let timer = StartTimer {
             timer_id: "super_timer_id".to_string(),

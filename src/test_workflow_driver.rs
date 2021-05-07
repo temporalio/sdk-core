@@ -18,9 +18,17 @@ use crate::{
 };
 use anyhow::bail;
 use crossbeam::channel::{Receiver, Sender};
+use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    future::Future,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use tokio::{
     runtime::Runtime,
     sync::{
@@ -36,7 +44,7 @@ pub struct TestRustWorker {
     namespace: String,
     task_queue: String,
     // Maps run id to the driver
-    workflows: HashMap<String, UnboundedSender<WfActivation>>,
+    workflows: DashMap<String, UnboundedSender<WfActivation>>,
     outstanding_wf_ct: Arc<AtomicUsize>,
 }
 
@@ -55,7 +63,7 @@ impl TestRustWorker {
     /// Create a workflow, asking the server to start it with the provided workflow ID and using the
     /// provided [TestWorkflowDriver] as the workflow code.
     pub async fn submit_wf(
-        &mut self,
+        &self,
         workflow_id: String,
         mut twd: TestWorkflowDriver,
     ) -> Result<(), tonic::Status> {
@@ -124,7 +132,7 @@ impl TestRustWorker {
 
     /// Drives all workflows until they have all finished, repeatedly polls server to fetch work
     /// for them.
-    pub async fn run_until_done(mut self) -> Result<(), anyhow::Error> {
+    pub async fn run_until_done(self) -> Result<(), anyhow::Error> {
         let ctr = self.outstanding_wf_ct.clone();
         tokio::select!(
             r = async {loop {
