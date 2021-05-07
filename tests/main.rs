@@ -6,6 +6,7 @@ mod integ_tests {
 
     use rand::{distributions::Standard, Rng};
     use std::{convert::TryFrom, env, future::Future, sync::Arc, time::Duration};
+    use temporal_sdk_core::test_workflow_driver::TestRustWorker;
     use temporal_sdk_core::{
         protos::coresdk::workflow_commands::{
             workflow_command, ActivityCancellationType, ScheduleActivity,
@@ -43,6 +44,14 @@ mod integ_tests {
                 wft_timeout: None,
                 initted_core: None,
             }
+        }
+
+        pub async fn worker(&mut self) -> TestRustWorker {
+            TestRustWorker::new(
+                self.get_core().await,
+                NAMESPACE.to_owned(),
+                self.task_queue.clone(),
+            )
         }
 
         pub async fn get_core(&mut self) -> Arc<dyn Core> {

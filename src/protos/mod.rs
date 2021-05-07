@@ -283,6 +283,13 @@ pub mod coresdk {
                 )),
             }
         }
+
+        pub fn unwrap_ok_payload(self) -> Payload {
+            match self.status.unwrap() {
+                activity_result::activity_result::Status::Completed(c) => c.result.unwrap(),
+                _ => panic!("Activity was not successful"),
+            }
+        }
     }
 
     impl ActivityTask {

@@ -4,9 +4,8 @@ use crate::{
         wf_activation_job::{self, Variant},
         FireTimer, ResolveActivity,
     },
-    test_workflow_driver::TestWorkflowDriver,
+    test_workflow_driver::{TestWorkflowDriver, UnblockEvent},
     workflow::{ActivationListener, WorkflowFetcher},
-    CommandID,
 };
 use futures::executor::block_on;
 use std::convert::TryInto;
@@ -38,13 +37,16 @@ impl ActivationListener for TestWorkflowDriver {
     fn on_activation_job(&mut self, activation: &wf_activation_job::Variant) {
         match activation {
             Variant::FireTimer(FireTimer { timer_id }) => {
-                self.unblock(CommandID::Timer(timer_id.to_owned()));
+                self.unblock(UnblockEvent::Timer(timer_id.to_owned()));
             }
             Variant::ResolveActivity(ResolveActivity {
                 activity_id,
-                result: _result,
+                result,
             }) => {
-                self.unblock(CommandID::Activity(activity_id.to_owned()));
+                self.unblock(UnblockEvent::Activity {
+                    id: activity_id.clone(),
+                    result: result.clone().expect("Test activity has a result"),
+                });
             }
             _ => {}
         }

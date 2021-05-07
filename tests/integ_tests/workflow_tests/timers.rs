@@ -8,9 +8,10 @@ use temporal_sdk_core::protos::coresdk::{
 };
 use temporal_sdk_core::test_workflow_driver::{CommandSender, TestRustWorker, TestWorkflowDriver};
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn timer_workflow_new_way() {
-    let mut starter = CoreWfStarter::new("timer_wf_new");
+    let wf_name = "timer_wf_new";
+    let mut starter = CoreWfStarter::new(wf_name);
     let tq = starter.task_queue.clone();
     let core = starter.get_core().await;
 
@@ -23,10 +24,7 @@ async fn timer_workflow_new_way() {
         command_sink.timer(timer).await;
         command_sink.complete_workflow_execution();
     });
-    worker
-        .submit_wf("timer_wf_new".to_owned(), twd)
-        .await
-        .unwrap();
+    worker.submit_wf(wf_name.to_owned(), twd).await.unwrap();
     worker.run_until_done().await.unwrap();
 }
 

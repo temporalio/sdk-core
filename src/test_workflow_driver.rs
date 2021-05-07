@@ -4,6 +4,7 @@
 
 use crate::{
     protos::coresdk::{
+        activity_result::ActivityResult,
         workflow_activation::{
             wf_activation_job::Variant, FireTimer, ResolveActivity, WfActivationJob,
         },
@@ -16,7 +17,6 @@ use crate::{
 };
 use anyhow::bail;
 use crossbeam::channel::{Receiver, Sender};
-use futures::channel::oneshot;
 use parking_lot::{Condvar, Mutex};
 use std::{
     collections::{HashMap, HashSet},
@@ -24,9 +24,13 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::runtime::Runtime;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::{
+    runtime::Runtime,
+    sync::oneshot,
+    task::{JoinError, JoinHandle},
+};
 
+/// A worker that can poll for and respond to workflow tasks by using [TestWorkflowDriver]s
 pub struct TestRustWorker {
     core: Arc<dyn Core>,
     namespace: String,
@@ -82,13 +86,15 @@ impl TestRustWorker {
                         match v {
                             Variant::StartWorkflow(_) => {}
                             Variant::FireTimer(FireTimer { timer_id }) => {
-                                twd.unblock(CommandID::Timer(timer_id))
+                                twd.unblock(UnblockEvent::Timer(timer_id))
                             }
                             Variant::ResolveActivity(ResolveActivity {
                                 activity_id,
-                                // TODO: Propagate results
-                                ..
-                            }) => twd.unblock(CommandID::Activity(activity_id)),
+                                result,
+                            }) => twd.unblock(UnblockEvent::Activity {
+                                id: activity_id,
+                                result: result.expect("Activity must have result"),
+                            }),
                             Variant::UpdateRandomSeed(_) => {}
                             Variant::QueryWorkflow(_) => {}
                             Variant::CancelWorkflow(_) => {}
@@ -99,9 +105,13 @@ impl TestRustWorker {
                         bail!("Empty activation job variant");
                     }
                 }
+
                 // After the workflow has been advanced, grab any outgoing commands and send them to
-                // the server
-                let wf_is_done = twd.wait_until_wf_iteration_done();
+                // the server.
+
+                // Since waiting until the iteration is done may block and isn't async, we need
+                // to use block_in_place here.
+                let wf_is_done = tokio::task::block_in_place(|| twd.wait_until_wf_iteration_done());
                 if wf_is_done {
                     incomplete_wfs.remove(&activation.run_id);
                 }
@@ -119,6 +129,11 @@ impl TestRustWorker {
         }
         Ok(())
     }
+}
+
+pub(crate) enum UnblockEvent {
+    Timer(String),
+    Activity { id: String, result: ActivityResult },
 }
 
 pub struct TestWorkflowDriver {
@@ -180,8 +195,8 @@ impl TestWorkflowDriver {
     }
 
     /// Given the id of a command, indicate to the workflow code that it is now unblocked
-    pub fn unblock(&mut self, command: CommandID) {
-        self.cache.unblock(command);
+    pub(crate) fn unblock(&mut self, unblock_evt: UnblockEvent) {
+        self.cache.unblock(unblock_evt);
     }
 
     /// If there are no commands, and the workflow isn't done, we need to wait for one of those
@@ -222,12 +237,38 @@ struct TestWfDriverCache {
     condvar: Condvar,
 }
 
+macro_rules! add_sent_cmd_decl {
+    ($method_name:ident, $map_name:ident, $resolve_type:ty) => {
+        /// Track a new command that the wf has sent down the command sink. The command starts in
+        /// [CommandStatus::Sent] and will be marked blocked once it is `await`ed
+        fn $method_name(&self, id: String) -> oneshot::Receiver<$resolve_type> {
+            let (tx, rx) = oneshot::channel();
+            let mut bc = self.blocking_info.lock();
+            let ic = IssuedCommand {
+                unblocker: tx,
+                status: CommandStatus::Sent,
+            };
+            bc.$map_name.insert(id, ic);
+            rx
+        }
+    };
+}
+
 impl TestWfDriverCache {
-    /// Unblock a command by ID
-    fn unblock(&self, id: CommandID) {
+    /// Unblock a command
+    fn unblock(&self, unblock_evt: UnblockEvent) {
         let mut bc = self.blocking_info.lock();
-        if let Some(t) = bc.issued_commands.remove(&id) {
-            t.unblocker.send(()).unwrap()
+        match unblock_evt {
+            UnblockEvent::Timer(id) => {
+                if let Some(t) = bc.issued_timers.remove(&id) {
+                    t.unblocker.send(()).unwrap();
+                };
+            }
+            UnblockEvent::Activity { id, result } => {
+                if let Some(t) = bc.issued_activities.remove(&id) {
+                    t.unblocker.send(result).unwrap();
+                }
+            }
         };
     }
 
@@ -235,37 +276,33 @@ impl TestWfDriverCache {
     /// removed from the "lang" side without needing a response from core.
     fn cancel_timer(&self, id: &str) {
         let mut bc = self.blocking_info.lock();
-        bc.issued_commands.remove(&CommandID::Timer(id.to_owned()));
+        bc.issued_timers.remove(id);
     }
 
     /// Cancel activity by ID.
+    /// TODO: Support different cancel types
     fn cancel_activity(&self, id: &str) {
         let mut bc = self.blocking_info.lock();
-        bc.issued_commands
-            .remove(&CommandID::Activity(id.to_owned()));
+        bc.issued_activities.remove(id);
     }
 
-    /// Track a new command that the wf has sent down the command sink. The command starts in
-    /// [CommandStatus::Sent] and will be marked blocked once it is `await`ed
-    fn add_sent_cmd(&self, id: CommandID) -> oneshot::Receiver<()> {
-        let (tx, rx) = oneshot::channel();
-        let mut bc = self.blocking_info.lock();
-        bc.issued_commands.insert(
-            id,
-            IssuedCommand {
-                unblocker: tx,
-                status: CommandStatus::Sent,
-            },
-        );
-        rx
-    }
+    add_sent_cmd_decl!(add_sent_timer, issued_timers, ());
+    add_sent_cmd_decl!(add_sent_activity, issued_activities, ActivityResult);
 
     /// Indicate that a command is being `await`ed
     fn set_cmd_blocked(&self, id: CommandID) {
-        dbg!("set cmd blocked");
         let mut bc = self.blocking_info.lock();
-        if let Some(cmd) = bc.issued_commands.get_mut(&id) {
-            cmd.status = CommandStatus::Blocked;
+        match &id {
+            CommandID::Timer(id) => {
+                if let Some(cmd) = bc.issued_timers.get_mut(id) {
+                    cmd.status = CommandStatus::Blocked;
+                }
+            }
+            CommandID::Activity(id) => {
+                if let Some(cmd) = bc.issued_activities.get_mut(id) {
+                    cmd.status = CommandStatus::Blocked;
+                }
+            }
         }
         // Wake up the fetcher thread, since we have blocked on a command and that would mean we've
         // finished sending what we can.
@@ -278,23 +315,32 @@ impl TestWfDriverCache {
 /// of the workflow) is blocked waiting on a command).
 #[derive(Default, Debug)]
 struct BlockingCondInfo {
-    /// Holds a mapping of timer id -> oneshot channel to resolve it
-    issued_commands: HashMap<CommandID, IssuedCommand>,
+    /// Holds a mapping of timer ids -> oneshot channel to resolve them
+    issued_timers: HashMap<String, IssuedCommand<()>>,
+    /// Holds a mapping of activity ids -> oneshot channel to resolve them
+    issued_activities: HashMap<String, IssuedCommand<ActivityResult>>,
     wf_is_done: bool,
 }
 
 impl BlockingCondInfo {
     fn num_blocked_cmds(&self) -> usize {
-        self.issued_commands
+        let tc = self
+            .issued_timers
             .values()
             .filter(|ic| ic.status == CommandStatus::Blocked)
-            .count()
+            .count();
+        let ac = self
+            .issued_activities
+            .values()
+            .filter(|ic| ic.status == CommandStatus::Blocked)
+            .count();
+        tc + ac
     }
 }
 
 #[derive(Debug)]
-struct IssuedCommand {
-    unblocker: oneshot::Sender<()>,
+struct IssuedCommand<Out> {
+    unblocker: oneshot::Sender<Out>,
     status: CommandStatus,
 }
 
@@ -318,32 +364,43 @@ impl CommandSender {
 
     /// Request to create a timer
     pub fn timer(&mut self, a: StartTimer) -> impl Future {
+        let id = a.timer_id.clone();
         self.send_blocking_cmd(
-            CommandID::Timer(a.timer_id.clone()),
+            CommandID::Timer(id.clone()),
             WorkflowCommand {
                 variant: Some(a.into()),
             },
+            |s: &Self| s.twd_cache.add_sent_timer(id),
         )
     }
 
     /// Request to run an activity
-    pub fn activity(&mut self, a: ScheduleActivity) -> impl Future {
+    pub fn activity(
+        &mut self,
+        a: ScheduleActivity,
+    ) -> impl Future<Output = Option<ActivityResult>> {
+        let id = a.activity_id.clone();
         self.send_blocking_cmd(
-            CommandID::Activity(a.activity_id.clone()),
+            CommandID::Activity(id.clone()),
             WorkflowCommand {
                 variant: Some(a.into()),
             },
+            |s: &Self| s.twd_cache.add_sent_activity(id),
         )
     }
 
-    fn send_blocking_cmd(&mut self, id: CommandID, c: WorkflowCommand) -> impl Future {
-        dbg!("send blcoking");
+    fn send_blocking_cmd<O>(
+        &mut self,
+        id: CommandID,
+        c: WorkflowCommand,
+        sent_adder: impl FnOnce(&Self) -> oneshot::Receiver<O>,
+    ) -> impl Future<Output = Option<O>> {
         self.send(c);
-        let rx = self.twd_cache.add_sent_cmd(id.clone());
+        let rx = sent_adder(&self);
         let cache_clone = self.twd_cache.clone();
         async move {
             cache_clone.set_cmd_blocked(id);
-            rx.await
+            rx.await.ok()
         }
     }
 
