@@ -1,6 +1,6 @@
 use crate::integ_tests::CoreWfStarter;
 use assert_matches::assert_matches;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use temporal_sdk_core::test_workflow_driver::{CommandSender, TestWorkflowDriver};
 use temporal_sdk_core::{
     protos::coresdk::{
@@ -21,12 +21,14 @@ use temporal_sdk_core::{
 #[tokio::test(flavor = "multi_thread")]
 async fn activity_load() {
     let mut starter = CoreWfStarter::new("activity_load");
+    starter.max_wft(1000).max_at(1000);
     let mut worker = starter.worker().await;
 
     let activity_id = "act-1";
     let activity_timeout = Duration::from_secs(5);
     let payload_dat = b"hello".to_vec();
 
+    let starting = Instant::now();
     for i in 0..1000 {
         let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| {
             let task_queue = starter.get_task_queue().to_owned();
@@ -57,30 +59,37 @@ async fn activity_load() {
             .await
             .unwrap();
     }
+    dbg!(starting.elapsed());
 
+    let running = Instant::now();
     let core = starter.get_core().await;
+    let mut handles = vec![];
+    for _ in 0..1000 {
+        let core = core.clone();
+        let payload_dat = payload_dat.clone();
+        // Poll for and complete all activities
+        let h = tokio::spawn(async move {
+            let task = core.poll_activity_task().await.unwrap();
+            assert_matches!(
+                task.variant,
+                Some(act_task::Variant::Start(start_activity)) => {
+                    assert_eq!(start_activity.activity_type, "test_activity".to_string())
+                }
+            );
+            core.complete_activity_task(ActivityTaskCompletion {
+                task_token: task.task_token,
+                result: Some(ActivityResult::ok(payload_dat.into())),
+            })
+            .await
+            .unwrap();
+        });
+        handles.push(h);
+    }
     tokio::join! {
         async {
             worker.run_until_done().await.unwrap();
         },
-        // Poll for an complete activities
-        async {
-            for _ in 0..1000 {
-                let payload_dat = payload_dat.clone();
-                let task = core.poll_activity_task().await.unwrap();
-                assert_matches!(
-                    task.variant,
-                    Some(act_task::Variant::Start(start_activity)) => {
-                        assert_eq!(start_activity.activity_type, "test_activity".to_string())
-                    }
-                );
-                core.complete_activity_task(ActivityTaskCompletion {
-                    task_token: task.task_token,
-                    result: Some(ActivityResult::ok(payload_dat.into())),
-                })
-                .await
-                .unwrap();
-            }
-        }
+        futures::future::join_all(handles)
     };
+    dbg!(running.elapsed());
 }

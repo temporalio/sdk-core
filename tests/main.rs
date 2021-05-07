@@ -105,6 +105,16 @@ mod integ_tests {
             self
         }
 
+        pub fn max_wft(&mut self, max: usize) -> &mut Self {
+            self.core_options.max_outstanding_workflow_tasks = max;
+            self
+        }
+
+        pub fn max_at(&mut self, max: usize) -> &mut Self {
+            self.core_options.max_outstanding_activities = max;
+            self
+        }
+
         pub fn wft_timeout(&mut self, timeout: Duration) -> &mut Self {
             self.wft_timeout = Some(timeout);
             self
