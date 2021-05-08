@@ -23,7 +23,7 @@ use crate::{
         },
     },
     task_token::TaskToken,
-    Core, CoreInitOptions, CoreSDK, ServerGatewayApis, ServerGatewayOptions,
+    Core, CoreInitOptionsBuilder, CoreSDK, ServerGatewayApis, ServerGatewayOptions,
 };
 use bimap::BiMap;
 use mockall::TimesRange;
@@ -75,26 +75,25 @@ pub(crate) fn fake_core_from_mock_sg(mock_and_tasks: MockSGAndTasks) -> FakeCore
     FakeCore {
         inner: CoreSDK::new(
             mock_and_tasks.sg,
-            CoreInitOptions {
-                gateway_opts: fake_sg_opts(),
-                evict_after_pending_cleared: true,
-                max_outstanding_workflow_tasks: 5,
-                max_outstanding_activities: 5,
-            },
+            CoreInitOptionsBuilder::default()
+                .gateway_opts(fake_sg_opts())
+                .build()
+                .unwrap(),
         ),
         outstanding_wf_tasks: mock_and_tasks.task_map,
     }
 }
 
-pub(crate) fn mock_core(sg: MockServerGatewayApis) -> CoreSDK<impl ServerGatewayApis> {
+pub(crate) fn mock_core<SG>(sg: SG) -> CoreSDK<impl ServerGatewayApis>
+where
+    SG: ServerGatewayApis + Send + Sync + 'static,
+{
     CoreSDK::new(
         sg,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 5,
-            max_outstanding_activities: 5,
-        },
+        CoreInitOptionsBuilder::default()
+            .gateway_opts(fake_sg_opts())
+            .build()
+            .unwrap(),
     )
 }
 

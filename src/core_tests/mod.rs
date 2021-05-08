@@ -6,7 +6,7 @@ use crate::{
     machines::test_help::{build_fake_core, fake_sg_opts, hist_to_poll_resp},
     pollers::MockManualGateway,
     test_help::canned_histories,
-    Core, CoreInitOptions, CoreSDK, PollActivityTaskQueueResponse,
+    Core, CoreInitOptionsBuilder, CoreSDK, PollActivityTaskQueueResponse,
 };
 use futures::FutureExt;
 use std::time::Duration;
@@ -58,12 +58,13 @@ async fn shutdown_interrupts_both_polls() {
 
     let core = CoreSDK::new(
         mock_gateway,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 5,
-            max_outstanding_activities: 5,
-        },
+        CoreInitOptionsBuilder::default()
+            .gateway_opts(fake_sg_opts())
+            // Need only 1 concurrent pollers for mock expectations to work here
+            .max_concurrent_wft_polls(1usize)
+            .max_concurrent_at_polls(1usize)
+            .build()
+            .unwrap(),
     );
     tokio::join! {
         async {

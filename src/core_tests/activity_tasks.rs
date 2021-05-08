@@ -11,7 +11,7 @@ use crate::{
             RespondActivityTaskCompletedResponse,
         },
     },
-    ActivityHeartbeat, ActivityTask, Core, CoreInitOptions, CoreSDK,
+    ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK,
 };
 use futures::FutureExt;
 use std::{
@@ -54,12 +54,11 @@ async fn max_activites_respected() {
 
     let core = CoreSDK::new(
         mock_gateway,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 1,
-            max_outstanding_activities: 2,
-        },
+        CoreInitOptionsBuilder::default()
+            .gateway_opts(fake_sg_opts())
+            .max_outstanding_activities(2usize)
+            .build()
+            .unwrap(),
     );
 
     // We allow two outstanding activities, therefore first two polls should return right away
@@ -92,15 +91,7 @@ async fn activity_not_found_returns_ok() {
         .times(1)
         .returning(|_, _| Err(tonic::Status::not_found("unimportant")));
 
-    let core = CoreSDK::new(
-        mock_gateway,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 5,
-            max_outstanding_activities: 5,
-        },
-    );
+    let core = mock_core(mock_gateway);
 
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: vec![1],
@@ -133,15 +124,7 @@ async fn heartbeats_report_cancels() {
             })
         });
 
-    let core = CoreSDK::new(
-        mock_gateway,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 5,
-            max_outstanding_activities: 5,
-        },
-    );
+    let core = mock_core(mock_gateway);
 
     let act = core.poll_activity_task().await.unwrap();
     core.record_activity_heartbeat(ActivityHeartbeat {
@@ -195,15 +178,7 @@ async fn activity_cancel_interrupts_poll() {
             .boxed()
         });
 
-    let core = CoreSDK::new(
-        mock_gateway,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 5,
-            max_outstanding_activities: 5,
-        },
-    );
+    let core = mock_core(mock_gateway);
     let last_finisher = AtomicUsize::new(0);
     // Perform first poll to get the activity registered
     let act = core.poll_activity_task().await.unwrap();
@@ -309,12 +284,11 @@ async fn many_concurrent_heartbeat_cancels() {
 
     let core = CoreSDK::new(
         mock_gateway,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 5,
-            max_outstanding_activities: CONCURRENCY_NUM as usize,
-        },
+        CoreInitOptionsBuilder::default()
+            .gateway_opts(fake_sg_opts())
+            .max_outstanding_activities(CONCURRENCY_NUM as usize)
+            .build()
+            .unwrap(),
     );
     let core = Arc::new(core);
 

@@ -5,18 +5,19 @@ use crate::{
 use std::{fmt::Debug, future::Future, sync::Arc};
 use tokio::sync::{
     mpsc::{channel, Receiver},
-    Mutex, Notify, Semaphore,
+    watch, Mutex, Semaphore,
 };
 
 pub struct LongPollBuffer<T> {
     buffered_polls: Mutex<Receiver<pollers::Result<T>>>,
-    shutdown: Arc<Notify>,
+    shutdown: watch::Sender<bool>,
     /// This semaphore exists to ensure that we only poll server as many times as core actually
     /// *asked* it to be polled - otherwise we might spin and buffer polls constantly. This also
     /// means unit tests can continue to function in a predictable manner when calling mocks.
     polls_requested: Arc<Semaphore>,
 }
 
+// TODO: Fun idea - const generics for defining poller handle array
 impl<T> LongPollBuffer<T>
 where
     T: Send + Debug + 'static,
@@ -30,24 +31,26 @@ where
         FT: Future<Output = pollers::Result<T>> + Send,
     {
         let (tx, rx) = channel(buffer_size);
-        let shutdown = Arc::new(Notify::new());
         let polls_requested = Arc::new(Semaphore::new(0));
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let pf = Arc::new(poll_fn);
         for _ in 0..concurrent_pollers {
             let tx = tx.clone();
             let pf = pf.clone();
-            let shutdown = shutdown.clone();
+            let mut shutdown = shutdown_rx.clone();
             let polls_requested = polls_requested.clone();
             tokio::spawn(async move {
                 loop {
+                    if *shutdown.borrow() {
+                        break;
+                    }
                     let sp = tokio::select! {
                         sp = polls_requested.acquire() => sp.expect("Polls semaphore not dropped"),
-                        _ = shutdown.notified() => break,
+                        _ = shutdown.changed() => continue,
                     };
-                    let pf = pf();
                     let r = tokio::select! {
-                        r = pf => r,
-                        _ = shutdown.notified() => break,
+                        r = pf() => r,
+                        _ = shutdown.changed() => continue,
                     };
                     sp.forget();
                     tx.send(r).await.expect("Long poll buffer is not dropped");
@@ -56,7 +59,7 @@ where
         }
         Self {
             buffered_polls: Mutex::new(rx),
-            shutdown,
+            shutdown: shutdown_tx,
             polls_requested,
         }
     }
@@ -71,7 +74,9 @@ where
     }
 
     pub fn shutdown(&self) {
-        self.shutdown.notify_one();
+        self.shutdown
+            .send(true)
+            .expect("Must be able to send shutdown in poller");
     }
 }
 

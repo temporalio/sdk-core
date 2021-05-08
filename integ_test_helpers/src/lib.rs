@@ -5,7 +5,7 @@ use temporal_sdk_core::{
         workflow_command, ActivityCancellationType, ScheduleActivity,
     },
     test_workflow_driver::TestRustWorker,
-    Core, CoreInitOptions, ServerGatewayApis, ServerGatewayOptions,
+    Core, CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayApis, ServerGatewayOptions,
 };
 use url::Url;
 
@@ -28,12 +28,11 @@ impl CoreWfStarter {
         let task_queue = format!("{}_{}", test_name, task_q_salt);
         Self {
             test_name: test_name.to_owned(),
-            core_options: CoreInitOptions {
-                gateway_opts: get_integ_server_options(&task_queue),
-                evict_after_pending_cleared: false,
-                max_outstanding_workflow_tasks: 5,
-                max_outstanding_activities: 5,
-            },
+            core_options: CoreInitOptionsBuilder::default()
+                .gateway_opts(get_integ_server_options(&task_queue))
+                .evict_after_pending_cleared(false)
+                .build()
+                .unwrap(),
             task_queue,
             wft_timeout: None,
             initted_core: None,
@@ -152,12 +151,13 @@ pub fn get_integ_server_options(task_q: &str) -> ServerGatewayOptions {
 
 pub async fn get_integ_core(task_q: &str) -> impl Core {
     let gateway_opts = get_integ_server_options(task_q);
-    temporal_sdk_core::init(CoreInitOptions {
-        gateway_opts,
-        evict_after_pending_cleared: false,
-        max_outstanding_workflow_tasks: 5,
-        max_outstanding_activities: 5,
-    })
+    temporal_sdk_core::init(
+        CoreInitOptionsBuilder::default()
+            .gateway_opts(gateway_opts)
+            .evict_after_pending_cleared(false)
+            .build()
+            .unwrap(),
+    )
     .await
     .unwrap()
 }

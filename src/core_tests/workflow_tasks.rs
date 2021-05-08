@@ -1,3 +1,4 @@
+use crate::machines::test_help::mock_core;
 use crate::{
     job_assert,
     machines::test_help::{
@@ -25,7 +26,7 @@ use crate::{
         },
     },
     test_help::canned_histories,
-    Core, CoreInitOptions, CoreSDK, WfActivationCompletion,
+    Core, CoreInitOptionsBuilder, CoreSDK, WfActivationCompletion,
 };
 use rstest::{fixture, rstest};
 use std::{
@@ -904,12 +905,11 @@ async fn max_concurrent_wft_respected() {
 
     let core = CoreSDK::new(
         mock_gateway,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 2,
-            max_outstanding_activities: 1,
-        },
+        CoreInitOptionsBuilder::default()
+            .gateway_opts(fake_sg_opts())
+            .max_outstanding_workflow_tasks(2usize)
+            .build()
+            .unwrap(),
     );
 
     // Poll twice in a row before completing -- we should be at limit
@@ -1079,15 +1079,7 @@ async fn lots_of_workflows() {
     });
 
     let mock = build_multihist_mock_sg(hists, false, None);
-    let core = CoreSDK::new(
-        mock.sg,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 20,
-            max_outstanding_activities: 5,
-        },
-    );
+    let core = mock_core(mock.sg);
 
     let core = Arc::new(core);
     let mut handles = vec![];
