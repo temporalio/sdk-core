@@ -5,12 +5,16 @@ use crate::{
 use std::{fmt::Debug, future::Future, sync::Arc};
 use tokio::sync::{
     mpsc::{channel, Receiver},
-    Mutex, Notify,
+    Mutex, Notify, Semaphore,
 };
 
 pub struct LongPollBuffer<T> {
     buffered_polls: Mutex<Receiver<pollers::Result<T>>>,
     shutdown: Arc<Notify>,
+    /// This semaphore exists to ensure that we only poll server as many times as core actually
+    /// *asked* it to be polled - otherwise we might spin and buffer polls constantly. This also
+    /// means unit tests can continue to function in a predictable manner when calling mocks.
+    polls_requested: Arc<Semaphore>,
 }
 
 impl<T> LongPollBuffer<T>
@@ -27,18 +31,25 @@ where
     {
         let (tx, rx) = channel(buffer_size);
         let shutdown = Arc::new(Notify::new());
+        let polls_requested = Arc::new(Semaphore::new(0));
         let pf = Arc::new(poll_fn);
         for _ in 0..concurrent_pollers {
             let tx = tx.clone();
             let pf = pf.clone();
             let shutdown = shutdown.clone();
+            let polls_requested = polls_requested.clone();
             tokio::spawn(async move {
                 loop {
+                    let sp = tokio::select! {
+                        sp = polls_requested.acquire() => sp.expect("Polls semaphore not dropped"),
+                        _ = shutdown.notified() => break,
+                    };
                     let pf = pf();
                     let r = tokio::select! {
                         r = pf => r,
                         _ = shutdown.notified() => break,
                     };
+                    sp.forget();
                     tx.send(r).await.expect("Long poll buffer is not dropped");
                 }
             });
@@ -46,10 +57,12 @@ where
         Self {
             buffered_polls: Mutex::new(rx),
             shutdown,
+            polls_requested,
         }
     }
 
     pub async fn poll(&self) -> pollers::Result<T> {
+        self.polls_requested.add_permits(1);
         let mut locked = self.buffered_polls.lock().await;
         (*locked)
             .recv()

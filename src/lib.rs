@@ -429,6 +429,8 @@ where
         self.shutdown_requested.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
         self.wft_manager.shutdown();
+        self.wf_task_poll_buffer.shutdown();
+        self.at_task_poll_buffer.shutdown();
         self.activity_heartbeat_manager_handle.shutdown().await;
     }
 }
