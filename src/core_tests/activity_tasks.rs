@@ -287,6 +287,8 @@ async fn many_concurrent_heartbeat_cancels() {
         CoreInitOptionsBuilder::default()
             .gateway_opts(fake_sg_opts())
             .max_outstanding_activities(CONCURRENCY_NUM as usize)
+            // Only 1 poll at a time to avoid over-polling and running out of responses
+            .max_concurrent_at_polls(1usize)
             .build()
             .unwrap(),
     );
@@ -346,4 +348,5 @@ async fn many_concurrent_heartbeat_cancels() {
         h.await.unwrap();
     }
     assert!(core.outstanding_activity_tasks.is_empty());
+    core.shutdown().await;
 }

@@ -615,10 +615,11 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     {
         tokio::select! {
             biased;
-            r = wrap_this => r,
+
             _ = self.shutdown_notifier() => {
                 Err(ShutdownErr.into())
             }
+            r = wrap_this => r,
         }
     }
 

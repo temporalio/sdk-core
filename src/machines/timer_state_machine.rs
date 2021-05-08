@@ -293,7 +293,6 @@ mod test {
             task, hence no extra loop.
         */
         let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
-            dbg!("yey");
             let timer = StartTimer {
                 timer_id: "timer1".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
