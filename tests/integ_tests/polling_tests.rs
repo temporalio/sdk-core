@@ -1,8 +1,5 @@
 use assert_matches::assert_matches;
 use crossbeam::channel::{unbounded, RecvTimeoutError};
-use integ_test_helpers::{
-    get_integ_server_options, init_core_and_create_wf, schedule_activity_cmd,
-};
 use std::time::Duration;
 use temporal_sdk_core::protos::coresdk::{
     activity_task::activity_task as act_task,
@@ -12,7 +9,8 @@ use temporal_sdk_core::protos::coresdk::{
     },
     workflow_completion::WfActivationCompletion,
 };
-use temporal_sdk_core::{Core, CoreInitOptions, IntoCompletion};
+use temporal_sdk_core::{Core, CoreInitOptionsBuilder, IntoCompletion};
+use test_utils::{get_integ_server_options, init_core_and_create_wf, schedule_activity_cmd};
 use tokio::time::timeout;
 
 #[tokio::test]
@@ -109,12 +107,12 @@ async fn long_poll_timeout_is_retried() {
     let mut gateway_opts = get_integ_server_options("some_task_q");
     // Server whines unless long poll > 2 seconds
     gateway_opts.long_poll_timeout = Duration::from_secs(3);
-    let core = temporal_sdk_core::init(CoreInitOptions {
-        gateway_opts,
-        evict_after_pending_cleared: false,
-        max_outstanding_workflow_tasks: 1,
-        max_outstanding_activities: 1,
-    })
+    let core = temporal_sdk_core::init(
+        CoreInitOptionsBuilder::default()
+            .gateway_opts(gateway_opts)
+            .build()
+            .unwrap(),
+    )
     .await
     .unwrap();
     // Should block for more than 3 seconds, since we internally retry long poll

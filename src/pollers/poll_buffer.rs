@@ -17,7 +17,6 @@ pub struct LongPollBuffer<T> {
     polls_requested: Arc<Semaphore>,
 }
 
-// TODO: Fun idea - const generics for defining poller handle array
 impl<T> LongPollBuffer<T>
 where
     T: Send + Debug + 'static,
@@ -53,7 +52,7 @@ where
                         _ = shutdown.changed() => continue,
                     };
                     sp.forget();
-                    tx.send(r).await.expect("Long poll buffer is not dropped");
+                    let _ = tx.send(r).await;
                 }
             });
         }
@@ -74,9 +73,7 @@ where
     }
 
     pub fn shutdown(&self) {
-        self.shutdown
-            .send(true)
-            .expect("Must be able to send shutdown in poller");
+        let _ = self.shutdown.send(true);
     }
 }
 

@@ -1,6 +1,5 @@
 use assert_matches::assert_matches;
 use futures::future::join_all;
-use integ_test_helpers::CoreWfStarter;
 use std::time::{Duration, Instant};
 use temporal_sdk_core::protos::coresdk::{
     activity_result::ActivityResult,
@@ -9,6 +8,7 @@ use temporal_sdk_core::protos::coresdk::{
     ActivityTaskCompletion,
 };
 use temporal_sdk_core::test_workflow_driver::{CommandSender, TestWorkflowDriver};
+use test_utils::{fanout_tasks, CoreWfStarter};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn activity_load() {
@@ -58,13 +58,11 @@ async fn activity_load() {
     dbg!(starting.elapsed());
 
     let running = Instant::now();
-    let core = starter.get_core().await;
-    let mut handles = vec![];
-    for _ in 0..1000 {
-        let core = core.clone();
+    let core = &starter.get_core().await;
+    // Poll for and complete all activities
+    let all_acts = fanout_tasks(1000, |_| {
         let payload_dat = payload_dat.clone();
-        // Poll for and complete all activities
-        let h = tokio::spawn(async move {
+        async move {
             let task = core.poll_activity_task().await.unwrap();
             assert_matches!(
                 task.variant,
@@ -78,14 +76,13 @@ async fn activity_load() {
             })
             .await
             .unwrap();
-        });
-        handles.push(h);
-    }
+        }
+    });
     tokio::join! {
         async {
             worker.run_until_done().await.unwrap();
         },
-        futures::future::join_all(handles)
+        all_acts
     };
     dbg!(running.elapsed());
 }

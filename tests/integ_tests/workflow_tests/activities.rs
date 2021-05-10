@@ -1,5 +1,4 @@
 use assert_matches::assert_matches;
-use integ_test_helpers::{init_core_and_create_wf, schedule_activity_cmd};
 use std::time::Duration;
 use temporal_sdk_core::{
     protos::coresdk::{
@@ -15,6 +14,7 @@ use temporal_sdk_core::{
     },
     IntoCompletion,
 };
+use test_utils::{init_core_and_create_wf, schedule_activity_cmd};
 use tokio::time::sleep;
 
 #[tokio::test]

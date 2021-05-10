@@ -1,3 +1,4 @@
+use futures::{stream::FuturesUnordered, StreamExt};
 use rand::{distributions::Standard, Rng};
 use std::{convert::TryFrom, env, future::Future, sync::Arc, time::Duration};
 use temporal_sdk_core::{
@@ -182,4 +183,24 @@ pub fn schedule_activity_cmd(
         ..Default::default()
     }
     .into()
+}
+
+/// Given a desired number of concurrent executions and a provided function that produces a future,
+/// run that many instances of the future concurrently.
+///
+/// Annoyingly, because of a sorta-bug in the way async blocks work, the async block produced by
+/// the closure must be `async move` if it uses the provided iteration number. On the plus side,
+/// since you're usually just accessing core in the closure, if core is a reference everything just
+/// works. See https://github.com/rust-lang/rust/issues/81653
+pub async fn fanout_tasks<FutureMaker, Fut>(num: usize, fm: FutureMaker)
+where
+    FutureMaker: Fn(usize) -> Fut,
+    Fut: Future,
+{
+    let mut tasks = FuturesUnordered::new();
+    for i in 0..num {
+        tasks.push(fm(i));
+    }
+
+    while tasks.next().await.is_some() {}
 }

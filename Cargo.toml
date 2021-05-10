@@ -52,13 +52,13 @@ bimap = "0.6.1"
 mockall = "0.9"
 rstest = "0.9"
 lazy_static = "1.4"
-integ_test_helpers = { path = "integ_test_helpers" }
+test_utils = { path = "test_utils" }
 
 [build-dependencies]
 tonic-build = "0.4"
 
 [workspace]
-members = [".", "fsm", "integ_test_helpers"]
+members = [".", "fsm", "test_utils"]
 
 [[test]]
 name = "integ_tests"

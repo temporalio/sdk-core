@@ -3,9 +3,6 @@ mod timers;
 
 use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
-use integ_test_helpers::{
-    get_integ_core, init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreWfStarter, GwApi,
-};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use temporal_sdk_core::{
     protos::coresdk::{
@@ -19,6 +16,9 @@ use temporal_sdk_core::{
         ActivityTaskCompletion,
     },
     Core, IntoCompletion, PollWfError,
+};
+use test_utils::{
+    get_integ_core, init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreWfStarter, GwApi,
 };
 use tokio::time::sleep;
 

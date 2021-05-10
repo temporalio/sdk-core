@@ -1,5 +1,4 @@
 use assert_matches::assert_matches;
-use integ_test_helpers::{init_core_and_create_wf, CoreWfStarter, NAMESPACE};
 use std::time::Duration;
 use temporal_sdk_core::protos::coresdk::{
     workflow_activation::{wf_activation_job, FireTimer, WfActivationJob},
@@ -7,6 +6,7 @@ use temporal_sdk_core::protos::coresdk::{
     workflow_completion::WfActivationCompletion,
 };
 use temporal_sdk_core::test_workflow_driver::{CommandSender, TestRustWorker, TestWorkflowDriver};
+use test_utils::{init_core_and_create_wf, CoreWfStarter, NAMESPACE};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn timer_workflow_new_way() {
@@ -15,7 +15,7 @@ async fn timer_workflow_new_way() {
     let tq = starter.get_task_queue().to_owned();
     let core = starter.get_core().await;
 
-    let worker = TestRustWorker::new(core, NAMESPACE.to_owned(), tq);
+    let worker = TestRustWorker::new(core.clone(), NAMESPACE.to_owned(), tq);
     let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
         let timer = StartTimer {
             timer_id: "super_timer_id".to_string(),
@@ -26,6 +26,7 @@ async fn timer_workflow_new_way() {
     });
     worker.submit_wf(wf_name.to_owned(), twd).await.unwrap();
     worker.run_until_done().await.unwrap();
+    core.shutdown().await;
 }
 
 #[tokio::test]

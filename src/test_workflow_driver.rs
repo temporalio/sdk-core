@@ -19,16 +19,9 @@ use crate::{
 use anyhow::bail;
 use crossbeam::channel::{Receiver, Sender};
 use dashmap::DashMap;
+use futures::{stream::FuturesUnordered, StreamExt};
 use parking_lot::{Condvar, Mutex};
-use std::{
-    collections::HashMap,
-    future::Future,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
 use tokio::{
     runtime::Runtime,
     sync::{
@@ -45,7 +38,7 @@ pub struct TestRustWorker {
     task_queue: String,
     // Maps run id to the driver
     workflows: DashMap<String, UnboundedSender<WfActivation>>,
-    outstanding_wf_ct: Arc<AtomicUsize>,
+    join_handles: FuturesUnordered<JoinHandle<Result<(), anyhow::Error>>>,
 }
 
 impl TestRustWorker {
@@ -56,7 +49,7 @@ impl TestRustWorker {
             namespace,
             task_queue,
             workflows: Default::default(),
-            outstanding_wf_ct: Arc::new(AtomicUsize::new(0)),
+            join_handles: FuturesUnordered::new(),
         }
     }
 
@@ -78,12 +71,9 @@ impl TestRustWorker {
                 None,
             )
             .await?;
-        self.outstanding_wf_ct.fetch_add(1, Ordering::AcqRel);
-        // Todo: Handle join
         let (tx, mut rx) = unbounded_channel::<WfActivation>();
         let core = self.core.clone();
-        let counter = self.outstanding_wf_ct.clone();
-        tokio::spawn(async move {
+        let jh = tokio::spawn(async move {
             while let Some(activation) = rx.recv().await {
                 for WfActivationJob { variant } in activation.jobs {
                     if let Some(v) = variant {
@@ -120,38 +110,44 @@ impl TestRustWorker {
                 core.complete_workflow_task(outgoing.into_completion(activation.task_token))
                     .await?;
                 if wf_is_done {
-                    counter.fetch_sub(1, Ordering::AcqRel);
                     break;
                 }
             }
             Ok(())
         });
         self.workflows.insert(res.run_id, tx);
+        self.join_handles.push(jh);
         Ok(())
     }
 
     /// Drives all workflows until they have all finished, repeatedly polls server to fetch work
     /// for them.
     pub async fn run_until_done(self) -> Result<(), anyhow::Error> {
-        let ctr = self.outstanding_wf_ct.clone();
-        tokio::select!(
-            r = async {loop {
-                let activation = self.core.poll_workflow_task().await?;
+        // Need to deconstruct self
+        let mut handles = self.join_handles;
+        let core = self.core;
+        let workflows = self.workflows;
+
+        let poller = async {
+            loop {
+                let activation = core.poll_workflow_task().await?;
                 // The activation is expected to apply to some workflow we know about. Use it to
                 // unblock things and advance the workflow.
-                if let Some(tx) = self.workflows.get_mut(&activation.run_id) {
+                if let Some(tx) = workflows.get_mut(&activation.run_id) {
                     tx.send(activation).unwrap();
                 } else {
                     bail!("Got activation for unknown workflow");
                 }
             }
-            } => r,
-            _ = async {loop {
-                if ctr.load(Ordering::Relaxed) == 0 {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }} => Ok(())
+        };
+        let shutdown_checker = async {
+            // Because we consume self, it is impossible that any new workflows will be added while
+            // we are draining here.
+            while handles.next().await.is_some() {}
+        };
+        tokio::select!(
+            r = poller => r,
+            _ = shutdown_checker => Ok(())
         )
     }
 }
