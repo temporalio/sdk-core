@@ -100,6 +100,22 @@ mod integ_tests {
     #[tokio::test]
     #[ignore]
     async fn tls_test() {
+        // Load certs/keys
+        let root = tokio::fs::read(
+            "/home/sushi/dev/temporal/customization-samples/tls/tls-simple/certs/ca.cert",
+        )
+        .await
+        .unwrap();
+        let client_cert = tokio::fs::read(
+            "/home/sushi/dev/temporal/customization-samples/tls/tls-simple/certs/client.pem",
+        )
+        .await
+        .unwrap();
+        let client_private_key = tokio::fs::read(
+            "/home/sushi/dev/temporal/customization-samples/tls/tls-simple/certs/client.key",
+        )
+        .await
+        .unwrap();
         let sgo = ServerGatewayOptions {
             target_url: Url::from_str("https://localhost:7233").unwrap(),
             namespace: NAMESPACE.to_string(),
@@ -108,17 +124,11 @@ mod integ_tests {
             worker_binary_id: "binident".to_string(),
             long_poll_timeout: Duration::from_secs(60),
             tls_cfg: Some(TlsConfig {
-                server_root_ca_cert:
-                    "/home/sushi/dev/temporal/customization-samples/tls/tls-simple/certs/ca.cert"
-                        .into(),
-                domain: "tls-sample".to_string(),
+                server_root_ca_cert: Some(root),
+                domain: Some("tls-sample".to_string()),
                 client_tls_config: Some(ClientTlsConfig {
-                    client_cert:
-                    "/home/sushi/dev/temporal/customization-samples/tls/tls-simple/certs/client.pem"
-                        .into(),
-                    client_private_key:
-                    "/home/sushi/dev/temporal/customization-samples/tls/tls-simple/certs/client.key"
-                        .into(),
+                    client_cert,
+                    client_private_key,
                 }),
             }),
         };

@@ -8,7 +8,6 @@ pub use poll_buffer::{
 };
 
 use crate::{
-    errors::CoreInitError::CertLoadingError,
     machines::ProtoCommand,
     protos::temporal::api::{
         common::v1::{Payloads, WorkflowExecution, WorkflowType},
@@ -32,7 +31,8 @@ use crate::{
     task_token::TaskToken,
     CoreInitError,
 };
-use std::{path::PathBuf, time::Duration};
+use std::fmt::{Debug, Formatter};
+use std::time::Duration;
 use tonic::{
     transport::{Certificate, Channel, Endpoint, Identity},
     Request, Status,
@@ -65,30 +65,40 @@ pub struct ServerGatewayOptions {
     /// Timeout for long polls (polling of task queues)
     pub long_poll_timeout: Duration,
 
-    /// If specified, use TLS as configured by the [TlsCfg] struct
+    /// If specified, use TLS as configured by the [TlsCfg] struct. If this is set core will attempt
+    /// to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any certs
+    /// or keys as bytes, loading them from disk itself if needed.
     pub tls_cfg: Option<TlsConfig>,
 }
 
 /// Configuration options for TLS
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TlsConfig {
-    /// A location to a file representing the root CA certificate used by the server. If this is
-    /// set, core will attempt to use TLS when connecting to the server. If `client_tls_config` is
-    /// also set, then core will attempt to use mTLS.
-    pub server_root_ca_cert: PathBuf,
-    /// The domain/dns name that the server's certificate uses
-    pub domain: String,
-    /// TLS info for the client, if using mTLS
+    /// Bytes representing the root CA certificate used by the server. If not set, and the server's
+    /// cert is issued by someone the operating system trusts, verification will still work (ex:
+    /// Cloud offering).
+    pub server_root_ca_cert: Option<Vec<u8>>,
+    /// Sets the domain name against which to verify the server's TLS certificate. If not provided,
+    /// the domain name will be extracted from the URL used to connect.
+    pub domain: Option<String>,
+    /// TLS info for the client. If specified, core will attempt to use mTLS.
     pub client_tls_config: Option<ClientTlsConfig>,
 }
 
 /// If using mTLS, both the client cert and private key must be specified, this contains them.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ClientTlsConfig {
     /// The certificate for this client
-    pub client_cert: PathBuf,
+    pub client_cert: Vec<u8>,
     /// The private key for this client
-    pub client_private_key: PathBuf,
+    pub client_private_key: Vec<u8>,
+}
+
+impl Debug for ClientTlsConfig {
+    // Intentionally omit details here since they could leak a key if ever printed
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ClientTlsConfig(..)")
+    }
 }
 
 impl ServerGatewayOptions {
@@ -109,32 +119,20 @@ impl ServerGatewayOptions {
     /// Passes it through if TLS options not set.
     async fn add_tls_to_channel(&self, channel: Endpoint) -> Result<Endpoint, CoreInitError> {
         if let Some(tls_cfg) = &self.tls_cfg {
-            let server_root_ca_cert = tokio::fs::read(&tls_cfg.server_root_ca_cert)
-                .await
-                .map_err(|e| CertLoadingError {
-                    artifact: "server root certificate",
-                    source: e,
-                })?;
-            let server_root_ca_cert = Certificate::from_pem(server_root_ca_cert);
+            let mut tls = tonic::transport::ClientTlsConfig::new();
 
-            let mut tls = tonic::transport::ClientTlsConfig::new()
-                .ca_certificate(server_root_ca_cert)
-                .domain_name(tls_cfg.domain.clone());
+            if let Some(root_cert) = &tls_cfg.server_root_ca_cert {
+                let server_root_ca_cert = Certificate::from_pem(root_cert);
+                tls = tls.ca_certificate(server_root_ca_cert);
+            }
+
+            if let Some(domain) = &tls_cfg.domain {
+                tls = tls.domain_name(domain);
+            }
 
             if let Some(client_opts) = &tls_cfg.client_tls_config {
-                let client_cert = tokio::fs::read(&client_opts.client_cert)
-                    .await
-                    .map_err(|e| CertLoadingError {
-                        artifact: "client certificate",
-                        source: e,
-                    })?;
-                let client_key = tokio::fs::read(&client_opts.client_private_key)
-                    .await
-                    .map_err(|e| CertLoadingError {
-                        artifact: "client private key",
-                        source: e,
-                    })?;
-                let client_identity = Identity::from_pem(client_cert, client_key);
+                let client_identity =
+                    Identity::from_pem(&client_opts.client_cert, &client_opts.client_private_key);
                 tls = tls.identity(client_identity);
             }
 
@@ -560,32 +558,5 @@ mod manual_mock {
             ) -> impl Future<Output = Result<RecordActivityTaskHeartbeatResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::str::FromStr;
-
-    #[tokio::test]
-    async fn bad_cert_path_returns_correct_err() {
-        let sgo = ServerGatewayOptions {
-            target_url: Url::from_str("https://fake").unwrap(),
-            namespace: "".to_string(),
-            task_queue: "task_queue".to_string(),
-            identity: "".to_string(),
-            worker_binary_id: "".to_string(),
-            long_poll_timeout: Default::default(),
-            tls_cfg: Some(TlsConfig {
-                server_root_ca_cert: "totally/not/a/real/path.pem".into(),
-                domain: "whatever".to_string(),
-                client_tls_config: None,
-            }),
-        };
-        assert_matches!(
-            sgo.connect().await.unwrap_err(),
-            CoreInitError::CertLoadingError { .. }
-        );
     }
 }
