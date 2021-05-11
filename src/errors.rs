@@ -23,6 +23,14 @@ pub enum CoreInitError {
     /// Server connection error. Crashing and restarting the worker is likely best.
     #[error("Server connection error: {0:?}")]
     TonicTransportError(#[from] tonic::transport::Error),
+    /// There was a problem while trying to load certificates for TLS
+    #[error("Error loading TLS {artifact}: {source:?}")]
+    CertLoadingError {
+        /// The name of the TLS artifact we were trying to load
+        artifact: &'static str,
+        /// Underlying error
+        source: std::io::Error,
+    },
 }
 
 /// Errors thrown by [crate::Core::poll_workflow_task]

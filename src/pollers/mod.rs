@@ -1,15 +1,14 @@
 mod poll_buffer;
 
+#[cfg(test)]
+pub use manual_mock::MockManualGateway;
 pub use poll_buffer::{
     new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
     PollWorkflowTaskBuffer,
 };
 
-use crate::protos::temporal::api::workflowservice::v1::{
-    RecordActivityTaskHeartbeatRequest, RecordActivityTaskHeartbeatResponse,
-};
-use crate::task_token::TaskToken;
 use crate::{
+    errors::CoreInitError::CertLoadingError,
     machines::ProtoCommand,
     protos::temporal::api::{
         common::v1::{Payloads, WorkflowExecution, WorkflowType},
@@ -19,7 +18,8 @@ use crate::{
         workflowservice::v1::{
             workflow_service_client::WorkflowServiceClient, PollActivityTaskQueueRequest,
             PollActivityTaskQueueResponse, PollWorkflowTaskQueueRequest,
-            PollWorkflowTaskQueueResponse, RespondActivityTaskCanceledRequest,
+            PollWorkflowTaskQueueResponse, RecordActivityTaskHeartbeatRequest,
+            RecordActivityTaskHeartbeatResponse, RespondActivityTaskCanceledRequest,
             RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedRequest,
             RespondActivityTaskCompletedResponse, RespondActivityTaskFailedRequest,
             RespondActivityTaskFailedResponse, RespondWorkflowTaskCompletedRequest,
@@ -29,10 +29,14 @@ use crate::{
             StartWorkflowExecutionResponse,
         },
     },
+    task_token::TaskToken,
     CoreInitError,
 };
-use std::time::Duration;
-use tonic::{transport::Channel, Request, Status};
+use std::{path::PathBuf, time::Duration};
+use tonic::{
+    transport::{Certificate, Channel, Endpoint, Identity},
+    Request, Status,
+};
 use url::Url;
 use uuid::Uuid;
 
@@ -60,20 +64,83 @@ pub struct ServerGatewayOptions {
 
     /// Timeout for long polls (polling of task queues)
     pub long_poll_timeout: Duration,
+
+    /// If specified, use TLS as configured by the [TlsCfg] struct
+    pub tls_cfg: Option<TlsConfig>,
+}
+
+/// Configuration options for TLS
+#[derive(Clone, Debug)]
+pub struct TlsConfig {
+    /// A location to a file representing the root CA certificate used by the server. If this is
+    /// set, core will attempt to use TLS when connecting to the server. If `client_tls_config` is
+    /// also set, then core will attempt to use mTLS.
+    pub server_root_ca_cert: PathBuf,
+    /// The domain/dns name that the server's certificate uses
+    pub domain: String,
+    /// TLS info for the client, if using mTLS
+    pub client_tls_config: Option<ClientTlsConfig>,
+}
+
+/// If using mTLS, both the client cert and private key must be specified, this contains them.
+#[derive(Clone, Debug)]
+pub struct ClientTlsConfig {
+    /// The certificate for this client
+    pub client_cert: PathBuf,
+    /// The private key for this client
+    pub client_private_key: PathBuf,
 }
 
 impl ServerGatewayOptions {
     /// Attempt to establish a connection to the Temporal server
     pub async fn connect(&self) -> Result<ServerGateway, CoreInitError> {
-        let channel = Channel::from_shared(self.target_url.to_string())?
-            .connect()
-            .await?;
+        let channel = Channel::from_shared(self.target_url.to_string())?;
+        let channel = self.add_tls_to_channel(channel).await?;
+        let channel = channel.connect().await?;
         let interceptor = intercept(&self);
         let service = WorkflowServiceClient::with_interceptor(channel, interceptor);
         Ok(ServerGateway {
             service,
             opts: self.clone(),
         })
+    }
+
+    /// If TLS is configured, set the appropriate options on the provided channel and return it.
+    /// Passes it through if TLS options not set.
+    async fn add_tls_to_channel(&self, channel: Endpoint) -> Result<Endpoint, CoreInitError> {
+        if let Some(tls_cfg) = &self.tls_cfg {
+            let server_root_ca_cert = tokio::fs::read(&tls_cfg.server_root_ca_cert)
+                .await
+                .map_err(|e| CertLoadingError {
+                    artifact: "server root certificate",
+                    source: e,
+                })?;
+            let server_root_ca_cert = Certificate::from_pem(server_root_ca_cert);
+
+            let mut tls = tonic::transport::ClientTlsConfig::new()
+                .ca_certificate(server_root_ca_cert)
+                .domain_name(tls_cfg.domain.clone());
+
+            if let Some(client_opts) = &tls_cfg.client_tls_config {
+                let client_cert = tokio::fs::read(&client_opts.client_cert)
+                    .await
+                    .map_err(|e| CertLoadingError {
+                        artifact: "client certificate",
+                        source: e,
+                    })?;
+                let client_key = tokio::fs::read(&client_opts.client_private_key)
+                    .await
+                    .map_err(|e| CertLoadingError {
+                        artifact: "client private key",
+                        source: e,
+                    })?;
+                let client_identity = Identity::from_pem(client_cert, client_key);
+                tls = tls.identity(client_identity);
+            }
+
+            return Ok(channel.tls_config(tls)?);
+        }
+        Ok(channel)
     }
 }
 
@@ -99,6 +166,7 @@ fn intercept(opts: &ServerGatewayOptions) -> impl Fn(Request<()>) -> Result<Requ
 }
 
 /// Contains an instance of a client for interacting with the temporal server
+#[derive(Debug)]
 pub struct ServerGateway {
     /// Client for interacting with workflow service
     pub service: WorkflowServiceClient<tonic::transport::Channel>,
@@ -411,9 +479,6 @@ impl ServerGatewayApis for ServerGateway {
 }
 
 #[cfg(test)]
-pub use manual_mock::MockManualGateway;
-
-#[cfg(test)]
 mod manual_mock {
     use super::*;
     use std::future::Future;
@@ -495,5 +560,32 @@ mod manual_mock {
             ) -> impl Future<Output = Result<RecordActivityTaskHeartbeatResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[tokio::test]
+    async fn bad_cert_path_returns_correct_err() {
+        let sgo = ServerGatewayOptions {
+            target_url: Url::from_str("https://fake").unwrap(),
+            namespace: "".to_string(),
+            task_queue: "task_queue".to_string(),
+            identity: "".to_string(),
+            worker_binary_id: "".to_string(),
+            long_poll_timeout: Default::default(),
+            tls_cfg: Some(TlsConfig {
+                server_root_ca_cert: "totally/not/a/real/path.pem".into(),
+                domain: "whatever".to_string(),
+                client_tls_config: None,
+            }),
+        };
+        assert_matches!(
+            sgo.connect().await.unwrap_err(),
+            CoreInitError::CertLoadingError { .. }
+        );
     }
 }

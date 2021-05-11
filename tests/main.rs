@@ -1,7 +1,11 @@
 #[cfg(test)]
 mod integ_tests {
+    use std::str::FromStr;
     use std::{convert::TryFrom, env, future::Future, sync::Arc, time::Duration};
-    use temporal_sdk_core::{Core, CoreInitOptions, ServerGatewayApis, ServerGatewayOptions};
+    use temporal_sdk_core::{
+        protos::temporal::api::workflowservice::v1::ListNamespacesRequest, ClientTlsConfig, Core,
+        CoreInitOptions, ServerGatewayApis, ServerGatewayOptions, TlsConfig,
+    };
     use url::Url;
 
     mod polling_tests;
@@ -74,6 +78,7 @@ mod integ_tests {
             worker_binary_id: "".to_string(),
             long_poll_timeout: Duration::from_secs(60),
             target_url: url,
+            tls_cfg: None,
         }
     }
 
@@ -87,5 +92,40 @@ mod integ_tests {
         })
         .await
         .unwrap()
+    }
+
+    // TODO: Currently ignored because starting up the docker image with TLS requires some hoop
+    //  jumping. We should upgrade CI to be able to do that but this was manually run against
+    //  https://github.com/temporalio/customization-samples/tree/master/tls/tls-simple
+    #[tokio::test]
+    #[ignore]
+    async fn tls_test() {
+        let sgo = ServerGatewayOptions {
+            target_url: Url::from_str("https://localhost:7233").unwrap(),
+            namespace: NAMESPACE.to_string(),
+            task_queue: "whatever".to_string(),
+            identity: "ident".to_string(),
+            worker_binary_id: "binident".to_string(),
+            long_poll_timeout: Duration::from_secs(60),
+            tls_cfg: Some(TlsConfig {
+                server_root_ca_cert:
+                    "/home/sushi/dev/temporal/customization-samples/tls/tls-simple/certs/ca.cert"
+                        .into(),
+                domain: "tls-sample".to_string(),
+                client_tls_config: Some(ClientTlsConfig {
+                    client_cert:
+                    "/home/sushi/dev/temporal/customization-samples/tls/tls-simple/certs/client.pem"
+                        .into(),
+                    client_private_key:
+                    "/home/sushi/dev/temporal/customization-samples/tls/tls-simple/certs/client.key"
+                        .into(),
+                }),
+            }),
+        };
+        let mut con = sgo.connect().await.unwrap();
+        con.service
+            .list_namespaces(ListNamespacesRequest::default())
+            .await
+            .unwrap();
     }
 }
