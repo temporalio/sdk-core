@@ -65,9 +65,9 @@ pub struct ServerGatewayOptions {
     /// Timeout for long polls (polling of task queues)
     pub long_poll_timeout: Duration,
 
-    /// If specified, use TLS as configured by the [TlsCfg] struct. If this is set core will attempt
-    /// to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any certs
-    /// or keys as bytes, loading them from disk itself if needed.
+    /// If specified, use TLS as configured by the [TlsConfig] struct. If this is set core will
+    /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
+    /// certs or keys as bytes, loading them from disk itself if needed.
     pub tls_cfg: Option<TlsConfig>,
 }
 
