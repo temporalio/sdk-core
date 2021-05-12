@@ -31,9 +31,8 @@ prost-types = "0.7"
 rand = "0.8.3"
 slotmap = "1.0"
 thiserror = "1.0"
-# For the full list of tokio features and what they enable see https://docs.rs/tokio/1.5.0/tokio/#feature-flags
-tokio = { version = "1.1", features = ["rt", "rt-multi-thread", "parking_lot", "time"] }
-tonic = "0.4"
+tokio = { version = "1.1", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs"] }
+tonic = { version = "0.4", features = ["tls", "tls-roots"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-futures = "0.2"
 tracing-opentelemetry = "0.12"

@@ -234,6 +234,7 @@ pub fn fake_sg_opts() -> ServerGatewayOptions {
         identity: "".to_string(),
         worker_binary_id: "".to_string(),
         long_poll_timeout: Default::default(),
+        tls_cfg: None,
     }
 }
 

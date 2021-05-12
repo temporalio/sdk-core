@@ -33,7 +33,10 @@ pub use crate::errors::{
     PollActivityError, PollWfError,
 };
 pub use core_tracing::tracing_init;
-pub use pollers::{PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions};
+pub use pollers::{
+    ClientTlsConfig, PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions,
+    TlsConfig,
+};
 pub use url::Url;
 
 use crate::{
