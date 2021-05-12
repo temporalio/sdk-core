@@ -31,8 +31,10 @@ use crate::{
     task_token::TaskToken,
     CoreInitError,
 };
-use std::fmt::{Debug, Formatter};
-use std::time::Duration;
+use std::{
+    fmt::{Debug, Formatter},
+    time::Duration,
+};
 use tonic::{
     transport::{Certificate, Channel, Endpoint, Identity},
     Request, Status,
