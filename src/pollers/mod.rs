@@ -1,14 +1,12 @@
 mod poll_buffer;
 
+#[cfg(test)]
+pub use manual_mock::MockManualGateway;
 pub use poll_buffer::{
     new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
     PollWorkflowTaskBuffer,
 };
 
-use crate::protos::temporal::api::workflowservice::v1::{
-    RecordActivityTaskHeartbeatRequest, RecordActivityTaskHeartbeatResponse,
-};
-use crate::task_token::TaskToken;
 use crate::{
     machines::ProtoCommand,
     protos::temporal::api::{
@@ -19,7 +17,8 @@ use crate::{
         workflowservice::v1::{
             workflow_service_client::WorkflowServiceClient, PollActivityTaskQueueRequest,
             PollActivityTaskQueueResponse, PollWorkflowTaskQueueRequest,
-            PollWorkflowTaskQueueResponse, RespondActivityTaskCanceledRequest,
+            PollWorkflowTaskQueueResponse, RecordActivityTaskHeartbeatRequest,
+            RecordActivityTaskHeartbeatResponse, RespondActivityTaskCanceledRequest,
             RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedRequest,
             RespondActivityTaskCompletedResponse, RespondActivityTaskFailedRequest,
             RespondActivityTaskFailedResponse, RespondWorkflowTaskCompletedRequest,
@@ -29,10 +28,17 @@ use crate::{
             StartWorkflowExecutionResponse,
         },
     },
+    task_token::TaskToken,
     CoreInitError,
 };
-use std::time::Duration;
-use tonic::{transport::Channel, Request, Status};
+use std::{
+    fmt::{Debug, Formatter},
+    time::Duration,
+};
+use tonic::{
+    transport::{Certificate, Channel, Endpoint, Identity},
+    Request, Status,
+};
 use url::Url;
 use uuid::Uuid;
 
@@ -60,20 +66,81 @@ pub struct ServerGatewayOptions {
 
     /// Timeout for long polls (polling of task queues)
     pub long_poll_timeout: Duration,
+
+    /// If specified, use TLS as configured by the [TlsConfig] struct. If this is set core will
+    /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
+    /// certs or keys as bytes, loading them from disk itself if needed.
+    pub tls_cfg: Option<TlsConfig>,
+}
+
+/// Configuration options for TLS
+#[derive(Clone, Debug, Default)]
+pub struct TlsConfig {
+    /// Bytes representing the root CA certificate used by the server. If not set, and the server's
+    /// cert is issued by someone the operating system trusts, verification will still work (ex:
+    /// Cloud offering).
+    pub server_root_ca_cert: Option<Vec<u8>>,
+    /// Sets the domain name against which to verify the server's TLS certificate. If not provided,
+    /// the domain name will be extracted from the URL used to connect.
+    pub domain: Option<String>,
+    /// TLS info for the client. If specified, core will attempt to use mTLS.
+    pub client_tls_config: Option<ClientTlsConfig>,
+}
+
+/// If using mTLS, both the client cert and private key must be specified, this contains them.
+#[derive(Clone)]
+pub struct ClientTlsConfig {
+    /// The certificate for this client
+    pub client_cert: Vec<u8>,
+    /// The private key for this client
+    pub client_private_key: Vec<u8>,
+}
+
+impl Debug for ClientTlsConfig {
+    // Intentionally omit details here since they could leak a key if ever printed
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ClientTlsConfig(..)")
+    }
 }
 
 impl ServerGatewayOptions {
     /// Attempt to establish a connection to the Temporal server
     pub async fn connect(&self) -> Result<ServerGateway, CoreInitError> {
-        let channel = Channel::from_shared(self.target_url.to_string())?
-            .connect()
-            .await?;
+        let channel = Channel::from_shared(self.target_url.to_string())?;
+        let channel = self.add_tls_to_channel(channel).await?;
+        let channel = channel.connect().await?;
         let interceptor = intercept(&self);
         let service = WorkflowServiceClient::with_interceptor(channel, interceptor);
         Ok(ServerGateway {
             service,
             opts: self.clone(),
         })
+    }
+
+    /// If TLS is configured, set the appropriate options on the provided channel and return it.
+    /// Passes it through if TLS options not set.
+    async fn add_tls_to_channel(&self, channel: Endpoint) -> Result<Endpoint, CoreInitError> {
+        if let Some(tls_cfg) = &self.tls_cfg {
+            let mut tls = tonic::transport::ClientTlsConfig::new();
+
+            if let Some(root_cert) = &tls_cfg.server_root_ca_cert {
+                let server_root_ca_cert = Certificate::from_pem(root_cert);
+                tls = tls.ca_certificate(server_root_ca_cert);
+            }
+
+            if let Some(domain) = &tls_cfg.domain {
+                tls = tls.domain_name(domain);
+            }
+
+            if let Some(client_opts) = &tls_cfg.client_tls_config {
+                let client_identity =
+                    Identity::from_pem(&client_opts.client_cert, &client_opts.client_private_key);
+                tls = tls.identity(client_identity);
+            }
+
+            return Ok(channel.tls_config(tls)?);
+        }
+        Ok(channel)
     }
 }
 
@@ -99,6 +166,7 @@ fn intercept(opts: &ServerGatewayOptions) -> impl Fn(Request<()>) -> Result<Requ
 }
 
 /// Contains an instance of a client for interacting with the temporal server
+#[derive(Debug)]
 pub struct ServerGateway {
     /// Client for interacting with workflow service
     pub service: WorkflowServiceClient<tonic::transport::Channel>,
@@ -409,9 +477,6 @@ impl ServerGatewayApis for ServerGateway {
             .into_inner())
     }
 }
-
-#[cfg(test)]
-pub use manual_mock::MockManualGateway;
 
 #[cfg(test)]
 mod manual_mock {

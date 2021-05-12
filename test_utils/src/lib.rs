@@ -147,6 +147,7 @@ pub fn get_integ_server_options(task_q: &str) -> ServerGatewayOptions {
         worker_binary_id: "".to_string(),
         long_poll_timeout: Duration::from_secs(60),
         target_url: url,
+        tls_cfg: None,
     }
 }
 
