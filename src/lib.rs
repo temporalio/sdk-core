@@ -11,6 +11,7 @@ pub extern crate assert_matches;
 extern crate tracing;
 
 pub mod protos;
+pub mod test_workflow_driver;
 
 mod activity;
 pub(crate) mod core_tracing;
@@ -37,6 +38,7 @@ pub use pollers::{
     ClientTlsConfig, PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions,
     TlsConfig,
 };
+pub use protosext::IntoCompletion;
 pub use url::Url;
 
 use crate::{
@@ -143,19 +145,30 @@ pub trait Core: Send + Sync {
 }
 
 /// Holds various configuration information required to call [init]
+#[derive(Debug, Clone, derive_builder::Builder)]
+#[builder(setter(into))]
 pub struct CoreInitOptions {
     /// Options for the connection to the temporal server
     pub gateway_opts: ServerGatewayOptions,
     /// If set to true (which should be the default choice until sticky task queues are implemented)
     /// workflows are evicted after they no longer have any pending activations. IE: After they
     /// have sent new commands to the server.
+    #[builder(default = "true")]
     pub evict_after_pending_cleared: bool,
     /// The maximum allowed number of workflow tasks that will ever be given to lang at one
     /// time. Note that one workflow task may require multiple activations - so the WFT counts as
     /// "outstanding" until all activations it requires have been completed.
+    #[builder(default = "100")]
     pub max_outstanding_workflow_tasks: usize,
     /// The maximum allowed number of activity tasks that will ever be given to lang at one time.
+    #[builder(default = "100")]
     pub max_outstanding_activities: usize,
+    /// Maximum number of concurrent poll workflow task requests we will perform at a time
+    #[builder(default = "10")]
+    pub max_concurrent_wft_polls: usize,
+    /// Maximum number of concurrent poll activity task requests we will perform at a time
+    #[builder(default = "10")]
+    pub max_concurrent_at_polls: usize,
 }
 
 /// Initializes an instance of the core sdk and establishes a connection to the temporal server.
@@ -218,7 +231,7 @@ where
                 return Ok(pa);
             }
 
-            if self.shutdown_requested.load(Ordering::SeqCst) {
+            if self.shutdown_requested.load(Ordering::Relaxed) {
                 return Err(PollWfError::ShutDown);
             }
 
@@ -429,6 +442,8 @@ where
         self.shutdown_requested.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
         self.wft_manager.shutdown();
+        self.wf_task_poll_buffer.shutdown();
+        self.at_task_poll_buffer.shutdown();
         self.activity_heartbeat_manager_handle.shutdown().await;
     }
 }
@@ -442,10 +457,18 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                 workflow_task_complete_notify.clone(),
                 init_options.evict_after_pending_cleared,
             ),
-            init_options,
             server_gateway: sg.clone(),
-            wf_task_poll_buffer: new_workflow_task_buffer(sg.clone()),
-            at_task_poll_buffer: new_activity_task_buffer(sg.clone()),
+            wf_task_poll_buffer: new_workflow_task_buffer(
+                sg.clone(),
+                init_options.max_concurrent_wft_polls,
+                init_options.max_concurrent_wft_polls * 2,
+            ),
+            at_task_poll_buffer: new_activity_task_buffer(
+                sg.clone(),
+                init_options.max_concurrent_at_polls,
+                init_options.max_concurrent_at_polls * 2,
+            ),
+            init_options,
             outstanding_activity_tasks: Default::default(),
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
@@ -506,7 +529,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                        "No work for lang to perform after polling server. Sending autocomplete.");
                 self.complete_workflow_task(WfActivationCompletion {
                     task_token: tt.0,
-                    status: Some(workflow_completion::Success::from_cmds(vec![]).into()),
+                    status: Some(workflow_completion::Success::from_variants(vec![]).into()),
                 })
                 .await?;
                 Ok(None)
@@ -595,10 +618,11 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     {
         tokio::select! {
             biased;
-            r = wrap_this => r,
+
             _ = self.shutdown_notifier() => {
                 Err(ShutdownErr.into())
             }
+            r = wrap_this => r,
         }
     }
 

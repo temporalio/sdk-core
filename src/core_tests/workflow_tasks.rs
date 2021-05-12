@@ -1,5 +1,6 @@
 use crate::{
     job_assert,
+    machines::test_help::mock_core,
     machines::test_help::{
         build_fake_core, build_multihist_mock_sg, fake_core_from_mock_sg, fake_sg_opts,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, poll_and_reply, EvictionMode,
@@ -25,16 +26,14 @@ use crate::{
         },
     },
     test_help::canned_histories,
-    Core, CoreInitOptions, CoreSDK, WfActivationCompletion,
+    Core, CoreInitOptionsBuilder, CoreSDK, WfActivationCompletion,
 };
 use rstest::{fixture, rstest};
 use std::{
     collections::VecDeque,
-    sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
 };
+use test_utils::fanout_tasks;
 
 #[fixture(hist_batches = &[])]
 fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
@@ -904,12 +903,11 @@ async fn max_concurrent_wft_respected() {
 
     let core = CoreSDK::new(
         mock_gateway,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 2,
-            max_outstanding_activities: 1,
-        },
+        CoreInitOptionsBuilder::default()
+            .gateway_opts(fake_sg_opts())
+            .max_outstanding_workflow_tasks(2usize)
+            .build()
+            .unwrap(),
     );
 
     // Poll twice in a row before completing -- we should be at limit
@@ -922,7 +920,7 @@ async fn max_concurrent_wft_respected() {
         async {
             core.complete_workflow_task(WfActivationCompletion::from_status(
                 r1.task_token,
-                workflow_completion::Success::from_cmds(vec![StartTimer {
+                workflow_completion::Success::from_variants(vec![StartTimer {
                     timer_id: "timer-1".to_string(),
                     ..Default::default()
                 }
@@ -943,7 +941,7 @@ async fn max_concurrent_wft_respected() {
     for i in 2..19 {
         core.complete_workflow_task(WfActivationCompletion::from_status(
             r1.task_token,
-            workflow_completion::Success::from_cmds(vec![StartTimer {
+            workflow_completion::Success::from_variants(vec![StartTimer {
                 timer_id: format!("timer-{}", i),
                 ..Default::default()
             }
@@ -956,8 +954,6 @@ async fn max_concurrent_wft_respected() {
     }
 }
 
-// TODO: Test doesn't fail when mock not called enough times (even though it panics??), but it
-//   actually only should be called two times (with 1,2,3)
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[3]))]
 #[tokio::test]
 async fn activity_not_canceled_on_replay_repro(hist_batches: &[usize]) {
@@ -1081,45 +1077,29 @@ async fn lots_of_workflows() {
     });
 
     let mock = build_multihist_mock_sg(hists, false, None);
-    let core = CoreSDK::new(
-        mock.sg,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 20,
-            max_outstanding_activities: 5,
-        },
-    );
+    let core = &mock_core(mock.sg);
 
-    let core = Arc::new(core);
-    let mut handles = vec![];
-    for _ in 0..5 {
-        let core = core.clone();
-        let h = tokio::spawn(async move {
-            while let Ok(wft) = core.poll_workflow_task().await {
-                let job = &wft.jobs[0];
-                let reply = match job.variant {
-                    Some(wf_activation_job::Variant::StartWorkflow(_)) => StartTimer {
-                        timer_id: "fake_timer".to_string(),
-                        ..Default::default()
-                    }
-                    .into(),
-                    Some(wf_activation_job::Variant::RemoveFromCache(_)) => continue,
-                    _ => CompleteWorkflowExecution { result: None }.into(),
-                };
-                core.complete_workflow_task(WfActivationCompletion::from_status(
-                    wft.task_token,
-                    workflow_completion::Success::from_cmds(vec![reply]).into(),
-                ))
-                .await
-                .unwrap();
-            }
-        });
-        handles.push(h);
-    }
-    for h in handles {
-        h.await.unwrap()
-    }
+    fanout_tasks(5, |_| async move {
+        while let Ok(wft) = core.poll_workflow_task().await {
+            let job = &wft.jobs[0];
+            let reply = match job.variant {
+                Some(wf_activation_job::Variant::StartWorkflow(_)) => StartTimer {
+                    timer_id: "fake_timer".to_string(),
+                    ..Default::default()
+                }
+                .into(),
+                Some(wf_activation_job::Variant::RemoveFromCache(_)) => continue,
+                _ => CompleteWorkflowExecution { result: None }.into(),
+            };
+            core.complete_workflow_task(WfActivationCompletion::from_status(
+                wft.task_token,
+                workflow_completion::Success::from_variants(vec![reply]).into(),
+            ))
+            .await
+            .unwrap();
+        }
+    })
+    .await;
     assert_eq!(core.wft_manager.outstanding_wft(), 0);
 }
 

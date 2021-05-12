@@ -693,14 +693,13 @@ fn convert_payloads(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::protos::coresdk::workflow_activation::WfActivation;
     use crate::{
-        machines::{
-            test_help::{CommandSender, TestHistoryBuilder, TestWorkflowDriver},
-            workflow_machines::WorkflowMachines,
+        machines::{test_help::TestHistoryBuilder, workflow_machines::WorkflowMachines},
+        protos::coresdk::{
+            workflow_activation::WfActivation, workflow_commands::CompleteWorkflowExecution,
         },
-        protos::coresdk::workflow_commands::CompleteWorkflowExecution,
         test_help::canned_histories,
+        test_workflow_driver::{CommandSender, TestWorkflowDriver},
     };
     use rstest::{fixture, rstest};
     use std::time::Duration;
@@ -740,9 +739,7 @@ mod test {
                 ..Default::default()
             };
             command_sink.activity(activity).await;
-
-            let complete = CompleteWorkflowExecution::default();
-            command_sink.send(complete.into());
+            command_sink.complete_workflow_execution();
         })
     }
 
@@ -802,8 +799,7 @@ mod test {
             cmd_sink.cancel_activity("activity-id-1");
             cancel_activity_future.await;
 
-            let complete = CompleteWorkflowExecution::default();
-            cmd_sink.send(complete.into());
+            cmd_sink.complete_workflow_execution();
         });
 
         let mut t = TestHistoryBuilder::default();

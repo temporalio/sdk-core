@@ -11,17 +11,15 @@ use crate::{
             RespondActivityTaskCompletedResponse,
         },
     },
-    ActivityHeartbeat, ActivityTask, Core, CoreInitOptions, CoreSDK,
+    ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK,
 };
 use futures::FutureExt;
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
+use test_utils::fanout_tasks;
 use tokio::time::sleep;
 
 #[tokio::test]
@@ -54,12 +52,11 @@ async fn max_activites_respected() {
 
     let core = CoreSDK::new(
         mock_gateway,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 1,
-            max_outstanding_activities: 2,
-        },
+        CoreInitOptionsBuilder::default()
+            .gateway_opts(fake_sg_opts())
+            .max_outstanding_activities(2usize)
+            .build()
+            .unwrap(),
     );
 
     // We allow two outstanding activities, therefore first two polls should return right away
@@ -92,15 +89,7 @@ async fn activity_not_found_returns_ok() {
         .times(1)
         .returning(|_, _| Err(tonic::Status::not_found("unimportant")));
 
-    let core = CoreSDK::new(
-        mock_gateway,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 5,
-            max_outstanding_activities: 5,
-        },
-    );
+    let core = mock_core(mock_gateway);
 
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: vec![1],
@@ -133,15 +122,7 @@ async fn heartbeats_report_cancels() {
             })
         });
 
-    let core = CoreSDK::new(
-        mock_gateway,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 5,
-            max_outstanding_activities: 5,
-        },
-    );
+    let core = mock_core(mock_gateway);
 
     let act = core.poll_activity_task().await.unwrap();
     core.record_activity_heartbeat(ActivityHeartbeat {
@@ -195,15 +176,7 @@ async fn activity_cancel_interrupts_poll() {
             .boxed()
         });
 
-    let core = CoreSDK::new(
-        mock_gateway,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 5,
-            max_outstanding_activities: 5,
-        },
-    );
+    let core = mock_core(mock_gateway);
     let last_finisher = AtomicUsize::new(0);
     // Perform first poll to get the activity registered
     let act = core.poll_activity_task().await.unwrap();
@@ -249,7 +222,7 @@ async fn activity_poll_timeout_retries() {
 async fn many_concurrent_heartbeat_cancels() {
     // Run a whole bunch of activities in parallel, having the server return cancellations for
     // them after a few successful heartbeats
-    const CONCURRENCY_NUM: u32 = 1000;
+    const CONCURRENCY_NUM: usize = 1000;
 
     let mut mock_gateway = MockManualGateway::new();
     let mut poll_resps = VecDeque::from(
@@ -307,16 +280,16 @@ async fn many_concurrent_heartbeat_cancels() {
             .boxed()
         });
 
-    let core = CoreSDK::new(
+    let core = &CoreSDK::new(
         mock_gateway,
-        CoreInitOptions {
-            gateway_opts: fake_sg_opts(),
-            evict_after_pending_cleared: true,
-            max_outstanding_workflow_tasks: 5,
-            max_outstanding_activities: CONCURRENCY_NUM as usize,
-        },
+        CoreInitOptionsBuilder::default()
+            .gateway_opts(fake_sg_opts())
+            .max_outstanding_activities(CONCURRENCY_NUM)
+            // Only 1 poll at a time to avoid over-polling and running out of responses
+            .max_concurrent_at_polls(1usize)
+            .build()
+            .unwrap(),
     );
-    let core = Arc::new(core);
 
     // Poll all activities first so they are registered
     for _ in 0..CONCURRENCY_NUM {
@@ -324,52 +297,37 @@ async fn many_concurrent_heartbeat_cancels() {
     }
 
     // Spawn "activities"
-    let mut handles = vec![];
-    for i in 0..CONCURRENCY_NUM {
-        let core = core.clone();
-        let jh = tokio::spawn(async move {
-            for _ in 0..10 {
-                core.record_activity_heartbeat(ActivityHeartbeat {
-                    task_token: i.to_be_bytes().to_vec(),
-                    details: vec![],
-                });
-                sleep(Duration::from_millis(100)).await;
-            }
-        });
-        handles.push(jh);
-    }
-
-    // Wait for all the heartbeating to finish, which should result in a bunch of pending
-    // cancellations
-    for h in handles.drain(..) {
-        h.await.unwrap()
-    }
-    let mut handles = vec![];
+    fanout_tasks(CONCURRENCY_NUM, |i| async move {
+        let task_token = i.to_be_bytes().to_vec();
+        for _ in 0..10 {
+            core.record_activity_heartbeat(ActivityHeartbeat {
+                task_token: task_token.clone(),
+                details: vec![],
+            });
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await;
 
     // Read all the cancellations and reply to them concurrently
-    for _ in 0..CONCURRENCY_NUM {
-        let core = core.clone();
-        let jh = tokio::spawn(async move {
-            let r = core.poll_activity_task().await.unwrap();
-            assert_matches!(
-                r,
-                ActivityTask {
-                    variant: Some(activity_task::Variant::Cancel(_)),
-                    ..
-                }
-            );
-            core.complete_activity_task(ActivityTaskCompletion {
-                task_token: r.task_token.clone(),
-                result: Some(ActivityResult::cancel_from_details(None)),
-            })
-            .await
-            .unwrap();
-        });
-        handles.push(jh);
-    }
+    fanout_tasks(CONCURRENCY_NUM, |_| async move {
+        let r = core.poll_activity_task().await.unwrap();
+        assert_matches!(
+            r,
+            ActivityTask {
+                variant: Some(activity_task::Variant::Cancel(_)),
+                ..
+            }
+        );
+        core.complete_activity_task(ActivityTaskCompletion {
+            task_token: r.task_token.clone(),
+            result: Some(ActivityResult::cancel_from_details(None)),
+        })
+        .await
+        .unwrap();
+    })
+    .await;
 
-    for h in handles.drain(..) {
-        h.await.unwrap();
-    }
     assert!(core.outstanding_activity_tasks.is_empty());
+    core.shutdown().await;
 }

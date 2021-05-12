@@ -272,12 +272,9 @@ impl Cancellable for TimerMachine {
 mod test {
     use super::*;
     use crate::{
-        machines::{
-            test_help::{CommandSender, TestHistoryBuilder, TestWorkflowDriver},
-            workflow_machines::WorkflowMachines,
-        },
-        protos::coresdk::workflow_commands::CompleteWorkflowExecution,
+        machines::{test_help::TestHistoryBuilder, workflow_machines::WorkflowMachines},
         test_help::canned_histories,
+        test_workflow_driver::{CommandSender, TestWorkflowDriver},
     };
     use rstest::{fixture, rstest};
     use std::time::Duration;
@@ -301,9 +298,7 @@ mod test {
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
             };
             command_sink.timer(timer).await;
-
-            let complete = CompleteWorkflowExecution::default();
-            command_sink.send(complete.into());
+            command_sink.complete_workflow_execution();
         });
 
         let t = canned_histories::single_timer("timer1");
@@ -391,9 +386,7 @@ mod test {
             // Cancel the first timer after having waited on the second
             cmd_sink.cancel_timer("cancel_timer");
             cancel_timer_fut.await;
-
-            let complete = CompleteWorkflowExecution::default();
-            cmd_sink.send(complete.into());
+            cmd_sink.complete_workflow_execution();
         });
 
         let t = canned_histories::cancel_timer("wait_timer", "cancel_timer");
@@ -450,9 +443,7 @@ mod test {
             // Immediately cancel the timer
             cmd_sink.cancel_timer("cancel_timer");
             cancel_timer_fut.await;
-
-            let complete = CompleteWorkflowExecution::default();
-            cmd_sink.send(complete.into());
+            cmd_sink.complete_workflow_execution();
         });
 
         let mut t = TestHistoryBuilder::default();

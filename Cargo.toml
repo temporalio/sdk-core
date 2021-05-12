@@ -19,6 +19,7 @@ async-trait = "0.1"
 base64 = "0.13"
 crossbeam = "0.8"
 dashmap = "4.0"
+derive_builder = "0.10"
 derive_more = "0.99"
 futures = "0.3"
 itertools = "0.10"
@@ -50,16 +51,22 @@ bimap = "0.6.1"
 mockall = "0.9"
 rstest = "0.9"
 lazy_static = "1.4"
+test_utils = { path = "test_utils" }
 
 [build-dependencies]
 tonic-build = "0.4"
 
 [workspace]
-members = [".", "fsm"]
+members = [".", "fsm", "test_utils"]
 
 [[test]]
 name = "integ_tests"
 path = "tests/main.rs"
 # Prevents autodiscovery, and hence these getting run with `cargo test`. Run with
 # `cargo test --test integ_tests`
+test = false
+
+[[test]]
+name = "load_tests"
+path = "tests/load_tests.rs"
 test = false

@@ -1,0 +1,14 @@
+[package]
+name = "test_utils"
+version = "0.1.0"
+authors = ["Spencer Judge <spencer@temporal.io>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+futures = "0.3"
+temporal-sdk-core = { path = ".." }
+rand = "0.8"
+url = "2.2"
+base64 = "0.13"

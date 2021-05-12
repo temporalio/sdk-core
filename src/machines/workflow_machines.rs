@@ -1,5 +1,3 @@
-use crate::protos::coresdk::workflow_activation::wf_activation_job::Variant;
-use crate::protos::coresdk::PayloadsToPayloadError;
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
@@ -11,9 +9,10 @@ use crate::{
     protos::{
         coresdk::{
             workflow_activation::{
-                wf_activation_job, StartWorkflow, UpdateRandomSeed, WfActivation,
+                wf_activation_job::{self, Variant},
+                StartWorkflow, UpdateRandomSeed, WfActivation,
             },
-            PayloadsExt,
+            PayloadsExt, PayloadsToPayloadError,
         },
         temporal::api::{
             enums::v1::{CommandType, EventType},
@@ -21,7 +20,7 @@ use crate::{
         },
     },
     protosext::HistoryInfo,
-    workflow::{DrivenWorkflow, WorkflowFetcher},
+    workflow::{CommandID, DrivenWorkflow, WorkflowFetcher},
 };
 use slotmap::SlotMap;
 use std::{
@@ -77,12 +76,6 @@ pub(crate) struct WorkflowMachines {
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: DrivenWorkflow,
-}
-
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub enum CommandID {
-    Timer(String),
-    Activity(String),
 }
 
 slotmap::new_key_type! { struct MachineKey; }
