@@ -29,9 +29,12 @@ mod core_tests;
 #[cfg(test)]
 mod test_help;
 
-pub use crate::errors::{
-    ActivityHeartbeatError, CompleteActivityError, CompleteWfError, CoreInitError,
-    PollActivityError, PollWfError,
+pub use crate::{
+    errors::{
+        ActivityHeartbeatError, CompleteActivityError, CompleteWfError, CoreInitError,
+        PollActivityError, PollWfError,
+    },
+    workflow::WorkflowCachingPolicy,
 };
 pub use core_tracing::tracing_init;
 pub use pollers::{
@@ -150,11 +153,9 @@ pub trait Core: Send + Sync {
 pub struct CoreInitOptions {
     /// Options for the connection to the temporal server
     pub gateway_opts: ServerGatewayOptions,
-    /// If set to true (which should be the default choice until sticky task queues are implemented)
-    /// workflows are evicted after they no longer have any pending activations. IE: After they
-    /// have sent new commands to the server.
-    #[builder(default = "true")]
-    pub evict_after_pending_cleared: bool,
+    /// See [WorkflowEvictionPolicy]
+    #[builder(default = "WorkflowCachingPolicy::NonSticky")]
+    pub eviction_policy: WorkflowCachingPolicy,
     /// The maximum allowed number of workflow tasks that will ever be given to lang at one
     /// time. Note that one workflow task may require multiple activations - so the WFT counts as
     /// "outstanding" until all activations it requires have been completed.
@@ -455,7 +456,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         Self {
             wft_manager: WorkflowTaskManager::new(
                 workflow_task_complete_notify.clone(),
-                init_options.evict_after_pending_cleared,
+                init_options.eviction_policy,
             ),
             server_gateway: sg.clone(),
             wf_task_poll_buffer: new_workflow_task_buffer(

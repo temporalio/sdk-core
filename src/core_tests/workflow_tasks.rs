@@ -1,9 +1,8 @@
 use crate::{
     job_assert,
-    machines::test_help::mock_core,
     machines::test_help::{
         build_fake_core, build_multihist_mock_sg, fake_core_from_mock_sg, fake_sg_opts,
-        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, poll_and_reply, EvictionMode,
+        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_core, poll_and_reply,
         FakeCore, FakeWfResponses, TestHistoryBuilder,
     },
     pollers::MockServerGatewayApis,
@@ -26,6 +25,7 @@ use crate::{
         },
     },
     test_help::canned_histories,
+    workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
     Core, CoreInitOptionsBuilder, CoreSDK, WfActivationCompletion,
 };
 use rstest::{fixture, rstest};
@@ -60,12 +60,15 @@ fn single_activity_failure_setup(hist_batches: &[usize]) -> FakeCore {
 }
 
 #[rstest]
-#[case::incremental(single_timer_setup(&[1, 2]), EvictionMode::NotSticky)]
-#[case::replay(single_timer_setup(&[2]), EvictionMode::NotSticky)]
-#[case::incremental_evict(single_timer_setup(&[1, 2]), EvictionMode::AfterEveryReply)]
-#[case::replay_evict(single_timer_setup(&[2, 2]), EvictionMode::AfterEveryReply)]
+#[case::incremental(single_timer_setup(&[1, 2]), NonSticky)]
+#[case::replay(single_timer_setup(&[2]), NonSticky)]
+#[case::incremental_evict(single_timer_setup(&[1, 2]), AfterEveryReply)]
+#[case::replay_evict(single_timer_setup(&[2, 2]), AfterEveryReply)]
 #[tokio::test]
-async fn single_timer_test_across_wf_bridge(#[case] core: FakeCore, #[case] evict: EvictionMode) {
+async fn single_timer_test_across_wf_bridge(
+    #[case] core: FakeCore,
+    #[case] evict: WorkflowCachingPolicy,
+) {
     poll_and_reply(
         &core,
         evict,
@@ -97,7 +100,7 @@ case::replay_activity_failure(single_activity_failure_setup(&[2]))
 async fn single_activity_completion(core: FakeCore) {
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
@@ -128,7 +131,7 @@ async fn parallel_timer_test_across_wf_bridge(hist_batches: &[usize]) {
 
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
@@ -185,7 +188,7 @@ async fn timer_cancel_test_across_wf_bridge(hist_batches: &[usize]) {
 
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
@@ -229,7 +232,7 @@ async fn scheduled_activity_cancellation_try_cancel(hist_batches: &[usize]) {
 
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
@@ -268,7 +271,7 @@ async fn scheduled_activity_timeout(hist_batches: &[usize]) {
     let core = build_fake_core(wfid, t, hist_batches);
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
@@ -320,7 +323,7 @@ async fn started_activity_timeout(hist_batches: &[usize]) {
 
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
@@ -373,7 +376,7 @@ async fn cancelled_activity_timeout(hist_batches: &[usize]) {
 
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
@@ -437,7 +440,7 @@ async fn started_activity_cancellation_abandon(hist_batches: &[usize]) {
 async fn verify_activity_cancellation_abandon(activity_id: &&str, core: &FakeCore) {
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
@@ -508,7 +511,7 @@ async fn started_activity_cancellation_wait_for_cancellation(hist_batches: &[usi
 async fn verify_activity_cancellation_wait_for_cancellation(activity_id: &str, core: &FakeCore) {
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
@@ -585,7 +588,7 @@ async fn verify_activity_cancellation_try_cancel_task_canceled(
 ) {
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
@@ -633,7 +636,7 @@ async fn workflow_update_random_seed_on_workflow_reset() {
 
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &|res| {
@@ -691,7 +694,7 @@ async fn cancel_timer_before_sent_wf_bridge() {
 
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[gen_assert_and_reply(
             &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
             vec![
@@ -712,11 +715,14 @@ async fn cancel_timer_before_sent_wf_bridge() {
 }
 
 #[rstest]
-#[case::no_evict_inc(&[1, 2, 2], EvictionMode::NotSticky)]
-#[case::no_evict(&[2, 2], EvictionMode::NotSticky)]
-#[case::evict(&[1, 2, 2, 2], EvictionMode::AfterEveryReply)]
+#[case::no_evict_inc(&[1, 2, 2], NonSticky)]
+#[case::no_evict(&[2, 2], NonSticky)]
+#[case::evict(&[1, 2, 2, 2], AfterEveryReply)]
 #[tokio::test]
-async fn complete_activation_with_failure(#[case] batches: &[usize], #[case] evict: EvictionMode) {
+async fn complete_activation_with_failure(
+    #[case] batches: &[usize],
+    #[case] evict: WorkflowCachingPolicy,
+) {
     let wfid = "fake_wf_id";
     let timer_id = "timer";
 
@@ -765,7 +771,7 @@ async fn simple_timer_fail_wf_execution(hist_batches: &[usize]) {
 
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
@@ -800,7 +806,7 @@ async fn two_signals(hist_batches: &[usize]) {
 
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
@@ -846,7 +852,7 @@ async fn workflow_failures_only_reported_once() {
 
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &|_| {},
@@ -964,7 +970,7 @@ async fn activity_not_canceled_on_replay_repro(hist_batches: &[usize]) {
 
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
@@ -1021,7 +1027,7 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &[usize])
 
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
@@ -1113,7 +1119,7 @@ async fn wft_timeout_repro(hist_batches: &[usize]) {
 
     poll_and_reply(
         &core,
-        EvictionMode::NotSticky,
+        NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),

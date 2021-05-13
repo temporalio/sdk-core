@@ -7,6 +7,7 @@ use temporal_sdk_core::{
     },
     test_workflow_driver::TestRustWorker,
     Core, CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayApis, ServerGatewayOptions,
+    WorkflowCachingPolicy,
 };
 use url::Url;
 
@@ -31,7 +32,7 @@ impl CoreWfStarter {
             test_name: test_name.to_owned(),
             core_options: CoreInitOptionsBuilder::default()
                 .gateway_opts(get_integ_server_options(&task_queue))
-                .evict_after_pending_cleared(false)
+                .eviction_policy(WorkflowCachingPolicy::sticky_default())
                 .build()
                 .unwrap(),
             task_queue,
@@ -90,8 +91,8 @@ impl CoreWfStarter {
         &self.test_name
     }
 
-    pub fn evict_after_pending_cleared(&mut self, evict_after_pending_cleared: bool) -> &mut Self {
-        self.core_options.evict_after_pending_cleared = evict_after_pending_cleared;
+    pub fn eviction_policy(&mut self, policy: WorkflowCachingPolicy) -> &mut Self {
+        self.core_options.eviction_policy = policy;
         self
     }
 
@@ -156,7 +157,7 @@ pub async fn get_integ_core(task_q: &str) -> impl Core {
     temporal_sdk_core::init(
         CoreInitOptionsBuilder::default()
             .gateway_opts(gateway_opts)
-            .evict_after_pending_cleared(false)
+            .eviction_policy(WorkflowCachingPolicy::sticky_default())
             .build()
             .unwrap(),
     )

@@ -8,8 +8,8 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     task_token::TaskToken,
     workflow::{
-        NextWfActivation, OutgoingServerCommands, WorkflowConcurrencyManager, WorkflowError,
-        WorkflowManager,
+        NextWfActivation, OutgoingServerCommands, WorkflowCachingPolicy,
+        WorkflowConcurrencyManager, WorkflowError, WorkflowManager,
     },
 };
 use crossbeam::queue::SegQueue;
@@ -44,8 +44,7 @@ pub struct WorkflowTaskManager {
     ready_buffered_wft: SegQueue<ValidPollWFTQResponse>,
     /// Used to wake blocked workflow task polling when tasks complete
     workflow_task_complete_notify: Arc<Notify>,
-    /// If true, evict workflows after they complete each workflow task
-    evict_after_wft_complete: bool,
+    eviction_policy: WorkflowCachingPolicy,
 }
 
 #[derive(Debug, derive_more::From)]
@@ -60,7 +59,10 @@ pub enum NewWfTaskOutcome {
 }
 
 impl WorkflowTaskManager {
-    pub fn new(workflow_task_complete_notify: Arc<Notify>, evict_after_wft_complete: bool) -> Self {
+    pub fn new(
+        workflow_task_complete_notify: Arc<Notify>,
+        eviction_policy: WorkflowCachingPolicy,
+    ) -> Self {
         Self {
             workflow_machines: WorkflowConcurrencyManager::new(),
             workflow_task_tokens: Default::default(),
@@ -69,7 +71,7 @@ impl WorkflowTaskManager {
             outstanding_workflow_tasks: Default::default(),
             ready_buffered_wft: Default::default(),
             workflow_task_complete_notify,
-            evict_after_wft_complete,
+            eviction_policy,
         }
     }
 
@@ -250,7 +252,7 @@ impl WorkflowTaskManager {
             self.outstanding_workflow_tasks.remove(run_id);
 
             // Blow them up if we're in non-sticky mode as well
-            if self.evict_after_wft_complete {
+            if self.eviction_policy == WorkflowCachingPolicy::NonSticky {
                 self.evict_run(task_token);
             }
 

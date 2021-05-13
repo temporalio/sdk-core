@@ -7,6 +7,7 @@ mod transition_coverage;
 pub(crate) use history_builder::TestHistoryBuilder;
 pub(crate) use transition_coverage::add_coverage;
 
+use crate::workflow::WorkflowCachingPolicy;
 use crate::{
     pollers::MockServerGatewayApis,
     protos::{
@@ -238,18 +239,6 @@ pub fn fake_sg_opts() -> ServerGatewayOptions {
 
 type AsserterWithReply<'a> = (&'a dyn Fn(&WfActivation), wf_activation_completion::Status);
 
-pub enum EvictionMode {
-    #[allow(dead_code)] // Not used until we have stickyness options implemented
-    /// Core is in sticky mode, and workflows are being cached
-    Sticky,
-    /// Core is not in sticky mode, and workflows are evicted after they finish their pending
-    /// activations
-    NotSticky,
-    /// Not a real mode, but good for imitating crashes. Evict workflows after *every* reply,
-    /// even if there are pending activations
-    AfterEveryReply,
-}
-
 /// This function accepts a list of asserts and replies to workflow activations to run against the
 /// provided instance of fake core.
 ///
@@ -259,7 +248,7 @@ pub enum EvictionMode {
 /// proceed
 pub(crate) async fn poll_and_reply<'a>(
     core: &'a FakeCore,
-    eviction_mode: EvictionMode,
+    eviction_mode: WorkflowCachingPolicy,
     expect_and_reply: &'a [AsserterWithReply<'a>],
 ) {
     let mut evictions = 0;
@@ -325,9 +314,9 @@ pub(crate) async fn poll_and_reply<'a>(
             }
 
             match eviction_mode {
-                EvictionMode::Sticky => unimplemented!(),
-                EvictionMode::NotSticky => (),
-                EvictionMode::AfterEveryReply => {
+                WorkflowCachingPolicy::Sticky { .. } => unimplemented!(),
+                WorkflowCachingPolicy::NonSticky => (),
+                WorkflowCachingPolicy::AfterEveryReply => {
                     if evictions < expected_evictions {
                         core.inner.wft_manager.evict_run(&task_tok.into());
                         evictions += 1;
