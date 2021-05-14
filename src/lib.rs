@@ -570,7 +570,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             if let Err(ts) = res {
                 let should_evict = self.handle_wft_complete_errs(ts)?;
                 if should_evict {
-                    self.wft_manager.evict_run(&task_token)
+                    self.wft_manager.evict_run(&task_token);
                 }
             }
         }

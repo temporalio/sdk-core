@@ -13,7 +13,7 @@ use crate::{
     },
 };
 use crossbeam::queue::SegQueue;
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 use std::{fmt::Debug, sync::Arc};
 use tokio::sync::Notify;
 use tracing::Span;
@@ -25,13 +25,11 @@ use tracing::Span;
 pub struct WorkflowTaskManager {
     /// Manages threadsafe access to workflow machine instances
     workflow_machines: WorkflowConcurrencyManager,
-    /// Maps task tokens to workflow run ids
-    workflow_task_tokens: DashMap<TaskToken, String>,
+    /// Maps task tokens to info about their associated workflow task
+    workflow_task_tokens: DashMap<TaskToken, WorkflowTaskInfo>,
     /// Workflows may generate new activations immediately upon completion (ex: while replaying,
     /// or when cancelling an activity in try-cancel/abandon mode). They queue here.
     pending_activations: PendingActivations,
-    /// Workflows (by run id) for which the last task completion we sent was a failure
-    workflows_last_task_failed: DashSet<String>,
     /// Used to track which workflows (by run id) have outstanding workflow tasks. Additionally,
     /// if the value is set, it indicates there is a buffered poll response from the server that
     /// applies to this run. This can happen when lang takes too long to complete a task and
@@ -45,6 +43,14 @@ pub struct WorkflowTaskManager {
     /// Used to wake blocked workflow task polling when tasks complete
     workflow_task_complete_notify: Arc<Notify>,
     eviction_policy: WorkflowCachingPolicy,
+}
+
+/// Contains important information about a given workflow task that we need to memorize while
+/// lang handles it.
+#[derive(Clone, Debug)]
+pub struct WorkflowTaskInfo {
+    run_id: String,
+    attempt: u32,
 }
 
 #[derive(Debug, derive_more::From)]
@@ -67,7 +73,6 @@ impl WorkflowTaskManager {
             workflow_machines: WorkflowConcurrencyManager::new(),
             workflow_task_tokens: Default::default(),
             pending_activations: Default::default(),
-            workflows_last_task_failed: Default::default(),
             outstanding_workflow_tasks: Default::default(),
             ready_buffered_wft: Default::default(),
             workflow_task_complete_notify,
@@ -94,19 +99,23 @@ impl WorkflowTaskManager {
     pub fn run_id_for_task(&self, task_token: &TaskToken) -> Option<String> {
         self.workflow_task_tokens
             .get(task_token)
-            .map(|r| r.value().clone())
+            .map(|r| r.value().run_id.clone())
     }
 
-    /// Evict a workflow from the cache by its task token
-    pub fn evict_run(&self, task_token: &TaskToken) {
-        if let Some((_, run_id)) = self.workflow_task_tokens.remove(task_token) {
+    /// Evict a workflow from the cache by its task token. Returns that workflow's task info if
+    /// it was present.
+    pub fn evict_run(&self, task_token: &TaskToken) -> Option<WorkflowTaskInfo> {
+        if let Some((_, wti)) = self.workflow_task_tokens.remove(task_token) {
+            let run_id = &wti.run_id;
             debug!(run_id=%run_id, "Evicting run");
-            let maybe_buffered = self.outstanding_workflow_tasks.remove(&run_id);
-            self.workflow_machines.evict(&run_id);
-            self.pending_activations.remove_all_with_run_id(&run_id);
+            let maybe_buffered = self.outstanding_workflow_tasks.remove(run_id);
+            self.workflow_machines.evict(run_id);
+            self.pending_activations.remove_all_with_run_id(run_id);
             // Queue up an eviction activation
-            self.pending_activations
-                .push(create_evict_activation(task_token.to_owned(), run_id));
+            self.pending_activations.push(create_evict_activation(
+                task_token.to_owned(),
+                run_id.to_owned(),
+            ));
             self.workflow_task_complete_notify.notify_waiters();
             // If we just evicted something and there was a buffered poll response for the workflow,
             // it is now ready to be produced by the next poll. (Not immediate next, since, ignoring
@@ -115,6 +124,9 @@ impl WorkflowTaskManager {
             if let Some(buffered_poll) = maybe_buffered.and_then(|mb| mb.1) {
                 self.ready_buffered_wft.push(buffered_poll);
             }
+            Some(wti)
+        } else {
+            None
         }
     }
 
@@ -175,9 +187,6 @@ impl WorkflowTaskManager {
         let ret = if !self.pending_activations.has_pending(run_id)
             && server_cmds.at_final_workflow_task
         {
-            // Since we're telling the server about a wft success, we can remove it from the
-            // last failed map (if it was present)
-            self.workflows_last_task_failed.remove(run_id);
             Some(server_cmds)
         } else {
             None
@@ -190,10 +199,12 @@ impl WorkflowTaskManager {
     /// server
     pub fn failed_activation(&self, run_id: &str, task_token: &TaskToken) -> bool {
         // Blow up any cached data associated with the workflow
-        self.evict_run(&task_token);
-        // Only report to server if the last task wasn't also a failure (avoid spam)
-        let should_report = !self.workflows_last_task_failed.contains(run_id);
-        self.workflows_last_task_failed.insert(run_id.to_owned());
+        let should_report = if let Some(wti) = self.evict_run(&task_token) {
+            // Only report to server if the last task wasn't also a failure (avoid spam)
+            wti.attempt <= 1
+        } else {
+            true
+        };
         self.after_wft_report(run_id, &task_token);
         should_report
     }
@@ -210,9 +221,13 @@ impl WorkflowTaskManager {
         poll_wf_resp: ValidPollWFTQResponse,
     ) -> Result<Option<NextWfActivation>, WorkflowUpdateError> {
         let run_id = poll_wf_resp.workflow_execution.run_id.clone();
-        // Correlate task token w/ run ID
+
+        let wft_info = WorkflowTaskInfo {
+            run_id: run_id.clone(),
+            attempt: poll_wf_resp.attempt,
+        };
         self.workflow_task_tokens
-            .insert(poll_wf_resp.task_token, run_id.clone());
+            .insert(poll_wf_resp.task_token, wft_info);
 
         match self.workflow_machines.create_or_update(
             &run_id,

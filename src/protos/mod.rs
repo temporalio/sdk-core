@@ -850,7 +850,30 @@ pub mod temporal {
 
         pub mod workflowservice {
             pub mod v1 {
+                use std::fmt::{Display, Formatter};
+
                 tonic::include_proto!("temporal.api.workflowservice.v1");
+
+                impl Display for PollWorkflowTaskQueueResponse {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        let last_event = self
+                            .history
+                            .as_ref()
+                            .map(|h| h.events.last().map(|he| he.event_id))
+                            .flatten()
+                            .unwrap_or(0);
+                        write!(
+                            f,
+                            "PollWFTQResp(run_id: {}, attempt: {}, last_event: {})",
+                            self.workflow_execution
+                                .as_ref()
+                                .map(|we| we.run_id.as_str())
+                                .unwrap_or(""),
+                            self.attempt,
+                            last_event
+                        )
+                    }
+                }
             }
         }
     }

@@ -20,6 +20,7 @@ pub struct ValidPollWFTQResponse {
     pub workflow_execution: WorkflowExecution,
     pub history: History,
     pub next_page_token: Vec<u8>,
+    pub attempt: u32,
 }
 
 impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
@@ -33,6 +34,7 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                 workflow_execution: Some(workflow_execution),
                 history: Some(history),
                 next_page_token,
+                attempt,
                 ..
             } => {
                 if !next_page_token.is_empty() {
@@ -45,6 +47,7 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                     workflow_execution,
                     history,
                     next_page_token,
+                    attempt: attempt as u32,
                 })
             }
             _ => Err(value),

@@ -30,6 +30,7 @@ use bimap::BiMap;
 use mockall::TimesRange;
 use parking_lot::RwLock;
 use rand::{thread_rng, Rng};
+use std::collections::HashMap;
 use std::{
     collections::{BTreeMap, HashSet, VecDeque},
     ops::RangeFull,
@@ -138,15 +139,32 @@ pub fn build_multihist_mock_sg(
                 full_hist_info.wf_task_count
             );
         }
+        // Verify response batches only ever return longer histories (IE: Are sorted ascending)
+        assert!(
+            hist.response_batches
+                .as_slice()
+                .windows(2)
+                .all(|w| w[0] <= w[1]),
+            "response batches must have increasing wft numbers"
+        );
 
         if enforce_correct_number_of_polls {
             *correct_num_polls.get_or_insert(0) += hist.response_batches.len();
         }
 
+        // Convert history batches into poll responses, while also tracking how many times a given
+        // history has been returned so we can increment the associated attempt number on the WFT.
+        let mut attempts_at_task_num = HashMap::new();
         let responses: Vec<_> = hist
             .response_batches
             .iter()
-            .map(|to_task_num| hist_to_poll_resp(&hist.hist, hist.wf_id.to_owned(), *to_task_num))
+            .map(|to_task_num| {
+                let cur_attempt = attempts_at_task_num.entry(to_task_num).or_insert(1);
+                let mut r = hist_to_poll_resp(&hist.hist, hist.wf_id.to_owned(), *to_task_num);
+                r.attempt = *cur_attempt;
+                *cur_attempt += 1;
+                r
+            })
             .collect();
 
         let tasks = VecDeque::from(responses);
