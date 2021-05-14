@@ -455,12 +455,17 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     pub(crate) fn new(server_gateway: SG, init_options: CoreInitOptions) -> Self {
         let sg = Arc::new(server_gateway);
         let workflow_task_complete_notify = Arc::new(Notify::new());
+        let cache_policy = if init_options.max_cached_workflows == 0 {
+            WorkflowCachingPolicy::NonSticky
+        } else {
+            WorkflowCachingPolicy::Sticky {
+                max_cached_workflows: init_options.max_cached_workflows,
+            }
+        };
         Self {
             wft_manager: WorkflowTaskManager::new(
                 workflow_task_complete_notify.clone(),
-                WorkflowCachingPolicy::Sticky {
-                    max_cached_workflows: init_options.max_cached_workflows,
-                },
+                cache_policy,
             ),
             server_gateway: sg.clone(),
             wf_task_poll_buffer: new_workflow_task_buffer(
