@@ -15,7 +15,7 @@ use temporal_sdk_core::{
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
-    Core, IntoCompletion, PollWfError, WorkflowCachingPolicy,
+    Core, IntoCompletion, PollWfError,
 };
 use test_utils::{
     get_integ_core, init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreWfStarter, GwApi,
@@ -339,7 +339,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     let mut wf_starter = CoreWfStarter::new("wft_timeout_doesnt_create_unsolvable_autocomplete");
     wf_starter
         // Test needs eviction on and a short timeout
-        .eviction_policy(WorkflowCachingPolicy::NonSticky)
+        .max_cached_workflows(0usize)
         .wft_timeout(Duration::from_secs(1));
     let core = wf_starter.get_core().await;
     let task_queue = wf_starter.get_task_queue().to_owned();

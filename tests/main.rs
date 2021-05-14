@@ -21,18 +21,17 @@ mod integ_tests {
     #[ignore]
     async fn tls_test() {
         // Load certs/keys
-        let root = tokio::fs::read(
-            "/home/sushi/dev/temporal/customization-samples/tls/tls-simple/certs/ca.cert",
-        )
-        .await
-        .unwrap();
+        let root =
+            tokio::fs::read("/home/sushi/dev/temporal/customization-samples/tls/tls-full/certs/cluster/ca/server-intermediate-ca.pem")
+                .await
+                .unwrap();
         let client_cert = tokio::fs::read(
-            "/home/sushi/dev/temporal/customization-samples/tls/tls-simple/certs/client.pem",
+            "/home/sushi/dev/temporal/customization-samples/tls/tls-full/certs/client/accounting/client-accounting-namespace-chain.pem",
         )
         .await
         .unwrap();
         let client_private_key = tokio::fs::read(
-            "/home/sushi/dev/temporal/customization-samples/tls/tls-simple/certs/client.key",
+            "/home/sushi/dev/temporal/customization-samples/tls/tls-full/certs/client/accounting/client-accounting-namespace.key",
         )
         .await
         .unwrap();
@@ -45,7 +44,7 @@ mod integ_tests {
             long_poll_timeout: Duration::from_secs(60),
             tls_cfg: Some(TlsConfig {
                 server_root_ca_cert: Some(root),
-                domain: Some("tls-sample".to_string()),
+                domain: Some("accounting.cluster-x.contoso.com".to_string()),
                 client_tls_config: Some(ClientTlsConfig {
                     client_cert,
                     client_private_key,

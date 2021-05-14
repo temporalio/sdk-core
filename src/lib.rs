@@ -29,12 +29,9 @@ mod core_tests;
 #[cfg(test)]
 mod test_help;
 
-pub use crate::{
-    errors::{
-        ActivityHeartbeatError, CompleteActivityError, CompleteWfError, CoreInitError,
-        PollActivityError, PollWfError,
-    },
-    workflow::WorkflowCachingPolicy,
+pub use crate::errors::{
+    ActivityHeartbeatError, CompleteActivityError, CompleteWfError, CoreInitError,
+    PollActivityError, PollWfError,
 };
 pub use core_tracing::tracing_init;
 pub use pollers::{
@@ -44,6 +41,7 @@ pub use pollers::{
 pub use protosext::IntoCompletion;
 pub use url::Url;
 
+use crate::workflow::WorkflowCachingPolicy;
 use crate::{
     activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle, InflightActivityDetails},
     errors::ShutdownErr,
@@ -153,9 +151,13 @@ pub trait Core: Send + Sync {
 pub struct CoreInitOptions {
     /// Options for the connection to the temporal server
     pub gateway_opts: ServerGatewayOptions,
-    /// See [WorkflowEvictionPolicy]
-    #[builder(default = "WorkflowCachingPolicy::NonSticky")]
-    pub eviction_policy: WorkflowCachingPolicy,
+    /// If set nonzero, workflows will be cached and sticky task queues will be used, meaning that
+    /// history updates are applied incrementally to suspended instances of workflow execution.
+    /// Workflows are evicted according to a least-recently-used policy one the cache maximum is
+    /// reached. Workflows may also be explicitly evicted at any time, or as a result of errors
+    /// or failures.
+    #[builder(default = "0")]
+    pub max_cached_workflows: usize,
     /// The maximum allowed number of workflow tasks that will ever be given to lang at one
     /// time. Note that one workflow task may require multiple activations - so the WFT counts as
     /// "outstanding" until all activations it requires have been completed.
@@ -456,7 +458,9 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         Self {
             wft_manager: WorkflowTaskManager::new(
                 workflow_task_complete_notify.clone(),
-                init_options.eviction_policy,
+                WorkflowCachingPolicy::Sticky {
+                    max_cached_workflows: init_options.max_cached_workflows,
+                },
             ),
             server_gateway: sg.clone(),
             wf_task_poll_buffer: new_workflow_task_buffer(

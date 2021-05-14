@@ -65,7 +65,7 @@ pub enum NewWfTaskOutcome {
 }
 
 impl WorkflowTaskManager {
-    pub fn new(
+    pub(crate) fn new(
         workflow_task_complete_notify: Arc<Notify>,
         eviction_policy: WorkflowCachingPolicy,
     ) -> Self {

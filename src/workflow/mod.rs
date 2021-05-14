@@ -178,7 +178,7 @@ impl WorkflowManager {
 
 /// Determines when workflows are kept in the cache or evicted
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WorkflowCachingPolicy {
+pub(crate) enum WorkflowCachingPolicy {
     /// Workflows are cached until evicted explicitly or the cache size limit is reached, in which
     /// case they are evicted by least-recently-used ordering.
     Sticky {
@@ -193,17 +193,4 @@ pub enum WorkflowCachingPolicy {
     /// even if there are pending activations
     #[cfg(test)]
     AfterEveryReply,
-}
-
-/// The default number of workflows sticky mode will cache at maximum
-pub static STICKY_DEFAULT_MAX_WORKFLOWS: usize = 10_000;
-
-impl WorkflowCachingPolicy {
-    /// Returns a sticky [WorkflowEvictionPolicy] with the cache size set to
-    /// [STICKY_DEFAULT_MAX_WORKFLOWS]
-    pub fn sticky_default() -> Self {
-        WorkflowCachingPolicy::Sticky {
-            max_cached_workflows: STICKY_DEFAULT_MAX_WORKFLOWS,
-        }
-    }
 }
