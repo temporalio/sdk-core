@@ -293,12 +293,9 @@ pub mod coresdk {
     }
 
     impl ActivityTask {
-        pub fn start_from_poll_resp(
-            r: PollActivityTaskQueueResponse,
-            task_token: TaskToken,
-        ) -> Self {
+        pub fn start_from_poll_resp(r: PollActivityTaskQueueResponse) -> Self {
             ActivityTask {
-                task_token: task_token.0,
+                task_token: r.task_token,
                 activity_id: r.activity_id,
                 variant: Some(activity_task::activity_task::Variant::Start(
                     activity_task::Start {

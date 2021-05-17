@@ -21,6 +21,7 @@ mod pending_activations;
 mod pollers;
 mod protosext;
 pub(crate) mod task_token;
+mod worker;
 mod workflow;
 mod workflow_tasks;
 
@@ -35,15 +36,17 @@ pub use crate::errors::{
 };
 pub use core_tracing::tracing_init;
 pub use pollers::{
-    ClientTlsConfig, PollTaskRequest, ServerGateway, ServerGatewayApis, ServerGatewayOptions,
-    TlsConfig,
+    ClientTlsConfig, ServerGateway, ServerGatewayApis, ServerGatewayOptions, TlsConfig,
 };
 pub use protosext::IntoCompletion;
 pub use url::Url;
+pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
-use crate::workflow::WorkflowCachingPolicy;
 use crate::{
-    activity::{ActivityHeartbeatManager, ActivityHeartbeatManagerHandle, InflightActivityDetails},
+    activity::{
+        ActivityHeartbeatManager, ActivityHeartbeatManagerHandle, ActivityTaskManager,
+        InflightActivityDetails,
+    },
     errors::ShutdownErr,
     machines::EmptyWorkflowCommandErr,
     pollers::{
@@ -65,6 +68,8 @@ use crate::{
     },
     protosext::ValidPollWFTQResponse,
     task_token::TaskToken,
+    worker::Worker,
+    workflow::WorkflowCachingPolicy,
     workflow_tasks::{NewWfTaskOutcome, WorkflowTaskManager},
 };
 use dashmap::DashMap;
@@ -91,14 +96,15 @@ pub trait Core: Send + Sync {
     /// indefinitely until such work is available or [Core::shutdown] is called.
     ///
     /// TODO: Examples
-    async fn poll_workflow_task(&self) -> Result<WfActivation, PollWfError>;
+    async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError>;
 
     /// Ask the core for some work, returning an [ActivityTask]. It is then the language SDK's
     /// responsibility to call the appropriate activity code with the provided inputs. Blocks
     /// indefinitely until such work is available or [Core::shutdown] is called.
     ///
     /// TODO: Examples
-    async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError>;
+    async fn poll_activity_task(&self, task_queue: &str)
+        -> Result<ActivityTask, PollActivityError>;
 
     /// Tell the core that a workflow activation has completed
     async fn complete_workflow_task(
@@ -158,20 +164,6 @@ pub struct CoreInitOptions {
     /// or failures.
     #[builder(default = "0")]
     pub max_cached_workflows: usize,
-    /// The maximum allowed number of workflow tasks that will ever be given to lang at one
-    /// time. Note that one workflow task may require multiple activations - so the WFT counts as
-    /// "outstanding" until all activations it requires have been completed.
-    #[builder(default = "100")]
-    pub max_outstanding_workflow_tasks: usize,
-    /// The maximum allowed number of activity tasks that will ever be given to lang at one time.
-    #[builder(default = "100")]
-    pub max_outstanding_activities: usize,
-    /// Maximum number of concurrent poll workflow task requests we will perform at a time
-    #[builder(default = "10")]
-    pub max_concurrent_wft_polls: usize,
-    /// Maximum number of concurrent poll activity task requests we will perform at a time
-    #[builder(default = "10")]
-    pub max_concurrent_at_polls: usize,
 }
 
 /// Initializes an instance of the core sdk and establishes a connection to the temporal server.
@@ -193,27 +185,18 @@ struct CoreSDK<WP> {
     init_options: CoreInitOptions,
     /// Provides work in the form of responses the server would send from polling task Qs
     server_gateway: Arc<WP>,
+    /// Maps task queue names to workers
+    workers: DashMap<String, Worker>,
     /// Workflow task management
     wft_manager: WorkflowTaskManager,
-
-    /// Buffers workflow task polling in the event we need to return a pending activation while
-    /// a poll is ongoing
-    wf_task_poll_buffer: PollWorkflowTaskBuffer,
-    /// Buffers workflow task polling in the event we need to return a pending activation while
-    /// a poll is ongoing
-    at_task_poll_buffer: PollActivityTaskBuffer,
-
-    activity_heartbeat_manager_handle: ActivityHeartbeatManagerHandle,
-    /// Activities that have been issued to lang but not yet completed
-    outstanding_activity_tasks: DashMap<TaskToken, InflightActivityDetails>,
+    /// Activity task management
+    act_manager: ActivityTaskManager,
     /// Has shutdown been called?
     shutdown_requested: AtomicBool,
     /// Used to wake up future which checks shutdown state
     shutdown_notify: Notify,
     /// Used to wake blocked workflow task polling when tasks complete
     workflow_task_complete_notify: Arc<Notify>,
-    /// Used to wake blocked activity task polling when tasks complete
-    activity_task_complete_notify: Notify,
 }
 
 #[async_trait::async_trait]
@@ -222,7 +205,7 @@ where
     WP: ServerGatewayApis + Send + Sync + 'static,
 {
     #[instrument(skip(self))]
-    async fn poll_workflow_task(&self) -> Result<WfActivation, PollWfError> {
+    async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError> {
         // The poll needs to be in a loop because we can't guarantee tail call optimization in Rust
         // (simply) and we really, really need that for long-poll retries.
         loop {
@@ -247,19 +230,13 @@ where
                 }
             }
 
-            // Do not proceed to poll unless we are below the outstanding WFT limit
-            if self.wft_manager.outstanding_wft()
-                >= self.init_options.max_outstanding_workflow_tasks
-            {
-                self.workflow_task_complete_notify.notified().await;
-                continue;
-            }
-
-            debug!("Polling server");
-
             let task_complete_fut = self.workflow_task_complete_notify.notified();
+            let worker = self
+                .workers
+                .get(task_queue)
+                .ok_or(PollWfError::NoWorkerForQueue(task_queue.to_owned()))?;
             let poll_result_future =
-                self.shutdownable_fut(self.wf_task_poll_buffer.poll().map_err(Into::into));
+                self.shutdownable_fut(worker.workflow_poll().map_err(Into::into));
             let selected_f = tokio::select! {
                 biased;
 
@@ -296,53 +273,31 @@ where
     }
 
     #[instrument(skip(self))]
-    async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError> {
+    async fn poll_activity_task(
+        &self,
+        task_queue: &str,
+    ) -> Result<ActivityTask, PollActivityError> {
         loop {
             if self.shutdown_requested.load(Ordering::Relaxed) {
                 return Err(PollActivityError::ShutDown);
             }
 
+            let worker = self
+                .workers
+                .get(task_queue)
+                .ok_or(PollActivityError::NoWorkerForQueue(task_queue.to_owned()))?;
+
             tokio::select! {
                 biased;
 
-                maybe_tt = self.activity_heartbeat_manager_handle.next_pending_cancel() => {
-                    // Issue cancellations for anything we noticed was cancelled during heartbeating
-                    if let Some(task_token) = maybe_tt {
-                        // It's possible that activity has been completed and we no longer have an
-                        // outstanding activity task. This is fine because it means that we no
-                        // longer need to cancel this activity, so we'll just ignore such orphaned
-                        // cancellations.
-                        if let Some(mut details) =
-                            self.outstanding_activity_tasks.get_mut(&task_token) {
-                                if details.issued_cancel_to_lang {
-                                    // Don't double-issue cancellations
-                                    continue;
-                                }
-                                details.issued_cancel_to_lang = true;
-                                return Ok(ActivityTask::cancel_from_ids(
-                                    task_token,
-                                    details.activity_id.clone(),
-                                ));
-                        } else {
-                            warn!(task_token = ?task_token,
-                                  "Unknown activity task when issuing cancel");
-                            // If we can't find the activity here, it's already been completed,
-                            // in which case issuing a cancel again is pointless.
-                            continue;
-                        }
-                    }
-                    // The only situation where the next cancel would return none is if the manager
-                    // was dropped, which can only happen on shutdown.
-                    return Err(PollActivityError::ShutDown);
-                }
-                _ = self.shutdown_notifier() => {
-                    return Err(PollActivityError::ShutDown);
-                }
-                r = self.do_activity_poll() => {
+                r = self.act_manager.poll(&worker) => {
                     match r.transpose() {
                         None => continue,
                         Some(r) => return r
                     }
+                }
+                _ = self.shutdown_notifier() => {
+                    return Err(PollActivityError::ShutDown);
                 }
             }
         }
@@ -424,15 +379,19 @@ where
             None => (Ok(()), true),
         };
         if should_remove {
-            self.outstanding_activity_tasks.remove(&tt);
+            // Remove the activity from tracking and tell the worker a slot is free
+            if let Some(deets) = self.act_manager.mark_complete(&tt) {
+                self.workers
+                    .get(&deets.task_queue)
+                    .map(|w| w.activity_done());
+            }
         }
-        self.activity_task_complete_notify.notify_waiters();
         Ok(res?)
     }
 
     fn record_activity_heartbeat(&self, details: ActivityHeartbeat) {
         let tt = details.task_token.clone();
-        if let Err(e) = self.record_activity_heartbeat_with_errors(details) {
+        if let Err(e) = self.act_manager.record_activity_heartbeat(details) {
             warn!(task_token = ?tt, details = ?e, "Activity heartbeat failed.")
         }
     }
@@ -445,9 +404,7 @@ where
         self.shutdown_requested.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
         self.wft_manager.shutdown();
-        self.wf_task_poll_buffer.shutdown();
-        self.at_task_poll_buffer.shutdown();
-        self.activity_heartbeat_manager_handle.shutdown().await;
+        // TODO: Shutdown all workers
     }
 }
 
@@ -467,56 +424,13 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                 workflow_task_complete_notify.clone(),
                 cache_policy,
             ),
+            act_manager: ActivityTaskManager::new(sg.clone()),
             server_gateway: sg.clone(),
-            wf_task_poll_buffer: new_workflow_task_buffer(
-                sg.clone(),
-                init_options.max_concurrent_wft_polls,
-                init_options.max_concurrent_wft_polls * 2,
-            ),
-            at_task_poll_buffer: new_activity_task_buffer(
-                sg.clone(),
-                init_options.max_concurrent_at_polls,
-                init_options.max_concurrent_at_polls * 2,
-            ),
+            workers: DashMap::new(),
             init_options,
-            outstanding_activity_tasks: Default::default(),
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
             workflow_task_complete_notify,
-            activity_task_complete_notify: Notify::new(),
-            activity_heartbeat_manager_handle: ActivityHeartbeatManager::new(sg),
-        }
-    }
-
-    /// Wait until not at the outstanding activity limit, and then poll for new activities.
-    ///
-    /// Returns Ok(None) if the long poll timeout is hit
-    async fn do_activity_poll(&self) -> Result<Option<ActivityTask>, PollActivityError> {
-        while self.outstanding_activity_tasks.len() >= self.init_options.max_outstanding_activities
-        {
-            self.activity_task_complete_notify.notified().await
-        }
-
-        match self
-            .shutdownable_fut(self.at_task_poll_buffer.poll().map_err(Into::into))
-            .await
-        {
-            Ok(work) => {
-                if work == PollActivityTaskQueueResponse::default() {
-                    return Ok(None);
-                }
-                let task_token = TaskToken(work.task_token.clone());
-                self.outstanding_activity_tasks.insert(
-                    task_token.clone(),
-                    InflightActivityDetails::new(
-                        work.activity_id.clone(),
-                        work.heartbeat_timeout.clone(),
-                        false,
-                    ),
-                );
-                Ok(Some(ActivityTask::start_from_poll_resp(work, task_token)))
-            }
-            Err(e) => Err(e),
         }
     }
 
@@ -654,28 +568,5 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             }
             _ => Err(err.into()),
         }
-    }
-
-    fn record_activity_heartbeat_with_errors(
-        &self,
-        details: ActivityHeartbeat,
-    ) -> Result<(), ActivityHeartbeatError> {
-        let t: time::Duration = self
-            .outstanding_activity_tasks
-            .get(&TaskToken(details.task_token.clone()))
-            .ok_or(ActivityHeartbeatError::UnknownActivity)?
-            .heartbeat_timeout
-            .clone()
-            .ok_or(ActivityHeartbeatError::HeartbeatTimeoutNotSet)?
-            .try_into()
-            .or(Err(ActivityHeartbeatError::InvalidHeartbeatTimeout))?;
-        // There is a bug in the server that translates non-set heartbeat timeouts into 0 duration.
-        // That's why we treat 0 the same way as None, otherwise we wouldn't know which aggregation
-        // delay to use, and using 0 is not a good idea as SDK would hammer the server too hard.
-        if t.as_millis() == 0 {
-            return Err(ActivityHeartbeatError::HeartbeatTimeoutNotSet);
-        }
-        self.activity_heartbeat_manager_handle
-            .record(details, t.div(2))
     }
 }

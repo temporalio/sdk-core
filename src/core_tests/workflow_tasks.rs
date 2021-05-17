@@ -35,6 +35,8 @@ use std::{
 };
 use test_utils::fanout_tasks;
 
+const TEST_Q: &str = "q";
+
 #[fixture(hist_batches = &[])]
 fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
     let wfid = "fake_wf_id";
@@ -901,7 +903,7 @@ async fn max_concurrent_wft_respected() {
     mock_gateway
         .expect_poll_workflow_task()
         .times(2)
-        .returning(move || Ok(tasks.pop_front().unwrap()));
+        .returning(move |_| Ok(tasks.pop_front().unwrap()));
     // Response not really important here
     mock_gateway
         .expect_complete_workflow_task()
@@ -911,14 +913,15 @@ async fn max_concurrent_wft_respected() {
         mock_gateway,
         CoreInitOptionsBuilder::default()
             .gateway_opts(fake_sg_opts())
-            .max_outstanding_workflow_tasks(2usize)
+            // TODO: Set worker options
+            // .max_outstanding_workflow_tasks(2usize)
             .build()
             .unwrap(),
     );
 
     // Poll twice in a row before completing -- we should be at limit
-    let r1 = core.poll_workflow_task().await.unwrap();
-    let _r2 = core.poll_workflow_task().await.unwrap();
+    let r1 = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let _r2 = core.poll_workflow_task(TEST_Q).await.unwrap();
     // Now we immediately poll for new work, and complete one of the existing activations. The
     // poll must not unblock until the completion goes through.
     let last_finisher = AtomicUsize::new(0);
@@ -935,7 +938,7 @@ async fn max_concurrent_wft_respected() {
             last_finisher.store(1, Ordering::SeqCst);
         },
         async {
-            let r = core.poll_workflow_task().await.unwrap();
+            let r = core.poll_workflow_task(TEST_Q).await.unwrap();
             last_finisher.store(2, Ordering::SeqCst);
             r
         }
@@ -956,7 +959,7 @@ async fn max_concurrent_wft_respected() {
         ))
         .await
         .unwrap();
-        r1 = core.poll_workflow_task().await.unwrap();
+        r1 = core.poll_workflow_task(TEST_Q).await.unwrap();
     }
 }
 
@@ -1086,7 +1089,7 @@ async fn lots_of_workflows() {
     let core = &mock_core(mock.sg);
 
     fanout_tasks(5, |_| async move {
-        while let Ok(wft) = core.poll_workflow_task().await {
+        while let Ok(wft) = core.poll_workflow_task(TEST_Q).await {
             let job = &wft.jobs[0];
             let reply = match job.variant {
                 Some(wf_activation_job::Variant::StartWorkflow(_)) => StartTimer {

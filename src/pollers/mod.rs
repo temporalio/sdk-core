@@ -53,15 +53,10 @@ pub struct ServerGatewayOptions {
     /// What namespace will we operate under
     pub namespace: String,
 
-    /// The task queue this worker is operating on
-    pub task_queue: String,
-
-    /// A human-readable string that can identify your worker
-    ///
-    /// TODO: Probably belongs in future worker abstraction
+    /// A human-readable string that can identify this process
     pub identity: String,
 
-    /// A string that should be unique to the exact worker code/binary being executed
+    /// A string that should be unique to this process' binary
     pub worker_binary_id: String,
 
     /// Timeout for long polls (polling of task queues)
@@ -188,11 +183,15 @@ pub trait ServerGatewayApis {
         task_timeout: Option<Duration>,
     ) -> Result<StartWorkflowExecutionResponse>;
 
-    /// Fetch new workflow tasks. Should block indefinitely if there is no work.
-    async fn poll_workflow_task(&self) -> Result<PollWorkflowTaskQueueResponse>;
+    /// Fetch new workflow tasks from the provided queue. Should block indefinitely if there is no
+    /// work.
+    async fn poll_workflow_task(&self, task_queue: String)
+        -> Result<PollWorkflowTaskQueueResponse>;
 
-    /// Fetch new activity tasks. Should block indefinitely if there is no work.
-    async fn poll_activity_task(&self) -> Result<PollActivityTaskQueueResponse>;
+    /// Fetch new activity tasks from the provided queue. Should block indefinitely if there is no
+    /// work.
+    async fn poll_activity_task(&self, task_queue: String)
+        -> Result<PollActivityTaskQueueResponse>;
 
     /// Complete a workflow activation. `task_token` is the task token that would've been received
     /// from [crate::Core::poll_workflow_task] API. `commands` is a list of new commands to send to
@@ -258,14 +257,6 @@ pub trait ServerGatewayApis {
     ) -> Result<SignalWorkflowExecutionResponse>;
 }
 
-/// Contains poll task request. String parameter defines a task queue to be polled.
-pub enum PollTaskRequest {
-    /// Instructs core to poll for workflow task.
-    Workflow(String),
-    /// Instructs core to poll for activity task.
-    Activity(String),
-}
-
 #[async_trait::async_trait]
 impl ServerGatewayApis for ServerGateway {
     async fn start_workflow(
@@ -299,11 +290,14 @@ impl ServerGatewayApis for ServerGateway {
             .into_inner())
     }
 
-    async fn poll_workflow_task(&self) -> Result<PollWorkflowTaskQueueResponse> {
+    async fn poll_workflow_task(
+        &self,
+        task_queue: String,
+    ) -> Result<PollWorkflowTaskQueueResponse> {
         let request = PollWorkflowTaskQueueRequest {
             namespace: self.opts.namespace.clone(),
             task_queue: Some(TaskQueue {
-                name: self.opts.task_queue.clone(),
+                name: task_queue,
                 kind: TaskQueueKind::Unspecified as i32,
             }),
             identity: self.opts.identity.clone(),
@@ -318,11 +312,14 @@ impl ServerGatewayApis for ServerGateway {
             .into_inner())
     }
 
-    async fn poll_activity_task(&self) -> Result<PollActivityTaskQueueResponse> {
+    async fn poll_activity_task(
+        &self,
+        task_queue: String,
+    ) -> Result<PollActivityTaskQueueResponse> {
         let request = PollActivityTaskQueueRequest {
             namespace: self.opts.namespace.clone(),
             task_queue: Some(TaskQueue {
-                name: self.opts.task_queue.clone(),
+                name: task_queue,
                 kind: TaskQueueKind::Normal as i32,
             }),
             identity: self.opts.identity.clone(),
@@ -500,11 +497,11 @@ mod manual_mock {
             ) -> impl Future<Output = Result<StartWorkflowExecutionResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;
 
-            fn poll_workflow_task<'a, 'b>(&'a self)
+            fn poll_workflow_task<'a, 'b>(&'a self, task_queue: String)
                 -> impl Future<Output = Result<PollWorkflowTaskQueueResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;
 
-            fn poll_activity_task<'a, 'b>(&self)
+            fn poll_activity_task<'a, 'b>(&self, task_queue: String)
                 -> impl Future<Output = Result<PollActivityTaskQueueResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;
 

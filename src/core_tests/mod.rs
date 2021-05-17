@@ -17,12 +17,12 @@ async fn after_shutdown_server_is_not_polled() {
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("fake_timer");
     let core = build_fake_core(wfid, t, &[1]);
-    let res = core.inner.poll_workflow_task().await.unwrap();
+    let res = core.inner.poll_workflow_task("q").await.unwrap();
     assert_eq!(res.jobs.len(), 1);
 
     core.inner.shutdown().await;
     assert_matches!(
-        core.inner.poll_workflow_task().await.unwrap_err(),
+        core.inner.poll_workflow_task("q").await.unwrap_err(),
         PollWfError::ShutDown
     );
 }
@@ -33,7 +33,7 @@ async fn shutdown_interrupts_both_polls() {
     mock_gateway
         .expect_poll_activity_task()
         .times(1)
-        .returning(move || {
+        .returning(move |_| {
             async move {
                 sleep(Duration::from_secs(1)).await;
                 Ok(PollActivityTaskQueueResponse {
@@ -47,7 +47,7 @@ async fn shutdown_interrupts_both_polls() {
     mock_gateway
         .expect_poll_workflow_task()
         .times(1)
-        .returning(move || {
+        .returning(move |_| {
             async move {
                 let t = canned_histories::single_timer("hi");
                 sleep(Duration::from_secs(1)).await;
@@ -60,19 +60,20 @@ async fn shutdown_interrupts_both_polls() {
         mock_gateway,
         CoreInitOptionsBuilder::default()
             .gateway_opts(fake_sg_opts())
+            // TODO: Need to actually set up workers here
             // Need only 1 concurrent pollers for mock expectations to work here
-            .max_concurrent_wft_polls(1usize)
-            .max_concurrent_at_polls(1usize)
+            // .max_concurrent_wft_polls(1usize)
+            // .max_concurrent_at_polls(1usize)
             .build()
             .unwrap(),
     );
     tokio::join! {
         async {
-            assert_matches!(core.poll_activity_task().await.unwrap_err(),
+            assert_matches!(core.poll_activity_task("q").await.unwrap_err(),
                             PollActivityError::ShutDown);
         },
         async {
-            assert_matches!(core.poll_workflow_task().await.unwrap_err(),
+            assert_matches!(core.poll_workflow_task("q").await.unwrap_err(),
                             PollWfError::ShutDown);
         },
         async {

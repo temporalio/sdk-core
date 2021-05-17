@@ -7,6 +7,7 @@ use temporal_sdk_core::{
     },
     test_workflow_driver::TestRustWorker,
     Core, CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayApis, ServerGatewayOptions,
+    WorkerConfig, WorkerConfigBuilder,
 };
 use url::Url;
 
@@ -16,8 +17,8 @@ pub type GwApi = Arc<dyn ServerGatewayApis>;
 /// Implements a builder pattern to help integ tests initialize core and create workflows
 pub struct CoreWfStarter {
     test_name: String,
-    task_queue: String,
     core_options: CoreInitOptions,
+    worker_config: WorkerConfig,
     wft_timeout: Option<Duration>,
     initted_core: Option<Arc<dyn Core>>,
 }
@@ -34,7 +35,10 @@ impl CoreWfStarter {
                 .max_cached_workflows(1000usize)
                 .build()
                 .unwrap(),
-            task_queue,
+            worker_config: WorkerConfigBuilder::default()
+                .task_queue(task_queue)
+                .build()
+                .unwrap(),
             wft_timeout: None,
             initted_core: None,
         }
@@ -44,7 +48,7 @@ impl CoreWfStarter {
         TestRustWorker::new(
             self.get_core().await,
             NAMESPACE.to_owned(),
-            self.task_queue.clone(),
+            self.worker_config.task_queue.clone(),
         )
     }
 
@@ -69,7 +73,7 @@ impl CoreWfStarter {
             |gw: GwApi| async move {
                 gw.start_workflow(
                     NAMESPACE.to_owned(),
-                    self.task_queue.clone(),
+                    self.worker_config.task_queue.clone(),
                     workflow_id,
                     self.test_name.clone(),
                     self.wft_timeout,
@@ -83,7 +87,7 @@ impl CoreWfStarter {
     }
 
     pub fn get_task_queue(&self) -> &str {
-        &self.task_queue
+        &self.worker_config.task_queue
     }
 
     pub fn get_wf_id(&self) -> &str {
@@ -96,12 +100,12 @@ impl CoreWfStarter {
     }
 
     pub fn max_wft(&mut self, max: usize) -> &mut Self {
-        self.core_options.max_outstanding_workflow_tasks = max;
+        self.worker_config.max_outstanding_workflow_tasks = max;
         self
     }
 
     pub fn max_at(&mut self, max: usize) -> &mut Self {
-        self.core_options.max_outstanding_activities = max;
+        self.worker_config.max_outstanding_activities = max;
         self
     }
 
@@ -142,7 +146,6 @@ pub fn get_integ_server_options(task_q: &str) -> ServerGatewayOptions {
     let url = Url::try_from(&*temporal_server_address).unwrap();
     ServerGatewayOptions {
         namespace: NAMESPACE.to_string(),
-        task_queue: task_q.to_string(),
         identity: "integ_tester".to_string(),
         worker_binary_id: "".to_string(),
         long_poll_timeout: Duration::from_secs(60),

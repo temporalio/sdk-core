@@ -183,7 +183,7 @@ pub fn build_multihist_mock_sg(
                 .map::<TimesRange, _>(Into::into)
                 .unwrap_or_else(|| RangeFull.into()),
         )
-        .returning(move || {
+        .returning(move |_| {
             for (wfid, tasks) in ids_to_resps.iter_mut() {
                 if !outstanding.read().contains_left(wfid) {
                     if let Some(t) = tasks.pop_front() {
@@ -247,7 +247,6 @@ pub fn fake_sg_opts() -> ServerGatewayOptions {
     ServerGatewayOptions {
         target_url: Url::from_str("https://fake").unwrap(),
         namespace: "".to_string(),
-        task_queue: "task_queue".to_string(),
         identity: "".to_string(),
         worker_binary_id: "".to_string(),
         long_poll_timeout: Default::default(),
@@ -284,7 +283,8 @@ pub(crate) async fn poll_and_reply<'a>(
                 continue;
             }
 
-            let mut res = core.inner.poll_workflow_task().await.unwrap();
+            // TODO: Plumb the queue through, will probably be needed for something
+            let mut res = core.inner.poll_workflow_task("whatever").await.unwrap();
             let contains_eviction = res.jobs.iter().position(|j| {
                 matches!(
                     j,
