@@ -3,10 +3,11 @@ mod workflow_tasks;
 
 use crate::{
     errors::{PollActivityError, PollWfError},
-    machines::test_help::{build_fake_core, fake_sg_opts, hist_to_poll_resp},
+    machines::test_help::{build_fake_core, fake_sg_opts, hist_to_poll_resp, TEST_Q},
     pollers::MockManualGateway,
+    protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
     test_help::canned_histories,
-    Core, CoreInitOptionsBuilder, CoreSDK, PollActivityTaskQueueResponse,
+    Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
 };
 use futures::FutureExt;
 use std::time::Duration;
@@ -60,20 +61,25 @@ async fn shutdown_interrupts_both_polls() {
         mock_gateway,
         CoreInitOptionsBuilder::default()
             .gateway_opts(fake_sg_opts())
-            // TODO: Need to actually set up workers here
+            .build()
+            .unwrap(),
+    );
+    core.register_worker(
+        WorkerConfigBuilder::default()
+            .task_queue(TEST_Q)
             // Need only 1 concurrent pollers for mock expectations to work here
-            // .max_concurrent_wft_polls(1usize)
-            // .max_concurrent_at_polls(1usize)
+            .max_concurrent_wft_polls(1usize)
+            .max_concurrent_at_polls(1usize)
             .build()
             .unwrap(),
     );
     tokio::join! {
         async {
-            assert_matches!(core.poll_activity_task("q").await.unwrap_err(),
+            assert_matches!(core.poll_activity_task(TEST_Q).await.unwrap_err(),
                             PollActivityError::ShutDown);
         },
         async {
-            assert_matches!(core.poll_workflow_task("q").await.unwrap_err(),
+            assert_matches!(core.poll_workflow_task(TEST_Q).await.unwrap_err(),
                             PollWfError::ShutDown);
         },
         async {

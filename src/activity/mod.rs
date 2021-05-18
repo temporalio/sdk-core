@@ -10,7 +10,7 @@ use crate::{
     protos::coresdk::activity_task::ActivityTask,
     protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
     task_token::TaskToken, worker::Worker, ActivityHeartbeat, ActivityHeartbeatError,
-    CompleteActivityError, PollActivityError, ServerGatewayApis,
+    PollActivityError, ServerGatewayApis,
 };
 use dashmap::DashMap;
 use std::{convert::TryInto, ops::Div, sync::Arc, time::Duration};
@@ -29,6 +29,10 @@ impl ActivityTaskManager {
             activity_heartbeat_manager_handle: ActivityHeartbeatManager::new(sg),
             outstanding_activity_tasks: Default::default(),
         }
+    }
+
+    pub(crate) async fn shutdown(&self) {
+        self.activity_heartbeat_manager_handle.shutdown().await;
     }
 
     /// Poll for an activity task using the provided worker. Returns `Ok(None)` if no activity is

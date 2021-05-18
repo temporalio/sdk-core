@@ -149,24 +149,26 @@ pub mod coresdk {
         }
     }
 
-    use crate::protos::{
-        coresdk::{
-            activity_result::ActivityResult,
-            activity_task::ActivityTask,
-            common::{Payload, UserCodeFailure},
-            workflow_activation::SignalWorkflow,
-            workflow_commands::workflow_command::Variant,
-            workflow_completion::Success,
+    use crate::{
+        protos::{
+            coresdk::{
+                activity_result::ActivityResult,
+                activity_task::ActivityTask,
+                common::{Payload, UserCodeFailure},
+                workflow_activation::SignalWorkflow,
+                workflow_commands::workflow_command::Variant,
+                workflow_completion::Success,
+            },
+            temporal::api::{
+                common::v1::{Payloads, WorkflowExecution},
+                failure::v1::ApplicationFailureInfo,
+                failure::v1::{failure::FailureInfo, Failure},
+                history::v1::WorkflowExecutionSignaledEventAttributes,
+                workflowservice::v1::PollActivityTaskQueueResponse,
+            },
         },
-        temporal::api::{
-            common::v1::{Payloads, WorkflowExecution},
-            failure::v1::ApplicationFailureInfo,
-            failure::v1::{failure::FailureInfo, Failure},
-            history::v1::WorkflowExecutionSignaledEventAttributes,
-            workflowservice::v1::PollActivityTaskQueueResponse,
-        },
+        task_token::fmt_tt,
     };
-    use crate::task_token::{fmt_tt, TaskToken};
     use std::convert::TryFrom;
     use std::fmt::{Display, Formatter};
     use workflow_activation::{wf_activation_job, WfActivationJob};

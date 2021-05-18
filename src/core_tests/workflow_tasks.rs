@@ -3,7 +3,7 @@ use crate::{
     machines::test_help::{
         build_fake_core, build_multihist_mock_sg, fake_core_from_mock_sg, fake_sg_opts,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_core, poll_and_reply,
-        FakeCore, FakeWfResponses, TestHistoryBuilder,
+        FakeCore, FakeWfResponses, TestHistoryBuilder, TEST_Q,
     },
     pollers::MockServerGatewayApis,
     protos::{
@@ -26,7 +26,7 @@ use crate::{
     },
     test_help::canned_histories,
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
-    Core, CoreInitOptionsBuilder, CoreSDK, WfActivationCompletion,
+    Core, CoreInitOptionsBuilder, CoreSDK, WfActivationCompletion, WorkerConfigBuilder,
 };
 use rstest::{fixture, rstest};
 use std::{
@@ -34,8 +34,6 @@ use std::{
     sync::atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 use test_utils::fanout_tasks;
-
-const TEST_Q: &str = "q";
 
 #[fixture(hist_batches = &[])]
 fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
@@ -760,6 +758,7 @@ async fn complete_activation_with_failure(
         ],
     )
     .await;
+    core.inner.shutdown().await;
 }
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
@@ -913,8 +912,13 @@ async fn max_concurrent_wft_respected() {
         mock_gateway,
         CoreInitOptionsBuilder::default()
             .gateway_opts(fake_sg_opts())
-            // TODO: Set worker options
-            // .max_outstanding_workflow_tasks(2usize)
+            .build()
+            .unwrap(),
+    );
+    core.register_worker(
+        WorkerConfigBuilder::default()
+            .task_queue(TEST_Q)
+            .max_outstanding_workflow_tasks(2usize)
             .build()
             .unwrap(),
     );

@@ -11,11 +11,12 @@ use crate::{
         NextWfActivation, OutgoingServerCommands, WorkflowCachingPolicy,
         WorkflowConcurrencyManager, WorkflowError, WorkflowManager,
     },
+    WfActivationUpdate,
 };
 use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
-use std::{fmt::Debug, sync::Arc};
-use tokio::sync::Notify;
+use std::fmt::Debug;
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::Span;
 
 /// Centralizes concerns related to applying new workflow tasks and reporting the activations they
@@ -40,8 +41,8 @@ pub struct WorkflowTaskManager {
     outstanding_workflow_tasks: DashMap<String, Option<ValidPollWFTQResponse>>,
     /// Holds poll wft responses from the server that need to be applied
     ready_buffered_wft: SegQueue<ValidPollWFTQResponse>,
-    /// Used to wake blocked workflow task polling when tasks complete
-    workflow_task_complete_notify: Arc<Notify>,
+    /// Used to wake blocked workflow task polling
+    workflow_activations_update: UnboundedSender<WfActivationUpdate>,
     eviction_policy: WorkflowCachingPolicy,
 }
 
@@ -51,6 +52,7 @@ pub struct WorkflowTaskManager {
 pub struct WorkflowTaskInfo {
     run_id: String,
     attempt: u32,
+    task_queue: String,
 }
 
 #[derive(Debug, derive_more::From)]
@@ -66,7 +68,7 @@ pub enum NewWfTaskOutcome {
 
 impl WorkflowTaskManager {
     pub(crate) fn new(
-        workflow_task_complete_notify: Arc<Notify>,
+        workflow_activations_update: UnboundedSender<WfActivationUpdate>,
         eviction_policy: WorkflowCachingPolicy,
     ) -> Self {
         Self {
@@ -75,7 +77,7 @@ impl WorkflowTaskManager {
             pending_activations: Default::default(),
             outstanding_workflow_tasks: Default::default(),
             ready_buffered_wft: Default::default(),
-            workflow_task_complete_notify,
+            workflow_activations_update,
             eviction_policy,
         }
     }
@@ -92,6 +94,7 @@ impl WorkflowTaskManager {
         self.ready_buffered_wft.pop()
     }
 
+    #[cfg(test)]
     pub fn outstanding_wft(&self) -> usize {
         self.outstanding_workflow_tasks.len()
     }
@@ -116,7 +119,11 @@ impl WorkflowTaskManager {
                 task_token.to_owned(),
                 run_id.to_owned(),
             ));
-            self.workflow_task_complete_notify.notify_waiters();
+            let _ =
+                self.workflow_activations_update
+                    .send(WfActivationUpdate::WorkflowTaskComplete {
+                        task_queue: wti.task_queue.clone(),
+                    });
             // If we just evicted something and there was a buffered poll response for the workflow,
             // it is now ready to be produced by the next poll. (Not immediate next, since, ignoring
             // other workflows, the next poll will be the eviction we just produced. Buffered polls
@@ -225,6 +232,7 @@ impl WorkflowTaskManager {
         let wft_info = WorkflowTaskInfo {
             run_id: run_id.clone(),
             attempt: poll_wf_resp.attempt,
+            task_queue: poll_wf_resp.task_queue,
         };
         self.workflow_task_tokens
             .insert(poll_wf_resp.task_token, wft_info);
@@ -253,8 +261,10 @@ impl WorkflowTaskManager {
             self.pending_activations
                 .push(next_activation.finalize(task_token));
             new_activation = true;
+            let _ = self
+                .workflow_activations_update
+                .send(WfActivationUpdate::NewPendingActivation);
         }
-        self.workflow_task_complete_notify.notify_waiters();
         Ok(new_activation)
     }
 
@@ -273,10 +283,14 @@ impl WorkflowTaskManager {
 
             // The evict may or may not have already done this, but even when we aren't evicting
             // we want to remove from the run id mapping if we completed the wft.
-            self.workflow_task_tokens.remove(task_token);
+            if let Some((_, wti)) = self.workflow_task_tokens.remove(task_token) {
+                let _ = self.workflow_activations_update.send(
+                    WfActivationUpdate::WorkflowTaskComplete {
+                        task_queue: wti.task_queue,
+                    },
+                );
+            }
         }
-
-        self.workflow_task_complete_notify.notify_waiters();
     }
 
     /// Wraps access to `self.workflow_machines.access`, properly passing in the current tracing

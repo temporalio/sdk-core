@@ -1,19 +1,13 @@
 use crate::{
-    activity::InflightActivityDetails,
     pollers::{
         new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
         PollWorkflowTaskBuffer,
     },
-    protos::{
-        coresdk::activity_task::ActivityTask,
-        temporal::api::workflowservice::v1::{
-            PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
-        },
+    protos::temporal::api::workflowservice::v1::{
+        PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
     },
-    task_token::TaskToken,
     PollActivityError, PollWfError, ServerGatewayApis,
 };
-use futures::TryFutureExt;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -59,6 +53,8 @@ pub(crate) struct Worker {
     /// ongoing. May be `None` if this worker does not poll for activities.
     at_task_poll_buffer: Option<PollActivityTaskBuffer>,
 
+    // TODO: This is all fucked for both of these. EX: Long poll timeout isn't an oustanding thing.
+    //   need to go back to maps here, rethink whole deal.
     /// Ensures we stay at or below this worker's maximum concurrent workflow limit
     workflows_semaphore: Semaphore,
     /// Ensures we stay at or below this worker's maximum concurrent activity limit
@@ -94,6 +90,11 @@ impl Worker {
             config,
         }
     }
+    pub(crate) fn shutdown(&self) {
+        self.wf_task_poll_buffer.shutdown();
+        self.at_task_poll_buffer.as_ref().map(|b| b.shutdown());
+    }
+
     pub(crate) fn task_queue(&self) -> &str {
         &self.config.task_queue
     }
@@ -111,30 +112,44 @@ impl Worker {
 
         // Acquire and immediately forget a permit for an outstanding activity. When they are
         // completed, we must add a new permit to the semaphore, since holding the permit the
-        // entire time lang does work would be a challenge. TODO: Maybe actually a good way, tho?
-        self.activities_semaphore
+        // entire time lang does work would be a challenge.
+        // TODO: Maybe actually a good way, tho? -- Might be able to stuff these into the
+        //   infos in their respective managers somehow, which could be nice.
+        let sem = self
+            .activities_semaphore
             .acquire()
             .await
-            .expect("outstanding activity semaphore not closed")
-            .forget();
+            .expect("outstanding activity semaphore not closed");
 
-        poll_buff.poll().map_err(Into::into).await
+        let res = poll_buff.poll().await?;
+        sem.forget();
+        Ok(res)
     }
 
     /// Wait until not at the outstanding workflow task limit, and then poll this worker's task
     /// queue for new workflow tasks.
     pub(crate) async fn workflow_poll(&self) -> Result<PollWorkflowTaskQueueResponse, PollWfError> {
-        self.workflows_semaphore
+        let sem = self
+            .workflows_semaphore
             .acquire()
             .await
-            .expect("outstanding workflow tasks semaphore not dropped")
-            .forget();
+            .expect("outstanding workflow tasks semaphore not dropped");
         debug!("Polling server");
-        self.wf_task_poll_buffer.poll().map_err(Into::into).await
+        let res = self.wf_task_poll_buffer.poll().await?;
+        // TODO: Doesn't account for long poll timeout
+        sem.forget();
+        Ok(res)
     }
 
     /// Tell the worker an activity has completed, for tracking max outstanding activities
     pub(crate) fn activity_done(&self) {
         self.activities_semaphore.add_permits(1)
+    }
+
+    // TODO: Add unit tests for both of these, and a multi-worker test at lib level
+    //   also test to ensure long poll timeouts don't eat up permits
+    /// Tell the worker a workflow task has completed, for tracking max outstanding WFTs
+    pub(crate) fn workflow_task_done(&self) {
+        self.workflows_semaphore.add_permits(1)
     }
 }

@@ -1,3 +1,4 @@
+use crate::machines::test_help::TEST_Q;
 use crate::{
     errors::PollActivityError,
     machines::test_help::{fake_sg_opts, mock_core},
@@ -11,7 +12,7 @@ use crate::{
             RespondActivityTaskCompletedResponse,
         },
     },
-    ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK,
+    ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
 };
 use futures::FutureExt;
 use std::{
@@ -55,8 +56,13 @@ async fn max_activites_respected() {
         mock_gateway,
         CoreInitOptionsBuilder::default()
             .gateway_opts(fake_sg_opts())
-            // TODO: Set worker options
-            // .max_outstanding_activities(2usize)
+            .build()
+            .unwrap(),
+    );
+    core.register_worker(
+        WorkerConfigBuilder::default()
+            .task_queue(TEST_Q)
+            .max_outstanding_activities(2usize)
             .build()
             .unwrap(),
     );
@@ -126,14 +132,14 @@ async fn heartbeats_report_cancels() {
 
     let core = mock_core(mock_gateway);
 
-    let act = core.poll_activity_task("q").await.unwrap();
+    let act = core.poll_activity_task(TEST_Q).await.unwrap();
     core.record_activity_heartbeat(ActivityHeartbeat {
         task_token: act.task_token,
         details: vec![vec![1u8, 2, 3].into()],
     });
     // We have to wait a beat for the heartbeat to be processed
     sleep(Duration::from_millis(50)).await;
-    let act = core.poll_activity_task("q").await.unwrap();
+    let act = core.poll_activity_task(TEST_Q).await.unwrap();
     assert_matches!(
         act,
         ActivityTask {
@@ -181,7 +187,7 @@ async fn activity_cancel_interrupts_poll() {
     let core = mock_core(mock_gateway);
     let last_finisher = AtomicUsize::new(0);
     // Perform first poll to get the activity registered
-    let act = core.poll_activity_task("q").await.unwrap();
+    let act = core.poll_activity_task(TEST_Q).await.unwrap();
     // Poll should block until heartbeat is sent, issuing the cancel, and interrupting the poll
     tokio::join! {
         async {
@@ -192,7 +198,7 @@ async fn activity_cancel_interrupts_poll() {
             last_finisher.store(1, Ordering::SeqCst);
         },
         async {
-            core.poll_activity_task("q").await.unwrap();
+            core.poll_activity_task(TEST_Q).await.unwrap();
             last_finisher.store(2, Ordering::SeqCst);
         }
     };
@@ -216,7 +222,7 @@ async fn activity_poll_timeout_retries() {
             }
         });
     let core = mock_core(mock_gateway);
-    let r = core.poll_activity_task("q").await;
+    let r = core.poll_activity_task(TEST_Q).await;
     assert_matches!(r.unwrap_err(), PollActivityError::TonicError(_));
 }
 
@@ -225,7 +231,6 @@ async fn many_concurrent_heartbeat_cancels() {
     // Run a whole bunch of activities in parallel, having the server return cancellations for
     // them after a few successful heartbeats
     const CONCURRENCY_NUM: usize = 1000;
-    let task_q = "q";
 
     let mut mock_gateway = MockManualGateway::new();
     let mut poll_resps = VecDeque::from(
@@ -287,17 +292,22 @@ async fn many_concurrent_heartbeat_cancels() {
         mock_gateway,
         CoreInitOptionsBuilder::default()
             .gateway_opts(fake_sg_opts())
-            // TODO: Set worker options
-            // .max_outstanding_activities(CONCURRENCY_NUM)
+            .build()
+            .unwrap(),
+    );
+    core.register_worker(
+        WorkerConfigBuilder::default()
+            .task_queue(TEST_Q)
+            .max_outstanding_activities(CONCURRENCY_NUM)
             // Only 1 poll at a time to avoid over-polling and running out of responses
-            // .max_concurrent_at_polls(1usize)
+            .max_concurrent_at_polls(1usize)
             .build()
             .unwrap(),
     );
 
     // Poll all activities first so they are registered
     for _ in 0..CONCURRENCY_NUM {
-        core.poll_activity_task(task_q).await.unwrap();
+        core.poll_activity_task(TEST_Q).await.unwrap();
     }
 
     // Spawn "activities"
@@ -315,7 +325,7 @@ async fn many_concurrent_heartbeat_cancels() {
 
     // Read all the cancellations and reply to them concurrently
     fanout_tasks(CONCURRENCY_NUM, |_| async move {
-        let r = core.poll_activity_task(task_q).await.unwrap();
+        let r = core.poll_activity_task(TEST_Q).await.unwrap();
         assert_matches!(
             r,
             ActivityTask {

@@ -43,16 +43,9 @@ pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
 use crate::{
-    activity::{
-        ActivityHeartbeatManager, ActivityHeartbeatManagerHandle, ActivityTaskManager,
-        InflightActivityDetails,
-    },
+    activity::ActivityTaskManager,
     errors::ShutdownErr,
     machines::EmptyWorkflowCommandErr,
-    pollers::{
-        new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
-        PollWorkflowTaskBuffer,
-    },
     protos::{
         coresdk::{
             activity_result::{self as ar, activity_result},
@@ -62,8 +55,7 @@ use crate::{
             ActivityHeartbeat, ActivityTaskCompletion,
         },
         temporal::api::{
-            enums::v1::WorkflowTaskFailedCause,
-            workflowservice::v1::{PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse},
+            enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
         },
     },
     protosext::ValidPollWFTQResponse,
@@ -73,24 +65,28 @@ use crate::{
     workflow_tasks::{NewWfTaskOutcome, WorkflowTaskManager},
 };
 use dashmap::DashMap;
-use futures::TryFutureExt;
+use futures::{FutureExt, TryFutureExt};
 use std::{
     convert::TryInto,
     future::Future,
-    ops::Div,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time,
 };
-use tokio::sync::Notify;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+use tokio::sync::{Mutex, Notify};
 
 /// This trait is the primary way by which language specific SDKs interact with the core SDK. It is
 /// expected that only one instance of an implementation will exist for the lifetime of the
 /// worker(s) using it.
 #[async_trait::async_trait]
 pub trait Core: Send + Sync {
+    /// Register a worker with core. Workers poll on a specific task queue, and when calling core's
+    /// poll functions, you must provide a task queue name. Returned activations will include that
+    /// task queue name as well, so that lang may route them to the appropriate place.
+    fn register_worker(&self, config: WorkerConfig);
+
     /// Ask the core for some work, returning a [WfActivation]. It is then the language SDK's
     /// responsibility to call the appropriate workflow code with the provided inputs. Blocks
     /// indefinitely until such work is available or [Core::shutdown] is called.
@@ -182,7 +178,7 @@ pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
 
 struct CoreSDK<WP> {
     /// Options provided at initialization time
-    init_options: CoreInitOptions,
+    _init_options: CoreInitOptions,
     /// Provides work in the form of responses the server would send from polling task Qs
     server_gateway: Arc<WP>,
     /// Maps task queue names to workers
@@ -195,8 +191,14 @@ struct CoreSDK<WP> {
     shutdown_requested: AtomicBool,
     /// Used to wake up future which checks shutdown state
     shutdown_notify: Notify,
-    /// Used to wake blocked workflow task polling when tasks complete
-    workflow_task_complete_notify: Arc<Notify>,
+    /// Used to wake blocked workflow task polling when there is some change to workflow activations
+    /// that should cause us to restart the loop
+    workflow_activations_update: Mutex<UnboundedReceiver<WfActivationUpdate>>,
+}
+
+enum WfActivationUpdate {
+    NewPendingActivation,
+    WorkflowTaskComplete { task_queue: String },
 }
 
 #[async_trait::async_trait]
@@ -204,6 +206,12 @@ impl<WP> Core for CoreSDK<WP>
 where
     WP: ServerGatewayApis + Send + Sync + 'static,
 {
+    fn register_worker(&self, config: WorkerConfig) {
+        let tq = config.task_queue.clone();
+        let worker = Worker::new(config, self.server_gateway.clone());
+        self.workers.insert(tq, worker);
+    }
+
     #[instrument(skip(self))]
     async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError> {
         // The poll needs to be in a loop because we can't guarantee tail call optimization in Rust
@@ -230,7 +238,11 @@ where
                 }
             }
 
-            let task_complete_fut = self.workflow_task_complete_notify.notified();
+            // TODO: Can I eliminate this lock?
+            let activation_update_fut = self
+                .workflow_activations_update
+                .lock()
+                .then(|mut l| async move { l.recv().await });
             let worker = self
                 .workers
                 .get(task_queue)
@@ -242,7 +254,11 @@ where
 
                 // If a task is completed while we are waiting on polling, we need to restart the
                 // loop right away to provide any potential new pending activation
-                _ = task_complete_fut => {
+                update = activation_update_fut => {
+                    // If the update indicates a task completed, free a slot in the worker
+                    if let Some(WfActivationUpdate::WorkflowTaskComplete {task_queue}) = update {
+                        self.workers.get(&task_queue).map(|w| w.workflow_task_done());
+                    }
                     continue;
                 }
                 r = poll_result_future => r
@@ -403,15 +419,17 @@ where
     async fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
+        for entry in self.workers.iter() {
+            entry.shutdown();
+        }
         self.wft_manager.shutdown();
-        // TODO: Shutdown all workers
+        self.act_manager.shutdown().await;
     }
 }
 
 impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     pub(crate) fn new(server_gateway: SG, init_options: CoreInitOptions) -> Self {
         let sg = Arc::new(server_gateway);
-        let workflow_task_complete_notify = Arc::new(Notify::new());
         let cache_policy = if init_options.max_cached_workflows == 0 {
             WorkflowCachingPolicy::NonSticky
         } else {
@@ -419,18 +437,16 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                 max_cached_workflows: init_options.max_cached_workflows,
             }
         };
+        let (wau_tx, wau_rx) = unbounded_channel();
         Self {
-            wft_manager: WorkflowTaskManager::new(
-                workflow_task_complete_notify.clone(),
-                cache_policy,
-            ),
+            wft_manager: WorkflowTaskManager::new(wau_tx, cache_policy),
             act_manager: ActivityTaskManager::new(sg.clone()),
             server_gateway: sg.clone(),
             workers: DashMap::new(),
-            init_options,
+            _init_options: init_options,
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
-            workflow_task_complete_notify,
+            workflow_activations_update: Mutex::new(wau_rx),
         }
     }
 

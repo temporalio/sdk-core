@@ -17,6 +17,7 @@ use std::convert::TryFrom;
 /// A validated version of a [PollWorkflowTaskQueueResponse]
 pub struct ValidPollWFTQResponse {
     pub task_token: TaskToken,
+    pub task_queue: String,
     pub workflow_execution: WorkflowExecution,
     pub history: History,
     pub next_page_token: Vec<u8>,
@@ -31,6 +32,7 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
         match value {
             PollWorkflowTaskQueueResponse {
                 task_token,
+                workflow_execution_task_queue: Some(tq),
                 workflow_execution: Some(workflow_execution),
                 history: Some(history),
                 next_page_token,
@@ -44,6 +46,7 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
 
                 Ok(Self {
                     task_token: TaskToken(task_token),
+                    task_queue: tq.name,
                     workflow_execution,
                     history,
                     next_page_token,

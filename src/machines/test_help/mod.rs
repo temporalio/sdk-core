@@ -1,4 +1,7 @@
+// TODO: Move this whole thing to upper test help module
 type Result<T, E = anyhow::Error> = std::result::Result<T, E>;
+
+pub const TEST_Q: &str = "q";
 
 mod async_workflow_driver;
 mod history_builder;
@@ -7,7 +10,6 @@ mod transition_coverage;
 pub(crate) use history_builder::TestHistoryBuilder;
 pub(crate) use transition_coverage::add_coverage;
 
-use crate::workflow::WorkflowCachingPolicy;
 use crate::{
     pollers::MockServerGatewayApis,
     protos::{
@@ -18,21 +20,24 @@ use crate::{
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
         },
         temporal::api::common::v1::WorkflowExecution,
+        temporal::api::enums::v1::TaskQueueKind,
         temporal::api::history::v1::History,
+        temporal::api::taskqueue::v1::TaskQueue,
         temporal::api::workflowservice::v1::{
             PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
     task_token::TaskToken,
+    workflow::WorkflowCachingPolicy,
     Core, CoreInitOptionsBuilder, CoreSDK, ServerGatewayApis, ServerGatewayOptions,
+    WorkerConfigBuilder,
 };
 use bimap::BiMap;
 use mockall::TimesRange;
 use parking_lot::RwLock;
 use rand::{thread_rng, Rng};
-use std::collections::HashMap;
 use std::{
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     ops::RangeFull,
     str::FromStr,
     sync::Arc,
@@ -74,14 +79,21 @@ pub(crate) fn build_fake_core(
 
 /// See [build_fake_core] -- assemble a mock gateway into the final fake core
 pub(crate) fn fake_core_from_mock_sg(mock_and_tasks: MockSGAndTasks) -> FakeCore {
+    let core = CoreSDK::new(
+        mock_and_tasks.sg,
+        CoreInitOptionsBuilder::default()
+            .gateway_opts(fake_sg_opts())
+            .build()
+            .unwrap(),
+    );
+    core.register_worker(
+        WorkerConfigBuilder::default()
+            .task_queue(TEST_Q)
+            .build()
+            .unwrap(),
+    );
     FakeCore {
-        inner: CoreSDK::new(
-            mock_and_tasks.sg,
-            CoreInitOptionsBuilder::default()
-                .gateway_opts(fake_sg_opts())
-                .build()
-                .unwrap(),
-        ),
+        inner: core,
         outstanding_wf_tasks: mock_and_tasks.task_map,
     }
 }
@@ -90,13 +102,20 @@ pub(crate) fn mock_core<SG>(sg: SG) -> CoreSDK<impl ServerGatewayApis>
 where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
-    CoreSDK::new(
+    let core = CoreSDK::new(
         sg,
         CoreInitOptionsBuilder::default()
             .gateway_opts(fake_sg_opts())
             .build()
             .unwrap(),
-    )
+    );
+    core.register_worker(
+        WorkerConfigBuilder::default()
+            .task_queue(TEST_Q)
+            .build()
+            .unwrap(),
+    );
+    core
 }
 
 pub struct FakeWfResponses {
@@ -239,6 +258,10 @@ pub fn hist_to_poll_resp(
         history: Some(History { events: batch }),
         workflow_execution: Some(wf),
         task_token: task_token.to_vec(),
+        workflow_execution_task_queue: Some(TaskQueue {
+            name: TEST_Q.to_string(),
+            kind: TaskQueueKind::Normal as i32,
+        }),
         ..Default::default()
     }
 }
@@ -283,8 +306,7 @@ pub(crate) async fn poll_and_reply<'a>(
                 continue;
             }
 
-            // TODO: Plumb the queue through, will probably be needed for something
-            let mut res = core.inner.poll_workflow_task("whatever").await.unwrap();
+            let mut res = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
             let contains_eviction = res.jobs.iter().position(|j| {
                 matches!(
                     j,
