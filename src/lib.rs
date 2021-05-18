@@ -54,9 +54,7 @@ use crate::{
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
             ActivityHeartbeat, ActivityTaskCompletion,
         },
-        temporal::api::{
-            enums::v1::WorkflowTaskFailedCause, workflowservice::v1::PollWorkflowTaskQueueResponse,
-        },
+        temporal::api::enums::v1::WorkflowTaskFailedCause,
     },
     protosext::ValidPollWFTQResponse,
     task_token::TaskToken,
@@ -267,22 +265,14 @@ where
             };
 
             match selected_f {
-                Ok(work) => {
-                    if work == PollWorkflowTaskQueueResponse::default() {
-                        // We get the default proto in the event that the long poll times out.
-                        debug!("Poll wft timeout");
-                        continue;
-                    }
-
-                    let work: ValidPollWFTQResponse = work
-                        .try_into()
-                        .map_err(PollWfError::BadPollResponseFromServer)?;
-
-                    match self.apply_server_work(work).await? {
-                        Some(a) => return Ok(a),
-                        None => continue,
-                    }
+                Ok(None) => {
+                    debug!("Poll wft timeout");
+                    continue;
                 }
+                Ok(Some(work)) => match self.apply_server_work(work).await? {
+                    Some(a) => return Ok(a),
+                    None => continue,
+                },
                 // Drain pending activations in case of shutdown.
                 Err(PollWfError::ShutDown) => continue,
                 Err(e) => return Err(e),

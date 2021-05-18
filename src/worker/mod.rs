@@ -6,9 +6,10 @@ use crate::{
     protos::temporal::api::workflowservice::v1::{
         PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
     },
+    protosext::ValidPollWFTQResponse,
     PollActivityError, PollWfError, ServerGatewayApis,
 };
-use std::sync::Arc;
+use std::{convert::TryInto, sync::Arc};
 use tokio::sync::Semaphore;
 
 /// Defines per-worker configuration options
@@ -103,14 +104,16 @@ impl Worker {
 
     /// Wait until not at the outstanding activity limit, and then poll this worker's task queue for
     /// new activities.
+    ///
+    /// Returns `Ok(None)` in the event of a poll timeout
     pub(crate) async fn activity_poll(
         &self,
-    ) -> Result<PollActivityTaskQueueResponse, PollActivityError> {
-        // TODO: Explicit error?
+    ) -> Result<Option<PollActivityTaskQueueResponse>, PollActivityError> {
+        // No activity polling is allowed if this worker said it only handles local activities
         let poll_buff = self
             .at_task_poll_buffer
             .as_ref()
-            .expect("Poll on activity worker means it actually has a poller");
+            .ok_or_else(|| PollActivityError::NoWorkerForQueue(self.config.task_queue.clone()))?;
 
         // Acquire and immediately forget a permit for an outstanding activity. When they are
         // completed, we must add a new permit to the semaphore, since holding the permit the
@@ -124,23 +127,38 @@ impl Worker {
             .expect("outstanding activity semaphore not closed");
 
         let res = poll_buff.poll().await?;
+        if res == PollActivityTaskQueueResponse::default() {
+            return Ok(None);
+        }
+        // Only permanently take a permit in the event the poll finished completely
         sem.forget();
-        Ok(res)
+        Ok(Some(res))
     }
 
     /// Wait until not at the outstanding workflow task limit, and then poll this worker's task
     /// queue for new workflow tasks.
-    pub(crate) async fn workflow_poll(&self) -> Result<PollWorkflowTaskQueueResponse, PollWfError> {
+    ///
+    /// Returns `Ok(None)` in the event of a poll timeout
+    pub(crate) async fn workflow_poll(&self) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
         let sem = self
             .workflows_semaphore
             .acquire()
             .await
             .expect("outstanding workflow tasks semaphore not dropped");
-        debug!("Polling server");
+
         let res = self.wf_task_poll_buffer.poll().await?;
-        // TODO: Doesn't account for long poll timeout
+        if res == PollWorkflowTaskQueueResponse::default() {
+            // We get the default proto in the event that the long poll times out.
+            return Ok(None);
+        }
+
+        let work: ValidPollWFTQResponse = res
+            .try_into()
+            .map_err(PollWfError::BadPollResponseFromServer)?;
+
+        // Only permanently take a permit in the event the poll finished completely
         sem.forget();
-        Ok(res)
+        Ok(Some(work))
     }
 
     /// Tell the worker an activity has completed, for tracking max outstanding activities
@@ -148,10 +166,82 @@ impl Worker {
         self.activities_semaphore.add_permits(1)
     }
 
-    // TODO: Add unit tests for both of these, and a multi-worker test at lib level
-    //   also test to ensure long poll timeouts don't eat up permits
     /// Tell the worker a workflow task has completed, for tracking max outstanding WFTs
     pub(crate) fn workflow_task_done(&self) {
         self.workflows_semaphore.add_permits(1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pollers::MockServerGatewayApis;
+
+    #[tokio::test]
+    async fn activity_timeouts_dont_eat_permits() {
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_poll_activity_task()
+            .returning(|_| Ok(PollActivityTaskQueueResponse::default()));
+
+        let cfg = WorkerConfigBuilder::default()
+            .task_queue("whatever")
+            .max_outstanding_activities(5usize)
+            .build()
+            .unwrap();
+        let worker = Worker::new(cfg, Arc::new(mock_gateway));
+        assert_eq!(worker.activity_poll().await.unwrap(), None);
+        assert_eq!(worker.activities_semaphore.available_permits(), 5);
+    }
+
+    #[tokio::test]
+    async fn workflow_timeouts_dont_eat_permits() {
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_poll_workflow_task()
+            .returning(|_| Ok(PollWorkflowTaskQueueResponse::default()));
+
+        let cfg = WorkerConfigBuilder::default()
+            .task_queue("whatever")
+            .max_outstanding_workflow_tasks(5usize)
+            .build()
+            .unwrap();
+        let worker = Worker::new(cfg, Arc::new(mock_gateway));
+        assert_eq!(worker.workflow_poll().await.unwrap(), None);
+        assert_eq!(worker.workflows_semaphore.available_permits(), 5);
+    }
+
+    #[tokio::test]
+    async fn activity_errs_dont_eat_permits() {
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_poll_activity_task()
+            .returning(|_| Err(tonic::Status::internal("ahhh")));
+
+        let cfg = WorkerConfigBuilder::default()
+            .task_queue("whatever")
+            .max_outstanding_activities(5usize)
+            .build()
+            .unwrap();
+        let worker = Worker::new(cfg, Arc::new(mock_gateway));
+        assert!(worker.activity_poll().await.is_err());
+        assert_eq!(worker.activities_semaphore.available_permits(), 5);
+    }
+
+    #[tokio::test]
+    async fn workflow_errs_dont_eat_permits() {
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_poll_workflow_task()
+            .returning(|_| Err(tonic::Status::internal("ahhh")));
+
+        let cfg = WorkerConfigBuilder::default()
+            .task_queue("whatever")
+            .max_outstanding_workflow_tasks(5usize)
+            .build()
+            .unwrap();
+        let worker = Worker::new(cfg, Arc::new(mock_gateway));
+        assert!(worker.workflow_poll().await.is_err());
+        assert_eq!(worker.workflows_semaphore.available_permits(), 5);
     }
 }

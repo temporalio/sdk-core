@@ -1,7 +1,6 @@
-use crate::machines::test_help::TEST_Q;
 use crate::{
     errors::PollActivityError,
-    machines::test_help::{fake_sg_opts, mock_core},
+    machines::test_help::{fake_sg_opts, mock_core, TEST_Q},
     pollers::{MockManualGateway, MockServerGatewayApis},
     protos::{
         coresdk::{

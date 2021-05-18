@@ -7,10 +7,8 @@ pub(crate) use activity_heartbeat_manager::{
 pub(crate) use details::InflightActivityDetails;
 
 use crate::{
-    protos::coresdk::activity_task::ActivityTask,
-    protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
-    task_token::TaskToken, worker::Worker, ActivityHeartbeat, ActivityHeartbeatError,
-    PollActivityError, ServerGatewayApis,
+    protos::coresdk::activity_task::ActivityTask, task_token::TaskToken, worker::Worker,
+    ActivityHeartbeat, ActivityHeartbeatError, PollActivityError, ServerGatewayApis,
 };
 use dashmap::DashMap;
 use std::{convert::TryInto, ops::Div, sync::Arc, time::Duration};
@@ -76,10 +74,8 @@ impl ActivityTaskManager {
             }
             work = worker.activity_poll() => {
                 match work {
-                    Ok(work) => {
-                        if work == PollActivityTaskQueueResponse::default() {
-                            return Ok(None);
-                        }
+                    Ok(None) => Ok(None), // Timeout
+                    Ok(Some(work)) => {
                         self.outstanding_activity_tasks.insert(
                             work.task_token.clone().into(),
                             InflightActivityDetails::new(

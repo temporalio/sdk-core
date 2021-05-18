@@ -15,6 +15,7 @@ use crate::{
 use std::convert::TryFrom;
 
 /// A validated version of a [PollWorkflowTaskQueueResponse]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ValidPollWFTQResponse {
     pub task_token: TaskToken,
     pub task_queue: String,
