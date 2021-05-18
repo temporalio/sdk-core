@@ -173,6 +173,9 @@ pub fn build_multihist_mock_sg(
 
         // Convert history batches into poll responses, while also tracking how many times a given
         // history has been returned so we can increment the associated attempt number on the WFT.
+        // NOTE: This is hard to use properly with the `AfterEveryReply` testing eviction mode.
+        //  Such usages need a history different from other eviction modes which would include
+        //  WFT timeouts or something to simulate the task getting dropped.
         let mut attempts_at_task_num = HashMap::new();
         let responses: Vec<_> = hist
             .response_batches

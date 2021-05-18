@@ -717,7 +717,6 @@ async fn cancel_timer_before_sent_wf_bridge() {
 #[rstest]
 #[case::no_evict_inc(&[1, 2, 2], NonSticky)]
 #[case::no_evict(&[2, 2], NonSticky)]
-#[case::evict(&[1, 2, 2, 2], AfterEveryReply)]
 #[tokio::test]
 async fn complete_activation_with_failure(
     #[case] batches: &[usize],
