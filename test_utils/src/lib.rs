@@ -31,7 +31,7 @@ impl CoreWfStarter {
         Self {
             test_name: test_name.to_owned(),
             core_options: CoreInitOptionsBuilder::default()
-                .gateway_opts(get_integ_server_options(&task_queue))
+                .gateway_opts(get_integ_server_options())
                 .max_cached_workflows(1000usize)
                 .build()
                 .unwrap(),
@@ -117,7 +117,10 @@ impl CoreWfStarter {
     async fn get_or_init_core(&mut self) -> Arc<dyn Core> {
         let opts = self.core_options.clone();
         if self.initted_core.is_none() {
-            self.initted_core = Some(Arc::new(temporal_sdk_core::init(opts).await.unwrap()));
+            let core = temporal_sdk_core::init(opts).await.unwrap();
+            // Register a worker for the task queue
+            core.register_worker(self.worker_config.clone());
+            self.initted_core = Some(Arc::new(core));
         }
         self.initted_core.as_ref().unwrap().clone()
     }
@@ -138,7 +141,7 @@ pub async fn with_gw<F: FnOnce(GwApi) -> Fout, Fout: Future>(
     fun(gw).await
 }
 
-pub fn get_integ_server_options(task_q: &str) -> ServerGatewayOptions {
+pub fn get_integ_server_options() -> ServerGatewayOptions {
     let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
         Ok(addr) => addr,
         Err(_) => "http://localhost:7233".to_owned(),
@@ -152,19 +155,6 @@ pub fn get_integ_server_options(task_q: &str) -> ServerGatewayOptions {
         target_url: url,
         tls_cfg: None,
     }
-}
-
-pub async fn get_integ_core(task_q: &str) -> impl Core {
-    let gateway_opts = get_integ_server_options(task_q);
-    temporal_sdk_core::init(
-        CoreInitOptionsBuilder::default()
-            .gateway_opts(gateway_opts)
-            .max_cached_workflows(1000usize)
-            .build()
-            .unwrap(),
-    )
-    .await
-    .unwrap()
 }
 
 pub fn schedule_activity_cmd(
