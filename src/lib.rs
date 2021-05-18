@@ -246,7 +246,7 @@ where
             let worker = self
                 .workers
                 .get(task_queue)
-                .ok_or(PollWfError::NoWorkerForQueue(task_queue.to_owned()))?;
+                .ok_or_else(|| PollWfError::NoWorkerForQueue(task_queue.to_owned()))?;
             let poll_result_future =
                 self.shutdownable_fut(worker.workflow_poll().map_err(Into::into));
             let selected_f = tokio::select! {
@@ -257,7 +257,9 @@ where
                 update = activation_update_fut => {
                     // If the update indicates a task completed, free a slot in the worker
                     if let Some(WfActivationUpdate::WorkflowTaskComplete {task_queue}) = update {
-                        self.workers.get(&task_queue).map(|w| w.workflow_task_done());
+                        if let Some(w) = self.workers.get(&task_queue) {
+                            w.workflow_task_done();
+                        }
                     }
                     continue;
                 }
@@ -301,7 +303,7 @@ where
             let worker = self
                 .workers
                 .get(task_queue)
-                .ok_or(PollActivityError::NoWorkerForQueue(task_queue.to_owned()))?;
+                .ok_or_else(|| PollActivityError::NoWorkerForQueue(task_queue.to_owned()))?;
 
             tokio::select! {
                 biased;
@@ -397,9 +399,9 @@ where
         if should_remove {
             // Remove the activity from tracking and tell the worker a slot is free
             if let Some(deets) = self.act_manager.mark_complete(&tt) {
-                self.workers
-                    .get(&deets.task_queue)
-                    .map(|w| w.activity_done());
+                if let Some(worker) = self.workers.get(&deets.task_queue) {
+                    worker.activity_done();
+                }
             }
         }
         Ok(res?)
@@ -441,7 +443,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         Self {
             wft_manager: WorkflowTaskManager::new(wau_tx, cache_policy),
             act_manager: ActivityTaskManager::new(sg.clone()),
-            server_gateway: sg.clone(),
+            server_gateway: sg,
             workers: DashMap::new(),
             _init_options: init_options,
             shutdown_requested: AtomicBool::new(false),

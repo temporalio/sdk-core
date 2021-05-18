@@ -92,7 +92,9 @@ impl Worker {
     }
     pub(crate) fn shutdown(&self) {
         self.wf_task_poll_buffer.shutdown();
-        self.at_task_poll_buffer.as_ref().map(|b| b.shutdown());
+        if let Some(b) = self.at_task_poll_buffer.as_ref() {
+            b.shutdown();
+        }
     }
 
     pub(crate) fn task_queue(&self) -> &str {
