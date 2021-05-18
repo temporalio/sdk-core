@@ -1,3 +1,4 @@
+use crate::workflow::NextWfActivation;
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
@@ -10,7 +11,7 @@ use crate::{
         coresdk::{
             workflow_activation::{
                 wf_activation_job::{self, Variant},
-                StartWorkflow, UpdateRandomSeed, WfActivation,
+                StartWorkflow, UpdateRandomSeed,
             },
             PayloadsExt, PayloadsToPayloadError,
         },
@@ -402,16 +403,15 @@ impl WorkflowMachines {
     ///
     /// Importantly, the returned activation will have an empty task token. A meaningful one is
     /// expected to be attached by something higher in the call stack.
-    pub(crate) fn get_wf_activation(&mut self) -> Option<WfActivation> {
+    pub(crate) fn get_wf_activation(&mut self) -> Option<NextWfActivation> {
         let jobs = self.drive_me.drain_jobs();
         if jobs.is_empty() {
             None
         } else {
-            Some(WfActivation {
-                timestamp: self.current_wf_time.map(Into::into),
+            Some(NextWfActivation {
+                timestamp: self.current_wf_time,
                 run_id: self.run_id.clone(),
                 jobs,
-                task_token: vec![],
             })
         }
     }

@@ -10,12 +10,13 @@ use crate::task_token::TaskToken;
 use crate::{
     machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
     protos::{
-        coresdk::workflow_activation::WfActivation,
+        coresdk::workflow_activation::{WfActivation, WfActivationJob},
         temporal::api::{common::v1::WorkflowExecution, history::v1::History},
     },
     protosext::{HistoryInfo, HistoryInfoError},
 };
 use std::sync::mpsc::{SendError, Sender};
+use std::time::SystemTime;
 
 type Result<T, E = WorkflowError> = std::result::Result<T, E>;
 
@@ -87,22 +88,30 @@ impl WorkflowManager {
     }
 }
 
+/// This is a subset of [WfActivation] that the workflow machines are capable of returning.
+/// Additional information must be attached via [NextWfActivation::finalize] before sending out to
+/// lang.
 #[derive(Debug)]
 pub(crate) struct NextWfActivation {
-    /// Keep this private, so we can ensure task tokens are attached via [Self::finalize]
-    activation: WfActivation,
+    pub timestamp: Option<SystemTime>,
+    pub run_id: String,
+    pub jobs: Vec<WfActivationJob>,
 }
 
 impl NextWfActivation {
-    /// Attach a task token to the activation so it can be sent out to the lang sdk
-    pub fn finalize(self, task_token: TaskToken) -> WfActivation {
-        let mut a = self.activation;
-        a.task_token = task_token.0;
-        a
+    /// Attach a task token & queue to the activation so it can be sent out to the lang sdk
+    pub fn finalize(self, task_token: TaskToken, task_queue: String) -> WfActivation {
+        WfActivation {
+            task_token: task_token.0,
+            task_queue,
+            timestamp: self.timestamp.map(Into::into),
+            run_id: self.run_id,
+            jobs: self.jobs,
+        }
     }
 
     pub fn run_id(&self) -> &str {
-        &self.activation.run_id
+        &self.run_id
     }
 }
 
@@ -127,7 +136,7 @@ impl WorkflowManager {
         let activation = self.machines.get_wf_activation();
 
         self.current_wf_task_num += 1;
-        Ok(activation.map(|activation| NextWfActivation { activation }))
+        Ok(activation)
     }
 
     /// Fetch any pending commands that should be sent to the server, as well as if this workflow
@@ -152,7 +161,7 @@ impl WorkflowManager {
         // First check if there are already some pending jobs, which can be a result of replay.
         let activation = self.machines.get_wf_activation();
         if let Some(act) = activation {
-            return Ok(Some(NextWfActivation { activation: act }));
+            return Ok(Some(act));
         }
 
         let hist = &self.last_history_from_server;
@@ -164,7 +173,7 @@ impl WorkflowManager {
             self.current_wf_task_num += 1;
         }
 
-        Ok(activation.map(|activation| NextWfActivation { activation }))
+        Ok(activation)
     }
 
     /// Feed the workflow machines new commands issued by the executing workflow code, and iterate

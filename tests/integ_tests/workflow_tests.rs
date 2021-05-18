@@ -74,6 +74,7 @@ async fn parallel_workflows_same_queue() {
 
     for _ in 0..num_workflows * 2 {
         let task = core.poll_workflow_task(&task_q).await.unwrap();
+        assert_eq!(&task.task_queue, task_q);
         send_chans
             .get(&task.run_id)
             .unwrap()

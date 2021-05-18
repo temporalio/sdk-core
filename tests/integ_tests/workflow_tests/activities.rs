@@ -37,6 +37,7 @@ async fn activity_workflow() {
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
     let task = core.poll_activity_task(&task_q).await.unwrap();
+    assert_eq!(&task.task_queue, &task_q);
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {

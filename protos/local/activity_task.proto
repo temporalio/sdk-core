@@ -13,13 +13,16 @@ import "google/protobuf/duration.proto";
 message ActivityTask {
     /// A unique identifier for this task
     bytes task_token = 1;
+    // The task queue that this activity task came from. Corresponds to the worker that should be
+    // tasked with handling it.
+    string task_queue = 2;
     /// The activity's ID
-    string activity_id = 2;
+    string activity_id = 3;
     oneof variant {
         /// Start activity execution.
-        Start start = 3;
+        Start start = 4;
         /// Attempt to cancel activity execution.
-        Cancel cancel = 4;
+        Cancel cancel = 5;
     }
 }
 

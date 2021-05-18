@@ -118,6 +118,7 @@ impl WorkflowTaskManager {
             self.pending_activations.push(create_evict_activation(
                 task_token.to_owned(),
                 run_id.to_owned(),
+                wti.task_queue.clone(),
             ));
             let _ =
                 self.workflow_activations_update
@@ -163,12 +164,15 @@ impl WorkflowTaskManager {
         }
 
         let task_token = work.task_token.clone();
+        let task_queue = work.task_queue.clone();
         let next_activation = self.instantiate_or_update_workflow(work)?;
 
         if let Some(na) = next_activation {
             self.outstanding_workflow_tasks
                 .insert(na.run_id().to_owned(), None);
-            Ok(NewWfTaskOutcome::IssueActivation(na.finalize(task_token)))
+            Ok(NewWfTaskOutcome::IssueActivation(
+                na.finalize(task_token, task_queue),
+            ))
         } else {
             Ok(NewWfTaskOutcome::Autocomplete)
         }
@@ -258,8 +262,12 @@ impl WorkflowTaskManager {
         if let Some(next_activation) =
             self.access_wf_machine(run_id, move |mgr| mgr.get_next_activation())?
         {
+            let info = self
+                .workflow_task_tokens
+                .get(&task_token)
+                .expect("Task token is present in map if there is a new pending activation");
             self.pending_activations
-                .push(next_activation.finalize(task_token));
+                .push(next_activation.finalize(task_token, info.task_queue.clone()));
             new_activation = true;
             let _ = self
                 .workflow_activations_update

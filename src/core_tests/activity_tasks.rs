@@ -325,6 +325,7 @@ async fn many_concurrent_heartbeat_cancels() {
     // Read all the cancellations and reply to them concurrently
     fanout_tasks(CONCURRENCY_NUM, |_| async move {
         let r = core.poll_activity_task(TEST_Q).await.unwrap();
+        assert_eq!(&r.task_queue, TEST_Q);
         assert_matches!(
             r,
             ActivityTask {

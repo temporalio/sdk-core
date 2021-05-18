@@ -1093,6 +1093,7 @@ async fn lots_of_workflows() {
 
     fanout_tasks(5, |_| async move {
         while let Ok(wft) = core.poll_workflow_task(TEST_Q).await {
+            assert_eq!(&wft.task_queue, TEST_Q);
             let job = &wft.jobs[0];
             let reply = match job.variant {
                 Some(wf_activation_job::Variant::StartWorkflow(_)) => StartTimer {

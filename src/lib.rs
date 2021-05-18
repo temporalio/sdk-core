@@ -236,7 +236,6 @@ where
                 }
             }
 
-            // TODO: Can I eliminate this lock?
             let activation_update_fut = self
                 .workflow_activations_update
                 .lock()
