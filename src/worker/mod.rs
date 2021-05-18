@@ -54,8 +54,6 @@ pub(crate) struct Worker {
     /// ongoing. May be `None` if this worker does not poll for activities.
     at_task_poll_buffer: Option<PollActivityTaskBuffer>,
 
-    // TODO: This is all fucked for both of these. EX: Long poll timeout isn't an oustanding thing.
-    //   need to go back to maps here, rethink whole deal.
     /// Ensures we stay at or below this worker's maximum concurrent workflow limit
     workflows_semaphore: Semaphore,
     /// Ensures we stay at or below this worker's maximum concurrent activity limit
@@ -102,6 +100,16 @@ impl Worker {
         &self.config.task_queue
     }
 
+    #[cfg(test)]
+    pub(crate) fn outstanding_activities(&self) -> usize {
+        self.config.max_outstanding_activities - self.activities_semaphore.available_permits()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn outstanding_workflow_tasks(&self) -> usize {
+        self.config.max_outstanding_workflow_tasks - self.workflows_semaphore.available_permits()
+    }
+
     /// Wait until not at the outstanding activity limit, and then poll this worker's task queue for
     /// new activities.
     ///
@@ -115,11 +123,9 @@ impl Worker {
             .as_ref()
             .ok_or_else(|| PollActivityError::NoWorkerForQueue(self.config.task_queue.clone()))?;
 
-        // Acquire and immediately forget a permit for an outstanding activity. When they are
-        // completed, we must add a new permit to the semaphore, since holding the permit the
-        // entire time lang does work would be a challenge.
-        // TODO: Maybe actually a good way, tho? -- Might be able to stuff these into the
-        //   infos in their respective managers somehow, which could be nice.
+        // Acquire and subsequently forget a permit for an outstanding activity. When they are
+        // completed, we must add a new permit to the semaphore, since holding the permit the entire
+        // time lang does work would be a challenge.
         let sem = self
             .activities_semaphore
             .acquire()

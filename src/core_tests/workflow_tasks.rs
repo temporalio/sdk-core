@@ -1113,6 +1113,14 @@ async fn lots_of_workflows() {
     })
     .await;
     assert_eq!(core.wft_manager.outstanding_wft(), 0);
+    assert_eq!(
+        core.workers
+            .get(TEST_Q)
+            .unwrap()
+            .outstanding_workflow_tasks(),
+        0
+    );
+    core.shutdown().await;
 }
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]

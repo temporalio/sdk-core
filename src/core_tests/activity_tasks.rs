@@ -341,7 +341,9 @@ async fn many_concurrent_heartbeat_cancels() {
     })
     .await;
 
-    // TODO: Enable again
-    // assert!(core.outstanding_activity_tasks.is_empty());
+    assert_eq!(
+        core.workers.get(TEST_Q).unwrap().outstanding_activities(),
+        0
+    );
     core.shutdown().await;
 }
