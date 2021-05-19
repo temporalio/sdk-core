@@ -100,9 +100,8 @@ pub(crate) struct NextWfActivation {
 
 impl NextWfActivation {
     /// Attach a task token & queue to the activation so it can be sent out to the lang sdk
-    pub fn finalize(self, task_token: TaskToken, task_queue: String) -> WfActivation {
+    pub fn finalize(self, task_queue: String) -> WfActivation {
         WfActivation {
-            task_token: task_token.0,
             task_queue,
             timestamp: self.timestamp.map(Into::into),
             run_id: self.run_id,
@@ -117,6 +116,7 @@ impl NextWfActivation {
 
 #[derive(Debug)]
 pub struct OutgoingServerCommands {
+    pub task_token: TaskToken,
     pub commands: Vec<ProtoCommand>,
     pub at_final_workflow_task: bool,
 }
@@ -141,8 +141,10 @@ impl WorkflowManager {
 
     /// Fetch any pending commands that should be sent to the server, as well as if this workflow
     /// is at it's final workflow task in current history.
-    pub fn get_server_commands(&self) -> OutgoingServerCommands {
+    /// TODO: Maybe return a different type here rather than making caller pass in TT
+    pub fn get_server_commands(&self, task_token: TaskToken) -> OutgoingServerCommands {
         OutgoingServerCommands {
+            task_token,
             commands: self.machines.get_commands(),
             at_final_workflow_task: self.at_latest_wf_task(),
         }

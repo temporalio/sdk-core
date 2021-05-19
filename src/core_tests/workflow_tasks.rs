@@ -931,7 +931,7 @@ async fn max_concurrent_wft_respected() {
     let (_, mut r1) = tokio::join! {
         async {
             core.complete_workflow_task(WfActivationCompletion::from_status(
-                r1.task_token,
+                r1.run_id,
                 workflow_completion::Success::from_variants(vec![StartTimer {
                     timer_id: "timer-1".to_string(),
                     ..Default::default()
@@ -952,7 +952,7 @@ async fn max_concurrent_wft_respected() {
     // Since we never did anything with r2, all subsequent activations should be for wf1
     for i in 2..19 {
         core.complete_workflow_task(WfActivationCompletion::from_status(
-            r1.task_token,
+            r1.run_id,
             workflow_completion::Success::from_variants(vec![StartTimer {
                 timer_id: format!("timer-{}", i),
                 ..Default::default()
@@ -1105,7 +1105,7 @@ async fn lots_of_workflows() {
                 _ => CompleteWorkflowExecution { result: None }.into(),
             };
             core.complete_workflow_task(WfActivationCompletion::from_status(
-                wft.task_token,
+                wft.run_id,
                 workflow_completion::Success::from_variants(vec![reply]).into(),
             ))
             .await

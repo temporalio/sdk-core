@@ -52,6 +52,7 @@ pub(crate) struct FakeCore {
     pub(crate) outstanding_wf_tasks: OutstandingWfTaskMap,
 }
 
+/// run id -> task token
 pub type OutstandingWfTaskMap = Arc<RwLock<BiMap<String, TaskToken>>>;
 
 /// Given identifiers for a workflow/run, and a test history builder, construct an instance of
@@ -206,12 +207,16 @@ pub fn build_multihist_mock_sg(
                 .unwrap_or_else(|| RangeFull.into()),
         )
         .returning(move |_| {
-            for (wfid, tasks) in ids_to_resps.iter_mut() {
-                if !outstanding.read().contains_left(wfid) {
-                    if let Some(t) = tasks.pop_front() {
+            for (_, tasks) in ids_to_resps.iter_mut() {
+                if let Some(t) = tasks.pop_front() {
+                    // Must extract run id from a workflow task associated with this workflow
+                    // TODO: Case where run id changes for same workflow id is not handled here
+                    let rid = t.workflow_execution.as_ref().unwrap().run_id.clone();
+
+                    if !outstanding.read().contains_left(&rid) {
                         outstanding
                             .write()
-                            .insert(wfid.to_owned(), TaskToken(t.task_token.clone()));
+                            .insert(rid, TaskToken(t.task_token.clone()));
                         return Ok(t);
                     }
                 }
@@ -334,17 +339,15 @@ pub(crate) async fn poll_and_reply<'a>(
                 }
                 core.outstanding_wf_tasks
                     .write()
-                    .remove_by_right(&TaskToken(res.task_token));
+                    .remove_by_left(&res.run_id);
                 continue 'outer;
             }
 
             asserter(&res);
 
-            let task_tok = res.task_token;
-
             core.inner
                 .complete_workflow_task(WfActivationCompletion::from_status(
-                    task_tok.clone(),
+                    res.run_id.clone(),
                     reply.clone(),
                 ))
                 .await
@@ -361,7 +364,7 @@ pub(crate) async fn poll_and_reply<'a>(
                 WorkflowCachingPolicy::NonSticky => (),
                 WorkflowCachingPolicy::AfterEveryReply => {
                     if evictions < expected_evictions {
-                        core.inner.wft_manager.evict_run(&task_tok.into());
+                        core.inner.wft_manager.evict_run(&res.run_id);
                         evictions += 1;
                     }
                 }

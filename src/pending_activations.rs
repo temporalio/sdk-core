@@ -30,10 +30,6 @@ impl PendingActivations {
                 .activations
                 .get_mut(key)
                 .expect("PA run id mapping is always in sync with slot map");
-            assert_eq!(
-                v.task_token, act.task_token,
-                "New PAs that match an existing PA's run id must have the same task token"
-            );
             act.jobs.extend(v.jobs);
         } else {
             let run_id = v.run_id.clone();
@@ -108,24 +104,6 @@ mod tests {
         assert_eq!(&last.run_id, &rid2);
         assert!(!pas.has_pending(&rid2));
         assert!(pas.pop().is_none());
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "New PAs that match an existing PA's run id must have the same task token"
-    )]
-    fn panics_on_same_run_id_different_tokens() {
-        let pas = PendingActivations::default();
-        let rid = "1".to_string();
-        pas.push(WfActivation {
-            run_id: rid.clone(),
-            ..Default::default()
-        });
-        pas.push(WfActivation {
-            run_id: rid,
-            task_token: vec![9],
-            ..Default::default()
-        });
     }
 
     #[test]

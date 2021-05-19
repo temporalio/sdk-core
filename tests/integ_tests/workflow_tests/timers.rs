@@ -39,14 +39,14 @@ async fn timer_workflow() {
             start_to_fire_timeout: Some(Duration::from_secs(1).into()),
         }
         .into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
     let task = core.poll_workflow_task(&task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -71,7 +71,7 @@ async fn timer_cancel_workflow() {
             }
             .into(),
         ],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -84,7 +84,7 @@ async fn timer_cancel_workflow() {
             .into(),
             CompleteWorkflowExecution { result: None }.into(),
         ],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -108,7 +108,7 @@ async fn timer_immediate_cancel_workflow() {
             .into(),
             CompleteWorkflowExecution { result: None }.into(),
         ],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -133,7 +133,7 @@ async fn parallel_timer_workflow() {
             }
             .into(),
         ],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -161,7 +161,7 @@ async fn parallel_timer_workflow() {
     );
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();

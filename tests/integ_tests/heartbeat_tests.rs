@@ -27,7 +27,7 @@ async fn activity_heartbeat() {
             Duration::from_secs(60),
             Duration::from_secs(1),
         )
-        .into_completion(task.task_token),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -80,7 +80,7 @@ async fn activity_heartbeat() {
     );
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap()

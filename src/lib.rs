@@ -42,6 +42,7 @@ pub use protosext::IntoCompletion;
 pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
+use crate::workflow_tasks::FailedActivationOutcome;
 use crate::{
     activity::ActivityTaskManager,
     errors::ShutdownErr,
@@ -72,8 +73,10 @@ use std::{
         Arc,
     },
 };
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{
+    mpsc::{unbounded_channel, UnboundedReceiver},
+    Mutex, Notify,
+};
 
 /// This trait is the primary way by which language specific SDKs interact with the core SDK. It is
 /// expected that only one instance of an implementation will exist for the lifetime of the
@@ -315,27 +318,15 @@ where
         &self,
         completion: WfActivationCompletion,
     ) -> Result<(), CompleteWfError> {
-        let task_token = TaskToken(completion.task_token);
         let wfstatus = completion.status;
-        let run_id = self
-            .wft_manager
-            .run_id_for_task(&task_token)
-            .ok_or_else(|| CompleteWfError::MalformedWorkflowCompletion {
-                reason: format!(
-                    "Task token {} had no workflow run associated with it",
-                    &task_token
-                ),
-                completion: None,
-            })?;
 
         match wfstatus {
             Some(wf_activation_completion::Status::Successful(success)) => {
-                self.wf_activation_success(task_token.clone(), &run_id, success)
+                self.wf_activation_success(&completion.run_id, success)
                     .await
             }
             Some(wf_activation_completion::Status::Failed(failure)) => {
-                self.wf_activation_failed(task_token.clone(), &run_id, failure)
-                    .await
+                self.wf_activation_failed(&completion.run_id, failure).await
             }
             None => Err(CompleteWfError::MalformedWorkflowCompletion {
                 reason: "Workflow completion had empty status field".to_owned(),
@@ -447,7 +438,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         &self,
         work: ValidPollWFTQResponse,
     ) -> Result<Option<WfActivation>, CompleteWfError> {
-        let tt = work.task_token.clone();
         let we = work.workflow_execution.clone();
         match self.wft_manager.apply_new_wft(work)? {
             NewWfTaskOutcome::IssueActivation(a) => {
@@ -459,7 +449,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                 debug!(workflow_execution=?we,
                        "No work for lang to perform after polling server. Sending autocomplete.");
                 self.complete_workflow_task(WfActivationCompletion {
-                    task_token: tt.0,
+                    run_id: we.run_id,
                     status: Some(workflow_completion::Success::from_variants(vec![]).into()),
                 })
                 .await?;
@@ -471,7 +461,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     /// Handle a successful workflow completion
     async fn wf_activation_success(
         &self,
-        task_token: TaskToken,
         run_id: &str,
         success: workflow_completion::Success,
     ) -> Result<(), CompleteWfError> {
@@ -488,19 +477,16 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                 completion: None,
             })?;
 
-        if let Some(server_cmds) =
-            self.wft_manager
-                .successful_activation(run_id, task_token.clone(), cmds)?
-        {
+        if let Some(server_cmds) = self.wft_manager.successful_activation(run_id, cmds)? {
             debug!("Sending commands to server: {:?}", &server_cmds.commands);
             let res = self
                 .server_gateway
-                .complete_workflow_task(task_token.clone(), server_cmds.commands)
+                .complete_workflow_task(server_cmds.task_token, server_cmds.commands)
                 .await;
             if let Err(ts) = res {
                 let should_evict = self.handle_wft_complete_errs(ts)?;
                 if should_evict {
-                    self.wft_manager.evict_run(&task_token);
+                    self.wft_manager.evict_run(run_id);
                 }
             }
         }
@@ -510,21 +496,18 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     /// Handle a failed workflow completion
     async fn wf_activation_failed(
         &self,
-        task_token: TaskToken,
         run_id: &str,
         failure: workflow_completion::Failure,
     ) -> Result<(), CompleteWfError> {
-        if self.wft_manager.failed_activation(run_id, &task_token) {
-            // TODO: Handle errors
+        if let FailedActivationOutcome::Report(tt) = self.wft_manager.failed_activation(run_id) {
             self.server_gateway
                 .fail_workflow_task(
-                    task_token,
+                    tt,
                     WorkflowTaskFailedCause::Unspecified,
                     failure.failure.map(Into::into),
                 )
                 .await?;
         }
-
         Ok(())
     }
 

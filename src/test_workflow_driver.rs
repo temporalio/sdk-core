@@ -107,7 +107,7 @@ impl TestRustWorker {
                 // to use block_in_place here.
                 let wf_is_done = tokio::task::block_in_place(|| twd.wait_until_wf_iteration_done());
                 let outgoing = twd.drain_pending_commands();
-                core.complete_workflow_task(outgoing.into_completion(activation.task_token))
+                core.complete_workflow_task(outgoing.into_completion(activation.run_id))
                     .await?;
                 if wf_is_done {
                     break;

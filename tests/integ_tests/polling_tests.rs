@@ -35,7 +35,7 @@ async fn out_of_order_completion_doesnt_hang() {
             }
             .into(),
         ]
-        .into_completion(task.task_token),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -79,7 +79,7 @@ async fn out_of_order_completion_doesnt_hang() {
         );
         cc.complete_workflow_task(WfActivationCompletion::from_cmds(
             vec![CompleteWorkflowExecution { result: None }.into()],
-            task.task_token,
+            task.run_id,
         ))
         .await
         .unwrap();
@@ -94,7 +94,7 @@ async fn out_of_order_completion_doesnt_hang() {
             ..Default::default()
         }
         .into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();

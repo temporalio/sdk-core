@@ -14,17 +14,16 @@ import "google/protobuf/timestamp.proto";
 /// An instruction to the lang sdk to run some workflow code, whether for the first time or from
 /// a cached state.
 message WFActivation {
-    // A unique identifier for this task
-    bytes task_token = 1;
+    /// The id of the currently active run of the workflow. Also used as a cache key. There may
+    /// only ever be one active workflow task (and hence activation) of a run at one time.
+    string run_id = 1;
     // The task queue that this activation's workflow task came from. Corresponds to the worker
     // that should be tasked with handling it.
     string task_queue = 2;
     /// The current time as understood by the workflow, which is set by workflow task started events
     google.protobuf.Timestamp timestamp = 3;
-    /// The id of the currently active run of the workflow
-    string run_id = 4;
     /// The things to do upon activating the workflow
-    repeated WFActivationJob jobs = 5;
+    repeated WFActivationJob jobs = 4;
 }
 
 message WFActivationJob {

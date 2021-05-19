@@ -86,4 +86,5 @@ async fn activity_load() {
         all_acts
     };
     dbg!(running.elapsed());
+    core.shutdown().await;
 }

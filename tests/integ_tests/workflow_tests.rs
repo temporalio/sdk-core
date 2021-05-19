@@ -50,14 +50,14 @@ async fn parallel_workflows_same_queue() {
                 start_to_fire_timeout: Some(Duration::from_secs(1).into()),
             }
             .into()],
-            task.task_token,
+            task.run_id,
         ))
         .await
         .unwrap();
         let task = task_chan.next().await.unwrap();
         core.complete_workflow_task(WfActivationCompletion::from_cmds(
             vec![CompleteWorkflowExecution { result: None }.into()],
-            task.task_token,
+            task.run_id,
         ))
         .await
         .unwrap();
@@ -126,7 +126,7 @@ async fn fail_wf_task() {
             start_to_fire_timeout: Some(Duration::from_millis(200).into()),
         }
         .into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -137,7 +137,7 @@ async fn fail_wf_task() {
     // Then break for whatever reason
     let task = core.poll_workflow_task(&task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::fail(
-        task.task_token,
+        task.run_id,
         UserCodeFailure {
             message: "I did an oopsie".to_string(),
             ..Default::default()
@@ -164,14 +164,14 @@ async fn fail_wf_task() {
             start_to_fire_timeout: Some(Duration::from_millis(200).into()),
         }
         .into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
     let task = core.poll_workflow_task(&task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -188,7 +188,7 @@ async fn fail_workflow_execution() {
             start_to_fire_timeout: Some(Duration::from_secs(1).into()),
         }
         .into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -201,7 +201,7 @@ async fn fail_workflow_execution() {
             }),
         }
         .into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -218,7 +218,7 @@ async fn signal_workflow() {
     // Task is completed with no commands
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![],
-        res.task_token.clone(),
+        res.run_id.clone(),
     ))
     .await
     .unwrap();
@@ -258,7 +258,7 @@ async fn signal_workflow() {
     );
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        res.task_token,
+        res.run_id,
     ))
     .await
     .unwrap();
@@ -278,7 +278,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
             start_to_fire_timeout: Some(Duration::from_millis(10).into()),
         }
         .into()],
-        res.task_token,
+        res.run_id,
     ))
     .await
     .unwrap();
@@ -292,7 +292,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
         }]
     );
 
-    let task_token = res.task_token.clone();
+    let run_id = res.run_id.clone();
     // Send the signals to the server
     with_gw(core.as_ref(), |gw: GwApi| async move {
         gw.signal_workflow_execution(
@@ -310,7 +310,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
     // error will be silenced)
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        task_token,
+        run_id,
     ))
     .await
     .unwrap();
@@ -325,7 +325,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
     );
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        res.task_token,
+        res.run_id,
     ))
     .await
     .unwrap();
@@ -356,7 +356,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
                 Duration::from_secs(60),
                 Duration::from_secs(60),
             )
-            .into_completion(wf_task.task_token.clone()),
+            .into_completion(wf_task.run_id.clone()),
         )
         .await
         .unwrap();
@@ -433,7 +433,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
             // Reply to the first one, finally
             core.complete_workflow_task(WfActivationCompletion::from_cmds(
                 vec![CompleteWorkflowExecution { result: None }.into()],
-                wf_task.task_token,
+                wf_task.run_id,
             ))
             .await
             .unwrap();
@@ -449,7 +449,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     let wf_task = poll_sched_act_poll().await;
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        wf_task.task_token,
+        wf_task.run_id,
     ))
     .await
     .unwrap();

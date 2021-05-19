@@ -31,7 +31,7 @@ async fn activity_workflow() {
             Duration::from_secs(60),
             Duration::from_secs(60),
         )
-        .into_completion(task.task_token),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -74,7 +74,7 @@ async fn activity_workflow() {
     );
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap()
@@ -94,7 +94,7 @@ async fn activity_non_retryable_failure() {
             Duration::from_secs(60),
             Duration::from_secs(60),
         )
-        .into_completion(task.task_token),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -142,7 +142,7 @@ async fn activity_non_retryable_failure() {
     );
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap()
@@ -162,7 +162,7 @@ async fn activity_retry() {
             Duration::from_secs(60),
             Duration::from_secs(60),
         )
-        .into_completion(task.task_token),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -229,7 +229,7 @@ async fn activity_retry() {
     );
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap()
@@ -257,7 +257,7 @@ async fn activity_cancellation_try_cancel() {
             }
             .into(),
         ]
-        .into_completion(task.task_token),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -290,14 +290,14 @@ async fn activity_cancellation_try_cancel() {
             ..Default::default()
         }
         .into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
     let task = core.poll_workflow_task(&task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -325,7 +325,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
             }
             .into(),
         ]
-        .into_completion(task.task_token),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -344,7 +344,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
             ..Default::default()
         }
         .into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -371,7 +371,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
             start_to_fire_timeout: Some(Duration::from_millis(100).into()),
         }
         .into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -401,7 +401,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     );
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -421,7 +421,7 @@ async fn started_activity_timeout() {
             Duration::from_secs(1),
             Duration::from_secs(60),
         )
-        .into_completion(task.task_token),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -451,7 +451,7 @@ async fn started_activity_timeout() {
     );
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -480,7 +480,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
             }
             .into(),
         ]
-        .into_completion(task.task_token),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -513,7 +513,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
             ..Default::default()
         }
         .into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -530,7 +530,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
     let task = core.poll_workflow_task(&task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -558,7 +558,7 @@ async fn activity_cancellation_abandon() {
             }
             .into(),
         ]
-        .into_completion(task.task_token),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -591,7 +591,7 @@ async fn activity_cancellation_abandon() {
             ..Default::default()
         }
         .into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -600,7 +600,7 @@ async fn activity_cancellation_abandon() {
     let task = core.poll_workflow_task(&task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
