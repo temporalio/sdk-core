@@ -7,78 +7,39 @@ use crate::{
     },
     ServerGatewayApis,
 };
+use futures::StreamExt;
 use std::{
     collections::HashMap,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::{self, Duration},
+    time::{self, Duration, Instant},
 };
 use tokio::{
-    select,
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        watch::{channel, Receiver, Sender},
         Mutex,
     },
-    task::{JoinError, JoinHandle},
-    time::sleep,
+    task::JoinHandle,
 };
 
+// TODO: Not needed
 pub(crate) struct ActivityHeartbeatManager<SG> {
-    /// Core will aggregate activity heartbeats for each activity and send them to the server
-    /// periodically. This map contains sender channel for each activity, identified by the task
-    /// token, that has an active heartbeat processor.
-    heartbeat_processors: HashMap<TaskToken, ActivityHeartbeatProcessorHandle>,
-    events_tx: UnboundedSender<LifecycleEvent>,
-    events_rx: UnboundedReceiver<LifecycleEvent>,
-    shutdown_tx: Sender<bool>,
-    shutdown_rx: Receiver<bool>,
-    cancels_tx: UnboundedSender<TaskToken>,
-    server_gateway: Arc<SG>,
+    _server_gateway: Arc<SG>,
+    _shutting_down: Arc<AtomicBool>,
 }
 
 /// Used to supply new heartbeat events to the activity heartbeat manager, or to send a shutdown
 /// request.
 pub(crate) struct ActivityHeartbeatManagerHandle {
-    shutting_down: AtomicBool,
-    events: UnboundedSender<LifecycleEvent>,
+    shutting_down: Arc<AtomicBool>,
+    heartbeat_tx: UnboundedSender<ValidActivityHeartbeat>,
     /// Cancellations that have been received when heartbeating are queued here and can be consumed
     /// by [fetch_cancellations]
     incoming_cancels: Mutex<UnboundedReceiver<TaskToken>>,
     /// Used during `shutdown` to await until all inflight requests are sent.
     join_handle: Mutex<Option<JoinHandle<()>>>,
-}
-
-/// Used to supply heartbeat details to the heartbeat processor, which periodically sends them to
-/// the server.
-struct ActivityHeartbeatProcessorHandle {
-    heartbeat_tx: Sender<Vec<common::Payload>>,
-    join_handle: JoinHandle<()>,
-}
-
-/// Heartbeat processor, that aggregates and periodically sends heartbeat requests for a single
-/// activity to the server.
-struct ActivityHeartbeatProcessor<SG> {
-    task_token: TaskToken,
-    delay: time::Duration,
-    /// Used to receive heartbeat events.
-    heartbeat_rx: Receiver<Vec<common::Payload>>,
-    /// Used to receive shutdown notifications.
-    shutdown_rx: Receiver<bool>,
-    /// Used to send CleanupProcessor event at the end of the processor loop.
-    events_tx: UnboundedSender<LifecycleEvent>,
-    /// Used to send cancellation notices that we learned about when heartbeating back up to core
-    cancels_tx: UnboundedSender<TaskToken>,
-    server_gateway: Arc<SG>,
-}
-
-#[derive(Debug)]
-pub enum LifecycleEvent {
-    Heartbeat(ValidActivityHeartbeat),
-    CleanupProcessor(TaskToken),
-    Shutdown,
 }
 
 #[derive(Debug)]
@@ -106,12 +67,12 @@ impl ActivityHeartbeatManagerHandle {
             return Err(ActivityHeartbeatError::ShuttingDown);
         }
 
-        self.events
-            .send(LifecycleEvent::Heartbeat(ValidActivityHeartbeat {
+        self.heartbeat_tx
+            .send(ValidActivityHeartbeat {
                 task_token: TaskToken(details.task_token),
                 details: details.details,
                 delay,
-            }))
+            })
             .expect("Receive half of the heartbeats event channel must not be dropped");
 
         Ok(())
@@ -126,15 +87,7 @@ impl ActivityHeartbeatManagerHandle {
     /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all heartbeat
     /// processors to terminate gracefully.
     pub async fn shutdown(&self) {
-        // If shutdown was called multiple times, shutdown signal has been sent already and consumer
-        // might have been dropped already, meaning that sending to the channel may fail.
-        // All we need to do is to simply await on handle for the completion.
-        if !self.shutting_down.load(Ordering::Relaxed) {
-            self.events
-                .send(LifecycleEvent::Shutdown)
-                .expect("should be able to send shutdown event");
-            self.shutting_down.store(true, Ordering::Relaxed);
-        }
+        self.shutting_down.store(true, Ordering::Relaxed);
         let mut handle = self.join_handle.lock().await;
         if let Some(h) = handle.take() {
             h.await.expect("shutdown should exit cleanly");
@@ -142,144 +95,114 @@ impl ActivityHeartbeatManagerHandle {
     }
 }
 
+#[derive(Debug)]
+struct HbStreamState {
+    last_sent: HashMap<TaskToken, ActivityHbState>,
+    incoming_hbs: UnboundedReceiver<ValidActivityHeartbeat>,
+}
+impl HbStreamState {
+    fn new(incoming_hbs: UnboundedReceiver<ValidActivityHeartbeat>) -> Self {
+        Self {
+            last_sent: Default::default(),
+            incoming_hbs,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ActivityHbState {
+    delay: Duration,
+    last_sent: Instant,
+}
+
 impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG> {
     #![allow(clippy::new_ret_no_self)]
     /// Creates a new instance of an activity heartbeat manager and returns a handle to the user,
     /// which allows to send new heartbeats and initiate the shutdown.
     pub fn new(sg: Arc<SG>) -> ActivityHeartbeatManagerHandle {
-        let (shutdown_tx, shutdown_rx) = channel(false);
-        let (events_tx, events_rx) = unbounded_channel();
+        let (heartbeat_tx, heartbeat_rx) = unbounded_channel();
         let (cancels_tx, cancels_rx) = unbounded_channel();
-        let s = Self {
-            heartbeat_processors: Default::default(),
-            events_tx: events_tx.clone(),
-            events_rx,
-            shutdown_tx,
-            shutdown_rx,
-            cancels_tx,
-            server_gateway: sg,
-        };
-        let join_handle = tokio::spawn(s.lifecycle());
+        let shutting_down = Arc::new(AtomicBool::new(false));
+        let shutdown = shutting_down.clone();
+
+        let join_handle = tokio::spawn(
+            // The stream of incoming heartbeats uses scan to carry state across each item in the stream
+            // The closure checks if, for any given activity, we should heartbeat or not depending on
+            // its delay and when we last issued a heartbeat for it.
+            futures::stream::unfold(HbStreamState::new(heartbeat_rx), move |mut hb_states| {
+                let shutdown = shutdown.clone();
+                async move {
+                    let hb = if let Some(hb) = hb_states.incoming_hbs.recv().await {
+                        hb
+                    } else {
+                        return None;
+                    };
+
+                    let do_record = if !hb_states.last_sent.contains_key(&hb.task_token) {
+                        hb_states.last_sent.insert(
+                            hb.task_token.clone(),
+                            ActivityHbState {
+                                delay: hb.delay,
+                                last_sent: Instant::now(),
+                            },
+                        );
+                        true
+                    } else {
+                        false
+                    };
+
+                    if shutdown.load(Ordering::Relaxed) {
+                        return None;
+                    }
+
+                    let maybe_send_hb = if do_record { Some(hb) } else { None };
+                    Some((maybe_send_hb, hb_states))
+                }
+            })
+            .for_each_concurrent(None, move |hb| {
+                let sg = sg.clone();
+                let cancels_tx = cancels_tx.clone();
+                async move {
+                    let hb = if let Some(hb) = hb {
+                        hb
+                    } else {
+                        return;
+                    };
+
+                    match sg
+                        .record_activity_heartbeat(
+                            hb.task_token.clone(),
+                            hb.details.clone().into_payloads(),
+                        )
+                        .await
+                    {
+                        Ok(RecordActivityTaskHeartbeatResponse { cancel_requested }) => {
+                            if cancel_requested {
+                                cancels_tx
+                                    .send(hb.task_token.clone())
+                                    .expect("Receive half of heartbeat cancels not blocked");
+                            }
+                        }
+                        // Send cancels for any activity that learns its workflow already finished (which is
+                        // one thing not found implies - other reasons would seem equally valid).
+                        Err(s) if s.code() == tonic::Code::NotFound => {
+                            cancels_tx
+                                .send(hb.task_token.clone())
+                                .expect("Receive half of heartbeat cancels not blocked");
+                        }
+                        Err(e) => {
+                            warn!("Error when recording heartbeat: {:?}", e)
+                        }
+                    }
+                }
+            }),
+        );
+
         ActivityHeartbeatManagerHandle {
-            shutting_down: AtomicBool::new(false),
-            events: events_tx,
+            shutting_down,
+            heartbeat_tx,
             incoming_cancels: Mutex::new(cancels_rx),
             join_handle: Mutex::new(Some(join_handle)),
-        }
-    }
-
-    /// Main loop, that handles all heartbeat requests and dispatches them to processors.
-    async fn lifecycle(mut self) {
-        while let Some(event) = self.events_rx.recv().await {
-            match event {
-                LifecycleEvent::Heartbeat(heartbeat) => self.record(heartbeat),
-                LifecycleEvent::Shutdown => break,
-                LifecycleEvent::CleanupProcessor(task_token) => {
-                    self.heartbeat_processors.remove(&task_token);
-                }
-            }
-        }
-        self.shutdown().await.expect("shutdown should exit cleanly")
-    }
-
-    /// Records heartbeat, by sending it to the processor.
-    /// New processor is created if one doesn't exist, otherwise new event is dispatched to the
-    /// existing processor's receiver channel.
-    fn record(&mut self, heartbeat: ValidActivityHeartbeat) {
-        match self.heartbeat_processors.get(&heartbeat.task_token) {
-            Some(handle) => {
-                handle
-                    .heartbeat_tx
-                    .send(heartbeat.details)
-                    .expect("heartbeat channel can't be dropped if we are inside this method");
-            }
-            None => {
-                let (heartbeat_tx, heartbeat_rx) = channel(heartbeat.details);
-                let processor = ActivityHeartbeatProcessor {
-                    task_token: heartbeat.task_token.clone(),
-                    delay: heartbeat.delay,
-                    heartbeat_rx,
-                    shutdown_rx: self.shutdown_rx.clone(),
-                    events_tx: self.events_tx.clone(),
-                    cancels_tx: self.cancels_tx.clone(),
-                    server_gateway: self.server_gateway.clone(),
-                };
-                let join_handle = tokio::spawn(processor.run());
-                let handle = ActivityHeartbeatProcessorHandle {
-                    heartbeat_tx,
-                    join_handle,
-                };
-                self.heartbeat_processors
-                    .insert(heartbeat.task_token, handle);
-            }
-        }
-    }
-
-    /// Initiates termination of all heartbeat processors by sending a signal and awaits termination
-    pub async fn shutdown(mut self) -> Result<(), JoinError> {
-        self.shutdown_tx
-            .send(true)
-            .expect("shutdown channel can't be dropped before shutdown is complete");
-        for v in self.heartbeat_processors.drain() {
-            v.1.join_handle.await?;
-        }
-        Ok(())
-    }
-}
-
-impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<SG> {
-    async fn run(mut self) {
-        // Each processor is initialized with heartbeat payloads, first thing we need to do is send
-        // it out.
-        self.record_heartbeat().await;
-        loop {
-            sleep(self.delay).await;
-            select! {
-                biased;
-
-                _ = self.heartbeat_rx.changed() => {
-                    self.record_heartbeat().await;
-                }
-                _ = self.shutdown_rx.changed() => {
-                    break;
-                }
-                _ = sleep(self.delay) => {
-                    // Timed out while waiting for the next heartbeat. We waited 2 * delay in total,
-                    // where delay is 1/2 of the activity heartbeat timeout. This means that
-                    // activity has either timed out or completed by now.
-                    break;
-                }
-            };
-        }
-        self.events_tx
-            .send(LifecycleEvent::CleanupProcessor(self.task_token))
-            .expect("cleanup requests should not be dropped");
-    }
-
-    async fn record_heartbeat(&mut self) {
-        let details = self.heartbeat_rx.borrow().clone();
-        match self
-            .server_gateway
-            .record_activity_heartbeat(self.task_token.clone(), details.into_payloads())
-            .await
-        {
-            Ok(RecordActivityTaskHeartbeatResponse { cancel_requested }) => {
-                if cancel_requested {
-                    self.cancels_tx
-                        .send(self.task_token.clone())
-                        .expect("Receive half of heartbeat cancels not blocked");
-                }
-            }
-            // Send cancels for any activity that learns its workflow already finished (which is
-            // one thing not found implies - other reasons would seem equally valid).
-            Err(s) if s.code() == tonic::Code::NotFound => {
-                self.cancels_tx
-                    .send(self.task_token.clone())
-                    .expect("Receive half of heartbeat cancels not blocked");
-            }
-            Err(e) => {
-                warn!("Error when recording heartbeat: {:?}", e)
-            }
         }
     }
 }
@@ -291,6 +214,7 @@ mod test {
     use crate::protos::coresdk::common::Payload;
     use crate::protos::temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse;
     use std::time::Duration;
+    use tokio::time::sleep;
 
     /// Ensure that hearbeats that are sent with a small delay are aggregated and sent roughly once
     /// every 1/2 of the heartbeat timeout.
