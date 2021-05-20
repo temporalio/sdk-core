@@ -42,7 +42,6 @@ pub use protosext::IntoCompletion;
 pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
-use crate::workflow_tasks::FailedActivationOutcome;
 use crate::{
     activity::ActivityTaskManager,
     errors::ShutdownErr,
@@ -61,7 +60,7 @@ use crate::{
     task_token::TaskToken,
     worker::Worker,
     workflow::WorkflowCachingPolicy,
-    workflow_tasks::{NewWfTaskOutcome, WorkflowTaskManager},
+    workflow_tasks::{FailedActivationOutcome, NewWfTaskOutcome, WorkflowTaskManager},
 };
 use dashmap::DashMap;
 use futures::{FutureExt, TryFutureExt};
@@ -135,6 +134,12 @@ pub trait Core: Send + Sync {
     /// be optimal behavior for the user as we don't want to break activity execution due to badly
     /// configured heartbeat options.
     fn record_activity_heartbeat(&self, details: ActivityHeartbeat);
+
+    /// Request that a workflow be evicted by its run id. This will generate a workflow activation
+    /// with the eviction job inside it to be eventually returned by [poll_workflow_task]. If the
+    /// workflow had any existing outstanding activations, such activations are invalidated and
+    /// TODO: wat
+    fn request_eviction(&self, run_id: &str);
 
     /// Returns core's instance of the [ServerGatewayApis] implementor it is using.
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis>;
@@ -392,6 +397,10 @@ where
         if let Err(e) = self.act_manager.record_activity_heartbeat(details) {
             warn!(task_token = ?tt, details = ?e, "Activity heartbeat failed.")
         }
+    }
+
+    fn request_eviction(&self, run_id: &str) {
+        self.wft_manager.evict_run(run_id);
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {

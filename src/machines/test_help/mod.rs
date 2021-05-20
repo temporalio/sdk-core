@@ -250,6 +250,23 @@ pub fn build_multihist_mock_sg(
     }
 }
 
+/// See [build_multihist_mock_sg] -- one history convenience version
+pub fn single_hist_mock_sg(
+    wf_id: &str,
+    t: TestHistoryBuilder,
+    response_batches: &[usize],
+) -> MockSGAndTasks {
+    build_multihist_mock_sg(
+        vec![FakeWfResponses {
+            wf_id: wf_id.to_owned(),
+            hist: t,
+            response_batches: response_batches.to_vec(),
+        }],
+        true,
+        None,
+    )
+}
+
 pub fn hist_to_poll_resp(
     t: &TestHistoryBuilder,
     wf_id: String,
@@ -364,7 +381,7 @@ pub(crate) async fn poll_and_reply<'a>(
                 WorkflowCachingPolicy::NonSticky => (),
                 WorkflowCachingPolicy::AfterEveryReply => {
                     if evictions < expected_evictions {
-                        core.inner.wft_manager.evict_run(&res.run_id);
+                        core.inner.request_eviction(&res.run_id);
                         evictions += 1;
                     }
                 }

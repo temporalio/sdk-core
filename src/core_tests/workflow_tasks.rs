@@ -1,3 +1,4 @@
+use crate::machines::test_help::single_hist_mock_sg;
 use crate::{
     job_assert,
     machines::test_help::{
@@ -394,7 +395,7 @@ async fn cancelled_activity_timeout(hist_batches: &[usize]) {
                 }
                 .into()],
             ),
-            // Activity is getting resolved right away as it has been timed out.
+            // Activity is resolved right away as it has timed out.
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
@@ -421,7 +422,7 @@ async fn scheduled_activity_cancellation_abandon(hist_batches: &[usize]) {
     let t = canned_histories::cancel_scheduled_activity_abandon(activity_id, signal_id);
     let core = build_fake_core(wfid, t, hist_batches);
 
-    verify_activity_cancellation_abandon(&activity_id, &core).await;
+    verify_activity_cancellation(&core, activity_id, ActivityCancellationType::Abandon).await;
 }
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
@@ -434,10 +435,45 @@ async fn started_activity_cancellation_abandon(hist_batches: &[usize]) {
     let t = canned_histories::cancel_started_activity_abandon(activity_id, signal_id);
     let core = build_fake_core(wfid, t, hist_batches);
 
-    verify_activity_cancellation_abandon(&activity_id, &core).await;
+    verify_activity_cancellation(&core, activity_id, ActivityCancellationType::Abandon).await;
 }
 
-async fn verify_activity_cancellation_abandon(activity_id: &&str, core: &FakeCore) {
+#[rstest(hist_batches, case::incremental(&[1, 3]), case::replay(&[3]))]
+#[tokio::test]
+async fn scheduled_activity_cancellation_try_cancel_task_canceled(hist_batches: &[usize]) {
+    let wfid = "fake_wf_id";
+    let activity_id = "fake_activity";
+    let signal_id = "signal";
+
+    let t = canned_histories::cancel_scheduled_activity_with_activity_task_cancel(
+        activity_id,
+        signal_id,
+    );
+    let core = build_fake_core(wfid, t, hist_batches);
+
+    verify_activity_cancellation(&core, activity_id, ActivityCancellationType::TryCancel).await;
+}
+
+#[rstest(hist_batches, case::incremental(&[1, 3]), case::replay(&[3]))]
+#[tokio::test]
+async fn started_activity_cancellation_try_cancel_task_canceled(hist_batches: &[usize]) {
+    let wfid = "fake_wf_id";
+    let activity_id = "fake_activity";
+    let signal_id = "signal";
+
+    let t =
+        canned_histories::cancel_started_activity_with_activity_task_cancel(activity_id, signal_id);
+    let core = build_fake_core(wfid, t, hist_batches);
+
+    verify_activity_cancellation(&core, activity_id, ActivityCancellationType::TryCancel).await;
+}
+
+/// Verification for try cancel & abandon histories
+async fn verify_activity_cancellation(
+    core: &FakeCore,
+    activity_id: &str,
+    cancel_type: ActivityCancellationType,
+) {
     poll_and_reply(
         &core,
         NonSticky,
@@ -446,7 +482,7 @@ async fn verify_activity_cancellation_abandon(activity_id: &&str, core: &FakeCor
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
                     activity_id: activity_id.to_string(),
-                    cancellation_type: ActivityCancellationType::Abandon as i32,
+                    cancellation_type: cancel_type as i32,
                     ..Default::default()
                 }
                 .into()],
@@ -459,7 +495,7 @@ async fn verify_activity_cancellation_abandon(activity_id: &&str, core: &FakeCor
                 }
                 .into()],
             ),
-            // Activity is getting resolved right away as we are in the Abandon mode.
+            // Activity should be resolved right away
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
@@ -536,78 +572,6 @@ async fn verify_activity_cancellation_wait_for_cancellation(activity_id: &str, c
                 vec![],
             ),
             // Now ActivityTaskCanceled has been processed and activity can be resolved.
-            gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::ResolveActivity(
-                    ResolveActivity {
-                        activity_id: _,
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Canceled(..)),
-                        })
-                    }
-                )),
-                vec![CompleteWorkflowExecution { result: None }.into()],
-            ),
-        ],
-    )
-    .await;
-}
-
-#[rstest(hist_batches, case::incremental(&[1, 3]), case::replay(&[3]))]
-#[tokio::test]
-async fn scheduled_activity_cancellation_try_cancel_task_canceled(hist_batches: &[usize]) {
-    let wfid = "fake_wf_id";
-    let activity_id = "fake_activity";
-    let signal_id = "signal";
-
-    let t = canned_histories::cancel_scheduled_activity_with_activity_task_cancel(
-        activity_id,
-        signal_id,
-    );
-    let core = build_fake_core(wfid, t, hist_batches);
-
-    verify_activity_cancellation_try_cancel_task_canceled(&activity_id, &core).await;
-}
-
-#[rstest(hist_batches, case::incremental(&[1, 3]), case::replay(&[3]))]
-#[tokio::test]
-async fn started_activity_cancellation_try_cancel_task_canceled(hist_batches: &[usize]) {
-    let wfid = "fake_wf_id";
-    let activity_id = "fake_activity";
-    let signal_id = "signal";
-
-    let t =
-        canned_histories::cancel_started_activity_with_activity_task_cancel(activity_id, signal_id);
-    let core = build_fake_core(wfid, t, hist_batches);
-
-    verify_activity_cancellation_try_cancel_task_canceled(&activity_id, &core).await;
-}
-
-async fn verify_activity_cancellation_try_cancel_task_canceled(
-    activity_id: &&str,
-    core: &FakeCore,
-) {
-    poll_and_reply(
-        &core,
-        NonSticky,
-        &[
-            gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
-                vec![ScheduleActivity {
-                    activity_id: activity_id.to_string(),
-                    cancellation_type: ActivityCancellationType::TryCancel as i32,
-                    ..Default::default()
-                }
-                .into()],
-            ),
-            gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
-                vec![RequestCancelActivity {
-                    activity_id: activity_id.to_string(),
-                    ..Default::default()
-                }
-                .into()],
-            ),
-            // Making sure that activity is not resolved until it's cancelled.
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
@@ -1037,7 +1001,6 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &[usize])
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
-                // Start timer and activity
                 vec![ScheduleActivity {
                     activity_id: activity_id.to_string(),
                     cancellation_type: ActivityCancellationType::TryCancel as i32,
@@ -1138,7 +1101,6 @@ async fn wft_timeout_repro(hist_batches: &[usize]) {
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
-                // Start timer and activity
                 vec![ScheduleActivity {
                     activity_id: activity_id.to_string(),
                     cancellation_type: ActivityCancellationType::TryCancel as i32,
@@ -1162,4 +1124,25 @@ async fn wft_timeout_repro(hist_batches: &[usize]) {
         ],
     )
     .await;
+}
+
+#[tokio::test]
+async fn complete_after_eviction() {
+    let wfid = "fake_wf_id";
+    let t = canned_histories::single_timer("fake_timer");
+    let mut mock = single_hist_mock_sg(wfid, t, &[2]);
+    mock.sg.expect_complete_workflow_task().times(0);
+    let core = fake_core_from_mock_sg(mock);
+
+    let activation = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    // We just got start workflow, immediately evict
+    core.inner.request_eviction(&activation.run_id);
+    // Try to complete it. No error should be returned, and nothing happens or is sent to server.
+    core.inner
+        .complete_workflow_task(WfActivationCompletion::from_cmd(
+            CompleteWorkflowExecution { result: None }.into(),
+            activation.run_id,
+        ))
+        .await
+        .unwrap()
 }

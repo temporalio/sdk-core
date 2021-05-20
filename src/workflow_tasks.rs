@@ -28,8 +28,9 @@ pub struct WorkflowTaskManager {
     workflow_machines: WorkflowConcurrencyManager,
     /// Maps run ids to info about their associated workflow task
     workflow_info: DashMap<String, WorkflowTaskInfo>,
-    /// Workflows may generate new activations immediately upon completion (ex: while replaying,
-    /// or when cancelling an activity in try-cancel/abandon mode). They queue here.
+    /// Workflows may generate new activations immediately upon completion (ex: while replaying, or
+    /// when cancelling an activity in try-cancel/abandon mode), or for other reasons such as a
+    /// requested eviction. They queue here.
     pending_activations: PendingActivations,
     /// Used to track which workflows (by run id) have outstanding workflow tasks. Additionally,
     /// if the value is set, it indicates there is a buffered poll response from the server that
@@ -106,8 +107,11 @@ impl WorkflowTaskManager {
         self.outstanding_workflow_tasks.len()
     }
 
-    /// Evict a workflow from the cache by its run id. Returns that workflow's task info if
-    /// it was present.
+    /// Evict a workflow from the cache by its run id and enqueue a pending activation to evict the
+    /// workflow. Any existing pending activations will be destroyed, and any outstanding
+    /// activations invalidated.
+    ///
+    /// Returns that workflow's task info if it was present.
     pub fn evict_run(&self, run_id: &str) -> Option<WorkflowTaskInfo> {
         if let Some((_, wti)) = self.workflow_info.remove(run_id) {
             let run_id = &wti.run_id;
@@ -182,13 +186,15 @@ impl WorkflowTaskManager {
         run_id: &str,
         commands: Vec<WFCommand>,
     ) -> Result<Option<OutgoingServerCommands>, WorkflowUpdateError> {
-        // TODO: Error?
-        let tt = self
-            .workflow_info
-            .get(run_id)
-            .expect("Must exist")
-            .task_token
-            .clone();
+        let tt = if let Some(wti) = self.workflow_info.get(run_id) {
+            wti.task_token.clone()
+        } else {
+            warn!(
+                run_id,
+                "Attempted to complete activation for nonexistent run"
+            );
+            return Ok(None);
+        };
         // Send commands from lang into the machines
         self.access_wf_machine(run_id, move |mgr| mgr.push_commands(commands))?;
         self.enqueue_next_activation_if_needed(run_id)?;
