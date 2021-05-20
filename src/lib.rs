@@ -136,9 +136,9 @@ pub trait Core: Send + Sync {
     fn record_activity_heartbeat(&self, details: ActivityHeartbeat);
 
     /// Request that a workflow be evicted by its run id. This will generate a workflow activation
-    /// with the eviction job inside it to be eventually returned by [poll_workflow_task]. If the
-    /// workflow had any existing outstanding activations, such activations are invalidated and
-    /// TODO: wat
+    /// with the eviction job inside it to be eventually returned by [Core::poll_workflow_task]. If
+    /// the workflow had any existing outstanding activations, such activations are invalidated and
+    /// subsequent completions of them will do nothing and log a warning.
     fn request_eviction(&self, run_id: &str);
 
     /// Returns core's instance of the [ServerGatewayApis] implementor it is using.
