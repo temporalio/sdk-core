@@ -71,6 +71,7 @@ pub(crate) fn build_fake_core(
             wf_id: wf_id.to_owned(),
             hist: t,
             response_batches: response_batches.to_vec(),
+            task_q: TEST_Q.to_owned(),
         }],
         true,
         None,
@@ -123,6 +124,7 @@ pub struct FakeWfResponses {
     pub wf_id: String,
     pub hist: TestHistoryBuilder,
     pub response_batches: Vec<usize>,
+    pub task_q: String,
 }
 
 pub struct MockSGAndTasks {
@@ -144,7 +146,8 @@ pub fn build_multihist_mock_sg(
     enforce_correct_number_of_polls: bool,
     num_expected_fails: Option<usize>,
 ) -> MockSGAndTasks {
-    let mut ids_to_resps = BTreeMap::new();
+    // Maps task queues to maps of wfid -> responses
+    let mut task_queues_to_resps: HashMap<String, BTreeMap<String, VecDeque<_>>> = HashMap::new();
     let outstanding_wf_task_tokens = Arc::new(RwLock::new(BiMap::new()));
     let mut correct_num_polls = None;
 
@@ -183,7 +186,12 @@ pub fn build_multihist_mock_sg(
             .iter()
             .map(|to_task_num| {
                 let cur_attempt = attempts_at_task_num.entry(to_task_num).or_insert(1);
-                let mut r = hist_to_poll_resp(&hist.hist, hist.wf_id.to_owned(), *to_task_num);
+                let mut r = hist_to_poll_resp(
+                    &hist.hist,
+                    hist.wf_id.to_owned(),
+                    *to_task_num,
+                    hist.task_q.clone(),
+                );
                 r.attempt = *cur_attempt;
                 *cur_attempt += 1;
                 r
@@ -191,13 +199,15 @@ pub fn build_multihist_mock_sg(
             .collect();
 
         let tasks = VecDeque::from(responses);
-        ids_to_resps.insert(hist.wf_id, tasks);
+        task_queues_to_resps
+            .entry(hist.task_q)
+            .or_default()
+            .insert(hist.wf_id, tasks);
     }
 
-    // The gateway will return history from any workflows that do not have currently outstanding
-    // tasks. Order proceeds as sorted by workflow id
+    // The gateway will return history from any workflow runs that do not have currently outstanding
+    // tasks.
     let outstanding = outstanding_wf_task_tokens.clone();
-
     let mut mock_gateway = MockServerGatewayApis::new();
     mock_gateway
         .expect_poll_workflow_task()
@@ -206,8 +216,11 @@ pub fn build_multihist_mock_sg(
                 .map::<TimesRange, _>(Into::into)
                 .unwrap_or_else(|| RangeFull.into()),
         )
-        .returning(move |_| {
-            for (_, tasks) in ids_to_resps.iter_mut() {
+        .returning(move |tq| {
+            let queue_tasks = task_queues_to_resps
+                .get_mut(&tq)
+                .unwrap_or_else(|| panic!("No task queue {} defined during response setup", tq));
+            for (_, tasks) in queue_tasks.iter_mut() {
                 if let Some(t) = tasks.pop_front() {
                     // Must extract run id from a workflow task associated with this workflow
                     // TODO: Case where run id changes for same workflow id is not handled here
@@ -261,6 +274,7 @@ pub fn single_hist_mock_sg(
             wf_id: wf_id.to_owned(),
             hist: t,
             response_batches: response_batches.to_vec(),
+            task_q: TEST_Q.to_owned(),
         }],
         true,
         None,
@@ -271,6 +285,7 @@ pub fn hist_to_poll_resp(
     t: &TestHistoryBuilder,
     wf_id: String,
     to_task_num: usize,
+    task_queue: String,
 ) -> PollWorkflowTaskQueueResponse {
     let run_id = t.get_orig_run_id();
     let wf = WorkflowExecution {
@@ -284,7 +299,7 @@ pub fn hist_to_poll_resp(
         workflow_execution: Some(wf),
         task_token: task_token.to_vec(),
         workflow_execution_task_queue: Some(TaskQueue {
-            name: TEST_Q.to_string(),
+            name: task_queue,
             kind: TaskQueueKind::Normal as i32,
         }),
         ..Default::default()
@@ -332,6 +347,7 @@ pub(crate) async fn poll_and_reply<'a>(
             }
 
             let mut res = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+            assert_eq!(&res.task_queue, TEST_Q);
             let contains_eviction = res.jobs.iter().position(|j| {
                 matches!(
                     j,

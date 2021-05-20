@@ -1,10 +1,9 @@
-use crate::machines::test_help::single_hist_mock_sg;
 use crate::{
     job_assert,
     machines::test_help::{
         build_fake_core, build_multihist_mock_sg, fake_core_from_mock_sg, fake_sg_opts,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_core, poll_and_reply,
-        FakeCore, FakeWfResponses, TestHistoryBuilder, TEST_Q,
+        single_hist_mock_sg, FakeCore, FakeWfResponses, TestHistoryBuilder, TEST_Q,
     },
     pollers::MockServerGatewayApis,
     protos::{
@@ -695,6 +694,7 @@ async fn complete_activation_with_failure(
             wf_id: wfid.to_string(),
             hist,
             response_batches: batches.to_vec(),
+            task_q: TEST_Q.to_owned(),
         }],
         true,
         Some(1),
@@ -807,6 +807,7 @@ async fn workflow_failures_only_reported_once() {
             wf_id: wfid.to_string(),
             hist,
             response_batches,
+            task_q: TEST_Q.to_owned(),
         }],
         true,
         // We should only call the server to say we failed twice (once after each success)
@@ -856,8 +857,8 @@ async fn max_concurrent_wft_respected() {
     let t1 = canned_histories::long_sequential_timers(20);
     let t2 = canned_histories::long_sequential_timers(20);
     let mut tasks = VecDeque::from(vec![
-        hist_to_poll_resp(&t1, "wf1".to_owned(), 100),
-        hist_to_poll_resp(&t2, "wf2".to_owned(), 100),
+        hist_to_poll_resp(&t1, "wf1".to_owned(), 100, TEST_Q.to_string()),
+        hist_to_poll_resp(&t2, "wf2".to_owned(), 100, TEST_Q.to_string()),
     ]);
     // Limit the core to two outstanding workflow tasks, hence we should only see polling
     // happen twice, since we will not actually finish the two workflows
@@ -1048,6 +1049,7 @@ async fn lots_of_workflows() {
             wf_id,
             hist,
             response_batches: vec![1, 2],
+            task_q: TEST_Q.to_owned(),
         }
     });
 

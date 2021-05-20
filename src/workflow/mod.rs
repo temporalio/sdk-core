@@ -6,7 +6,6 @@ pub(crate) use bridge::WorkflowBridge;
 pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
 pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFetcher};
 
-use crate::task_token::TaskToken;
 use crate::{
     machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
     protos::{
@@ -14,9 +13,12 @@ use crate::{
         temporal::api::{common::v1::WorkflowExecution, history::v1::History},
     },
     protosext::{HistoryInfo, HistoryInfoError},
+    task_token::TaskToken,
 };
-use std::sync::mpsc::{SendError, Sender};
-use std::time::SystemTime;
+use std::{
+    sync::mpsc::{SendError, Sender},
+    time::SystemTime,
+};
 
 type Result<T, E = WorkflowError> = std::result::Result<T, E>;
 

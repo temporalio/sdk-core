@@ -1,4 +1,5 @@
 mod activity_tasks;
+mod workers;
 mod workflow_tasks;
 
 use crate::{
@@ -52,7 +53,12 @@ async fn shutdown_interrupts_both_polls() {
             async move {
                 let t = canned_histories::single_timer("hi");
                 sleep(Duration::from_secs(1)).await;
-                Ok(hist_to_poll_resp(&t, "wf".to_string(), 100))
+                Ok(hist_to_poll_resp(
+                    &t,
+                    "wf".to_string(),
+                    100,
+                    TEST_Q.to_string(),
+                ))
             }
             .boxed()
         });
