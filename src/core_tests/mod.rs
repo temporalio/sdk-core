@@ -19,12 +19,12 @@ async fn after_shutdown_server_is_not_polled() {
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("fake_timer");
     let core = build_fake_core(wfid, t, &[1]);
-    let res = core.inner.poll_workflow_task("q").await.unwrap();
+    let res = core.inner.poll_workflow_task().await.unwrap();
     assert_eq!(res.jobs.len(), 1);
 
     core.inner.shutdown().await;
     assert_matches!(
-        core.inner.poll_workflow_task("q").await.unwrap_err(),
+        core.inner.poll_workflow_task().await.unwrap_err(),
         PollWfError::ShutDown
     );
 }
@@ -81,11 +81,11 @@ async fn shutdown_interrupts_both_polls() {
     );
     tokio::join! {
         async {
-            assert_matches!(core.poll_activity_task(TEST_Q).await.unwrap_err(),
+            assert_matches!(core.poll_activity_task().await.unwrap_err(),
                             PollActivityError::ShutDown);
         },
         async {
-            assert_matches!(core.poll_workflow_task(TEST_Q).await.unwrap_err(),
+            assert_matches!(core.poll_workflow_task().await.unwrap_err(),
                             PollWfError::ShutDown);
         },
         async {

@@ -888,8 +888,8 @@ async fn max_concurrent_wft_respected() {
     );
 
     // Poll twice in a row before completing -- we should be at limit
-    let r1 = core.poll_workflow_task(TEST_Q).await.unwrap();
-    let _r2 = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let r1 = core.poll_workflow_task().await.unwrap();
+    let _r2 = core.poll_workflow_task().await.unwrap();
     // Now we immediately poll for new work, and complete one of the existing activations. The
     // poll must not unblock until the completion goes through.
     let last_finisher = AtomicUsize::new(0);
@@ -906,7 +906,7 @@ async fn max_concurrent_wft_respected() {
             last_finisher.store(1, Ordering::SeqCst);
         },
         async {
-            let r = core.poll_workflow_task(TEST_Q).await.unwrap();
+            let r = core.poll_workflow_task().await.unwrap();
             last_finisher.store(2, Ordering::SeqCst);
             r
         }
@@ -927,7 +927,7 @@ async fn max_concurrent_wft_respected() {
         ))
         .await
         .unwrap();
-        r1 = core.poll_workflow_task(TEST_Q).await.unwrap();
+        r1 = core.poll_workflow_task().await.unwrap();
     }
 }
 
@@ -1057,7 +1057,7 @@ async fn lots_of_workflows() {
     let core = &mock_core(mock.sg);
 
     fanout_tasks(5, |_| async move {
-        while let Ok(wft) = core.poll_workflow_task(TEST_Q).await {
+        while let Ok(wft) = core.poll_workflow_task().await {
             assert_eq!(&wft.task_queue, TEST_Q);
             let job = &wft.jobs[0];
             let reply = match job.variant {
@@ -1136,7 +1136,7 @@ async fn complete_after_eviction() {
     mock.sg.expect_complete_workflow_task().times(0);
     let core = fake_core_from_mock_sg(mock);
 
-    let activation = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    let activation = core.inner.poll_workflow_task().await.unwrap();
     // We just got start workflow, immediately evict
     core.inner.request_workflow_eviction(&activation.run_id);
     // Try to complete it. No error should be returned, and nothing happens or is sent to server.

@@ -31,8 +31,8 @@ async fn timer_workflow_new_way() {
 
 #[tokio::test]
 async fn timer_workflow() {
-    let (core, task_q) = init_core_and_create_wf("timer_workflow").await;
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let (core, _) = init_core_and_create_wf("timer_workflow").await;
+    let task = core.poll_workflow_task().await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![StartTimer {
             timer_id: "timer-1".to_string(),
@@ -43,7 +43,7 @@ async fn timer_workflow() {
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_task().await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
         task.run_id,
@@ -54,10 +54,10 @@ async fn timer_workflow() {
 
 #[tokio::test]
 async fn timer_cancel_workflow() {
-    let (core, task_q) = init_core_and_create_wf("timer_cancel_workflow").await;
+    let (core, _) = init_core_and_create_wf("timer_cancel_workflow").await;
     let timer_id = "wait_timer";
     let cancel_timer_id = "cancel_timer";
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_task().await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![
             StartTimer {
@@ -75,7 +75,7 @@ async fn timer_cancel_workflow() {
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_task().await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![
             CancelTimer {
@@ -92,9 +92,9 @@ async fn timer_cancel_workflow() {
 
 #[tokio::test]
 async fn timer_immediate_cancel_workflow() {
-    let (core, task_q) = init_core_and_create_wf("timer_immediate_cancel_workflow").await;
+    let (core, _) = init_core_and_create_wf("timer_immediate_cancel_workflow").await;
     let cancel_timer_id = "cancel_timer";
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_task().await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![
             StartTimer {
@@ -116,10 +116,10 @@ async fn timer_immediate_cancel_workflow() {
 
 #[tokio::test]
 async fn parallel_timer_workflow() {
-    let (core, task_q) = init_core_and_create_wf("parallel_timer_workflow").await;
+    let (core, _) = init_core_and_create_wf("parallel_timer_workflow").await;
     let timer_id = "timer 1".to_string();
     let timer_2_id = "timer 2".to_string();
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_task().await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![
             StartTimer {
@@ -140,7 +140,7 @@ async fn parallel_timer_workflow() {
     // Wait long enough for both timers to complete. Server seems to be a bit weird about actually
     // sending both of these in one go, so we need to wait longer than you would expect.
     std::thread::sleep(Duration::from_millis(1500));
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_task().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [

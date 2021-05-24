@@ -127,11 +127,10 @@ impl TestRustWorker {
         let mut handles = self.join_handles;
         let core = self.core;
         let workflows = self.workflows;
-        let tq = self.task_queue;
 
         let poller = async {
             loop {
-                let activation = core.poll_workflow_task(&tq).await?;
+                let activation = core.poll_workflow_task().await?;
                 // The activation is expected to apply to some workflow we know about. Use it to
                 // unblock things and advance the workflow.
                 if let Some(tx) = workflows.get_mut(&activation.run_id) {
