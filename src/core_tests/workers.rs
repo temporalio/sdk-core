@@ -48,9 +48,11 @@ async fn multi_workers() {
 async fn no_worker_for_queue_error_returned_properly() {
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("fake_timer");
-    let core = build_fake_core(wfid, t, &[2]);
+    // Empty batches array to specify 0 calls to poll expectation
+    let core = build_fake_core(wfid, t, &[]);
 
     let fake_q = "not a registered queue";
     let res = core.inner.poll_workflow_task(&fake_q).await.unwrap_err();
     assert_matches!(res, PollWfError::NoWorkerForQueue(err_q) => err_q == fake_q);
+    core.inner.shutdown().await;
 }
