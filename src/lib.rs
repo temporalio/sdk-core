@@ -83,8 +83,7 @@ use tokio::sync::{
 #[async_trait::async_trait]
 pub trait Core: Send + Sync {
     /// Register a worker with core. Workers poll on a specific task queue, and when calling core's
-    /// poll functions, you must provide a task queue name. Returned activations will include that
-    /// task queue name as well, so that lang may route them to the appropriate place.
+    /// poll functions, you must provide a task queue name.
     async fn register_worker(&self, config: WorkerConfig);
 
     /// Ask the core for some work, returning a [WfActivation]. It is then the language SDK's
