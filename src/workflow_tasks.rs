@@ -2,20 +2,16 @@
 
 use crate::{
     errors::WorkflowUpdateError,
-    machines::WFCommand,
+    machines::{ProtoCommand, WFCommand},
     pending_activations::PendingActivations,
     protos::coresdk::workflow_activation::{create_evict_activation, WfActivation},
     protosext::ValidPollWFTQResponse,
     task_token::TaskToken,
-    workflow::{
-        NextWfActivation, OutgoingServerCommands, WorkflowCachingPolicy,
-        WorkflowConcurrencyManager, WorkflowError, WorkflowManager,
-    },
+    workflow::{WorkflowCachingPolicy, WorkflowConcurrencyManager, WorkflowError, WorkflowManager},
     WfActivationUpdate,
 };
-use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
-use std::fmt::Debug;
+use std::{collections::VecDeque, fmt::Debug};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::Span;
 
@@ -40,8 +36,8 @@ pub struct WorkflowTaskManager {
     ///
     /// Only the most recent such reply from the server for a given run is kept.
     outstanding_workflow_tasks: DashMap<String, Option<ValidPollWFTQResponse>>,
-    /// Holds poll wft responses from the server that need to be applied
-    ready_buffered_wft: SegQueue<ValidPollWFTQResponse>,
+    /// Holds (by task queue) poll wft responses from the server that need to be applied
+    ready_buffered_wft: DashMap<String, VecDeque<ValidPollWFTQResponse>>,
     /// Used to wake blocked workflow task polling
     workflow_activations_update: UnboundedSender<WfActivationUpdate>,
     eviction_policy: WorkflowCachingPolicy,
@@ -74,6 +70,12 @@ pub enum FailedActivationOutcome {
     Report(TaskToken),
 }
 
+#[derive(Debug)]
+pub struct ServerCommandsWithTaskToken {
+    pub task_token: TaskToken,
+    pub commands: Vec<ProtoCommand>,
+}
+
 impl WorkflowTaskManager {
     pub(crate) fn new(
         workflow_activations_update: UnboundedSender<WfActivationUpdate>,
@@ -94,12 +96,15 @@ impl WorkflowTaskManager {
         self.workflow_machines.shutdown();
     }
 
-    pub fn next_pending_activation(&self) -> Option<WfActivation> {
-        self.pending_activations.pop()
+    pub fn next_pending_activation(&self, task_queue: &str) -> Option<WfActivation> {
+        self.pending_activations.pop(task_queue)
     }
 
-    pub fn next_buffered_poll(&self) -> Option<ValidPollWFTQResponse> {
-        self.ready_buffered_wft.pop()
+    pub fn next_buffered_poll(&self, task_queue: &str) -> Option<ValidPollWFTQResponse> {
+        self.ready_buffered_wft
+            .get_mut(task_queue)
+            .map(|mut dq| dq.pop_front())
+            .flatten()
     }
 
     #[cfg(test)]
@@ -120,10 +125,10 @@ impl WorkflowTaskManager {
             self.workflow_machines.evict(run_id);
             self.pending_activations.remove_all_with_run_id(run_id);
             // Queue up an eviction activation
-            self.pending_activations.push(create_evict_activation(
-                run_id.to_owned(),
+            self.pending_activations.push(
+                create_evict_activation(run_id.to_owned()),
                 wti.task_queue.clone(),
-            ));
+            );
             let _ =
                 self.workflow_activations_update
                     .send(WfActivationUpdate::WorkflowTaskComplete {
@@ -134,7 +139,10 @@ impl WorkflowTaskManager {
             // other workflows, the next poll will be the eviction we just produced. Buffered polls
             // always are popped after pending activations)
             if let Some(buffered_poll) = maybe_buffered.and_then(|mb| mb.1) {
-                self.ready_buffered_wft.push(buffered_poll);
+                self.ready_buffered_wft
+                    .entry(wti.task_queue.clone())
+                    .or_default()
+                    .push_back(buffered_poll);
             }
             Some(wti)
         } else {
@@ -167,13 +175,12 @@ impl WorkflowTaskManager {
             return Ok(NewWfTaskOutcome::RestartPollLoop);
         }
 
-        let task_queue = work.task_queue.clone();
         let next_activation = self.instantiate_or_update_workflow(work)?;
 
         if let Some(na) = next_activation {
             self.outstanding_workflow_tasks
-                .insert(na.run_id().to_owned(), None);
-            Ok(NewWfTaskOutcome::IssueActivation(na.finalize(task_queue)))
+                .insert(na.run_id.clone(), None);
+            Ok(NewWfTaskOutcome::IssueActivation(na))
         } else {
             Ok(NewWfTaskOutcome::Autocomplete)
         }
@@ -185,7 +192,7 @@ impl WorkflowTaskManager {
         &self,
         run_id: &str,
         commands: Vec<WFCommand>,
-    ) -> Result<Option<OutgoingServerCommands>, WorkflowUpdateError> {
+    ) -> Result<Option<ServerCommandsWithTaskToken>, WorkflowUpdateError> {
         let tt = if let Some(wti) = self.workflow_info.get(run_id) {
             wti.task_token.clone()
         } else {
@@ -200,14 +207,17 @@ impl WorkflowTaskManager {
         self.enqueue_next_activation_if_needed(run_id)?;
         // We want to fetch the outgoing commands only after any new activation has been queued,
         // as doing so may have altered the outgoing commands.
-        let server_cmds = self.access_wf_machine(run_id, |w| Ok(w.get_server_commands(tt)))?;
+        let server_cmds = self.access_wf_machine(run_id, |w| Ok(w.get_server_commands()))?;
         // We only actually want to send commands back to the server if there are no more pending
         // activations and we are at the final workflow task (IE: the lang SDK has caught up on
         // replay)
         let ret = if !self.pending_activations.has_pending(run_id)
             && server_cmds.at_final_workflow_task
         {
-            Some(server_cmds)
+            Some(ServerCommandsWithTaskToken {
+                task_token: tt,
+                commands: server_cmds.commands,
+            })
         } else {
             None
         };
@@ -252,7 +262,7 @@ impl WorkflowTaskManager {
     fn instantiate_or_update_workflow(
         &self,
         poll_wf_resp: ValidPollWFTQResponse,
-    ) -> Result<Option<NextWfActivation>, WorkflowUpdateError> {
+    ) -> Result<Option<WfActivation>, WorkflowUpdateError> {
         let run_id = poll_wf_resp.workflow_execution.run_id.clone();
 
         let wft_info = WorkflowTaskInfo {
@@ -283,9 +293,9 @@ impl WorkflowTaskManager {
             let info = self
                 .workflow_info
                 .get(run_id)
-                .expect("Task token is present in map if there is a new pending activation");
+                .expect("Workflow info is present in map if there is a new pending activation");
             self.pending_activations
-                .push(next_activation.finalize(info.task_queue.clone()));
+                .push(next_activation, info.task_queue.clone());
             new_activation = true;
             let _ = self
                 .workflow_activations_update

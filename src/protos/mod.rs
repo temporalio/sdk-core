@@ -17,16 +17,11 @@ pub mod coresdk {
         tonic::include_proto!("coresdk.activity_task");
 
         impl ActivityTask {
-            pub fn cancel_from_ids(
-                task_token: TaskToken,
-                activity_id: String,
-                task_queue: String,
-            ) -> Self {
+            pub fn cancel_from_ids(task_token: TaskToken, activity_id: String) -> Self {
                 ActivityTask {
                     task_token: task_token.0,
                     activity_id,
                     variant: Some(activity_task::Variant::Cancel(Cancel {})),
-                    task_queue,
                 }
             }
         }
@@ -63,14 +58,13 @@ pub mod coresdk {
         use std::fmt::{Display, Formatter};
 
         tonic::include_proto!("coresdk.workflow_activation");
-        pub fn create_evict_activation(run_id: String, task_queue: String) -> WfActivation {
+        pub fn create_evict_activation(run_id: String) -> WfActivation {
             WfActivation {
                 timestamp: None,
                 run_id,
                 jobs: vec![WfActivationJob::from(
                     wf_activation_job::Variant::RemoveFromCache(true),
                 )],
-                task_queue,
             }
         }
 
@@ -296,10 +290,9 @@ pub mod coresdk {
     }
 
     impl ActivityTask {
-        pub fn start_from_poll_resp(r: PollActivityTaskQueueResponse, task_queue: String) -> Self {
+        pub fn start_from_poll_resp(r: PollActivityTaskQueueResponse) -> Self {
             ActivityTask {
                 task_token: r.task_token,
-                task_queue,
                 activity_id: r.activity_id,
                 variant: Some(activity_task::activity_task::Variant::Start(
                     activity_task::Start {

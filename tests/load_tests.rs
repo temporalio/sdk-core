@@ -15,6 +15,7 @@ async fn activity_load() {
     let mut starter = CoreWfStarter::new("activity_load");
     starter.max_wft(1000).max_at(1000);
     let worker = starter.worker().await;
+    let task_q = &starter.get_task_queue().to_owned();
 
     let activity_id = "act-1";
     let activity_timeout = Duration::from_secs(8);
@@ -63,7 +64,7 @@ async fn activity_load() {
     let all_acts = fanout_tasks(1000, |_| {
         let payload_dat = payload_dat.clone();
         async move {
-            let task = core.poll_activity_task().await.unwrap();
+            let task = core.poll_activity_task(task_q).await.unwrap();
             assert_matches!(
                 task.variant,
                 Some(act_task::Variant::Start(start_activity)) => {

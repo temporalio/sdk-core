@@ -59,7 +59,6 @@ impl ActivityTaskManager {
                             return Ok(Some(ActivityTask::cancel_from_ids(
                                 task_token,
                                 details.activity_id.clone(),
-                                details.task_queue.clone()
                             )));
                     } else {
                         warn!(task_token = ?task_token,
@@ -86,8 +85,7 @@ impl ActivityTaskManager {
                                 worker.task_queue().to_owned()
                             ),
                         );
-                        Ok(Some(ActivityTask::start_from_poll_resp(work,
-                                                                   worker.task_queue().to_owned())))
+                        Ok(Some(ActivityTask::start_from_poll_resp(work)))
                     }
                     Err(e) => Err(e)
                 }

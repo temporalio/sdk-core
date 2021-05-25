@@ -62,7 +62,7 @@ use crate::{
     workflow::WorkflowCachingPolicy,
     workflow_tasks::{FailedActivationOutcome, NewWfTaskOutcome, WorkflowTaskManager},
 };
-use futures::{future::select_all, FutureExt, TryFutureExt};
+use futures::{FutureExt, TryFutureExt};
 use std::{
     collections::HashMap,
     convert::TryInto,
@@ -91,15 +91,22 @@ pub trait Core: Send + Sync {
     /// responsibility to call the appropriate workflow code with the provided inputs. Blocks
     /// indefinitely until such work is available or [Core::shutdown] is called.
     ///
+    /// The returned activation is guaranteed to be for the same task queue / worker which was
+    /// provided as the `task_queue` argument.
+    ///
     /// TODO: Examples
-    async fn poll_workflow_task(&self) -> Result<WfActivation, PollWfError>;
+    async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError>;
 
     /// Ask the core for some work, returning an [ActivityTask]. It is then the language SDK's
     /// responsibility to call the appropriate activity code with the provided inputs. Blocks
     /// indefinitely until such work is available or [Core::shutdown] is called.
     ///
+    /// The returned activation is guaranteed to be for the same task queue / worker which was
+    /// provided as the `task_queue` argument.
+    ///
     /// TODO: Examples
-    async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError>;
+    async fn poll_activity_task(&self, task_queue: &str)
+        -> Result<ActivityTask, PollActivityError>;
 
     /// Tell the core that a workflow activation has completed
     async fn complete_workflow_task(
@@ -218,14 +225,14 @@ where
     }
 
     #[instrument(skip(self))]
-    async fn poll_workflow_task(&self) -> Result<WfActivation, PollWfError> {
+    async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError> {
         // The poll needs to be in a loop because we can't guarantee tail call optimization in Rust
         // (simply) and we really, really need that for long-poll retries.
         loop {
             // We must first check if there are pending workflow activations for workflows that are
             // currently replaying or otherwise need immediate jobs, and issue those before
             // bothering the server.
-            if let Some(pa) = self.wft_manager.next_pending_activation() {
+            if let Some(pa) = self.wft_manager.next_pending_activation(task_queue) {
                 debug!(activation=%pa, "Sending pending activation to lang");
                 return Ok(pa);
             }
@@ -236,7 +243,7 @@ where
 
             // Apply any buffered poll responses from the server. Must come after pending
             // activations, since there may be an eviction etc for whatever run is popped here.
-            if let Some(buff_wft) = self.wft_manager.next_buffered_poll() {
+            if let Some(buff_wft) = self.wft_manager.next_buffered_poll(task_queue) {
                 match self.apply_server_work(buff_wft).await? {
                     Some(a) => return Ok(a),
                     None => continue,
@@ -247,16 +254,12 @@ where
                 .workflow_activations_update
                 .lock()
                 .then(|mut l| async move { l.recv().await });
-
             let workers_rg = self.workers.read().await;
-            let mut futs = vec![];
-            for w in workers_rg.values() {
-                futs.push(w.workflow_poll().map_err(Into::into).boxed());
-            }
-            let poll_result_future = self.shutdownable_fut(async {
-                let (selected, _, _) = select_all(futs).await;
-                selected
-            });
+            let worker = workers_rg
+                .get(task_queue)
+                .ok_or_else(|| PollWfError::NoWorkerForQueue(task_queue.to_owned()))?;
+            let poll_result_future =
+                self.shutdownable_fut(worker.workflow_poll().map_err(Into::into));
             let selected_f = tokio::select! {
                 biased;
 
@@ -291,30 +294,24 @@ where
     }
 
     #[instrument(skip(self))]
-    async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError> {
+    async fn poll_activity_task(
+        &self,
+        task_queue: &str,
+    ) -> Result<ActivityTask, PollActivityError> {
         loop {
             if self.shutdown_requested.load(Ordering::Relaxed) {
                 return Err(PollActivityError::ShutDown);
             }
 
-            // TODO: Blows up now if there is a local only activity worker, it'll always error out
-            //   -- add test for that
-
             let workers_rg = self.workers.read().await;
-            let mut futs = vec![];
-            for w in workers_rg.values() {
-                futs.push(self.act_manager.poll(&w).map_err(Into::into).boxed());
-            }
-            let selected_act_poll = async {
-                let (selected, _, _) = select_all(futs).await;
-                selected
-            };
+            let worker = workers_rg
+                .get(task_queue)
+                .ok_or_else(|| PollActivityError::NoWorkerForQueue(task_queue.to_owned()))?;
 
-            // TODO: Can make selected poll shutdownable and elminate this select
             tokio::select! {
                 biased;
 
-                r = selected_act_poll => {
+                r = self.act_manager.poll(&worker) => {
                     match r.transpose() {
                         None => continue,
                         Some(r) => return r

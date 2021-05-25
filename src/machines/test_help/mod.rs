@@ -346,8 +346,7 @@ pub(crate) async fn poll_and_reply<'a>(
                 continue;
             }
 
-            let mut res = core.inner.poll_workflow_task().await.unwrap();
-            assert_eq!(&res.task_queue, TEST_Q);
+            let mut res = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
             let contains_eviction = res.jobs.iter().position(|j| {
                 matches!(
                     j,

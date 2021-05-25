@@ -9,16 +9,12 @@ pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFet
 use crate::{
     machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
     protos::{
-        coresdk::workflow_activation::{WfActivation, WfActivationJob},
+        coresdk::workflow_activation::WfActivation,
         temporal::api::{common::v1::WorkflowExecution, history::v1::History},
     },
     protosext::{HistoryInfo, HistoryInfoError},
-    task_token::TaskToken,
 };
-use std::{
-    sync::mpsc::{SendError, Sender},
-    time::SystemTime,
-};
+use std::sync::mpsc::{SendError, Sender};
 
 type Result<T, E = WorkflowError> = std::result::Result<T, E>;
 
@@ -90,35 +86,8 @@ impl WorkflowManager {
     }
 }
 
-/// This is a subset of [WfActivation] that the workflow machines are capable of returning.
-/// Additional information must be attached via [NextWfActivation::finalize] before sending out to
-/// lang.
-#[derive(Debug)]
-pub(crate) struct NextWfActivation {
-    pub timestamp: Option<SystemTime>,
-    pub run_id: String,
-    pub jobs: Vec<WfActivationJob>,
-}
-
-impl NextWfActivation {
-    /// Attach a task token & queue to the activation so it can be sent out to the lang sdk
-    pub fn finalize(self, task_queue: String) -> WfActivation {
-        WfActivation {
-            task_queue,
-            timestamp: self.timestamp.map(Into::into),
-            run_id: self.run_id,
-            jobs: self.jobs,
-        }
-    }
-
-    pub fn run_id(&self) -> &str {
-        &self.run_id
-    }
-}
-
 #[derive(Debug)]
 pub struct OutgoingServerCommands {
-    pub task_token: TaskToken,
     pub commands: Vec<ProtoCommand>,
     pub at_final_workflow_task: bool,
 }
@@ -129,7 +98,7 @@ impl WorkflowManager {
     /// Should only be called when a workflow has caught up on replay (or is just beginning). It
     /// will return a workflow activation if one is needed, as well as a bool indicating if there
     /// are more workflow tasks that need to be performed to replay the remaining history.
-    pub fn feed_history_from_server(&mut self, hist: History) -> Result<Option<NextWfActivation>> {
+    pub fn feed_history_from_server(&mut self, hist: History) -> Result<Option<WfActivation>> {
         let task_hist = HistoryInfo::new_from_history(&hist, Some(self.current_wf_task_num))?;
         let task_ct = hist.get_workflow_task_count(None)?;
         self.last_history_task_count = task_ct;
@@ -143,10 +112,8 @@ impl WorkflowManager {
 
     /// Fetch any pending commands that should be sent to the server, as well as if this workflow
     /// is at it's final workflow task in current history.
-    /// TODO: Maybe return a different type here rather than making caller pass in TT
-    pub fn get_server_commands(&self, task_token: TaskToken) -> OutgoingServerCommands {
+    pub fn get_server_commands(&self) -> OutgoingServerCommands {
         OutgoingServerCommands {
-            task_token,
             commands: self.machines.get_commands(),
             at_final_workflow_task: self.at_latest_wf_task(),
         }
@@ -161,7 +128,7 @@ impl WorkflowManager {
     /// Fetch the next workflow activation for this workflow if one is required. Callers may
     /// also need to call [get_server_commands] after this to issue any pending commands to the
     /// server.
-    pub fn get_next_activation(&mut self) -> Result<Option<NextWfActivation>> {
+    pub fn get_next_activation(&mut self) -> Result<Option<WfActivation>> {
         // First check if there are already some pending jobs, which can be a result of replay.
         let activation = self.machines.get_wf_activation();
         if let Some(act) = activation {

@@ -55,6 +55,9 @@ pub enum PollWfError {
     /// even though we already cancelled it)
     #[error("Unhandled error when auto-completing workflow task: {0:?}")]
     AutocompleteError(#[from] CompleteWfError),
+    /// There is no worker registered for the queue being polled
+    #[error("No worker registered for queue: {0}")]
+    NoWorkerForQueue(String),
 }
 
 impl From<WorkflowUpdateError> for PollWfError {
