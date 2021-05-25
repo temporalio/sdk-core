@@ -2,9 +2,10 @@
 //! doing so is nontrivial
 
 use crate::{
+    protos::coresdk::workflow_activation::WfActivation,
     protos::temporal::api::common::v1::WorkflowExecution,
     protos::temporal::api::history::v1::History,
-    workflow::{NextWfActivation, Result, WorkflowError, WorkflowManager},
+    workflow::{Result, WorkflowError, WorkflowManager},
 };
 use crossbeam::channel::{bounded, unbounded, Receiver, Select, Sender, TryRecvError};
 use dashmap::DashMap;
@@ -38,7 +39,7 @@ struct MachineCreatorMsg {
 }
 /// The response to [MachineCreatorMsg], which includes the wf activation and the channel to
 /// send requests to the newly instantiated workflow manager.
-type MachineCreatorResponseMsg = Result<(NextWfActivation, MachineMutationSender)>;
+type MachineCreatorResponseMsg = Result<(WfActivation, MachineMutationSender)>;
 
 impl WorkflowConcurrencyManager {
     pub fn new() -> Self {
@@ -67,7 +68,7 @@ impl WorkflowConcurrencyManager {
         run_id: &str,
         history: History,
         workflow_execution: WorkflowExecution,
-    ) -> Result<Option<NextWfActivation>> {
+    ) -> Result<Option<WfActivation>> {
         let span = debug_span!("create_or_update machines", %run_id);
 
         if self.exists(run_id) {

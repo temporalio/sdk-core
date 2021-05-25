@@ -411,7 +411,6 @@ impl WorkflowMachines {
                 timestamp: self.current_wf_time.map(Into::into),
                 run_id: self.run_id.clone(),
                 jobs,
-                task_token: vec![],
             })
         }
     }

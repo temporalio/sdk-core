@@ -7,6 +7,7 @@ use temporal_sdk_core::{
     },
     test_workflow_driver::TestRustWorker,
     Core, CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayApis, ServerGatewayOptions,
+    WorkerConfig, WorkerConfigBuilder,
 };
 use url::Url;
 
@@ -16,8 +17,8 @@ pub type GwApi = Arc<dyn ServerGatewayApis>;
 /// Implements a builder pattern to help integ tests initialize core and create workflows
 pub struct CoreWfStarter {
     test_name: String,
-    task_queue: String,
     core_options: CoreInitOptions,
+    worker_config: WorkerConfig,
     wft_timeout: Option<Duration>,
     initted_core: Option<Arc<dyn Core>>,
 }
@@ -30,11 +31,14 @@ impl CoreWfStarter {
         Self {
             test_name: test_name.to_owned(),
             core_options: CoreInitOptionsBuilder::default()
-                .gateway_opts(get_integ_server_options(&task_queue))
-                .evict_after_pending_cleared(false)
+                .gateway_opts(get_integ_server_options())
+                .max_cached_workflows(1000usize)
                 .build()
                 .unwrap(),
-            task_queue,
+            worker_config: WorkerConfigBuilder::default()
+                .task_queue(task_queue)
+                .build()
+                .unwrap(),
             wft_timeout: None,
             initted_core: None,
         }
@@ -44,7 +48,7 @@ impl CoreWfStarter {
         TestRustWorker::new(
             self.get_core().await,
             NAMESPACE.to_owned(),
-            self.task_queue.clone(),
+            self.worker_config.task_queue.clone(),
         )
     }
 
@@ -69,7 +73,7 @@ impl CoreWfStarter {
             |gw: GwApi| async move {
                 gw.start_workflow(
                     NAMESPACE.to_owned(),
-                    self.task_queue.clone(),
+                    self.worker_config.task_queue.clone(),
                     workflow_id,
                     self.test_name.clone(),
                     self.wft_timeout,
@@ -83,25 +87,25 @@ impl CoreWfStarter {
     }
 
     pub fn get_task_queue(&self) -> &str {
-        &self.task_queue
+        &self.worker_config.task_queue
     }
 
     pub fn get_wf_id(&self) -> &str {
         &self.test_name
     }
 
-    pub fn evict_after_pending_cleared(&mut self, evict_after_pending_cleared: bool) -> &mut Self {
-        self.core_options.evict_after_pending_cleared = evict_after_pending_cleared;
+    pub fn max_cached_workflows(&mut self, num: usize) -> &mut Self {
+        self.core_options.max_cached_workflows = num;
         self
     }
 
     pub fn max_wft(&mut self, max: usize) -> &mut Self {
-        self.core_options.max_outstanding_workflow_tasks = max;
+        self.worker_config.max_outstanding_workflow_tasks = max;
         self
     }
 
     pub fn max_at(&mut self, max: usize) -> &mut Self {
-        self.core_options.max_outstanding_activities = max;
+        self.worker_config.max_outstanding_activities = max;
         self
     }
 
@@ -113,7 +117,10 @@ impl CoreWfStarter {
     async fn get_or_init_core(&mut self) -> Arc<dyn Core> {
         let opts = self.core_options.clone();
         if self.initted_core.is_none() {
-            self.initted_core = Some(Arc::new(temporal_sdk_core::init(opts).await.unwrap()));
+            let core = temporal_sdk_core::init(opts).await.unwrap();
+            // Register a worker for the task queue
+            core.register_worker(self.worker_config.clone()).await;
+            self.initted_core = Some(Arc::new(core));
         }
         self.initted_core.as_ref().unwrap().clone()
     }
@@ -134,7 +141,7 @@ pub async fn with_gw<F: FnOnce(GwApi) -> Fout, Fout: Future>(
     fun(gw).await
 }
 
-pub fn get_integ_server_options(task_q: &str) -> ServerGatewayOptions {
+pub fn get_integ_server_options() -> ServerGatewayOptions {
     let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
         Ok(addr) => addr,
         Err(_) => "http://localhost:7233".to_owned(),
@@ -142,26 +149,12 @@ pub fn get_integ_server_options(task_q: &str) -> ServerGatewayOptions {
     let url = Url::try_from(&*temporal_server_address).unwrap();
     ServerGatewayOptions {
         namespace: NAMESPACE.to_string(),
-        task_queue: task_q.to_string(),
         identity: "integ_tester".to_string(),
         worker_binary_id: "".to_string(),
         long_poll_timeout: Duration::from_secs(60),
         target_url: url,
         tls_cfg: None,
     }
-}
-
-pub async fn get_integ_core(task_q: &str) -> impl Core {
-    let gateway_opts = get_integ_server_options(task_q);
-    temporal_sdk_core::init(
-        CoreInitOptionsBuilder::default()
-            .gateway_opts(gateway_opts)
-            .evict_after_pending_cleared(false)
-            .build()
-            .unwrap(),
-    )
-    .await
-    .unwrap()
 }
 
 pub fn schedule_activity_cmd(

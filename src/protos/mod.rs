@@ -55,13 +55,11 @@ pub mod coresdk {
     }
     pub mod workflow_activation {
         use crate::core_tracing::VecDisplayer;
-        use crate::task_token::{fmt_tt, TaskToken};
         use std::fmt::{Display, Formatter};
 
         tonic::include_proto!("coresdk.workflow_activation");
-        pub fn create_evict_activation(task_token: TaskToken, run_id: String) -> WfActivation {
+        pub fn create_evict_activation(run_id: String) -> WfActivation {
             WfActivation {
-                task_token: task_token.0,
                 timestamp: None,
                 run_id,
                 jobs: vec![WfActivationJob::from(
@@ -72,7 +70,7 @@ pub mod coresdk {
 
         impl Display for WfActivation {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                write!(f, "WfActivation({}, ", fmt_tt(&self.task_token),)?;
+                write!(f, "WfActivation(")?;
                 write!(f, "run_id: {}, ", self.run_id)?;
                 write!(f, "jobs: {})", self.jobs.display())
             }
@@ -166,7 +164,6 @@ pub mod coresdk {
             workflowservice::v1::PollActivityTaskQueueResponse,
         },
     };
-    use crate::task_token::{fmt_tt, TaskToken};
     use std::convert::TryFrom;
     use std::fmt::{Display, Formatter};
     use workflow_activation::{wf_activation_job, WfActivationJob};
@@ -205,26 +202,26 @@ pub mod coresdk {
 
     impl WfActivationCompletion {
         /// Create a successful activation from a list of commands
-        pub fn from_cmds(cmds: Vec<workflow_command::Variant>, task_token: Vec<u8>) -> Self {
+        pub fn from_cmds(cmds: Vec<workflow_command::Variant>, run_id: String) -> Self {
             let success = Success::from_variants(cmds);
             Self {
-                task_token,
+                run_id,
                 status: Some(wf_activation_completion::Status::Successful(success)),
             }
         }
 
         /// Create a successful activation from just one command
-        pub fn from_cmd(cmds: workflow_command::Variant, task_token: Vec<u8>) -> Self {
+        pub fn from_cmd(cmds: workflow_command::Variant, run_id: String) -> Self {
             let success = Success::from_variants(vec![cmds]);
             Self {
-                task_token,
+                run_id,
                 status: Some(wf_activation_completion::Status::Successful(success)),
             }
         }
 
-        pub fn fail(task_token: Vec<u8>, failure: UserCodeFailure) -> Self {
+        pub fn fail(run_id: String, failure: UserCodeFailure) -> Self {
             Self {
-                task_token,
+                run_id,
                 status: Some(wf_activation_completion::Status::Failed(
                     workflow_completion::Failure {
                         failure: Some(failure),
@@ -233,9 +230,9 @@ pub mod coresdk {
             }
         }
 
-        pub fn from_status(task_token: Vec<u8>, status: wf_activation_completion::Status) -> Self {
+        pub fn from_status(run_id: String, status: wf_activation_completion::Status) -> Self {
             Self {
-                task_token,
+                run_id,
                 status: Some(status),
             }
         }
@@ -245,8 +242,8 @@ pub mod coresdk {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             write!(
                 f,
-                "WfActivationCompletion(task_token: {}, status: ",
-                fmt_tt(&self.task_token),
+                "WfActivationCompletion(run_id: {}, status: ",
+                &self.run_id
             )?;
             match &self.status {
                 None => write!(f, "empty")?,
@@ -293,12 +290,9 @@ pub mod coresdk {
     }
 
     impl ActivityTask {
-        pub fn start_from_poll_resp(
-            r: PollActivityTaskQueueResponse,
-            task_token: TaskToken,
-        ) -> Self {
+        pub fn start_from_poll_resp(r: PollActivityTaskQueueResponse) -> Self {
             ActivityTask {
-                task_token: task_token.0,
+                task_token: r.task_token,
                 activity_id: r.activity_id,
                 variant: Some(activity_task::activity_task::Variant::Start(
                     activity_task::Start {

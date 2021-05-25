@@ -80,13 +80,15 @@ where
 pub type PollWorkflowTaskBuffer = LongPollBuffer<PollWorkflowTaskQueueResponse>;
 pub fn new_workflow_task_buffer(
     sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>,
+    task_queue: String,
     concurrent_pollers: usize,
     buffer_size: usize,
 ) -> PollWorkflowTaskBuffer {
     LongPollBuffer::new(
         move || {
             let sg = sg.clone();
-            async move { sg.poll_workflow_task().await }
+            let task_queue = task_queue.clone();
+            async move { sg.poll_workflow_task(task_queue).await }
         },
         concurrent_pollers,
         buffer_size,
@@ -96,13 +98,15 @@ pub fn new_workflow_task_buffer(
 pub type PollActivityTaskBuffer = LongPollBuffer<PollActivityTaskQueueResponse>;
 pub fn new_activity_task_buffer(
     sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>,
+    task_queue: String,
     concurrent_pollers: usize,
     buffer_size: usize,
 ) -> PollActivityTaskBuffer {
     LongPollBuffer::new(
         move || {
             let sg = sg.clone();
-            async move { sg.poll_activity_task().await }
+            let task_queue = task_queue.clone();
+            async move { sg.poll_activity_task(task_queue).await }
         },
         concurrent_pollers,
         buffer_size,
@@ -123,7 +127,7 @@ mod tests {
         mock_gateway
             .expect_poll_workflow_task()
             .times(2)
-            .returning(move || {
+            .returning(move |_| {
                 async {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     Ok(Default::default())
@@ -132,7 +136,7 @@ mod tests {
             });
         let mock_gateway = Arc::new(mock_gateway);
 
-        let pb = new_workflow_task_buffer(mock_gateway, 1, 1);
+        let pb = new_workflow_task_buffer(mock_gateway, "someq".to_string(), 1, 1);
 
         // Poll a bunch of times, "interrupting" it each time, we should only actually have polled
         // once since the poll takes a while

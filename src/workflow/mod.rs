@@ -6,7 +6,6 @@ pub(crate) use bridge::WorkflowBridge;
 pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
 pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFetcher};
 
-use crate::task_token::TaskToken;
 use crate::{
     machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
     protos::{
@@ -88,25 +87,6 @@ impl WorkflowManager {
 }
 
 #[derive(Debug)]
-pub(crate) struct NextWfActivation {
-    /// Keep this private, so we can ensure task tokens are attached via [Self::finalize]
-    activation: WfActivation,
-}
-
-impl NextWfActivation {
-    /// Attach a task token to the activation so it can be sent out to the lang sdk
-    pub fn finalize(self, task_token: TaskToken) -> WfActivation {
-        let mut a = self.activation;
-        a.task_token = task_token.0;
-        a
-    }
-
-    pub fn run_id(&self) -> &str {
-        &self.activation.run_id
-    }
-}
-
-#[derive(Debug)]
 pub struct OutgoingServerCommands {
     pub commands: Vec<ProtoCommand>,
     pub at_final_workflow_task: bool,
@@ -118,7 +98,7 @@ impl WorkflowManager {
     /// Should only be called when a workflow has caught up on replay (or is just beginning). It
     /// will return a workflow activation if one is needed, as well as a bool indicating if there
     /// are more workflow tasks that need to be performed to replay the remaining history.
-    pub fn feed_history_from_server(&mut self, hist: History) -> Result<Option<NextWfActivation>> {
+    pub fn feed_history_from_server(&mut self, hist: History) -> Result<Option<WfActivation>> {
         let task_hist = HistoryInfo::new_from_history(&hist, Some(self.current_wf_task_num))?;
         let task_ct = hist.get_workflow_task_count(None)?;
         self.last_history_task_count = task_ct;
@@ -127,7 +107,7 @@ impl WorkflowManager {
         let activation = self.machines.get_wf_activation();
 
         self.current_wf_task_num += 1;
-        Ok(activation.map(|activation| NextWfActivation { activation }))
+        Ok(activation)
     }
 
     /// Fetch any pending commands that should be sent to the server, as well as if this workflow
@@ -148,11 +128,11 @@ impl WorkflowManager {
     /// Fetch the next workflow activation for this workflow if one is required. Callers may
     /// also need to call [get_server_commands] after this to issue any pending commands to the
     /// server.
-    pub fn get_next_activation(&mut self) -> Result<Option<NextWfActivation>> {
+    pub fn get_next_activation(&mut self) -> Result<Option<WfActivation>> {
         // First check if there are already some pending jobs, which can be a result of replay.
         let activation = self.machines.get_wf_activation();
         if let Some(act) = activation {
-            return Ok(Some(NextWfActivation { activation: act }));
+            return Ok(Some(act));
         }
 
         let hist = &self.last_history_from_server;
@@ -164,7 +144,7 @@ impl WorkflowManager {
             self.current_wf_task_num += 1;
         }
 
-        Ok(activation.map(|activation| NextWfActivation { activation }))
+        Ok(activation)
     }
 
     /// Feed the workflow machines new commands issued by the executing workflow code, and iterate
@@ -174,4 +154,23 @@ impl WorkflowManager {
         self.machines.iterate_machines()?;
         Ok(())
     }
+}
+
+/// Determines when workflows are kept in the cache or evicted
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum WorkflowCachingPolicy {
+    /// Workflows are cached until evicted explicitly or the cache size limit is reached, in which
+    /// case they are evicted by least-recently-used ordering.
+    Sticky {
+        /// The maximum number of workflows that will be kept in the cache
+        max_cached_workflows: usize,
+    },
+    /// Workflows are evicted after each workflow task completion. Note that this is *not* after
+    /// each workflow activation - there are often multiple activations per workflow task.
+    NonSticky,
+
+    /// Not a real mode, but good for imitating crashes. Evict workflows after *every* reply,
+    /// even if there are pending activations
+    #[cfg(test)]
+    AfterEveryReply,
 }
