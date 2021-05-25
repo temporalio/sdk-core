@@ -63,7 +63,8 @@ async fn max_activites_respected() {
             .max_outstanding_activities(2usize)
             .build()
             .unwrap(),
-    );
+    )
+    .await;
 
     // We allow two outstanding activities, therefore first two polls should return right away
     let r1 = core.poll_activity_task().await.unwrap();
@@ -301,7 +302,8 @@ async fn many_concurrent_heartbeat_cancels() {
             .max_concurrent_at_polls(1usize)
             .build()
             .unwrap(),
-    );
+    )
+    .await;
 
     // Poll all activities first so they are registered
     for _ in 0..CONCURRENCY_NUM {
@@ -342,7 +344,12 @@ async fn many_concurrent_heartbeat_cancels() {
     .await;
 
     assert_eq!(
-        core.workers.get(TEST_Q).unwrap().outstanding_activities(),
+        core.workers
+            .read()
+            .await
+            .get(TEST_Q)
+            .unwrap()
+            .outstanding_activities(),
         0
     );
     core.shutdown().await;

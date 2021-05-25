@@ -81,14 +81,14 @@ pub(crate) fn build_fake_core(
 
 /// See [build_fake_core] -- assemble a mock gateway into the final fake core
 pub(crate) fn fake_core_from_mock_sg(mock_and_tasks: MockSGAndTasks) -> FakeCore {
-    let core = CoreSDK::new(
+    let mut core = CoreSDK::new(
         mock_and_tasks.sg,
         CoreInitOptionsBuilder::default()
             .gateway_opts(fake_sg_opts())
             .build()
             .unwrap(),
     );
-    core.register_worker(
+    core.reg_worker_sync(
         WorkerConfigBuilder::default()
             .task_queue(TEST_Q)
             .build()
@@ -104,14 +104,14 @@ pub(crate) fn mock_core<SG>(sg: SG) -> CoreSDK<impl ServerGatewayApis>
 where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
-    let core = CoreSDK::new(
+    let mut core = CoreSDK::new(
         sg,
         CoreInitOptionsBuilder::default()
             .gateway_opts(fake_sg_opts())
             .build()
             .unwrap(),
     );
-    core.register_worker(
+    core.reg_worker_sync(
         WorkerConfigBuilder::default()
             .task_queue(TEST_Q)
             .build()

@@ -119,7 +119,7 @@ impl CoreWfStarter {
         if self.initted_core.is_none() {
             let core = temporal_sdk_core::init(opts).await.unwrap();
             // Register a worker for the task queue
-            core.register_worker(self.worker_config.clone());
+            core.register_worker(self.worker_config.clone()).await;
             self.initted_core = Some(Arc::new(core));
         }
         self.initted_core.as_ref().unwrap().clone()

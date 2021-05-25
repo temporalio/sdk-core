@@ -37,7 +37,8 @@ async fn multi_workers() {
                 .task_queue(queue_name.clone())
                 .build()
                 .unwrap(),
-        );
+        )
+        .await;
     }
 
     for _ in 0..5 {

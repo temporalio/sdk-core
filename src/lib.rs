@@ -62,9 +62,9 @@ use crate::{
     workflow::WorkflowCachingPolicy,
     workflow_tasks::{FailedActivationOutcome, NewWfTaskOutcome, WorkflowTaskManager},
 };
-use dashmap::DashMap;
 use futures::{future::select_all, FutureExt, TryFutureExt};
 use std::{
+    collections::HashMap,
     convert::TryInto,
     future::Future,
     sync::{
@@ -74,7 +74,7 @@ use std::{
 };
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver},
-    Mutex, Notify,
+    Mutex, Notify, RwLock,
 };
 
 /// This trait is the primary way by which language specific SDKs interact with the core SDK. It is
@@ -85,7 +85,7 @@ pub trait Core: Send + Sync {
     /// Register a worker with core. Workers poll on a specific task queue, and when calling core's
     /// poll functions, you must provide a task queue name. Returned activations will include that
     /// task queue name as well, so that lang may route them to the appropriate place.
-    fn register_worker(&self, config: WorkerConfig);
+    async fn register_worker(&self, config: WorkerConfig);
 
     /// Ask the core for some work, returning a [WfActivation]. It is then the language SDK's
     /// responsibility to call the appropriate workflow code with the provided inputs. Blocks
@@ -187,7 +187,7 @@ struct CoreSDK<WP> {
     /// Provides work in the form of responses the server would send from polling task Qs
     server_gateway: Arc<WP>,
     /// Maps task queue names to workers
-    workers: DashMap<String, Worker>,
+    workers: RwLock<HashMap<String, Worker>>,
     /// Workflow task management
     wft_manager: WorkflowTaskManager,
     /// Activity task management
@@ -211,10 +211,10 @@ impl<WP> Core for CoreSDK<WP>
 where
     WP: ServerGatewayApis + Send + Sync + 'static,
 {
-    fn register_worker(&self, config: WorkerConfig) {
+    async fn register_worker(&self, config: WorkerConfig) {
         let tq = config.task_queue.clone();
         let worker = Worker::new(config, self.server_gateway.clone());
-        self.workers.insert(tq, worker);
+        self.workers.write().await.insert(tq, worker);
     }
 
     #[instrument(skip(self))]
@@ -247,9 +247,10 @@ where
                 .workflow_activations_update
                 .lock()
                 .then(|mut l| async move { l.recv().await });
-            let worker_refs: Vec<_> = self.workers.iter().collect();
+
+            let workers_rg = self.workers.read().await;
             let mut futs = vec![];
-            for w in worker_refs.iter() {
+            for w in workers_rg.values() {
                 futs.push(w.workflow_poll().map_err(Into::into).boxed());
             }
             let poll_result_future = self.shutdownable_fut(async {
@@ -264,7 +265,7 @@ where
                 update = activation_update_fut => {
                     // If the update indicates a task completed, free a slot in the worker
                     if let Some(WfActivationUpdate::WorkflowTaskComplete {task_queue}) = update {
-                        if let Some(w) = self.workers.get(&task_queue) {
+                        if let Some(w) = workers_rg.get(&task_queue) {
                             w.workflow_task_done();
                         }
                     }
@@ -299,9 +300,9 @@ where
             // TODO: Blows up now if there is a local only activity worker, it'll always error out
             //   -- add test for that
 
-            let worker_refs: Vec<_> = self.workers.iter().collect();
+            let workers_rg = self.workers.read().await;
             let mut futs = vec![];
-            for w in worker_refs.iter() {
+            for w in workers_rg.values() {
                 futs.push(self.act_manager.poll(&w).map_err(Into::into).boxed());
             }
             let selected_act_poll = async {
@@ -392,7 +393,7 @@ where
         if should_remove {
             // Remove the activity from tracking and tell the worker a slot is free
             if let Some(deets) = self.act_manager.mark_complete(&tt) {
-                if let Some(worker) = self.workers.get(&deets.task_queue) {
+                if let Some(worker) = self.workers.read().await.get(&deets.task_queue) {
                     worker.activity_done();
                 }
             }
@@ -418,7 +419,7 @@ where
     async fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
-        for entry in self.workers.iter() {
+        for entry in self.workers.read().await.values() {
             entry.shutdown();
         }
         self.wft_manager.shutdown();
@@ -441,12 +442,20 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             wft_manager: WorkflowTaskManager::new(wau_tx, cache_policy),
             act_manager: ActivityTaskManager::new(sg.clone()),
             server_gateway: sg,
-            workers: DashMap::new(),
+            workers: RwLock::new(HashMap::new()),
             _init_options: init_options,
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
             workflow_activations_update: Mutex::new(wau_rx),
         }
+    }
+
+    /// Internal convenience function to avoid needing async when caller has mutable access to core
+    #[cfg(test)]
+    fn reg_worker_sync(&mut self, config: WorkerConfig) {
+        let tq = config.task_queue.clone();
+        let worker = Worker::new(config, self.server_gateway.clone());
+        self.workers.get_mut().insert(tq, worker);
     }
 
     /// Apply validated WFTs from the server. Returns an activation if one should be issued to
@@ -577,13 +586,3 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         }
     }
 }
-
-//
-// async fn poll_any_worker(&self) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
-//     let mut futs = vec![];
-//     for w in self.workers.iter() {
-//         futs.push(w.workflow_poll().map_err(Into::into).boxed());
-//     }
-//     let (selected, _, _) = select_all(futs).await;
-//     selected
-// }

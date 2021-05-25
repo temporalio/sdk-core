@@ -78,7 +78,8 @@ async fn shutdown_interrupts_both_polls() {
             .max_concurrent_at_polls(1usize)
             .build()
             .unwrap(),
-    );
+    )
+    .await;
     tokio::join! {
         async {
             assert_matches!(core.poll_activity_task().await.unwrap_err(),

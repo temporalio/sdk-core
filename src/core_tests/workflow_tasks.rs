@@ -885,7 +885,8 @@ async fn max_concurrent_wft_respected() {
             .max_outstanding_workflow_tasks(2usize)
             .build()
             .unwrap(),
-    );
+    )
+    .await;
 
     // Poll twice in a row before completing -- we should be at limit
     let r1 = core.poll_workflow_task().await.unwrap();
@@ -1081,6 +1082,8 @@ async fn lots_of_workflows() {
     assert_eq!(core.wft_manager.outstanding_wft(), 0);
     assert_eq!(
         core.workers
+            .read()
+            .await
             .get(TEST_Q)
             .unwrap()
             .outstanding_workflow_tasks(),

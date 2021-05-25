@@ -17,7 +17,7 @@ async fn activity_load() {
     let worker = starter.worker().await;
 
     let activity_id = "act-1";
-    let activity_timeout = Duration::from_secs(5);
+    let activity_timeout = Duration::from_secs(8);
     let payload_dat = b"hello".to_vec();
 
     let starting = Instant::now();
