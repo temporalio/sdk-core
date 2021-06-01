@@ -62,6 +62,7 @@ pub mod coresdk {
             WfActivation {
                 timestamp: None,
                 run_id,
+                is_replaying: false,
                 jobs: vec![WfActivationJob::from(
                     wf_activation_job::Variant::RemoveFromCache(true),
                 )],
