@@ -19,8 +19,10 @@ message WFActivation {
     string run_id = 1;
     /// The current time as understood by the workflow, which is set by workflow task started events
     google.protobuf.Timestamp timestamp = 2;
+    /// Whether or not the activation is replaying past events
+    bool is_replaying = 3;
     /// The things to do upon activating the workflow
-    repeated WFActivationJob jobs = 3;
+    repeated WFActivationJob jobs = 4;
 }
 
 message WFActivationJob {

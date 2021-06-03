@@ -409,6 +409,7 @@ impl WorkflowMachines {
         } else {
             Some(WfActivation {
                 timestamp: self.current_wf_time.map(Into::into),
+                is_replaying: self.replaying,
                 run_id: self.run_id.clone(),
                 jobs,
             })
