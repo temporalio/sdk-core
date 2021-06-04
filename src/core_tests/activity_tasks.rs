@@ -288,13 +288,7 @@ async fn many_concurrent_heartbeat_cancels() {
             .boxed()
         });
 
-    let core = &CoreSDK::new(
-        mock_gateway,
-        CoreInitOptionsBuilder::default()
-            .gateway_opts(fake_sg_opts())
-            .build()
-            .unwrap(),
-    );
+    let core = &mock_core(mock_gateway);
     core.register_worker(
         WorkerConfigBuilder::default()
             .task_queue(TEST_Q)

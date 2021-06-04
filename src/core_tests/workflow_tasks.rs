@@ -1,10 +1,9 @@
-use crate::machines::test_help::{fake_sg_opts, mock_core_with_opts};
 use crate::{
     job_assert,
     machines::test_help::{
         build_fake_core, build_multihist_mock_sg, fake_core_from_mock_sg, gen_assert_and_fail,
-        gen_assert_and_reply, hist_to_poll_resp, mock_core, poll_and_reply, single_hist_mock_sg,
-        FakeCore, FakeWfResponses, TestHistoryBuilder, TEST_Q,
+        gen_assert_and_reply, hist_to_poll_resp, mock_core, mock_core_with_opts, poll_and_reply,
+        single_hist_mock_sg, FakeCore, FakeWfResponses, TestHistoryBuilder, TEST_Q,
     },
     pollers::MockServerGatewayApis,
     protos::{
@@ -27,7 +26,7 @@ use crate::{
     },
     test_help::canned_histories,
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
-    Core, CoreInitOptionsBuilder, CoreSDK, WfActivationCompletion, WorkerConfigBuilder,
+    Core, CoreInitOptionsBuilder, WfActivationCompletion, WorkerConfigBuilder,
 };
 use rstest::{fixture, rstest};
 use std::{
@@ -873,14 +872,7 @@ async fn max_concurrent_wft_respected() {
         .expect_complete_workflow_task()
         .returning(|_, _, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
 
-    // TODO: Why does extra register (from mock_core) break stuff?
-    let core = CoreSDK::new(
-        mock_gateway,
-        CoreInitOptionsBuilder::default()
-            .gateway_opts(fake_sg_opts())
-            .build()
-            .unwrap(),
-    );
+    let core = mock_core(mock_gateway);
     core.register_worker(
         WorkerConfigBuilder::default()
             .task_queue(TEST_Q)
