@@ -1,14 +1,20 @@
 use crate::{
+    machines::ProtoCommand,
     pollers::{
-        new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
+        self, new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
         PollWorkflowTaskBuffer,
     },
+    protos::temporal::api::enums::v1::TaskQueueKind,
+    protos::temporal::api::taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
     protos::temporal::api::workflowservice::v1::{
         PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
+        RespondWorkflowTaskCompletedResponse,
     },
     protosext::ValidPollWFTQResponse,
+    task_token::TaskToken,
     PollActivityError, PollWfError, ServerGatewayApis,
 };
+use std::time::Duration;
 use std::{convert::TryInto, sync::Arc};
 use tokio::sync::Semaphore;
 
@@ -47,6 +53,10 @@ pub struct WorkerConfig {
 pub(crate) struct Worker {
     config: WorkerConfig,
 
+    /// If set, this worker's workflow task completions should indicate that it wants to use
+    /// sticky queues with the provided name
+    sticky_queue_name: Option<String>,
+
     /// Buffers workflow task polling in the event we need to return a pending activation while
     /// a poll is ongoing
     wf_task_poll_buffer: PollWorkflowTaskBuffer,
@@ -63,6 +73,7 @@ pub(crate) struct Worker {
 impl Worker {
     pub(crate) fn new<SG: ServerGatewayApis + Send + Sync + 'static>(
         config: WorkerConfig,
+        sticky_queue_name: Option<String>,
         sg: Arc<SG>,
     ) -> Self {
         let wf_task_poll_buffer = new_workflow_task_buffer(
@@ -82,6 +93,7 @@ impl Worker {
             ))
         };
         Self {
+            sticky_queue_name,
             wf_task_poll_buffer,
             at_task_poll_buffer,
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
@@ -167,6 +179,29 @@ impl Worker {
         Ok(Some(work))
     }
 
+    /// Use the given server gateway to respond that the workflow task is completed. Properly
+    /// attaches sticky task queue information if appropriate.
+    pub(crate) async fn complete_workflow_task(
+        &self,
+        sg: &(dyn ServerGatewayApis + Sync),
+        task_token: TaskToken,
+        commands: Vec<ProtoCommand>,
+    ) -> pollers::Result<RespondWorkflowTaskCompletedResponse> {
+        let stq = self
+            .sticky_queue_name
+            .as_ref()
+            .map(|tq| StickyExecutionAttributes {
+                worker_task_queue: Some(TaskQueue {
+                    name: tq.clone(),
+                    kind: TaskQueueKind::Sticky as i32,
+                }),
+                // TODO: Set appropriately
+                schedule_to_start_timeout: Some(Duration::from_secs(60).into()),
+            });
+        debug!("Sending commands to server: {:?}", &commands);
+        sg.complete_workflow_task(task_token, commands, stq).await
+    }
+
     /// Tell the worker an activity has completed, for tracking max outstanding activities
     pub(crate) fn activity_done(&self) {
         self.activities_semaphore.add_permits(1)
@@ -195,7 +230,7 @@ mod tests {
             .max_outstanding_activities(5usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, Arc::new(mock_gateway));
+        let worker = Worker::new(cfg, None, Arc::new(mock_gateway));
         assert_eq!(worker.activity_poll().await.unwrap(), None);
         assert_eq!(worker.activities_semaphore.available_permits(), 5);
     }
@@ -212,7 +247,7 @@ mod tests {
             .max_outstanding_workflow_tasks(5usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, Arc::new(mock_gateway));
+        let worker = Worker::new(cfg, None, Arc::new(mock_gateway));
         assert_eq!(worker.workflow_poll().await.unwrap(), None);
         assert_eq!(worker.workflows_semaphore.available_permits(), 5);
     }
@@ -229,7 +264,7 @@ mod tests {
             .max_outstanding_activities(5usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, Arc::new(mock_gateway));
+        let worker = Worker::new(cfg, None, Arc::new(mock_gateway));
         assert!(worker.activity_poll().await.is_err());
         assert_eq!(worker.activities_semaphore.available_permits(), 5);
     }
@@ -246,7 +281,7 @@ mod tests {
             .max_outstanding_workflow_tasks(5usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, Arc::new(mock_gateway));
+        let worker = Worker::new(cfg, None, Arc::new(mock_gateway));
         assert!(worker.workflow_poll().await.is_err());
         assert_eq!(worker.workflows_semaphore.available_permits(), 5);
     }

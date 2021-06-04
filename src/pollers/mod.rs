@@ -13,7 +13,7 @@ use crate::{
         common::v1::{Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
-        taskqueue::v1::TaskQueue,
+        taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
         workflowservice::v1::{
             workflow_service_client::WorkflowServiceClient, PollActivityTaskQueueRequest,
             PollActivityTaskQueueResponse, PollWorkflowTaskQueueRequest,
@@ -193,13 +193,18 @@ pub trait ServerGatewayApis {
     async fn poll_activity_task(&self, task_queue: String)
         -> Result<PollActivityTaskQueueResponse>;
 
-    /// Complete a workflow activation. `task_token` is the task token that would've been received
-    /// from [crate::Core::poll_workflow_task] API. `commands` is a list of new commands to send to
-    /// the server, such as starting a timer.
+    /// Complete a workflow activation.
+    ///
+    /// * `task_token`: The task token that would've been received from
+    /// [crate::Core::poll_workflow_task] API.
+    /// * `commands`: A list of new commands to send to the server, such as starting a timer.
+    /// * `sticky_attributes`: If set, indicate that next task should be queued on sticky queue with
+    /// given attributes.
     async fn complete_workflow_task(
         &self,
         task_token: TaskToken,
         commands: Vec<ProtoCommand>,
+        sticky_attributes: Option<StickyExecutionAttributes>,
     ) -> Result<RespondWorkflowTaskCompletedResponse>;
 
     /// Complete activity task by sending response to the server. `task_token` contains activity
@@ -338,6 +343,7 @@ impl ServerGatewayApis for ServerGateway {
         &self,
         task_token: TaskToken,
         commands: Vec<ProtoCommand>,
+        sticky_attributes: Option<StickyExecutionAttributes>,
     ) -> Result<RespondWorkflowTaskCompletedResponse> {
         let request = RespondWorkflowTaskCompletedRequest {
             task_token: task_token.0,
@@ -345,6 +351,7 @@ impl ServerGatewayApis for ServerGateway {
             identity: self.opts.identity.clone(),
             binary_checksum: self.opts.worker_binary_id.clone(),
             namespace: self.opts.namespace.clone(),
+            sticky_attributes,
             ..Default::default()
         };
         Ok(self
@@ -509,6 +516,7 @@ mod manual_mock {
                 &self,
                 task_token: TaskToken,
                 commands: Vec<ProtoCommand>,
+                sticky_attributes: Option<StickyExecutionAttributes>,
             ) -> impl Future<Output = Result<RespondWorkflowTaskCompletedResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;
 

@@ -77,6 +77,13 @@ use tokio::sync::{
     Mutex, Notify, RwLock,
 };
 
+lazy_static::lazy_static! {
+    /// A process-wide unique string, which will be different on every startup
+    static ref PROCCESS_UNIQ_ID: String = {
+        uuid::Uuid::new_v4().to_simple().to_string()
+    };
+}
+
 /// This trait is the primary way by which language specific SDKs interact with the core SDK. It is
 /// expected that only one instance of an implementation will exist for the lifetime of the
 /// worker(s) using it.
@@ -189,7 +196,7 @@ pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
 
 struct CoreSDK<WP> {
     /// Options provided at initialization time
-    _init_options: CoreInitOptions,
+    init_options: CoreInitOptions,
     /// Provides work in the form of responses the server would send from polling task Qs
     server_gateway: Arc<WP>,
     /// Maps task queue names to workers
@@ -218,8 +225,7 @@ where
     WP: ServerGatewayApis + Send + Sync + 'static,
 {
     async fn register_worker(&self, config: WorkerConfig) {
-        let tq = config.task_queue.clone();
-        let worker = Worker::new(config, self.server_gateway.clone());
+        let (tq, worker) = self.build_worker(config);
         self.workers.write().await.insert(tq, worker);
     }
 
@@ -439,7 +445,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             act_manager: ActivityTaskManager::new(sg.clone()),
             server_gateway: sg,
             workers: RwLock::new(HashMap::new()),
-            _init_options: init_options,
+            init_options,
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
             workflow_activations_update: Mutex::new(wau_rx),
@@ -449,9 +455,25 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     /// Internal convenience function to avoid needing async when caller has mutable access to core
     #[cfg(test)]
     fn reg_worker_sync(&mut self, config: WorkerConfig) {
-        let tq = config.task_queue.clone();
-        let worker = Worker::new(config, self.server_gateway.clone());
+        let (tq, worker) = self.build_worker(config);
         self.workers.get_mut().insert(tq, worker);
+    }
+
+    /// From a worker config, return a (task queue, Worker) pair
+    fn build_worker(&self, config: WorkerConfig) -> (String, Worker) {
+        let tq = config.task_queue.clone();
+        let use_sticky = if self.init_options.max_cached_workflows > 0 {
+            Some(format!(
+                "{}-{}-{}",
+                &self.init_options.gateway_opts.identity, &tq, *PROCCESS_UNIQ_ID
+            ))
+        } else {
+            None
+        };
+        (
+            tq,
+            Worker::new(config, use_sticky, self.server_gateway.clone()),
+        )
     }
 
     /// Apply validated WFTs from the server. Returns an activation if one should be issued to
@@ -493,23 +515,30 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             .map(|c| c.try_into())
             .collect::<Result<Vec<_>, EmptyWorkflowCommandErr>>()
             .map_err(|_| CompleteWfError::MalformedWorkflowCompletion {
-                reason: "At least one workflow command in the completion \
-                                contained an empty variant"
-                    .to_owned(),
+                reason:
+                    "At least one workflow command in the completion contained an empty variant"
+                        .to_owned(),
                 completion: None,
             })?;
 
         if let Some(server_cmds) = self.wft_manager.successful_activation(run_id, cmds)? {
-            debug!("Sending commands to server: {:?}", &server_cmds.commands);
-            let res = self
-                .server_gateway
-                .complete_workflow_task(server_cmds.task_token, server_cmds.commands)
-                .await;
-            if let Err(ts) = res {
-                let should_evict = self.handle_wft_complete_errs(ts)?;
-                if should_evict {
-                    self.wft_manager.evict_run(run_id);
+            if let Some(worker) = self.workers.read().await.get(&server_cmds.task_queue) {
+                let res = worker
+                    .complete_workflow_task(
+                        self.server_gateway.as_ref(),
+                        server_cmds.task_token,
+                        server_cmds.commands,
+                    )
+                    .await;
+                if let Err(ts) = res {
+                    let should_evict = self.handle_wft_complete_errs(ts)?;
+                    if should_evict {
+                        self.wft_manager.evict_run(run_id);
+                    }
                 }
+            } else {
+                // TODO: Worker missing case
+                panic!("Ahh worker expected");
             }
         }
         Ok(())

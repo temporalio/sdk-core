@@ -23,6 +23,7 @@ derive_builder = "0.10"
 derive_more = "0.99"
 futures = "0.3"
 itertools = "0.10"
+lazy_static = "1.4"
 once_cell = "1.5"
 opentelemetry = { version = "0.13", features = ["rt-tokio"] }
 opentelemetry-jaeger = "0.12"
@@ -50,7 +51,6 @@ assert_matches = "1.4"
 bimap = "0.6.1"
 mockall = "0.9"
 rstest = "0.9"
-lazy_static = "1.4"
 test_utils = { path = "test_utils" }
 
 [build-dependencies]

@@ -47,10 +47,10 @@ pub struct WorkflowTaskManager {
 /// lang handles it.
 #[derive(Clone, Debug)]
 pub struct WorkflowTaskInfo {
-    task_token: TaskToken,
-    run_id: String,
-    attempt: u32,
-    task_queue: String,
+    pub task_token: TaskToken,
+    pub run_id: String,
+    pub attempt: u32,
+    pub task_queue: String,
 }
 
 #[derive(Debug, derive_more::From)]
@@ -71,8 +71,9 @@ pub enum FailedActivationOutcome {
 }
 
 #[derive(Debug)]
-pub struct ServerCommandsWithTaskToken {
+pub struct ServerCommandsWithWorkflowInfo {
     pub task_token: TaskToken,
+    pub task_queue: String,
     pub commands: Vec<ProtoCommand>,
 }
 
@@ -192,9 +193,11 @@ impl WorkflowTaskManager {
         &self,
         run_id: &str,
         commands: Vec<WFCommand>,
-    ) -> Result<Option<ServerCommandsWithTaskToken>, WorkflowUpdateError> {
-        let tt = if let Some(wti) = self.workflow_info.get(run_id) {
-            wti.task_token.clone()
+    ) -> Result<Option<ServerCommandsWithWorkflowInfo>, WorkflowUpdateError> {
+        let (task_token, task_queue) = if let Some(wti) = self.workflow_info.get(run_id) {
+            // Note: Ideally we could return these as refs but dashmap makes that hard. Likely
+            //   not a real perf concern.
+            (wti.task_token.clone(), wti.task_queue.clone())
         } else {
             warn!(
                 run_id,
@@ -214,8 +217,9 @@ impl WorkflowTaskManager {
         let ret = if !self.pending_activations.has_pending(run_id)
             && server_cmds.at_final_workflow_task
         {
-            Some(ServerCommandsWithTaskToken {
-                task_token: tt,
+            Some(ServerCommandsWithWorkflowInfo {
+                task_token,
+                task_queue,
                 commands: server_cmds.commands,
             })
         } else {

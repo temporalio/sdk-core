@@ -81,36 +81,25 @@ pub(crate) fn build_fake_core(
 
 /// See [build_fake_core] -- assemble a mock gateway into the final fake core
 pub(crate) fn fake_core_from_mock_sg(mock_and_tasks: MockSGAndTasks) -> FakeCore {
-    let mut core = CoreSDK::new(
-        mock_and_tasks.sg,
-        CoreInitOptionsBuilder::default()
-            .gateway_opts(fake_sg_opts())
-            .build()
-            .unwrap(),
-    );
-    core.reg_worker_sync(
-        WorkerConfigBuilder::default()
-            .task_queue(TEST_Q)
-            .build()
-            .unwrap(),
-    );
+    let core = mock_core(mock_and_tasks.sg);
     FakeCore {
         inner: core,
         outstanding_wf_tasks: mock_and_tasks.task_map,
     }
 }
 
-pub(crate) fn mock_core<SG>(sg: SG) -> CoreSDK<impl ServerGatewayApis>
+pub(crate) fn mock_core<SG>(sg: SG) -> CoreSDK<SG>
 where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
-    let mut core = CoreSDK::new(
-        sg,
-        CoreInitOptionsBuilder::default()
-            .gateway_opts(fake_sg_opts())
-            .build()
-            .unwrap(),
-    );
+    mock_core_with_opts(sg, CoreInitOptionsBuilder::default())
+}
+
+pub(crate) fn mock_core_with_opts<SG>(sg: SG, mut opts: CoreInitOptionsBuilder) -> CoreSDK<SG>
+where
+    SG: ServerGatewayApis + Send + Sync + 'static,
+{
+    let mut core = CoreSDK::new(sg, opts.gateway_opts(fake_sg_opts()).build().unwrap());
     core.reg_worker_sync(
         WorkerConfigBuilder::default()
             .task_queue(TEST_Q)
@@ -127,6 +116,7 @@ pub struct FakeWfResponses {
     pub task_q: String,
 }
 
+// TODO: turn this into a builder or make a new one? to make all these different build fns simpler
 pub struct MockSGAndTasks {
     pub sg: MockServerGatewayApis,
     pub task_map: OutstandingWfTaskMap,
@@ -145,6 +135,23 @@ pub fn build_multihist_mock_sg(
     hists: impl IntoIterator<Item = FakeWfResponses>,
     enforce_correct_number_of_polls: bool,
     num_expected_fails: Option<usize>,
+) -> MockSGAndTasks {
+    augment_multihist_mock_sg(
+        hists,
+        enforce_correct_number_of_polls,
+        num_expected_fails,
+        MockServerGatewayApis::new(),
+    )
+}
+
+/// See [build_multihist_mock_sg] -- manual version that allows setting some expectations on the
+/// mock that should be matched first, before the normal expectations that match the provided
+/// history.
+pub fn augment_multihist_mock_sg(
+    hists: impl IntoIterator<Item = FakeWfResponses>,
+    enforce_correct_number_of_polls: bool,
+    num_expected_fails: Option<usize>,
+    mut mock_gateway: MockServerGatewayApis,
 ) -> MockSGAndTasks {
     // Maps task queues to maps of wfid -> responses
     let mut task_queues_to_resps: HashMap<String, BTreeMap<String, VecDeque<_>>> = HashMap::new();
@@ -208,7 +215,6 @@ pub fn build_multihist_mock_sg(
     // The gateway will return history from any workflow runs that do not have currently outstanding
     // tasks.
     let outstanding = outstanding_wf_task_tokens.clone();
-    let mut mock_gateway = MockServerGatewayApis::new();
     mock_gateway
         .expect_poll_workflow_task()
         .times(
@@ -240,7 +246,7 @@ pub fn build_multihist_mock_sg(
     let outstanding = outstanding_wf_task_tokens.clone();
     mock_gateway
         .expect_complete_workflow_task()
-        .returning(move |tt, _| {
+        .returning(move |tt, _, _| {
             outstanding.write().remove_by_right(&tt);
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
@@ -268,8 +274,9 @@ pub fn single_hist_mock_sg(
     wf_id: &str,
     t: TestHistoryBuilder,
     response_batches: &[usize],
+    mock_gateway: MockServerGatewayApis,
 ) -> MockSGAndTasks {
-    build_multihist_mock_sg(
+    augment_multihist_mock_sg(
         vec![FakeWfResponses {
             wf_id: wf_id.to_owned(),
             hist: t,
@@ -278,6 +285,7 @@ pub fn single_hist_mock_sg(
         }],
         true,
         None,
+        mock_gateway,
     )
 }
 
