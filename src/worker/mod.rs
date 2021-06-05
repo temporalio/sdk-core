@@ -53,9 +53,8 @@ pub struct WorkerConfig {
 pub(crate) struct Worker {
     config: WorkerConfig,
 
-    /// If set, this worker's workflow task completions should indicate that it wants to use
-    /// sticky queues with the provided name
-    sticky_queue_name: Option<String>,
+    /// Will be populated when this worker should poll on a sticky WFT queue
+    sticky_queue: Option<StickyQueue>,
 
     /// Buffers workflow task polling in the event we need to return a pending activation while
     /// a poll is ongoing
@@ -70,6 +69,11 @@ pub(crate) struct Worker {
     activities_semaphore: Semaphore,
 }
 
+struct StickyQueue {
+    name: String,
+    poll_buffer: PollWorkflowTaskBuffer,
+}
+
 impl Worker {
     pub(crate) fn new<SG: ServerGatewayApis + Send + Sync + 'static>(
         config: WorkerConfig,
@@ -82,6 +86,16 @@ impl Worker {
             config.max_concurrent_wft_polls,
             config.max_concurrent_wft_polls * 2,
         );
+        let sticky_queue = sticky_queue_name.map(|sqn| StickyQueue {
+            poll_buffer: new_workflow_task_buffer(
+                sg.clone(),
+                sqn.clone(),
+                // TODO: Split this number across normal and sticky poller? Sticky should have more?
+                config.max_concurrent_wft_polls,
+                config.max_concurrent_wft_polls * 2,
+            ),
+            name: sqn,
+        });
         let at_task_poll_buffer = if config.no_remote_activities {
             None
         } else {
@@ -93,7 +107,7 @@ impl Worker {
             ))
         };
         Self {
-            sticky_queue_name,
+            sticky_queue,
             wf_task_poll_buffer,
             at_task_poll_buffer,
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
@@ -164,7 +178,16 @@ impl Worker {
             .await
             .expect("outstanding workflow tasks semaphore not dropped");
 
-        let res = self.wf_task_poll_buffer.poll().await?;
+        // If we use sticky queues, poll both the sticky and non-sticky queue
+        let res = if let Some(sq) = self.sticky_queue.as_ref() {
+            tokio::select! {
+                biased;
+                r = sq.poll_buffer.poll() => {r?}
+                r = self.wf_task_poll_buffer.poll() => {r?}
+            }
+        } else {
+            self.wf_task_poll_buffer.poll().await?
+        };
         if res == PollWorkflowTaskQueueResponse::default() {
             // We get the default proto in the event that the long poll times out.
             return Ok(None);
@@ -188,11 +211,11 @@ impl Worker {
         commands: Vec<ProtoCommand>,
     ) -> pollers::Result<RespondWorkflowTaskCompletedResponse> {
         let stq = self
-            .sticky_queue_name
+            .sticky_queue
             .as_ref()
-            .map(|tq| StickyExecutionAttributes {
+            .map(|sq| StickyExecutionAttributes {
                 worker_task_queue: Some(TaskQueue {
-                    name: tq.clone(),
+                    name: sq.name.clone(),
                     kind: TaskQueueKind::Sticky as i32,
                 }),
                 // TODO: Set appropriately

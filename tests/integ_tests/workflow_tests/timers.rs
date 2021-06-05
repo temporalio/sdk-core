@@ -6,10 +6,34 @@ use temporal_sdk_core::protos::coresdk::{
     workflow_completion::WfActivationCompletion,
 };
 use temporal_sdk_core::test_workflow_driver::{CommandSender, TestRustWorker, TestWorkflowDriver};
+use temporal_sdk_core::tracing_init;
 use test_utils::{init_core_and_create_wf, CoreWfStarter, NAMESPACE};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn timer_workflow_new_way() {
+async fn timer_workflow_sticky_queue() {
+    tracing_init();
+    let wf_name = "timer_wf_new";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.max_cached_workflows(10);
+    let tq = starter.get_task_queue().to_owned();
+    let core = starter.get_core().await;
+
+    let worker = TestRustWorker::new(core.clone(), NAMESPACE.to_owned(), tq);
+    let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
+        let timer = StartTimer {
+            timer_id: "super_timer_id".to_string(),
+            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+        };
+        command_sink.timer(timer).await;
+        command_sink.complete_workflow_execution();
+    });
+    worker.submit_wf(wf_name.to_owned(), twd).await.unwrap();
+    worker.run_until_done().await.unwrap();
+    core.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn timer_workflow_workflow_driver() {
     let wf_name = "timer_wf_new";
     let mut starter = CoreWfStarter::new(wf_name);
     let tq = starter.get_task_queue().to_owned();
