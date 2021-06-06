@@ -63,6 +63,8 @@ message StartWorkflow {
     /// The seed must be used to initialize the random generator used by SDK.
     /// RandomSeedUpdatedAttributes are used to deliver seed updates.
     uint64 randomness_seed = 4;
+    /// Used to add metadata e.g. for tracing and auth, meant to be read and written to by interceptors.
+    map<string, common.Payload> headers = 5;
 
     // TODO: Do we need namespace here, or should that just be fetchable easily?
     //   will be others - workflow exe started attrs, etc
