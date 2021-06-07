@@ -36,11 +36,15 @@ pub struct WorkerConfig {
     #[builder(default = "100")]
     pub max_outstanding_activities: usize,
     /// Maximum number of concurrent poll workflow task requests we will perform at a time on this
-    /// worker's task queue and its sticky task queue. Hence note this means the absolute number of
-    /// concurrent polls this worker may theoretically perform is 2x this number if sticky queues
-    /// are being used.
+    /// worker's task queue. See also [nonsticky_to_sticky_poll_ratio]. A zero value will be treated
+    /// as if set to `1`.
     #[builder(default = "5")]
     pub max_concurrent_wft_polls: usize,
+    /// [max_concurrent_wft_polls] * this number = the number of max pollers that will be allowed
+    /// for the nonsticky queue when sticky tasks are enabled. If both defaults are used, the sticky
+    /// queue will allow 4 max pollers while the nonsticky queue will allow one.
+    #[builder(default = "0.2")]
+    pub nonsticky_to_sticky_poll_ratio: f32,
     /// Maximum number of concurrent poll activity task requests we will perform at a time on this
     /// worker's task queue
     #[builder(default = "5")]
@@ -82,18 +86,24 @@ impl Worker {
         sticky_queue_name: Option<String>,
         sg: Arc<SG>,
     ) -> Self {
+        let max_nonsticky_polls = if sticky_queue_name.is_some() {
+            config.max_nonsticky_polls()
+        } else {
+            config.max_concurrent_wft_polls
+        };
+        let max_sticky_polls = config.max_sticky_polls();
         let wf_task_poll_buffer = new_workflow_task_buffer(
             sg.clone(),
             config.task_queue.clone(),
-            config.max_concurrent_wft_polls,
-            config.max_concurrent_wft_polls * 2,
+            max_nonsticky_polls,
+            max_nonsticky_polls * 2,
         );
         let sticky_queue = sticky_queue_name.map(|sqn| StickyQueue {
             poll_buffer: new_workflow_task_buffer(
                 sg.clone(),
                 sqn.clone(),
-                config.max_concurrent_wft_polls,
-                config.max_concurrent_wft_polls * 2,
+                max_sticky_polls,
+                max_sticky_polls * 2,
             ),
             name: sqn,
         });
@@ -243,6 +253,18 @@ impl Worker {
     }
 }
 
+impl WorkerConfig {
+    fn max_nonsticky_polls(&self) -> usize {
+        ((self.max_concurrent_wft_polls as f32 * self.nonsticky_to_sticky_poll_ratio) as usize)
+            .max(1)
+    }
+    fn max_sticky_polls(&self) -> usize {
+        self.max_concurrent_wft_polls
+            .saturating_sub(self.max_nonsticky_polls())
+            .max(1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +336,26 @@ mod tests {
         let worker = Worker::new(cfg, None, Arc::new(mock_gateway));
         assert!(worker.workflow_poll().await.is_err());
         assert_eq!(worker.workflows_semaphore.available_permits(), 5);
+    }
+
+    #[test]
+    fn max_polls_calculated_properly() {
+        let cfg = WorkerConfigBuilder::default()
+            .task_queue("whatever")
+            .build()
+            .unwrap();
+        assert_eq!(cfg.max_nonsticky_polls(), 1);
+        assert_eq!(cfg.max_sticky_polls(), 4);
+    }
+
+    #[test]
+    fn max_polls_zero() {
+        let cfg = WorkerConfigBuilder::default()
+            .task_queue("whatever")
+            .max_concurrent_wft_polls(0_usize)
+            .build()
+            .unwrap();
+        assert_eq!(cfg.max_nonsticky_polls(), 1);
+        assert_eq!(cfg.max_sticky_polls(), 1);
     }
 }
