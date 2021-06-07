@@ -23,9 +23,12 @@ async fn activity_load() {
 
     let starting = Instant::now();
     join_all((0..1000usize).map(|i| {
-        let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| {
-            let task_queue = starter.get_task_queue().to_owned();
+        let task_queue = starter.get_task_queue().to_owned();
+        let payload_dat = payload_dat.clone();
+        let twd = TestWorkflowDriver::new(move |mut command_sink: CommandSender| {
+            let task_queue = task_queue.clone();
             let payload_dat = payload_dat.clone();
+
             async move {
                 let activity = ScheduleActivity {
                     activity_id: activity_id.to_string(),

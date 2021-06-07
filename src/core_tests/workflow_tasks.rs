@@ -884,6 +884,7 @@ async fn max_concurrent_wft_respected() {
 
     // Poll twice in a row before completing -- we should be at limit
     let r1 = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let r1_run_id = r1.run_id.clone();
     let _r2 = core.poll_workflow_task(TEST_Q).await.unwrap();
     // Now we immediately poll for new work, and complete one of the existing activations. The
     // poll must not unblock until the completion goes through.
@@ -923,7 +924,7 @@ async fn max_concurrent_wft_respected() {
         .await
         .unwrap();
         r1 = core.poll_workflow_task(TEST_Q).await.unwrap();
-        // TODO: assert for wf1
+        assert_eq!(r1.run_id, r1_run_id);
     }
     core.shutdown().await;
 }
