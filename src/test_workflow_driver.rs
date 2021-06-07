@@ -75,7 +75,7 @@ impl TestRustWorker {
         let (tx, mut rx) = unbounded_channel::<WfActivation>();
         let core = self.core.clone();
         let jh = tokio::spawn(async move {
-            while let Some(activation) = rx.recv().await {
+            'receiver: while let Some(activation) = rx.recv().await {
                 for WfActivationJob { variant } in activation.jobs {
                     if let Some(v) = variant {
                         match v {
@@ -97,6 +97,7 @@ impl TestRustWorker {
                             Variant::RemoveFromCache(_) => {
                                 // Restart the workflow on eviction
                                 twd.init_workflow();
+                                continue 'receiver;
                             }
                         }
                     } else {

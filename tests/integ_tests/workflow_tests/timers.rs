@@ -11,7 +11,6 @@ use test_utils::{init_core_and_create_wf, CoreWfStarter, NAMESPACE};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn timer_workflow_not_sticky() {
-    tracing_init();
     let wf_name = "timer_wf_not_sticky";
     let mut starter = CoreWfStarter::new(wf_name);
     starter.max_cached_workflows(0);

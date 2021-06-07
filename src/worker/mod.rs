@@ -117,6 +117,9 @@ impl Worker {
     }
     pub(crate) fn shutdown(&self) {
         self.wf_task_poll_buffer.shutdown();
+        if let Some(sq) = self.sticky_queue.as_ref() {
+            sq.poll_buffer.shutdown();
+        }
         if let Some(b) = self.at_task_poll_buffer.as_ref() {
             b.shutdown();
         }
