@@ -1132,7 +1132,7 @@ async fn complete_after_eviction() {
     let t = canned_histories::single_timer("fake_timer");
     let mut mock = MockServerGatewayApis::new();
     mock.expect_complete_workflow_task().times(0);
-    let mock = single_hist_mock_sg(wfid, t, &[2], mock);
+    let mock = single_hist_mock_sg(wfid, t, &[2], mock, true);
     let core = fake_core_from_mock_sg(mock);
 
     let activation = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
@@ -1159,7 +1159,7 @@ async fn sends_appropriate_sticky_task_queue_responses() {
         .times(1)
         .returning(|_, _, _| Ok(Default::default()));
     mock.expect_complete_workflow_task().times(0);
-    let mock = single_hist_mock_sg(wfid, t, &[1], mock);
+    let mock = single_hist_mock_sg(wfid, t, &[1], mock, false);
     let mut opts = CoreInitOptionsBuilder::default();
     opts.max_cached_workflows(10_usize);
     let core = mock_core_with_opts(mock.sg, opts);

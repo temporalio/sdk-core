@@ -105,6 +105,7 @@ impl HistoryInfo {
         Self::new_from_events(&h.events, to_wf_task_num)
     }
 
+    #[cfg(test)]
     pub(crate) fn events(&self) -> &[HistoryEvent] {
         &self.events
     }

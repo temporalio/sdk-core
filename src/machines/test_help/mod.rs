@@ -223,24 +223,28 @@ pub fn augment_multihist_mock_sg(
                 .unwrap_or_else(|| RangeFull.into()),
         )
         .returning(move |tq| {
-            let queue_tasks = task_queues_to_resps
-                .get_mut(&tq)
-                .unwrap_or_else(|| panic!("No task queue {} defined during response setup", tq));
-            for (_, tasks) in queue_tasks.iter_mut() {
-                if let Some(t) = tasks.pop_front() {
-                    // Must extract run id from a workflow task associated with this workflow
-                    // TODO: Case where run id changes for same workflow id is not handled here
-                    let rid = t.workflow_execution.as_ref().unwrap().run_id.clone();
+            if let Some(queue_tasks) = task_queues_to_resps.get_mut(&tq) {
+                for (_, tasks) in queue_tasks.iter_mut() {
+                    if let Some(t) = tasks.pop_front() {
+                        // Must extract run id from a workflow task associated with this workflow
+                        // TODO: Case where run id changes for same workflow id is not handled here
+                        let rid = t.workflow_execution.as_ref().unwrap().run_id.clone();
 
-                    if !outstanding.read().contains_left(&rid) {
-                        outstanding
-                            .write()
-                            .insert(rid, TaskToken(t.task_token.clone()));
-                        return Ok(t);
+                        if !outstanding.read().contains_left(&rid) {
+                            outstanding
+                                .write()
+                                .insert(rid, TaskToken(t.task_token.clone()));
+                            return Ok(t);
+                        }
                     }
                 }
+                Err(tonic::Status::cancelled("No more work to do"))
+            } else {
+                Err(tonic::Status::not_found(format!(
+                    "Task queue {} not defined in test setup",
+                    tq
+                )))
             }
-            Err(tonic::Status::cancelled("No more work to do"))
         });
 
     let outstanding = outstanding_wf_task_tokens.clone();
@@ -275,6 +279,7 @@ pub fn single_hist_mock_sg(
     t: TestHistoryBuilder,
     response_batches: &[usize],
     mock_gateway: MockServerGatewayApis,
+    enforce_num_polls: bool,
 ) -> MockSGAndTasks {
     augment_multihist_mock_sg(
         vec![FakeWfResponses {
@@ -283,7 +288,7 @@ pub fn single_hist_mock_sg(
             response_batches: response_batches.to_vec(),
             task_q: TEST_Q.to_owned(),
         }],
-        true,
+        enforce_num_polls,
         None,
         mock_gateway,
     )

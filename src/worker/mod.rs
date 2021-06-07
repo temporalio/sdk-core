@@ -181,13 +181,16 @@ impl Worker {
         // If we use sticky queues, poll both the sticky and non-sticky queue
         let res = if let Some(sq) = self.sticky_queue.as_ref() {
             tokio::select! {
+                // This bias exists for testing, where the test mocks currently don't populate
+                // sticky queues. In production, the bias is unimportant.
                 biased;
-                r = sq.poll_buffer.poll() => {r?}
-                r = self.wf_task_poll_buffer.poll() => {r?}
+
+                r = self.wf_task_poll_buffer.poll() => r,
+                r = sq.poll_buffer.poll() => r
             }
         } else {
-            self.wf_task_poll_buffer.poll().await?
-        };
+            self.wf_task_poll_buffer.poll().await
+        }?;
         if res == PollWorkflowTaskQueueResponse::default() {
             // We get the default proto in the event that the long poll times out.
             return Ok(None);
