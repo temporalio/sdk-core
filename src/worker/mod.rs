@@ -36,7 +36,9 @@ pub struct WorkerConfig {
     #[builder(default = "100")]
     pub max_outstanding_activities: usize,
     /// Maximum number of concurrent poll workflow task requests we will perform at a time on this
-    /// worker's task queue
+    /// worker's task queue and its sticky task queue. Hence note this means the absolute number of
+    /// concurrent polls this worker may theoretically perform is 2x this number if sticky queues
+    /// are being used.
     #[builder(default = "5")]
     pub max_concurrent_wft_polls: usize,
     /// Maximum number of concurrent poll activity task requests we will perform at a time on this
@@ -90,7 +92,6 @@ impl Worker {
             poll_buffer: new_workflow_task_buffer(
                 sg.clone(),
                 sqn.clone(),
-                // TODO: Split this number across normal and sticky poller? Sticky should have more?
                 config.max_concurrent_wft_polls,
                 config.max_concurrent_wft_polls * 2,
             ),

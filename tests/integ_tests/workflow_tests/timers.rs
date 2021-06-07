@@ -6,7 +6,6 @@ use temporal_sdk_core::protos::coresdk::{
     workflow_completion::WfActivationCompletion,
 };
 use temporal_sdk_core::test_workflow_driver::{CommandSender, TestRustWorker, TestWorkflowDriver};
-use temporal_sdk_core::tracing_init;
 use test_utils::{init_core_and_create_wf, CoreWfStarter, NAMESPACE};
 
 #[tokio::test(flavor = "multi_thread")]

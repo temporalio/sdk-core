@@ -540,8 +540,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                     }
                 }
             } else {
-                // TODO: Worker missing case
-                panic!("Ahh worker expected");
+                return Err(CompleteWfError::NoWorkerForQueue(server_cmds.task_queue));
             }
         }
         Ok(())

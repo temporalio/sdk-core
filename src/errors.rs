@@ -118,6 +118,9 @@ pub enum CompleteWfError {
         /// The run id of the erring workflow
         run_id: String,
     },
+    /// There is no worker registered for the queue being polled
+    #[error("No worker registered for queue: {0}")]
+    NoWorkerForQueue(String),
     /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
     /// errors, so lang should consider this fatal.
     #[error("Unhandled error when calling the temporal server: {0:?}")]
