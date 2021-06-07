@@ -243,6 +243,9 @@ async fn signal_workflow() {
     })
     .await;
 
+    // Wait a beat, to make sure both signals are in the next task
+    sleep(Duration::from_millis(800)).await;
+
     let res = core.poll_workflow_task(&task_q).await.unwrap();
     assert_matches!(
         res.jobs.as_slice(),
