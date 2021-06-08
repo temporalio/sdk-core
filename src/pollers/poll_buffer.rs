@@ -63,13 +63,22 @@ where
         }
     }
 
+    /// Poll the buffer. Adds one permit to the polling pool - the point of this being that the
+    /// buffer may support many concurrent pollers, but there is no reason to have them poll unless
+    /// enough polls have actually been requested. Calling this function adds a permit that any
+    /// concurrent poller may fulfill.
+    ///
+    /// EX: If this function is only ever called serially and always `await`ed, there will be no
+    /// concurrent polling. If it is called many times and the futures are awaited concurrently,
+    /// then polling will happen concurrently.
     pub async fn poll(&self) -> pollers::Result<T> {
         self.polls_requested.add_permits(1);
         let mut locked = self.buffered_polls.lock().await;
-        (*locked)
+        let ret = (*locked)
             .recv()
             .await
-            .expect("There is always another item in the stream")
+            .expect("There is always another item in the stream");
+        ret
     }
 
     pub fn shutdown(&self) {

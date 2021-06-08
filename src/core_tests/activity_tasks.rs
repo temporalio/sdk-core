@@ -23,7 +23,7 @@ use test_utils::fanout_tasks;
 use tokio::time::sleep;
 
 #[tokio::test]
-async fn max_activites_respected() {
+async fn max_activities_respected() {
     let task_q = "q";
     let mut tasks = VecDeque::from(vec![
         PollActivityTaskQueueResponse {
@@ -204,6 +204,7 @@ async fn activity_cancel_interrupts_poll() {
     };
     // So that we know we blocked
     assert_eq!(last_finisher.load(Ordering::Acquire), 2);
+    core.shutdown().await;
 }
 
 #[tokio::test]

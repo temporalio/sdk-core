@@ -19,10 +19,10 @@ use crate::{
 use anyhow::bail;
 use crossbeam::channel::{Receiver, Sender};
 use dashmap::DashMap;
-use futures::future::BoxFuture;
-use futures::{stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::{stream::FuturesUnordered, StreamExt};
 use parking_lot::{Condvar, Mutex};
 use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
+use tokio::sync::Notify;
 use tokio::{
     runtime::Runtime,
     sync::{
@@ -56,11 +56,15 @@ impl TestRustWorker {
 
     /// Create a workflow, asking the server to start it with the provided workflow ID and using the
     /// provided [TestWorkflowDriver] as the workflow code.
-    pub async fn submit_wf(
+    pub async fn submit_wf<F, Fut>(
         &self,
         workflow_id: String,
-        mut twd: TestWorkflowDriver,
-    ) -> Result<(), tonic::Status> {
+        wf_function: Arc<F>,
+    ) -> Result<(), tonic::Status>
+    where
+        F: Fn(CommandSender) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
         let res = self
             .core
             .server_gateway()
@@ -72,6 +76,17 @@ impl TestRustWorker {
                 None,
             )
             .await?;
+
+        self.start_wf(wf_function, res.run_id);
+        Ok(())
+    }
+
+    fn start_wf<F, Fut>(&self, wf_function: Arc<F>, run_id: String)
+    where
+        F: Fn(CommandSender) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let mut twd = TestWorkflowDriver::new(wf_function.as_ref());
         let (tx, mut rx) = unbounded_channel::<WfActivation>();
         let core = self.core.clone();
         let jh = tokio::spawn(async move {
@@ -95,8 +110,11 @@ impl TestRustWorker {
                             Variant::CancelWorkflow(_) => {}
                             Variant::SignalWorkflow(_) => {}
                             Variant::RemoveFromCache(_) => {
-                                // Restart the workflow on eviction
-                                twd.init_workflow();
+                                let old_twd = std::mem::replace(
+                                    &mut twd,
+                                    TestWorkflowDriver::new(wf_function.as_ref()),
+                                );
+                                old_twd.kill().await;
                                 continue 'receiver;
                             }
                         }
@@ -120,9 +138,8 @@ impl TestRustWorker {
             }
             Ok(())
         });
-        self.workflows.insert(res.run_id, tx);
+        self.workflows.insert(run_id, tx);
         self.join_handles.push(jh);
-        Ok(())
     }
 
     /// Drives all workflows until they have all finished, repeatedly polls server to fetch work
@@ -147,13 +164,14 @@ impl TestRustWorker {
             }
         };
         let shutdown_checker = async {
-            // Because we consume self, it is impossible that any new workflows will be added while
-            // we are draining here.
-            while handles.next().await.is_some() {}
+            while let Some(h) = handles.next().await {
+                h??;
+            }
+            Ok(())
         };
         tokio::select!(
             r = poller => r,
-            _ = shutdown_checker => Ok(())
+            r = shutdown_checker => r
         )
     }
 }
@@ -168,9 +186,8 @@ pub struct TestWorkflowDriver {
     join_handle: Option<JoinHandle<()>>,
     commands_from_wf: Receiver<WorkflowCommand>,
     cache: Arc<TestWfDriverCache>,
-    workflow_fn: Box<dyn Fn(CommandSender) -> BoxFuture<'static, ()> + Send>,
-    command_sender: CommandSender,
-    runtime: Option<Runtime>,
+    kill_notifier: Arc<Notify>,
+    _runtime: Option<Runtime>,
 }
 
 impl TestWorkflowDriver {
@@ -181,24 +198,51 @@ impl TestWorkflowDriver {
     /// code into a new task.
     pub fn new<F, Fut>(workflow_fn: F) -> Self
     where
-        F: Fn(CommandSender) -> Fut + Send + Sync + 'static,
+        F: Fn(CommandSender) -> Fut,
         Fut: Future<Output = ()> + Send + 'static,
     {
         let twd_cache = Arc::new(TestWfDriverCache::default());
         let (sender, receiver) = CommandSender::new(twd_cache.clone());
 
-        let workflow_fn = move |cs| workflow_fn(cs).boxed();
+        let twd_clone = twd_cache.clone();
+        let wf_inner_fut = workflow_fn(sender);
+        let kill_notifier = Arc::new(Notify::new());
+        let killed = kill_notifier.clone();
+        let wf_future = async move {
+            tokio::select! {
+                biased;
 
-        let mut ret = Self {
-            join_handle: None,
+                _ = killed.notified() => {
+                    return;
+                }
+                _ = wf_inner_fut => {},
+            }
+
+            let mut bc = twd_clone.blocking_info.lock();
+            bc.wf_is_done = true;
+            // Wake up the fetcher thread, since we have finished the workflow and that would mean
+            // we've finished sending what we can.
+            twd_clone.condvar.notify_one();
+        };
+
+        // This allows us to use the test workflow driver from inside an async context, or not.
+        // If we are not in an async context we create a new tokio runtime and store it in ourselves
+        // to run the workflow future. If we are in one, we use that instead.
+        let (maybe_rt, join_handle) = if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            (None, Some(handle.spawn(wf_future)))
+        } else {
+            let runtime = Runtime::new().unwrap();
+            let jh = runtime.spawn(wf_future);
+            (Some(runtime), Some(jh))
+        };
+
+        Self {
+            join_handle,
             commands_from_wf: receiver,
             cache: twd_cache,
-            workflow_fn: Box::new(workflow_fn),
-            command_sender: sender,
-            runtime: None,
-        };
-        ret.init_workflow();
-        ret
+            kill_notifier,
+            _runtime: maybe_rt,
+        }
     }
 
     /// Drains all pending commands that the workflow has produced since the last time this was
@@ -234,6 +278,11 @@ impl TestWorkflowDriver {
         bc_lock.wf_is_done
     }
 
+    async fn kill(mut self) {
+        self.kill_notifier.notify_one();
+        self.join().await.unwrap();
+    }
+
     /// Wait for the test workflow to exit
     pub async fn join(&mut self) -> Result<(), JoinError> {
         if let Some(jh) = self.join_handle.take() {
@@ -241,34 +290,6 @@ impl TestWorkflowDriver {
         } else {
             Ok(())
         }
-    }
-
-    /// Initialize (or restart, ex: to simulate an eviction) the workflow function
-    fn init_workflow(&mut self) {
-        let twd_clone = self.cache.clone();
-        let wf_inner_fut = (self.workflow_fn)(self.command_sender.clone());
-        let wf_future = async move {
-            wf_inner_fut.await;
-
-            let mut bc = twd_clone.blocking_info.lock();
-            bc.wf_is_done = true;
-            // Wake up the fetcher thread, since we have finished the workflow and that would mean
-            // we've finished sending what we can.
-            twd_clone.condvar.notify_one();
-        };
-
-        // This allows us to use the test workflow driver from inside an async context, or not.
-        // If we are not in an async context we create a new tokio runtime and store it in ourselves
-        // to run the workflow future. If we are in one, we use that instead.
-        let (maybe_rt, join_handle) = if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            (None, Some(handle.spawn(wf_future)))
-        } else {
-            let runtime = Runtime::new().unwrap();
-            let jh = runtime.spawn(wf_future);
-            (Some(runtime), Some(jh))
-        };
-        self.runtime = maybe_rt;
-        self.join_handle = join_handle;
     }
 }
 
@@ -316,15 +337,16 @@ impl TestWfDriverCache {
     /// Cancel a timer by ID. Timers get some special handling here since they are always
     /// removed from the "lang" side without needing a response from core.
     fn cancel_timer(&self, id: &str) {
-        let mut bc = self.blocking_info.lock();
-        bc.issued_timers.remove(id);
+        self.unblock(UnblockEvent::Timer(id.to_owned()));
     }
 
     /// Cancel activity by ID.
     /// TODO: Support different cancel types
     fn cancel_activity(&self, id: &str) {
-        let mut bc = self.blocking_info.lock();
-        bc.issued_activities.remove(id);
+        self.unblock(UnblockEvent::Activity {
+            id: id.to_owned(),
+            result: ActivityResult::cancel_from_details(None),
+        });
     }
 
     add_sent_cmd_decl!(add_sent_timer, issued_timers, ());
@@ -392,7 +414,6 @@ enum CommandStatus {
 }
 
 /// Used within workflows to issue commands
-#[derive(Clone)]
 pub struct CommandSender {
     chan: Sender<WorkflowCommand>,
     twd_cache: Arc<TestWfDriverCache>,
@@ -443,6 +464,8 @@ impl CommandSender {
         let cache_clone = self.twd_cache.clone();
         async move {
             cache_clone.set_cmd_blocked(id);
+            // Dropping the handle can happen on an "eviction", and we don't want to spew unwrap
+            // panics when that happens, so `ok` is used.
             rx.await.ok()
         }
     }

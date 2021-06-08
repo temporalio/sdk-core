@@ -200,7 +200,7 @@ impl Worker {
                 biased;
 
                 r = self.wf_task_poll_buffer.poll() => r,
-                r = sq.poll_buffer.poll() => r
+                r = sq.poll_buffer.poll() => r,
             }
         } else {
             self.wf_task_poll_buffer.poll().await

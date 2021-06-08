@@ -15,7 +15,7 @@ use temporal_sdk_core::{
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
-    Core, IntoCompletion, PollWfError,
+    tracing_init, Core, IntoCompletion, PollWfError,
 };
 use test_utils::{init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreWfStarter, GwApi};
 use tokio::time::sleep;
@@ -243,18 +243,39 @@ async fn signal_workflow() {
     })
     .await;
 
-    let res = core.poll_workflow_task(&task_q).await.unwrap();
-    assert_matches!(
-        res.jobs.as_slice(),
-        [
-            WfActivationJob {
+    let mut res = core.poll_workflow_task(&task_q).await.unwrap();
+    // Sometimes both signals are complete at once, sometimes only one, depending on server
+    // Converting test to wf function type would make this shorter
+    if res.jobs.len() == 2 {
+        assert_matches!(
+            res.jobs.as_slice(),
+            [
+                WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+                },
+                WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+                }
+            ]
+        );
+    } else if res.jobs.len() == 1 {
+        assert_matches!(
+            res.jobs.as_slice(),
+            [WfActivationJob {
                 variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
-            },
-            WfActivationJob {
+            },]
+        );
+        core.complete_workflow_task(WfActivationCompletion::from_cmds(vec![], res.run_id))
+            .await
+            .unwrap();
+        res = core.poll_workflow_task(&task_q).await.unwrap();
+        assert_matches!(
+            res.jobs.as_slice(),
+            [WfActivationJob {
                 variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
-            }
-        ]
-    );
+            },]
+        );
+    }
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
         res.run_id,
@@ -332,6 +353,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
 
 #[tokio::test]
 async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
+    tracing_init();
     let activity_id = "act-1";
     let signal_at_start = "at-start";
     let signal_at_complete = "at-complete";

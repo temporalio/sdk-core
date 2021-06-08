@@ -338,8 +338,7 @@ where
         completion: WfActivationCompletion,
     ) -> Result<(), CompleteWfError> {
         let wfstatus = completion.status;
-
-        match wfstatus {
+        let r = match wfstatus {
             Some(wf_activation_completion::Status::Successful(success)) => {
                 self.wf_activation_success(&completion.run_id, success)
                     .await
@@ -351,7 +350,10 @@ where
                 reason: "Workflow completion had empty status field".to_owned(),
                 completion: None,
             }),
-        }
+        };
+
+        self.wft_manager.activation_done(&completion.run_id);
+        r
     }
 
     #[instrument(skip(self))]
