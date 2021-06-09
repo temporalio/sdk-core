@@ -158,13 +158,17 @@ pub trait Core: Send + Sync {
     /// Returns core's instance of the [ServerGatewayApis] implementor it is using.
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis>;
 
-    /// Initiates async shutdown procedure, eventually ceases all polling of the server.
-    /// [Core::poll_workflow_task] should be called until it returns [PollWfError::ShutDown]
-    /// to ensure that any workflows which are still undergoing replay have an opportunity to finish.
-    /// This means that the lang sdk will need to call [Core::complete_workflow_task] for those
-    /// workflows until they are done. At that point, the lang SDK can end the process,
-    /// or drop the [Core] instance, which will close the connection.
+    /// Initiates async shutdown procedure, eventually ceases all polling of the server and shuts
+    /// down all registered workers. [Core::poll_workflow_task] should be called until it returns
+    /// [PollWfError::ShutDown] to ensure that any workflows which are still undergoing replay have
+    /// an opportunity to finish. This means that the lang sdk will need to call
+    /// [Core::complete_workflow_task] for those workflows until they are done. At that point, the
+    /// lang SDK can end the process, or drop the [Core] instance, which will close the connection.
     async fn shutdown(&self);
+
+    /// Shut down a specific worker. Will cease all polling on the task queue and future attempts
+    /// to poll that queue will return [PollWfError::NoWorkerForQueue].
+    async fn shutdown_worker(&self, task_queue: &str);
 }
 
 /// Holds various configuration information required to call [init]
@@ -431,11 +435,18 @@ where
     async fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
-        for entry in self.workers.read().await.values() {
-            entry.shutdown();
+        for (_, w) in self.workers.write().await.drain() {
+            w.shutdown().await;
         }
         self.wft_manager.shutdown();
         self.act_manager.shutdown().await;
+    }
+
+    async fn shutdown_worker(&self, task_queue: &str) {
+        let mut workers = self.workers.write().await;
+        if let Some(w) = workers.remove(task_queue) {
+            w.shutdown().await;
+        }
     }
 }
 

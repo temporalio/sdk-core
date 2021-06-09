@@ -2,11 +2,14 @@ use crate::{
     pollers, protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
     protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse, ServerGatewayApis,
 };
+use futures::prelude::stream::FuturesUnordered;
+use futures::StreamExt;
 use std::{fmt::Debug, future::Future, sync::Arc};
 use tokio::sync::{
     mpsc::{channel, Receiver},
     watch, Mutex, Semaphore,
 };
+use tokio::task::JoinHandle;
 
 pub struct LongPollBuffer<T> {
     buffered_polls: Mutex<Receiver<pollers::Result<T>>>,
@@ -15,6 +18,7 @@ pub struct LongPollBuffer<T> {
     /// *asked* it to be polled - otherwise we might spin and buffer polls constantly. This also
     /// means unit tests can continue to function in a predictable manner when calling mocks.
     polls_requested: Arc<Semaphore>,
+    join_handles: FuturesUnordered<JoinHandle<()>>,
 }
 
 impl<T> LongPollBuffer<T>
@@ -32,13 +36,14 @@ where
         let (tx, rx) = channel(buffer_size);
         let polls_requested = Arc::new(Semaphore::new(0));
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let join_handles = FuturesUnordered::new();
         let pf = Arc::new(poll_fn);
         for _ in 0..concurrent_pollers {
             let tx = tx.clone();
             let pf = pf.clone();
             let mut shutdown = shutdown_rx.clone();
             let polls_requested = polls_requested.clone();
-            tokio::spawn(async move {
+            let jh = tokio::spawn(async move {
                 loop {
                     if *shutdown.borrow() {
                         break;
@@ -55,11 +60,13 @@ where
                     let _ = tx.send(r).await;
                 }
             });
+            join_handles.push(jh);
         }
         Self {
             buffered_polls: Mutex::new(rx),
             shutdown: shutdown_tx,
             polls_requested,
+            join_handles,
         }
     }
 
@@ -81,8 +88,9 @@ where
         ret
     }
 
-    pub fn shutdown(&self) {
+    pub async fn shutdown(mut self) {
         let _ = self.shutdown.send(true);
+        while self.join_handles.next().await.is_some() {}
     }
 }
 
@@ -169,6 +177,6 @@ mod tests {
         // Now we grab the buffered poll response, the poll task will go again but we don't grab it,
         // therefore we will have only polled twice.
         pb.poll().await.unwrap();
-        pb.shutdown();
+        pb.shutdown().await;
     }
 }

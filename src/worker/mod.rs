@@ -137,13 +137,13 @@ impl Worker {
             config,
         }
     }
-    pub(crate) fn shutdown(&self) {
-        self.wf_task_poll_buffer.shutdown();
-        if let Some(sq) = self.sticky_queue.as_ref() {
-            sq.poll_buffer.shutdown();
+    pub(crate) async fn shutdown(self) {
+        self.wf_task_poll_buffer.shutdown().await;
+        if let Some(sq) = self.sticky_queue {
+            sq.poll_buffer.shutdown().await;
         }
-        if let Some(b) = self.at_task_poll_buffer.as_ref() {
-            b.shutdown();
+        if let Some(b) = self.at_task_poll_buffer {
+            b.shutdown().await;
         }
     }
 
