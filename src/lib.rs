@@ -32,7 +32,7 @@ mod test_help;
 
 pub use crate::errors::{
     ActivityHeartbeatError, CompleteActivityError, CompleteWfError, CoreInitError,
-    PollActivityError, PollWfError,
+    PollActivityError, PollWfError, WorkerRegistrationError,
 };
 pub use core_tracing::tracing_init;
 pub use pollers::{
@@ -42,7 +42,6 @@ pub use protosext::IntoCompletion;
 pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
-use crate::errors::WorkerRegistrationError;
 use crate::{
     activity::ActivityTaskManager,
     errors::ShutdownErr,
