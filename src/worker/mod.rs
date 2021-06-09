@@ -36,14 +36,15 @@ pub struct WorkerConfig {
     #[builder(default = "100")]
     pub max_outstanding_activities: usize,
     /// Maximum number of concurrent poll workflow task requests we will perform at a time on this
-    /// worker's task queue. See also [nonsticky_to_sticky_poll_ratio]. Must be at least 1.
+    /// worker's task queue. See also [WorkerConfig::nonsticky_to_sticky_poll_ratio]. Must be at
+    /// least 1.
     #[builder(default = "5")]
     pub max_concurrent_wft_polls: usize,
-    /// [max_concurrent_wft_polls] * this number = the number of max pollers that will be allowed
-    /// for the nonsticky queue when sticky tasks are enabled. If both defaults are used, the sticky
-    /// queue will allow 4 max pollers while the nonsticky queue will allow one. The minimum for
-    /// either poller is 1, so if `max_concurrent_wft_polls` is 1 and sticky queues are enabled,
-    /// there will be 2 concurrent polls.
+    /// [WorkerConfig::max_concurrent_wft_polls] * this number = the number of max pollers that will
+    /// be allowed for the nonsticky queue when sticky tasks are enabled. If both defaults are used,
+    /// the sticky queue will allow 4 max pollers while the nonsticky queue will allow one. The
+    /// minimum for either poller is 1, so if `max_concurrent_wft_polls` is 1 and sticky queues are
+    /// enabled, there will be 2 concurrent polls.
     #[builder(default = "0.2")]
     pub nonsticky_to_sticky_poll_ratio: f32,
     /// Maximum number of concurrent poll activity task requests we will perform at a time on this
