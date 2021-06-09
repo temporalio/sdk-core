@@ -8,6 +8,7 @@ use crate::{
     },
     protos::{
         coresdk::{
+            common::Payload,
             workflow_activation::{
                 wf_activation_job::{self, Variant},
                 StartWorkflow, UpdateRandomSeed, WfActivation,
@@ -15,6 +16,7 @@ use crate::{
             PayloadsExt, PayloadsToPayloadError,
         },
         temporal::api::{
+            common::v1::Header,
             enums::v1::{CommandType, EventType},
             history::v1::{history_event, HistoryEvent},
         },
@@ -339,6 +341,13 @@ impl WorkflowMachines {
                             randomness_seed: str_to_randomness_seed(
                                 &attrs.original_execution_run_id,
                             ),
+                            headers: match &attrs.header {
+                                None => HashMap::new(),
+                                Some(Header { fields }) => fields
+                                    .iter()
+                                    .map(|(k, v)| (k.clone(), Payload::from(v.clone())))
+                                    .collect(),
+                            },
                         }
                         .into(),
                     );
