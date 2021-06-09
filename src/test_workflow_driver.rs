@@ -427,7 +427,7 @@ impl CommandSender {
     }
 
     /// Request to create a timer
-    pub fn timer(&mut self, a: StartTimer) -> impl Future {
+    pub fn timer(&mut self, a: StartTimer) -> impl Future<Output = Option<()>> {
         let id = a.timer_id.clone();
         self.send_blocking_cmd(
             CommandID::Timer(id.clone()),

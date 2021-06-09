@@ -95,11 +95,11 @@ where
     mock_core_with_opts(sg, CoreInitOptionsBuilder::default())
 }
 
-pub(crate) fn mock_core_with_opts<SG>(sg: SG, mut opts: CoreInitOptionsBuilder) -> CoreSDK<SG>
+pub(crate) fn mock_core_with_opts<SG>(sg: SG, opts: CoreInitOptionsBuilder) -> CoreSDK<SG>
 where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
-    let mut core = CoreSDK::new(sg, opts.gateway_opts(fake_sg_opts()).build().unwrap());
+    let mut core = mock_core_with_opts_no_workers(sg, opts);
     core.reg_worker_sync(
         WorkerConfigBuilder::default()
             .task_queue(TEST_Q)
@@ -107,6 +107,16 @@ where
             .unwrap(),
     );
     core
+}
+
+pub(crate) fn mock_core_with_opts_no_workers<SG>(
+    sg: SG,
+    mut opts: CoreInitOptionsBuilder,
+) -> CoreSDK<SG>
+where
+    SG: ServerGatewayApis + Send + Sync + 'static,
+{
+    CoreSDK::new(sg, opts.gateway_opts(fake_sg_opts()).build().unwrap())
 }
 
 pub struct FakeWfResponses {

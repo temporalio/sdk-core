@@ -79,7 +79,8 @@ async fn shutdown_interrupts_both_polls() {
             .build()
             .unwrap(),
     )
-    .await;
+    .await
+    .unwrap();
     tokio::join! {
         async {
             assert_matches!(core.poll_activity_task(TEST_Q).await.unwrap_err(),

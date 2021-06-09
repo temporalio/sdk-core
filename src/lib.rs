@@ -42,6 +42,7 @@ pub use protosext::IntoCompletion;
 pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
+use crate::errors::WorkerRegistrationError;
 use crate::{
     activity::ActivityTaskManager,
     errors::ShutdownErr,
@@ -92,7 +93,7 @@ pub trait Core: Send + Sync {
     /// Register a worker with core. Workers poll on a specific task queue, and when calling core's
     /// poll functions, you must provide a task queue name. If there was already a worker registered
     /// with the same task queue name, it will be shut down and a new one will be created.
-    async fn register_worker(&self, config: WorkerConfig);
+    async fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError>;
 
     /// Ask the core for some work, returning a [WfActivation]. It is then the language SDK's
     /// responsibility to call the appropriate workflow code with the provided inputs. Blocks
@@ -225,11 +226,15 @@ impl<WP> Core for CoreSDK<WP>
 where
     WP: ServerGatewayApis + Send + Sync + 'static,
 {
-    async fn register_worker(&self, config: WorkerConfig) {
-        let (tq, worker) = self.build_worker(config);
-        if let Some(oldworker) = self.workers.write().await.insert(tq, worker) {
-            oldworker.shutdown();
+    async fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError> {
+        if self.workers.read().await.contains_key(&config.task_queue) {
+            return Err(WorkerRegistrationError::WorkerAlreadyRegisteredForQueue(
+                config.task_queue,
+            ));
         }
+        let (tq, worker) = self.build_worker(config);
+        self.workers.write().await.insert(tq, worker);
+        Ok(())
     }
 
     #[instrument(skip(self))]

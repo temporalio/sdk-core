@@ -1,3 +1,4 @@
+use crate::machines::test_help::mock_core_with_opts_no_workers;
 use crate::{
     job_assert,
     machines::test_help::{
@@ -872,7 +873,7 @@ async fn max_concurrent_wft_respected() {
         .expect_complete_workflow_task()
         .returning(|_, _, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
 
-    let core = mock_core(mock_gateway);
+    let core = mock_core_with_opts_no_workers(mock_gateway, CoreInitOptionsBuilder::default());
     core.register_worker(
         WorkerConfigBuilder::default()
             .task_queue(TEST_Q)
@@ -880,7 +881,8 @@ async fn max_concurrent_wft_respected() {
             .build()
             .unwrap(),
     )
-    .await;
+    .await
+    .unwrap();
 
     // Poll twice in a row before completing -- we should be at limit
     let r1 = core.poll_workflow_task(TEST_Q).await.unwrap();
@@ -1152,6 +1154,8 @@ async fn complete_after_eviction() {
 
 #[tokio::test]
 async fn sends_appropriate_sticky_task_queue_responses() {
+    // This test verifies that when completions are sent with sticky queues enabled, that they
+    // include the information that tells the server to enqueue the next task on a sticky queue.
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("fake_timer");
     let mut mock = MockServerGatewayApis::new();

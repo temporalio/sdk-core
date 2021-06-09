@@ -34,7 +34,8 @@ async fn multi_workers() {
                 .build()
                 .unwrap(),
         )
-        .await;
+        .await
+        .unwrap();
     }
 
     for i in 0..5 {
@@ -61,11 +62,11 @@ async fn no_worker_for_queue_error_returned_properly() {
 }
 
 #[tokio::test]
-async fn worker_double_register_replaces_old_worker() {
+async fn worker_double_register_is_err() {
     let t = canned_histories::single_timer("fake_timer");
-    let core = build_fake_core("fake_wf_id", t, &[1]);
-    // Replace the existing TEST_Q worker
-    core.inner
+    let core = build_fake_core("fake_wf_id", t, &[]);
+    assert!(core
+        .inner
         .register_worker(
             WorkerConfigBuilder::default()
                 .task_queue(TEST_Q)
@@ -73,11 +74,8 @@ async fn worker_double_register_replaces_old_worker() {
                 .build()
                 .unwrap(),
         )
-        .await;
-
-    // If the old worker wasn't replaced properly this would hang forever
-    core.inner.poll_workflow_task(TEST_Q).await.unwrap();
-    core.inner.shutdown().await;
+        .await
+        .is_err());
 }
 
 // Here we're making sure that when a pending activity is generated for a workflow on one task
@@ -105,7 +103,8 @@ async fn pending_activities_only_returned_for_their_queue() {
                 .build()
                 .unwrap(),
         )
-        .await;
+        .await
+        .unwrap();
     }
 
     // Create a pending activation by cancelling a try-cancel activity

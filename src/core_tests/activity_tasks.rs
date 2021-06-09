@@ -1,3 +1,4 @@
+use crate::machines::test_help::mock_core_with_opts_no_workers;
 use crate::{
     errors::PollActivityError,
     machines::test_help::{fake_sg_opts, mock_core, TEST_Q},
@@ -65,7 +66,8 @@ async fn max_activities_respected() {
             .build()
             .unwrap(),
     )
-    .await;
+    .await
+    .unwrap();
 
     // We allow two outstanding activities, therefore first two polls should return right away
     let r1 = core.poll_activity_task(task_q).await.unwrap();
@@ -289,7 +291,7 @@ async fn many_concurrent_heartbeat_cancels() {
             .boxed()
         });
 
-    let core = &mock_core(mock_gateway);
+    let core = &mock_core_with_opts_no_workers(mock_gateway, CoreInitOptionsBuilder::default());
     core.register_worker(
         WorkerConfigBuilder::default()
             .task_queue(TEST_Q)
@@ -299,7 +301,8 @@ async fn many_concurrent_heartbeat_cancels() {
             .build()
             .unwrap(),
     )
-    .await;
+    .await
+    .unwrap();
 
     // Poll all activities first so they are registered
     for _ in 0..CONCURRENCY_NUM {

@@ -170,3 +170,11 @@ pub enum ActivityHeartbeatError {
     #[error("New heartbeat requests are not accepted while shutting down")]
     ShuttingDown,
 }
+
+/// Errors thrown by [crate::Core::register_worker]
+#[derive(thiserror::Error, Debug)]
+pub enum WorkerRegistrationError {
+    /// A worker has already been registered on this queue
+    #[error("Worker already registered for queue: {0}")]
+    WorkerAlreadyRegisteredForQueue(String),
+}
