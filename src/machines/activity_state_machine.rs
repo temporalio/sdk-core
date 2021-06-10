@@ -733,7 +733,7 @@ mod test {
     }
 
     fn activity_workflow_driver(activity_id: &'static str) -> TestWorkflowDriver {
-        TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
+        TestWorkflowDriver::new(move |mut command_sink: CommandSender| async move {
             let activity = ScheduleActivity {
                 activity_id: activity_id.to_string(),
                 ..Default::default()

@@ -43,10 +43,24 @@ impl PendingActivations {
         };
     }
 
-    pub fn pop(&self, task_queue: &str) -> Option<WfActivation> {
+    pub fn pop_first_matching(
+        &self,
+        task_queue: &str,
+        predicate: impl Fn(&str) -> bool,
+    ) -> Option<WfActivation> {
         let mut inner = self.inner.write();
-        if let Some(qq) = inner.by_task_queue.get_mut(task_queue) {
-            if let Some(key) = qq.pop_front() {
+        if let Some(mut qq) = inner.by_task_queue.remove(task_queue) {
+            let maybe_key = qq.iter().position(|k| {
+                if let Some(activation) = inner.activations.get(*k) {
+                    predicate(&activation.run_id)
+                } else {
+                    false
+                }
+            });
+
+            let maybe_key = maybe_key.map(|pos| qq.remove(pos).unwrap());
+            inner.by_task_queue.insert(task_queue.to_owned(), qq);
+            if let Some(key) = maybe_key {
                 if let Some(pa) = inner.activations.remove(key) {
                     inner.by_run_id.remove(&pa.run_id);
                     Some(pa)
@@ -65,6 +79,10 @@ impl PendingActivations {
         }
     }
 
+    pub fn pop(&self, task_queue: &str) -> Option<WfActivation> {
+        self.pop_first_matching(task_queue, |_| true)
+    }
+
     pub fn has_pending(&self, run_id: &str) -> bool {
         self.inner.read().by_run_id.contains_key(run_id)
     }
@@ -81,10 +99,13 @@ impl PendingActivations {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::{fixture, rstest};
+
+    const TQ: &str = "task_q";
+    const TQ2: &str = "task_q_2";
 
     #[test]
     fn merges_same_ids() {
-        let tq = "task_q";
         let pas = PendingActivations::default();
         let rid1 = "1".to_string();
         let rid2 = "2".to_string();
@@ -93,45 +114,44 @@ mod tests {
                 run_id: rid1.clone(),
                 ..Default::default()
             },
-            tq.to_owned(),
+            TQ.to_owned(),
         );
         pas.push(
             WfActivation {
                 run_id: rid2.clone(),
                 ..Default::default()
             },
-            tq.to_owned(),
+            TQ.to_owned(),
         );
         pas.push(
             WfActivation {
                 run_id: rid2.clone(),
                 ..Default::default()
             },
-            tq.to_owned(),
+            TQ.to_owned(),
         );
         pas.push(
             WfActivation {
                 run_id: rid2.clone(),
                 ..Default::default()
             },
-            tq.to_owned(),
+            TQ.to_owned(),
         );
         assert!(pas.has_pending(&rid1));
         assert!(pas.has_pending(&rid2));
-        let last = pas.pop(tq).unwrap();
+        let last = pas.pop(TQ).unwrap();
         assert_eq!(&last.run_id, &rid1);
         assert!(!pas.has_pending(&rid1));
         assert!(pas.has_pending(&rid2));
         // Should only be one id 2, they are all merged
-        let last = pas.pop(tq).unwrap();
+        let last = pas.pop(TQ).unwrap();
         assert_eq!(&last.run_id, &rid2);
         assert!(!pas.has_pending(&rid2));
-        assert!(pas.pop(tq).is_none());
+        assert!(pas.pop(TQ).is_none());
     }
 
     #[test]
     fn can_remove_all_with_id() {
-        let tq = "task_q";
         let pas = PendingActivations::default();
         let remove_me = "2".to_string();
         pas.push(
@@ -139,74 +159,93 @@ mod tests {
                 run_id: "1".to_owned(),
                 ..Default::default()
             },
-            tq.to_owned(),
+            TQ.to_owned(),
         );
         pas.push(
             WfActivation {
                 run_id: remove_me.clone(),
                 ..Default::default()
             },
-            tq.to_owned(),
+            TQ.to_owned(),
         );
         pas.push(
             WfActivation {
                 run_id: remove_me.clone(),
                 ..Default::default()
             },
-            tq.to_owned(),
+            TQ.to_owned(),
         );
         pas.push(
             WfActivation {
                 run_id: "3".to_owned(),
                 ..Default::default()
             },
-            tq.to_owned(),
+            TQ.to_owned(),
         );
         pas.remove_all_with_run_id(&remove_me);
         assert!(!pas.has_pending(&remove_me));
-        assert_eq!(&pas.pop(tq).unwrap().run_id, "1");
-        assert_eq!(&pas.pop(tq).unwrap().run_id, "3");
-        assert!(pas.pop(tq).is_none());
+        assert_eq!(&pas.pop(TQ).unwrap().run_id, "1");
+        assert_eq!(&pas.pop(TQ).unwrap().run_id, "3");
+        assert!(pas.pop(TQ).is_none());
     }
 
-    #[test]
-    fn multiple_task_queues() {
-        let tq = "task_q";
-        let tq2 = "task_q_2";
+    #[fixture]
+    fn two_queues_two_runs() -> PendingActivations {
         let pas = PendingActivations::default();
         pas.push(
             WfActivation {
                 run_id: "1_1".to_owned(),
                 ..Default::default()
             },
-            tq.to_owned(),
+            TQ.to_owned(),
         );
         pas.push(
             WfActivation {
                 run_id: "2_1".to_owned(),
                 ..Default::default()
             },
-            tq2.to_owned(),
+            TQ2.to_owned(),
         );
         pas.push(
             WfActivation {
                 run_id: "1_2".to_owned(),
                 ..Default::default()
             },
-            tq.to_owned(),
+            TQ.to_owned(),
         );
         pas.push(
             WfActivation {
                 run_id: "2_2".to_owned(),
                 ..Default::default()
             },
-            tq2.to_owned(),
+            TQ2.to_owned(),
         );
-        assert_eq!(&pas.pop(tq).unwrap().run_id, "1_1");
-        assert_eq!(&pas.pop(tq2).unwrap().run_id, "2_1");
-        assert_eq!(&pas.pop(tq).unwrap().run_id, "1_2");
-        assert_eq!(pas.pop(tq), None);
-        assert_eq!(&pas.pop(tq2).unwrap().run_id, "2_2");
-        assert_eq!(pas.pop(tq2), None);
+        pas
+    }
+
+    #[rstest]
+    fn multiple_task_queues(#[from(two_queues_two_runs)] pas: PendingActivations) {
+        assert_eq!(&pas.pop(TQ).unwrap().run_id, "1_1");
+        assert_eq!(&pas.pop(TQ2).unwrap().run_id, "2_1");
+        assert_eq!(&pas.pop(TQ).unwrap().run_id, "1_2");
+        assert_eq!(pas.pop(TQ), None);
+        assert_eq!(&pas.pop(TQ2).unwrap().run_id, "2_2");
+        assert_eq!(pas.pop(TQ2), None);
+    }
+
+    #[rstest]
+    fn can_ignore_specific_runs(#[from(two_queues_two_runs)] pas: PendingActivations) {
+        assert_eq!(
+            &pas.pop_first_matching(TQ, |rid| rid != "1_1")
+                .unwrap()
+                .run_id,
+            "1_2"
+        );
+        assert_eq!(&pas.pop(TQ2).unwrap().run_id, "2_1");
+        assert_eq!(pas.pop_first_matching(TQ, |rid| rid != "1_1"), None);
+        assert_eq!(&pas.pop(TQ).unwrap().run_id, "1_1");
+        assert_eq!(pas.pop(TQ), None);
+        assert_eq!(&pas.pop(TQ2).unwrap().run_id, "2_2");
+        assert_eq!(pas.pop(TQ2), None);
     }
 }

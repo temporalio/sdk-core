@@ -1,4 +1,5 @@
 mod activities;
+mod stickyness;
 mod timers;
 
 use assert_matches::assert_matches;
@@ -130,9 +131,6 @@ async fn fail_wf_task() {
     .await
     .unwrap();
 
-    // Allow timer to fire
-    std::thread::sleep(Duration::from_millis(500));
-
     // Then break for whatever reason
     let task = core.poll_workflow_task(&task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::fail(
@@ -243,18 +241,39 @@ async fn signal_workflow() {
     })
     .await;
 
-    let res = core.poll_workflow_task(&task_q).await.unwrap();
-    assert_matches!(
-        res.jobs.as_slice(),
-        [
-            WfActivationJob {
+    let mut res = core.poll_workflow_task(&task_q).await.unwrap();
+    // Sometimes both signals are complete at once, sometimes only one, depending on server
+    // Converting test to wf function type would make this shorter
+    if res.jobs.len() == 2 {
+        assert_matches!(
+            res.jobs.as_slice(),
+            [
+                WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+                },
+                WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+                }
+            ]
+        );
+    } else if res.jobs.len() == 1 {
+        assert_matches!(
+            res.jobs.as_slice(),
+            [WfActivationJob {
                 variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
-            },
-            WfActivationJob {
+            },]
+        );
+        core.complete_workflow_task(WfActivationCompletion::from_cmds(vec![], res.run_id))
+            .await
+            .unwrap();
+        res = core.poll_workflow_task(&task_q).await.unwrap();
+        assert_matches!(
+            res.jobs.as_slice(),
+            [WfActivationJob {
                 variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
-            }
-        ]
-    );
+            },]
+        );
+    }
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![CompleteWorkflowExecution { result: None }.into()],
         res.run_id,

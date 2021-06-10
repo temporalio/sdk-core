@@ -81,36 +81,25 @@ pub(crate) fn build_fake_core(
 
 /// See [build_fake_core] -- assemble a mock gateway into the final fake core
 pub(crate) fn fake_core_from_mock_sg(mock_and_tasks: MockSGAndTasks) -> FakeCore {
-    let mut core = CoreSDK::new(
-        mock_and_tasks.sg,
-        CoreInitOptionsBuilder::default()
-            .gateway_opts(fake_sg_opts())
-            .build()
-            .unwrap(),
-    );
-    core.reg_worker_sync(
-        WorkerConfigBuilder::default()
-            .task_queue(TEST_Q)
-            .build()
-            .unwrap(),
-    );
+    let core = mock_core(mock_and_tasks.sg);
     FakeCore {
         inner: core,
         outstanding_wf_tasks: mock_and_tasks.task_map,
     }
 }
 
-pub(crate) fn mock_core<SG>(sg: SG) -> CoreSDK<impl ServerGatewayApis>
+pub(crate) fn mock_core<SG>(sg: SG) -> CoreSDK<SG>
 where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
-    let mut core = CoreSDK::new(
-        sg,
-        CoreInitOptionsBuilder::default()
-            .gateway_opts(fake_sg_opts())
-            .build()
-            .unwrap(),
-    );
+    mock_core_with_opts(sg, CoreInitOptionsBuilder::default())
+}
+
+pub(crate) fn mock_core_with_opts<SG>(sg: SG, opts: CoreInitOptionsBuilder) -> CoreSDK<SG>
+where
+    SG: ServerGatewayApis + Send + Sync + 'static,
+{
+    let mut core = mock_core_with_opts_no_workers(sg, opts);
     core.reg_worker_sync(
         WorkerConfigBuilder::default()
             .task_queue(TEST_Q)
@@ -120,6 +109,16 @@ where
     core
 }
 
+pub(crate) fn mock_core_with_opts_no_workers<SG>(
+    sg: SG,
+    mut opts: CoreInitOptionsBuilder,
+) -> CoreSDK<SG>
+where
+    SG: ServerGatewayApis + Send + Sync + 'static,
+{
+    CoreSDK::new(sg, opts.gateway_opts(fake_sg_opts()).build().unwrap())
+}
+
 pub struct FakeWfResponses {
     pub wf_id: String,
     pub hist: TestHistoryBuilder,
@@ -127,6 +126,7 @@ pub struct FakeWfResponses {
     pub task_q: String,
 }
 
+// TODO: turn this into a builder or make a new one? to make all these different build fns simpler
 pub struct MockSGAndTasks {
     pub sg: MockServerGatewayApis,
     pub task_map: OutstandingWfTaskMap,
@@ -145,6 +145,23 @@ pub fn build_multihist_mock_sg(
     hists: impl IntoIterator<Item = FakeWfResponses>,
     enforce_correct_number_of_polls: bool,
     num_expected_fails: Option<usize>,
+) -> MockSGAndTasks {
+    augment_multihist_mock_sg(
+        hists,
+        enforce_correct_number_of_polls,
+        num_expected_fails,
+        MockServerGatewayApis::new(),
+    )
+}
+
+/// See [build_multihist_mock_sg] -- manual version that allows setting some expectations on the
+/// mock that should be matched first, before the normal expectations that match the provided
+/// history.
+pub fn augment_multihist_mock_sg(
+    hists: impl IntoIterator<Item = FakeWfResponses>,
+    enforce_correct_number_of_polls: bool,
+    num_expected_fails: Option<usize>,
+    mut mock_gateway: MockServerGatewayApis,
 ) -> MockSGAndTasks {
     // Maps task queues to maps of wfid -> responses
     let mut task_queues_to_resps: HashMap<String, BTreeMap<String, VecDeque<_>>> = HashMap::new();
@@ -208,7 +225,6 @@ pub fn build_multihist_mock_sg(
     // The gateway will return history from any workflow runs that do not have currently outstanding
     // tasks.
     let outstanding = outstanding_wf_task_tokens.clone();
-    let mut mock_gateway = MockServerGatewayApis::new();
     mock_gateway
         .expect_poll_workflow_task()
         .times(
@@ -217,30 +233,34 @@ pub fn build_multihist_mock_sg(
                 .unwrap_or_else(|| RangeFull.into()),
         )
         .returning(move |tq| {
-            let queue_tasks = task_queues_to_resps
-                .get_mut(&tq)
-                .unwrap_or_else(|| panic!("No task queue {} defined during response setup", tq));
-            for (_, tasks) in queue_tasks.iter_mut() {
-                if let Some(t) = tasks.pop_front() {
-                    // Must extract run id from a workflow task associated with this workflow
-                    // TODO: Case where run id changes for same workflow id is not handled here
-                    let rid = t.workflow_execution.as_ref().unwrap().run_id.clone();
+            if let Some(queue_tasks) = task_queues_to_resps.get_mut(&tq) {
+                for (_, tasks) in queue_tasks.iter_mut() {
+                    if let Some(t) = tasks.pop_front() {
+                        // Must extract run id from a workflow task associated with this workflow
+                        // TODO: Case where run id changes for same workflow id is not handled here
+                        let rid = t.workflow_execution.as_ref().unwrap().run_id.clone();
 
-                    if !outstanding.read().contains_left(&rid) {
-                        outstanding
-                            .write()
-                            .insert(rid, TaskToken(t.task_token.clone()));
-                        return Ok(t);
+                        if !outstanding.read().contains_left(&rid) {
+                            outstanding
+                                .write()
+                                .insert(rid, TaskToken(t.task_token.clone()));
+                            return Ok(t);
+                        }
                     }
                 }
+                Err(tonic::Status::cancelled("No more work to do"))
+            } else {
+                Err(tonic::Status::not_found(format!(
+                    "Task queue {} not defined in test setup",
+                    tq
+                )))
             }
-            Err(tonic::Status::cancelled("No more work to do"))
         });
 
     let outstanding = outstanding_wf_task_tokens.clone();
     mock_gateway
         .expect_complete_workflow_task()
-        .returning(move |tt, _| {
+        .returning(move |tt, _, _| {
             outstanding.write().remove_by_right(&tt);
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
@@ -268,16 +288,19 @@ pub fn single_hist_mock_sg(
     wf_id: &str,
     t: TestHistoryBuilder,
     response_batches: &[usize],
+    mock_gateway: MockServerGatewayApis,
+    enforce_num_polls: bool,
 ) -> MockSGAndTasks {
-    build_multihist_mock_sg(
+    augment_multihist_mock_sg(
         vec![FakeWfResponses {
             wf_id: wf_id.to_owned(),
             hist: t,
             response_batches: response_batches.to_vec(),
             task_q: TEST_Q.to_owned(),
         }],
-        true,
+        enforce_num_polls,
         None,
+        mock_gateway,
     )
 }
 

@@ -462,10 +462,8 @@ impl WorkflowMachines {
 
     /// Apply events from history to this machines instance
     pub(crate) fn apply_history_events(&mut self, history_info: &HistoryInfo) -> Result<()> {
-        let (_, events) = history_info
-            .events()
-            .split_at(self.get_last_started_event_id() as usize);
-        let mut history = events.iter().peekable();
+        let events = history_info.events_after(self.get_last_started_event_id());
+        let mut history = events.peekable();
 
         self.set_started_ids(
             history_info.previous_started_event_id,

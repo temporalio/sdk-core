@@ -10,7 +10,7 @@ use crate::{
     workflow::{WorkflowCachingPolicy, WorkflowConcurrencyManager, WorkflowError, WorkflowManager},
     WfActivationUpdate,
 };
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use std::{collections::VecDeque, fmt::Debug};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::Span;
@@ -36,6 +36,8 @@ pub struct WorkflowTaskManager {
     ///
     /// Only the most recent such reply from the server for a given run is kept.
     outstanding_workflow_tasks: DashMap<String, Option<ValidPollWFTQResponse>>,
+    /// A set of run ids for which there is a currently outstanding workflow activation
+    outstanding_activations: DashSet<String>,
     /// Holds (by task queue) poll wft responses from the server that need to be applied
     ready_buffered_wft: DashMap<String, VecDeque<ValidPollWFTQResponse>>,
     /// Used to wake blocked workflow task polling
@@ -47,10 +49,10 @@ pub struct WorkflowTaskManager {
 /// lang handles it.
 #[derive(Clone, Debug)]
 pub struct WorkflowTaskInfo {
-    task_token: TaskToken,
-    run_id: String,
-    attempt: u32,
-    task_queue: String,
+    pub task_token: TaskToken,
+    pub run_id: String,
+    pub attempt: u32,
+    pub task_queue: String,
 }
 
 #[derive(Debug, derive_more::From)]
@@ -71,8 +73,9 @@ pub enum FailedActivationOutcome {
 }
 
 #[derive(Debug)]
-pub struct ServerCommandsWithTaskToken {
+pub struct ServerCommandsWithWorkflowInfo {
     pub task_token: TaskToken,
+    pub task_queue: String,
     pub commands: Vec<ProtoCommand>,
 }
 
@@ -86,6 +89,7 @@ impl WorkflowTaskManager {
             workflow_info: Default::default(),
             pending_activations: Default::default(),
             outstanding_workflow_tasks: Default::default(),
+            outstanding_activations: Default::default(),
             ready_buffered_wft: Default::default(),
             workflow_activations_update,
             eviction_policy,
@@ -97,7 +101,20 @@ impl WorkflowTaskManager {
     }
 
     pub fn next_pending_activation(&self, task_queue: &str) -> Option<WfActivation> {
-        self.pending_activations.pop(task_queue)
+        // It is important that we do not issue pending activations for any workflows which already
+        // have an outstanding activation. If we did, it can result in races where an in-progress
+        // completion may appear to be the last in a task (no more pending activations) because
+        // concurrently a poll happened to dequeue the pending activation at the right time.
+        // NOTE: This all goes away with the handles-per-workflow poll approach.
+        let maybe_act = self
+            .pending_activations
+            .pop_first_matching(task_queue, |rid| {
+                !self.outstanding_activations.contains(rid)
+            });
+        if let Some(act) = maybe_act.as_ref() {
+            self.outstanding_activations.insert(act.run_id.clone());
+        }
+        maybe_act
     }
 
     pub fn next_buffered_poll(&self, task_queue: &str) -> Option<ValidPollWFTQResponse> {
@@ -105,6 +122,14 @@ impl WorkflowTaskManager {
             .get_mut(task_queue)
             .map(|mut dq| dq.pop_front())
             .flatten()
+    }
+
+    pub(crate) fn activation_done(&self, run_id: &str) {
+        if self.outstanding_activations.remove(run_id).is_some() {
+            let _ = self
+                .workflow_activations_update
+                .send(WfActivationUpdate::NewPendingActivation);
+        }
     }
 
     #[cfg(test)]
@@ -123,6 +148,7 @@ impl WorkflowTaskManager {
             debug!(run_id=%run_id, "Evicting run");
             let maybe_buffered = self.outstanding_workflow_tasks.remove(run_id);
             self.workflow_machines.evict(run_id);
+            self.outstanding_activations.remove(run_id);
             self.pending_activations.remove_all_with_run_id(run_id);
             // Queue up an eviction activation
             self.pending_activations.push(
@@ -180,6 +206,7 @@ impl WorkflowTaskManager {
         if let Some(na) = next_activation {
             self.outstanding_workflow_tasks
                 .insert(na.run_id.clone(), None);
+            self.outstanding_activations.insert(na.run_id.clone());
             Ok(NewWfTaskOutcome::IssueActivation(na))
         } else {
             Ok(NewWfTaskOutcome::Autocomplete)
@@ -192,9 +219,11 @@ impl WorkflowTaskManager {
         &self,
         run_id: &str,
         commands: Vec<WFCommand>,
-    ) -> Result<Option<ServerCommandsWithTaskToken>, WorkflowUpdateError> {
-        let tt = if let Some(wti) = self.workflow_info.get(run_id) {
-            wti.task_token.clone()
+    ) -> Result<Option<ServerCommandsWithWorkflowInfo>, WorkflowUpdateError> {
+        let (task_token, task_queue) = if let Some(wti) = self.workflow_info.get(run_id) {
+            // Note: Ideally we could return these as refs but dashmap makes that hard. Likely
+            //   not a real perf concern.
+            (wti.task_token.clone(), wti.task_queue.clone())
         } else {
             warn!(
                 run_id,
@@ -214,8 +243,9 @@ impl WorkflowTaskManager {
         let ret = if !self.pending_activations.has_pending(run_id)
             && server_cmds.at_final_workflow_task
         {
-            Some(ServerCommandsWithTaskToken {
-                task_token: tt,
+            Some(ServerCommandsWithWorkflowInfo {
+                task_token,
+                task_queue,
                 commands: server_cmds.commands,
             })
         } else {

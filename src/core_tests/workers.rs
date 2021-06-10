@@ -1,3 +1,4 @@
+use crate::machines::test_help::TEST_Q;
 use crate::{
     machines::test_help::{build_fake_core, build_multihist_mock_sg, mock_core, FakeWfResponses},
     protos::coresdk::workflow_activation::wf_activation_job,
@@ -33,7 +34,8 @@ async fn multi_workers() {
                 .build()
                 .unwrap(),
         )
-        .await;
+        .await
+        .unwrap();
     }
 
     for i in 0..5 {
@@ -49,15 +51,31 @@ async fn multi_workers() {
 
 #[tokio::test]
 async fn no_worker_for_queue_error_returned_properly() {
-    let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("fake_timer");
     // Empty batches array to specify 0 calls to poll expectation
-    let core = build_fake_core(wfid, t, &[]);
+    let core = build_fake_core("fake_wf_id", t, &[]);
 
     let fake_q = "not a registered queue";
     let res = core.inner.poll_workflow_task(&fake_q).await.unwrap_err();
     assert_matches!(res, PollWfError::NoWorkerForQueue(err_q) => err_q == fake_q);
     core.inner.shutdown().await;
+}
+
+#[tokio::test]
+async fn worker_double_register_is_err() {
+    let t = canned_histories::single_timer("fake_timer");
+    let core = build_fake_core("fake_wf_id", t, &[]);
+    assert!(core
+        .inner
+        .register_worker(
+            WorkerConfigBuilder::default()
+                .task_queue(TEST_Q)
+                .max_outstanding_workflow_tasks(2_usize)
+                .build()
+                .unwrap(),
+        )
+        .await
+        .is_err());
 }
 
 // Here we're making sure that when a pending activity is generated for a workflow on one task
@@ -85,7 +103,8 @@ async fn pending_activities_only_returned_for_their_queue() {
                 .build()
                 .unwrap(),
         )
-        .await;
+        .await
+        .unwrap();
     }
 
     // Create a pending activation by cancelling a try-cancel activity

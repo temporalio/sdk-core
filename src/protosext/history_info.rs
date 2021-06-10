@@ -105,8 +105,15 @@ impl HistoryInfo {
         Self::new_from_events(&h.events, to_wf_task_num)
     }
 
+    #[cfg(test)]
     pub(crate) fn events(&self) -> &[HistoryEvent] {
         &self.events
+    }
+
+    pub(crate) fn events_after(&self, event_id: i64) -> impl Iterator<Item = &HistoryEvent> {
+        self.events
+            .iter()
+            .skip_while(move |e| e.event_id <= event_id)
     }
 }
 

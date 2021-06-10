@@ -32,7 +32,7 @@ mod test_help;
 
 pub use crate::errors::{
     ActivityHeartbeatError, CompleteActivityError, CompleteWfError, CoreInitError,
-    PollActivityError, PollWfError,
+    PollActivityError, PollWfError, WorkerRegistrationError,
 };
 pub use core_tracing::tracing_init;
 pub use pollers::{
@@ -77,14 +77,22 @@ use tokio::sync::{
     Mutex, Notify, RwLock,
 };
 
+lazy_static::lazy_static! {
+    /// A process-wide unique string, which will be different on every startup
+    static ref PROCCESS_UNIQ_ID: String = {
+        uuid::Uuid::new_v4().to_simple().to_string()
+    };
+}
+
 /// This trait is the primary way by which language specific SDKs interact with the core SDK. It is
 /// expected that only one instance of an implementation will exist for the lifetime of the
 /// worker(s) using it.
 #[async_trait::async_trait]
 pub trait Core: Send + Sync {
     /// Register a worker with core. Workers poll on a specific task queue, and when calling core's
-    /// poll functions, you must provide a task queue name.
-    async fn register_worker(&self, config: WorkerConfig);
+    /// poll functions, you must provide a task queue name. If there was already a worker registered
+    /// with the same task queue name, it will be shut down and a new one will be created.
+    async fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError>;
 
     /// Ask the core for some work, returning a [WfActivation]. It is then the language SDK's
     /// responsibility to call the appropriate workflow code with the provided inputs. Blocks
@@ -149,13 +157,17 @@ pub trait Core: Send + Sync {
     /// Returns core's instance of the [ServerGatewayApis] implementor it is using.
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis>;
 
-    /// Initiates async shutdown procedure, eventually ceases all polling of the server.
-    /// [Core::poll_workflow_task] should be called until it returns [PollWfError::ShutDown]
-    /// to ensure that any workflows which are still undergoing replay have an opportunity to finish.
-    /// This means that the lang sdk will need to call [Core::complete_workflow_task] for those
-    /// workflows until they are done. At that point, the lang SDK can end the process,
-    /// or drop the [Core] instance, which will close the connection.
+    /// Initiates async shutdown procedure, eventually ceases all polling of the server and shuts
+    /// down all registered workers. [Core::poll_workflow_task] should be called until it returns
+    /// [PollWfError::ShutDown] to ensure that any workflows which are still undergoing replay have
+    /// an opportunity to finish. This means that the lang sdk will need to call
+    /// [Core::complete_workflow_task] for those workflows until they are done. At that point, the
+    /// lang SDK can end the process, or drop the [Core] instance, which will close the connection.
     async fn shutdown(&self);
+
+    /// Shut down a specific worker. Will cease all polling on the task queue and future attempts
+    /// to poll that queue will return [PollWfError::NoWorkerForQueue].
+    async fn shutdown_worker(&self, task_queue: &str);
 }
 
 /// Holds various configuration information required to call [init]
@@ -189,7 +201,7 @@ pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
 
 struct CoreSDK<WP> {
     /// Options provided at initialization time
-    _init_options: CoreInitOptions,
+    init_options: CoreInitOptions,
     /// Provides work in the form of responses the server would send from polling task Qs
     server_gateway: Arc<WP>,
     /// Maps task queue names to workers
@@ -217,10 +229,15 @@ impl<WP> Core for CoreSDK<WP>
 where
     WP: ServerGatewayApis + Send + Sync + 'static,
 {
-    async fn register_worker(&self, config: WorkerConfig) {
-        let tq = config.task_queue.clone();
-        let worker = Worker::new(config, self.server_gateway.clone());
+    async fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError> {
+        if self.workers.read().await.contains_key(&config.task_queue) {
+            return Err(WorkerRegistrationError::WorkerAlreadyRegisteredForQueue(
+                config.task_queue,
+            ));
+        }
+        let (tq, worker) = self.build_worker(config);
         self.workers.write().await.insert(tq, worker);
+        Ok(())
     }
 
     #[instrument(skip(self))]
@@ -329,8 +346,7 @@ where
         completion: WfActivationCompletion,
     ) -> Result<(), CompleteWfError> {
         let wfstatus = completion.status;
-
-        match wfstatus {
+        let r = match wfstatus {
             Some(wf_activation_completion::Status::Successful(success)) => {
                 self.wf_activation_success(&completion.run_id, success)
                     .await
@@ -342,7 +358,10 @@ where
                 reason: "Workflow completion had empty status field".to_owned(),
                 completion: None,
             }),
-        }
+        };
+
+        self.wft_manager.activation_done(&completion.run_id);
+        r
     }
 
     #[instrument(skip(self))]
@@ -415,11 +434,18 @@ where
     async fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
-        for entry in self.workers.read().await.values() {
-            entry.shutdown();
+        for (_, w) in self.workers.write().await.drain() {
+            w.shutdown().await;
         }
         self.wft_manager.shutdown();
         self.act_manager.shutdown().await;
+    }
+
+    async fn shutdown_worker(&self, task_queue: &str) {
+        let mut workers = self.workers.write().await;
+        if let Some(w) = workers.remove(task_queue) {
+            w.shutdown().await;
+        }
     }
 }
 
@@ -439,7 +465,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             act_manager: ActivityTaskManager::new(sg.clone()),
             server_gateway: sg,
             workers: RwLock::new(HashMap::new()),
-            _init_options: init_options,
+            init_options,
             shutdown_requested: AtomicBool::new(false),
             shutdown_notify: Notify::new(),
             workflow_activations_update: Mutex::new(wau_rx),
@@ -449,9 +475,25 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     /// Internal convenience function to avoid needing async when caller has mutable access to core
     #[cfg(test)]
     fn reg_worker_sync(&mut self, config: WorkerConfig) {
-        let tq = config.task_queue.clone();
-        let worker = Worker::new(config, self.server_gateway.clone());
+        let (tq, worker) = self.build_worker(config);
         self.workers.get_mut().insert(tq, worker);
+    }
+
+    /// From a worker config, return a (task queue, Worker) pair
+    fn build_worker(&self, config: WorkerConfig) -> (String, Worker) {
+        let tq = config.task_queue.clone();
+        let use_sticky = if self.init_options.max_cached_workflows > 0 {
+            Some(format!(
+                "{}-{}-{}",
+                &self.init_options.gateway_opts.identity, &tq, *PROCCESS_UNIQ_ID
+            ))
+        } else {
+            None
+        };
+        (
+            tq,
+            Worker::new(config, use_sticky, self.server_gateway.clone()),
+        )
     }
 
     /// Apply validated WFTs from the server. Returns an activation if one should be issued to
@@ -493,23 +535,29 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             .map(|c| c.try_into())
             .collect::<Result<Vec<_>, EmptyWorkflowCommandErr>>()
             .map_err(|_| CompleteWfError::MalformedWorkflowCompletion {
-                reason: "At least one workflow command in the completion \
-                                contained an empty variant"
-                    .to_owned(),
+                reason:
+                    "At least one workflow command in the completion contained an empty variant"
+                        .to_owned(),
                 completion: None,
             })?;
 
         if let Some(server_cmds) = self.wft_manager.successful_activation(run_id, cmds)? {
-            debug!("Sending commands to server: {:?}", &server_cmds.commands);
-            let res = self
-                .server_gateway
-                .complete_workflow_task(server_cmds.task_token, server_cmds.commands)
-                .await;
-            if let Err(ts) = res {
-                let should_evict = self.handle_wft_complete_errs(ts)?;
-                if should_evict {
-                    self.wft_manager.evict_run(run_id);
+            if let Some(worker) = self.workers.read().await.get(&server_cmds.task_queue) {
+                let res = worker
+                    .complete_workflow_task(
+                        self.server_gateway.as_ref(),
+                        server_cmds.task_token,
+                        server_cmds.commands,
+                    )
+                    .await;
+                if let Err(ts) = res {
+                    let should_evict = self.handle_wft_complete_errs(ts)?;
+                    if should_evict {
+                        self.wft_manager.evict_run(run_id);
+                    }
                 }
+            } else {
+                return Err(CompleteWfError::NoWorkerForQueue(server_cmds.task_queue));
             }
         }
         Ok(())

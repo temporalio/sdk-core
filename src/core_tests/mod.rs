@@ -30,6 +30,21 @@ async fn after_shutdown_server_is_not_polled() {
 }
 
 #[tokio::test]
+async fn after_shutdown_of_worker_queue_not_registered() {
+    let wfid = "fake_wf_id";
+    let t = canned_histories::single_timer("fake_timer");
+    let core = build_fake_core(wfid, t, &[1]);
+    let res = core.inner.poll_workflow_task("q").await.unwrap();
+    assert_eq!(res.jobs.len(), 1);
+
+    core.inner.shutdown_worker("q").await;
+    assert_matches!(
+        core.inner.poll_workflow_task("q").await.unwrap_err(),
+        PollWfError::NoWorkerForQueue(_)
+    );
+}
+
+#[tokio::test]
 async fn shutdown_interrupts_both_polls() {
     let mut mock_gateway = MockManualGateway::new();
     mock_gateway
@@ -79,7 +94,8 @@ async fn shutdown_interrupts_both_polls() {
             .build()
             .unwrap(),
     )
-    .await;
+    .await
+    .unwrap();
     tokio::join! {
         async {
             assert_matches!(core.poll_activity_task(TEST_Q).await.unwrap_err(),

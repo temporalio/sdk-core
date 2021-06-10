@@ -1,8 +1,9 @@
+use crate::machines::test_help::mock_core_with_opts_no_workers;
 use crate::{
     job_assert,
     machines::test_help::{
-        build_fake_core, build_multihist_mock_sg, fake_core_from_mock_sg, fake_sg_opts,
-        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_core, poll_and_reply,
+        build_fake_core, build_multihist_mock_sg, fake_core_from_mock_sg, gen_assert_and_fail,
+        gen_assert_and_reply, hist_to_poll_resp, mock_core, mock_core_with_opts, poll_and_reply,
         single_hist_mock_sg, FakeCore, FakeWfResponses, TestHistoryBuilder, TEST_Q,
     },
     pollers::MockServerGatewayApis,
@@ -26,7 +27,7 @@ use crate::{
     },
     test_help::canned_histories,
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
-    Core, CoreInitOptionsBuilder, CoreSDK, WfActivationCompletion, WorkerConfigBuilder,
+    Core, CoreInitOptionsBuilder, WfActivationCompletion, WorkerConfigBuilder,
 };
 use rstest::{fixture, rstest};
 use std::{
@@ -870,26 +871,22 @@ async fn max_concurrent_wft_respected() {
     // Response not really important here
     mock_gateway
         .expect_complete_workflow_task()
-        .returning(|_, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
+        .returning(|_, _, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
 
-    let core = CoreSDK::new(
-        mock_gateway,
-        CoreInitOptionsBuilder::default()
-            .gateway_opts(fake_sg_opts())
-            .build()
-            .unwrap(),
-    );
+    let core = mock_core_with_opts_no_workers(mock_gateway, CoreInitOptionsBuilder::default());
     core.register_worker(
         WorkerConfigBuilder::default()
             .task_queue(TEST_Q)
-            .max_outstanding_workflow_tasks(2usize)
+            .max_outstanding_workflow_tasks(2_usize)
             .build()
             .unwrap(),
     )
-    .await;
+    .await
+    .unwrap();
 
     // Poll twice in a row before completing -- we should be at limit
     let r1 = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let r1_run_id = r1.run_id.clone();
     let _r2 = core.poll_workflow_task(TEST_Q).await.unwrap();
     // Now we immediately poll for new work, and complete one of the existing activations. The
     // poll must not unblock until the completion goes through.
@@ -929,7 +926,9 @@ async fn max_concurrent_wft_respected() {
         .await
         .unwrap();
         r1 = core.poll_workflow_task(TEST_Q).await.unwrap();
+        assert_eq!(r1.run_id, r1_run_id);
     }
+    core.shutdown().await;
 }
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[3]))]
@@ -1134,8 +1133,9 @@ async fn wft_timeout_repro(hist_batches: &[usize]) {
 async fn complete_after_eviction() {
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("fake_timer");
-    let mut mock = single_hist_mock_sg(wfid, t, &[2]);
-    mock.sg.expect_complete_workflow_task().times(0);
+    let mut mock = MockServerGatewayApis::new();
+    mock.expect_complete_workflow_task().times(0);
+    let mock = single_hist_mock_sg(wfid, t, &[2], mock, true);
     let core = fake_core_from_mock_sg(mock);
 
     let activation = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
@@ -1148,5 +1148,37 @@ async fn complete_after_eviction() {
             activation.run_id,
         ))
         .await
-        .unwrap()
+        .unwrap();
+    core.inner.shutdown().await;
+}
+
+#[tokio::test]
+async fn sends_appropriate_sticky_task_queue_responses() {
+    // This test verifies that when completions are sent with sticky queues enabled, that they
+    // include the information that tells the server to enqueue the next task on a sticky queue.
+    let wfid = "fake_wf_id";
+    let t = canned_histories::single_timer("fake_timer");
+    let mut mock = MockServerGatewayApis::new();
+    mock.expect_complete_workflow_task()
+        .withf(|_, _, stq| stq.is_some())
+        .times(1)
+        .returning(|_, _, _| Ok(Default::default()));
+    mock.expect_complete_workflow_task().times(0);
+    let mock = single_hist_mock_sg(wfid, t, &[1], mock, false);
+    let mut opts = CoreInitOptionsBuilder::default();
+    opts.max_cached_workflows(10_usize);
+    let core = mock_core_with_opts(mock.sg, opts);
+
+    let activation = core.poll_workflow_task(TEST_Q).await.unwrap();
+    core.complete_workflow_task(WfActivationCompletion::from_cmd(
+        StartTimer {
+            timer_id: "fake_timer".to_string(),
+            ..Default::default()
+        }
+        .into(),
+        activation.run_id,
+    ))
+    .await
+    .unwrap();
+    core.shutdown().await;
 }

@@ -1,3 +1,4 @@
+use crate::machines::test_help::mock_core_with_opts_no_workers;
 use crate::{
     errors::PollActivityError,
     machines::test_help::{fake_sg_opts, mock_core, TEST_Q},
@@ -23,7 +24,7 @@ use test_utils::fanout_tasks;
 use tokio::time::sleep;
 
 #[tokio::test]
-async fn max_activites_respected() {
+async fn max_activities_respected() {
     let task_q = "q";
     let mut tasks = VecDeque::from(vec![
         PollActivityTaskQueueResponse {
@@ -65,7 +66,8 @@ async fn max_activites_respected() {
             .build()
             .unwrap(),
     )
-    .await;
+    .await
+    .unwrap();
 
     // We allow two outstanding activities, therefore first two polls should return right away
     let r1 = core.poll_activity_task(task_q).await.unwrap();
@@ -204,6 +206,7 @@ async fn activity_cancel_interrupts_poll() {
     };
     // So that we know we blocked
     assert_eq!(last_finisher.load(Ordering::Acquire), 2);
+    core.shutdown().await;
 }
 
 #[tokio::test]
@@ -288,13 +291,7 @@ async fn many_concurrent_heartbeat_cancels() {
             .boxed()
         });
 
-    let core = &CoreSDK::new(
-        mock_gateway,
-        CoreInitOptionsBuilder::default()
-            .gateway_opts(fake_sg_opts())
-            .build()
-            .unwrap(),
-    );
+    let core = &mock_core_with_opts_no_workers(mock_gateway, CoreInitOptionsBuilder::default());
     core.register_worker(
         WorkerConfigBuilder::default()
             .task_queue(TEST_Q)
@@ -304,7 +301,8 @@ async fn many_concurrent_heartbeat_cancels() {
             .build()
             .unwrap(),
     )
-    .await;
+    .await
+    .unwrap();
 
     // Poll all activities first so they are registered
     for _ in 0..CONCURRENCY_NUM {
