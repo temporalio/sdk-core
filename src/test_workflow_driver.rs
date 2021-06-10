@@ -22,12 +22,11 @@ use dashmap::DashMap;
 use futures::{stream::FuturesUnordered, StreamExt};
 use parking_lot::{Condvar, Mutex};
 use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
-use tokio::sync::Notify;
 use tokio::{
     runtime::Runtime,
     sync::{
         mpsc::{unbounded_channel, UnboundedSender},
-        oneshot,
+        oneshot, Notify,
     },
     task::{JoinError, JoinHandle},
 };
@@ -37,6 +36,7 @@ pub struct TestRustWorker {
     core: Arc<dyn Core>,
     namespace: String,
     task_queue: String,
+    deadlock_override: Option<Duration>,
     // Maps run id to the driver
     workflows: DashMap<String, UnboundedSender<WfActivation>>,
     join_handles: FuturesUnordered<JoinHandle<Result<(), anyhow::Error>>>,
@@ -50,8 +50,14 @@ impl TestRustWorker {
             namespace,
             task_queue,
             workflows: Default::default(),
+            deadlock_override: None,
             join_handles: FuturesUnordered::new(),
         }
+    }
+
+    /// Force the workflow deadlock timeout to a different value
+    pub fn override_deadlock(&mut self, new_time: Duration) {
+        self.deadlock_override = Some(new_time);
     }
 
     /// Create a workflow, asking the server to start it with the provided workflow ID and using the
@@ -81,12 +87,16 @@ impl TestRustWorker {
         Ok(())
     }
 
-    fn start_wf<F, Fut>(&self, wf_function: Arc<F>, run_id: String)
+    /// Actually run the workflow function
+    pub fn start_wf<F, Fut>(&self, wf_function: Arc<F>, run_id: String)
     where
         F: Fn(CommandSender) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         let mut twd = TestWorkflowDriver::new(wf_function.as_ref());
+        if let Some(or) = self.deadlock_override {
+            twd.override_deadlock(or);
+        }
         let (tx, mut rx) = unbounded_channel::<WfActivation>();
         let core = self.core.clone();
         let jh = tokio::spawn(async move {
@@ -187,6 +197,7 @@ pub struct TestWorkflowDriver {
     commands_from_wf: Receiver<WorkflowCommand>,
     cache: Arc<TestWfDriverCache>,
     kill_notifier: Arc<Notify>,
+    deadlock_time: Duration,
     _runtime: Option<Runtime>,
 }
 
@@ -241,8 +252,14 @@ impl TestWorkflowDriver {
             commands_from_wf: receiver,
             cache: twd_cache,
             kill_notifier,
+            deadlock_time: Duration::from_secs(1),
             _runtime: maybe_rt,
         }
+    }
+
+    /// Useful for forcing WFT timeouts
+    pub fn override_deadlock(&mut self, new_time: Duration) {
+        self.deadlock_time = new_time;
     }
 
     /// Drains all pending commands that the workflow has produced since the last time this was
@@ -270,7 +287,7 @@ impl TestWorkflowDriver {
             let timeout_res = self
                 .cache
                 .condvar
-                .wait_for(&mut bc_lock, Duration::from_secs(1));
+                .wait_for(&mut bc_lock, self.deadlock_time);
             if timeout_res.timed_out() {
                 panic!("Workflow deadlocked (1 second)")
             }

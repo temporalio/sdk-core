@@ -4,34 +4,15 @@ use temporal_sdk_core::protos::coresdk::{
     workflow_completion::WfActivationCompletion,
 };
 use temporal_sdk_core::test_workflow_driver::{CommandSender, TestRustWorker};
-use temporal_sdk_core::tracing_init;
 use test_utils::{init_core_and_create_wf, CoreWfStarter, NAMESPACE};
 
-async fn timer_wf(mut command_sink: CommandSender) {
+pub async fn timer_wf(mut command_sink: CommandSender) {
     let timer = StartTimer {
         timer_id: "super_timer_id".to_string(),
         start_to_fire_timeout: Some(Duration::from_secs(1).into()),
     };
     command_sink.timer(timer).await;
     command_sink.complete_workflow_execution();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn timer_workflow_not_sticky() {
-    tracing_init();
-    let wf_name = "timer_wf_not_sticky";
-    let mut starter = CoreWfStarter::new(wf_name);
-    starter.max_cached_workflows(0);
-    let tq = starter.get_task_queue().to_owned();
-    let core = starter.get_core().await;
-
-    let worker = TestRustWorker::new(core.clone(), NAMESPACE.to_owned(), tq.clone());
-    worker
-        .submit_wf(wf_name.to_owned(), Arc::new(timer_wf))
-        .await
-        .unwrap();
-    worker.run_until_done().await.unwrap();
-    core.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -151,7 +132,6 @@ async fn parallel_timer_wf(mut command_sink: CommandSender) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn parallel_timers() {
-    tracing_init();
     let wf_name = "parallel_timers";
     let mut starter = CoreWfStarter::new(wf_name);
     let tq = starter.get_task_queue().to_owned();

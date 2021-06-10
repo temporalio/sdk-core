@@ -1,4 +1,5 @@
 mod activities;
+mod stickyness;
 mod timers;
 
 use assert_matches::assert_matches;
@@ -15,7 +16,7 @@ use temporal_sdk_core::{
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
-    tracing_init, Core, IntoCompletion, PollWfError,
+    Core, IntoCompletion, PollWfError,
 };
 use test_utils::{init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreWfStarter, GwApi};
 use tokio::time::sleep;
@@ -129,9 +130,6 @@ async fn fail_wf_task() {
     ))
     .await
     .unwrap();
-
-    // Allow timer to fire
-    std::thread::sleep(Duration::from_millis(500));
 
     // Then break for whatever reason
     let task = core.poll_workflow_task(&task_q).await.unwrap();
@@ -353,7 +351,6 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
 
 #[tokio::test]
 async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
-    tracing_init();
     let activity_id = "act-1";
     let signal_at_start = "at-start";
     let signal_at_complete = "at-complete";
