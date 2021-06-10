@@ -162,23 +162,35 @@ impl TestHistoryBuilder {
         }
     }
 
+    pub fn as_partial_history(&self, to_event_id: i64) -> History {
+        History {
+            events: self
+                .events
+                .iter()
+                .take_while(|e| e.event_id <= to_event_id)
+                .cloned()
+                .collect(),
+        }
+    }
+
     pub fn get_orig_run_id(&self) -> &str {
         &self.original_run_id
     }
 
     /// Iterates over the events in this builder to return a [HistoryInfo] including events up to
     /// the provided `to_wf_task_num`
+    // TODO: Could take enum that is either task number or ID, to make change easier
     pub(crate) fn get_history_info(
         &self,
         to_wf_task_num: usize,
     ) -> Result<HistoryInfo, HistoryInfoError> {
-        HistoryInfo::new_from_events(&self.events, Some(to_wf_task_num))
+        HistoryInfo::new_from_history(&self.as_history(), Some(to_wf_task_num))
     }
 
     /// Iterates over the events in this builder to return a [HistoryInfo] representing *all*
     /// events in the history
     pub(crate) fn get_full_history_info(&self) -> Result<HistoryInfo, HistoryInfoError> {
-        HistoryInfo::new_from_events(&self.events, None)
+        HistoryInfo::new_from_history(&self.as_history(), None)
     }
 
     fn build_and_push_event(&mut self, event_type: EventType, attribs: Attributes) {

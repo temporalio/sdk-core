@@ -184,10 +184,12 @@ impl WorkflowMachines {
         })?;
 
         if self.replaying
+            && self.current_started_event_id > 0 // Must have been set to anything
             && self.current_started_event_id >= self.previous_started_event_id
             && event_type != EventType::WorkflowTaskCompleted
         {
             // Replay is finished
+            warn!("Set replaying to false");
             self.replaying = false;
         }
 
@@ -425,19 +427,6 @@ impl WorkflowMachines {
         }
     }
 
-    /// Given an event id (possibly zero) of the last successfully executed workflow task and an
-    /// id of the last event, sets the ids internally and appropriately sets the replaying flag.
-    fn set_started_ids(
-        &mut self,
-        previous_started_event_id: i64,
-        workflow_task_started_event_id: i64,
-    ) {
-        self.previous_started_event_id = previous_started_event_id;
-        self.workflow_task_started_event_id = workflow_task_started_event_id;
-        self.replaying = previous_started_event_id > 0;
-        warn!("Replaying: {}", &self.replaying);
-    }
-
     fn set_current_time(&mut self, time: SystemTime) -> SystemTime {
         if self.current_wf_time.map(|t| t < time).unwrap_or(true) {
             self.current_wf_time = Some(time);
@@ -466,9 +455,15 @@ impl WorkflowMachines {
         let events = history_info.events_after(self.get_last_started_event_id());
         let mut history = events.peekable();
 
-        self.set_started_ids(
-            history_info.previous_started_event_id,
-            history_info.workflow_task_started_event_id,
+        self.previous_started_event_id = history_info.previous_started_event_id;
+        self.workflow_task_started_event_id = history_info.workflow_task_started_event_id;
+        self.replaying =
+            self.workflow_task_started_event_id < history_info.last_wft_started_id_in_hist;
+        warn!(
+            "Replaying: {}, wft_s_id: {}, last_wft_s_id: {}",
+            &self.replaying,
+            self.workflow_task_started_event_id,
+            history_info.last_wft_started_id_in_hist
         );
 
         // HistoryInfo's constructor enforces some rules about the structure of history that

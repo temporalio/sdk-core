@@ -1,10 +1,10 @@
-use crate::machines::test_help::mock_core_with_opts_no_workers;
 use crate::{
     job_assert,
     machines::test_help::{
         build_fake_core, build_multihist_mock_sg, fake_core_from_mock_sg, gen_assert_and_fail,
-        gen_assert_and_reply, hist_to_poll_resp, mock_core, mock_core_with_opts, poll_and_reply,
-        single_hist_mock_sg, FakeCore, FakeWfResponses, TestHistoryBuilder, TEST_Q,
+        gen_assert_and_reply, hist_to_poll_resp, mock_core, mock_core_with_opts,
+        mock_core_with_opts_no_workers, poll_and_reply, single_hist_mock_sg, FakeCore,
+        FakeWfResponses, TestHistoryBuilder, TEST_Q,
     },
     pollers::MockServerGatewayApis,
     protos::{
@@ -66,10 +66,7 @@ fn single_activity_failure_setup(hist_batches: &[usize]) -> FakeCore {
 #[case::incremental_evict(single_timer_setup(&[1, 2]), AfterEveryReply)]
 #[case::replay_evict(single_timer_setup(&[2, 2]), AfterEveryReply)]
 #[tokio::test]
-async fn single_timer_test_across_wf_bridge(
-    #[case] core: FakeCore,
-    #[case] evict: WorkflowCachingPolicy,
-) {
+async fn single_timer(#[case] core: FakeCore, #[case] evict: WorkflowCachingPolicy) {
     poll_and_reply(
         &core,
         evict,
@@ -179,7 +176,7 @@ async fn parallel_timer_test_across_wf_bridge(hist_batches: &[usize]) {
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
 #[tokio::test]
-async fn timer_cancel_test_across_wf_bridge(hist_batches: &[usize]) {
+async fn timer_cancel(hist_batches: &[usize]) {
     let wfid = "fake_wf_id";
     let timer_id = "wait_timer";
     let cancel_timer_id = "cancel_timer";

@@ -73,6 +73,7 @@ pub mod coresdk {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(f, "WfActivation(")?;
                 write!(f, "run_id: {}, ", self.run_id)?;
+                write!(f, "is_replaying: {}, ", self.is_replaying)?;
                 write!(f, "jobs: {})", self.jobs.display())
             }
         }

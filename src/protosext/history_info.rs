@@ -11,6 +11,10 @@ pub(crate) struct HistoryInfo {
     // which enforces some invariants regarding history structure that need to be upheld.
     events: Vec<HistoryEvent>,
     pub wf_task_count: usize,
+    /// When constructed, more events might be passed in then we actually used, because of the
+    /// `to_wf_task_num` parameters. Tracks the last wft started event id in the *original* history
+    /// that was passed in when this hist info was constructed. Helps with determining replay.
+    pub last_wft_started_id_in_hist: i64,
 }
 
 type Result<T, E = HistoryInfoError> = std::result::Result<T, E>;
@@ -32,13 +36,19 @@ pub enum HistoryInfoError {
 impl HistoryInfo {
     /// Constructs a new instance, retaining only enough events to reach the provided workflow
     /// task number. If not provided, all events are retained.
-    pub(crate) fn new_from_events(
-        events: &[HistoryEvent],
-        to_wf_task_num: Option<usize>,
-    ) -> Result<Self> {
+    pub(crate) fn new_from_history(h: &History, to_wf_task_num: Option<usize>) -> Result<Self> {
+        let events = &h.events;
         if events.is_empty() {
             return Err(HistoryInfoError::HistoryEndsUnexpectedly);
         }
+
+        // First find the latest WFT started in the original history
+        let last_wft_started_id_in_hist = events
+            .iter()
+            .rev()
+            .find(|e| e.event_type == EventType::WorkflowTaskStarted as i32)
+            .map(|e| e.event_id)
+            .ok_or(HistoryInfoError::HistoryEndsUnexpectedly)?;
 
         let to_wf_task_num = to_wf_task_num.unwrap_or(usize::MAX);
         let mut workflow_task_started_event_id = 0;
@@ -76,6 +86,7 @@ impl HistoryInfo {
                             workflow_task_started_event_id,
                             events,
                             wf_task_count,
+                            last_wft_started_id_in_hist,
                         });
                     }
                 } else if next_event.is_some() && !next_is_failed_or_timeout {
@@ -90,6 +101,7 @@ impl HistoryInfo {
                         workflow_task_started_event_id,
                         events,
                         wf_task_count,
+                        last_wft_started_id_in_hist,
                     });
                 }
                 // No more events
@@ -99,10 +111,6 @@ impl HistoryInfo {
             }
         }
         unreachable!()
-    }
-
-    pub(crate) fn new_from_history(h: &History, to_wf_task_num: Option<usize>) -> Result<Self> {
-        Self::new_from_events(&h.events, to_wf_task_num)
     }
 
     #[cfg(test)]

@@ -152,6 +152,9 @@ impl WorkflowManager {
         }
 
         let hist = &self.last_history_from_server;
+        // TODO: This may be totally fubar in that using current task number at all is always
+        //   going to be a problem when applying partial histories. Need to use ID instead and apply
+        //   events until we get to next WFT started
         let task_hist = HistoryInfo::new_from_history(hist, Some(self.current_wf_task_num))?;
         self.machines.apply_history_events(&task_hist)?;
         let activation = self.machines.get_wf_activation();
