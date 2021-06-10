@@ -55,6 +55,10 @@ pub struct WorkerConfig {
     /// poll for activity tasks. This option exists because
     #[builder(default = "false")]
     pub no_remote_activities: bool,
+    /// How long a workflow task is allowed to sit on the sticky queue before it is timed out
+    /// and moved to the non-sticky queue where it may be picked up by any worker.
+    #[builder(default = "Duration::from_secs(10)")]
+    pub sticky_queue_schedule_to_start_timeout: Duration,
 }
 
 impl WorkerConfigBuilder {
@@ -246,8 +250,9 @@ impl Worker {
                     name: sq.name.clone(),
                     kind: TaskQueueKind::Sticky as i32,
                 }),
-                // TODO: Set appropriately
-                schedule_to_start_timeout: Some(Duration::from_secs(60).into()),
+                schedule_to_start_timeout: Some(
+                    self.config.sticky_queue_schedule_to_start_timeout.into(),
+                ),
             });
         debug!("Sending commands to server: {:?}", &commands);
         sg.complete_workflow_task(task_token, commands, stq).await
