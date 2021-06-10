@@ -30,7 +30,7 @@ pub enum WorkflowError {
     /// Underlying error in state machines
     #[error("Underlying error in state machines: {0:?}")]
     UnderlyingMachinesError(#[from] WFMachinesError),
-    /// There was an error in the history associated with the workflow: {0:?}
+    /// There was an error in the history associated with the workflow
     #[error("There was an error in the history associated with the workflow: {0:?}")]
     HistoryError(#[from] HistoryInfoError),
     /// Error buffering commands coming in from the lang side. This shouldn't happen unless we've
@@ -53,7 +53,9 @@ pub(crate) enum CommandID {
 /// associated with that specific workflow run.
 pub(crate) struct WorkflowManager {
     machines: WorkflowMachines,
-    command_sink: Sender<Vec<WFCommand>>,
+    /// Is always set in normal operation. Optional to allow for unit testing with the test
+    /// workflow driver, which does not need to complete activations the normal way.
+    command_sink: Option<Sender<Vec<WFCommand>>>,
     /// The last recorded history we received from the server for this workflow run. This must be
     /// kept because the lang side polls & completes for every workflow task, but we do not need
     /// to poll the server that often during replay.
@@ -78,7 +80,21 @@ impl WorkflowManager {
         );
         Ok(Self {
             machines: state_machines,
-            command_sink: cmd_sink,
+            command_sink: Some(cmd_sink),
+            last_history_task_count: history.get_workflow_task_count(None)?,
+            last_history_from_server: history,
+            current_wf_task_num: 1,
+        })
+    }
+
+    #[cfg(test)]
+    pub fn new_from_machines(
+        history: History,
+        workflow_machines: WorkflowMachines,
+    ) -> Result<Self, HistoryInfoError> {
+        Ok(Self {
+            machines: workflow_machines,
+            command_sink: None,
             last_history_task_count: history.get_workflow_task_count(None)?,
             last_history_from_server: history,
             current_wf_task_num: 1,
@@ -147,10 +163,26 @@ impl WorkflowManager {
         Ok(activation)
     }
 
+    /// During testing it can be useful to run through all activations to simulate replay easily.
+    /// Returns the last produced activation, if at least one was produced.
+    ///
+    /// This is meant to be used with the TestWorkflowDriver which can automatically produce
+    /// commands.
+    #[cfg(test)]
+    pub fn process_all_activations(&mut self) -> Result<Option<WfActivation>> {
+        let mut last_act = None;
+        while let Some(act) = self.get_next_activation()? {
+            last_act = Some(act);
+        }
+        Ok(last_act)
+    }
+
     /// Feed the workflow machines new commands issued by the executing workflow code, and iterate
     /// the machines.
     pub fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<()> {
-        self.command_sink.send(cmds)?;
+        if let Some(cs) = self.command_sink.as_mut() {
+            cs.send(cmds)?;
+        }
         self.machines.iterate_machines()?;
         Ok(())
     }

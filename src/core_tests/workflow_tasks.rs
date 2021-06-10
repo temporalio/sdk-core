@@ -26,6 +26,7 @@ use crate::{
         },
     },
     test_help::canned_histories,
+    tracing_init,
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
     Core, CoreInitOptionsBuilder, WfActivationCompletion, WorkerConfigBuilder,
 };
@@ -180,6 +181,7 @@ async fn parallel_timer_test_across_wf_bridge(hist_batches: &[usize]) {
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
 #[tokio::test]
 async fn timer_cancel_test_across_wf_bridge(hist_batches: &[usize]) {
+    tracing_init();
     let wfid = "fake_wf_id";
     let timer_id = "wait_timer";
     let cancel_timer_id = "cancel_timer";

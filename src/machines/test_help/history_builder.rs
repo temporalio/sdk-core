@@ -3,7 +3,6 @@ use crate::protos::temporal::api::common::v1::{Payload, Payloads};
 use crate::protos::temporal::api::failure::v1::Failure;
 use crate::protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes;
 use crate::{
-    machines::{workflow_machines::WorkflowMachines, ProtoCommand},
     protos::temporal::api::{
         enums::v1::{EventType, WorkflowTaskFailedCause},
         history::v1::{
@@ -161,21 +160,6 @@ impl TestHistoryBuilder {
         History {
             events: self.events.clone(),
         }
-    }
-
-    /// Handle workflow task(s) using the provided [WorkflowMachines]. Will process as many workflow
-    /// tasks as the provided `to_wf_task_num` parameter.
-    ///
-    /// # Panics
-    /// * Can panic if the passed in machines have been manipulated outside of this builder
-    pub(crate) fn handle_workflow_task_take_cmds(
-        &self,
-        wf_machines: &mut WorkflowMachines,
-        to_wf_task_num: Option<usize>,
-    ) -> Result<Vec<ProtoCommand>> {
-        let histinfo = HistoryInfo::new_from_events(&self.events, to_wf_task_num)?;
-        wf_machines.apply_history_events(&histinfo)?;
-        Ok(wf_machines.get_commands())
     }
 
     pub fn get_orig_run_id(&self) -> &str {

@@ -427,7 +427,7 @@ impl WorkflowMachines {
 
     /// Given an event id (possibly zero) of the last successfully executed workflow task and an
     /// id of the last event, sets the ids internally and appropriately sets the replaying flag.
-    pub(crate) fn set_started_ids(
+    fn set_started_ids(
         &mut self,
         previous_started_event_id: i64,
         workflow_task_started_event_id: i64,
@@ -435,6 +435,7 @@ impl WorkflowMachines {
         self.previous_started_event_id = previous_started_event_id;
         self.workflow_task_started_event_id = workflow_task_started_event_id;
         self.replaying = previous_started_event_id > 0;
+        warn!("Replaying: {}", &self.replaying);
     }
 
     fn set_current_time(&mut self, time: SystemTime) -> SystemTime {

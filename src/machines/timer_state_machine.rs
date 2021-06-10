@@ -271,6 +271,7 @@ impl Cancellable for TimerMachine {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::workflow::WorkflowManager;
     use crate::{
         machines::{test_help::TestHistoryBuilder, workflow_machines::WorkflowMachines},
         test_help::canned_histories,
@@ -314,18 +315,17 @@ mod test {
 
     #[rstest]
     fn test_fire_happy_path_inc(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let (t, mut state_machines) = fire_happy_hist;
+        let (t, state_machines) = fire_happy_hist;
+        let mut wfm = WorkflowManager::new_from_machines(t.as_history(), state_machines).unwrap();
 
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
-            .unwrap();
-        state_machines.get_wf_activation();
+        wfm.get_next_activation().unwrap().unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
-            .unwrap();
-        state_machines.get_wf_activation();
+
+        wfm.get_next_activation().unwrap().unwrap();
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 1);
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -335,10 +335,10 @@ mod test {
 
     #[rstest]
     fn test_fire_happy_path_full(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let (t, mut state_machines) = fire_happy_hist;
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, None)
-            .unwrap();
+        let (t, state_machines) = fire_happy_hist;
+        let mut wfm = WorkflowManager::new_from_machines(t.as_history(), state_machines).unwrap();
+        wfm.process_all_activations().unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -357,17 +357,18 @@ mod test {
         });
 
         let t = canned_histories::single_timer("badid");
-        let mut state_machines = WorkflowMachines::new(
+        let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
             Box::new(twd).into(),
         );
 
-        assert!(t
-            .handle_workflow_task_take_cmds(&mut state_machines, None)
+        let mut wfm = WorkflowManager::new_from_machines(t.as_history(), state_machines).unwrap();
+        let act = wfm.process_all_activations();
+        assert!(act
             .unwrap_err()
             .to_string()
-            .contains("Timer fired event did not have expected timer id realid!"))
+            .contains("Timer fired event did not have expected timer id realid!"));
     }
 
     #[fixture]
@@ -400,35 +401,36 @@ mod test {
 
     #[rstest]
     fn incremental_cancellation(cancellation_setup: (TestHistoryBuilder, WorkflowMachines)) {
-        let (t, mut state_machines) = cancellation_setup;
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
-            .unwrap();
+        let (t, state_machines) = cancellation_setup;
+        let mut wfm = WorkflowManager::new_from_machines(t.as_history(), state_machines).unwrap();
+
+        wfm.get_next_activation().unwrap().unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
         assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
-            .unwrap();
+
+        wfm.get_next_activation().unwrap().unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].command_type, CommandType::CancelTimer as i32);
         assert_eq!(
             commands[1].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, None)
-            .unwrap();
+
+        assert!(wfm.get_next_activation().unwrap().is_none());
+        let commands = wfm.get_server_commands().commands;
         // There should be no commands - the wf completed at the same time the timer was cancelled
         assert_eq!(commands.len(), 0);
     }
 
     #[rstest]
     fn full_cancellation(cancellation_setup: (TestHistoryBuilder, WorkflowMachines)) {
-        let (t, mut state_machines) = cancellation_setup;
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, None)
-            .unwrap();
+        let (t, state_machines) = cancellation_setup;
+        let mut wfm = WorkflowManager::new_from_machines(t.as_history(), state_machines).unwrap();
+        wfm.process_all_activations().unwrap();
+        let commands = wfm.get_server_commands().commands;
         // There should be no commands - the wf completed at the same time the timer was cancelled
         assert_eq!(commands.len(), 0);
     }
@@ -450,16 +452,15 @@ mod test {
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
-
-        let mut state_machines = WorkflowMachines::new(
+        let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
             Box::new(twd).into(),
         );
+        let mut wfm = WorkflowManager::new_from_machines(t.as_history(), state_machines).unwrap();
 
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, None)
-            .unwrap();
+        wfm.process_all_activations().unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
     }
 }
