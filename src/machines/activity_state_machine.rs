@@ -712,10 +712,11 @@ mod test {
         let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
+            t.as_history_update(),
             Box::new(twd).into(),
         );
 
-        assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
+        assert_eq!(2, t.get_full_history_info().unwrap().wf_task_count());
         (t, state_machines)
     }
 
@@ -726,10 +727,11 @@ mod test {
         let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
+            t.as_history_update(),
             Box::new(twd).into(),
         );
 
-        assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
+        assert_eq!(2, t.get_full_history_info().unwrap().wf_task_count());
         (t, state_machines)
     }
 
@@ -751,7 +753,7 @@ mod test {
     )]
     fn single_activity_inc(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
         let (t, state_machines) = hist_batches;
-        let mut wfm = WorkflowManager::new_from_machines(t.as_history(), state_machines).unwrap();
+        let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
         wfm.get_next_activation().unwrap().unwrap();
         let commands = wfm.get_server_commands().commands;
@@ -777,7 +779,7 @@ mod test {
     )]
     fn single_activity_full(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
         let (t, state_machines) = hist_batches;
-        let mut wfm = WorkflowManager::new_from_machines(t.as_history(), state_machines).unwrap();
+        let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
         wfm.process_all_activations().unwrap();
         let commands = wfm.get_server_commands().commands;
@@ -810,9 +812,10 @@ mod test {
         let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
+            t.as_history_update(),
             Box::new(twd).into(),
         );
-        let mut wfm = WorkflowManager::new_from_machines(t.as_history(), state_machines).unwrap();
+        let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
         let activation = wfm.process_all_activations().unwrap().unwrap();
         let commands = wfm.get_server_commands().commands;

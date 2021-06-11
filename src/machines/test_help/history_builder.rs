@@ -1,19 +1,20 @@
 use super::Result;
-use crate::protos::temporal::api::common::v1::{Payload, Payloads};
-use crate::protos::temporal::api::failure::v1::Failure;
-use crate::protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes;
 use crate::{
+    machines::test_help::history_info::{HistoryInfo, HistoryInfoError},
+    protos::temporal::api::common::v1::{Payload, Payloads},
+    protos::temporal::api::failure::v1::Failure,
+    protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes,
     protos::temporal::api::{
         enums::v1::{EventType, WorkflowTaskFailedCause},
         history::v1::{
-            history_event::Attributes, ActivityTaskCancelRequestedEventAttributes, History,
-            HistoryEvent, TimerStartedEventAttributes, WorkflowExecutionCompletedEventAttributes,
+            history_event::Attributes, ActivityTaskCancelRequestedEventAttributes, HistoryEvent,
+            TimerStartedEventAttributes, WorkflowExecutionCompletedEventAttributes,
             WorkflowExecutionStartedEventAttributes, WorkflowTaskCompletedEventAttributes,
             WorkflowTaskFailedEventAttributes, WorkflowTaskScheduledEventAttributes,
             WorkflowTaskStartedEventAttributes, WorkflowTaskTimedOutEventAttributes,
         },
     },
-    protosext::{HistoryInfo, HistoryInfoError},
+    workflow::HistoryUpdate,
 };
 use anyhow::bail;
 use std::time::SystemTime;
@@ -26,6 +27,7 @@ pub struct TestHistoryBuilder {
     /// id
     current_event_id: i64,
     workflow_task_scheduled_event_id: i64,
+    final_workflow_task_started_event_id: i64,
     previous_started_event_id: i64,
     previous_task_completed_id: i64,
     original_run_id: String,
@@ -83,7 +85,8 @@ impl TestHistoryBuilder {
             scheduled_event_id: self.workflow_task_scheduled_event_id,
             ..Default::default()
         };
-        self.build_and_push_event(EventType::WorkflowTaskStarted, attrs.into());
+        self.final_workflow_task_started_event_id =
+            self.add_get_event_id(EventType::WorkflowTaskStarted, Some(attrs.into()));
     }
 
     pub fn add_workflow_task_completed(&mut self) {
@@ -156,21 +159,8 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowExecutionSignaled, attrs.into());
     }
 
-    pub fn as_history(&self) -> History {
-        History {
-            events: self.events.clone(),
-        }
-    }
-
-    pub fn as_partial_history(&self, to_event_id: i64) -> History {
-        History {
-            events: self
-                .events
-                .iter()
-                .take_while(|e| e.event_id <= to_event_id)
-                .cloned()
-                .collect(),
-        }
+    pub(crate) fn as_history_update(&self) -> HistoryUpdate {
+        self.get_full_history_info().unwrap().into()
     }
 
     pub fn get_orig_run_id(&self) -> &str {
@@ -179,18 +169,18 @@ impl TestHistoryBuilder {
 
     /// Iterates over the events in this builder to return a [HistoryInfo] including events up to
     /// the provided `to_wf_task_num`
-    // TODO: Could take enum that is either task number or ID, to make change easier
     pub(crate) fn get_history_info(
         &self,
         to_wf_task_num: usize,
     ) -> Result<HistoryInfo, HistoryInfoError> {
-        HistoryInfo::new_from_history(&self.as_history(), Some(to_wf_task_num))
+        // TODO: It is clear here why to_number sucks
+        HistoryInfo::new_from_history(&self.events.clone().into(), Some(to_wf_task_num))
     }
 
     /// Iterates over the events in this builder to return a [HistoryInfo] representing *all*
     /// events in the history
     pub(crate) fn get_full_history_info(&self) -> Result<HistoryInfo, HistoryInfoError> {
-        HistoryInfo::new_from_history(&self.as_history(), None)
+        HistoryInfo::new_from_history(&self.events.clone().into(), None)
     }
 
     fn build_and_push_event(&mut self, event_type: EventType, attribs: Attributes) {

@@ -1,7 +1,3 @@
-mod history_info;
-pub(crate) use history_info::HistoryInfo;
-pub(crate) use history_info::HistoryInfoError;
-
 use crate::{
     protos::coresdk::{
         workflow_commands::{workflow_command, WorkflowCommand},
@@ -23,6 +19,8 @@ pub struct ValidPollWFTQResponse {
     pub history: History,
     pub next_page_token: Vec<u8>,
     pub attempt: u32,
+    pub previous_started_event_id: i64,
+    pub started_event_id: i64,
 }
 
 impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
@@ -38,6 +36,8 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                 history: Some(history),
                 next_page_token,
                 attempt,
+                previous_started_event_id,
+                started_event_id,
                 ..
             } => {
                 if !next_page_token.is_empty() {
@@ -52,6 +52,8 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                     history,
                     next_page_token,
                     attempt: attempt as u32,
+                    previous_started_event_id,
+                    started_event_id,
                 })
             }
             _ => Err(value),

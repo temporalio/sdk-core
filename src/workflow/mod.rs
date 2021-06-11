@@ -1,18 +1,18 @@
 mod bridge;
 mod concurrency_manager;
 mod driven_workflow;
+mod history_update;
 
 pub(crate) use bridge::WorkflowBridge;
 pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
 pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFetcher};
+pub(crate) use history_update::HistoryUpdate;
 
 use crate::{
     machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
     protos::{
-        coresdk::workflow_activation::WfActivation,
-        temporal::api::{common::v1::WorkflowExecution, history::v1::History},
+        coresdk::workflow_activation::WfActivation, temporal::api::common::v1::WorkflowExecution,
     },
-    protosext::{HistoryInfo, HistoryInfoError},
 };
 use std::sync::mpsc::{SendError, Sender};
 
@@ -30,9 +30,6 @@ pub enum WorkflowError {
     /// Underlying error in state machines
     #[error("Underlying error in state machines: {0:?}")]
     UnderlyingMachinesError(#[from] WFMachinesError),
-    /// There was an error in the history associated with the workflow
-    #[error("There was an error in the history associated with the workflow: {0:?}")]
-    HistoryError(#[from] HistoryInfoError),
     /// Error buffering commands coming in from the lang side. This shouldn't happen unless we've
     /// run out of memory or there is a logic bug. Considered fatal.
     #[error("Internal error buffering workflow commands")]
@@ -56,55 +53,38 @@ pub(crate) struct WorkflowManager {
     /// Is always set in normal operation. Optional to allow for unit testing with the test
     /// workflow driver, which does not need to complete activations the normal way.
     command_sink: Option<Sender<Vec<WFCommand>>>,
-    /// The last recorded history we received from the server for this workflow run. This must be
-    /// kept because the lang side polls & completes for every workflow task, but we do not need
-    /// to poll the server that often during replay.
-    last_history_from_server: History,
-    last_history_task_count: usize,
-    /// The current workflow task number this run is on. Starts at one and monotonically increases.
-    current_wf_task_num: usize,
 }
 
 impl WorkflowManager {
     /// Create a new workflow manager given workflow history and execution info as would be found
     /// in [PollWorkflowTaskQueueResponse]
-    pub fn new(
-        history: History,
-        workflow_execution: WorkflowExecution,
-    ) -> Result<Self, HistoryInfoError> {
+    pub fn new(history: HistoryUpdate, workflow_execution: WorkflowExecution) -> Self {
         let (wfb, cmd_sink) = WorkflowBridge::new();
         let state_machines = WorkflowMachines::new(
             workflow_execution.workflow_id,
             workflow_execution.run_id,
+            history,
             Box::new(wfb).into(),
         );
-        Ok(Self {
+        Self {
             machines: state_machines,
             command_sink: Some(cmd_sink),
-            last_history_task_count: history.get_workflow_task_count(None)?,
-            last_history_from_server: history,
-            current_wf_task_num: 1,
-        })
+        }
     }
 
     #[cfg(test)]
-    pub fn new_from_machines(
-        history: History,
-        workflow_machines: WorkflowMachines,
-    ) -> Result<Self, HistoryInfoError> {
-        Ok(Self {
+    pub fn new_from_machines(workflow_machines: WorkflowMachines) -> Self {
+        Self {
             machines: workflow_machines,
             command_sink: None,
-            last_history_task_count: history.get_workflow_task_count(None)?,
-            last_history_from_server: history,
-            current_wf_task_num: 1,
-        })
+        }
     }
 }
 
 #[derive(Debug)]
 pub struct OutgoingServerCommands {
     pub commands: Vec<ProtoCommand>,
+    // TODO: Replace with is_replay, now that it'll work?
     pub at_final_workflow_task: bool,
 }
 
@@ -114,16 +94,16 @@ impl WorkflowManager {
     /// Should only be called when a workflow has caught up on replay (or is just beginning). It
     /// will return a workflow activation if one is needed, as well as a bool indicating if there
     /// are more workflow tasks that need to be performed to replay the remaining history.
-    pub fn feed_history_from_server(&mut self, hist: History) -> Result<Option<WfActivation>> {
-        let task_hist = HistoryInfo::new_from_history(&hist, Some(self.current_wf_task_num))?;
-        let task_ct = hist.get_workflow_task_count(None)?;
-        self.last_history_task_count = task_ct;
-        self.last_history_from_server = hist;
-        self.machines.apply_history_events(&task_hist)?;
-        let activation = self.machines.get_wf_activation();
+    pub fn feed_history_from_server(
+        &mut self,
+        update: HistoryUpdate,
+    ) -> Result<Option<WfActivation>> {
+        // TODO: Now we must replace current task num with id
+        //let task_hist = HistoryInfo::new_from_history(&hist, Some(self.current_wf_task_num))?;
+        // self.last_history_from_server = update;
 
-        self.current_wf_task_num += 1;
-        Ok(activation)
+        self.machines.new_history_from_server(update)?;
+        Ok(self.machines.get_wf_activation())
     }
 
     /// Fetch any pending commands that should be sent to the server, as well as if this workflow
@@ -131,14 +111,8 @@ impl WorkflowManager {
     pub fn get_server_commands(&self) -> OutgoingServerCommands {
         OutgoingServerCommands {
             commands: self.machines.get_commands(),
-            at_final_workflow_task: self.at_latest_wf_task(),
+            at_final_workflow_task: !self.machines.replaying,
         }
-    }
-
-    /// Return true if the workflow has reached the final workflow task in the latest history
-    /// we have from server
-    pub fn at_latest_wf_task(&self) -> bool {
-        self.current_wf_task_num >= self.last_history_task_count
     }
 
     /// Fetch the next workflow activation for this workflow if one is required. Callers may
@@ -151,19 +125,8 @@ impl WorkflowManager {
             return Ok(Some(act));
         }
 
-        let hist = &self.last_history_from_server;
-        // TODO: This may be totally fubar in that using current task number at all is always
-        //   going to be a problem when applying partial histories. Need to use ID instead and apply
-        //   events until we get to next WFT started
-        let task_hist = HistoryInfo::new_from_history(hist, Some(self.current_wf_task_num))?;
-        self.machines.apply_history_events(&task_hist)?;
-        let activation = self.machines.get_wf_activation();
-
-        if activation.is_some() {
-            self.current_wf_task_num += 1;
-        }
-
-        Ok(activation)
+        self.machines.apply_next_wft_from_history()?;
+        Ok(self.machines.get_wf_activation())
     }
 
     /// During testing it can be useful to run through all activations to simulate replay easily.

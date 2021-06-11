@@ -1,3 +1,4 @@
+use crate::workflow::HistoryUpdate;
 use crate::{
     protos::temporal::api::enums::v1::EventType,
     protos::temporal::api::history::v1::{History, HistoryEvent},
@@ -10,11 +11,7 @@ pub(crate) struct HistoryInfo {
     // This needs to stay private so the struct can't be instantiated outside of the constructor,
     // which enforces some invariants regarding history structure that need to be upheld.
     events: Vec<HistoryEvent>,
-    pub wf_task_count: usize,
-    /// When constructed, more events might be passed in then we actually used, because of the
-    /// `to_wf_task_num` parameters. Tracks the last wft started event id in the *original* history
-    /// that was passed in when this hist info was constructed. Helps with determining replay.
-    pub last_wft_started_id_in_hist: i64,
+    wf_task_count: usize,
 }
 
 type Result<T, E = HistoryInfoError> = std::result::Result<T, E>;
@@ -41,14 +38,6 @@ impl HistoryInfo {
         if events.is_empty() {
             return Err(HistoryInfoError::HistoryEndsUnexpectedly);
         }
-
-        // First find the latest WFT started in the original history
-        let last_wft_started_id_in_hist = events
-            .iter()
-            .rev()
-            .find(|e| e.event_type == EventType::WorkflowTaskStarted as i32)
-            .map(|e| e.event_id)
-            .ok_or(HistoryInfoError::HistoryEndsUnexpectedly)?;
 
         let to_wf_task_num = to_wf_task_num.unwrap_or(usize::MAX);
         let mut workflow_task_started_event_id = 0;
@@ -86,7 +75,6 @@ impl HistoryInfo {
                             workflow_task_started_event_id,
                             events,
                             wf_task_count,
-                            last_wft_started_id_in_hist,
                         });
                     }
                 } else if next_event.is_some() && !next_is_failed_or_timeout {
@@ -101,7 +89,6 @@ impl HistoryInfo {
                         workflow_task_started_event_id,
                         events,
                         wf_task_count,
-                        last_wft_started_id_in_hist,
                     });
                 }
                 // No more events
@@ -113,15 +100,23 @@ impl HistoryInfo {
         unreachable!()
     }
 
-    #[cfg(test)]
     pub(crate) fn events(&self) -> &[HistoryEvent] {
         &self.events
     }
 
-    pub(crate) fn events_after(&self, event_id: i64) -> impl Iterator<Item = &HistoryEvent> {
-        self.events
-            .iter()
-            .skip_while(move |e| e.event_id <= event_id)
+    /// Non-test code should *not* rely on just counting workflow tasks b/c of pagination
+    pub(crate) fn wf_task_count(&self) -> usize {
+        self.wf_task_count
+    }
+}
+
+impl From<HistoryInfo> for HistoryUpdate {
+    fn from(v: HistoryInfo) -> Self {
+        HistoryUpdate::new_from_events(
+            v.events,
+            v.previous_started_event_id,
+            v.workflow_task_started_event_id,
+        )
     }
 }
 

@@ -1,5 +1,6 @@
 //! Management of workflow tasks
 
+use crate::workflow::HistoryUpdate;
 use crate::{
     errors::WorkflowUpdateError,
     machines::{ProtoCommand, WFCommand},
@@ -305,7 +306,11 @@ impl WorkflowTaskManager {
 
         match self.workflow_machines.create_or_update(
             &run_id,
-            poll_wf_resp.history,
+            HistoryUpdate::new(
+                poll_wf_resp.history,
+                poll_wf_resp.previous_started_event_id,
+                poll_wf_resp.started_event_id,
+            ),
             poll_wf_resp.workflow_execution,
         ) {
             Ok(activation) => Ok(activation),

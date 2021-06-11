@@ -1,5 +1,5 @@
 use crate::{
-    machines::{test_help::TestHistoryBuilder, WorkflowMachines},
+    machines::WorkflowMachines,
     protos::coresdk::workflow_commands::StartTimer,
     protos::temporal::api::enums::v1::CommandType,
     test_help::canned_histories,
@@ -9,44 +9,49 @@ use crate::{
 use rstest::{fixture, rstest};
 use std::time::Duration;
 
-// TODO: Dedupe
-#[fixture]
-fn fire_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
-    let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
-        let timer = StartTimer {
-            timer_id: "timer1".to_string(),
-            start_to_fire_timeout: Some(Duration::from_secs(5).into()),
-        };
-        command_sink.timer(timer).await;
+fn timers_wf(num_timers: usize) -> TestWorkflowDriver {
+    TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
+        for tnum in 1..=num_timers {
+            let timer = StartTimer {
+                timer_id: format!("timer-{}", tnum),
+                start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+            };
+            command_sink.timer(timer).await;
+        }
         command_sink.complete_workflow_execution();
-    });
+    })
+}
 
-    let t = canned_histories::single_timer("timer1");
-    let state_machines = WorkflowMachines::new(
+#[fixture(num_timers = 1)]
+fn fire_happy_hist(num_timers: usize) -> WorkflowMachines {
+    let twd = timers_wf(num_timers);
+    // Add 1 b/c history takes # wf tasks, not timers
+    let t = canned_histories::long_sequential_timers(num_timers + 1);
+    WorkflowMachines::new(
         "wfid".to_string(),
         "runid".to_string(),
+        t.as_history_update(),
         Box::new(twd).into(),
-    );
-
-    assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
-    (t, state_machines)
+    )
 }
 
 #[rstest]
-fn replay_flag_is_correct(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-    let (t, state_machines) = fire_happy_hist;
-    let mut wfm = WorkflowManager::new_from_machines(t.as_history(), state_machines).unwrap();
+#[case::one_timer(fire_happy_hist(1), 1)]
+#[case::five_timers(fire_happy_hist(5), 5)]
+fn replay_flag_is_correct(#[case] setup: WorkflowMachines, #[case] num_timers: usize) {
+    let mut wfm = WorkflowManager::new_from_machines(setup);
 
-    let act = wfm.get_next_activation().unwrap().unwrap();
-    assert!(act.is_replaying);
-    let commands = wfm.get_server_commands().commands;
-    assert_eq!(commands.len(), 1);
-    assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+    for _ in 1..=num_timers {
+        let act = wfm.get_next_activation().unwrap().unwrap();
+        assert!(act.is_replaying);
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+    }
 
     let act = wfm.get_next_activation().unwrap().unwrap();
     assert!(!act.is_replaying);
     let commands = wfm.get_server_commands().commands;
-    assert_eq!(commands.len(), 1);
     assert_eq!(commands.len(), 1);
     assert_eq!(
         commands[0].command_type,
@@ -54,11 +59,18 @@ fn replay_flag_is_correct(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines
     );
 }
 
-#[rstest]
-fn replay_flag_is_correct_partial_history(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-    let (t, state_machines) = fire_happy_hist;
-    let mut wfm =
-        WorkflowManager::new_from_machines(t.as_partial_history(3), state_machines).unwrap();
+#[test]
+fn replay_flag_is_correct_partial_history() {
+    let twd = timers_wf(1);
+    // Add 1 b/c history takes # wf tasks, not timers
+    let t = canned_histories::long_sequential_timers(2);
+    let state_machines = WorkflowMachines::new(
+        "wfid".to_string(),
+        "runid".to_string(),
+        t.get_history_info(1).unwrap().into(),
+        Box::new(twd).into(),
+    );
+    let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
     let act = wfm.get_next_activation().unwrap().unwrap();
     assert!(!act.is_replaying);

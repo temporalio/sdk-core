@@ -1,10 +1,10 @@
 //! Ultimately it would be nice to make this generic and push it out into its own crate but
 //! doing so is nontrivial
 
+use crate::workflow::HistoryUpdate;
 use crate::{
     protos::coresdk::workflow_activation::WfActivation,
     protos::temporal::api::common::v1::WorkflowExecution,
-    protos::temporal::api::history::v1::History,
     workflow::{Result, WorkflowError, WorkflowManager},
 };
 use crossbeam::channel::{bounded, unbounded, Receiver, Select, Sender, TryRecvError};
@@ -32,7 +32,7 @@ type MachineMutationReceiver = Receiver<Box<dyn FnOnce(&mut WorkflowManager) + S
 /// This is the message sent from the concurrency manager to the dedicated thread in order to
 /// instantiate a new workflow manager
 struct MachineCreatorMsg {
-    history: History,
+    history: HistoryUpdate,
     workflow_execution: WorkflowExecution,
     resp_chan: Sender<MachineCreatorResponseMsg>,
     span: Span,
@@ -66,7 +66,7 @@ impl WorkflowConcurrencyManager {
     pub fn create_or_update(
         &self,
         run_id: &str,
-        history: History,
+        history: HistoryUpdate,
         workflow_execution: WorkflowExecution,
     ) -> Result<Option<WfActivation>> {
         let span = debug_span!("create_or_update machines", %run_id);
@@ -204,16 +204,14 @@ impl WorkflowConcurrencyManager {
                 span,
             }) => {
                 let _e = span.enter();
-                let send_this = match WorkflowManager::new(history, workflow_execution)
-                    .map_err(Into::into)
-                    .and_then(|mut wfm| Ok((wfm.get_next_activation()?, wfm)))
-                {
-                    Ok((Some(activation), wfm)) => {
+                let mut wfm = WorkflowManager::new(history, workflow_execution);
+                let send_this = match wfm.get_next_activation() {
+                    Ok(Some(activation)) => {
                         let (machine_sender, machine_rcv) = unbounded();
                         machine_rcvs.push((machine_rcv, wfm));
                         Ok((activation, machine_sender))
                     }
-                    Ok((None, wfm)) => Err(WorkflowError::MachineWasCreatedWithNoActivations {
+                    Ok(None) => Err(WorkflowError::MachineWasCreatedWithNoActivations {
                         run_id: wfm.machines.run_id,
                     }),
                     Err(e) => Err(e),
@@ -282,9 +280,11 @@ mod tests {
         let activation = mgr
             .create_or_update(
                 "some_run_id",
-                History {
-                    events: t.get_history_info(1).unwrap().events().to_vec(),
-                },
+                HistoryUpdate::new_from_events(
+                    t.get_history_info(1).unwrap().events().to_vec(),
+                    0,
+                    3,
+                ),
                 WorkflowExecution {
                     workflow_id: "wid".to_string(),
                     run_id: "rid".to_string(),
@@ -299,8 +299,15 @@ mod tests {
     #[test]
     fn returns_errors_on_creation() {
         let mgr = WorkflowConcurrencyManager::new();
-        let res = mgr.create_or_update("some_run_id", Default::default(), Default::default());
-        // Should whine that the history is empty
-        assert_matches!(res.unwrap_err(), WorkflowError::HistoryError(_))
+        let res = mgr.create_or_update(
+            "some_run_id",
+            HistoryUpdate::new(History::default(), 0, 0),
+            Default::default(),
+        );
+        // Should whine that the machines have nothing to do (history empty)
+        assert_matches!(
+            res.unwrap_err(),
+            WorkflowError::MachineWasCreatedWithNoActivations { .. }
+        )
     }
 }
