@@ -76,7 +76,13 @@ impl HistoryUpdate {
             if !should_pop(e) {
                 break;
             }
-            events_to_next_wft_started.push(self.events.pop_front().unwrap());
+            // Unwrap OK because we have just peeked it
+            let popped = self.events.pop_front().unwrap();
+            // It's possible to have gotten a new history update without eviction (ex: unhandled
+            // command on completion), where we may need to skip events we already handled.
+            if popped.event_id > from_wft_started_id {
+                events_to_next_wft_started.push(popped);
+            }
         }
 
         events_to_next_wft_started
@@ -131,5 +137,15 @@ mod tests {
         let seq_2 = update.take_next_wft_sequence(3);
         assert_eq!(seq_2.len(), 11);
         assert_eq!(seq_2.last().unwrap().event_id, 14);
+    }
+
+    #[test]
+    fn skips_events_before_desired_wft() {
+        let timer_hist = canned_histories::single_timer("t");
+        let mut update = timer_hist.as_history_update();
+        // We haven't processed the first 3 events, but we should still only get the second sequence
+        let seq_2 = update.take_next_wft_sequence(3);
+        assert_eq!(seq_2.len(), 5);
+        assert_eq!(seq_2.last().unwrap().event_id, 8);
     }
 }

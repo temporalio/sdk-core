@@ -44,7 +44,9 @@ pub(crate) struct WorkflowMachines {
     last_history_from_server: HistoryUpdate,
     /// EventId of the last handled WorkflowTaskStarted event
     current_started_event_id: i64,
-    /// The event id of the next workflow task started event that
+    /// The event id of the next workflow task started event that the machines need to process.
+    /// Eventually, this number should reach the started id in the latest history update, but
+    /// we must incrementally apply the history while communicating with lang.
     next_started_event_id: i64,
     /// True if the workflow is replaying from history
     pub replaying: bool,
