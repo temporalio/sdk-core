@@ -84,8 +84,7 @@ impl WorkflowManager {
 #[derive(Debug)]
 pub struct OutgoingServerCommands {
     pub commands: Vec<ProtoCommand>,
-    // TODO: Replace with is_replay, now that it'll work?
-    pub at_final_workflow_task: bool,
+    pub replaying: bool,
 }
 
 impl WorkflowManager {
@@ -98,10 +97,6 @@ impl WorkflowManager {
         &mut self,
         update: HistoryUpdate,
     ) -> Result<Option<WfActivation>> {
-        // TODO: Now we must replace current task num with id
-        //let task_hist = HistoryInfo::new_from_history(&hist, Some(self.current_wf_task_num))?;
-        // self.last_history_from_server = update;
-
         self.machines.new_history_from_server(update)?;
         Ok(self.machines.get_wf_activation())
     }
@@ -111,7 +106,7 @@ impl WorkflowManager {
     pub fn get_server_commands(&self) -> OutgoingServerCommands {
         OutgoingServerCommands {
             commands: self.machines.get_commands(),
-            at_final_workflow_task: !self.machines.replaying,
+            replaying: self.machines.replaying,
         }
     }
 

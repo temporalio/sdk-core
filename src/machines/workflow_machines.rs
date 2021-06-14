@@ -139,7 +139,6 @@ pub enum WFMachinesError {
 }
 
 impl WorkflowMachines {
-    // TODO: Maybe collapse wfid and run id into history update
     pub(crate) fn new(
         workflow_id: String,
         run_id: String,
@@ -376,7 +375,6 @@ impl WorkflowMachines {
                 }
             }
             Some(EventType::WorkflowTaskScheduled) => {
-                // TODO: Should be next wft to process id?
                 let wf_task_sm = WorkflowTaskMachine::new(self.next_started_event_id);
                 let key = self.all_machines.insert(Box::new(wf_task_sm));
                 self.submachine_handle_event(key, event, has_next_event)?;

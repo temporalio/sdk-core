@@ -67,6 +67,7 @@ fn replay_flag_is_correct_partial_history() {
     let state_machines = WorkflowMachines::new(
         "wfid".to_string(),
         "runid".to_string(),
+        // Only provide history up to the first workflow task
         t.get_history_info(1).unwrap().into(),
         Box::new(twd).into(),
     );

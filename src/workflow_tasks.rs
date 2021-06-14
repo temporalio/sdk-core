@@ -239,11 +239,8 @@ impl WorkflowTaskManager {
         // as doing so may have altered the outgoing commands.
         let server_cmds = self.access_wf_machine(run_id, |w| Ok(w.get_server_commands()))?;
         // We only actually want to send commands back to the server if there are no more pending
-        // activations and we are at the final workflow task (IE: the lang SDK has caught up on
-        // replay)
-        let ret = if !self.pending_activations.has_pending(run_id)
-            && server_cmds.at_final_workflow_task
-        {
+        // activations and we are caught up on replay.
+        let ret = if !self.pending_activations.has_pending(run_id) && !server_cmds.replaying {
             Some(ServerCommandsWithWorkflowInfo {
                 task_token,
                 task_queue,

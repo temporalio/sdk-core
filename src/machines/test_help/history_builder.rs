@@ -173,7 +173,6 @@ impl TestHistoryBuilder {
         &self,
         to_wf_task_num: usize,
     ) -> Result<HistoryInfo, HistoryInfoError> {
-        // TODO: It is clear here why to_number sucks
         HistoryInfo::new_from_history(&self.events.clone().into(), Some(to_wf_task_num))
     }
 
