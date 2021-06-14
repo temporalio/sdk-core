@@ -21,8 +21,7 @@ use crate::{
             history::v1::{history_event, HistoryEvent},
         },
     },
-    protosext::HistoryInfo,
-    workflow::{CommandID, DrivenWorkflow, WorkflowFetcher},
+    workflow::{CommandID, DrivenWorkflow, HistoryUpdate, WorkflowFetcher},
 };
 use slotmap::SlotMap;
 use std::{
@@ -39,17 +38,18 @@ type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 /// comprise the logic of an executing workflow. One instance will exist per currently executing
 /// (or cached) workflow on the worker.
 pub(crate) struct WorkflowMachines {
-    /// The event id of the last wf task started event in the history which is expected to be
-    /// [current_started_event_id] except during replay.
-    workflow_task_started_event_id: i64,
+    /// The last recorded history we received from the server for this workflow run. This must be
+    /// kept because the lang side polls & completes for every workflow task, but we do not need
+    /// to poll the server that often during replay.
+    last_history_from_server: HistoryUpdate,
     /// EventId of the last handled WorkflowTaskStarted event
     current_started_event_id: i64,
-    /// The event id of the started event of the last successfully executed workflow task
-    previous_started_event_id: i64,
+    /// The event id of the next workflow task started event that the machines need to process.
+    /// Eventually, this number should reach the started id in the latest history update, but
+    /// we must incrementally apply the history while communicating with lang.
+    next_started_event_id: i64,
     /// True if the workflow is replaying from history
-    /// TODO: This seems wrong when I try to use it in contexts I expect it to return true, and
-    ///   is currently unused, but some unimplemented state machines need it so kept for now.
-    replaying: bool,
+    pub replaying: bool,
     /// Workflow identifier
     pub workflow_id: String,
     /// Identifies the current run
@@ -141,16 +141,24 @@ pub enum WFMachinesError {
 }
 
 impl WorkflowMachines {
-    pub(crate) fn new(workflow_id: String, run_id: String, driven_wf: DrivenWorkflow) -> Self {
+    pub(crate) fn new(
+        workflow_id: String,
+        run_id: String,
+        history: HistoryUpdate,
+        driven_wf: DrivenWorkflow,
+    ) -> Self {
+        let replaying = history.previous_started_event_id > 0;
         Self {
+            last_history_from_server: history,
             workflow_id,
             run_id,
             drive_me: driven_wf,
             // In an ideal world one could say ..Default::default() here and it'd still work.
-            workflow_task_started_event_id: 0,
             current_started_event_id: 0,
-            previous_started_event_id: 0,
-            replaying: false,
+            next_started_event_id: 0,
+            // Default to true since application of events will appropriately set false if needed
+            // replaying: true,
+            replaying,
             current_wf_time: None,
             all_machines: Default::default(),
             machines_by_event_id: Default::default(),
@@ -160,8 +168,15 @@ impl WorkflowMachines {
         }
     }
 
+    pub(crate) fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
+        self.last_history_from_server = update;
+        self.replaying = self.last_history_from_server.previous_started_event_id > 0;
+        self.apply_next_wft_from_history()?;
+        Ok(())
+    }
+
     /// Returns the id of the last seen WorkflowTaskStarted event
-    pub(crate) fn get_last_started_event_id(&self) -> i64 {
+    pub(crate) fn last_handled_wft_started_id(&self) -> i64 {
         self.current_started_event_id
     }
 
@@ -184,7 +199,8 @@ impl WorkflowMachines {
         })?;
 
         if self.replaying
-            && self.current_started_event_id >= self.previous_started_event_id
+            && self.current_started_event_id
+                >= self.last_history_from_server.previous_started_event_id
             && event_type != EventType::WorkflowTaskCompleted
         {
             // Replay is finished
@@ -361,7 +377,7 @@ impl WorkflowMachines {
                 }
             }
             Some(EventType::WorkflowTaskScheduled) => {
-                let wf_task_sm = WorkflowTaskMachine::new(self.workflow_task_started_event_id);
+                let wf_task_sm = WorkflowTaskMachine::new(self.next_started_event_id);
                 let key = self.all_machines.insert(Box::new(wf_task_sm));
                 self.submachine_handle_event(key, event, has_next_event)?;
                 self.machines_by_event_id.insert(event.event_id, key);
@@ -425,18 +441,6 @@ impl WorkflowMachines {
         }
     }
 
-    /// Given an event id (possibly zero) of the last successfully executed workflow task and an
-    /// id of the last event, sets the ids internally and appropriately sets the replaying flag.
-    pub(crate) fn set_started_ids(
-        &mut self,
-        previous_started_event_id: i64,
-        workflow_task_started_event_id: i64,
-    ) {
-        self.previous_started_event_id = previous_started_event_id;
-        self.workflow_task_started_event_id = workflow_task_started_event_id;
-        self.replaying = previous_started_event_id > 0;
-    }
-
     fn set_current_time(&mut self, time: SystemTime) -> SystemTime {
         if self.current_wf_time.map(|t| t < time).unwrap_or(true) {
             self.current_wf_time = Some(time);
@@ -461,18 +465,18 @@ impl WorkflowMachines {
     }
 
     /// Apply events from history to this machines instance
-    pub(crate) fn apply_history_events(&mut self, history_info: &HistoryInfo) -> Result<()> {
-        let events = history_info.events_after(self.get_last_started_event_id());
-        let mut history = events.peekable();
+    pub(crate) fn apply_next_wft_from_history(&mut self) -> Result<()> {
+        let events = self
+            .last_history_from_server
+            .take_next_wft_sequence(self.last_handled_wft_started_id());
 
-        self.set_started_ids(
-            history_info.previous_started_event_id,
-            history_info.workflow_task_started_event_id,
-        );
+        if let Some(last_event) = events.last() {
+            if last_event.event_type == EventType::WorkflowTaskStarted as i32 {
+                self.next_started_event_id = last_event.event_id;
+            }
+        }
 
-        // HistoryInfo's constructor enforces some rules about the structure of history that
-        // could be enforced here, but needn't be because they have already been guaranteed by it.
-        // See the errors that can be returned from [HistoryInfo::new_from_events] for detail.
+        let mut history = events.iter().peekable();
 
         while let Some(event) = history.next() {
             let next_event = history.peek();

@@ -275,12 +275,13 @@ mod test {
         machines::{test_help::TestHistoryBuilder, workflow_machines::WorkflowMachines},
         test_help::canned_histories,
         test_workflow_driver::{CommandSender, TestWorkflowDriver},
+        workflow::WorkflowManager,
     };
     use rstest::{fixture, rstest};
     use std::time::Duration;
 
     #[fixture]
-    fn fire_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
+    fn fire_happy_hist() -> WorkflowMachines {
         /*
             We have two versions of this test, one which processes the history in two calls, and one
             which replays all of it in one go. Both versions must produce the same two activations.
@@ -305,27 +306,26 @@ mod test {
         let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
+            t.as_history_update(),
             Box::new(twd).into(),
         );
 
-        assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
-        (t, state_machines)
+        assert_eq!(2, t.get_full_history_info().unwrap().wf_task_count());
+        state_machines
     }
 
     #[rstest]
-    fn test_fire_happy_path_inc(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let (t, mut state_machines) = fire_happy_hist;
+    fn test_fire_happy_path_inc(fire_happy_hist: WorkflowMachines) {
+        let mut wfm = WorkflowManager::new_from_machines(fire_happy_hist);
 
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
-            .unwrap();
-        state_machines.get_wf_activation();
+        wfm.get_next_activation().unwrap().unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
-            .unwrap();
-        state_machines.get_wf_activation();
+
+        wfm.get_next_activation().unwrap().unwrap();
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 1);
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -334,11 +334,10 @@ mod test {
     }
 
     #[rstest]
-    fn test_fire_happy_path_full(fire_happy_hist: (TestHistoryBuilder, WorkflowMachines)) {
-        let (t, mut state_machines) = fire_happy_hist;
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, None)
-            .unwrap();
+    fn test_fire_happy_path_full(fire_happy_hist: WorkflowMachines) {
+        let mut wfm = WorkflowManager::new_from_machines(fire_happy_hist);
+        wfm.process_all_activations().unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -357,21 +356,23 @@ mod test {
         });
 
         let t = canned_histories::single_timer("badid");
-        let mut state_machines = WorkflowMachines::new(
+        let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
+            t.as_history_update(),
             Box::new(twd).into(),
         );
 
-        assert!(t
-            .handle_workflow_task_take_cmds(&mut state_machines, None)
+        let mut wfm = WorkflowManager::new_from_machines(state_machines);
+        let act = wfm.process_all_activations();
+        assert!(act
             .unwrap_err()
             .to_string()
-            .contains("Timer fired event did not have expected timer id realid!"))
+            .contains("Timer fired event did not have expected timer id realid!"));
     }
 
     #[fixture]
-    fn cancellation_setup() -> (TestHistoryBuilder, WorkflowMachines) {
+    fn cancellation_setup() -> WorkflowMachines {
         let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
             let cancel_timer_fut = cmd_sink.timer(StartTimer {
                 timer_id: "cancel_timer".to_string(),
@@ -390,45 +391,44 @@ mod test {
         });
 
         let t = canned_histories::cancel_timer("wait_timer", "cancel_timer");
-        let state_machines = WorkflowMachines::new(
+        WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
+            t.as_history_update(),
             Box::new(twd).into(),
-        );
-        (t, state_machines)
+        )
     }
 
     #[rstest]
-    fn incremental_cancellation(cancellation_setup: (TestHistoryBuilder, WorkflowMachines)) {
-        let (t, mut state_machines) = cancellation_setup;
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
-            .unwrap();
+    fn incremental_cancellation(cancellation_setup: WorkflowMachines) {
+        let mut wfm = WorkflowManager::new_from_machines(cancellation_setup);
+
+        wfm.get_next_activation().unwrap().unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
         assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
-            .unwrap();
+
+        wfm.get_next_activation().unwrap().unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].command_type, CommandType::CancelTimer as i32);
         assert_eq!(
             commands[1].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, None)
-            .unwrap();
+
+        assert!(wfm.get_next_activation().unwrap().is_none());
+        let commands = wfm.get_server_commands().commands;
         // There should be no commands - the wf completed at the same time the timer was cancelled
         assert_eq!(commands.len(), 0);
     }
 
     #[rstest]
-    fn full_cancellation(cancellation_setup: (TestHistoryBuilder, WorkflowMachines)) {
-        let (t, mut state_machines) = cancellation_setup;
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, None)
-            .unwrap();
+    fn full_cancellation(cancellation_setup: WorkflowMachines) {
+        let mut wfm = WorkflowManager::new_from_machines(cancellation_setup);
+        wfm.process_all_activations().unwrap();
+        let commands = wfm.get_server_commands().commands;
         // There should be no commands - the wf completed at the same time the timer was cancelled
         assert_eq!(commands.len(), 0);
     }
@@ -450,16 +450,16 @@ mod test {
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
-
-        let mut state_machines = WorkflowMachines::new(
+        let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
+            t.as_history_update(),
             Box::new(twd).into(),
         );
+        let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, None)
-            .unwrap();
+        wfm.process_all_activations().unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
     }
 }

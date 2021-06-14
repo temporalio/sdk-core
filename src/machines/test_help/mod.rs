@@ -5,6 +5,7 @@ pub const TEST_Q: &str = "q";
 
 mod async_workflow_driver;
 mod history_builder;
+mod history_info;
 mod transition_coverage;
 
 pub(crate) use history_builder::TestHistoryBuilder;
@@ -173,10 +174,10 @@ pub fn augment_multihist_mock_sg(
         // Ensure no response batch is trying to return more tasks than the history contains
         for rb_wf_num in &hist.response_batches {
             assert!(
-                *rb_wf_num <= full_hist_info.wf_task_count,
+                *rb_wf_num <= full_hist_info.wf_task_count(),
                 "Wf task count {} is not <= total task count {}",
                 rb_wf_num,
-                full_hist_info.wf_task_count
+                full_hist_info.wf_task_count()
             );
         }
         // Verify response batches only ever return longer histories (IE: Are sorted ascending)
@@ -315,7 +316,8 @@ pub fn hist_to_poll_resp(
         workflow_id: wf_id,
         run_id: run_id.to_string(),
     };
-    let batch = t.get_history_info(to_task_num).unwrap().events().to_vec();
+    let hist_info = t.get_history_info(to_task_num).unwrap();
+    let batch = hist_info.events().to_vec();
     let task_token: [u8; 16] = thread_rng().gen();
     PollWorkflowTaskQueueResponse {
         history: Some(History { events: batch }),
@@ -325,6 +327,8 @@ pub fn hist_to_poll_resp(
             name: task_queue,
             kind: TaskQueueKind::Normal as i32,
         }),
+        previous_started_event_id: hist_info.previous_started_event_id,
+        started_event_id: hist_info.workflow_task_started_event_id,
         ..Default::default()
     }
 }

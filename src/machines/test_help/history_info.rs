@@ -1,3 +1,4 @@
+use crate::workflow::HistoryUpdate;
 use crate::{
     protos::temporal::api::enums::v1::EventType,
     protos::temporal::api::history::v1::{History, HistoryEvent},
@@ -10,7 +11,7 @@ pub(crate) struct HistoryInfo {
     // This needs to stay private so the struct can't be instantiated outside of the constructor,
     // which enforces some invariants regarding history structure that need to be upheld.
     events: Vec<HistoryEvent>,
-    pub wf_task_count: usize,
+    wf_task_count: usize,
 }
 
 type Result<T, E = HistoryInfoError> = std::result::Result<T, E>;
@@ -32,10 +33,8 @@ pub enum HistoryInfoError {
 impl HistoryInfo {
     /// Constructs a new instance, retaining only enough events to reach the provided workflow
     /// task number. If not provided, all events are retained.
-    pub(crate) fn new_from_events(
-        events: &[HistoryEvent],
-        to_wf_task_num: Option<usize>,
-    ) -> Result<Self> {
+    pub(crate) fn new_from_history(h: &History, to_wf_task_num: Option<usize>) -> Result<Self> {
+        let events = &h.events;
         if events.is_empty() {
             return Err(HistoryInfoError::HistoryEndsUnexpectedly);
         }
@@ -101,19 +100,23 @@ impl HistoryInfo {
         unreachable!()
     }
 
-    pub(crate) fn new_from_history(h: &History, to_wf_task_num: Option<usize>) -> Result<Self> {
-        Self::new_from_events(&h.events, to_wf_task_num)
-    }
-
-    #[cfg(test)]
     pub(crate) fn events(&self) -> &[HistoryEvent] {
         &self.events
     }
 
-    pub(crate) fn events_after(&self, event_id: i64) -> impl Iterator<Item = &HistoryEvent> {
-        self.events
-            .iter()
-            .skip_while(move |e| e.event_id <= event_id)
+    /// Non-test code should *not* rely on just counting workflow tasks b/c of pagination
+    pub(crate) fn wf_task_count(&self) -> usize {
+        self.wf_task_count
+    }
+}
+
+impl From<HistoryInfo> for HistoryUpdate {
+    fn from(v: HistoryInfo) -> Self {
+        HistoryUpdate::new_from_events(
+            v.events,
+            v.previous_started_event_id,
+            v.workflow_task_started_event_id,
+        )
     }
 }
 

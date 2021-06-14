@@ -1,4 +1,5 @@
 mod activity_tasks;
+mod replay_flag;
 mod workers;
 mod workflow_tasks;
 

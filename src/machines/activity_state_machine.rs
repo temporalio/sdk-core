@@ -693,6 +693,7 @@ fn convert_payloads(
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::workflow::WorkflowManager;
     use crate::{
         machines::{test_help::TestHistoryBuilder, workflow_machines::WorkflowMachines},
         protos::coresdk::{
@@ -711,10 +712,11 @@ mod test {
         let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
+            t.as_history_update(),
             Box::new(twd).into(),
         );
 
-        assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
+        assert_eq!(2, t.get_full_history_info().unwrap().wf_task_count());
         (t, state_machines)
     }
 
@@ -725,10 +727,11 @@ mod test {
         let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
+            t.as_history_update(),
             Box::new(twd).into(),
         );
 
-        assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
+        assert_eq!(2, t.get_full_history_info().unwrap().wf_task_count());
         (t, state_machines)
     }
 
@@ -749,21 +752,19 @@ mod test {
         case::failure(activity_failure_hist())
     )]
     fn single_activity_inc(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
-        let (t, mut state_machines) = hist_batches;
+        let (t, state_machines) = hist_batches;
+        let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
-            .unwrap();
-        state_machines.get_wf_activation();
+        wfm.get_next_activation().unwrap().unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
             CommandType::ScheduleActivityTask as i32
         );
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
-            .unwrap();
-        state_machines.get_wf_activation();
+
+        wfm.get_next_activation().unwrap().unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -777,10 +778,11 @@ mod test {
         case::failure(activity_failure_hist())
     )]
     fn single_activity_full(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
-        let (t, mut state_machines) = hist_batches;
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, None)
-            .unwrap();
+        let (t, state_machines) = hist_batches;
+        let mut wfm = WorkflowManager::new_from_machines(state_machines);
+
+        wfm.process_all_activations().unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -807,17 +809,16 @@ mod test {
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
 
-        let mut state_machines = WorkflowMachines::new(
+        let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
+            t.as_history_update(),
             Box::new(twd).into(),
         );
+        let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, None)
-            .unwrap();
-        assert_eq!(commands.len(), 0);
-        let activation = state_machines.get_wf_activation().unwrap();
+        let activation = wfm.process_all_activations().unwrap().unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_matches!(
             activation.jobs.as_slice(),
             [

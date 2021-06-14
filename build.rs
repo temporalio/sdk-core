@@ -11,6 +11,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[derive(::derive_more::From)]",
         )
         .type_attribute(
+            "temporal.api.history.v1.History",
+            "#[derive(::derive_more::From)]",
+        )
+        .type_attribute(
             "temporal.api.command.v1.Command.attributes",
             "#[derive(::derive_more::From)]",
         )
