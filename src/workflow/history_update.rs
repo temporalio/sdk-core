@@ -48,8 +48,13 @@ impl HistoryUpdate {
     /// Events are *consumed* by this process, to keep things efficient in workflow machines
     pub fn take_next_wft_sequence(&mut self, from_wft_started_id: i64) -> Vec<HistoryEvent> {
         let mut events_to_next_wft_started = vec![];
-        let mut saw_next_wft = false;
 
+        // This flag tracks if, while determining events to be returned, we have seen the next
+        // logically significant WFT started event which follows the one that was passed in as a
+        // parameter. If a WFT fails or times out, it is not significant. So we will stop returning
+        // events (exclusive) as soon as we see an event following a WFT started that is *not*
+        // failed or timed out.
+        let mut saw_next_wft = false;
         let mut should_pop = |e: &HistoryEvent| {
             if e.event_id <= from_wft_started_id {
                 return true;
