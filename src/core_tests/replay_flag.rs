@@ -39,6 +39,9 @@ fn fire_happy_hist(num_timers: usize) -> WorkflowMachines {
 #[case::one_timer(fire_happy_hist(1), 1)]
 #[case::five_timers(fire_happy_hist(5), 5)]
 fn replay_flag_is_correct(#[case] setup: WorkflowMachines, #[case] num_timers: usize) {
+    // Verify replay flag is correct by constructing a workflow manager that already has a complete
+    // history fed into it. The first (few, depending on test a params) activation(s) will be under
+    // replay while the last should not
     let mut wfm = WorkflowManager::new_from_machines(setup);
 
     for _ in 1..=num_timers {
