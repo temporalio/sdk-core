@@ -59,7 +59,9 @@ impl PendingActivations {
             });
 
             let maybe_key = maybe_key.map(|pos| qq.remove(pos).unwrap());
-            inner.by_task_queue.insert(task_queue.to_owned(), qq);
+            if !qq.is_empty() {
+                inner.by_task_queue.insert(task_queue.to_owned(), qq);
+            }
             if let Some(key) = maybe_key {
                 if let Some(pa) = inner.activations.remove(key) {
                     inner.by_run_id.remove(&pa.run_id);
@@ -229,8 +231,10 @@ mod tests {
         assert_eq!(&pas.pop(TQ2).unwrap().run_id, "2_1");
         assert_eq!(&pas.pop(TQ).unwrap().run_id, "1_2");
         assert_eq!(pas.pop(TQ), None);
+        assert_eq!(pas.inner.read().by_task_queue.get(TQ), None);
         assert_eq!(&pas.pop(TQ2).unwrap().run_id, "2_2");
         assert_eq!(pas.pop(TQ2), None);
+        assert_eq!(pas.inner.read().by_task_queue.get(TQ2), None);
     }
 
     #[rstest]

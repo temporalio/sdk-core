@@ -17,31 +17,15 @@ use tokio::time::sleep;
 
 #[tokio::test]
 async fn after_shutdown_server_is_not_polled() {
-    let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("fake_timer");
-    let core = build_fake_core(wfid, t, &[1]);
-    let res = core.inner.poll_workflow_task("q").await.unwrap();
+    let core = build_fake_core("fake_wf_id", t, &[1]);
+    let res = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
 
     core.inner.shutdown().await;
     assert_matches!(
-        core.inner.poll_workflow_task("q").await.unwrap_err(),
+        core.inner.poll_workflow_task(TEST_Q).await.unwrap_err(),
         PollWfError::ShutDown
-    );
-}
-
-#[tokio::test]
-async fn after_shutdown_of_worker_queue_not_registered() {
-    let wfid = "fake_wf_id";
-    let t = canned_histories::single_timer("fake_timer");
-    let core = build_fake_core(wfid, t, &[1]);
-    let res = core.inner.poll_workflow_task("q").await.unwrap();
-    assert_eq!(res.jobs.len(), 1);
-
-    core.inner.shutdown_worker("q").await;
-    assert_matches!(
-        core.inner.poll_workflow_task("q").await.unwrap_err(),
-        PollWfError::NoWorkerForQueue(_)
     );
 }
 

@@ -69,7 +69,7 @@ impl ActivityTaskManager {
                 }
                 // The only situation where the next cancel would return none is if the manager
                 // was dropped, which can only happen on shutdown.
-                return Err(PollActivityError::ShutDown);
+                Err(PollActivityError::ShutDown)
             }
             work = worker.activity_poll() => {
                 match work {

@@ -1081,6 +1081,7 @@ async fn lots_of_workflows() {
             .await
             .get(TEST_Q)
             .unwrap()
+            .unwrap()
             .outstanding_workflow_tasks(),
         0
     );

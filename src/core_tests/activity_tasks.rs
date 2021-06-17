@@ -347,6 +347,7 @@ async fn many_concurrent_heartbeat_cancels() {
             .await
             .get(TEST_Q)
             .unwrap()
+            .unwrap()
             .outstanding_activities(),
         0
     );

@@ -141,7 +141,21 @@ impl Worker {
             config,
         }
     }
-    pub(crate) async fn shutdown(self) {
+
+    /// Tell the worker to begin the shutdown process. Can be used before [await_shutdown] if
+    /// polling should be ceased before it is possible to consume the worker instance.
+    pub(crate) fn notify_shutdown(&self) {
+        self.wf_task_poll_buffer.notify_shutdown();
+        if let Some(sq) = self.sticky_queue.as_ref() {
+            sq.poll_buffer.notify_shutdown();
+        }
+        if let Some(b) = self.at_task_poll_buffer.as_ref() {
+            b.notify_shutdown();
+        }
+    }
+
+    /// Resolves when shutdown of the worker is complete
+    pub(crate) async fn await_shutdown(self) {
         self.wf_task_poll_buffer.shutdown().await;
         if let Some(sq) = self.sticky_queue {
             sq.poll_buffer.shutdown().await;
@@ -187,7 +201,10 @@ impl Worker {
             .await
             .expect("outstanding activity semaphore not closed");
 
-        let res = poll_buff.poll().await?;
+        let res = poll_buff
+            .poll()
+            .await
+            .ok_or(PollActivityError::ShutDown)??;
         if res == PollActivityTaskQueueResponse::default() {
             return Ok(None);
         }
@@ -219,7 +236,9 @@ impl Worker {
             }
         } else {
             self.wf_task_poll_buffer.poll().await
-        }?;
+        }
+        .ok_or(PollWfError::ShutDown)??;
+
         if res == PollWorkflowTaskQueueResponse::default() {
             // We get the default proto in the event that the long poll times out.
             return Ok(None);

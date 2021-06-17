@@ -1,14 +1,21 @@
-use crate::machines::test_help::TEST_Q;
 use crate::{
-    machines::test_help::{build_fake_core, build_multihist_mock_sg, mock_core, FakeWfResponses},
+    machines::test_help::{
+        build_fake_core, build_multihist_mock_sg, hist_to_poll_resp, mock_core,
+        mock_core_with_opts_no_workers, FakeWfResponses, TEST_Q,
+    },
+    pollers::MockManualGateway,
     protos::coresdk::workflow_activation::wf_activation_job,
     protos::coresdk::workflow_commands::{
-        ActivityCancellationType, RequestCancelActivity, ScheduleActivity,
+        ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity,
+        ScheduleActivity, StartTimer,
     },
     protos::coresdk::workflow_completion::WfActivationCompletion,
     test_help::canned_histories,
-    Core, PollWfError, WorkerConfigBuilder,
+    Core, CoreInitOptionsBuilder, PollWfError, WorkerConfigBuilder,
 };
+use futures::FutureExt;
+use std::time::Duration;
+use tokio::time::sleep;
 
 #[tokio::test]
 async fn multi_workers() {
@@ -137,4 +144,115 @@ async fn pending_activities_only_returned_for_their_queue() {
         res.jobs[0].variant,
         Some(wf_activation_job::Variant::StartWorkflow(_))
     );
+}
+
+#[tokio::test]
+async fn nonexistent_worker_poll_returns_not_registered() {
+    let core =
+        mock_core_with_opts_no_workers(MockManualGateway::new(), CoreInitOptionsBuilder::default());
+    assert_matches!(
+        core.poll_workflow_task(TEST_Q).await.unwrap_err(),
+        PollWfError::NoWorkerForQueue(_)
+    );
+}
+
+#[tokio::test]
+async fn after_shutdown_of_worker_get_shutdown_err() {
+    let t = canned_histories::single_timer("fake_timer");
+    let core = build_fake_core("fake_wf_id", t, &[1]);
+    let res = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    assert_eq!(res.jobs.len(), 1);
+    core.inner.shutdown_worker(TEST_Q).await;
+    assert_matches!(
+        core.inner.poll_workflow_task(TEST_Q).await.unwrap_err(),
+        PollWfError::ShutDown
+    );
+}
+
+#[tokio::test]
+async fn after_shutdown_of_worker_can_be_reregistered() {
+    let t = canned_histories::single_timer("fake_timer");
+    let core = build_fake_core("fake_wf_id", t, &[1]);
+    let res = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    assert_eq!(res.jobs.len(), 1);
+    core.inner.shutdown_worker(TEST_Q).await;
+    core.inner
+        .register_worker(
+            WorkerConfigBuilder::default()
+                .task_queue(TEST_Q)
+                .build()
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn shutdown_worker_can_complete_pending_activation() {
+    let t = canned_histories::single_timer("fake_timer");
+    let core = build_fake_core("fake_wf_id", t, &[2]);
+    let res = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    assert_eq!(res.jobs.len(), 1);
+    // Complete the timer, will queue PA
+    core.inner
+        .complete_workflow_task(WfActivationCompletion::from_cmds(
+            vec![StartTimer {
+                timer_id: "fake_timer".to_string(),
+                ..Default::default()
+            }
+            .into()],
+            res.run_id,
+        ))
+        .await
+        .unwrap();
+
+    core.inner.shutdown_worker(TEST_Q).await;
+    let res = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    // The timer fires
+    assert_eq!(res.jobs.len(), 1);
+    core.inner
+        .complete_workflow_task(WfActivationCompletion::from_cmds(
+            vec![CompleteWorkflowExecution::default().into()],
+            res.run_id,
+        ))
+        .await
+        .unwrap();
+    // Since non-sticky, one more activation for eviction
+    core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    // Now it's shut down
+    assert_matches!(
+        core.inner.poll_workflow_task(TEST_Q).await.unwrap_err(),
+        PollWfError::ShutDown
+    );
+}
+
+#[tokio::test]
+async fn worker_shutdown_during_poll_doesnt_deadlock() {
+    let mut mock_gateway = MockManualGateway::new();
+    mock_gateway
+        .expect_poll_workflow_task()
+        .returning(move |_| {
+            // Slow poll response
+            async move {
+                let t = canned_histories::single_timer("fake_timer");
+                sleep(Duration::from_secs(1)).await;
+                Ok(hist_to_poll_resp(
+                    &t,
+                    "wf".to_string(),
+                    100,
+                    TEST_Q.to_string(),
+                ))
+            }
+            .boxed()
+        });
+    let core = mock_core(mock_gateway);
+    let pollfut = core.poll_workflow_task(TEST_Q);
+    let shutdownfut = async {
+        // Give poll a beat to get started
+        sleep(Duration::from_millis(50)).await;
+        core.shutdown_worker(TEST_Q).await;
+    };
+    let (pollres, _) = tokio::join!(pollfut, shutdownfut);
+    assert_matches!(pollres.unwrap_err(), PollWfError::ShutDown);
+    core.shutdown().await;
 }
