@@ -479,13 +479,11 @@ where
             w.notify_shutdown();
         }
         let mut workers = self.workers.write().await;
-        info!("Shutdown worker write lock acquired");
         if let Some(WorkerStatus::Live(w)) = workers.remove(task_queue) {
             workers.insert(task_queue.to_owned(), WorkerStatus::Shutdown);
             drop(workers);
             w.await_shutdown().await;
         }
-        info!("Finished shutting down worker on queue {}", task_queue);
     }
 }
 
