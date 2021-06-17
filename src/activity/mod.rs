@@ -16,8 +16,7 @@ use std::{convert::TryInto, ops::Div, sync::Arc, time::Duration};
 pub(crate) struct ActivityTaskManager {
     /// Handle to the heartbeat manager
     activity_heartbeat_manager_handle: ActivityHeartbeatManagerHandle,
-    /// Activities that have been issued to lang but not yet completed, mapped to the worker who
-    /// is processing them.
+    /// Activities that have been issued to lang but not yet completed
     outstanding_activity_tasks: DashMap<TaskToken, InflightActivityDetails>,
 }
 
