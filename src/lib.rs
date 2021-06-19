@@ -472,7 +472,7 @@ where
         self.poll_loop_notify.notify_waiters();
         for (_, w) in self.workers.write().await.drain() {
             if let WorkerStatus::Live(w) = w {
-                w.await_shutdown().await;
+                w.shutdown_complete().await;
             }
         }
         self.wft_manager.shutdown();
@@ -484,12 +484,17 @@ where
         if let Some(WorkerStatus::Live(w)) = self.workers.read().await.get(task_queue) {
             w.notify_shutdown();
         }
-        self.poll_loop_notify.notify_waiters();
-        let mut workers = self.workers.write().await;
+        let mut workers = match self.workers.try_write() {
+            Ok(wg) => wg,
+            Err(_) => {
+                self.poll_loop_notify.notify_waiters();
+                self.workers.write().await
+            }
+        };
         if let Some(WorkerStatus::Live(w)) = workers.remove(task_queue) {
             workers.insert(task_queue.to_owned(), WorkerStatus::Shutdown);
             drop(workers);
-            w.await_shutdown().await;
+            w.shutdown_complete().await;
         }
     }
 }

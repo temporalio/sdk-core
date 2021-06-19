@@ -155,7 +155,7 @@ impl Worker {
     }
 
     /// Resolves when shutdown of the worker is complete
-    pub(crate) async fn await_shutdown(self) {
+    pub(crate) async fn shutdown_complete(self) {
         self.wf_task_poll_buffer.shutdown().await;
         if let Some(sq) = self.sticky_queue {
             sq.poll_buffer.shutdown().await;

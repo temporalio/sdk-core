@@ -1,3 +1,4 @@
+use crate::errors::PollWfError::TonicError;
 use crate::{
     machines::test_help::{
         build_fake_core, build_multihist_mock_sg, hist_to_poll_resp, mock_core,
@@ -172,7 +173,7 @@ async fn after_shutdown_of_worker_get_shutdown_err() {
 #[tokio::test]
 async fn after_shutdown_of_worker_can_be_reregistered() {
     let t = canned_histories::single_timer("fake_timer");
-    let core = build_fake_core("fake_wf_id", t, &[1]);
+    let core = build_fake_core("fake_wf_id", t, &[1, 2]);
     let res = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
     core.inner.shutdown_worker(TEST_Q).await;
@@ -185,6 +186,12 @@ async fn after_shutdown_of_worker_can_be_reregistered() {
         )
         .await
         .unwrap();
+    // The mock doesn't understand about shutdowns, but all we need to do is make sure the server
+    // gets hit (the mock) -- it will return no work here since there is still an outstanding WFT.
+    assert_matches!(
+        core.inner.poll_workflow_task(TEST_Q).await.unwrap_err(),
+        TonicError(_)
+    );
 }
 
 #[tokio::test]
