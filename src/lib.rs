@@ -44,7 +44,6 @@ pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
 use crate::{
     activity::ActivityTaskManager,
-    errors::ShutdownErr,
     machines::EmptyWorkflowCommandErr,
     protos::{
         coresdk::{
@@ -66,7 +65,6 @@ use futures::{FutureExt, TryFutureExt};
 use std::{
     collections::HashMap,
     convert::TryInto,
-    future::Future,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -213,7 +211,7 @@ struct CoreSDK<WP> {
     /// Has shutdown been called?
     shutdown_requested: AtomicBool,
     /// Used to wake up future which checks shutdown state
-    shutdown_notify: Notify,
+    poll_loop_notify: Notify,
     /// Used to wake blocked workflow task polling when there is some change to workflow activations
     /// that should cause us to restart the loop
     workflow_activations_update: Mutex<UnboundedReceiver<WfActivationUpdate>>,
@@ -297,8 +295,7 @@ where
             } else {
                 return Err(PollWfError::ShutDown);
             };
-            let poll_result_future =
-                self.shutdownable_fut(worker.workflow_poll().map_err(Into::into));
+            let poll_result_future = worker.workflow_poll().map_err(Into::into);
             let selected_f = tokio::select! {
                 biased;
 
@@ -313,7 +310,14 @@ where
                     }
                     continue;
                 }
-                r = poll_result_future => r
+                r = poll_result_future => {r},
+                shutdown = self.shutdown_or_continue_notifier() => {
+                    if shutdown {
+                        return Err(PollWfError::ShutDown);
+                    } else {
+                        continue;
+                    }
+                }
             };
 
             match selected_f {
@@ -361,8 +365,10 @@ where
                         Some(r) => return r
                     }
                 }
-                _ = self.shutdown_notifier() => {
-                    return Err(PollActivityError::ShutDown);
+                shutdown = self.shutdown_or_continue_notifier() => {
+                    if shutdown {
+                        return Err(PollActivityError::ShutDown);
+                    }
                 }
             }
         }
@@ -463,7 +469,7 @@ where
 
     async fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
-        self.shutdown_notify.notify_waiters();
+        self.poll_loop_notify.notify_waiters();
         for (_, w) in self.workers.write().await.drain() {
             if let WorkerStatus::Live(w) = w {
                 w.await_shutdown().await;
@@ -478,6 +484,7 @@ where
         if let Some(WorkerStatus::Live(w)) = self.workers.read().await.get(task_queue) {
             w.notify_shutdown();
         }
+        self.poll_loop_notify.notify_waiters();
         let mut workers = self.workers.write().await;
         if let Some(WorkerStatus::Live(w)) = workers.remove(task_queue) {
             workers.insert(task_queue.to_owned(), WorkerStatus::Shutdown);
@@ -505,7 +512,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             workers: RwLock::new(HashMap::new()),
             init_options,
             shutdown_requested: AtomicBool::new(false),
-            shutdown_notify: Notify::new(),
+            poll_loop_notify: Notify::new(),
             workflow_activations_update: Mutex::new(wau_rx),
         }
     }
@@ -632,33 +639,14 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         Ok(())
     }
 
-    /// A future that resolves when the shutdown flag has been set to true
-    async fn shutdown_notifier(&self) {
-        loop {
-            if self.shutdown_requested.load(Ordering::Relaxed) {
-                break;
-            }
-            self.shutdown_notify.notified().await;
+    /// A future that resolves to true the shutdown flag has been set to true, false is simply
+    /// a signal that a poll loop should be restarted. Only meant to be called from polling funcs.
+    async fn shutdown_or_continue_notifier(&self) -> bool {
+        if self.shutdown_requested.load(Ordering::Relaxed) {
+            return true;
         }
-    }
-
-    /// Wrap a future, making it return early with a shutdown error in the event the shutdown
-    /// flag has been set
-    async fn shutdownable_fut<FOut, FErr>(
-        &self,
-        wrap_this: impl Future<Output = Result<FOut, FErr>>,
-    ) -> Result<FOut, FErr>
-    where
-        FErr: From<ShutdownErr>,
-    {
-        tokio::select! {
-            biased;
-
-            _ = self.shutdown_notifier() => {
-                Err(ShutdownErr.into())
-            }
-            r = wrap_this => r,
-        }
+        self.poll_loop_notify.notified().await;
+        self.shutdown_requested.load(Ordering::Relaxed)
     }
 
     /// Handle server errors from either completing or failing a workflow task

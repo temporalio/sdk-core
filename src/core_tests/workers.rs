@@ -11,11 +11,11 @@ use crate::{
     },
     protos::coresdk::workflow_completion::WfActivationCompletion,
     test_help::canned_histories,
-    Core, CoreInitOptionsBuilder, PollWfError, WorkerConfigBuilder,
+    Core, CoreInitOptionsBuilder, CoreSDK, PollWfError, ServerGatewayApis, WorkerConfigBuilder,
 };
 use futures::FutureExt;
-use std::time::Duration;
-use tokio::time::sleep;
+use rstest::{fixture, rstest};
+use tokio::sync::watch;
 
 #[tokio::test]
 async fn multi_workers() {
@@ -226,16 +226,21 @@ async fn shutdown_worker_can_complete_pending_activation() {
     );
 }
 
-#[tokio::test]
-async fn worker_shutdown_during_poll_doesnt_deadlock() {
+#[fixture]
+fn worker_shutdown() -> (
+    CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
+    watch::Sender<bool>,
+) {
     let mut mock_gateway = MockManualGateway::new();
+    let (tx, rx) = watch::channel(false);
     mock_gateway
         .expect_poll_workflow_task()
         .returning(move |_| {
-            // Slow poll response
+            let mut rx = rx.clone();
             async move {
                 let t = canned_histories::single_timer("fake_timer");
-                sleep(Duration::from_secs(1)).await;
+                // Don't resolve polls until worker shuts down
+                rx.changed().await.unwrap();
                 Ok(hist_to_poll_resp(
                     &t,
                     "wf".to_string(),
@@ -245,14 +250,55 @@ async fn worker_shutdown_during_poll_doesnt_deadlock() {
             }
             .boxed()
         });
-    let core = mock_core(mock_gateway);
+    (mock_core(mock_gateway), tx)
+}
+
+#[rstest]
+#[tokio::test]
+async fn worker_shutdown_during_poll_doesnt_deadlock(
+    worker_shutdown: (
+        CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
+        watch::Sender<bool>,
+    ),
+) {
+    let (core, tx) = worker_shutdown;
     let pollfut = core.poll_workflow_task(TEST_Q);
     let shutdownfut = async {
-        // Give poll a beat to get started
-        sleep(Duration::from_millis(50)).await;
         core.shutdown_worker(TEST_Q).await;
+        tx.send(true).unwrap();
     };
     let (pollres, _) = tokio::join!(pollfut, shutdownfut);
     assert_matches!(pollres.unwrap_err(), PollWfError::ShutDown);
+    core.shutdown().await;
+}
+
+#[rstest]
+#[tokio::test]
+async fn worker_shutdown_during_multiple_poll_doesnt_deadlock(
+    worker_shutdown: (
+        CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
+        watch::Sender<bool>,
+    ),
+) {
+    let (core, tx) = worker_shutdown;
+    core.register_worker(
+        WorkerConfigBuilder::default()
+            .task_queue("q2")
+            .build()
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    let pollfut = core.poll_workflow_task(TEST_Q);
+    let poll2fut = core.poll_workflow_task("q2");
+    let shutdownfut = async {
+        core.shutdown_worker(TEST_Q).await;
+        tx.send(true).unwrap();
+    };
+    let (pollres, poll2res, _) = tokio::join!(pollfut, poll2fut, shutdownfut);
+    assert_matches!(pollres.unwrap_err(), PollWfError::ShutDown);
+    // Worker 2 poll should not be an error
+    poll2res.unwrap();
     core.shutdown().await;
 }
