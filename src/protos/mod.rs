@@ -44,11 +44,14 @@ pub mod coresdk {
     pub mod common {
         tonic::include_proto!("coresdk.common");
 
-        impl From<Vec<u8>> for Payload {
-            fn from(data: Vec<u8>) -> Self {
+        impl<T> From<T> for Payload
+        where
+            T: AsRef<[u8]>,
+        {
+            fn from(v: T) -> Self {
                 Self {
                     metadata: Default::default(),
-                    data,
+                    data: v.as_ref().to_vec(),
                 }
             }
         }
@@ -66,6 +69,21 @@ pub mod coresdk {
                 jobs: vec![WfActivationJob::from(
                     wf_activation_job::Variant::RemoveFromCache(true),
                 )],
+            }
+        }
+
+        pub fn create_query_activation(
+            run_id: String,
+            queries: impl IntoIterator<Item = QueryWorkflow>,
+        ) -> WfActivation {
+            WfActivation {
+                timestamp: None,
+                run_id,
+                is_replaying: false,
+                jobs: queries
+                    .into_iter()
+                    .map(|qr| wf_activation_job::Variant::QueryWorkflow(qr).into())
+                    .collect(),
             }
         }
 
@@ -213,8 +231,8 @@ pub mod coresdk {
         }
 
         /// Create a successful activation from just one command
-        pub fn from_cmd(cmds: workflow_command::Variant, run_id: String) -> Self {
-            let success = Success::from_variants(vec![cmds]);
+        pub fn from_cmd(cmd: workflow_command::Variant, run_id: String) -> Self {
+            let success = Success::from_variants(vec![cmd]);
             Self {
                 run_id,
                 status: Some(wf_activation_completion::Status::Successful(success)),
@@ -406,8 +424,31 @@ pub mod coresdk {
 
     impl From<common::Payload> for Payloads {
         fn from(p: Payload) -> Self {
-            Payloads {
+            Self {
                 payloads: vec![p.into()],
+            }
+        }
+    }
+
+    impl<T> From<T> for super::temporal::api::common::v1::Payload
+    where
+        T: AsRef<[u8]>,
+    {
+        fn from(v: T) -> Self {
+            Self {
+                metadata: Default::default(),
+                data: v.as_ref().to_vec(),
+            }
+        }
+    }
+
+    impl<T> From<T> for Payloads
+    where
+        T: AsRef<[u8]>,
+    {
+        fn from(v: T) -> Self {
+            Payloads {
+                payloads: vec![v.into()],
             }
         }
     }
@@ -817,6 +858,13 @@ pub mod temporal {
                             self.attempt,
                             last_event
                         )
+                    }
+                }
+
+                impl QueryWorkflowResponse {
+                    /// Unwrap a successful response as vec of payloads
+                    pub fn unwrap(self) -> Vec<crate::protos::temporal::api::common::v1::Payload> {
+                        self.query_result.unwrap().payloads
                     }
                 }
             }

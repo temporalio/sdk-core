@@ -5,6 +5,7 @@ use crate::{
     },
     protos::temporal::api::common::v1::WorkflowExecution,
     protos::temporal::api::history::v1::History,
+    protos::temporal::api::query::v1::WorkflowQuery,
     protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
     task_token::TaskToken,
 };
@@ -12,6 +13,7 @@ use std::convert::TryFrom;
 
 /// A validated version of a [PollWorkflowTaskQueueResponse]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::manual_non_exhaustive)] // Clippy doesn't understand it's only for *in* this crate
 pub struct ValidPollWFTQResponse {
     pub task_token: TaskToken,
     pub task_queue: String,
@@ -21,6 +23,12 @@ pub struct ValidPollWFTQResponse {
     pub attempt: u32,
     pub previous_started_event_id: i64,
     pub started_event_id: i64,
+    /// If this is present, `history` will be empty. This is not a very "tight" design, but it's
+    /// enforced at construction time.
+    pub legacy_query: Option<WorkflowQuery>,
+
+    /// Zero-size field to prevent explicit construction
+    _cant_construct_me: (),
 }
 
 impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
@@ -28,6 +36,17 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
     type Error = PollWorkflowTaskQueueResponse;
 
     fn try_from(value: PollWorkflowTaskQueueResponse) -> Result<Self, Self::Error> {
+        if value.query.is_some()
+            && value
+                .history
+                .as_ref()
+                .map(|h| !h.events.is_empty())
+                .unwrap_or(false)
+        {
+            error!("Poll WFTQ response had a `query` field with a nonempty history");
+            return Err(value);
+        }
+
         match value {
             PollWorkflowTaskQueueResponse {
                 task_token,
@@ -38,6 +57,7 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                 attempt,
                 previous_started_event_id,
                 started_event_id,
+                query,
                 ..
             } => {
                 if !next_page_token.is_empty() {
@@ -54,6 +74,8 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                     attempt: attempt as u32,
                     previous_started_event_id,
                     started_event_id,
+                    legacy_query: query,
+                    _cant_construct_me: (),
                 })
             }
             _ => Err(value),

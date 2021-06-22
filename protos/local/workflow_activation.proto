@@ -88,8 +88,12 @@ message UpdateRandomSeed {
 
 /// Query a workflow
 message QueryWorkflow {
-    string query_type = 1;
-    repeated common.Payload arguments = 2;
+    /// For PollWFTResp `query` field, this will be set to a special sigil. For the `queries` field,
+    /// the server provides a unique identifier.
+    string query_id = 1;
+    /// The query's function/method/etc name
+    string query_type = 2;
+    repeated common.Payload arguments = 3;
 }
 
 /// Cancel a running workflow

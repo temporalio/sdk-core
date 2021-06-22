@@ -9,23 +9,26 @@ pub use poll_buffer::{
 
 use crate::{
     machines::ProtoCommand,
+    protos::coresdk::workflow_commands::{query_result, QueryResult},
     protos::temporal::api::{
         common::v1::{Payloads, WorkflowExecution, WorkflowType},
-        enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
+        enums::v1::{QueryResultType, TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
+        query::v1::WorkflowQuery,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
         workflowservice::v1::{
             workflow_service_client::WorkflowServiceClient, PollActivityTaskQueueRequest,
             PollActivityTaskQueueResponse, PollWorkflowTaskQueueRequest,
-            PollWorkflowTaskQueueResponse, RecordActivityTaskHeartbeatRequest,
-            RecordActivityTaskHeartbeatResponse, RespondActivityTaskCanceledRequest,
-            RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedRequest,
-            RespondActivityTaskCompletedResponse, RespondActivityTaskFailedRequest,
-            RespondActivityTaskFailedResponse, RespondWorkflowTaskCompletedRequest,
-            RespondWorkflowTaskCompletedResponse, RespondWorkflowTaskFailedRequest,
-            RespondWorkflowTaskFailedResponse, SignalWorkflowExecutionRequest,
-            SignalWorkflowExecutionResponse, StartWorkflowExecutionRequest,
-            StartWorkflowExecutionResponse,
+            PollWorkflowTaskQueueResponse, QueryWorkflowRequest, QueryWorkflowResponse,
+            RecordActivityTaskHeartbeatRequest, RecordActivityTaskHeartbeatResponse,
+            RespondActivityTaskCanceledRequest, RespondActivityTaskCanceledResponse,
+            RespondActivityTaskCompletedRequest, RespondActivityTaskCompletedResponse,
+            RespondActivityTaskFailedRequest, RespondActivityTaskFailedResponse,
+            RespondQueryTaskCompletedRequest, RespondQueryTaskCompletedResponse,
+            RespondWorkflowTaskCompletedRequest, RespondWorkflowTaskCompletedResponse,
+            RespondWorkflowTaskFailedRequest, RespondWorkflowTaskFailedResponse,
+            SignalWorkflowExecutionRequest, SignalWorkflowExecutionResponse,
+            StartWorkflowExecutionRequest, StartWorkflowExecutionResponse,
         },
     },
     task_token::TaskToken,
@@ -260,6 +263,21 @@ pub trait ServerGatewayApis {
         signal_name: String,
         payloads: Option<Payloads>,
     ) -> Result<SignalWorkflowExecutionResponse>;
+
+    /// Request a query of a certain workflow instance
+    async fn query_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: String,
+        query: WorkflowQuery,
+    ) -> Result<QueryWorkflowResponse>;
+
+    /// Respond to a legacy query-only workflow task
+    async fn respond_legacy_query(
+        &self,
+        task_token: TaskToken,
+        query_result: QueryResult,
+    ) -> Result<RespondQueryTaskCompletedResponse>;
 }
 
 #[async_trait::async_trait]
@@ -480,6 +498,64 @@ impl ServerGatewayApis for ServerGateway {
             .await?
             .into_inner())
     }
+
+    async fn query_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: String,
+        query: WorkflowQuery,
+    ) -> Result<QueryWorkflowResponse> {
+        Ok(self
+            .service
+            .clone()
+            .query_workflow(QueryWorkflowRequest {
+                namespace: self.opts.namespace.clone(),
+                execution: Some(WorkflowExecution {
+                    workflow_id,
+                    run_id,
+                }),
+                query: Some(query),
+                query_reject_condition: 1,
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn respond_legacy_query(
+        &self,
+        task_token: TaskToken,
+        query_result: QueryResult,
+    ) -> Result<RespondQueryTaskCompletedResponse> {
+        let (completed_type, query_result, error_message) = match query_result {
+            QueryResult {
+                variant: Some(query_result::Variant::Succeeded(qs)),
+                ..
+            } => (
+                QueryResultType::Answered as i32,
+                qs.response.map(Into::into),
+                "".to_string(),
+            ),
+            QueryResult {
+                variant: Some(query_result::Variant::FailedWithMessage(err)),
+                ..
+            } => (QueryResultType::Failed as i32, None, err),
+            QueryResult { variant: None, .. } => {
+                todo!("Can't have this here. Need to pass in better validated thing")
+            }
+        };
+        Ok(self
+            .service
+            .clone()
+            .respond_query_task_completed(RespondQueryTaskCompletedRequest {
+                task_token: task_token.into(),
+                completed_type,
+                query_result,
+                error_message,
+                namespace: self.opts.namespace.clone(),
+            })
+            .await?
+            .into_inner())
+    }
 }
 
 #[cfg(test)]
@@ -563,6 +639,21 @@ mod manual_mock {
                task_token: TaskToken,
                details: Option<Payloads>,
             ) -> impl Future<Output = Result<RecordActivityTaskHeartbeatResponse>> + Send + 'b
+                where 'a: 'b, Self: 'b;
+
+            fn query_workflow_execution<'a, 'b>(
+                &self,
+                workflow_id: String,
+                run_id: String,
+                query: WorkflowQuery,
+            ) -> impl Future<Output = Result<QueryWorkflowResponse>> + Send + 'b
+                where 'a: 'b, Self: 'b;
+
+            fn respond_legacy_query<'a, 'b>(
+                &self,
+                task_token: TaskToken,
+                query_result: QueryResult,
+            ) -> impl Future<Output = Result<RespondQueryTaskCompletedResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;
         }
     }

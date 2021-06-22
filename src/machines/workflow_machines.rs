@@ -548,11 +548,12 @@ impl WorkflowMachines {
         Ok(())
     }
 
-    /// Handles results of the workflow activation, delegating work to the appropriate state machine.
-    /// Returns a list of workflow jobs that should be queued in the pending activation for the next poll.
-    /// This list will be populated only if state machine produced lang activations as part of command processing.
-    /// For example some types of activity cancellation need to immediately unblock lang side without
-    /// having it to poll for an actual workflow task from the server.
+    /// Handles results of the workflow activation, delegating work to the appropriate state
+    /// machine. Returns a list of workflow jobs that should be queued in the pending activation for
+    /// the next poll. This list will be populated only if state machine produced lang activations
+    /// as part of command processing. For example some types of activity cancellation need to
+    /// immediately unblock lang side without having it to poll for an actual workflow task from the
+    /// server.
     fn handle_driven_results(
         &mut self,
         results: Vec<WFCommand>,
@@ -589,6 +590,10 @@ impl WorkflowMachines {
                 WFCommand::FailWorkflow(attrs) => {
                     let cwfm = self.add_new_machine(fail_workflow(attrs));
                     self.current_wf_task_commands.push_back(cwfm);
+                }
+                WFCommand::QueryResponse(query) => {
+                    // TODO: Somehow bubble up query response?
+                    warn!("Got query response from lang: {:?}", query);
                 }
                 WFCommand::NoCommandsFromLang => (),
             }

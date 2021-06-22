@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display, Formatter};
 
-#[derive(Hash, Eq, PartialEq, Clone, derive_more::From)]
+#[derive(Hash, Eq, PartialEq, Clone, derive_more::From, derive_more::Into)]
 pub struct TaskToken(pub Vec<u8>);
 
 impl Display for TaskToken {

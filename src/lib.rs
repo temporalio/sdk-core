@@ -59,7 +59,10 @@ use crate::{
     task_token::TaskToken,
     worker::Worker,
     workflow::WorkflowCachingPolicy,
-    workflow_tasks::{FailedActivationOutcome, NewWfTaskOutcome, WorkflowTaskManager},
+    workflow_tasks::{
+        ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
+        ServerCommandsWithWorkflowInfo, WorkflowTaskManager,
+    },
 };
 use futures::{FutureExt, TryFutureExt};
 use std::{
@@ -548,14 +551,14 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         )
     }
 
-    /// Apply validated WFTs from the server. Returns an activation if one should be issued to
-    /// lang, or returns `None` in which case the polling loop should be restarted.
+    /// Apply validated poll responses from the server. Returns an activation if one should be
+    /// issued to lang, or returns `None` in which case the polling loop should be restarted.
     async fn apply_server_work(
         &self,
         work: ValidPollWFTQResponse,
     ) -> Result<Option<WfActivation>, CompleteWfError> {
         let we = work.workflow_execution.clone();
-        match self.wft_manager.apply_new_wft(work)? {
+        match self.wft_manager.apply_new_poll_resp(work)? {
             NewWfTaskOutcome::IssueActivation(a) => {
                 debug!(activation=%a, "Sending activation to lang");
                 Ok(Some(a))
@@ -593,35 +596,51 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                 completion: None,
             })?;
 
-        if let Some(server_cmds) = self.wft_manager.successful_activation(run_id, cmds)? {
-            match self.workers.read().await.get(&server_cmds.task_queue) {
-                Some(WorkerStatus::Live(worker)) => {
-                    let res = worker
-                        .complete_workflow_task(
-                            self.server_gateway.as_ref(),
-                            server_cmds.task_token,
-                            server_cmds.commands,
-                        )
-                        .await;
-                    if let Err(ts) = res {
-                        let should_evict = self.handle_wft_complete_errs(ts)?;
-                        if should_evict {
-                            self.wft_manager.evict_run(run_id);
+        match self.wft_manager.successful_activation(run_id, cmds)? {
+            Some(ServerCommandsWithWorkflowInfo {
+                task_token,
+                task_queue,
+                action: ActivationAction::WftComplete { commands },
+            }) => {
+                match self.workers.read().await.get(&task_queue) {
+                    Some(WorkerStatus::Live(worker)) => {
+                        let res = worker
+                            .complete_workflow_task(
+                                self.server_gateway.as_ref(),
+                                task_token,
+                                commands,
+                            )
+                            .await;
+                        if let Err(ts) = res {
+                            let should_evict = self.handle_wft_complete_errs(ts)?;
+                            if should_evict {
+                                self.wft_manager.evict_run(run_id);
+                            }
                         }
                     }
-                }
-                Some(WorkerStatus::Shutdown) => {
-                    // If the worker is shutdown we still want to be able to complete the WF, but
-                    // sticky queue no longer makes sense, so we complete directly through gateway
-                    // with no sticky info
-                    self.server_gateway
-                        .complete_workflow_task(server_cmds.task_token, server_cmds.commands, None)
-                        .await?;
-                }
-                None => {
-                    return Err(CompleteWfError::NoWorkerForQueue(server_cmds.task_queue));
+                    Some(WorkerStatus::Shutdown) => {
+                        // If the worker is shutdown we still want to be able to complete the WF, but
+                        // sticky queue no longer makes sense, so we complete directly through gateway
+                        // with no sticky info
+                        self.server_gateway
+                            .complete_workflow_task(task_token, commands, None)
+                            .await?;
+                    }
+                    None => {
+                        return Err(CompleteWfError::NoWorkerForQueue(task_queue));
+                    }
                 }
             }
+            Some(ServerCommandsWithWorkflowInfo {
+                task_token,
+                action: ActivationAction::RespondLegacyQuery { result },
+                ..
+            }) => {
+                self.server_gateway
+                    .respond_legacy_query(task_token, result)
+                    .await?;
+            }
+            None => {}
         }
         Ok(())
     }

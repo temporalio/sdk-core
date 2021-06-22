@@ -23,6 +23,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[derive(::derive_more::From)]",
         )
         .type_attribute(
+            "coresdk.workflow_commands.QueryResult.variant",
+            "#[derive(::derive_more::From)]",
+        )
+        .type_attribute(
             "coresdk.workflow_activation.wf_activation_job",
             "#[derive(::derive_more::From)]",
         )

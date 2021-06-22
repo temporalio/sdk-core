@@ -16,6 +16,7 @@ use crate::{
 };
 use std::sync::mpsc::{SendError, Sender};
 
+pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
 type Result<T, E = WorkflowError> = std::result::Result<T, E>;
 
 /// Errors relating to workflow management and machine logic. These are going to be passed up and

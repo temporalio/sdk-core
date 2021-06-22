@@ -47,7 +47,6 @@ message ScheduleActivity {
     string activity_type = 2;
     string namespace = 3;
     // The name of the task queue to place this activity request in
-    //  TODO: Do we care about sticky/not sticky?
     string task_queue = 4;
     map<string, common.Payload> header_fields = 5;
     /// Arguments/input to the activity. Called "input" upstream.
@@ -62,7 +61,6 @@ message ScheduleActivity {
     google.protobuf.Duration schedule_to_start_timeout = 8;
     /// Maximum time an activity is allowed to execute after a pick up by a worker. This timeout is
     /// always retryable. Either this or schedule_to_close_timeout must be specified.
-    /// TODO: Is this really either or can you do both? Make oneof if mutually exclusive
     google.protobuf.Duration start_to_close_timeout = 9;
     /// Maximum time allowed between successful worker heartbeats.
     google.protobuf.Duration heartbeat_timeout = 10;
@@ -91,9 +89,11 @@ message RequestCancelActivity {
 }
 
 message QueryResult {
+    /// Corresponds to the id provided in the activation job
+    string query_id = 1;
     oneof variant {
-        QuerySuccess succeeded = 1;
-        string failed_with_message = 2;
+        QuerySuccess succeeded = 2;
+        string failed_with_message = 3;
     }
 }
 
