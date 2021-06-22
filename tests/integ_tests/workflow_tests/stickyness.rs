@@ -3,6 +3,7 @@ use std::{sync::Arc, time::Duration};
 use temporal_sdk_core::{
     protos::coresdk::workflow_commands::StartTimer,
     test_workflow_driver::{CommandSender, TestRustWorker},
+    tracing_init,
 };
 use test_utils::{CoreWfStarter, NAMESPACE};
 use tokio::time::sleep;
@@ -37,6 +38,7 @@ pub async fn timer_timeout_wf(mut command_sink: CommandSender) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn timer_workflow_timeout_on_sticky() {
+    tracing_init();
     // This test intentionally times out a workflow task in order to make the next task be scheduled
     // on a not-sticky queue
     let wf_name = "timer_workflow_timeout_on_sticky";
