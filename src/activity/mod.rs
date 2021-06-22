@@ -16,8 +16,7 @@ use std::{convert::TryInto, ops::Div, sync::Arc, time::Duration};
 pub(crate) struct ActivityTaskManager {
     /// Handle to the heartbeat manager
     activity_heartbeat_manager_handle: ActivityHeartbeatManagerHandle,
-    /// Activities that have been issued to lang but not yet completed, mapped to the worker who
-    /// is processing them.
+    /// Activities that have been issued to lang but not yet completed
     outstanding_activity_tasks: DashMap<TaskToken, InflightActivityDetails>,
 }
 
@@ -70,7 +69,7 @@ impl ActivityTaskManager {
                 }
                 // The only situation where the next cancel would return none is if the manager
                 // was dropped, which can only happen on shutdown.
-                return Err(PollActivityError::ShutDown);
+                Err(PollActivityError::ShutDown)
             }
             work = worker.activity_poll() => {
                 match work {

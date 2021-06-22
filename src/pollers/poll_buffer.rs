@@ -78,14 +78,16 @@ where
     /// EX: If this function is only ever called serially and always `await`ed, there will be no
     /// concurrent polling. If it is called many times and the futures are awaited concurrently,
     /// then polling will happen concurrently.
-    pub async fn poll(&self) -> pollers::Result<T> {
+    ///
+    /// Returns `None` if the poll buffer has been shut down
+    pub async fn poll(&self) -> Option<pollers::Result<T>> {
         self.polls_requested.add_permits(1);
         let mut locked = self.buffered_polls.lock().await;
-        let ret = (*locked)
-            .recv()
-            .await
-            .expect("There is always another item in the stream");
-        ret
+        (*locked).recv().await
+    }
+
+    pub fn notify_shutdown(&self) {
+        let _ = self.shutdown.send(true);
     }
 
     pub async fn shutdown(mut self) {
@@ -176,7 +178,7 @@ mod tests {
         assert!(last_val);
         // Now we grab the buffered poll response, the poll task will go again but we don't grab it,
         // therefore we will have only polled twice.
-        pb.poll().await.unwrap();
+        pb.poll().await.unwrap().unwrap();
         pb.shutdown().await;
     }
 }
