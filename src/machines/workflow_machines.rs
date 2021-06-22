@@ -425,19 +425,15 @@ impl WorkflowMachines {
     /// timer, etc. This does *not* cause any advancement of the state machines, it merely drains
     /// from the outgoing queue of activation jobs.
     ///
-    /// Importantly, the returned activation will have an empty task token. A meaningful one is
-    /// expected to be attached by something higher in the call stack.
-    pub(crate) fn get_wf_activation(&mut self) -> Option<WfActivation> {
+    /// The job list may be empty, in which case it is expected the caller handles what to do in a
+    /// "no work" situation. Possibly, it may know about some work the machines don't, like queries.
+    pub(crate) fn get_wf_activation(&mut self) -> WfActivation {
         let jobs = self.drive_me.drain_jobs();
-        if jobs.is_empty() {
-            None
-        } else {
-            Some(WfActivation {
-                timestamp: self.current_wf_time.map(Into::into),
-                is_replaying: self.replaying,
-                run_id: self.run_id.clone(),
-                jobs,
-            })
+        WfActivation {
+            timestamp: self.current_wf_time.map(Into::into),
+            is_replaying: self.replaying,
+            run_id: self.run_id.clone(),
+            jobs,
         }
     }
 

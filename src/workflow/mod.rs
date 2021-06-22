@@ -35,10 +35,10 @@ pub enum WorkflowError {
     /// run out of memory or there is a logic bug. Considered fatal.
     #[error("Internal error buffering workflow commands")]
     CommandBufferingError(#[from] SendError<Vec<WFCommand>>),
-    /// We tried to instantiate a workflow instance, but the provided history resulted in no
-    /// new activations. There is nothing to do.
+    /// We tried to instantiate a workflow instance, but the provided history resulted in nothing
+    /// for lang to do.
     #[error("Machine created with no activations for run_id {run_id}")]
-    MachineWasCreatedWithNoActivations { run_id: String },
+    MachineWasCreatedWithNoJobs { run_id: String },
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -94,10 +94,7 @@ impl WorkflowManager {
     /// Should only be called when a workflow has caught up on replay (or is just beginning). It
     /// will return a workflow activation if one is needed, as well as a bool indicating if there
     /// are more workflow tasks that need to be performed to replay the remaining history.
-    pub fn feed_history_from_server(
-        &mut self,
-        update: HistoryUpdate,
-    ) -> Result<Option<WfActivation>> {
+    pub fn feed_history_from_server(&mut self, update: HistoryUpdate) -> Result<WfActivation> {
         self.machines.new_history_from_server(update)?;
         Ok(self.machines.get_wf_activation())
     }
@@ -106,11 +103,11 @@ impl WorkflowManager {
     /// the next unapplied workflow task if such a sequence exists in history we already know about.
     /// Callers may also need to call [get_server_commands] after this to issue any pending commands
     /// to the server.
-    pub fn get_next_activation(&mut self) -> Result<Option<WfActivation>> {
+    pub fn get_next_activation(&mut self) -> Result<WfActivation> {
         // First check if there are already some pending jobs, which can be a result of replay.
         let activation = self.machines.get_wf_activation();
-        if let Some(act) = activation {
-            return Ok(Some(act));
+        if !activation.jobs.is_empty() {
+            return Ok(activation);
         }
 
         self.machines.apply_next_wft_from_history()?;
@@ -127,15 +124,18 @@ impl WorkflowManager {
     }
 
     /// During testing it can be useful to run through all activations to simulate replay easily.
-    /// Returns the last produced activation, if at least one was produced.
+    /// Returns the last produced activation with jobs in it, or an activation with no jobs if
+    /// the first call had no jobs.
     ///
     /// This is meant to be used with the TestWorkflowDriver which can automatically produce
     /// commands.
     #[cfg(test)]
-    pub fn process_all_activations(&mut self) -> Result<Option<WfActivation>> {
-        let mut last_act = None;
-        while let Some(act) = self.get_next_activation()? {
-            last_act = Some(act);
+    pub fn process_all_activations(&mut self) -> Result<WfActivation> {
+        let mut last_act = self.get_next_activation()?;
+        let mut next_act = self.get_next_activation()?;
+        while !next_act.jobs.is_empty() {
+            last_act = next_act;
+            next_act = self.get_next_activation()?;
         }
         Ok(last_act)
     }

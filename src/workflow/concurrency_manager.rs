@@ -68,7 +68,7 @@ impl WorkflowConcurrencyManager {
         run_id: &str,
         history: HistoryUpdate,
         workflow_execution: WorkflowExecution,
-    ) -> Result<Option<WfActivation>> {
+    ) -> Result<WfActivation> {
         let span = debug_span!("create_or_update machines", %run_id);
 
         if self.exists(run_id) {
@@ -94,7 +94,7 @@ impl WorkflowConcurrencyManager {
                 .recv()
                 .expect("wfm create resp channel can't be dropped, it is in this stackframe")?;
             self.machines.insert(run_id.to_string(), machine_sender);
-            Ok(Some(activation))
+            Ok(activation)
         }
     }
 
@@ -206,14 +206,17 @@ impl WorkflowConcurrencyManager {
                 let _e = span.enter();
                 let mut wfm = WorkflowManager::new(history, workflow_execution);
                 let send_this = match wfm.get_next_activation() {
-                    Ok(Some(activation)) => {
-                        let (machine_sender, machine_rcv) = unbounded();
-                        machine_rcvs.push((machine_rcv, wfm));
-                        Ok((activation, machine_sender))
+                    Ok(activation) => {
+                        if activation.jobs.is_empty() {
+                            Err(WorkflowError::MachineWasCreatedWithNoJobs {
+                                run_id: wfm.machines.run_id,
+                            })
+                        } else {
+                            let (machine_sender, machine_rcv) = unbounded();
+                            machine_rcvs.push((machine_rcv, wfm));
+                            Ok((activation, machine_sender))
+                        }
                     }
-                    Ok(None) => Err(WorkflowError::MachineWasCreatedWithNoActivations {
-                        run_id: wfm.machines.run_id,
-                    }),
                     Err(e) => Err(e),
                 };
                 resp_chan
@@ -291,7 +294,7 @@ mod tests {
                 },
             )
             .unwrap();
-        assert!(activation.is_some());
+        assert!(!activation.jobs.is_empty());
 
         mgr.shutdown();
     }
@@ -307,7 +310,7 @@ mod tests {
         // Should whine that the machines have nothing to do (history empty)
         assert_matches!(
             res.unwrap_err(),
-            WorkflowError::MachineWasCreatedWithNoActivations { .. }
+            WorkflowError::MachineWasCreatedWithNoJobs { .. }
         )
     }
 }

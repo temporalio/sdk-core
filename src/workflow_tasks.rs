@@ -264,9 +264,10 @@ impl WorkflowTaskManager {
             },
         );
 
-        if let Some(na) = next_activation {
-            self.outstanding_activations.insert(na.run_id.clone());
-            Ok(NewWfTaskOutcome::IssueActivation(na))
+        if !next_activation.jobs.is_empty() {
+            self.outstanding_activations
+                .insert(next_activation.run_id.clone());
+            Ok(NewWfTaskOutcome::IssueActivation(next_activation))
         } else {
             // TODO: Problem is here we would've had WF info inserted, but no activation.
             Ok(NewWfTaskOutcome::Autocomplete)
@@ -387,7 +388,7 @@ impl WorkflowTaskManager {
     fn instantiate_or_update_workflow(
         &self,
         poll_wf_resp: ValidPollWFTQResponse,
-    ) -> Result<(WorkflowTaskInfo, Option<WfActivation>), WorkflowUpdateError> {
+    ) -> Result<(WorkflowTaskInfo, WfActivation), WorkflowUpdateError> {
         let run_id = poll_wf_resp.workflow_execution.run_id.clone();
 
         let wft_info = WorkflowTaskInfo {
@@ -415,9 +416,9 @@ impl WorkflowTaskManager {
     /// pushing it into the pending activations list
     fn enqueue_next_activation_if_needed(&self, run_id: &str) -> Result<bool, WorkflowUpdateError> {
         let mut new_activation = false;
-        if let Some(next_activation) =
-            self.access_wf_machine(run_id, move |mgr| mgr.get_next_activation())?
-        {
+        let next_activation =
+            self.access_wf_machine(run_id, move |mgr| mgr.get_next_activation())?;
+        if !next_activation.jobs.is_empty() {
             let wf_entry = self
                 .outstanding_workflow_tasks
                 .get(run_id)
