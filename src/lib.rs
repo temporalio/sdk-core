@@ -623,6 +623,8 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                 }
             }
         }
+
+        self.wft_manager.after_wft_report(run_id);
         Ok(())
     }
 

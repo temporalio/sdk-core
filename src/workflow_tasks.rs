@@ -266,7 +266,6 @@ impl WorkflowTaskManager {
         } else {
             None
         };
-        self.after_wft_report(run_id);
         Ok(ret)
     }
 
@@ -350,8 +349,10 @@ impl WorkflowTaskManager {
     }
 
     /// Called after every WFT completion or failure, updates outstanding task status & issues
-    /// evictions if required
-    fn after_wft_report(&self, run_id: &str) {
+    /// evictions if required. It is important this is called *after* reporting a successful WFT
+    /// to server, as some replies (task not found) may require an eviction, which could be avoided
+    /// if this is called too early.
+    pub(crate) fn after_wft_report(&self, run_id: &str) {
         // Workflows with no more pending activations (IE: They have completed a WFT) must be
         // removed from the outstanding tasks map
         if !self.pending_activations.has_pending(run_id) {
