@@ -6,7 +6,8 @@ use crate::{
     pending_activations::PendingActivations,
     protos::coresdk::{
         workflow_activation::{
-            create_evict_activation, create_query_activation, QueryWorkflow, WfActivation,
+            create_evict_activation, create_query_activation, wf_activation_job, QueryWorkflow,
+            WfActivation,
         },
         workflow_commands::QueryResult,
         PayloadsExt,
@@ -93,8 +94,11 @@ pub struct ServerCommandsWithWorkflowInfo {
 
 #[derive(Debug)]
 pub enum ActivationAction {
-    /// We should respond that the workflow task is complete with the included commands
-    WftComplete { commands: Vec<ProtoCommand> },
+    /// We should respond that the workflow task is complete
+    WftComplete {
+        commands: Vec<ProtoCommand>,
+        query_responses: Vec<QueryResult>,
+    },
     /// We should respond to a legacy query request
     RespondLegacyQuery { result: QueryResult },
 }
@@ -244,6 +248,7 @@ impl WorkflowTaskManager {
                     buffered_resp: None,
                 },
             );
+            // TODO: Can I avoid this now? Just create an empty activation intentionally?
             let na = create_query_activation(
                 work.workflow_execution.run_id,
                 [QueryWorkflow {
@@ -310,6 +315,19 @@ impl WorkflowTaskManager {
                 action: ActivationAction::RespondLegacyQuery { result: qr },
             })
         } else {
+            // First strip out query responses from other commands that actually affect machines
+            let query_responses = commands
+                .iter()
+                .filter_map(|cmd| {
+                    if let WFCommand::QueryResponse(qr) = cmd {
+                        // TODO: Ugh avoid clone
+                        Some(qr.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            warn!("Query resps: {:#?}", &query_responses);
             // Send commands from lang into the machines
             self.access_wf_machine(run_id, move |mgr| mgr.push_commands(commands))?;
             self.enqueue_next_activation_if_needed(run_id)?;
@@ -324,10 +342,23 @@ impl WorkflowTaskManager {
                     task_queue,
                     action: ActivationAction::WftComplete {
                         commands: server_cmds.commands,
+                        query_responses,
                     },
                 })
             } else {
-                None
+                if !query_responses.is_empty() {
+                    error!("Query only resp replaying: {}", server_cmds.replaying);
+                    Some(ServerCommandsWithWorkflowInfo {
+                        task_token,
+                        task_queue,
+                        action: ActivationAction::WftComplete {
+                            commands: vec![],
+                            query_responses,
+                        },
+                    })
+                } else {
+                    None
+                }
             }
         };
 
@@ -362,25 +393,6 @@ impl WorkflowTaskManager {
         }
     }
 
-    /// Push a pending activation with a query job in it for the provided run, with the provided
-    /// list of queries in it.
-    // pub(crate) fn queue_query_activation(
-    //     &self,
-    //     run_id: &str,
-    //     queries: impl IntoIterator<Item = QueryWorkflow>,
-    // ) -> Result<(), WorkflowUpdateError> {
-    //     let info = self.workflow_info.get(run_id).ok_or(WorkflowUpdateError {
-    //         source: WorkflowError::MissingMachine {
-    //             run_id: run_id.to_string(),
-    //         },
-    //         run_id: run_id.to_string(),
-    //     })?;
-    //     let activation = create_query_activation(run_id.to_string(), queries);
-    //     self.pending_activations
-    //         .push(activation, info.task_queue.clone());
-    //     Ok(())
-    // }
-
     /// Will create a new workflow manager if needed for the workflow activation, if not, it will
     /// feed the existing manager the updated history we received from the server.
     ///
@@ -407,7 +419,18 @@ impl WorkflowTaskManager {
             ),
             poll_wf_resp.workflow_execution,
         ) {
-            Ok(activation) => Ok((wft_info, activation)),
+            Ok(mut activation) => {
+                // If there are in-poll queries, insert jobs for those queries into the activation
+                if !poll_wf_resp.query_requests.is_empty() {
+                    let query_jobs = poll_wf_resp
+                        .query_requests
+                        .into_iter()
+                        .map(|q| wf_activation_job::Variant::QueryWorkflow(q).into());
+                    activation.jobs.extend(query_jobs);
+                }
+
+                Ok((wft_info, activation))
+            }
             Err(source) => Err(WorkflowUpdateError { source, run_id }),
         }
     }

@@ -261,8 +261,8 @@ pub fn augment_multihist_mock_sg(
     let outstanding = outstanding_wf_task_tokens.clone();
     mock_gateway
         .expect_complete_workflow_task()
-        .returning(move |tt, _, _| {
-            outstanding.write().remove_by_right(&tt);
+        .returning(move |comp| {
+            outstanding.write().remove_by_right(&comp.task_token);
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
     let outstanding = outstanding_wf_task_tokens.clone();

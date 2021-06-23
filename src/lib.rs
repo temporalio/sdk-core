@@ -55,7 +55,7 @@ use crate::{
         },
         temporal::api::enums::v1::WorkflowTaskFailedCause,
     },
-    protosext::ValidPollWFTQResponse,
+    protosext::{ValidPollWFTQResponse, WorkflowTaskCompletion},
     task_token::TaskToken,
     worker::Worker,
     workflow::WorkflowCachingPolicy,
@@ -600,17 +600,27 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             Some(ServerCommandsWithWorkflowInfo {
                 task_token,
                 task_queue,
-                action: ActivationAction::WftComplete { commands },
+                action:
+                    ActivationAction::WftComplete {
+                        commands,
+                        query_responses,
+                    },
             }) => {
+                debug!("Sending commands to server: {:?}", &commands);
+                let mut completion = WorkflowTaskCompletion {
+                    task_token,
+                    commands,
+                    query_responses,
+                    sticky_attributes: None,
+                    return_new_workflow_task: false,
+                    force_create_new_workflow_task: false,
+                };
                 match self.workers.read().await.get(&task_queue) {
                     Some(WorkerStatus::Live(worker)) => {
-                        let res = worker
-                            .complete_workflow_task(
-                                self.server_gateway.as_ref(),
-                                task_token,
-                                commands,
-                            )
-                            .await;
+                        let sticky_attrs = worker.get_sticky_attrs();
+                        completion.sticky_attributes = sticky_attrs;
+                        // TODO: Do this in shutdown branch as well?
+                        let res = self.server_gateway.complete_workflow_task(completion).await;
                         if let Err(ts) = res {
                             let should_evict = self.handle_wft_complete_errs(ts)?;
                             if should_evict {
@@ -623,7 +633,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                         // sticky queue no longer makes sense, so we complete directly through gateway
                         // with no sticky info
                         self.server_gateway
-                            .complete_workflow_task(task_token, commands, None)
+                            .complete_workflow_task(completion)
                             .await?;
                     }
                     None => {

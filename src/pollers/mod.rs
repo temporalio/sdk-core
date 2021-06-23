@@ -8,29 +8,31 @@ pub use poll_buffer::{
 };
 
 use crate::{
-    machines::ProtoCommand,
-    protos::coresdk::workflow_commands::{query_result, QueryResult},
-    protos::temporal::api::{
-        common::v1::{Payloads, WorkflowExecution, WorkflowType},
-        enums::v1::{QueryResultType, TaskQueueKind, WorkflowTaskFailedCause},
-        failure::v1::Failure,
-        query::v1::WorkflowQuery,
-        taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
-        workflowservice::v1::{
-            workflow_service_client::WorkflowServiceClient, PollActivityTaskQueueRequest,
-            PollActivityTaskQueueResponse, PollWorkflowTaskQueueRequest,
-            PollWorkflowTaskQueueResponse, QueryWorkflowRequest, QueryWorkflowResponse,
-            RecordActivityTaskHeartbeatRequest, RecordActivityTaskHeartbeatResponse,
-            RespondActivityTaskCanceledRequest, RespondActivityTaskCanceledResponse,
-            RespondActivityTaskCompletedRequest, RespondActivityTaskCompletedResponse,
-            RespondActivityTaskFailedRequest, RespondActivityTaskFailedResponse,
-            RespondQueryTaskCompletedRequest, RespondQueryTaskCompletedResponse,
-            RespondWorkflowTaskCompletedRequest, RespondWorkflowTaskCompletedResponse,
-            RespondWorkflowTaskFailedRequest, RespondWorkflowTaskFailedResponse,
-            SignalWorkflowExecutionRequest, SignalWorkflowExecutionResponse,
-            StartWorkflowExecutionRequest, StartWorkflowExecutionResponse,
+    protos::{
+        coresdk::workflow_commands::QueryResult,
+        temporal::api::{
+            common::v1::{Payloads, WorkflowExecution, WorkflowType},
+            enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
+            failure::v1::Failure,
+            query::v1::{WorkflowQuery, WorkflowQueryResult},
+            taskqueue::v1::TaskQueue,
+            workflowservice::v1::{
+                workflow_service_client::WorkflowServiceClient, PollActivityTaskQueueRequest,
+                PollActivityTaskQueueResponse, PollWorkflowTaskQueueRequest,
+                PollWorkflowTaskQueueResponse, QueryWorkflowRequest, QueryWorkflowResponse,
+                RecordActivityTaskHeartbeatRequest, RecordActivityTaskHeartbeatResponse,
+                RespondActivityTaskCanceledRequest, RespondActivityTaskCanceledResponse,
+                RespondActivityTaskCompletedRequest, RespondActivityTaskCompletedResponse,
+                RespondActivityTaskFailedRequest, RespondActivityTaskFailedResponse,
+                RespondQueryTaskCompletedRequest, RespondQueryTaskCompletedResponse,
+                RespondWorkflowTaskCompletedRequest, RespondWorkflowTaskCompletedResponse,
+                RespondWorkflowTaskFailedRequest, RespondWorkflowTaskFailedResponse,
+                SignalWorkflowExecutionRequest, SignalWorkflowExecutionResponse,
+                StartWorkflowExecutionRequest, StartWorkflowExecutionResponse,
+            },
         },
     },
+    protosext::WorkflowTaskCompletion,
     task_token::TaskToken,
     CoreInitError,
 };
@@ -197,17 +199,9 @@ pub trait ServerGatewayApis {
         -> Result<PollActivityTaskQueueResponse>;
 
     /// Complete a workflow activation.
-    ///
-    /// * `task_token`: The task token that would've been received from
-    /// [crate::Core::poll_workflow_task] API.
-    /// * `commands`: A list of new commands to send to the server, such as starting a timer.
-    /// * `sticky_attributes`: If set, indicate that next task should be queued on sticky queue with
-    /// given attributes.
     async fn complete_workflow_task(
         &self,
-        task_token: TaskToken,
-        commands: Vec<ProtoCommand>,
-        sticky_attributes: Option<StickyExecutionAttributes>,
+        request: WorkflowTaskCompletion,
     ) -> Result<RespondWorkflowTaskCompletedResponse>;
 
     /// Complete activity task by sending response to the server. `task_token` contains activity
@@ -359,18 +353,32 @@ impl ServerGatewayApis for ServerGateway {
 
     async fn complete_workflow_task(
         &self,
-        task_token: TaskToken,
-        commands: Vec<ProtoCommand>,
-        sticky_attributes: Option<StickyExecutionAttributes>,
+        request: WorkflowTaskCompletion,
     ) -> Result<RespondWorkflowTaskCompletedResponse> {
         let request = RespondWorkflowTaskCompletedRequest {
-            task_token: task_token.0,
-            commands,
+            task_token: request.task_token.into(),
+            commands: request.commands,
             identity: self.opts.identity.clone(),
+            sticky_attributes: request.sticky_attributes,
+            return_new_workflow_task: request.return_new_workflow_task,
+            force_create_new_workflow_task: request.force_create_new_workflow_task,
             binary_checksum: self.opts.worker_binary_id.clone(),
+            query_results: request
+                .query_responses
+                .into_iter()
+                .map(|qr| {
+                    let (id, completed_type, query_result, error_message) = qr.into_components();
+                    (
+                        id,
+                        WorkflowQueryResult {
+                            result_type: completed_type as i32,
+                            answer: query_result,
+                            error_message,
+                        },
+                    )
+                })
+                .collect(),
             namespace: self.opts.namespace.clone(),
-            sticky_attributes,
-            ..Default::default()
         };
         Ok(self
             .service
@@ -526,29 +534,13 @@ impl ServerGatewayApis for ServerGateway {
         task_token: TaskToken,
         query_result: QueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse> {
-        let (completed_type, query_result, error_message) = match query_result {
-            QueryResult {
-                variant: Some(query_result::Variant::Succeeded(qs)),
-                ..
-            } => (
-                QueryResultType::Answered as i32,
-                qs.response.map(Into::into),
-                "".to_string(),
-            ),
-            QueryResult {
-                variant: Some(query_result::Variant::FailedWithMessage(err)),
-                ..
-            } => (QueryResultType::Failed as i32, None, err),
-            QueryResult { variant: None, .. } => {
-                todo!("Can't have this here. Need to pass in better validated thing")
-            }
-        };
+        let (_, completed_type, query_result, error_message) = query_result.into_components();
         Ok(self
             .service
             .clone()
             .respond_query_task_completed(RespondQueryTaskCompletedRequest {
                 task_token: task_token.into(),
-                completed_type,
+                completed_type: completed_type as i32,
                 query_result,
                 error_message,
                 namespace: self.opts.namespace.clone(),
@@ -590,9 +582,7 @@ mod manual_mock {
 
             fn complete_workflow_task<'a, 'b>(
                 &self,
-                task_token: TaskToken,
-                commands: Vec<ProtoCommand>,
-                sticky_attributes: Option<StickyExecutionAttributes>,
+                request: WorkflowTaskCompletion,
             ) -> impl Future<Output = Result<RespondWorkflowTaskCompletedResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;
 

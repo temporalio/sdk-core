@@ -1,12 +1,18 @@
 use crate::{
-    protos::coresdk::{
-        workflow_commands::{workflow_command, WorkflowCommand},
-        workflow_completion::{wf_activation_completion, WfActivationCompletion},
+    machines::ProtoCommand,
+    protos::{
+        coresdk::{
+            workflow_activation::QueryWorkflow,
+            workflow_commands::{workflow_command, QueryResult, WorkflowCommand},
+            workflow_completion::{wf_activation_completion, WfActivationCompletion},
+            PayloadsExt,
+        },
+        temporal::api::common::v1::WorkflowExecution,
+        temporal::api::history::v1::History,
+        temporal::api::query::v1::WorkflowQuery,
+        temporal::api::taskqueue::v1::StickyExecutionAttributes,
+        temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
     },
-    protos::temporal::api::common::v1::WorkflowExecution,
-    protos::temporal::api::history::v1::History,
-    protos::temporal::api::query::v1::WorkflowQuery,
-    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
     task_token::TaskToken,
 };
 use std::convert::TryFrom;
@@ -24,8 +30,10 @@ pub struct ValidPollWFTQResponse {
     pub previous_started_event_id: i64,
     pub started_event_id: i64,
     /// If this is present, `history` will be empty. This is not a very "tight" design, but it's
-    /// enforced at construction time.
+    /// enforced at construction time. From the `query` field.
     pub legacy_query: Option<WorkflowQuery>,
+    /// Query requests from the `queries` field
+    pub query_requests: Vec<QueryWorkflow>,
 
     /// Zero-size field to prevent explicit construction
     _cant_construct_me: (),
@@ -43,6 +51,8 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                 .map(|h| !h.events.is_empty())
                 .unwrap_or(false)
         {
+            // TODO: Apparently this is totally possible. Need to allow both kinds of responses
+            //   at the same time -- add test
             error!("Poll WFTQ response had a `query` field with a nonempty history");
             return Err(value);
         }
@@ -58,12 +68,22 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                 previous_started_event_id,
                 started_event_id,
                 query,
+                queries,
                 ..
             } => {
                 if !next_page_token.is_empty() {
                     // TODO: Support history pagination
                     unimplemented!("History pagination not yet implemented");
                 }
+
+                let query_requests = queries
+                    .into_iter()
+                    .map(|(id, q)| QueryWorkflow {
+                        query_id: id,
+                        query_type: q.query_type,
+                        arguments: Vec::from_payloads(q.query_args),
+                    })
+                    .collect();
 
                 Ok(Self {
                     task_token: TaskToken(task_token),
@@ -75,6 +95,7 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                     previous_started_event_id,
                     started_event_id,
                     legacy_query: query,
+                    query_requests,
                     _cant_construct_me: (),
                 })
             }
@@ -107,4 +128,20 @@ where
             status: Some(wf_activation_completion::Status::Successful(success)),
         }
     }
+}
+
+/// A version of [RespondWorkflowTaskCompletedRequest] that will finish being filled out by the
+/// server client
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowTaskCompletion {
+    /// The task token that would've been received from [crate::Core::poll_workflow_task] API.
+    pub task_token: TaskToken,
+    /// A list of new commands to send to the server, such as starting a timer.
+    pub commands: Vec<ProtoCommand>,
+    /// If set, indicate that next task should be queued on sticky queue with given attributes.
+    pub sticky_attributes: Option<StickyExecutionAttributes>,
+    /// Responses to queries in the `queries` field of the workflow task.
+    pub query_responses: Vec<QueryResult>,
+    pub return_new_workflow_task: bool,
+    pub force_create_new_workflow_task: bool,
 }

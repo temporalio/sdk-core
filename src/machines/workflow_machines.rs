@@ -198,6 +198,11 @@ impl WorkflowMachines {
             WFMachinesError::UnexpectedEvent(event.clone(), "The event type is unknown")
         })?;
 
+        warn!(
+            "Apply: curstarted {} prev {}",
+            self.current_started_event_id, self.last_history_from_server.previous_started_event_id
+        );
+
         if self.replaying
             && self.current_started_event_id
                 >= self.last_history_from_server.previous_started_event_id
@@ -465,6 +470,12 @@ impl WorkflowMachines {
         let events = self
             .last_history_from_server
             .take_next_wft_sequence(self.last_handled_wft_started_id());
+
+        // We're caught up on reply if there are no new events to process
+        // TODO: Probably this is unneeded if we evict whenever history is from non-sticky queue
+        if events.is_empty() {
+            self.replaying = false;
+        }
 
         if let Some(last_event) = events.last() {
             if last_event.event_type == EventType::WorkflowTaskStarted as i32 {

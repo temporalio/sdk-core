@@ -88,8 +88,9 @@ message UpdateRandomSeed {
 
 /// Query a workflow
 message QueryWorkflow {
-    /// For PollWFTResp `query` field, this will be set to a special sigil. For the `queries` field,
-    /// the server provides a unique identifier.
+    /// For PollWFTResp `query` field, this will be set to the special value `legacy`. For the
+    /// `queries` field, the server provides a unique identifier. If it is a `legacy` query,
+    /// lang cannot issue any commands in response other than to answer the query.
     string query_id = 1;
     /// The query's function/method/etc name
     string query_type = 2;

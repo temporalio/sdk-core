@@ -1,6 +1,6 @@
 //! Contains the protobuf definitions used as arguments to and return values from interactions with
-//! [super::Core]. Language SDK authors can generate structs using the proto definitions that will match
-//! the generated structs in this module.
+//! [super::Core]. Language SDK authors can generate structs using the proto definitions that will
+//! match the generated structs in this module.
 
 #[allow(clippy::large_enum_variant)]
 // I'd prefer not to do this, but there are some generated things that just don't need it.
@@ -9,6 +9,23 @@ pub mod coresdk {
     //! Contains all protobufs relating to communication between core and lang-specific SDKs
 
     tonic::include_proto!("coresdk");
+
+    use crate::protos::temporal::api::{
+        common::v1::{Payloads, WorkflowExecution},
+        failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
+        history::v1::WorkflowExecutionSignaledEventAttributes,
+        workflowservice::v1::PollActivityTaskQueueResponse,
+    };
+    use activity_result::ActivityResult;
+    use activity_task::ActivityTask;
+    use common::{Payload, UserCodeFailure};
+    use std::{
+        convert::TryFrom,
+        fmt::{Display, Formatter},
+    };
+    use workflow_activation::{wf_activation_job, SignalWorkflow, WfActivationJob};
+    use workflow_commands::{workflow_command, workflow_command::Variant, WorkflowCommand};
+    use workflow_completion::{wf_activation_completion, WfActivationCompletion};
 
     #[allow(clippy::module_inception)]
     pub mod activity_task {
@@ -138,8 +155,11 @@ pub mod coresdk {
         }
     }
     pub mod workflow_commands {
-        use std::fmt::{Display, Formatter};
         tonic::include_proto!("coresdk.workflow_commands");
+
+        use crate::protos::temporal::api::common::v1::Payloads;
+        use crate::protos::temporal::api::enums::v1::QueryResultType;
+        use std::fmt::{Display, Formatter};
 
         impl Display for WorkflowCommand {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -165,30 +185,37 @@ pub mod coresdk {
                 }
             }
         }
-    }
 
-    use crate::protos::{
-        coresdk::{
-            activity_result::ActivityResult,
-            activity_task::ActivityTask,
-            common::{Payload, UserCodeFailure},
-            workflow_activation::SignalWorkflow,
-            workflow_commands::workflow_command::Variant,
-            workflow_completion::Success,
-        },
-        temporal::api::{
-            common::v1::{Payloads, WorkflowExecution},
-            failure::v1::ApplicationFailureInfo,
-            failure::v1::{failure::FailureInfo, Failure},
-            history::v1::WorkflowExecutionSignaledEventAttributes,
-            workflowservice::v1::PollActivityTaskQueueResponse,
-        },
-    };
-    use std::convert::TryFrom;
-    use std::fmt::{Display, Formatter};
-    use workflow_activation::{wf_activation_job, WfActivationJob};
-    use workflow_commands::{workflow_command, WorkflowCommand};
-    use workflow_completion::{wf_activation_completion, WfActivationCompletion};
+        impl QueryResult {
+            /// Helper to construct the Temporal API query result types.
+            pub fn into_components(self) -> (String, QueryResultType, Option<Payloads>, String) {
+                match self {
+                    QueryResult {
+                        variant: Some(query_result::Variant::Succeeded(qs)),
+                        query_id,
+                    } => (
+                        query_id,
+                        QueryResultType::Answered,
+                        qs.response.map(Into::into),
+                        "".to_string(),
+                    ),
+                    QueryResult {
+                        variant: Some(query_result::Variant::FailedWithMessage(err)),
+                        query_id,
+                    } => (query_id, QueryResultType::Failed, None, err),
+                    QueryResult {
+                        variant: None,
+                        query_id,
+                    } => (
+                        query_id,
+                        QueryResultType::Failed,
+                        None,
+                        "Query response was empty".to_string(),
+                    ),
+                }
+            }
+        }
+    }
 
     pub type HistoryEventId = i64;
 
@@ -210,7 +237,7 @@ pub mod coresdk {
         }
     }
 
-    impl Success {
+    impl workflow_completion::Success {
         pub fn from_variants(cmds: Vec<Variant>) -> Self {
             let cmds: Vec<_> = cmds
                 .into_iter()
@@ -223,7 +250,7 @@ pub mod coresdk {
     impl WfActivationCompletion {
         /// Create a successful activation from a list of commands
         pub fn from_cmds(cmds: Vec<workflow_command::Variant>, run_id: String) -> Self {
-            let success = Success::from_variants(cmds);
+            let success = workflow_completion::Success::from_variants(cmds);
             Self {
                 run_id,
                 status: Some(wf_activation_completion::Status::Successful(success)),
@@ -232,7 +259,7 @@ pub mod coresdk {
 
         /// Create a successful activation from just one command
         pub fn from_cmd(cmd: workflow_command::Variant, run_id: String) -> Self {
-            let success = Success::from_variants(vec![cmd]);
+            let success = workflow_completion::Success::from_variants(vec![cmd]);
             Self {
                 run_id,
                 status: Some(wf_activation_completion::Status::Successful(success)),
@@ -276,7 +303,9 @@ pub mod coresdk {
     impl Display for wf_activation_completion::Status {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
-                wf_activation_completion::Status::Successful(Success { commands }) => {
+                wf_activation_completion::Status::Successful(workflow_completion::Success {
+                    commands,
+                }) => {
                     write!(f, "Success(")?;
                     for c in commands {
                         write!(f, " {} ", c)?;
@@ -858,6 +887,25 @@ pub mod temporal {
                             self.attempt,
                             last_event
                         )
+                    }
+                }
+
+                /// Can be used while debugging to avoid filling up a whole screen with poll resps
+                pub struct CompactHist<'a>(pub &'a PollWorkflowTaskQueueResponse);
+                impl Display for CompactHist<'_> {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        writeln!(
+                            f,
+                            "PollWorkflowTaskQueueResponse (prev_started: {}, started: {})",
+                            self.0.previous_started_event_id, self.0.started_event_id
+                        )?;
+                        if let Some(h) = self.0.history.as_ref() {
+                            for event in &h.events {
+                                writeln!(f, "{}", event)?;
+                            }
+                        }
+                        writeln!(f, "query: {:#?}", self.0.query)?;
+                        writeln!(f, "queries: {:#?}", self.0.queries)
                     }
                 }
 
