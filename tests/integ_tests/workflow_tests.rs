@@ -472,3 +472,33 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn wft_timeout_on_sticky_switches_to_nonsticky_with_eviction() {
+    let mut wf_starter =
+        CoreWfStarter::new("wft_timeout_on_sticky_switches_to_nonsticky_with_eviction");
+    // Short timeout with cache on
+    wf_starter.wft_timeout(Duration::from_secs(1));
+    let core = wf_starter.get_core().await;
+    let task_q = wf_starter.get_task_queue();
+    let wf_id = &wf_starter.get_wf_id().to_owned();
+
+    wf_starter.start_wf().await;
+
+    // Complete first task to get it onto the sticky queue
+    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+        vec![StartTimer {
+            timer_id: "timer".to_string(),
+            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+        }
+        .into()],
+        task.run_id,
+    ))
+    .await
+    .unwrap();
+
+    // Time out the next task
+    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    sleep(Duration::from_secs(2)).await;
+}
