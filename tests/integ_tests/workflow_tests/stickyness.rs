@@ -1,5 +1,11 @@
 use crate::integ_tests::workflow_tests::timers::timer_wf;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use temporal_sdk_core::{
     protos::coresdk::workflow_commands::StartTimer,
     test_workflow_driver::{CommandSender, TestRustWorker},
@@ -24,13 +30,17 @@ async fn timer_workflow_not_sticky() {
     core.shutdown().await;
 }
 
-pub async fn timer_timeout_wf(mut command_sink: CommandSender) {
+static TIMED_OUT_ONCE: AtomicBool = AtomicBool::new(false);
+async fn timer_timeout_wf(mut command_sink: CommandSender) {
     let timer = StartTimer {
         timer_id: "super_timer_id".to_string(),
         start_to_fire_timeout: Some(Duration::from_secs(1).into()),
     };
     let t = command_sink.timer(timer);
-    sleep(Duration::from_secs(3)).await;
+    if !TIMED_OUT_ONCE.load(Ordering::SeqCst) {
+        sleep(Duration::from_secs(3)).await;
+        TIMED_OUT_ONCE.store(true, Ordering::SeqCst);
+    }
     t.await;
     command_sink.complete_workflow_execution();
 }

@@ -93,10 +93,15 @@ impl TestRustWorker {
         F: Fn(CommandSender) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        let mut twd = TestWorkflowDriver::new(wf_function.as_ref());
-        if let Some(or) = self.deadlock_override {
-            twd.override_deadlock(or);
-        }
+        let deadlock_override = self.deadlock_override;
+        let regen_twd = move || {
+            let mut twd = TestWorkflowDriver::new(wf_function.as_ref());
+            if let Some(or) = deadlock_override {
+                twd.override_deadlock(or);
+            }
+            twd
+        };
+        let mut twd = regen_twd();
         let (tx, mut rx) = unbounded_channel::<WfActivation>();
         let core = self.core.clone();
         let jh = tokio::spawn(async move {
@@ -120,10 +125,7 @@ impl TestRustWorker {
                             Variant::CancelWorkflow(_) => {}
                             Variant::SignalWorkflow(_) => {}
                             Variant::RemoveFromCache(_) => {
-                                let old_twd = std::mem::replace(
-                                    &mut twd,
-                                    TestWorkflowDriver::new(wf_function.as_ref()),
-                                );
+                                let old_twd = std::mem::replace(&mut twd, regen_twd());
                                 old_twd.kill().await;
                                 continue 'receiver;
                             }
@@ -167,7 +169,9 @@ impl TestRustWorker {
                 // The activation is expected to apply to some workflow we know about. Use it to
                 // unblock things and advance the workflow.
                 if let Some(tx) = workflows.get_mut(&activation.run_id) {
-                    tx.send(activation).unwrap();
+                    // Error could happen b/c of eviction notification after wf exits. We don't care
+                    // about that in these tests.
+                    let _ = tx.send(activation);
                 } else {
                     bail!("Got activation for unknown workflow");
                 }
