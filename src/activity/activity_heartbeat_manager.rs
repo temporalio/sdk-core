@@ -179,7 +179,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatManager<SG>
                 }
             }
         }
-        self.shutdown().await.expect("shutdown should exit cleanly")
+        self.shutdown().await.expect("shutdown should exit cleanly");
     }
 
     /// Records heartbeat, by sending it to the processor.
