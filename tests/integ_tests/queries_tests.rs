@@ -1,4 +1,5 @@
 use assert_matches::assert_matches;
+use std::sync::Arc;
 use std::time::Duration;
 use temporal_sdk_core::protos::coresdk::{
     workflow_activation::{wf_activation_job, WfActivationJob},
@@ -6,7 +7,7 @@ use temporal_sdk_core::protos::coresdk::{
     workflow_completion::WfActivationCompletion,
 };
 use temporal_sdk_core::protos::temporal::api::query::v1::WorkflowQuery;
-use temporal_sdk_core::tracing_init;
+use temporal_sdk_core::{tracing_init, Core};
 use test_utils::{init_core_and_create_wf, with_gw, CoreWfStarter, GwApi};
 
 #[tokio::test]
@@ -100,9 +101,93 @@ async fn simple_query_legacy() {
     assert_eq!(&q_resp.unwrap()[0].data, query_resp);
 }
 
+// TODO: Use more places
+async fn complete_timer(core: &Arc<dyn Core>, run_id: &str, timer_id: &str) {
+    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+        vec![StartTimer {
+            timer_id: timer_id.to_string(),
+            start_to_fire_timeout: Some(Duration::from_millis(500).into()),
+        }
+        .into()],
+        run_id.to_string(),
+    ))
+    .await
+    .unwrap();
+}
+
+#[rstest::rstest]
+#[case::no_eviction(false)]
+#[case::with_eviction(true)]
 #[tokio::test]
-async fn queries_in_wf_task() {
+async fn query_after_execution_complete(#[case] do_evict: bool) {
     tracing_init();
+    let workflow_id = &format!("after_done_query_evict-{}", do_evict);
+    let query_resp = b"response";
+    let (core, task_q) = init_core_and_create_wf(workflow_id).await;
+    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let run_id = task.run_id.clone();
+    complete_timer(&core, &task.run_id, "timer-1").await;
+    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
+        task.run_id,
+    ))
+    .await
+    .unwrap();
+
+    if do_evict {
+        core.request_workflow_eviction(&run_id);
+    }
+
+    let query_fut = with_gw(core.as_ref(), |gw: GwApi| async move {
+        gw.query_workflow_execution(
+            workflow_id.to_string(),
+            run_id,
+            WorkflowQuery {
+                query_type: "myquery".to_string(),
+                query_args: Some(b"hi".into()),
+            },
+        )
+        .await
+        .unwrap()
+    });
+    let query_handling_fut = async {
+        let task = core.poll_workflow_task(&task_q).await.unwrap();
+        dbg!(&task);
+
+        let query = assert_matches!(
+            task.jobs.as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::QueryWorkflow(q)),
+            }] => q
+        );
+        // Complete the query
+        core.complete_workflow_task(WfActivationCompletion::from_cmd(
+            QueryResult {
+                query_id: query.query_id.clone(),
+                variant: Some(
+                    QuerySuccess {
+                        response: Some(query_resp.into()),
+                    }
+                    .into(),
+                ),
+            }
+            .into(),
+            task.run_id,
+        ))
+        .await
+        .unwrap();
+    };
+    let (q_resp, _) = tokio::join!(query_fut, query_handling_fut);
+    // Ensure query response is as expected
+    assert_eq!(&q_resp.unwrap()[0].data, query_resp);
+}
+
+#[ignore]
+#[tokio::test]
+async fn repros_query_dropped_on_floor() {
+    // This test reliably repros the server dropping one of the two simultaneously issued queries.
+
     let workflow_id = "queries_in_wf_task";
     let q1_resp = b"query_1_resp";
     let q2_resp = b"query_2_resp";
@@ -114,58 +199,87 @@ async fn queries_in_wf_task() {
     wf_starter.start_wf().await;
 
     let task = core.poll_workflow_task(&task_q).await.unwrap();
+    complete_timer(&core, &task.run_id, "timer-1").await;
+
+    // Poll for a task we will time out
+    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Complete now-timed-out task (add a new timer)
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![StartTimer {
-            timer_id: "timer-1".to_string(),
-            start_to_fire_timeout: Some(Duration::from_millis(500).into()),
-        }
-        .into()],
+        vec![],
         task.run_id.clone(),
     ))
     .await
     .unwrap();
-    // Poll for a task we will time out
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
-    dbg!(&task);
-    tokio::time::sleep(Duration::from_secs(2)).await;
 
     let run_id = task.run_id.to_string();
     let q1_fut = with_gw(core.as_ref(), |gw: GwApi| async move {
-        gw.query_workflow_execution(
-            workflow_id.to_string(),
-            run_id,
-            WorkflowQuery {
-                query_type: "query_1".to_string(),
-                query_args: Some(b"hi 1".into()),
-            },
-        )
-        .await
-        .unwrap()
+        let res = gw
+            .query_workflow_execution(
+                workflow_id.to_string(),
+                run_id,
+                WorkflowQuery {
+                    query_type: "query_1".to_string(),
+                    query_args: Some(b"hi 1".into()),
+                },
+            )
+            .await
+            .unwrap();
+        dbg!("Got q1 resp");
+        res
     });
     let run_id = task.run_id.to_string();
     let q2_fut = with_gw(core.as_ref(), |gw: GwApi| async move {
-        gw.query_workflow_execution(
-            workflow_id.to_string(),
-            run_id,
-            WorkflowQuery {
-                query_type: "query_2".to_string(),
-                query_args: Some(b"hi 2".into()),
-            },
-        )
-        .await
-        .unwrap()
-    });
-    let workflow_completions_future = async {
-        // Complete now-timed-out task (add a new timer)
-        core.complete_workflow_task(WfActivationCompletion::from_cmds(vec![], task.run_id))
+        let res = gw
+            .query_workflow_execution(
+                workflow_id.to_string(),
+                run_id,
+                WorkflowQuery {
+                    query_type: "query_2".to_string(),
+                    query_args: Some(b"hi 2".into()),
+                },
+            )
             .await
             .unwrap();
+        dbg!("Got q2 resp");
+        res
+    });
+    let workflow_completions_future = async {
         let mut seen_q1 = false;
         let mut seen_q2 = false;
         while !seen_q1 || !seen_q2 {
             dbg!("Polling");
             let task = core.poll_workflow_task(&task_q).await.unwrap();
-            dbg!("Past second poll");
+            dbg!("Past second poll", &task);
+
+            if matches!(
+                task.jobs[0],
+                WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+                }
+            ) {
+                dbg!("Evict path");
+                let task = core.poll_workflow_task(&task_q).await.unwrap();
+                complete_timer(&core, &task.run_id, "timer-1").await;
+                continue;
+            }
+
+            if matches!(
+                task.jobs[0],
+                WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::FireTimer(_)),
+                }
+            ) {
+                // If we get the timer firing after replay, be done.
+                core.complete_workflow_task(WfActivationCompletion::from_cmds(
+                    vec![CompleteWorkflowExecution { result: None }.into()],
+                    task.run_id,
+                ))
+                .await
+                .unwrap();
+                continue;
+            }
+
             // There should be a query job (really, there should be both... server only sends one?)
             let query = assert_matches!(
                 task.jobs.as_slice(),
@@ -173,46 +287,32 @@ async fn queries_in_wf_task() {
                     variant: Some(wf_activation_job::Variant::QueryWorkflow(q)),
                 }] => q
             );
-            let resp = if query.query_id == "query_1" {
+            let resp = if query.query_type == "query_1" {
                 seen_q1 = true;
+                dbg!("Answering q1");
                 q1_resp
             } else {
+                dbg!("Answering q2");
                 seen_q2 = true;
                 q2_resp
             };
             // Complete the query
             core.complete_workflow_task(WfActivationCompletion::from_cmds(
-                vec![
-                    QueryResult {
-                        query_id: query.query_id.clone(),
-                        variant: Some(
-                            QuerySuccess {
-                                response: Some(resp.into()),
-                            }
-                            .into(),
-                        ),
-                    }
-                    .into(),
-                    // Also start a timer to avoid stalling out -- bug where query can be dropped
-                    StartTimer {
-                        timer_id: "timer-2".to_string(),
-                        start_to_fire_timeout: Some(Duration::from_millis(500).into()),
-                    }
-                    .into(),
-                ],
+                vec![QueryResult {
+                    query_id: query.query_id.clone(),
+                    variant: Some(
+                        QuerySuccess {
+                            response: Some(resp.into()),
+                        }
+                        .into(),
+                    ),
+                }
+                .into()],
                 task.run_id,
             ))
             .await
             .unwrap();
         }
-        // Finish the workflow
-        let task = core.poll_workflow_task(&task_q).await.unwrap();
-        core.complete_workflow_task(WfActivationCompletion::from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
-            task.run_id,
-        ))
-        .await
-        .unwrap();
     };
     let (q1_res, q2_res, _) = tokio::join!(q1_fut, q2_fut, workflow_completions_future);
     // Ensure query responses are as expected

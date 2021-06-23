@@ -698,7 +698,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                 Ok(false)
             }
             tonic::Code::NotFound => {
-                warn!("Task not found when completing");
+                warn!("Task not found when completing: {}", err);
                 Ok(true)
             }
             _ => Err(err.into()),

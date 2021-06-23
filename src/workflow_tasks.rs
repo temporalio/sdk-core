@@ -166,6 +166,11 @@ impl WorkflowTaskManager {
     ///
     /// Returns that workflow's task info if it was present.
     pub fn evict_run(&self, run_id: &str) -> Option<WorkflowTaskInfo> {
+        debug!(run_id=%run_id, "Evicting run");
+        self.workflow_machines.evict(run_id);
+        self.outstanding_activations.remove(run_id);
+        self.pending_activations.remove_all_with_run_id(run_id);
+
         if let Some((
             _,
             OutstandingTask {
@@ -174,14 +179,9 @@ impl WorkflowTaskManager {
             },
         )) = self.outstanding_workflow_tasks.remove(run_id)
         {
-            let run_id = &info.run_id;
-            debug!(run_id=%run_id, "Evicting run");
-            self.workflow_machines.evict(run_id);
-            self.outstanding_activations.remove(run_id);
-            self.pending_activations.remove_all_with_run_id(run_id);
             // Queue up an eviction activation
             self.pending_activations.push(
-                create_evict_activation(run_id.to_owned()),
+                create_evict_activation(run_id.to_string()),
                 info.task_queue.clone(),
             );
             let _ =
@@ -316,10 +316,14 @@ impl WorkflowTaskManager {
             })
         } else {
             // First strip out query responses from other commands that actually affect machines
+            let mut saw_legacy_cmd = false;
             let query_responses = commands
                 .iter()
                 .filter_map(|cmd| {
                     if let WFCommand::QueryResponse(qr) = cmd {
+                        if qr.query_id == LEGACY_QUERY_ID {
+                            saw_legacy_cmd = true;
+                        }
                         // TODO: Ugh avoid clone
                         Some(qr.clone())
                     } else {
@@ -327,6 +331,12 @@ impl WorkflowTaskManager {
                     }
                 })
                 .collect();
+            if saw_legacy_cmd {
+                return Err(WorkflowUpdateError {
+                    source: WorkflowError::LegacyQueryResponseIncludedOtherCommands,
+                    run_id: run_id.to_string(),
+                });
+            }
             warn!("Query resps: {:#?}", &query_responses);
             // Send commands from lang into the machines
             self.access_wf_machine(run_id, move |mgr| mgr.push_commands(commands))?;

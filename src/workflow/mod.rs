@@ -39,6 +39,10 @@ pub enum WorkflowError {
     /// for lang to do.
     #[error("Machine created with no activations for run_id {run_id}")]
     MachineWasCreatedWithNoJobs { run_id: String },
+    /// Lang responded with other commands in addition to a legacy query response, which is not
+    /// allowed.
+    #[error("Lang responded with other commands in addition to legacy query response")]
+    LegacyQueryResponseIncludedOtherCommands,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
