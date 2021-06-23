@@ -124,16 +124,28 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
     let workflow_id = &format!("after_done_query_evict-{}", do_evict);
     let query_resp = b"response";
     let (core, task_q) = init_core_and_create_wf(workflow_id).await;
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
-    let run_id = task.run_id.clone();
-    complete_timer(&core, &task.run_id, "timer-1").await;
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        task.run_id,
-    ))
-    .await
-    .unwrap();
+
+    let do_workflow = || async {
+        let task = core.poll_workflow_task(&task_q).await.unwrap();
+        assert_matches!(
+            task.jobs.as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
+            }]
+        );
+        let run_id = task.run_id.clone();
+        complete_timer(&core, &task.run_id, "timer-1").await;
+        let task = core.poll_workflow_task(&task_q).await.unwrap();
+        core.complete_workflow_task(WfActivationCompletion::from_cmds(
+            vec![CompleteWorkflowExecution { result: None }.into()],
+            task.run_id,
+        ))
+        .await
+        .unwrap();
+        run_id
+    };
+
+    let run_id = do_workflow().await;
 
     if do_evict {
         core.request_workflow_eviction(&run_id);
@@ -151,7 +163,13 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
         .await
         .unwrap()
     });
+
     let query_handling_fut = async {
+        // If we evicted, we should need to replay the whole workflow before we execute the query
+        if do_evict {
+            do_workflow().await;
+        }
+
         let task = core.poll_workflow_task(&task_q).await.unwrap();
         dbg!(&task);
 

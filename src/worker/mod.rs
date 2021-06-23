@@ -243,7 +243,6 @@ impl Worker {
         }
 
         warn!("{}", CompactHist(&res));
-        // warn!("{:#?}", &res);
 
         let work: ValidPollWFTQResponse = res
             .try_into()
