@@ -363,7 +363,6 @@ impl WorkflowTaskManager {
                 None
             }
         };
-
         Ok(ret)
     }
 
