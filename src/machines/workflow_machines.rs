@@ -198,11 +198,6 @@ impl WorkflowMachines {
             WFMachinesError::UnexpectedEvent(event.clone(), "The event type is unknown")
         })?;
 
-        warn!(
-            "Apply: curstarted {} prev {}",
-            self.current_started_event_id, self.last_history_from_server.previous_started_event_id
-        );
-
         if self.replaying
             && self.current_started_event_id
                 >= self.last_history_from_server.previous_started_event_id
