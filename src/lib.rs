@@ -553,7 +553,9 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     }
 
     /// Apply validated poll responses from the server. Returns an activation if one should be
-    /// issued to lang, or returns `None` in which case the polling loop should be restarted.
+    /// issued to lang, or returns `None` in which case the polling loop should be restarted
+    /// (ex: Got a new workflow task for a run but lang is already handling an activation for that
+    /// same run)
     async fn apply_server_work(
         &self,
         work: ValidPollWFTQResponse,
