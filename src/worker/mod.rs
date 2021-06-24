@@ -7,7 +7,7 @@ use crate::{
         temporal::api::enums::v1::TaskQueueKind,
         temporal::api::taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
         temporal::api::workflowservice::v1::{
-            CompactHist, PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
+            PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
         },
     },
     protosext::ValidPollWFTQResponse,
@@ -241,8 +241,6 @@ impl Worker {
             // We get the default proto in the event that the long poll times out.
             return Ok(None);
         }
-
-        warn!("{}", CompactHist(&res));
 
         let work: ValidPollWFTQResponse = res
             .try_into()

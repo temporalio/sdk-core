@@ -75,6 +75,7 @@ pub mod coresdk {
     }
     pub mod workflow_activation {
         use crate::core_tracing::VecDisplayer;
+        use crate::workflow::LEGACY_QUERY_ID;
         use std::fmt::{Display, Formatter};
 
         tonic::include_proto!("coresdk.workflow_activation");
@@ -101,6 +102,15 @@ pub mod coresdk {
                     .into_iter()
                     .map(|qr| wf_activation_job::Variant::QueryWorkflow(qr).into())
                     .collect(),
+            }
+        }
+
+        impl WfActivation {
+            /// Returns true if this activation has one and only one job to perform a legacy query
+            pub(crate) fn is_legacy_query(&self) -> bool {
+                matches!(&self.jobs.as_slice(), &[WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::QueryWorkflow(qr))
+                }] if qr.query_id == LEGACY_QUERY_ID)
             }
         }
 
@@ -157,8 +167,10 @@ pub mod coresdk {
     pub mod workflow_commands {
         tonic::include_proto!("coresdk.workflow_commands");
 
+        use super::workflow_completion;
         use crate::protos::temporal::api::common::v1::Payloads;
         use crate::protos::temporal::api::enums::v1::QueryResultType;
+        use crate::workflow::LEGACY_QUERY_ID;
         use std::fmt::{Display, Formatter};
 
         impl Display for WorkflowCommand {
@@ -212,6 +224,17 @@ pub mod coresdk {
                         None,
                         "Query response was empty".to_string(),
                     ),
+                }
+            }
+
+            pub fn legacy_failure(fail: workflow_completion::Failure) -> Self {
+                QueryResult {
+                    query_id: LEGACY_QUERY_ID.to_string(),
+                    variant: Some(query_result::Variant::FailedWithMessage(
+                        fail.failure
+                            .map(|ucf| ucf.message)
+                            .unwrap_or_else(|| "unknown failure reason".to_string()),
+                    )),
                 }
             }
         }

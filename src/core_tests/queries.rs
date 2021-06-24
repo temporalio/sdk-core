@@ -6,6 +6,7 @@ use crate::{
     pollers::MockServerGatewayApis,
     protos::{
         coresdk::{
+            common::UserCodeFailure,
             workflow_activation::{wf_activation_job, WfActivationJob},
             workflow_commands::{CompleteWorkflowExecution, QueryResult, QuerySuccess, StartTimer},
             workflow_completion::WfActivationCompletion,
@@ -223,5 +224,73 @@ async fn new_queries(#[case] num_queries: usize) {
     core.complete_workflow_task(WfActivationCompletion::from_cmds(qresults, task.run_id))
         .await
         .unwrap();
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn legacy_query_failure_on_wft_failure() {
+    tracing_init();
+    let wfid = "fake_wf_id";
+    let t = canned_histories::single_timer("fake_timer");
+    let mut tasks = VecDeque::from(vec![
+        hist_to_poll_resp(&t, wfid.to_owned(), 1, TEST_Q.to_string()),
+        {
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1, TEST_Q.to_string());
+            pr.query = Some(WorkflowQuery {
+                query_type: "query-type".to_string(),
+                query_args: Some(b"hi".into()),
+            });
+            pr.history = Some(History { events: vec![] });
+            pr
+        },
+        hist_to_poll_resp(&t, wfid.to_owned(), 2, TEST_Q.to_string()),
+    ]);
+    let mut mock_gateway = MockServerGatewayApis::new();
+    mock_gateway
+        .expect_poll_workflow_task()
+        .returning(move |_| Ok(tasks.pop_front().unwrap()));
+    mock_gateway
+        .expect_complete_workflow_task()
+        .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
+    mock_gateway
+        .expect_respond_legacy_query()
+        .times(1)
+        .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
+
+    let mut opts = CoreInitOptionsBuilder::default();
+    opts.max_cached_workflows(10_usize);
+    let core = mock_core_with_opts(mock_gateway, opts);
+
+    let task = core.poll_workflow_task(TEST_Q).await.unwrap();
+    core.complete_workflow_task(WfActivationCompletion::from_cmd(
+        StartTimer {
+            timer_id: "fake_timer".to_string(),
+            ..Default::default()
+        }
+        .into(),
+        task.run_id,
+    ))
+    .await
+    .unwrap();
+
+    let task = core.poll_workflow_task(TEST_Q).await.unwrap();
+    // Poll again, and we end up getting a `query` field query response
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::QueryWorkflow(q)),
+        }] => q
+    );
+    // Fail wft which should result in query being failed
+    core.complete_workflow_task(WfActivationCompletion::fail(
+        task.run_id,
+        UserCodeFailure {
+            message: "Ahh i broke".to_string(),
+            ..Default::default()
+        },
+    ))
+    .await
+    .unwrap();
+
     core.shutdown().await;
 }

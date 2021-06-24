@@ -50,6 +50,7 @@ use crate::{
             activity_result::{self as ar, activity_result},
             activity_task::ActivityTask,
             workflow_activation::WfActivation,
+            workflow_commands::QueryResult,
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
             ActivityHeartbeat, ActivityTaskCompletion,
         },
@@ -663,14 +664,22 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         run_id: &str,
         failure: workflow_completion::Failure,
     ) -> Result<(), CompleteWfError> {
-        if let FailedActivationOutcome::Report(tt) = self.wft_manager.failed_activation(run_id) {
-            self.server_gateway
-                .fail_workflow_task(
-                    tt,
-                    WorkflowTaskFailedCause::Unspecified,
-                    failure.failure.map(Into::into),
-                )
-                .await?;
+        match self.wft_manager.failed_activation(run_id) {
+            FailedActivationOutcome::Report(tt) => {
+                self.server_gateway
+                    .fail_workflow_task(
+                        tt,
+                        WorkflowTaskFailedCause::Unspecified,
+                        failure.failure.map(Into::into),
+                    )
+                    .await?;
+            }
+            FailedActivationOutcome::ReportLegacyQueryFailure(task_token) => {
+                self.server_gateway
+                    .respond_legacy_query(task_token, QueryResult::legacy_failure(failure))
+                    .await?;
+            }
+            _ => {}
         }
         Ok(())
     }
