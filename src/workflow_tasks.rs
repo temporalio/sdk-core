@@ -350,20 +350,17 @@ impl WorkflowTaskManager {
                         query_responses,
                     },
                 })
+            } else if !query_responses.is_empty() {
+                Some(ServerCommandsWithWorkflowInfo {
+                    task_token,
+                    task_queue,
+                    action: ActivationAction::WftComplete {
+                        commands: vec![],
+                        query_responses,
+                    },
+                })
             } else {
-                if !query_responses.is_empty() {
-                    error!("Query only resp replaying: {}", server_cmds.replaying);
-                    Some(ServerCommandsWithWorkflowInfo {
-                        task_token,
-                        task_queue,
-                        action: ActivationAction::WftComplete {
-                            commands: vec![],
-                            query_responses,
-                        },
-                    })
-                } else {
-                    None
-                }
+                None
             }
         };
 
