@@ -62,7 +62,7 @@ struct OutstandingTask {
     pub legacy_query: Option<QueryWorkflow>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 enum OutstandingActivation {
     // A normal activation with a joblist
     Normal,
@@ -288,7 +288,7 @@ impl WorkflowTaskManager {
     pub(crate) fn successful_activation(
         &self,
         run_id: &str,
-        commands: Vec<WFCommand>,
+        mut commands: Vec<WFCommand>,
     ) -> Result<Option<ServerCommandsWithWorkflowInfo>, WorkflowUpdateError> {
         let (task_token, task_queue) =
             if let Some(entry) = self.outstanding_workflow_tasks.get(run_id) {
@@ -308,7 +308,6 @@ impl WorkflowTaskManager {
         let ret = if matches!(&commands.as_slice(),
                     &[WFCommand::QueryResponse(qr)] if qr.query_id == LEGACY_QUERY_ID)
         {
-            let mut commands = commands;
             let qr = match commands.remove(0) {
                 WFCommand::QueryResponse(qr) => qr,
                 _ => unreachable!("We just verified this is the only command"),
@@ -320,26 +319,23 @@ impl WorkflowTaskManager {
             })
         } else {
             // First strip out query responses from other commands that actually affect machines
-            let mut saw_legacy_cmd = false;
-            let query_responses = commands
-                .iter()
-                .filter_map(|cmd| {
-                    if let WFCommand::QueryResponse(qr) = cmd {
+            // Would be prettier with `drain_filter`
+            let mut i = 0;
+            let mut query_responses = vec![];
+            while i < commands.len() {
+                if matches!(commands[i], WFCommand::QueryResponse(_)) {
+                    if let WFCommand::QueryResponse(qr) = commands.remove(i) {
                         if qr.query_id == LEGACY_QUERY_ID {
-                            saw_legacy_cmd = true;
+                            return Err(WorkflowUpdateError {
+                                source: WorkflowError::LegacyQueryResponseIncludedOtherCommands,
+                                run_id: run_id.to_string(),
+                            });
                         }
-                        // TODO: Ugh avoid clone
-                        Some(qr.clone())
-                    } else {
-                        None
+                        query_responses.push(qr);
                     }
-                })
-                .collect();
-            if saw_legacy_cmd {
-                return Err(WorkflowUpdateError {
-                    source: WorkflowError::LegacyQueryResponseIncludedOtherCommands,
-                    run_id: run_id.to_string(),
-                });
+                } else {
+                    i += 1;
+                }
             }
             // Send commands from lang into the machines
             self.access_wf_machine(run_id, move |mgr| mgr.push_commands(commands))?;
@@ -388,7 +384,7 @@ impl WorkflowTaskManager {
         };
         // If the outstanding activation is a legacy query task, report that we need to fail it
         let ret = if let Some(OutstandingActivation::LegacyQuery) =
-            self.outstanding_activations.get(run_id).as_deref()
+            self.outstanding_activations.get(run_id).map(|at| *at)
         {
             FailedActivationOutcome::ReportLegacyQueryFailure(tt)
         } else {

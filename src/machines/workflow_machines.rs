@@ -593,9 +593,9 @@ impl WorkflowMachines {
                     let cwfm = self.add_new_machine(fail_workflow(attrs));
                     self.current_wf_task_commands.push_back(cwfm);
                 }
-                WFCommand::QueryResponse(query) => {
-                    // TODO: Somehow bubble up query response?
-                    warn!("Got query response from lang: {:?}", query);
+                WFCommand::QueryResponse(_) => {
+                    // Nothing to do here, queries are handled above the machine level
+                    unimplemented!("Query responses should not make it down into the machines")
                 }
                 WFCommand::NoCommandsFromLang => (),
             }

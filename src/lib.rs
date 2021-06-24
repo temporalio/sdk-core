@@ -620,7 +620,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                     Some(WorkerStatus::Live(worker)) => {
                         let sticky_attrs = worker.get_sticky_attrs();
                         completion.sticky_attributes = sticky_attrs;
-                        // TODO: Do this in shutdown branch as well?
                         let res = self.server_gateway.complete_workflow_task(completion).await;
                         if let Err(ts) = res {
                             let should_evict = self.handle_wft_complete_errs(ts)?;
@@ -630,9 +629,9 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                         }
                     }
                     Some(WorkerStatus::Shutdown) => {
-                        // If the worker is shutdown we still want to be able to complete the WF, but
-                        // sticky queue no longer makes sense, so we complete directly through gateway
-                        // with no sticky info
+                        // If the worker is shutdown we still want to be able to complete the WF,
+                        // but sticky queue no longer makes sense, so we complete directly through
+                        // gateway with no sticky info
                         self.server_gateway
                             .complete_workflow_task(completion)
                             .await?;

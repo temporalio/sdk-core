@@ -44,19 +44,6 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
     type Error = PollWorkflowTaskQueueResponse;
 
     fn try_from(value: PollWorkflowTaskQueueResponse) -> Result<Self, Self::Error> {
-        // if value.query.is_some()
-        //     && value
-        //         .history
-        //         .as_ref()
-        //         .map(|h| !h.events.is_empty())
-        //         .unwrap_or(false)
-        // {
-        //     // TODO: Apparently this is totally possible. Need to allow both kinds of responses
-        //     //   at the same time -- add test
-        //     error!("Poll WFTQ response had a `query` field with a nonempty history");
-        //     return Err(value);
-        // }
-
         match value {
             PollWorkflowTaskQueueResponse {
                 task_token,

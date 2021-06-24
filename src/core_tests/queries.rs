@@ -1,6 +1,3 @@
-// TODO:
-//  * Legacy - failed task responses
-
 use crate::{
     machines::test_help::{hist_to_poll_resp, mock_core_with_opts, TEST_Q},
     pollers::MockServerGatewayApis,
@@ -18,7 +15,7 @@ use crate::{
         },
     },
     test_help::canned_histories,
-    tracing_init, Core, CoreInitOptionsBuilder,
+    Core, CoreInitOptionsBuilder,
 };
 use std::collections::{HashMap, VecDeque};
 
@@ -35,7 +32,6 @@ use std::collections::{HashMap, VecDeque};
 #[case::without_history(false)]
 #[tokio::test]
 async fn legacy_query(#[case] include_history: bool) {
-    tracing_init();
     let wfid = "fake_wf_id";
     let query_resp = "response";
     let t = canned_histories::single_timer("fake_timer");
@@ -145,7 +141,6 @@ async fn legacy_query(#[case] include_history: bool) {
 #[case::multiple_queries(3)]
 #[tokio::test]
 async fn new_queries(#[case] num_queries: usize) {
-    tracing_init();
     let wfid = "fake_wf_id";
     let query_resp = "response";
     let t = canned_histories::single_timer("fake_timer");
@@ -229,7 +224,6 @@ async fn new_queries(#[case] num_queries: usize) {
 
 #[tokio::test]
 async fn legacy_query_failure_on_wft_failure() {
-    tracing_init();
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("fake_timer");
     let mut tasks = VecDeque::from(vec![

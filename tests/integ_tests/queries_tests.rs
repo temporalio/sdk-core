@@ -1,18 +1,21 @@
 use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
-use temporal_sdk_core::protos::coresdk::{
-    common::UserCodeFailure,
-    workflow_activation::{wf_activation_job, WfActivationJob},
-    workflow_commands::{CompleteWorkflowExecution, QueryResult, QuerySuccess, StartTimer},
-    workflow_completion::WfActivationCompletion,
+use temporal_sdk_core::{
+    protos::{
+        coresdk::{
+            common::UserCodeFailure,
+            workflow_activation::{wf_activation_job, WfActivationJob},
+            workflow_commands::{CompleteWorkflowExecution, QueryResult, QuerySuccess, StartTimer},
+            workflow_completion::WfActivationCompletion,
+        },
+        temporal::api::query::v1::WorkflowQuery,
+    },
+    Core,
 };
-use temporal_sdk_core::protos::temporal::api::query::v1::WorkflowQuery;
-use temporal_sdk_core::{tracing_init, Core};
 use test_utils::{init_core_and_create_wf, with_gw, CoreWfStarter, GwApi};
 
 #[tokio::test]
 async fn simple_query_legacy() {
-    tracing_init();
     let workflow_id = "simple_query";
     let query_resp = b"response";
     let (core, task_q) = init_core_and_create_wf(workflow_id).await;
@@ -120,7 +123,6 @@ async fn complete_timer(core: &Arc<dyn Core>, run_id: &str, timer_id: &str) {
 #[case::with_eviction(true)]
 #[tokio::test]
 async fn query_after_execution_complete(#[case] do_evict: bool) {
-    tracing_init();
     let workflow_id = &format!("after_done_query_evict-{}", do_evict);
     let query_resp = b"response";
     let (core, task_q) = init_core_and_create_wf(workflow_id).await;
@@ -340,7 +342,6 @@ async fn repros_query_dropped_on_floor() {
 
 #[tokio::test]
 async fn fail_legacy_query() {
-    tracing_init();
     let workflow_id = "fail_legacy_query";
     let query_err = "oh no broken";
     let (core, task_q) = init_core_and_create_wf(workflow_id).await;
