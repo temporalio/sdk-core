@@ -4,13 +4,13 @@ use std::time::Duration;
 use temporal_sdk_core::protos::coresdk::{
     activity_task::activity_task as act_task,
     workflow_activation::{wf_activation_job, FireTimer, WfActivationJob},
-    workflow_commands::{
-        ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity, StartTimer,
-    },
+    workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
     workflow_completion::WfActivationCompletion,
 };
 use temporal_sdk_core::{Core, CoreInitOptionsBuilder, IntoCompletion};
-use test_utils::{get_integ_server_options, init_core_and_create_wf, schedule_activity_cmd};
+use test_utils::{
+    get_integ_server_options, init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers,
+};
 use tokio::time::timeout;
 
 #[tokio::test]
@@ -77,12 +77,7 @@ async fn out_of_order_completion_doesnt_hang() {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(_)),
             }]
         );
-        cc.complete_workflow_task(WfActivationCompletion::from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
-            task.run_id,
-        ))
-        .await
-        .unwrap();
+        cc.complete_execution(&task.run_id).await;
     });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
