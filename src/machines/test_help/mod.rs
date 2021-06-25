@@ -11,8 +11,9 @@ mod transition_coverage;
 pub(crate) use history_builder::TestHistoryBuilder;
 pub(crate) use transition_coverage::add_coverage;
 
+use crate::pollers::{BoxedActPoller, BoxedPoller};
 use crate::{
-    pollers::MockServerGatewayApis,
+    pollers::{BoxedWFPoller, MockManualPoller, MockPoller, MockServerGatewayApis},
     protos::{
         coresdk::{
             common::UserCodeFailure,
@@ -25,7 +26,8 @@ use crate::{
         temporal::api::history::v1::History,
         temporal::api::taskqueue::v1::TaskQueue,
         temporal::api::workflowservice::v1::{
-            PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
+            PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
+            RespondWorkflowTaskCompletedResponse,
         },
     },
     task_token::TaskToken,
@@ -34,6 +36,7 @@ use crate::{
     WorkerConfigBuilder,
 };
 use bimap::BiMap;
+use futures::FutureExt;
 use mockall::TimesRange;
 use parking_lot::RwLock;
 use rand::{thread_rng, Rng};
@@ -81,33 +84,48 @@ pub(crate) fn build_fake_core(
 }
 
 /// See [build_fake_core] -- assemble a mock gateway into the final fake core
-pub(crate) fn fake_core_from_mock_sg(mock_and_tasks: MockSGAndTasks) -> FakeCore {
-    let core = mock_core(mock_and_tasks.sg);
+pub(crate) fn fake_core_from_mock_sg(mocks: MocksHolder<MockServerGatewayApis>) -> FakeCore {
+    let outstanding_wf_tasks = mocks.task_map.clone();
+    let core = mock_core(mocks);
     FakeCore {
         inner: core,
-        outstanding_wf_tasks: mock_and_tasks.task_map,
+        outstanding_wf_tasks,
     }
 }
 
-pub(crate) fn mock_core<SG>(sg: SG) -> CoreSDK<SG>
+pub(crate) fn mock_core<SG>(mocks: MocksHolder<SG>) -> CoreSDK<SG>
 where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
-    mock_core_with_opts(sg, CoreInitOptionsBuilder::default())
+    mock_core_with_opts(mocks, CoreInitOptionsBuilder::default())
 }
 
-pub(crate) fn mock_core_with_opts<SG>(sg: SG, opts: CoreInitOptionsBuilder) -> CoreSDK<SG>
+pub(crate) fn mock_core_with_opts<SG>(
+    mocks: MocksHolder<SG>,
+    opts: CoreInitOptionsBuilder,
+) -> CoreSDK<SG>
 where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
-    let mut core = mock_core_with_opts_no_workers(sg, opts);
-    core.reg_worker_sync(
-        WorkerConfigBuilder::default()
-            .task_queue(TEST_Q)
-            .build()
-            .unwrap(),
-    );
+    let mut core = mock_core_with_opts_no_workers(mocks.sg, opts);
+    register_mock_workers(&mut core, mocks.mock_pollers);
     core
+}
+
+pub(crate) fn register_mock_workers<SG>(core: &mut CoreSDK<SG>, mocks: MockPollers)
+where
+    SG: ServerGatewayApis + Send + Sync + 'static,
+{
+    for (tq, mockpoll) in mocks {
+        core.reg_worker_sync(
+            WorkerConfigBuilder::default()
+                .task_queue(tq)
+                .build()
+                .unwrap(),
+            Some(mockpoll.0),
+            mockpoll.1,
+        );
+    }
 }
 
 pub(crate) fn mock_core_with_opts_no_workers<SG>(
@@ -128,9 +146,75 @@ pub struct FakeWfResponses {
 }
 
 // TODO: turn this into a builder or make a new one? to make all these different build fns simpler
-pub struct MockSGAndTasks {
-    pub sg: MockServerGatewayApis,
+pub struct MocksHolder<SG: ServerGatewayApis + Send + Sync + 'static> {
+    pub sg: SG,
     pub task_map: OutstandingWfTaskMap,
+    /// Maps task queue name -> mock pollers for that task queue
+    pub mock_pollers: MockPollers,
+}
+pub type MockPollers = HashMap<String, (BoxedWFPoller, Option<BoxedActPoller>)>;
+
+impl<SG> MocksHolder<SG>
+where
+    SG: ServerGatewayApis + Send + Sync + 'static,
+{
+    pub fn from_mock_pollers(sg: SG, mock_pollers: MockPollers) -> MocksHolder<SG> {
+        MocksHolder {
+            sg,
+            task_map: Default::default(),
+            mock_pollers,
+        }
+    }
+
+    /// Uses the provided list of tasks to create a mock poller for the `TEST_Q`
+    pub fn from_gateway_with_responses(
+        sg: SG,
+        wf_tasks: VecDeque<PollWorkflowTaskQueueResponse>,
+        act_tasks: VecDeque<PollActivityTaskQueueResponse>,
+    ) -> MocksHolder<SG> {
+        let mut mock_pollers = HashMap::new();
+        let mock_poller = mock_poller_from_resps(wf_tasks);
+        let mock_act_poller = mock_poller_from_resps(act_tasks);
+        mock_pollers.insert(TEST_Q.to_string(), (mock_poller, Some(mock_act_poller)));
+        MocksHolder {
+            sg,
+            task_map: Default::default(),
+            mock_pollers,
+        }
+    }
+}
+
+pub fn mock_poller_from_resps<T>(mut tasks: VecDeque<T>) -> BoxedPoller<T>
+where
+    T: Send + Sync + 'static,
+{
+    let mut mock_poller = mock_poller();
+    mock_poller
+        .expect_poll()
+        .returning(move || Some(Ok(tasks.pop_front().unwrap())));
+    Box::new(mock_poller) as BoxedPoller<T>
+}
+
+pub fn mock_poller<T>() -> MockPoller<T>
+where
+    T: Send + Sync + 'static,
+{
+    let mut mock_poller = MockPoller::new();
+    mock_poller.expect_shutdown_box().return_const(());
+    mock_poller.expect_notify_shutdown().return_const(());
+    mock_poller
+}
+
+pub fn mock_manual_poller<T>() -> MockManualPoller<T>
+where
+    T: Send + Sync + 'static,
+{
+    let mut mock_poller = MockManualPoller::new();
+    mock_poller
+        .expect_shutdown_box()
+        .returning(|| async {}.boxed());
+    mock_poller.expect_notify_shutdown().return_const(());
+    mock_poller
 }
 
 /// Build a mock server gateway capable of returning multiple different histories for different
@@ -146,8 +230,8 @@ pub fn build_multihist_mock_sg(
     hists: impl IntoIterator<Item = FakeWfResponses>,
     enforce_correct_number_of_polls: bool,
     num_expected_fails: Option<usize>,
-) -> MockSGAndTasks {
-    augment_multihist_mock_sg(
+) -> MocksHolder<MockServerGatewayApis> {
+    build_mock_pollers(
         hists,
         enforce_correct_number_of_polls,
         num_expected_fails,
@@ -155,15 +239,13 @@ pub fn build_multihist_mock_sg(
     )
 }
 
-/// See [build_multihist_mock_sg] -- manual version that allows setting some expectations on the
-/// mock that should be matched first, before the normal expectations that match the provided
-/// history.
-pub fn augment_multihist_mock_sg(
+/// Given an iterable of fake responses, return the mocks & associated data to work with them
+pub fn build_mock_pollers(
     hists: impl IntoIterator<Item = FakeWfResponses>,
     enforce_correct_number_of_polls: bool,
     num_expected_fails: Option<usize>,
     mut mock_gateway: MockServerGatewayApis,
-) -> MockSGAndTasks {
+) -> MocksHolder<MockServerGatewayApis> {
     // Maps task queues to maps of wfid -> responses
     let mut task_queues_to_resps: HashMap<String, BTreeMap<String, VecDeque<_>>> = HashMap::new();
     let outstanding_wf_task_tokens = Arc::new(RwLock::new(BiMap::new()));
@@ -223,18 +305,21 @@ pub fn augment_multihist_mock_sg(
             .insert(hist.wf_id, tasks);
     }
 
-    // The gateway will return history from any workflow runs that do not have currently outstanding
-    // tasks.
-    let outstanding = outstanding_wf_task_tokens.clone();
-    mock_gateway
-        .expect_poll_workflow_task()
-        .times(
-            correct_num_polls
-                .map::<TimesRange, _>(Into::into)
-                .unwrap_or_else(|| RangeFull.into()),
-        )
-        .returning(move |tq| {
-            if let Some(queue_tasks) = task_queues_to_resps.get_mut(&tq) {
+    let mut mock_pollers = HashMap::new();
+    for (task_q, mut queue_tasks) in task_queues_to_resps.into_iter() {
+        let mut mock_poller = mock_poller();
+
+        // The poller will return history from any workflow runs that do not have currently
+        // outstanding tasks.
+        let outstanding = outstanding_wf_task_tokens.clone();
+        mock_poller
+            .expect_poll()
+            .times(
+                correct_num_polls
+                    .map::<TimesRange, _>(Into::into)
+                    .unwrap_or_else(|| RangeFull.into()),
+            )
+            .returning(move || {
                 for (_, tasks) in queue_tasks.iter_mut() {
                     if let Some(t) = tasks.pop_front() {
                         // Must extract run id from a workflow task associated with this workflow
@@ -245,18 +330,14 @@ pub fn augment_multihist_mock_sg(
                             outstanding
                                 .write()
                                 .insert(rid, TaskToken(t.task_token.clone()));
-                            return Ok(t);
+                            return Some(Ok(t));
                         }
                     }
                 }
-                Err(tonic::Status::cancelled("No more work to do"))
-            } else {
-                Err(tonic::Status::not_found(format!(
-                    "Task queue {} not defined in test setup",
-                    tq
-                )))
-            }
-        });
+                Some(Err(tonic::Status::cancelled("No more work to do")))
+            });
+        mock_pollers.insert(task_q, (Box::new(mock_poller) as BoxedWFPoller, None));
+    }
 
     let outstanding = outstanding_wf_task_tokens.clone();
     mock_gateway
@@ -278,9 +359,10 @@ pub fn augment_multihist_mock_sg(
             Ok(Default::default())
         });
 
-    MockSGAndTasks {
+    MocksHolder {
         sg: mock_gateway,
         task_map: outstanding_wf_task_tokens,
+        mock_pollers,
     }
 }
 
@@ -291,8 +373,8 @@ pub fn single_hist_mock_sg(
     response_batches: &[usize],
     mock_gateway: MockServerGatewayApis,
     enforce_num_polls: bool,
-) -> MockSGAndTasks {
-    augment_multihist_mock_sg(
+) -> MocksHolder<MockServerGatewayApis> {
+    build_mock_pollers(
         vec![FakeWfResponses {
             wf_id: wf_id.to_owned(),
             hist: t,

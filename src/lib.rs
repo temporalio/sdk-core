@@ -79,6 +79,9 @@ use tokio::sync::{
     Mutex, Notify, RwLock,
 };
 
+#[cfg(test)]
+use crate::pollers::{BoxedActPoller, BoxedWFPoller};
+
 lazy_static::lazy_static! {
     /// A process-wide unique string, which will be different on every startup
     static ref PROCCESS_UNIQ_ID: String = {
@@ -252,7 +255,9 @@ where
                 config.task_queue,
             ));
         }
-        let (tq, worker) = self.build_worker(config);
+        let tq = config.task_queue.clone();
+        let sticky_q = self.get_sticky_q_name_for_worker(&config);
+        let worker = Worker::new(config, sticky_q, self.server_gateway.clone());
         self.workers
             .write()
             .await
@@ -526,30 +531,35 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         }
     }
 
-    /// Internal convenience function to avoid needing async when caller has mutable access to core
+    /// Allow construction of workers with mocked poll responses during testing
     #[cfg(test)]
-    fn reg_worker_sync(&mut self, config: WorkerConfig) {
-        let (tq, worker) = self.build_worker(config);
+    fn reg_worker_sync(
+        &mut self,
+        config: WorkerConfig,
+        wft_poller: Option<BoxedWFPoller>,
+        act_poller: Option<BoxedActPoller>,
+    ) {
+        let tq = config.task_queue.clone();
+        let sticky_q = self.get_sticky_q_name_for_worker(&config);
+        let worker = if let Some(wfp) = wft_poller {
+            Worker::new_with_pollers(config, sticky_q, wfp, act_poller)
+        } else {
+            Worker::new(config, sticky_q, self.server_gateway.clone())
+        };
         self.workers
             .get_mut()
             .insert(tq, WorkerStatus::Live(worker));
     }
 
-    /// From a worker config, return a (task queue, Worker) pair
-    fn build_worker(&self, config: WorkerConfig) -> (String, Worker) {
-        let tq = config.task_queue.clone();
-        let use_sticky = if self.init_options.max_cached_workflows > 0 {
+    fn get_sticky_q_name_for_worker(&self, config: &WorkerConfig) -> Option<String> {
+        if self.init_options.max_cached_workflows > 0 {
             Some(format!(
                 "{}-{}-{}",
-                &self.init_options.gateway_opts.identity, &tq, *PROCCESS_UNIQ_ID
+                &self.init_options.gateway_opts.identity, &config.task_queue, *PROCCESS_UNIQ_ID
             ))
         } else {
             None
-        };
-        (
-            tq,
-            Worker::new(config, use_sticky, self.server_gateway.clone()),
-        )
+        }
     }
 
     /// Apply validated poll responses from the server. Returns an activation if one should be

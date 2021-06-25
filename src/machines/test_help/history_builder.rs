@@ -20,7 +20,7 @@ use anyhow::bail;
 use std::time::SystemTime;
 use uuid::Uuid;
 
-#[derive(Default, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct TestHistoryBuilder {
     events: Vec<HistoryEvent>,
     /// Is incremented every time a new event is added, and that *new* value is used as that event's

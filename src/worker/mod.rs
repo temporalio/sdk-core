@@ -1,3 +1,4 @@
+use crate::pollers::{BoxedActPoller, BoxedWFPoller};
 use crate::{
     pollers::{new_activity_task_buffer, new_workflow_task_buffer, Poller, WorkflowTaskPoller},
     protos::{
@@ -74,10 +75,10 @@ pub(crate) struct Worker {
 
     /// Buffers workflow task polling in the event we need to return a pending activation while
     /// a poll is ongoing. Sticky and nonsticky polling happens inside of it.
-    wf_task_poll_buffer: Box<dyn Poller<PollWorkflowTaskQueueResponse> + Send + Sync>,
+    wf_task_poll_buffer: BoxedWFPoller,
     /// Buffers activity task polling in the event we need to return a cancellation while a poll is
     /// ongoing. May be `None` if this worker does not poll for activities.
-    at_task_poll_buffer: Option<Box<dyn Poller<PollActivityTaskQueueResponse> + Send + Sync>>,
+    at_task_poll_buffer: Option<BoxedActPoller>,
 
     /// Ensures we stay at or below this worker's maximum concurrent workflow limit
     workflows_semaphore: Semaphore,
@@ -132,6 +133,23 @@ impl Worker {
             sticky_name: sticky_queue_name,
             wf_task_poll_buffer,
             at_task_poll_buffer,
+            workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
+            activities_semaphore: Semaphore::new(config.max_outstanding_activities),
+            config,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_pollers(
+        config: WorkerConfig,
+        sticky_queue_name: Option<String>,
+        wft_poller: BoxedWFPoller,
+        act_poller: Option<BoxedActPoller>,
+    ) -> Self {
+        Self {
+            sticky_name: sticky_queue_name,
+            wf_task_poll_buffer: wft_poller,
+            at_task_poll_buffer: act_poller,
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             activities_semaphore: Semaphore::new(config.max_outstanding_activities),
             config,

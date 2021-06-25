@@ -1,10 +1,13 @@
 mod poll_buffer;
 
 #[cfg(test)]
-pub use manual_mock::MockManualGateway;
+pub use manual_mock::{MockManualGateway, MockManualPoller};
+#[cfg(test)]
+pub use poll_buffer::MockPoller;
+
 pub use poll_buffer::{
-    new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
-    PollWorkflowTaskBuffer, Poller, WorkflowTaskPoller,
+    new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, BoxedPoller, BoxedWFPoller,
+    PollActivityTaskBuffer, PollWorkflowTaskBuffer, Poller, WorkflowTaskPoller,
 };
 
 use crate::{
@@ -645,6 +648,21 @@ mod manual_mock {
                 query_result: QueryResult,
             ) -> impl Future<Output = Result<RespondQueryTaskCompletedResponse>> + Send + 'b
                 where 'a: 'b, Self: 'b;
+        }
+    }
+    mockall::mock! {
+        pub ManualPoller<T: Send + Sync + 'static> {}
+        impl<T: Send + Sync + 'static> Poller<T> for ManualPoller<T> {
+            fn poll<'a, 'b>(&self)
+              -> impl Future<Output = Option<Result<T>>> + Send + 'b
+                where 'a: 'b, Self: 'b;
+            fn notify_shutdown(&self);
+            fn shutdown<'a>(self)
+              -> impl Future<Output = ()> + Send + 'a
+                where Self: 'a;
+            fn shutdown_box<'a>(self: Box<Self>)
+              -> impl Future<Output = ()> + Send + 'a
+                where Self: 'a;
         }
     }
 }

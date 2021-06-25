@@ -1051,7 +1051,7 @@ async fn lots_of_workflows() {
     });
 
     let mock = build_multihist_mock_sg(hists, false, None);
-    let core = &mock_core(mock.sg);
+    let core = &mock_core(mock);
 
     fanout_tasks(5, |_| async move {
         while let Ok(wft) = core.poll_workflow_task(TEST_Q).await {
@@ -1165,7 +1165,7 @@ async fn sends_appropriate_sticky_task_queue_responses() {
     let mock = single_hist_mock_sg(wfid, t, &[1], mock, false);
     let mut opts = CoreInitOptionsBuilder::default();
     opts.max_cached_workflows(10_usize);
-    let core = mock_core_with_opts(mock.sg, opts);
+    let core = mock_core_with_opts(mock, opts);
 
     let activation = core.poll_workflow_task(TEST_Q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmd(

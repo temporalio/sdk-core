@@ -14,6 +14,7 @@ use tokio::sync::{
 };
 use tokio::task::JoinHandle;
 
+// TODO: Move up one level?
 /// A trait for things that poll the server. Hides complexity of concurrent polling or polling
 /// on sticky/nonsticky queues simultaneously.
 #[cfg_attr(test, mockall::automock)]
@@ -28,6 +29,9 @@ where
     /// Need a separate shutdown to be able to consume boxes :(
     async fn shutdown_box(self: Box<Self>);
 }
+pub type BoxedPoller<T> = Box<dyn Poller<T> + Send + Sync + 'static>;
+pub type BoxedWFPoller = BoxedPoller<PollWorkflowTaskQueueResponse>;
+pub type BoxedActPoller = BoxedPoller<PollActivityTaskQueueResponse>;
 
 pub struct LongPollBuffer<T> {
     buffered_polls: Mutex<Receiver<pollers::Result<T>>>,

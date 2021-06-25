@@ -1,5 +1,5 @@
 use crate::{
-    machines::test_help::{hist_to_poll_resp, mock_core_with_opts, TEST_Q},
+    machines::test_help::{hist_to_poll_resp, mock_core_with_opts, MocksHolder, TEST_Q},
     pollers::MockServerGatewayApis,
     protos::{
         coresdk::{
@@ -20,8 +20,6 @@ use crate::{
 use std::collections::{HashMap, VecDeque};
 
 // TODO: The existing mock helpers can't be easily made to deal with queries:
-//   * Stop mocking server direcly, mock poll buffers instead
-//          (avoid unpredictable polling due to sticky) (some errors show up in log b/c of this)
 //   * Support stickyness
 //   I have some work in this direction saved locally. Alternatively, try to convert UTs at the
 //   core level to be able to use the test workflow driver. Would be very nice. Add query handler
@@ -35,7 +33,7 @@ async fn legacy_query(#[case] include_history: bool) {
     let wfid = "fake_wf_id";
     let query_resp = "response";
     let t = canned_histories::single_timer("fake_timer");
-    let mut tasks = VecDeque::from(vec![
+    let tasks = VecDeque::from(vec![
         hist_to_poll_resp(&t, wfid.to_owned(), 1, TEST_Q.to_string()),
         {
             let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1, TEST_Q.to_string());
@@ -52,9 +50,6 @@ async fn legacy_query(#[case] include_history: bool) {
     ]);
     let mut mock_gateway = MockServerGatewayApis::new();
     mock_gateway
-        .expect_poll_workflow_task()
-        .returning(move |_| Ok(tasks.pop_front().unwrap()));
-    mock_gateway
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
     mock_gateway
@@ -66,7 +61,10 @@ async fn legacy_query(#[case] include_history: bool) {
     if !include_history {
         opts.max_cached_workflows(10_usize);
     }
-    let core = mock_core_with_opts(mock_gateway, opts);
+    let core = mock_core_with_opts(
+        MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![].into()),
+        opts,
+    );
 
     let first_wft = || async {
         let task = core.poll_workflow_task(TEST_Q).await.unwrap();
@@ -144,7 +142,7 @@ async fn new_queries(#[case] num_queries: usize) {
     let wfid = "fake_wf_id";
     let query_resp = "response";
     let t = canned_histories::single_timer("fake_timer");
-    let mut tasks = VecDeque::from(vec![
+    let tasks = VecDeque::from(vec![
         hist_to_poll_resp(&t, wfid.to_owned(), 1, TEST_Q.to_string()),
         {
             let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 2, TEST_Q.to_string());
@@ -163,16 +161,16 @@ async fn new_queries(#[case] num_queries: usize) {
     ]);
     let mut mock_gateway = MockServerGatewayApis::new();
     mock_gateway
-        .expect_poll_workflow_task()
-        .returning(move |_| Ok(tasks.pop_front().unwrap()));
-    mock_gateway
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
     mock_gateway.expect_respond_legacy_query().times(0);
 
     let mut opts = CoreInitOptionsBuilder::default();
     opts.max_cached_workflows(10_usize);
-    let core = mock_core_with_opts(mock_gateway, opts);
+    let core = mock_core_with_opts(
+        MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![].into()),
+        opts,
+    );
 
     let task = core.poll_workflow_task(TEST_Q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmd(
@@ -226,7 +224,7 @@ async fn new_queries(#[case] num_queries: usize) {
 async fn legacy_query_failure_on_wft_failure() {
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("fake_timer");
-    let mut tasks = VecDeque::from(vec![
+    let tasks = VecDeque::from(vec![
         hist_to_poll_resp(&t, wfid.to_owned(), 1, TEST_Q.to_string()),
         {
             let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1, TEST_Q.to_string());
@@ -241,9 +239,6 @@ async fn legacy_query_failure_on_wft_failure() {
     ]);
     let mut mock_gateway = MockServerGatewayApis::new();
     mock_gateway
-        .expect_poll_workflow_task()
-        .returning(move |_| Ok(tasks.pop_front().unwrap()));
-    mock_gateway
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
     mock_gateway
@@ -253,7 +248,10 @@ async fn legacy_query_failure_on_wft_failure() {
 
     let mut opts = CoreInitOptionsBuilder::default();
     opts.max_cached_workflows(10_usize);
-    let core = mock_core_with_opts(mock_gateway, opts);
+    let core = mock_core_with_opts(
+        MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![].into()),
+        opts,
+    );
 
     let task = core.poll_workflow_task(TEST_Q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmd(
