@@ -45,14 +45,14 @@ fn replay_flag_is_correct(#[case] setup: WorkflowMachines, #[case] num_timers: u
     let mut wfm = WorkflowManager::new_from_machines(setup);
 
     for _ in 1..=num_timers {
-        let act = wfm.get_next_activation().unwrap().unwrap();
+        let act = wfm.get_next_activation().unwrap();
         assert!(act.is_replaying);
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
     }
 
-    let act = wfm.get_next_activation().unwrap().unwrap();
+    let act = wfm.get_next_activation().unwrap();
     assert!(!act.is_replaying);
     let commands = wfm.get_server_commands().commands;
     assert_eq!(commands.len(), 1);
@@ -76,7 +76,7 @@ fn replay_flag_is_correct_partial_history() {
     );
     let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
-    let act = wfm.get_next_activation().unwrap().unwrap();
+    let act = wfm.get_next_activation().unwrap();
     assert!(!act.is_replaying);
     let commands = wfm.get_server_commands().commands;
     assert_eq!(commands.len(), 1);

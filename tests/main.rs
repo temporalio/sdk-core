@@ -12,6 +12,7 @@ mod integ_tests {
 
     mod heartbeat_tests;
     mod polling_tests;
+    mod queries_tests;
     mod workflow_tests;
 
     // TODO: Currently ignored because starting up the docker image with TLS requires some hoop

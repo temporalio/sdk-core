@@ -88,8 +88,13 @@ message UpdateRandomSeed {
 
 /// Query a workflow
 message QueryWorkflow {
-    string query_type = 1;
-    repeated common.Payload arguments = 2;
+    /// For PollWFTResp `query` field, this will be set to the special value `legacy`. For the
+    /// `queries` field, the server provides a unique identifier. If it is a `legacy` query,
+    /// lang cannot issue any commands in response other than to answer the query.
+    string query_id = 1;
+    /// The query's function/method/etc name
+    string query_type = 2;
+    repeated common.Payload arguments = 3;
 }
 
 /// Cancel a running workflow

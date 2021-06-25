@@ -1,21 +1,19 @@
 use crate::{
-    machines::ProtoCommand,
     pollers::{
-        self, new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
+        new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
         PollWorkflowTaskBuffer,
     },
-    protos::temporal::api::enums::v1::TaskQueueKind,
-    protos::temporal::api::taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
-    protos::temporal::api::workflowservice::v1::{
-        PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
-        RespondWorkflowTaskCompletedResponse,
+    protos::{
+        temporal::api::enums::v1::TaskQueueKind,
+        temporal::api::taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
+        temporal::api::workflowservice::v1::{
+            PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
+        },
     },
     protosext::ValidPollWFTQResponse,
-    task_token::TaskToken,
     PollActivityError, PollWfError, ServerGatewayApis,
 };
-use std::time::Duration;
-use std::{convert::TryInto, sync::Arc};
+use std::{convert::TryInto, sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
 
 /// Defines per-worker configuration options
@@ -253,16 +251,10 @@ impl Worker {
         Ok(Some(work))
     }
 
-    /// Use the given server gateway to respond that the workflow task is completed. Properly
-    /// attaches sticky task queue information if appropriate.
-    pub(crate) async fn complete_workflow_task(
-        &self,
-        sg: &(dyn ServerGatewayApis + Sync),
-        task_token: TaskToken,
-        commands: Vec<ProtoCommand>,
-    ) -> pollers::Result<RespondWorkflowTaskCompletedResponse> {
-        let stq = self
-            .sticky_queue
+    /// Return the sticky execution attributes that should be used to complete workflow tasks
+    /// for this worker (if any).
+    pub(crate) fn get_sticky_attrs(&self) -> Option<StickyExecutionAttributes> {
+        self.sticky_queue
             .as_ref()
             .map(|sq| StickyExecutionAttributes {
                 worker_task_queue: Some(TaskQueue {
@@ -272,9 +264,7 @@ impl Worker {
                 schedule_to_start_timeout: Some(
                     self.config.sticky_queue_schedule_to_start_timeout.into(),
                 ),
-            });
-        debug!("Sending commands to server: {:?}", &commands);
-        sg.complete_workflow_task(task_token, commands, stq).await
+            })
     }
 
     /// Tell the worker an activity has completed, for tracking max outstanding activities

@@ -187,7 +187,7 @@ pub fn schedule_activity_cmd(
 /// Annoyingly, because of a sorta-bug in the way async blocks work, the async block produced by
 /// the closure must be `async move` if it uses the provided iteration number. On the plus side,
 /// since you're usually just accessing core in the closure, if core is a reference everything just
-/// works. See https://github.com/rust-lang/rust/issues/81653
+/// works. See <https://github.com/rust-lang/rust/issues/81653>
 pub async fn fanout_tasks<FutureMaker, Fut>(num: usize, fm: FutureMaker)
 where
     FutureMaker: Fn(usize) -> Fut,

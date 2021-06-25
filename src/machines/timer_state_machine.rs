@@ -318,12 +318,12 @@ mod test {
     fn test_fire_happy_path_inc(fire_happy_hist: WorkflowMachines) {
         let mut wfm = WorkflowManager::new_from_machines(fire_happy_hist);
 
-        wfm.get_next_activation().unwrap().unwrap();
+        wfm.get_next_activation().unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
 
-        wfm.get_next_activation().unwrap().unwrap();
+        wfm.get_next_activation().unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands.len(), 1);
@@ -403,13 +403,13 @@ mod test {
     fn incremental_cancellation(cancellation_setup: WorkflowMachines) {
         let mut wfm = WorkflowManager::new_from_machines(cancellation_setup);
 
-        wfm.get_next_activation().unwrap().unwrap();
+        wfm.get_next_activation().unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
         assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
 
-        wfm.get_next_activation().unwrap().unwrap();
+        wfm.get_next_activation().unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].command_type, CommandType::CancelTimer as i32);
@@ -418,7 +418,7 @@ mod test {
             CommandType::CompleteWorkflowExecution as i32
         );
 
-        assert!(wfm.get_next_activation().unwrap().is_none());
+        assert!(wfm.get_next_activation().unwrap().jobs.is_empty());
         let commands = wfm.get_server_commands().commands;
         // There should be no commands - the wf completed at the same time the timer was cancelled
         assert_eq!(commands.len(), 0);

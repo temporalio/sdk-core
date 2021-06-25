@@ -40,7 +40,7 @@ use crate::{
     protos::{
         coresdk::workflow_commands::{
             workflow_command, CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution,
-            RequestCancelActivity, ScheduleActivity, StartTimer, WorkflowCommand,
+            QueryResult, RequestCancelActivity, ScheduleActivity, StartTimer, WorkflowCommand,
         },
         temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
     },
@@ -70,6 +70,7 @@ pub enum WFCommand {
     CancelTimer(CancelTimer),
     CompleteWorkflow(CompleteWorkflowExecution),
     FailWorkflow(FailWorkflowExecution),
+    QueryResponse(QueryResult),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
@@ -91,7 +92,7 @@ impl TryFrom<WorkflowCommand> for WFCommand {
                 Ok(WFCommand::CompleteWorkflow(c))
             }
             workflow_command::Variant::FailWorkflowExecution(s) => Ok(WFCommand::FailWorkflow(s)),
-            _ => unimplemented!(),
+            workflow_command::Variant::RespondToQuery(s) => Ok(WFCommand::QueryResponse(s)),
         }
     }
 }

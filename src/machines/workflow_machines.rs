@@ -425,19 +425,15 @@ impl WorkflowMachines {
     /// timer, etc. This does *not* cause any advancement of the state machines, it merely drains
     /// from the outgoing queue of activation jobs.
     ///
-    /// Importantly, the returned activation will have an empty task token. A meaningful one is
-    /// expected to be attached by something higher in the call stack.
-    pub(crate) fn get_wf_activation(&mut self) -> Option<WfActivation> {
+    /// The job list may be empty, in which case it is expected the caller handles what to do in a
+    /// "no work" situation. Possibly, it may know about some work the machines don't, like queries.
+    pub(crate) fn get_wf_activation(&mut self) -> WfActivation {
         let jobs = self.drive_me.drain_jobs();
-        if jobs.is_empty() {
-            None
-        } else {
-            Some(WfActivation {
-                timestamp: self.current_wf_time.map(Into::into),
-                is_replaying: self.replaying,
-                run_id: self.run_id.clone(),
-                jobs,
-            })
+        WfActivation {
+            timestamp: self.current_wf_time.map(Into::into),
+            is_replaying: self.replaying,
+            run_id: self.run_id.clone(),
+            jobs,
         }
     }
 
@@ -469,6 +465,12 @@ impl WorkflowMachines {
         let events = self
             .last_history_from_server
             .take_next_wft_sequence(self.last_handled_wft_started_id());
+
+        // We're caught up on reply if there are no new events to process
+        // TODO: Probably this is unneeded if we evict whenever history is from non-sticky queue
+        if events.is_empty() {
+            self.replaying = false;
+        }
 
         if let Some(last_event) = events.last() {
             if last_event.event_type == EventType::WorkflowTaskStarted as i32 {
@@ -548,11 +550,12 @@ impl WorkflowMachines {
         Ok(())
     }
 
-    /// Handles results of the workflow activation, delegating work to the appropriate state machine.
-    /// Returns a list of workflow jobs that should be queued in the pending activation for the next poll.
-    /// This list will be populated only if state machine produced lang activations as part of command processing.
-    /// For example some types of activity cancellation need to immediately unblock lang side without
-    /// having it to poll for an actual workflow task from the server.
+    /// Handles results of the workflow activation, delegating work to the appropriate state
+    /// machine. Returns a list of workflow jobs that should be queued in the pending activation for
+    /// the next poll. This list will be populated only if state machine produced lang activations
+    /// as part of command processing. For example some types of activity cancellation need to
+    /// immediately unblock lang side without having it to poll for an actual workflow task from the
+    /// server.
     fn handle_driven_results(
         &mut self,
         results: Vec<WFCommand>,
@@ -589,6 +592,10 @@ impl WorkflowMachines {
                 WFCommand::FailWorkflow(attrs) => {
                     let cwfm = self.add_new_machine(fail_workflow(attrs));
                     self.current_wf_task_commands.push_back(cwfm);
+                }
+                WFCommand::QueryResponse(_) => {
+                    // Nothing to do here, queries are handled above the machine level
+                    unimplemented!("Query responses should not make it down into the machines")
                 }
                 WFCommand::NoCommandsFromLang => (),
             }

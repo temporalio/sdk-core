@@ -868,7 +868,7 @@ async fn max_concurrent_wft_respected() {
     // Response not really important here
     mock_gateway
         .expect_complete_workflow_task()
-        .returning(|_, _, _| Ok(RespondWorkflowTaskCompletedResponse::default()));
+        .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
 
     let core = mock_core_with_opts_no_workers(mock_gateway, CoreInitOptionsBuilder::default());
     core.register_worker(
@@ -1158,9 +1158,9 @@ async fn sends_appropriate_sticky_task_queue_responses() {
     let t = canned_histories::single_timer("fake_timer");
     let mut mock = MockServerGatewayApis::new();
     mock.expect_complete_workflow_task()
-        .withf(|_, _, stq| stq.is_some())
+        .withf(|comp| comp.sticky_attributes.is_some())
         .times(1)
-        .returning(|_, _, _| Ok(Default::default()));
+        .returning(|_| Ok(Default::default()));
     mock.expect_complete_workflow_task().times(0);
     let mock = single_hist_mock_sg(wfid, t, &[1], mock, false);
     let mut opts = CoreInitOptionsBuilder::default();

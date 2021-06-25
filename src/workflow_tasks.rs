@@ -4,16 +4,23 @@ use crate::{
     errors::WorkflowUpdateError,
     machines::{ProtoCommand, WFCommand},
     pending_activations::PendingActivations,
-    protos::coresdk::workflow_activation::{create_evict_activation, WfActivation},
+    protos::coresdk::{
+        workflow_activation::{
+            create_evict_activation, create_query_activation, wf_activation_job, QueryWorkflow,
+            WfActivation,
+        },
+        workflow_commands::QueryResult,
+        PayloadsExt,
+    },
     protosext::ValidPollWFTQResponse,
     task_token::TaskToken,
     workflow::{
         HistoryUpdate, WorkflowCachingPolicy, WorkflowConcurrencyManager, WorkflowError,
-        WorkflowManager,
+        WorkflowManager, LEGACY_QUERY_ID,
     },
     WfActivationUpdate,
 };
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 use std::{collections::VecDeque, fmt::Debug};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::Span;
@@ -33,8 +40,8 @@ pub struct WorkflowTaskManager {
     /// about that task, as well as (possibly) the most recent buffered poll from the server for
     /// this workflow run
     outstanding_workflow_tasks: DashMap<String, OutstandingTask>,
-    /// A set of run ids for which there is a currently outstanding workflow activation
-    outstanding_activations: DashSet<String>,
+    /// Maps run ids to info about currently outstanding activations for that run
+    outstanding_activations: DashMap<String, OutstandingActivation>,
     /// Holds (by task queue) poll wft responses from the server that need to be applied
     ready_buffered_wft: DashMap<String, VecDeque<ValidPollWFTQResponse>>,
     /// Used to wake blocked workflow task polling
@@ -42,6 +49,7 @@ pub struct WorkflowTaskManager {
     eviction_policy: WorkflowCachingPolicy,
 }
 
+#[derive(Clone, Debug)]
 struct OutstandingTask {
     pub info: WorkflowTaskInfo,
     /// If set, it indicates there is a buffered poll response from the server that applies to this
@@ -49,6 +57,17 @@ struct OutstandingTask {
     /// example. Upon next completion, the buffered response will be removed and pushed into
     /// [ready_buffered_wft].
     pub buffered_resp: Option<ValidPollWFTQResponse>,
+    /// If set the outstanding task has query from the old `query` field which must be fulfilled
+    /// upon finishing replay
+    pub legacy_query: Option<QueryWorkflow>,
+}
+
+#[derive(Copy, Clone, Debug)]
+enum OutstandingActivation {
+    // A normal activation with a joblist
+    Normal,
+    // An activation for a legacy query
+    LegacyQuery,
 }
 
 /// Contains important information about a given workflow task that we need to memorize while
@@ -76,13 +95,25 @@ pub enum NewWfTaskOutcome {
 pub enum FailedActivationOutcome {
     NoReport,
     Report(TaskToken),
+    ReportLegacyQueryFailure(TaskToken),
 }
 
 #[derive(Debug)]
 pub struct ServerCommandsWithWorkflowInfo {
     pub task_token: TaskToken,
     pub task_queue: String,
-    pub commands: Vec<ProtoCommand>,
+    pub action: ActivationAction,
+}
+
+#[derive(Debug)]
+pub enum ActivationAction {
+    /// We should respond that the workflow task is complete
+    WftComplete {
+        commands: Vec<ProtoCommand>,
+        query_responses: Vec<QueryResult>,
+    },
+    /// We should respond to a legacy query request
+    RespondLegacyQuery { result: QueryResult },
 }
 
 impl WorkflowTaskManager {
@@ -114,10 +145,10 @@ impl WorkflowTaskManager {
         let maybe_act = self
             .pending_activations
             .pop_first_matching(task_queue, |rid| {
-                !self.outstanding_activations.contains(rid)
+                !self.outstanding_activations.contains_key(rid)
             });
         if let Some(act) = maybe_act.as_ref() {
-            self.outstanding_activations.insert(act.run_id.clone());
+            self.insert_outstanding_activation(&act);
         }
         maybe_act
     }
@@ -148,22 +179,23 @@ impl WorkflowTaskManager {
     ///
     /// Returns that workflow's task info if it was present.
     pub fn evict_run(&self, run_id: &str) -> Option<WorkflowTaskInfo> {
+        debug!(run_id=%run_id, "Evicting run");
+        self.workflow_machines.evict(run_id);
+        self.outstanding_activations.remove(run_id);
+        self.pending_activations.remove_all_with_run_id(run_id);
+
         if let Some((
             _,
             OutstandingTask {
                 info,
                 buffered_resp,
+                ..
             },
         )) = self.outstanding_workflow_tasks.remove(run_id)
         {
-            let run_id = &info.run_id;
-            debug!(run_id=%run_id, "Evicting run");
-            self.workflow_machines.evict(run_id);
-            self.outstanding_activations.remove(run_id);
-            self.pending_activations.remove_all_with_run_id(run_id);
             // Queue up an eviction activation
             self.pending_activations.push(
-                create_evict_activation(run_id.to_owned()),
+                create_evict_activation(run_id.to_string()),
                 info.task_queue.clone(),
             );
             let _ =
@@ -187,20 +219,20 @@ impl WorkflowTaskManager {
         }
     }
 
-    /// Given a validated wf task from the server, prepare an activation (if there is one) to be
-    /// sent to lang. If applying the task to the workflow's state does not produce a new
+    /// Given a validated poll response from the server, prepare an activation (if there is one) to
+    /// be sent to lang. If applying the response to the workflow's state does not produce a new
     /// activation, `None` is returned.
     ///
     /// The new activation is immediately considered to be an outstanding workflow task - so it is
     /// expected that new activations will be dispatched to lang right away.
-    pub(crate) fn apply_new_wft(
+    pub(crate) fn apply_new_poll_resp(
         &self,
-        work: ValidPollWFTQResponse,
+        mut work: ValidPollWFTQResponse,
     ) -> Result<NewWfTaskOutcome, WorkflowUpdateError> {
         debug!(
             task_token = %&work.task_token,
             history_length = %work.history.events.len(),
-            "Received new workflow task from server"
+            "Applying new workflow task from server"
         );
 
         if let Some(mut outstanding_entry) = self
@@ -212,20 +244,41 @@ impl WorkflowTaskManager {
             return Ok(NewWfTaskOutcome::RestartPollLoop);
         }
 
-        let (info, next_activation) = self.instantiate_or_update_workflow(work)?;
+        // Check if there is a legacy query we either need to immediately issue an activation for
+        // (if there is no more replay work to do) or we need to store for later answering.
+        let legacy_query = work.legacy_query.take().map(|q| QueryWorkflow {
+            query_id: LEGACY_QUERY_ID.to_string(),
+            query_type: q.query_type,
+            arguments: Vec::from_payloads(q.query_args),
+        });
+
+        let (info, mut next_activation) = self.instantiate_or_update_workflow(work)?;
+
+        // Immediately dispatch query activation if no other jobs
+        let legacy_query = if next_activation.jobs.is_empty() {
+            if let Some(lq) = legacy_query {
+                next_activation
+                    .jobs
+                    .push(wf_activation_job::Variant::QueryWorkflow(lq).into());
+            }
+            None
+        } else {
+            legacy_query
+        };
+
         self.outstanding_workflow_tasks.insert(
             info.run_id.clone(),
             OutstandingTask {
                 info,
                 buffered_resp: None,
+                legacy_query,
             },
         );
 
-        if let Some(na) = next_activation {
-            self.outstanding_activations.insert(na.run_id.clone());
-            Ok(NewWfTaskOutcome::IssueActivation(na))
+        if !next_activation.jobs.is_empty() {
+            self.insert_outstanding_activation(&next_activation);
+            Ok(NewWfTaskOutcome::IssueActivation(next_activation))
         } else {
-            // TODO: Problem is here we would've had WF info inserted, but no activation.
             Ok(NewWfTaskOutcome::Autocomplete)
         }
     }
@@ -235,7 +288,7 @@ impl WorkflowTaskManager {
     pub(crate) fn successful_activation(
         &self,
         run_id: &str,
-        commands: Vec<WFCommand>,
+        mut commands: Vec<WFCommand>,
     ) -> Result<Option<ServerCommandsWithWorkflowInfo>, WorkflowUpdateError> {
         let (task_token, task_queue) =
             if let Some(entry) = self.outstanding_workflow_tasks.get(run_id) {
@@ -249,22 +302,70 @@ impl WorkflowTaskManager {
                 );
                 return Ok(None);
             };
-        // Send commands from lang into the machines
-        self.access_wf_machine(run_id, move |mgr| mgr.push_commands(commands))?;
-        self.enqueue_next_activation_if_needed(run_id)?;
-        // We want to fetch the outgoing commands only after any new activation has been queued,
-        // as doing so may have altered the outgoing commands.
-        let server_cmds = self.access_wf_machine(run_id, |w| Ok(w.get_server_commands()))?;
-        // We only actually want to send commands back to the server if there are no more pending
-        // activations and we are caught up on replay.
-        let ret = if !self.pending_activations.has_pending(run_id) && !server_cmds.replaying {
+
+        // If the only command in the activation is a legacy query response, that means we need
+        // to respond differently than a typical activation.
+        let ret = if matches!(&commands.as_slice(),
+                    &[WFCommand::QueryResponse(qr)] if qr.query_id == LEGACY_QUERY_ID)
+        {
+            let qr = match commands.remove(0) {
+                WFCommand::QueryResponse(qr) => qr,
+                _ => unreachable!("We just verified this is the only command"),
+            };
             Some(ServerCommandsWithWorkflowInfo {
                 task_token,
                 task_queue,
-                commands: server_cmds.commands,
+                action: ActivationAction::RespondLegacyQuery { result: qr },
             })
         } else {
-            None
+            // First strip out query responses from other commands that actually affect machines
+            // Would be prettier with `drain_filter`
+            let mut i = 0;
+            let mut query_responses = vec![];
+            while i < commands.len() {
+                if matches!(commands[i], WFCommand::QueryResponse(_)) {
+                    if let WFCommand::QueryResponse(qr) = commands.remove(i) {
+                        if qr.query_id == LEGACY_QUERY_ID {
+                            return Err(WorkflowUpdateError {
+                                source: WorkflowError::LegacyQueryResponseIncludedOtherCommands,
+                                run_id: run_id.to_string(),
+                            });
+                        }
+                        query_responses.push(qr);
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            // Send commands from lang into the machines
+            self.access_wf_machine(run_id, move |mgr| mgr.push_commands(commands))?;
+            self.enqueue_next_activation_if_needed(run_id)?;
+            // We want to fetch the outgoing commands only after any new activation has been queued,
+            // as doing so may have altered the outgoing commands.
+            let server_cmds = self.access_wf_machine(run_id, |w| Ok(w.get_server_commands()))?;
+            // We only actually want to send commands back to the server if there are no more pending
+            // activations and we are caught up on replay.
+            if !self.pending_activations.has_pending(run_id) && !server_cmds.replaying {
+                Some(ServerCommandsWithWorkflowInfo {
+                    task_token,
+                    task_queue,
+                    action: ActivationAction::WftComplete {
+                        commands: server_cmds.commands,
+                        query_responses,
+                    },
+                })
+            } else if !query_responses.is_empty() {
+                Some(ServerCommandsWithWorkflowInfo {
+                    task_token,
+                    task_queue,
+                    action: ActivationAction::WftComplete {
+                        commands: vec![],
+                        query_responses,
+                    },
+                })
+            } else {
+                None
+            }
         };
         Ok(ret)
     }
@@ -281,19 +382,28 @@ impl WorkflowTaskManager {
             );
             return FailedActivationOutcome::NoReport;
         };
-        // Blow up any cached data associated with the workflow
-        let should_report = if let Some(wti) = self.evict_run(run_id) {
-            // Only report to server if the last task wasn't also a failure (avoid spam)
-            wti.attempt <= 1
+        // If the outstanding activation is a legacy query task, report that we need to fail it
+        let ret = if let Some(OutstandingActivation::LegacyQuery) =
+            self.outstanding_activations.get(run_id).map(|at| *at)
+        {
+            FailedActivationOutcome::ReportLegacyQueryFailure(tt)
         } else {
-            true
+            // Blow up any cached data associated with the workflow
+            let should_report = if let Some(wti) = self.evict_run(run_id) {
+                // Only report to server if the last task wasn't also a failure (avoid spam)
+                wti.attempt <= 1
+            } else {
+                true
+            };
+            if should_report {
+                FailedActivationOutcome::Report(tt)
+            } else {
+                FailedActivationOutcome::NoReport
+            }
         };
+
         self.after_wft_report(run_id);
-        if should_report {
-            FailedActivationOutcome::Report(tt)
-        } else {
-            FailedActivationOutcome::NoReport
-        }
+        ret
     }
 
     /// Will create a new workflow manager if needed for the workflow activation, if not, it will
@@ -303,7 +413,7 @@ impl WorkflowTaskManager {
     fn instantiate_or_update_workflow(
         &self,
         poll_wf_resp: ValidPollWFTQResponse,
-    ) -> Result<(WorkflowTaskInfo, Option<WfActivation>), WorkflowUpdateError> {
+    ) -> Result<(WorkflowTaskInfo, WfActivation), WorkflowUpdateError> {
         let run_id = poll_wf_resp.workflow_execution.run_id.clone();
 
         let wft_info = WorkflowTaskInfo {
@@ -322,7 +432,18 @@ impl WorkflowTaskManager {
             ),
             poll_wf_resp.workflow_execution,
         ) {
-            Ok(activation) => Ok((wft_info, activation)),
+            Ok(mut activation) => {
+                // If there are in-poll queries, insert jobs for those queries into the activation
+                if !poll_wf_resp.query_requests.is_empty() {
+                    let query_jobs = poll_wf_resp
+                        .query_requests
+                        .into_iter()
+                        .map(|q| wf_activation_job::Variant::QueryWorkflow(q).into());
+                    activation.jobs.extend(query_jobs);
+                }
+
+                Ok((wft_info, activation))
+            }
             Err(source) => Err(WorkflowUpdateError { source, run_id }),
         }
     }
@@ -331,13 +452,13 @@ impl WorkflowTaskManager {
     /// pushing it into the pending activations list
     fn enqueue_next_activation_if_needed(&self, run_id: &str) -> Result<bool, WorkflowUpdateError> {
         let mut new_activation = false;
-        if let Some(next_activation) =
-            self.access_wf_machine(run_id, move |mgr| mgr.get_next_activation())?
-        {
+        let next_activation =
+            self.access_wf_machine(run_id, move |mgr| mgr.get_next_activation())?;
+        if !next_activation.jobs.is_empty() {
             let wf_entry = self
                 .outstanding_workflow_tasks
                 .get(run_id)
-                .expect("Workflow info is present in map if there is a new pending activation");
+                .expect("Workflow task is present in map if there is a new pending activation");
             self.pending_activations
                 .push(next_activation, wf_entry.info.task_queue.clone());
             new_activation = true;
@@ -356,6 +477,20 @@ impl WorkflowTaskManager {
         // Workflows with no more pending activations (IE: They have completed a WFT) must be
         // removed from the outstanding tasks map
         if !self.pending_activations.has_pending(run_id) {
+            // Check if there was a legacy query which must be fulfilled, and if there is create
+            // a new pending activation for it.
+            if let Some(mut ot) = self.outstanding_workflow_tasks.get_mut(run_id) {
+                if let Some(query) = ot.legacy_query.take() {
+                    let na = create_query_activation(run_id.to_string(), [query]);
+                    self.pending_activations
+                        .push(na, ot.info.task_queue.clone());
+                    let _ = self
+                        .workflow_activations_update
+                        .send(WfActivationUpdate::NewPendingActivation);
+                    return;
+                }
+            }
+
             // Blow them up if we're in non-sticky mode as well
             if self.eviction_policy == WorkflowCachingPolicy::NonSticky {
                 self.evict_run(run_id);
@@ -396,5 +531,15 @@ impl WorkflowTaskManager {
                 source,
                 run_id: run_id.to_owned(),
             })
+    }
+
+    fn insert_outstanding_activation(&self, act: &WfActivation) {
+        let act_type = if act.is_legacy_query() {
+            OutstandingActivation::LegacyQuery
+        } else {
+            OutstandingActivation::Normal
+        };
+        self.outstanding_activations
+            .insert(act.run_id.clone(), act_type);
     }
 }

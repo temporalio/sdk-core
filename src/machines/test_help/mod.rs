@@ -261,8 +261,8 @@ pub fn augment_multihist_mock_sg(
     let outstanding = outstanding_wf_task_tokens.clone();
     mock_gateway
         .expect_complete_workflow_task()
-        .returning(move |tt, _, _| {
-            outstanding.write().remove_by_right(&tt);
+        .returning(move |comp| {
+            outstanding.write().remove_by_right(&comp.task_token);
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
     let outstanding = outstanding_wf_task_tokens.clone();
@@ -425,6 +425,7 @@ pub(crate) async fn poll_and_reply<'a>(
                     if evictions < expected_evictions {
                         core.inner.request_workflow_eviction(&res.run_id);
                         evictions += 1;
+                        continue 'outer;
                     }
                 }
             }
