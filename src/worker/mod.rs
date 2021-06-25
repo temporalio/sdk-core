@@ -1,7 +1,7 @@
 use crate::{
     pollers::{
         new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
-        PollWorkflowTaskBuffer,
+        PollWorkflowTaskBuffer, Poller,
     },
     protos::{
         temporal::api::enums::v1::TaskQueueKind,

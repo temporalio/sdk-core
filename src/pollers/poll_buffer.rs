@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod mocks;
+
 use crate::{
     pollers, protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
     protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse, ServerGatewayApis,
@@ -10,6 +13,19 @@ use tokio::sync::{
     watch, Mutex, Semaphore,
 };
 use tokio::task::JoinHandle;
+
+/// A trait for things that poll the server. Hides complexity of concurrent polling or polling
+/// on sticky/nonsticky queues simultaneously.
+#[cfg_attr(test, mockall::automock)]
+#[async_trait::async_trait]
+pub trait Poller<PollResult>
+where
+    PollResult: Send + Sync + 'static,
+{
+    async fn poll(&self) -> Option<pollers::Result<PollResult>>;
+    fn notify_shutdown(&self);
+    async fn shutdown(mut self);
+}
 
 pub struct LongPollBuffer<T> {
     buffered_polls: Mutex<Receiver<pollers::Result<T>>>,
@@ -69,7 +85,13 @@ where
             join_handles,
         }
     }
+}
 
+#[async_trait::async_trait]
+impl<T> Poller<T> for LongPollBuffer<T>
+where
+    T: Send + Sync + Debug + 'static,
+{
     /// Poll the buffer. Adds one permit to the polling pool - the point of this being that the
     /// buffer may support many concurrent pollers, but there is no reason to have them poll unless
     /// enough polls have actually been requested. Calling this function adds a permit that any
@@ -80,17 +102,17 @@ where
     /// then polling will happen concurrently.
     ///
     /// Returns `None` if the poll buffer has been shut down
-    pub async fn poll(&self) -> Option<pollers::Result<T>> {
+    async fn poll(&self) -> Option<pollers::Result<T>> {
         self.polls_requested.add_permits(1);
         let mut locked = self.buffered_polls.lock().await;
         (*locked).recv().await
     }
 
-    pub fn notify_shutdown(&self) {
+    fn notify_shutdown(&self) {
         let _ = self.shutdown.send(true);
     }
 
-    pub async fn shutdown(mut self) {
+    async fn shutdown(mut self) {
         let _ = self.shutdown.send(true);
         while self.join_handles.next().await.is_some() {}
     }
