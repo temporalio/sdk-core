@@ -212,9 +212,9 @@ pub mod coresdk {
                         "".to_string(),
                     ),
                     QueryResult {
-                        variant: Some(query_result::Variant::FailedWithMessage(err)),
+                        variant: Some(query_result::Variant::Failed(err)),
                         query_id,
-                    } => (query_id, QueryResultType::Failed, None, err),
+                    } => (query_id, QueryResultType::Failed, None, err.message),
                     QueryResult {
                         variant: None,
                         query_id,
@@ -230,10 +230,8 @@ pub mod coresdk {
             pub fn legacy_failure(fail: workflow_completion::Failure) -> Self {
                 QueryResult {
                     query_id: LEGACY_QUERY_ID.to_string(),
-                    variant: Some(query_result::Variant::FailedWithMessage(
-                        fail.failure
-                            .map(|ucf| ucf.message)
-                            .unwrap_or_else(|| "unknown failure reason".to_string()),
+                    variant: Some(query_result::Variant::Failed(
+                        fail.failure.unwrap_or_default(),
                     )),
                 }
             }

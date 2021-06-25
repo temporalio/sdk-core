@@ -93,7 +93,7 @@ message QueryResult {
     string query_id = 1;
     oneof variant {
         QuerySuccess succeeded = 2;
-        string failed_with_message = 3;
+        common.UserCodeFailure failed = 3;
     }
 }
 
