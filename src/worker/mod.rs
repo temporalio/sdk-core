@@ -1,8 +1,5 @@
 use crate::{
-    pollers::{
-        new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer, Poller,
-        WorkflowTaskPoller,
-    },
+    pollers::{new_activity_task_buffer, new_workflow_task_buffer, Poller, WorkflowTaskPoller},
     protos::{
         temporal::api::enums::v1::TaskQueueKind,
         temporal::api::taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
@@ -76,11 +73,11 @@ pub(crate) struct Worker {
     sticky_name: Option<String>,
 
     /// Buffers workflow task polling in the event we need to return a pending activation while
-    /// a poll is ongoing
-    wf_task_poll_buffer: WorkflowTaskPoller,
+    /// a poll is ongoing. Sticky and nonsticky polling happens inside of it.
+    wf_task_poll_buffer: Box<dyn Poller<PollWorkflowTaskQueueResponse> + Send + Sync>,
     /// Buffers activity task polling in the event we need to return a cancellation while a poll is
     /// ongoing. May be `None` if this worker does not poll for activities.
-    at_task_poll_buffer: Option<PollActivityTaskBuffer>,
+    at_task_poll_buffer: Option<Box<dyn Poller<PollActivityTaskQueueResponse> + Send + Sync>>,
 
     /// Ensures we stay at or below this worker's maximum concurrent workflow limit
     workflows_semaphore: Semaphore,
@@ -117,16 +114,23 @@ impl Worker {
         let at_task_poll_buffer = if config.no_remote_activities {
             None
         } else {
-            Some(new_activity_task_buffer(
+            Some(Box::new(new_activity_task_buffer(
                 sg,
                 config.task_queue.clone(),
                 config.max_concurrent_at_polls,
                 config.max_concurrent_at_polls * 2,
             ))
+                as Box<
+                    dyn Poller<PollActivityTaskQueueResponse> + Send + Sync,
+                >)
         };
+        let wf_task_poll_buffer = Box::new(WorkflowTaskPoller::new(
+            wf_task_poll_buffer,
+            sticky_queue_poller,
+        ));
         Self {
             sticky_name: sticky_queue_name,
-            wf_task_poll_buffer: WorkflowTaskPoller::new(wf_task_poll_buffer, sticky_queue_poller),
+            wf_task_poll_buffer,
             at_task_poll_buffer,
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             activities_semaphore: Semaphore::new(config.max_outstanding_activities),
@@ -145,9 +149,9 @@ impl Worker {
 
     /// Resolves when shutdown of the worker is complete
     pub(crate) async fn shutdown_complete(self) {
-        self.wf_task_poll_buffer.shutdown().await;
+        self.wf_task_poll_buffer.shutdown_box().await;
         if let Some(b) = self.at_task_poll_buffer {
-            b.shutdown().await;
+            b.shutdown_box().await;
         }
     }
 

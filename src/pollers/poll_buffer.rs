@@ -24,7 +24,9 @@ where
 {
     async fn poll(&self) -> Option<pollers::Result<PollResult>>;
     fn notify_shutdown(&self);
-    async fn shutdown(mut self);
+    async fn shutdown(self);
+    /// Need a separate shutdown to be able to consume boxes :(
+    async fn shutdown_box(self: Box<Self>);
 }
 
 pub struct LongPollBuffer<T> {
@@ -116,6 +118,11 @@ where
         let _ = self.shutdown.send(true);
         while self.join_handles.next().await.is_some() {}
     }
+
+    async fn shutdown_box(self: Box<Self>) {
+        let this = *self;
+        this.shutdown().await
+    }
 }
 
 /// A poller capable of polling on a sticky and a nonsticky queue simultaneously for workflow tasks.
@@ -151,6 +158,11 @@ impl Poller<PollWorkflowTaskQueueResponse> for WorkflowTaskPoller {
         if let Some(sq) = self.sticky_poller {
             sq.shutdown().await;
         }
+    }
+
+    async fn shutdown_box(self: Box<Self>) {
+        let this = *self;
+        this.shutdown().await
     }
 }
 
