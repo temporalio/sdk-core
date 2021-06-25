@@ -4,7 +4,7 @@ mod poll_buffer;
 pub use manual_mock::MockManualGateway;
 pub use poll_buffer::{
     new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
-    PollWorkflowTaskBuffer, Poller,
+    PollWorkflowTaskBuffer, Poller, WorkflowTaskPoller,
 };
 
 use crate::{

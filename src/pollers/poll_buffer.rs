@@ -118,6 +118,42 @@ where
     }
 }
 
+/// A poller capable of polling on a sticky and a nonsticky queue simultaneously for workflow tasks.
+#[derive(derive_more::Constructor)]
+pub struct WorkflowTaskPoller {
+    normal_poller: PollWorkflowTaskBuffer,
+    sticky_poller: Option<PollWorkflowTaskBuffer>,
+}
+
+#[async_trait::async_trait]
+impl Poller<PollWorkflowTaskQueueResponse> for WorkflowTaskPoller {
+    async fn poll(&self) -> Option<pollers::Result<PollWorkflowTaskQueueResponse>> {
+        if let Some(sq) = self.sticky_poller.as_ref() {
+            tokio::select! {
+                biased; // TODO: Remove once mocking happens above this level
+                r = self.normal_poller.poll() => r,
+                r = sq.poll() => r,
+            }
+        } else {
+            self.normal_poller.poll().await
+        }
+    }
+
+    fn notify_shutdown(&self) {
+        self.normal_poller.notify_shutdown();
+        if let Some(sq) = self.sticky_poller.as_ref() {
+            sq.notify_shutdown();
+        }
+    }
+
+    async fn shutdown(mut self) {
+        self.normal_poller.shutdown().await;
+        if let Some(sq) = self.sticky_poller {
+            sq.shutdown().await;
+        }
+    }
+}
+
 pub type PollWorkflowTaskBuffer = LongPollBuffer<PollWorkflowTaskQueueResponse>;
 pub fn new_workflow_task_buffer(
     sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>,

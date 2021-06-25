@@ -1,7 +1,7 @@
 use crate::{
     pollers::{
-        new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
-        PollWorkflowTaskBuffer, Poller,
+        new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer, Poller,
+        WorkflowTaskPoller,
     },
     protos::{
         temporal::api::enums::v1::TaskQueueKind,
@@ -73,11 +73,11 @@ pub(crate) struct Worker {
     config: WorkerConfig,
 
     /// Will be populated when this worker should poll on a sticky WFT queue
-    sticky_queue: Option<StickyQueue>,
+    sticky_name: Option<String>,
 
     /// Buffers workflow task polling in the event we need to return a pending activation while
     /// a poll is ongoing
-    wf_task_poll_buffer: PollWorkflowTaskBuffer,
+    wf_task_poll_buffer: WorkflowTaskPoller,
     /// Buffers activity task polling in the event we need to return a cancellation while a poll is
     /// ongoing. May be `None` if this worker does not poll for activities.
     at_task_poll_buffer: Option<PollActivityTaskBuffer>,
@@ -86,11 +86,6 @@ pub(crate) struct Worker {
     workflows_semaphore: Semaphore,
     /// Ensures we stay at or below this worker's maximum concurrent activity limit
     activities_semaphore: Semaphore,
-}
-
-struct StickyQueue {
-    name: String,
-    poll_buffer: PollWorkflowTaskBuffer,
 }
 
 impl Worker {
@@ -111,14 +106,13 @@ impl Worker {
             max_nonsticky_polls,
             max_nonsticky_polls * 2,
         );
-        let sticky_queue = sticky_queue_name.map(|sqn| StickyQueue {
-            poll_buffer: new_workflow_task_buffer(
+        let sticky_queue_poller = sticky_queue_name.as_ref().map(|sqn| {
+            new_workflow_task_buffer(
                 sg.clone(),
                 sqn.clone(),
                 max_sticky_polls,
                 max_sticky_polls * 2,
-            ),
-            name: sqn,
+            )
         });
         let at_task_poll_buffer = if config.no_remote_activities {
             None
@@ -131,8 +125,8 @@ impl Worker {
             ))
         };
         Self {
-            sticky_queue,
-            wf_task_poll_buffer,
+            sticky_name: sticky_queue_name,
+            wf_task_poll_buffer: WorkflowTaskPoller::new(wf_task_poll_buffer, sticky_queue_poller),
             at_task_poll_buffer,
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             activities_semaphore: Semaphore::new(config.max_outstanding_activities),
@@ -144,9 +138,6 @@ impl Worker {
     /// polling should be ceased before it is possible to consume the worker instance.
     pub(crate) fn notify_shutdown(&self) {
         self.wf_task_poll_buffer.notify_shutdown();
-        if let Some(sq) = self.sticky_queue.as_ref() {
-            sq.poll_buffer.notify_shutdown();
-        }
         if let Some(b) = self.at_task_poll_buffer.as_ref() {
             b.notify_shutdown();
         }
@@ -155,9 +146,6 @@ impl Worker {
     /// Resolves when shutdown of the worker is complete
     pub(crate) async fn shutdown_complete(self) {
         self.wf_task_poll_buffer.shutdown().await;
-        if let Some(sq) = self.sticky_queue {
-            sq.poll_buffer.shutdown().await;
-        }
         if let Some(b) = self.at_task_poll_buffer {
             b.shutdown().await;
         }
@@ -222,20 +210,11 @@ impl Worker {
             .await
             .expect("outstanding workflow tasks semaphore not dropped");
 
-        // If we use sticky queues, poll both the sticky and non-sticky queue
-        let res = if let Some(sq) = self.sticky_queue.as_ref() {
-            tokio::select! {
-                // This bias exists for testing, where the test mocks currently don't populate
-                // sticky queues. In production, the bias is unimportant.
-                biased;
-
-                r = self.wf_task_poll_buffer.poll() => r,
-                r = sq.poll_buffer.poll() => r,
-            }
-        } else {
-            self.wf_task_poll_buffer.poll().await
-        }
-        .ok_or(PollWfError::ShutDown)??;
+        let res = self
+            .wf_task_poll_buffer
+            .poll()
+            .await
+            .ok_or(PollWfError::ShutDown)??;
 
         if res == PollWorkflowTaskQueueResponse::default() {
             // We get the default proto in the event that the long poll times out.
@@ -254,11 +233,11 @@ impl Worker {
     /// Return the sticky execution attributes that should be used to complete workflow tasks
     /// for this worker (if any).
     pub(crate) fn get_sticky_attrs(&self) -> Option<StickyExecutionAttributes> {
-        self.sticky_queue
+        self.sticky_name
             .as_ref()
             .map(|sq| StickyExecutionAttributes {
                 worker_task_queue: Some(TaskQueue {
-                    name: sq.name.clone(),
+                    name: sq.clone(),
                     kind: TaskQueueKind::Sticky as i32,
                 }),
                 schedule_to_start_timeout: Some(
