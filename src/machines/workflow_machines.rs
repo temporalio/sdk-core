@@ -494,7 +494,6 @@ impl WorkflowMachines {
                 if event.is_final_wf_execution_event() {
                     return Ok(());
                 }
-                unreachable!()
             }
         }
 
