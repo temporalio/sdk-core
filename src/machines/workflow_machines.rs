@@ -489,12 +489,6 @@ impl WorkflowMachines {
             }
 
             self.handle_event(event, next_event.is_some())?;
-
-            if next_event.is_none() {
-                if event.is_final_wf_execution_event() {
-                    return Ok(());
-                }
-            }
         }
 
         Ok(())
