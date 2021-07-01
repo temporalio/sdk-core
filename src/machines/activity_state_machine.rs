@@ -693,14 +693,14 @@ fn convert_payloads(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::workflow::WorkflowManager;
     use crate::{
-        machines::{test_help::TestHistoryBuilder, workflow_machines::WorkflowMachines},
+        machines::workflow_machines::WorkflowMachines,
         protos::coresdk::{
             workflow_activation::WfActivation, workflow_commands::CompleteWorkflowExecution,
         },
-        test_help::canned_histories,
+        test_help::{canned_histories, TestHistoryBuilder},
         test_workflow_driver::{CommandSender, TestWorkflowDriver},
+        workflow::WorkflowManager,
     };
     use rstest::{fixture, rstest};
     use std::time::Duration;

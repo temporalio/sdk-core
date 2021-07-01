@@ -1,11 +1,5 @@
 use crate::{
     job_assert,
-    machines::test_help::{
-        build_fake_core, build_multihist_mock_sg, fake_core_from_mock_sg, gen_assert_and_fail,
-        gen_assert_and_reply, hist_to_poll_resp, mock_core, mock_core_with_opts,
-        mock_core_with_opts_no_workers, poll_and_reply, single_hist_mock_sg, FakeCore,
-        FakeWfResponses, TestHistoryBuilder, TEST_Q,
-    },
     pollers::MockServerGatewayApis,
     protos::{
         coresdk::{
@@ -25,7 +19,12 @@ use crate::{
             enums::v1::EventType, workflowservice::v1::RespondWorkflowTaskCompletedResponse,
         },
     },
-    test_help::canned_histories,
+    test_help::{
+        build_fake_core, build_multihist_mock_sg, canned_histories, fake_core_from_mocks,
+        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_core,
+        mock_core_with_opts, mock_core_with_opts_no_workers, poll_and_reply, single_hist_mock_sg,
+        FakeCore, FakeWfResponses, TestHistoryBuilder, TEST_Q,
+    },
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
     Core, CoreInitOptionsBuilder, WfActivationCompletion, WorkerConfigBuilder,
 };
@@ -697,7 +696,7 @@ async fn complete_activation_with_failure(
         true,
         Some(1),
     );
-    let core = fake_core_from_mock_sg(mock_sg);
+    let core = fake_core_from_mocks(mock_sg);
 
     poll_and_reply(
         &core,
@@ -811,7 +810,7 @@ async fn workflow_failures_only_reported_once() {
         // We should only call the server to say we failed twice (once after each success)
         Some(2),
     );
-    let core = fake_core_from_mock_sg(mock_sg);
+    let core = fake_core_from_mocks(mock_sg);
 
     poll_and_reply(
         &core,
@@ -1134,7 +1133,7 @@ async fn complete_after_eviction() {
     let mut mock = MockServerGatewayApis::new();
     mock.expect_complete_workflow_task().times(0);
     let mock = single_hist_mock_sg(wfid, t, &[2], mock, true);
-    let core = fake_core_from_mock_sg(mock);
+    let core = fake_core_from_mocks(mock);
 
     let activation = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
     // We just got start workflow, immediately evict

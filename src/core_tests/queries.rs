@@ -1,5 +1,7 @@
+use std::collections::{HashMap, VecDeque};
+
+use crate::test_help::{hist_to_poll_resp, mock_core_with_opts, MocksHolder, TEST_Q};
 use crate::{
-    machines::test_help::{hist_to_poll_resp, mock_core_with_opts, MocksHolder, TEST_Q},
     pollers::MockServerGatewayApis,
     protos::{
         coresdk::{
@@ -17,7 +19,6 @@ use crate::{
     test_help::canned_histories,
     Core, CoreInitOptionsBuilder,
 };
-use std::collections::{HashMap, VecDeque};
 
 // TODO: The existing mock helpers can't be easily made to deal with queries:
 //   * Support stickyness

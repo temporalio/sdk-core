@@ -1,12 +1,15 @@
-use crate::machines::test_help::TestHistoryBuilder;
-use crate::protos::temporal::api::common::v1::Payload;
-use crate::protos::temporal::api::enums::v1::{EventType, WorkflowTaskFailedCause};
-use crate::protos::temporal::api::failure::v1::Failure;
-use crate::protos::temporal::api::history::v1::{
-    history_event, ActivityTaskCancelRequestedEventAttributes, ActivityTaskCanceledEventAttributes,
-    ActivityTaskCompletedEventAttributes, ActivityTaskFailedEventAttributes,
-    ActivityTaskScheduledEventAttributes, ActivityTaskStartedEventAttributes,
-    ActivityTaskTimedOutEventAttributes, TimerCanceledEventAttributes, TimerFiredEventAttributes,
+use crate::{
+    protos::temporal::api::common::v1::Payload,
+    protos::temporal::api::enums::v1::{EventType, WorkflowTaskFailedCause},
+    protos::temporal::api::failure::v1::Failure,
+    protos::temporal::api::history::v1::{
+        history_event, ActivityTaskCancelRequestedEventAttributes,
+        ActivityTaskCanceledEventAttributes, ActivityTaskCompletedEventAttributes,
+        ActivityTaskFailedEventAttributes, ActivityTaskScheduledEventAttributes,
+        ActivityTaskStartedEventAttributes, ActivityTaskTimedOutEventAttributes,
+        TimerCanceledEventAttributes, TimerFiredEventAttributes,
+    },
+    test_help::TestHistoryBuilder,
 };
 
 ///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED

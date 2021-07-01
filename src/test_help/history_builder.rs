@@ -1,6 +1,4 @@
-use super::Result;
 use crate::{
-    machines::test_help::history_info::{HistoryInfo, HistoryInfoError},
     protos::temporal::api::common::v1::{Payload, Payloads},
     protos::temporal::api::failure::v1::Failure,
     protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes,
@@ -13,6 +11,10 @@ use crate::{
             WorkflowTaskFailedEventAttributes, WorkflowTaskScheduledEventAttributes,
             WorkflowTaskStartedEventAttributes, WorkflowTaskTimedOutEventAttributes,
         },
+    },
+    test_help::{
+        history_info::{HistoryInfo, HistoryInfoError},
+        Result,
     },
     workflow::HistoryUpdate,
 };

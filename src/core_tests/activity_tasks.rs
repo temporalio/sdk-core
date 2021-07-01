@@ -1,9 +1,5 @@
 use crate::{
     errors::PollActivityError,
-    machines::test_help::{
-        fake_sg_opts, mock_core, mock_core_with_opts_no_workers, mock_manual_poller, mock_poller,
-        MocksHolder, TEST_Q,
-    },
     pollers::{BoxedActPoller, BoxedWFPoller, MockManualGateway, MockServerGatewayApis},
     protos::{
         coresdk::{
@@ -13,6 +9,10 @@ use crate::{
             PollActivityTaskQueueResponse, RecordActivityTaskHeartbeatResponse,
             RespondActivityTaskCompletedResponse,
         },
+    },
+    test_help::{
+        fake_sg_opts, mock_core, mock_core_with_opts_no_workers, mock_manual_poller, mock_poller,
+        MocksHolder, TEST_Q,
     },
     ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
 };

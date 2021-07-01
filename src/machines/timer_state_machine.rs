@@ -272,8 +272,8 @@ impl Cancellable for TimerMachine {
 mod test {
     use super::*;
     use crate::{
-        machines::{test_help::TestHistoryBuilder, workflow_machines::WorkflowMachines},
-        test_help::canned_histories,
+        machines::workflow_machines::WorkflowMachines,
+        test_help::{canned_histories, TestHistoryBuilder},
         test_workflow_driver::{CommandSender, TestWorkflowDriver},
         workflow::WorkflowManager,
     };

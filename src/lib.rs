@@ -28,6 +28,7 @@ mod workflow_tasks;
 #[cfg(test)]
 mod core_tests;
 #[cfg(test)]
+#[macro_use]
 mod test_help;
 
 pub use crate::errors::{

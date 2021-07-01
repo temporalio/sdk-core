@@ -1,12 +1,6 @@
-use crate::pollers::BoxedWFPoller;
 use crate::{
     errors::PollWfError::TonicError,
-    machines::test_help::{
-        build_fake_core, build_multihist_mock_sg, hist_to_poll_resp, mock_core,
-        mock_core_with_opts_no_workers, register_mock_workers, single_hist_mock_sg,
-        FakeWfResponses, MocksHolder, TEST_Q,
-    },
-    pollers::{MockManualGateway, MockManualPoller, MockServerGatewayApis},
+    pollers::{BoxedWFPoller, MockManualGateway, MockManualPoller, MockServerGatewayApis},
     protos::coresdk::{
         workflow_activation::wf_activation_job,
         workflow_commands::{
@@ -15,7 +9,11 @@ use crate::{
         },
         workflow_completion::WfActivationCompletion,
     },
-    test_help::canned_histories,
+    test_help::{
+        build_fake_core, build_multihist_mock_sg, canned_histories, hist_to_poll_resp, mock_core,
+        mock_core_with_opts_no_workers, register_mock_workers, single_hist_mock_sg,
+        FakeWfResponses, MocksHolder, TEST_Q,
+    },
     Core, CoreInitOptionsBuilder, CoreSDK, PollWfError, ServerGatewayApis, WorkerConfigBuilder,
 };
 use futures::FutureExt;

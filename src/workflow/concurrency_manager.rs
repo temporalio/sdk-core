@@ -264,10 +264,11 @@ impl WorkflowConcurrencyManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::machines::test_help::TestHistoryBuilder;
-    use crate::protos::temporal::api::common::v1::WorkflowExecution;
-    use crate::protos::temporal::api::enums::v1::EventType;
-    use crate::protos::temporal::api::history::v1::History;
+    use crate::{
+        protos::temporal::api::common::v1::WorkflowExecution,
+        protos::temporal::api::enums::v1::EventType, protos::temporal::api::history::v1::History,
+        test_help::TestHistoryBuilder,
+    };
 
     // We test mostly error paths here since the happy paths are well covered by the tests of the
     // core sdk itself, and setting up the fake data is onerous here. If we make the concurrency
