@@ -1,11 +1,11 @@
-use crate::task_token::TaskToken;
 use crate::{
     errors::ActivityHeartbeatError,
+    pollers::ServerGatewayApis,
     protos::{
         coresdk::{common, ActivityHeartbeat, PayloadsExt},
         temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
     },
-    ServerGatewayApis,
+    task_token::TaskToken,
 };
 use std::{
     collections::HashMap,

@@ -1,37 +1,16 @@
-#[cfg(test)]
-mod mocks;
-
 use crate::{
-    pollers, protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
-    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse, ServerGatewayApis,
+    pollers::{self, Poller},
+    protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
+    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
+    ServerGatewayApis,
 };
-use futures::prelude::stream::FuturesUnordered;
-use futures::StreamExt;
+use futures::{prelude::stream::FuturesUnordered, StreamExt};
 use std::{fmt::Debug, future::Future, sync::Arc};
 use tokio::sync::{
     mpsc::{channel, Receiver},
     watch, Mutex, Semaphore,
 };
 use tokio::task::JoinHandle;
-
-// TODO: Move up one level?
-/// A trait for things that poll the server. Hides complexity of concurrent polling or polling
-/// on sticky/nonsticky queues simultaneously.
-#[cfg_attr(test, mockall::automock)]
-#[async_trait::async_trait]
-pub trait Poller<PollResult>
-where
-    PollResult: Send + Sync + 'static,
-{
-    async fn poll(&self) -> Option<pollers::Result<PollResult>>;
-    fn notify_shutdown(&self);
-    async fn shutdown(self);
-    /// Need a separate shutdown to be able to consume boxes :(
-    async fn shutdown_box(self: Box<Self>);
-}
-pub type BoxedPoller<T> = Box<dyn Poller<T> + Send + Sync + 'static>;
-pub type BoxedWFPoller = BoxedPoller<PollWorkflowTaskQueueResponse>;
-pub type BoxedActPoller = BoxedPoller<PollActivityTaskQueueResponse>;
 
 pub struct LongPollBuffer<T> {
     buffered_polls: Mutex<Receiver<pollers::Result<T>>>,
@@ -209,7 +188,7 @@ pub fn new_activity_task_buffer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pollers::manual_mock::MockManualGateway;
+    use crate::pollers::MockManualGateway;
     use futures::FutureExt;
     use std::time::Duration;
     use tokio::{select, sync::mpsc::channel};
