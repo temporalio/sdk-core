@@ -20,12 +20,6 @@ use crate::{
     Core, CoreInitOptionsBuilder,
 };
 
-// TODO: The existing mock helpers can't be easily made to deal with queries:
-//   * Support stickyness
-//   I have some work in this direction saved locally. Alternatively, try to convert UTs at the
-//   core level to be able to use the test workflow driver. Would be very nice. Add query handler
-//   to it. Can then use in integ tests too.
-
 #[rstest::rstest]
 #[case::with_history(true)]
 #[case::without_history(false)]
