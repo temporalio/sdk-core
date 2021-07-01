@@ -136,7 +136,7 @@ async fn fail_wf_task() {
     let task = core.poll_workflow_task(&task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![StartTimer {
-            timer_id: "best-timer".to_string(),
+            timer_id: "timer-1".to_string(),
             start_to_fire_timeout: Some(Duration::from_millis(200).into()),
         }
         .into()],
