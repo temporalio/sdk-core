@@ -187,7 +187,7 @@ impl TestRustWorker {
                     let wf_function = self
                         .workflow_fns
                         .get(&sw.workflow_id)
-                        .ok_or(anyhow!("Workflow id not found"))?;
+                        .ok_or_else(|| anyhow!("Workflow id not found"))?;
                     // TODO: Don't clone args
                     let mut twd =
                         TestWorkflowDriver::new(sw.arguments.clone(), wf_function.as_ref());
