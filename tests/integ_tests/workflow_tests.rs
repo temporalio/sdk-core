@@ -10,15 +10,15 @@ use temporal_sdk_core::{
         activity_result::ActivityResult,
         common::UserCodeFailure,
         workflow_activation::{wf_activation_job, WfActivation, WfActivationJob},
-        workflow_commands::{
-            ActivityCancellationType, CompleteWorkflowExecution, FailWorkflowExecution, StartTimer,
-        },
+        workflow_commands::{ActivityCancellationType, FailWorkflowExecution, StartTimer},
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
     Core, IntoCompletion, PollWfError,
 };
-use test_utils::{init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreWfStarter, GwApi};
+use test_utils::{
+    init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreTestHelpers, CoreWfStarter, GwApi,
+};
 use tokio::time::sleep;
 
 // TODO: We should get expected histories for these tests and confirm that the history at the end
@@ -45,23 +45,10 @@ async fn parallel_workflows_same_queue() {
                 variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
             }]
         );
-        core.complete_workflow_task(WfActivationCompletion::from_cmds(
-            vec![StartTimer {
-                timer_id: "timer".to_string(),
-                start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-            }
-            .into()],
-            task.run_id,
-        ))
-        .await
-        .unwrap();
+        core.complete_timer(&task.run_id, "timer", Duration::from_secs(1))
+            .await;
         let task = task_chan.next().await.unwrap();
-        core.complete_workflow_task(WfActivationCompletion::from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
-            task.run_id,
-        ))
-        .await
-        .unwrap();
+        core.complete_execution(&task.run_id).await;
     }
 
     let handles: Vec<_> = run_ids
@@ -120,16 +107,8 @@ async fn fail_wf_task() {
     let (core, task_q) = init_core_and_create_wf("fail_wf_task").await;
     // Start with a timer
     let task = core.poll_workflow_task(&task_q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![StartTimer {
-            timer_id: "best-timer".to_string(),
-            start_to_fire_timeout: Some(Duration::from_millis(200).into()),
-        }
-        .into()],
-        task.run_id,
-    ))
-    .await
-    .unwrap();
+    core.complete_timer(&task.run_id, "timer-1", Duration::from_millis(200))
+        .await;
 
     // Then break for whatever reason
     let task = core.poll_workflow_task(&task_q).await.unwrap();
@@ -157,7 +136,7 @@ async fn fail_wf_task() {
     let task = core.poll_workflow_task(&task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![StartTimer {
-            timer_id: "best-timer".to_string(),
+            timer_id: "timer-1".to_string(),
             start_to_fire_timeout: Some(Duration::from_millis(200).into()),
         }
         .into()],
@@ -166,29 +145,16 @@ async fn fail_wf_task() {
     .await
     .unwrap();
     let task = core.poll_workflow_task(&task_q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        task.run_id,
-    ))
-    .await
-    .unwrap();
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
 async fn fail_workflow_execution() {
     let (core, task_q) = init_core_and_create_wf("fail_workflow_execution").await;
-    let timer_id = "timer-1".to_owned();
+    let timer_id = "timer-1";
     let task = core.poll_workflow_task(&task_q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![StartTimer {
-            timer_id,
-            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-        }
-        .into()],
-        task.run_id,
-    ))
-    .await
-    .unwrap();
+    core.complete_timer(&task.run_id, timer_id, Duration::from_secs(1))
+        .await;
     let task = core.poll_workflow_task(&task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![FailWorkflowExecution {
@@ -274,12 +240,7 @@ async fn signal_workflow() {
             },]
         );
     }
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        res.run_id,
-    ))
-    .await
-    .unwrap();
+    core.complete_execution(&res.run_id).await;
 }
 
 #[tokio::test]
@@ -326,12 +287,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
 
     // Send completion - not having seen a poll response with a signal in it yet (unhandled command
     // error will be silenced)
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        run_id,
-    ))
-    .await
-    .unwrap();
+    core.complete_execution(&run_id).await;
 
     // We should get a new task with the signal
     let res = core.poll_workflow_task(&task_q).await.unwrap();
@@ -341,12 +297,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
             variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
         }]
     );
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        res.run_id,
-    ))
-    .await
-    .unwrap();
+    core.complete_execution(&res.run_id).await;
 }
 
 #[tokio::test]
@@ -449,12 +400,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         async {
             sleep(Duration::from_millis(500)).await;
             // Reply to the first one, finally
-            core.complete_workflow_task(WfActivationCompletion::from_cmds(
-                vec![CompleteWorkflowExecution { result: None }.into()],
-                wf_task.run_id,
-            ))
-            .await
-            .unwrap();
+            core.complete_execution(&wf_task.run_id).await;
         }
     );
     assert_matches!(
@@ -465,10 +411,5 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     );
     // Do it all over again, without timing out this time
     let wf_task = poll_sched_act_poll().await;
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        wf_task.run_id,
-    ))
-    .await
-    .unwrap();
+    core.complete_execution(&wf_task.run_id).await;
 }

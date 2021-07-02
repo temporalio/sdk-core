@@ -29,8 +29,7 @@ mod version_state_machine;
 mod workflow_task_state_machine;
 
 #[cfg(test)]
-#[macro_use]
-pub(crate) mod test_help;
+mod transition_coverage;
 
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
@@ -53,7 +52,7 @@ use std::{
 };
 
 #[cfg(test)]
-use crate::machines::test_help::add_coverage;
+use transition_coverage::add_coverage;
 
 pub(crate) type ProtoCommand = Command;
 

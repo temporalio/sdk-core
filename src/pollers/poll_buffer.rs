@@ -1,9 +1,10 @@
 use crate::{
-    pollers, protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
-    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse, ServerGatewayApis,
+    pollers::{self, Poller},
+    protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
+    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
+    ServerGatewayApis,
 };
-use futures::prelude::stream::FuturesUnordered;
-use futures::StreamExt;
+use futures::{prelude::stream::FuturesUnordered, StreamExt};
 use std::{fmt::Debug, future::Future, sync::Arc};
 use tokio::sync::{
     mpsc::{channel, Receiver},
@@ -69,7 +70,13 @@ where
             join_handles,
         }
     }
+}
 
+#[async_trait::async_trait]
+impl<T> Poller<T> for LongPollBuffer<T>
+where
+    T: Send + Sync + Debug + 'static,
+{
     /// Poll the buffer. Adds one permit to the polling pool - the point of this being that the
     /// buffer may support many concurrent pollers, but there is no reason to have them poll unless
     /// enough polls have actually been requested. Calling this function adds a permit that any
@@ -80,19 +87,65 @@ where
     /// then polling will happen concurrently.
     ///
     /// Returns `None` if the poll buffer has been shut down
-    pub async fn poll(&self) -> Option<pollers::Result<T>> {
+    async fn poll(&self) -> Option<pollers::Result<T>> {
         self.polls_requested.add_permits(1);
         let mut locked = self.buffered_polls.lock().await;
         (*locked).recv().await
     }
 
-    pub fn notify_shutdown(&self) {
+    fn notify_shutdown(&self) {
         let _ = self.shutdown.send(true);
     }
 
-    pub async fn shutdown(mut self) {
+    async fn shutdown(mut self) {
         let _ = self.shutdown.send(true);
         while self.join_handles.next().await.is_some() {}
+    }
+
+    async fn shutdown_box(self: Box<Self>) {
+        let this = *self;
+        this.shutdown().await
+    }
+}
+
+/// A poller capable of polling on a sticky and a nonsticky queue simultaneously for workflow tasks.
+#[derive(derive_more::Constructor)]
+pub struct WorkflowTaskPoller {
+    normal_poller: PollWorkflowTaskBuffer,
+    sticky_poller: Option<PollWorkflowTaskBuffer>,
+}
+
+#[async_trait::async_trait]
+impl Poller<PollWorkflowTaskQueueResponse> for WorkflowTaskPoller {
+    async fn poll(&self) -> Option<pollers::Result<PollWorkflowTaskQueueResponse>> {
+        if let Some(sq) = self.sticky_poller.as_ref() {
+            tokio::select! {
+                biased; // TODO: Remove once mocking happens above this level
+                r = self.normal_poller.poll() => r,
+                r = sq.poll() => r,
+            }
+        } else {
+            self.normal_poller.poll().await
+        }
+    }
+
+    fn notify_shutdown(&self) {
+        self.normal_poller.notify_shutdown();
+        if let Some(sq) = self.sticky_poller.as_ref() {
+            sq.notify_shutdown();
+        }
+    }
+
+    async fn shutdown(mut self) {
+        self.normal_poller.shutdown().await;
+        if let Some(sq) = self.sticky_poller {
+            sq.shutdown().await;
+        }
+    }
+
+    async fn shutdown_box(self: Box<Self>) {
+        let this = *self;
+        this.shutdown().await
     }
 }
 
@@ -135,7 +188,7 @@ pub fn new_activity_task_buffer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pollers::manual_mock::MockManualGateway;
+    use crate::pollers::MockManualGateway;
     use futures::FutureExt;
     use std::time::Duration;
     use tokio::{select, sync::mpsc::channel};

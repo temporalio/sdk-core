@@ -4,7 +4,7 @@ use temporal_sdk_core::protos::coresdk::{
     workflow_completion::WfActivationCompletion,
 };
 use temporal_sdk_core::test_workflow_driver::{CommandSender, TestRustWorker};
-use test_utils::{init_core_and_create_wf, CoreWfStarter, NAMESPACE};
+use test_utils::{init_core_and_create_wf, CoreTestHelpers, CoreWfStarter, NAMESPACE};
 
 pub async fn timer_wf(mut command_sink: CommandSender) {
     let timer = StartTimer {
@@ -32,7 +32,7 @@ async fn timer_workflow_workflow_driver() {
 }
 
 #[tokio::test]
-async fn timer_workflow() {
+async fn timer_workflow_manual() {
     let (core, task_q) = init_core_and_create_wf("timer_workflow").await;
     let task = core.poll_workflow_task(&task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
@@ -46,12 +46,7 @@ async fn timer_workflow() {
     .await
     .unwrap();
     let task = core.poll_workflow_task(&task_q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        task.run_id,
-    ))
-    .await
-    .unwrap();
+    core.complete_execution(&task.run_id).await;
     core.shutdown().await;
 }
 

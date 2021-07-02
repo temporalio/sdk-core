@@ -6,15 +6,13 @@ use temporal_sdk_core::{
         activity_task::activity_task as act_task,
         common::{Payload, UserCodeFailure},
         workflow_activation::{wf_activation_job, FireTimer, ResolveActivity, WfActivationJob},
-        workflow_commands::{
-            ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity, StartTimer,
-        },
+        workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
     IntoCompletion,
 };
-use test_utils::{init_core_and_create_wf, schedule_activity_cmd};
+use test_utils::{init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers};
 use tokio::time::sleep;
 
 #[tokio::test]
@@ -71,12 +69,7 @@ async fn activity_workflow() {
             assert_eq!(r, &response_payload);
         }
     );
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        task.run_id,
-    ))
-    .await
-    .unwrap()
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -139,12 +132,7 @@ async fn activity_non_retryable_failure() {
             assert_eq!(f, &failure);
         }
     );
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        task.run_id,
-    ))
-    .await
-    .unwrap()
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -226,12 +214,7 @@ async fn activity_retry() {
             assert_eq!(r, &response_payload);
         }
     );
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        task.run_id,
-    ))
-    .await
-    .unwrap()
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -294,12 +277,7 @@ async fn activity_cancellation_try_cancel() {
     .await
     .unwrap();
     let task = core.poll_workflow_task(&task_q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        task.run_id,
-    ))
-    .await
-    .unwrap();
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -398,12 +376,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
             variant: Some(wf_activation_job::Variant::FireTimer(_)),
         }]
     );
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        task.run_id,
-    ))
-    .await
-    .unwrap();
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -448,12 +421,7 @@ async fn started_activity_timeout() {
             assert_eq!(a_id, activity_id);
         }
     );
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        task.run_id,
-    ))
-    .await
-    .unwrap();
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -527,12 +495,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
     .await
     .unwrap();
     let task = core.poll_workflow_task(&task_q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        task.run_id,
-    ))
-    .await
-    .unwrap();
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -597,10 +560,5 @@ async fn activity_cancellation_abandon() {
     // Poll workflow task expecting that activation has been created by the state machine
     // immediately after the cancellation request.
     let task = core.poll_workflow_task(&task_q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        task.run_id,
-    ))
-    .await
-    .unwrap();
+    core.complete_execution(&task.run_id).await;
 }

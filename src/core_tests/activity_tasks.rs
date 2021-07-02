@@ -1,8 +1,6 @@
-use crate::machines::test_help::mock_core_with_opts_no_workers;
 use crate::{
     errors::PollActivityError,
-    machines::test_help::{fake_sg_opts, mock_core, TEST_Q},
-    pollers::{MockManualGateway, MockServerGatewayApis},
+    pollers::{BoxedActPoller, BoxedWFPoller, MockManualGateway, MockServerGatewayApis},
     protos::{
         coresdk::{
             activity_result::ActivityResult, activity_task::activity_task, ActivityTaskCompletion,
@@ -11,6 +9,10 @@ use crate::{
             PollActivityTaskQueueResponse, RecordActivityTaskHeartbeatResponse,
             RespondActivityTaskCompletedResponse,
         },
+    },
+    test_help::{
+        fake_sg_opts, mock_core, mock_core_with_opts_no_workers, mock_manual_poller, mock_poller,
+        MocksHolder, TEST_Q,
     },
     ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
 };
@@ -99,7 +101,11 @@ async fn activity_not_found_returns_ok() {
         .times(1)
         .returning(|_, _| Err(tonic::Status::not_found("unimportant")));
 
-    let core = mock_core(mock_gateway);
+    let core = mock_core(MocksHolder::from_gateway_with_responses(
+        mock_gateway,
+        vec![].into(),
+        vec![].into(),
+    ));
 
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: vec![1],
@@ -113,17 +119,6 @@ async fn activity_not_found_returns_ok() {
 async fn heartbeats_report_cancels() {
     let mut mock_gateway = MockServerGatewayApis::new();
     mock_gateway
-        .expect_poll_activity_task()
-        .times(1)
-        .returning(|_| {
-            Ok(PollActivityTaskQueueResponse {
-                task_token: vec![1],
-                activity_id: "act1".to_string(),
-                heartbeat_timeout: Some(Duration::from_secs(1).into()),
-                ..Default::default()
-            })
-        });
-    mock_gateway
         .expect_record_activity_heartbeat()
         .times(1)
         .returning(|_, _| {
@@ -132,7 +127,17 @@ async fn heartbeats_report_cancels() {
             })
         });
 
-    let core = mock_core(mock_gateway);
+    let core = mock_core(MocksHolder::from_gateway_with_responses(
+        mock_gateway,
+        vec![].into(),
+        vec![PollActivityTaskQueueResponse {
+            task_token: vec![1],
+            activity_id: "act1".to_string(),
+            heartbeat_timeout: Some(Duration::from_secs(1).into()),
+            ..Default::default()
+        }]
+        .into(),
+    ));
 
     let act = core.poll_activity_task(TEST_Q).await.unwrap();
     core.record_activity_heartbeat(ActivityHeartbeat {
@@ -154,26 +159,28 @@ async fn heartbeats_report_cancels() {
 
 #[tokio::test]
 async fn activity_cancel_interrupts_poll() {
-    let mut mock_gateway = MockManualGateway::new();
+    let mut mock_poller = mock_manual_poller();
     let mut poll_resps = VecDeque::from(vec![
         async {
-            Ok(PollActivityTaskQueueResponse {
+            Some(Ok(PollActivityTaskQueueResponse {
                 task_token: vec![1],
                 heartbeat_timeout: Some(Duration::from_secs(1).into()),
                 ..Default::default()
-            })
+            }))
         }
         .boxed(),
         async {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            Ok(Default::default())
+            Some(Ok(Default::default()))
         }
         .boxed(),
     ]);
-    mock_gateway
-        .expect_poll_activity_task()
+    mock_poller
+        .expect_poll()
         .times(2)
-        .returning(move |_| poll_resps.pop_front().unwrap());
+        .returning(move || poll_resps.pop_front().unwrap());
+
+    let mut mock_gateway = MockManualGateway::new();
     mock_gateway
         .expect_record_activity_heartbeat()
         .times(1)
@@ -185,8 +192,16 @@ async fn activity_cancel_interrupts_poll() {
             }
             .boxed()
         });
+    let mut pollers = HashMap::new();
+    pollers.insert(
+        TEST_Q.to_string(),
+        (
+            Box::new(mock_manual_poller()) as BoxedWFPoller,
+            Some(Box::new(mock_poller) as BoxedActPoller),
+        ),
+    );
 
-    let core = mock_core(mock_gateway);
+    let core = mock_core(MocksHolder::from_mock_pollers(mock_gateway, pollers));
     let last_finisher = AtomicUsize::new(0);
     // Perform first poll to get the activity registered
     let act = core.poll_activity_task(TEST_Q).await.unwrap();
@@ -211,20 +226,26 @@ async fn activity_cancel_interrupts_poll() {
 
 #[tokio::test]
 async fn activity_poll_timeout_retries() {
-    let mut mock_gateway = MockServerGatewayApis::new();
+    let mock_gateway = MockServerGatewayApis::new();
     let mut calls = 0;
-    mock_gateway
-        .expect_poll_activity_task()
-        .times(3)
-        .returning(move |_| {
-            calls += 1;
-            if calls <= 2 {
-                Ok(PollActivityTaskQueueResponse::default())
-            } else {
-                Err(tonic::Status::unknown("Test done"))
-            }
-        });
-    let core = mock_core(mock_gateway);
+    let mut mock_act_poller = mock_poller();
+    mock_act_poller.expect_poll().times(3).returning(move || {
+        calls += 1;
+        if calls <= 2 {
+            Some(Ok(PollActivityTaskQueueResponse::default()))
+        } else {
+            Some(Err(tonic::Status::unknown("Test done")))
+        }
+    });
+    let mut pollers = HashMap::new();
+    pollers.insert(
+        TEST_Q.to_string(),
+        (
+            Box::new(mock_poller()) as BoxedWFPoller,
+            Some(Box::new(mock_act_poller) as BoxedActPoller),
+        ),
+    );
+    let core = mock_core(MocksHolder::from_mock_pollers(mock_gateway, pollers));
     let r = core.poll_activity_task(TEST_Q).await;
     assert_matches!(r.unwrap_err(), PollActivityError::TonicError(_));
 }

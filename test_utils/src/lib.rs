@@ -3,8 +3,10 @@ use rand::{distributions::Standard, Rng};
 use std::{convert::TryFrom, env, future::Future, sync::Arc, time::Duration};
 use temporal_sdk_core::{
     protos::coresdk::workflow_commands::{
-        workflow_command, ActivityCancellationType, ScheduleActivity,
+        workflow_command, ActivityCancellationType, CompleteWorkflowExecution, ScheduleActivity,
+        StartTimer,
     },
+    protos::coresdk::workflow_completion::WfActivationCompletion,
     test_workflow_driver::TestRustWorker,
     Core, CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayApis, ServerGatewayOptions,
     WorkerConfig, WorkerConfigBuilder,
@@ -199,4 +201,38 @@ where
     }
 
     while tasks.next().await.is_some() {}
+}
+
+#[async_trait::async_trait]
+pub trait CoreTestHelpers {
+    async fn complete_execution(&self, run_id: &str);
+    async fn complete_timer(&self, run_id: &str, timer_id: &str, duration: Duration);
+}
+
+#[async_trait::async_trait]
+impl<T> CoreTestHelpers for T
+where
+    T: Core + ?Sized,
+{
+    async fn complete_execution(&self, run_id: &str) {
+        self.complete_workflow_task(WfActivationCompletion::from_cmds(
+            vec![CompleteWorkflowExecution { result: None }.into()],
+            run_id.to_string(),
+        ))
+        .await
+        .unwrap();
+    }
+
+    async fn complete_timer(&self, run_id: &str, timer_id: &str, duration: Duration) {
+        self.complete_workflow_task(WfActivationCompletion::from_cmds(
+            vec![StartTimer {
+                timer_id: timer_id.to_string(),
+                start_to_fire_timeout: Some(duration.into()),
+            }
+            .into()],
+            run_id.to_string(),
+        ))
+        .await
+        .unwrap();
+    }
 }

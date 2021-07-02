@@ -5,12 +5,11 @@ use temporal_sdk_core::protos::coresdk::{
     activity_task::activity_task as act_task,
     common::Payload,
     workflow_activation::{wf_activation_job, ResolveActivity, WfActivationJob},
-    workflow_commands::{ActivityCancellationType, CompleteWorkflowExecution},
-    workflow_completion::WfActivationCompletion,
+    workflow_commands::ActivityCancellationType,
     ActivityHeartbeat, ActivityTaskCompletion,
 };
 use temporal_sdk_core::IntoCompletion;
-use test_utils::{init_core_and_create_wf, schedule_activity_cmd};
+use test_utils::{init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers};
 use tokio::time::sleep;
 
 #[tokio::test]
@@ -78,10 +77,5 @@ async fn activity_heartbeat() {
             assert_eq!(r, &response_payload);
         }
     );
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        task.run_id,
-    ))
-    .await
-    .unwrap()
+    core.complete_execution(&task.run_id).await;
 }

@@ -1,6 +1,4 @@
-use super::Result;
 use crate::{
-    machines::test_help::history_info::{HistoryInfo, HistoryInfoError},
     protos::temporal::api::common::v1::{Payload, Payloads},
     protos::temporal::api::failure::v1::Failure,
     protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes,
@@ -14,13 +12,17 @@ use crate::{
             WorkflowTaskStartedEventAttributes, WorkflowTaskTimedOutEventAttributes,
         },
     },
+    test_help::{
+        history_info::{HistoryInfo, HistoryInfoError},
+        Result,
+    },
     workflow::HistoryUpdate,
 };
 use anyhow::bail;
 use std::time::SystemTime;
 use uuid::Uuid;
 
-#[derive(Default, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct TestHistoryBuilder {
     events: Vec<HistoryEvent>,
     /// Is incremented every time a new event is added, and that *new* value is used as that event's

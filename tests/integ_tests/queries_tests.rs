@@ -1,18 +1,15 @@
 use assert_matches::assert_matches;
-use std::{sync::Arc, time::Duration};
-use temporal_sdk_core::{
-    protos::{
-        coresdk::{
-            common::UserCodeFailure,
-            workflow_activation::{wf_activation_job, WfActivationJob},
-            workflow_commands::{CompleteWorkflowExecution, QueryResult, QuerySuccess, StartTimer},
-            workflow_completion::WfActivationCompletion,
-        },
-        temporal::api::query::v1::WorkflowQuery,
+use std::time::Duration;
+use temporal_sdk_core::protos::{
+    coresdk::{
+        common::UserCodeFailure,
+        workflow_activation::{wf_activation_job, WfActivationJob},
+        workflow_commands::{QueryResult, QuerySuccess, StartTimer},
+        workflow_completion::WfActivationCompletion,
     },
-    Core,
+    temporal::api::query::v1::WorkflowQuery,
 };
-use test_utils::{init_core_and_create_wf, with_gw, CoreWfStarter, GwApi};
+use test_utils::{init_core_and_create_wf, with_gw, CoreTestHelpers, CoreWfStarter, GwApi};
 
 #[tokio::test]
 async fn simple_query_legacy() {
@@ -92,30 +89,11 @@ async fn simple_query_legacy() {
         .unwrap();
         // Finish the workflow
         let task = core.poll_workflow_task(&task_q).await.unwrap();
-        core.complete_workflow_task(WfActivationCompletion::from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
-            task.run_id,
-        ))
-        .await
-        .unwrap();
+        core.complete_execution(&task.run_id).await;
     };
     let (q_resp, _) = tokio::join!(query_fut, workflow_completions_future);
     // Ensure query response is as expected
     assert_eq!(&q_resp.unwrap()[0].data, query_resp);
-}
-
-// TODO: Use more places
-async fn complete_timer(core: &Arc<dyn Core>, run_id: &str, timer_id: &str) {
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![StartTimer {
-            timer_id: timer_id.to_string(),
-            start_to_fire_timeout: Some(Duration::from_millis(500).into()),
-        }
-        .into()],
-        run_id.to_string(),
-    ))
-    .await
-    .unwrap();
 }
 
 #[rstest::rstest]
@@ -136,14 +114,10 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
             }]
         );
         let run_id = task.run_id.clone();
-        complete_timer(&core, &task.run_id, "timer-1").await;
+        core.complete_timer(&task.run_id, "timer-1", Duration::from_millis(500))
+            .await;
         let task = core.poll_workflow_task(&task_q).await.unwrap();
-        core.complete_workflow_task(WfActivationCompletion::from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
-            task.run_id,
-        ))
-        .await
-        .unwrap();
+        core.complete_execution(&task.run_id).await;
         run_id
     };
 
@@ -219,7 +193,8 @@ async fn repros_query_dropped_on_floor() {
     wf_starter.start_wf().await;
 
     let task = core.poll_workflow_task(&task_q).await.unwrap();
-    complete_timer(&core, &task.run_id, "timer-1").await;
+    core.complete_timer(&task.run_id, "timer-1", Duration::from_millis(500))
+        .await;
 
     // Poll for a task we will time out
     let task = core.poll_workflow_task(&task_q).await.unwrap();
@@ -280,7 +255,8 @@ async fn repros_query_dropped_on_floor() {
             ) {
                 dbg!("Evict path");
                 let task = core.poll_workflow_task(&task_q).await.unwrap();
-                complete_timer(&core, &task.run_id, "timer-1").await;
+                core.complete_timer(&task.run_id, "timer-1", Duration::from_millis(500))
+                    .await;
                 continue;
             }
 
@@ -291,13 +267,7 @@ async fn repros_query_dropped_on_floor() {
                 }
             ) {
                 // If we get the timer firing after replay, be done.
-                core.complete_workflow_task(WfActivationCompletion::from_cmds(
-                    vec![CompleteWorkflowExecution { result: None }.into()],
-                    task.run_id,
-                ))
-                .await
-                .unwrap();
-                continue;
+                core.complete_execution(&task.run_id).await;
             }
 
             // There should be a query job (really, there should be both... server only sends one?)
@@ -412,12 +382,7 @@ async fn fail_legacy_query() {
         .unwrap();
         // Finish the workflow
         let task = core.poll_workflow_task(&task_q).await.unwrap();
-        core.complete_workflow_task(WfActivationCompletion::from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
-            task.run_id,
-        ))
-        .await
-        .unwrap();
+        core.complete_execution(&task.run_id).await;
     };
     let (q_resp, _) = tokio::join!(query_fut, workflow_completions_future);
     // Ensure query response is a failure and has the right message
