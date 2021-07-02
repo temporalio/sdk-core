@@ -118,8 +118,10 @@ impl TestRustWorker {
         let live_wfs = self.incomplete_workflows.clone();
         let act_done_notify = self.activation_done_notify.clone();
         let jh = tokio::spawn(async move {
-            let res = 'rcvloop: loop {
-                let activation = rx.recv().await.expect("Send half not dropped");
+            let mut workflow_really_finished = false;
+            let mut retval = Ok(());
+
+            'rcvloop: while let Some(activation) = rx.recv().await {
                 for WfActivationJob { variant } in activation.jobs {
                     if let Some(v) = variant {
                         match v {
@@ -140,12 +142,12 @@ impl TestRustWorker {
                             Variant::SignalWorkflow(_) => {}
                             Variant::RemoveFromCache(_) => {
                                 twd.kill().await;
-                                break 'rcvloop Ok(());
+                                break 'rcvloop;
                             }
                         }
                     } else {
-                        live_wfs.fetch_sub(1, Ordering::SeqCst);
-                        break 'rcvloop Err(anyhow!("Empty activation job variant"));
+                        retval = Err(anyhow!("Empty activation job variant"));
+                        break 'rcvloop;
                     }
                 }
 
@@ -155,17 +157,20 @@ impl TestRustWorker {
                 {
                     WfExitKind::NotYetDone => {}
                     WfExitKind::Fail | WfExitKind::Complete => {
-                        live_wfs.fetch_sub(1, Ordering::SeqCst);
-                        break Ok(());
+                        workflow_really_finished = true;
+                        break;
                     }
                     WfExitKind::ContinueAsNew => {
-                        break Ok(());
+                        break;
                     }
                 }
                 act_done_notify.notify_one();
-            };
+            }
+            if workflow_really_finished {
+                live_wfs.fetch_sub(1, Ordering::SeqCst);
+            }
             act_done_notify.notify_one();
-            res
+            retval
         });
         self.workflows.insert(run_id, tx);
         self.join_handles.push(jh);
@@ -188,7 +193,7 @@ impl TestRustWorker {
                         .workflow_fns
                         .get(&sw.workflow_id)
                         .ok_or_else(|| anyhow!("Workflow id not found"))?;
-                    // TODO: Don't clone args
+                    // NOTE: Don't clone args if this gets ported to be a non-test rust worker
                     let mut twd =
                         TestWorkflowDriver::new(sw.arguments.clone(), wf_function.as_ref());
                     if let Some(or) = self.deadlock_override {
