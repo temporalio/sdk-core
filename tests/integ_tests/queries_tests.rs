@@ -147,7 +147,6 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
         }
 
         let task = core.poll_workflow_task(&task_q).await.unwrap();
-        dbg!(&task);
 
         let query = assert_matches!(
             task.jobs.as_slice(),
@@ -220,7 +219,6 @@ async fn repros_query_dropped_on_floor() {
             )
             .await
             .unwrap();
-        dbg!("Got q1 resp");
         res
     });
     let run_id = task.run_id.to_string();
@@ -236,16 +234,13 @@ async fn repros_query_dropped_on_floor() {
             )
             .await
             .unwrap();
-        dbg!("Got q2 resp");
         res
     });
     let workflow_completions_future = async {
         let mut seen_q1 = false;
         let mut seen_q2 = false;
         while !seen_q1 || !seen_q2 {
-            dbg!("Polling");
             let task = core.poll_workflow_task(&task_q).await.unwrap();
-            dbg!("Past second poll", &task);
 
             if matches!(
                 task.jobs[0],
@@ -253,7 +248,6 @@ async fn repros_query_dropped_on_floor() {
                     variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
                 }
             ) {
-                dbg!("Evict path");
                 let task = core.poll_workflow_task(&task_q).await.unwrap();
                 core.complete_timer(&task.run_id, "timer-1", Duration::from_millis(500))
                     .await;
@@ -279,10 +273,8 @@ async fn repros_query_dropped_on_floor() {
             );
             let resp = if query.query_type == "query_1" {
                 seen_q1 = true;
-                dbg!("Answering q1");
                 q1_resp
             } else {
-                dbg!("Answering q2");
                 seen_q2 = true;
                 q2_resp
             };

@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use temporal_sdk_core::protos::coresdk::{
     workflow_commands::{CancelTimer, CompleteWorkflowExecution, StartTimer},
     workflow_completion::WfActivationCompletion,
@@ -24,7 +24,7 @@ async fn timer_workflow_workflow_driver() {
 
     let worker = TestRustWorker::new(core.clone(), tq);
     worker
-        .submit_wf(vec![], wf_name.to_owned(), Arc::new(timer_wf))
+        .submit_wf(vec![], wf_name.to_owned(), timer_wf)
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -134,7 +134,7 @@ async fn parallel_timers() {
 
     let worker = TestRustWorker::new(core.clone(), tq.clone());
     worker
-        .submit_wf(vec![], wf_name.to_owned(), Arc::new(parallel_timer_wf))
+        .submit_wf(vec![], wf_name.to_owned(), parallel_timer_wf)
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

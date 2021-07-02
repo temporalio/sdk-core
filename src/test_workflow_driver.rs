@@ -17,12 +17,20 @@ use crate::{
     workflow::CommandID,
     CompleteWfError, Core, IntoCompletion,
 };
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use crossbeam::channel::{Receiver, Sender};
 use dashmap::DashMap;
-use futures::{stream::FuturesUnordered, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use parking_lot::{Condvar, Mutex};
-use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    future::Future,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use tokio::{
     runtime::Runtime,
     sync::{
@@ -37,10 +45,19 @@ pub struct TestRustWorker {
     core: Arc<dyn Core>,
     task_queue: String,
     deadlock_override: Option<Duration>,
-    // Maps run id to the driver
+    /// Maps run id to the driver
     workflows: DashMap<String, UnboundedSender<WfActivation>>,
+    /// Maps workflow id to the function for executing workflow runs with that ID
+    workflow_fns: DashMap<String, Box<WfFunc>>,
+    /// Number of live workflows
+    incomplete_workflows: Arc<AtomicUsize>,
+    /// Awoken each time an activation is completed by a workflow run
+    activation_done_notify: Arc<Notify>,
+    /// Handles for each spawned workflow run are inserted here to be cleaned up when all runs
+    /// are finished
     join_handles: FuturesUnordered<JoinHandle<Result<(), anyhow::Error>>>,
 }
+type WfFunc = dyn Fn(WfContext) -> BoxFuture<'static, ()> + Send + Sync + 'static;
 
 impl TestRustWorker {
     /// Create a new rust worker using the provided core instance, namespace, and task queue
@@ -49,6 +66,9 @@ impl TestRustWorker {
             core,
             task_queue,
             workflows: Default::default(),
+            workflow_fns: Default::default(),
+            incomplete_workflows: Arc::new(AtomicUsize::new(0)),
+            activation_done_notify: Arc::new(Notify::new()),
             deadlock_override: None,
             join_handles: FuturesUnordered::new(),
         }
@@ -65,14 +85,13 @@ impl TestRustWorker {
         &self,
         input: Vec<Payload>,
         workflow_id: String,
-        wf_function: Arc<F>,
+        wf_function: F,
     ) -> Result<(), tonic::Status>
     where
         F: Fn(WfContext) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        let res = self
-            .core
+        self.core
             .server_gateway()
             .start_workflow(
                 input,
@@ -83,86 +102,70 @@ impl TestRustWorker {
             )
             .await?;
 
-        self.start_wf(wf_function, res.run_id);
+        self.workflow_fns.insert(
+            workflow_id,
+            Box::new(move |ctx: WfContext| wf_function(ctx).boxed()),
+        );
+        self.incomplete_workflows.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 
-    /// Actually run the workflow function
-    pub fn start_wf<F, Fut>(&self, wf_function: Arc<F>, run_id: String)
-    where
-        F: Fn(WfContext) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        let deadlock_override = self.deadlock_override;
+    /// Actually run the workflow function. Once complete, the workflow will remove itself
+    /// from the function map, indicating that the submitted workflow has finished.
+    fn start_wf(&self, mut twd: TestWorkflowDriver, run_id: String) {
         let (tx, mut rx) = unbounded_channel::<WfActivation>();
         let core = self.core.clone();
+        let live_wfs = self.incomplete_workflows.clone();
+        let act_done_notify = self.activation_done_notify.clone();
         let jh = tokio::spawn(async move {
-            'execution: loop {
-                // First activation *must* be start workflow
-                let activation = rx.recv().await.expect("Must be a first activation");
-                let mut twd = if let [WfActivationJob {
-                    variant: Some(Variant::StartWorkflow(sw)),
-                }] = activation.jobs.as_slice()
-                {
-                    // TODO: Don't clone args
-                    let mut twd =
-                        TestWorkflowDriver::new(sw.arguments.clone(), wf_function.as_ref());
-                    if let Some(or) = deadlock_override {
-                        twd.override_deadlock(or);
+            let res = 'rcvloop: loop {
+                let activation = rx.recv().await.expect("Send half not dropped");
+                for WfActivationJob { variant } in activation.jobs {
+                    if let Some(v) = variant {
+                        match v {
+                            Variant::StartWorkflow(_) => {}
+                            Variant::FireTimer(FireTimer { timer_id }) => {
+                                twd.unblock(UnblockEvent::Timer(timer_id))
+                            }
+                            Variant::ResolveActivity(ResolveActivity {
+                                activity_id,
+                                result,
+                            }) => twd.unblock(UnblockEvent::Activity {
+                                id: activity_id,
+                                result: result.expect("Activity must have result"),
+                            }),
+                            Variant::UpdateRandomSeed(_) => {}
+                            Variant::QueryWorkflow(_) => {}
+                            Variant::CancelWorkflow(_) => {}
+                            Variant::SignalWorkflow(_) => {}
+                            Variant::RemoveFromCache(_) => {
+                                twd.kill().await;
+                                break 'rcvloop Ok(());
+                            }
+                        }
+                    } else {
+                        live_wfs.fetch_sub(1, Ordering::SeqCst);
+                        break 'rcvloop Err(anyhow!("Empty activation job variant"));
                     }
-                    twd
-                } else {
-                    bail!("First activation wasn't start workflow!")
-                };
+                }
 
-                if twd
+                match twd
                     .complete_wf_task(core.as_ref(), activation.run_id)
                     .await?
                 {
-                    break;
-                }
-
-                while let Some(activation) = rx.recv().await {
-                    for WfActivationJob { variant } in activation.jobs {
-                        if let Some(v) = variant {
-                            match v {
-                                Variant::StartWorkflow(_) => {
-                                    bail!("We shouldn't see start workflow at this point")
-                                }
-                                Variant::FireTimer(FireTimer { timer_id }) => {
-                                    twd.unblock(UnblockEvent::Timer(timer_id))
-                                }
-                                Variant::ResolveActivity(ResolveActivity {
-                                    activity_id,
-                                    result,
-                                }) => twd.unblock(UnblockEvent::Activity {
-                                    id: activity_id,
-                                    result: result.expect("Activity must have result"),
-                                }),
-                                Variant::UpdateRandomSeed(_) => {}
-                                Variant::QueryWorkflow(_) => {}
-                                Variant::CancelWorkflow(_) => {}
-                                Variant::SignalWorkflow(_) => {}
-                                Variant::RemoveFromCache(_) => {
-                                    twd.kill().await;
-                                    continue 'execution;
-                                }
-                            }
-                        } else {
-                            bail!("Empty activation job variant");
-                        }
+                    WfExitKind::NotYetDone => {}
+                    WfExitKind::Fail | WfExitKind::Complete => {
+                        live_wfs.fetch_sub(1, Ordering::SeqCst);
+                        break Ok(());
                     }
-
-                    if twd
-                        .complete_wf_task(core.as_ref(), activation.run_id)
-                        .await?
-                    {
-                        break;
+                    WfExitKind::ContinueAsNew => {
+                        break Ok(());
                     }
                 }
-                break;
-            }
-            Ok(())
+                act_done_notify.notify_one();
+            };
+            act_done_notify.notify_one();
+            res
         });
         self.workflows.insert(run_id, tx);
         self.join_handles.push(jh);
@@ -171,36 +174,49 @@ impl TestRustWorker {
     /// Drives all workflows until they have all finished, repeatedly polls server to fetch work
     /// for them.
     pub async fn run_until_done(self) -> Result<(), anyhow::Error> {
-        // Need to deconstruct self
-        let mut handles = self.join_handles;
-        let core = self.core;
-        let workflows = self.workflows;
-        let tq = self.task_queue;
-
-        let poller = async {
+        let poller = async move {
             loop {
-                let activation = core.poll_workflow_task(&tq).await?;
+                let activation = self.core.poll_workflow_task(&self.task_queue).await?;
+
+                // If the activation is to start a workflow, create a new workflow driver for it,
+                // using the function associated with that workflow id
+                if let [WfActivationJob {
+                    variant: Some(Variant::StartWorkflow(sw)),
+                }] = activation.jobs.as_slice()
+                {
+                    let wf_function = self
+                        .workflow_fns
+                        .get(&sw.workflow_id)
+                        .ok_or(anyhow!("Workflow id not found"))?;
+                    // TODO: Don't clone args
+                    let mut twd =
+                        TestWorkflowDriver::new(sw.arguments.clone(), wf_function.as_ref());
+                    if let Some(or) = self.deadlock_override {
+                        twd.override_deadlock(or);
+                    }
+                    self.start_wf(twd, activation.run_id.clone());
+                }
                 // The activation is expected to apply to some workflow we know about. Use it to
                 // unblock things and advance the workflow.
-                if let Some(tx) = workflows.get_mut(&activation.run_id) {
+                if let Some(tx) = self.workflows.get_mut(&activation.run_id) {
                     // Error could happen b/c of eviction notification after wf exits. We don't care
                     // about that in these tests.
                     let _ = tx.send(activation);
                 } else {
                     bail!("Got activation for unknown workflow");
                 }
+
+                self.activation_done_notify.notified().await;
+                if self.incomplete_workflows.load(Ordering::SeqCst) == 0 {
+                    break Ok(self);
+                }
             }
         };
-        let shutdown_checker = async {
-            while let Some(h) = handles.next().await {
-                h??;
-            }
-            Ok(())
-        };
-        tokio::select!(
-            r = poller => r,
-            r = shutdown_checker => r
-        )
+        let mut myself = poller.await?;
+        while let Some(h) = myself.join_handles.next().await {
+            h??;
+        }
+        Ok(())
     }
 }
 
@@ -314,19 +330,30 @@ impl TestWorkflowDriver {
     }
 
     /// After the workflow has been advanced, grab any outgoing commands and send them to the
-    /// server. Returns true if the workflow function exited.
+    /// server. Returns how the workflow exited.
     async fn complete_wf_task(
         &mut self,
         core: &dyn Core,
         run_id: String,
-    ) -> Result<bool, CompleteWfError> {
+    ) -> Result<WfExitKind, CompleteWfError> {
         // Since waiting until the iteration is done may block and isn't async, we need to use
         // block_in_place here.
         let wf_is_done = tokio::task::block_in_place(|| self.wait_until_wf_iteration_done());
         let outgoing = self.drain_pending_commands();
-        core.complete_workflow_task(outgoing.into_completion(run_id))
-            .await?;
-        Ok(wf_is_done)
+        let completion = outgoing.into_completion(run_id);
+        let wf_exit = if wf_is_done {
+            if completion.has_complete_workflow_execution() {
+                WfExitKind::Complete
+            } else if completion.has_continue_as_new() {
+                WfExitKind::ContinueAsNew
+            } else {
+                WfExitKind::Fail
+            }
+        } else {
+            WfExitKind::NotYetDone
+        };
+        core.complete_workflow_task(completion).await?;
+        Ok(wf_exit)
     }
 
     async fn kill(mut self) {
@@ -342,6 +369,13 @@ impl TestWorkflowDriver {
             Ok(())
         }
     }
+}
+
+enum WfExitKind {
+    NotYetDone,
+    Fail,
+    Complete,
+    ContinueAsNew,
 }
 
 #[derive(Debug, Default)]

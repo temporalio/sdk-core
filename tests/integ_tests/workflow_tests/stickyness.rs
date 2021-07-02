@@ -1,9 +1,6 @@
 use crate::integ_tests::workflow_tests::timers::timer_wf;
 use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 use temporal_sdk_core::{
@@ -23,7 +20,7 @@ async fn timer_workflow_not_sticky() {
 
     let worker = TestRustWorker::new(core.clone(), tq.clone());
     worker
-        .submit_wf(vec![], wf_name.to_owned(), Arc::new(timer_wf))
+        .submit_wf(vec![], wf_name.to_owned(), timer_wf)
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -57,8 +54,12 @@ async fn timer_workflow_timeout_on_sticky() {
 
     let mut worker = TestRustWorker::new(core.clone(), tq.clone());
     worker.override_deadlock(Duration::from_secs(4));
-    let run_id = starter.start_wf().await;
-    worker.start_wf(Arc::new(timer_timeout_wf), run_id);
+    // let run_id = starter.start_wf().await;
+    // worker.start_wf(Arc::new(timer_timeout_wf), run_id);
+    worker
+        .submit_wf(vec![], wf_name.to_owned(), timer_timeout_wf)
+        .await
+        .unwrap();
     worker.run_until_done().await.unwrap();
     core.shutdown().await;
 }

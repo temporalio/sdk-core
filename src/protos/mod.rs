@@ -314,6 +314,38 @@ pub mod coresdk {
                 status: Some(status),
             }
         }
+
+        /// Returns true if the activation contains a continue as new workflow execution command
+        pub fn has_continue_as_new(&self) -> bool {
+            if let Some(wf_activation_completion::Status::Successful(s)) = &self.status {
+                return s.commands.iter().any(|wfc| {
+                    matches!(
+                        wfc,
+                        WorkflowCommand {
+                            variant: Some(
+                                workflow_command::Variant::ContinueAsNewWorkflowExecution(_)
+                            ),
+                        }
+                    )
+                });
+            }
+            false
+        }
+
+        /// Returns true if the activation contains a complete workflow execution command
+        pub fn has_complete_workflow_execution(&self) -> bool {
+            if let Some(wf_activation_completion::Status::Successful(s)) = &self.status {
+                return s.commands.iter().any(|wfc| {
+                    matches!(
+                        wfc,
+                        WorkflowCommand {
+                            variant: Some(workflow_command::Variant::CompleteWorkflowExecution(_)),
+                        }
+                    )
+                });
+            }
+            false
+        }
     }
 
     impl Display for WfActivationCompletion {
