@@ -3,10 +3,10 @@ use temporal_sdk_core::protos::coresdk::{
     workflow_commands::{CancelTimer, CompleteWorkflowExecution, StartTimer},
     workflow_completion::WfActivationCompletion,
 };
-use temporal_sdk_core::test_workflow_driver::{CommandSender, TestRustWorker};
+use temporal_sdk_core::test_workflow_driver::{TestRustWorker, WfContext};
 use test_utils::{init_core_and_create_wf, CoreTestHelpers, CoreWfStarter, NAMESPACE};
 
-pub async fn timer_wf(mut command_sink: CommandSender) {
+pub async fn timer_wf(mut command_sink: WfContext) {
     let timer = StartTimer {
         timer_id: "super_timer_id".to_string(),
         start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -112,7 +112,7 @@ async fn timer_immediate_cancel_workflow() {
     .unwrap();
 }
 
-async fn parallel_timer_wf(mut command_sink: CommandSender) {
+async fn parallel_timer_wf(mut command_sink: WfContext) {
     let t1 = command_sink.timer(StartTimer {
         timer_id: "timer_1".to_string(),
         start_to_fire_timeout: Some(Duration::from_secs(1).into()),

@@ -4,7 +4,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Just build the message structs.
         .build_server(false)
         .build_client(true)
-        // .out_dir("src/protos")
         // Make conversions easier for some types
         .type_attribute(
             "temporal.api.history.v1.HistoryEvent.attributes",
@@ -16,6 +15,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .type_attribute(
             "temporal.api.command.v1.Command.attributes",
+            "#[derive(::derive_more::From)]",
+        )
+        .type_attribute(
+            "temporal.api.common.v1.WorkflowType",
+            "#[derive(::derive_more::From)]",
+        )
+        .type_attribute(
+            "temporal.api.common.v1.Header",
+            "#[derive(::derive_more::From)]",
+        )
+        .type_attribute(
+            "temporal.api.common.v1.Memo",
             "#[derive(::derive_more::From)]",
         )
         .type_attribute(

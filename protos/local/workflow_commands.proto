@@ -20,6 +20,7 @@ message WorkflowCommand {
         CancelTimer cancel_timer = 5;
         CompleteWorkflowExecution complete_workflow_execution = 6;
         FailWorkflowExecution fail_workflow_execution = 7;
+        ContinueAsNewWorkflowExecution continue_as_new_workflow_execution = 8;
 
         // To be added as/if needed:
         //  RequestCancelActivityTask request_cancel_activity_task_command_attributes = 6;
@@ -109,4 +110,27 @@ message CompleteWorkflowExecution {
 /// Issued when the workflow errors out
 message FailWorkflowExecution {
     common.UserCodeFailure failure = 1;
+}
+
+// TODO: Maybe combine all execution resolves into one message
+/// Continue the workflow as a new execution. Unless noted otherwise, unset or default field values
+/// will re-use the issuing workflow's values.
+message ContinueAsNewWorkflowExecution {
+    /// The identifier the lang-specific sdk uses to execute workflow code
+    string workflow_type = 1;
+    /// Task queue for the new workflow execution
+    string task_queue = 2;
+    /// Inputs to the workflow code. Should be specified. Will not re-use old arguments, as that
+    /// typically wouldn't make any sense.
+    repeated common.Payload arguments = 3;
+    /// Timeout for a single run of the new workflow.
+    google.protobuf.Duration workflow_run_timeout = 4;
+    /// Timeout of a single workflow task.
+    google.protobuf.Duration workflow_task_timeout = 5;
+    /// Memo fields
+    map<string, common.Payload> memo = 6;
+    /// Header fields
+    map<string, common.Payload> header = 7;
+    /// Search attributes
+    map<string, common.Payload> search_attributes = 8;
 }

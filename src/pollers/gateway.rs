@@ -284,6 +284,7 @@ impl ServerGatewayApis for ServerGateway {
             .clone()
             .start_workflow_execution(StartWorkflowExecutionRequest {
                 namespace,
+                input: Some(vec![1, 2, 3, 4].into()),
                 workflow_id,
                 workflow_type: Some(WorkflowType {
                     name: workflow_type,

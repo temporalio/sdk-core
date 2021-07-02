@@ -193,6 +193,9 @@ pub mod coresdk {
                         workflow_command::Variant::FailWorkflowExecution(_) => {
                             write!(f, "FailWorkflowExecution")
                         }
+                        workflow_command::Variant::ContinueAsNewWorkflowExecution(_) => {
+                            write!(f, "ContinueAsNewWorkflowExecution")
+                        }
                     },
                 }
             }
@@ -591,6 +594,13 @@ pub mod temporal {
                                 command_type: CommandType::RequestCancelActivityTask as i32,
                                 attributes: Some(a),
                             },
+                            a @ Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(_) => {
+                                Self {
+                                    command_type: CommandType::ContinueAsNewWorkflowExecution
+                                        as i32,
+                                    attributes: Some(a),
+                                }
+                            }
                             _ => unimplemented!(),
                         }
                     }
@@ -672,6 +682,24 @@ pub mod temporal {
                         )
                     }
                 }
+
+                impl From<workflow_commands::ContinueAsNewWorkflowExecution> for command::Attributes {
+                    fn from(c: workflow_commands::ContinueAsNewWorkflowExecution) -> Self {
+                        Self::ContinueAsNewWorkflowExecutionCommandAttributes(
+                            ContinueAsNewWorkflowExecutionCommandAttributes {
+                                workflow_type: Some(c.workflow_type.into()),
+                                task_queue: Some(c.task_queue.into()),
+                                input: c.arguments.into_payloads(),
+                                workflow_run_timeout: c.workflow_run_timeout,
+                                workflow_task_timeout: c.workflow_task_timeout,
+                                memo: Some(c.memo.into()),
+                                header: Some(c.header.into()),
+                                search_attributes: Some(c.search_attributes.into()),
+                                ..Default::default()
+                            },
+                        )
+                    }
+                }
             }
         }
         pub mod enums {
@@ -706,6 +734,22 @@ pub mod temporal {
                 impl From<Header> for HashMap<String, common::Payload> {
                     fn from(h: Header) -> Self {
                         h.fields.into_iter().map(|(k, v)| (k, v.into())).collect()
+                    }
+                }
+
+                impl From<HashMap<String, common::Payload>> for Memo {
+                    fn from(h: HashMap<String, common::Payload>) -> Self {
+                        Self {
+                            fields: h.into_iter().map(|(k, v)| (k, v.into())).collect(),
+                        }
+                    }
+                }
+
+                impl From<HashMap<String, common::Payload>> for SearchAttributes {
+                    fn from(h: HashMap<String, common::Payload>) -> Self {
+                        Self {
+                            indexed_fields: h.into_iter().map(|(k, v)| (k, v.into())).collect(),
+                        }
                     }
                 }
 

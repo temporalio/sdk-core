@@ -318,6 +318,7 @@ impl WorkflowTaskManager {
                 action: ActivationAction::RespondLegacyQuery { result: qr },
             })
         } else {
+            // TODO: Possibly extract to "special command handling" function
             // First strip out query responses from other commands that actually affect machines
             // Would be prettier with `drain_filter`
             let mut i = 0;
@@ -337,6 +338,8 @@ impl WorkflowTaskManager {
                     i += 1;
                 }
             }
+            // TODO: Augment continue as new command with default values here?
+
             // Send commands from lang into the machines
             self.access_wf_machine(run_id, move |mgr| mgr.push_commands(commands))?;
             self.enqueue_next_activation_if_needed(run_id)?;

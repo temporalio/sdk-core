@@ -8,7 +8,7 @@ use std::{
 };
 use temporal_sdk_core::{
     protos::coresdk::workflow_commands::StartTimer,
-    test_workflow_driver::{CommandSender, TestRustWorker},
+    test_workflow_driver::{TestRustWorker, WfContext},
 };
 use test_utils::{CoreWfStarter, NAMESPACE};
 use tokio::time::sleep;
@@ -31,7 +31,7 @@ async fn timer_workflow_not_sticky() {
 }
 
 static TIMED_OUT_ONCE: AtomicBool = AtomicBool::new(false);
-async fn timer_timeout_wf(mut command_sink: CommandSender) {
+async fn timer_timeout_wf(mut command_sink: WfContext) {
     let timer = StartTimer {
         timer_id: "super_timer_id".to_string(),
         start_to_fire_timeout: Some(Duration::from_secs(1).into()),

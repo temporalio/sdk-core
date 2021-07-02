@@ -38,8 +38,9 @@ use crate::{
     machines::workflow_machines::MachineResponse,
     protos::{
         coresdk::workflow_commands::{
-            workflow_command, CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution,
-            QueryResult, RequestCancelActivity, ScheduleActivity, StartTimer, WorkflowCommand,
+            workflow_command, CancelTimer, CompleteWorkflowExecution,
+            ContinueAsNewWorkflowExecution, FailWorkflowExecution, QueryResult,
+            RequestCancelActivity, ScheduleActivity, StartTimer, WorkflowCommand,
         },
         temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
     },
@@ -70,6 +71,7 @@ pub enum WFCommand {
     CompleteWorkflow(CompleteWorkflowExecution),
     FailWorkflow(FailWorkflowExecution),
     QueryResponse(QueryResult),
+    ContinueAsNew(ContinueAsNewWorkflowExecution),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
@@ -92,6 +94,9 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             }
             workflow_command::Variant::FailWorkflowExecution(s) => Ok(WFCommand::FailWorkflow(s)),
             workflow_command::Variant::RespondToQuery(s) => Ok(WFCommand::QueryResponse(s)),
+            workflow_command::Variant::ContinueAsNewWorkflowExecution(s) => {
+                Ok(WFCommand::ContinueAsNew(s))
+            }
         }
     }
 }

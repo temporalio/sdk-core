@@ -1,3 +1,4 @@
+use crate::machines::continue_as_new_workflow_state_machine::continue_as_new;
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
@@ -583,8 +584,12 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(cwfm);
                 }
                 WFCommand::FailWorkflow(attrs) => {
-                    let cwfm = self.add_new_machine(fail_workflow(attrs));
-                    self.current_wf_task_commands.push_back(cwfm);
+                    let fwfm = self.add_new_machine(fail_workflow(attrs));
+                    self.current_wf_task_commands.push_back(fwfm);
+                }
+                WFCommand::ContinueAsNew(attrs) => {
+                    let canm = self.add_new_machine(continue_as_new(attrs));
+                    self.current_wf_task_commands.push_back(canm);
                 }
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level

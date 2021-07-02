@@ -8,7 +8,7 @@ use temporal_sdk_core::protos::coresdk::{
     workflow_commands::{ActivityCancellationType, ScheduleActivity},
     ActivityTaskCompletion,
 };
-use temporal_sdk_core::test_workflow_driver::CommandSender;
+use temporal_sdk_core::test_workflow_driver::WfContext;
 use test_utils::{fanout_tasks, CoreWfStarter};
 
 const CONCURRENCY: usize = 1000;
@@ -29,7 +29,7 @@ async fn activity_load() {
     let task_queue = starter.get_task_queue().to_owned();
 
     let pd = payload_dat.clone();
-    let wf_fn = Arc::new(move |mut command_sink: CommandSender| {
+    let wf_fn = Arc::new(move |mut command_sink: WfContext| {
         let task_queue = task_queue.clone();
         let payload_dat = pd.clone();
 
