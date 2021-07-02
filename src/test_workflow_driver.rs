@@ -35,7 +35,6 @@ use tokio::{
 /// A worker that can poll for and respond to workflow tasks by using [TestWorkflowDriver]s
 pub struct TestRustWorker {
     core: Arc<dyn Core>,
-    namespace: String,
     task_queue: String,
     deadlock_override: Option<Duration>,
     // Maps run id to the driver
@@ -45,10 +44,9 @@ pub struct TestRustWorker {
 
 impl TestRustWorker {
     /// Create a new rust worker using the provided core instance, namespace, and task queue
-    pub fn new(core: Arc<dyn Core>, namespace: String, task_queue: String) -> Self {
+    pub fn new(core: Arc<dyn Core>, task_queue: String) -> Self {
         Self {
             core,
-            namespace,
             task_queue,
             workflows: Default::default(),
             deadlock_override: None,
@@ -65,6 +63,7 @@ impl TestRustWorker {
     /// provided [TestWorkflowDriver] as the workflow code.
     pub async fn submit_wf<F, Fut>(
         &self,
+        input: Vec<Payload>,
         workflow_id: String,
         wf_function: Arc<F>,
     ) -> Result<(), tonic::Status>
@@ -76,7 +75,7 @@ impl TestRustWorker {
             .core
             .server_gateway()
             .start_workflow(
-                self.namespace.clone(),
+                input,
                 self.task_queue.clone(),
                 workflow_id.clone(),
                 workflow_id.clone(),

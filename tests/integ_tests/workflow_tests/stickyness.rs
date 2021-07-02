@@ -10,7 +10,7 @@ use temporal_sdk_core::{
     protos::coresdk::workflow_commands::StartTimer,
     test_workflow_driver::{TestRustWorker, WfContext},
 };
-use test_utils::{CoreWfStarter, NAMESPACE};
+use test_utils::CoreWfStarter;
 use tokio::time::sleep;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -21,9 +21,9 @@ async fn timer_workflow_not_sticky() {
     let tq = starter.get_task_queue().to_owned();
     let core = starter.get_core().await;
 
-    let worker = TestRustWorker::new(core.clone(), NAMESPACE.to_owned(), tq.clone());
+    let worker = TestRustWorker::new(core.clone(), tq.clone());
     worker
-        .submit_wf(wf_name.to_owned(), Arc::new(timer_wf))
+        .submit_wf(vec![], wf_name.to_owned(), Arc::new(timer_wf))
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -55,7 +55,7 @@ async fn timer_workflow_timeout_on_sticky() {
     let tq = starter.get_task_queue().to_owned();
     let core = starter.get_core().await;
 
-    let mut worker = TestRustWorker::new(core.clone(), NAMESPACE.to_owned(), tq.clone());
+    let mut worker = TestRustWorker::new(core.clone(), tq.clone());
     worker.override_deadlock(Duration::from_secs(4));
     let run_id = starter.start_wf().await;
     worker.start_wf(Arc::new(timer_timeout_wf), run_id);

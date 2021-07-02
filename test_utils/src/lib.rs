@@ -47,11 +47,7 @@ impl CoreWfStarter {
     }
 
     pub async fn worker(&mut self) -> TestRustWorker {
-        TestRustWorker::new(
-            self.get_core().await,
-            NAMESPACE.to_owned(),
-            self.worker_config.task_queue.clone(),
-        )
+        TestRustWorker::new(self.get_core().await, self.worker_config.task_queue.clone())
     }
 
     pub async fn get_core(&mut self) -> Arc<dyn Core> {
@@ -74,7 +70,7 @@ impl CoreWfStarter {
                 .as_ref(),
             |gw: GwApi| async move {
                 gw.start_workflow(
-                    NAMESPACE.to_owned(),
+                    vec![],
                     self.worker_config.task_queue.clone(),
                     workflow_id,
                     self.test_name.clone(),

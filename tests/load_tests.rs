@@ -61,7 +61,7 @@ async fn activity_load() {
         let wf_fn = wf_fn.clone();
         async move {
             worker
-                .submit_wf(format!("activity_load_{}", i), wf_fn)
+                .submit_wf(vec![], format!("activity_load_{}", i), wf_fn)
                 .await
                 .unwrap();
         }

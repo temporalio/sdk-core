@@ -4,7 +4,7 @@ use temporal_sdk_core::protos::coresdk::{
     workflow_completion::WfActivationCompletion,
 };
 use temporal_sdk_core::test_workflow_driver::{TestRustWorker, WfContext};
-use test_utils::{init_core_and_create_wf, CoreTestHelpers, CoreWfStarter, NAMESPACE};
+use test_utils::{init_core_and_create_wf, CoreTestHelpers, CoreWfStarter};
 
 pub async fn timer_wf(mut command_sink: WfContext) {
     let timer = StartTimer {
@@ -22,9 +22,9 @@ async fn timer_workflow_workflow_driver() {
     let tq = starter.get_task_queue().to_owned();
     let core = starter.get_core().await;
 
-    let worker = TestRustWorker::new(core.clone(), NAMESPACE.to_owned(), tq);
+    let worker = TestRustWorker::new(core.clone(), tq);
     worker
-        .submit_wf(wf_name.to_owned(), Arc::new(timer_wf))
+        .submit_wf(vec![], wf_name.to_owned(), Arc::new(timer_wf))
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -132,9 +132,9 @@ async fn parallel_timers() {
     let tq = starter.get_task_queue().to_owned();
     let core = starter.get_core().await;
 
-    let worker = TestRustWorker::new(core.clone(), NAMESPACE.to_owned(), tq.clone());
+    let worker = TestRustWorker::new(core.clone(), tq.clone());
     worker
-        .submit_wf(wf_name.to_owned(), Arc::new(parallel_timer_wf))
+        .submit_wf(vec![], wf_name.to_owned(), Arc::new(parallel_timer_wf))
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

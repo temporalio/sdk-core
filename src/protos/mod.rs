@@ -72,6 +72,13 @@ pub mod coresdk {
                 }
             }
         }
+
+        impl Payload {
+            // Is it's own function b/c asref causes implementation conflicts
+            pub fn as_slice(&self) -> &[u8] {
+                self.data.as_slice()
+            }
+        }
     }
     pub mod workflow_activation {
         use crate::core_tracing::VecDisplayer;
