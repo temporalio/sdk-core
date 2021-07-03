@@ -109,3 +109,57 @@ impl WFMachinesAdapter for ContinueAsNewWorkflowMachine {
 }
 
 impl Cancellable for ContinueAsNewWorkflowMachine {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        machines::{workflow_machines::WorkflowMachines, StartTimer},
+        test_help::canned_histories,
+        test_workflow_driver::{TestWorkflowDriver, WfContext},
+        workflow::WorkflowManager,
+    };
+    use std::time::Duration;
+
+    async fn wf_with_timer(mut ctx: WfContext) {
+        ctx.timer(StartTimer {
+            timer_id: "timer1".to_string(),
+            start_to_fire_timeout: Some(Duration::from_millis(500).into()),
+        })
+        .await;
+        ctx.continue_as_new(ContinueAsNewWorkflowExecution {
+            arguments: vec![[1].into()],
+            ..Default::default()
+        });
+    }
+
+    #[test]
+    fn wf_completing_with_continue_as_new() {
+        let twd = TestWorkflowDriver::new(vec![], wf_with_timer);
+        let t = canned_histories::timer_then_continue_as_new("timer1");
+        let state_machines = WorkflowMachines::new(
+            "wfid".to_string(),
+            "runid".to_string(),
+            t.as_history_update(),
+            Box::new(twd).into(),
+        );
+        let mut wfm = WorkflowManager::new_from_machines(state_machines);
+        wfm.get_next_activation().unwrap();
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+
+        wfm.get_next_activation().unwrap();
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].command_type,
+            CommandType::ContinueAsNewWorkflowExecution as i32
+        );
+
+        assert!(wfm.get_next_activation().unwrap().jobs.is_empty());
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 0);
+    }
+}

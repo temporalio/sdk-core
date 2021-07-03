@@ -10,7 +10,6 @@ mod cancel_workflow_state_machine;
 #[allow(unused)]
 mod child_workflow_state_machine;
 mod complete_workflow_state_machine;
-#[allow(unused)]
 mod continue_as_new_workflow_state_machine;
 mod fail_workflow_state_machine;
 #[allow(unused)]

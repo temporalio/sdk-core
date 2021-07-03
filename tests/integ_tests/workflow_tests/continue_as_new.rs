@@ -6,9 +6,8 @@ use temporal_sdk_core::{
 };
 use test_utils::CoreWfStarter;
 
-pub async fn continue_as_new_wf(mut ctx: WfContext) {
+async fn continue_as_new_wf(mut ctx: WfContext) {
     let run_ct = ctx.get_args()[0].data[0];
-    dbg!(run_ct);
     let timer = StartTimer {
         timer_id: "sometimer".to_string(),
         start_to_fire_timeout: Some(Duration::from_millis(500).into()),
