@@ -1,9 +1,11 @@
 mod bridge;
+mod cache_manager;
 mod concurrency_manager;
 mod driven_workflow;
 mod history_update;
 
 pub(crate) use bridge::WorkflowBridge;
+pub(crate) use cache_manager::WorkflowCacheManager;
 pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
 pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFetcher};
 pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};

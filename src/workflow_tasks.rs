@@ -1,6 +1,7 @@
 //! Management of workflow tasks
 
 use crate::workflow::HistoryPaginator;
+use crate::workflow::WorkflowCacheManager;
 use crate::{
     errors::WorkflowUpdateError,
     machines::{ProtoCommand, WFCommand},
@@ -51,7 +52,8 @@ pub struct WorkflowTaskManager {
     ready_buffered_wft: DashMap<String, VecDeque<ValidPollWFTQResponse>>,
     /// Used to wake blocked workflow task polling
     workflow_activations_update: UnboundedSender<WfActivationUpdate>,
-    eviction_policy: WorkflowCachingPolicy,
+    /// Lock guarded cache manager, which is the authority for limit-based workflow machine eviction from the cache.
+    cache_manager: RwLock<WorkflowCacheManager>,
 }
 
 #[derive(Clone, Debug)]
@@ -151,7 +153,7 @@ impl WorkflowTaskManager {
             outstanding_activations: Default::default(),
             ready_buffered_wft: Default::default(),
             workflow_activations_update,
-            eviction_policy,
+            cache_manager: RwLock::new(WorkflowCacheManager::new(eviction_policy)),
         }
     }
 
@@ -168,6 +170,8 @@ impl WorkflowTaskManager {
             });
         if let Some(act) = maybe_act.as_ref() {
             self.insert_outstanding_activation(&act);
+            // Evict from the workflow cache to ensure that run id is not going to be invalidated before activation is complete.
+            self.cache_manager.write().evict(&act.run_id);
         }
         maybe_act
     }
@@ -195,10 +199,14 @@ impl WorkflowTaskManager {
     /// Evict a workflow from the cache by its run id and enqueue a pending activation to evict the
     /// workflow. Any existing pending activations will be destroyed, and any outstanding
     /// activations invalidated.
+    /// In case if evict_from_cache flag is passed, run id will also be removed from the LRU cache.
     ///
     /// Returns that workflow's task info if it was present.
-    pub fn evict_run(&self, run_id: &str) -> Option<WorkflowTaskInfo> {
+    pub fn evict_run(&self, run_id: &str, evict_from_cache: bool) -> Option<WorkflowTaskInfo> {
         debug!(run_id=%run_id, "Evicting run");
+        if evict_from_cache {
+            self.cache_manager.write().evict(run_id);
+        }
         self.workflow_machines.evict(run_id);
         self.outstanding_activations.remove(run_id);
         self.pending_activations.remove_all_with_run_id(run_id);
@@ -254,6 +262,9 @@ impl WorkflowTaskManager {
             history_length = %work.history.events.len(),
             "Applying new workflow task from server"
         );
+        self.cache_manager
+            .write()
+            .evict(&work.workflow_execution.run_id);
 
         if let Some(mut outstanding_entry) = self
             .outstanding_workflow_tasks
@@ -286,7 +297,6 @@ impl WorkflowTaskManager {
         } else {
             legacy_query
         };
-
         self.outstanding_workflow_tasks.insert(
             info.run_id.clone(),
             OutstandingTask {
@@ -396,7 +406,7 @@ impl WorkflowTaskManager {
         Ok(ret)
     }
 
-    /// Record that an activation failed, returns true if the failure should be reported to the
+    /// Record that an activation failed, returns enum that indicates if failure should be reported to the
     /// server
     pub fn failed_activation(&self, run_id: &str) -> FailedActivationOutcome {
         let tt = if let Some(entry) = self.outstanding_workflow_tasks.get(run_id) {
@@ -408,14 +418,15 @@ impl WorkflowTaskManager {
             );
             return FailedActivationOutcome::NoReport;
         };
+        self.cache_manager.write().evict(run_id);
         // If the outstanding activation is a legacy query task, report that we need to fail it
         let ret = if let Some(OutstandingActivation::LegacyQuery) =
             self.outstanding_activations.get(run_id).map(|at| *at)
         {
             FailedActivationOutcome::ReportLegacyQueryFailure(tt)
         } else {
-            // Blow up any cached data associated with the workflow
-            let should_report = if let Some(wti) = self.evict_run(run_id) {
+            // Blow up any cached data associated with the workflow, including LRU cache.
+            let should_report = if let Some(wti) = self.evict_run(run_id, true) {
                 // Only report to server if the last task wasn't also a failure (avoid spam)
                 wti.attempt <= 1
             } else {
@@ -529,9 +540,10 @@ impl WorkflowTaskManager {
                 }
             }
 
-            // Blow them up if we're in non-sticky mode as well
-            if self.eviction_policy == WorkflowCachingPolicy::NonSticky {
-                self.evict_run(run_id);
+            // Evict run id if we are in non-sticky mode or if we have too many cached run ids.
+            if let Some(evict_run_id) = self.cache_manager.write().touch(run_id) {
+                // Not removing from the cache as record has already been removed and we are still holding cache manager lock.
+                self.evict_run(&evict_run_id, false);
             }
 
             // The evict may or may not have already done this, but even when we aren't evicting
