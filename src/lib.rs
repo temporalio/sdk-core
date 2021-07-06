@@ -471,7 +471,7 @@ where
     }
 
     fn request_workflow_eviction(&self, run_id: &str) {
-        self.wft_manager.evict_run(run_id);
+        self.wft_manager.evict_run(run_id, true);
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {
