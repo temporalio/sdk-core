@@ -7,6 +7,7 @@ use crate::{
         history::v1::{
             history_event::Attributes, ActivityTaskCancelRequestedEventAttributes, HistoryEvent,
             TimerStartedEventAttributes, WorkflowExecutionCompletedEventAttributes,
+            WorkflowExecutionContinuedAsNewEventAttributes,
             WorkflowExecutionStartedEventAttributes, WorkflowTaskCompletedEventAttributes,
             WorkflowTaskFailedEventAttributes, WorkflowTaskScheduledEventAttributes,
             WorkflowTaskStartedEventAttributes, WorkflowTaskTimedOutEventAttributes,
@@ -114,6 +115,11 @@ impl TestHistoryBuilder {
             ..Default::default()
         };
         self.build_and_push_event(EventType::WorkflowExecutionCompleted, attrs.into());
+    }
+
+    pub fn add_continued_as_new(&mut self) {
+        let attrs = WorkflowExecutionContinuedAsNewEventAttributes::default();
+        self.build_and_push_event(EventType::WorkflowExecutionContinuedAsNew, attrs.into());
     }
 
     pub fn add_activity_task_cancel_requested(&mut self, scheduled_event_id: i64) {

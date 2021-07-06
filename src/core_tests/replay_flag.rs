@@ -3,14 +3,14 @@ use crate::{
     protos::coresdk::workflow_commands::StartTimer,
     protos::temporal::api::enums::v1::CommandType,
     test_help::canned_histories,
-    test_workflow_driver::{CommandSender, TestWorkflowDriver},
+    test_workflow_driver::{TestWorkflowDriver, WfContext},
     workflow::WorkflowManager,
 };
 use rstest::{fixture, rstest};
 use std::time::Duration;
 
 fn timers_wf(num_timers: usize) -> TestWorkflowDriver {
-    TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
+    TestWorkflowDriver::new(vec![], |mut command_sink: WfContext| async move {
         for tnum in 1..=num_timers {
             let timer = StartTimer {
                 timer_id: format!("timer-{}", tnum),

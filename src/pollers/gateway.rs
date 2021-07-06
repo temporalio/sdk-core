@@ -1,6 +1,7 @@
 use crate::{
     pollers::Result,
     protos::{
+        coresdk::common::Payload,
         coresdk::workflow_commands::QueryResult,
         temporal::api::{
             common::v1::{Payloads, WorkflowExecution, WorkflowType},
@@ -39,6 +40,7 @@ use tonic::{
 use url::Url;
 use uuid::Uuid;
 
+use crate::protos::coresdk::PayloadsExt;
 #[cfg(test)]
 use futures::Future;
 
@@ -174,7 +176,7 @@ pub trait ServerGatewayApis {
     /// Starts workflow execution.
     async fn start_workflow(
         &self,
-        namespace: String,
+        input: Vec<Payload>,
         task_queue: String,
         workflow_id: String,
         workflow_type: String,
@@ -271,7 +273,7 @@ pub trait ServerGatewayApis {
 impl ServerGatewayApis for ServerGateway {
     async fn start_workflow(
         &self,
-        namespace: String,
+        input: Vec<Payload>,
         task_queue: String,
         workflow_id: String,
         workflow_type: String,
@@ -283,7 +285,8 @@ impl ServerGatewayApis for ServerGateway {
             .service
             .clone()
             .start_workflow_execution(StartWorkflowExecutionRequest {
-                namespace,
+                namespace: self.opts.namespace.clone(),
+                input: input.into_payloads(),
                 workflow_id,
                 workflow_type: Some(WorkflowType {
                     name: workflow_type,
@@ -552,7 +555,7 @@ mockall::mock! {
     impl ServerGatewayApis for ManualGateway {
         fn start_workflow<'a, 'b>(
             &self,
-            namespace: String,
+            input: Vec<Payload>,
             task_queue: String,
             workflow_id: String,
             workflow_type: String,

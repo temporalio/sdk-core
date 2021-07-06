@@ -1,6 +1,5 @@
 use assert_matches::assert_matches;
 use futures::future::join_all;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use temporal_sdk_core::protos::coresdk::{
     activity_result::ActivityResult,
@@ -8,7 +7,7 @@ use temporal_sdk_core::protos::coresdk::{
     workflow_commands::{ActivityCancellationType, ScheduleActivity},
     ActivityTaskCompletion,
 };
-use temporal_sdk_core::test_workflow_driver::CommandSender;
+use temporal_sdk_core::test_workflow_driver::WfContext;
 use test_utils::{fanout_tasks, CoreWfStarter};
 
 const CONCURRENCY: usize = 1000;
@@ -29,7 +28,7 @@ async fn activity_load() {
     let task_queue = starter.get_task_queue().to_owned();
 
     let pd = payload_dat.clone();
-    let wf_fn = Arc::new(move |mut command_sink: CommandSender| {
+    let wf_fn = move |mut command_sink: WfContext| {
         let task_queue = task_queue.clone();
         let payload_dat = pd.clone();
 
@@ -53,7 +52,7 @@ async fn activity_load() {
             assert_eq!(res.data, payload_dat);
             command_sink.complete_workflow_execution();
         }
-    });
+    };
 
     let starting = Instant::now();
     join_all((0..CONCURRENCY).map(|i| {
@@ -61,7 +60,7 @@ async fn activity_load() {
         let wf_fn = wf_fn.clone();
         async move {
             worker
-                .submit_wf(format!("activity_load_{}", i), wf_fn)
+                .submit_wf(vec![], format!("activity_load_{}", i), wf_fn)
                 .await
                 .unwrap();
         }

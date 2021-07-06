@@ -1,12 +1,12 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use temporal_sdk_core::protos::coresdk::{
     workflow_commands::{CancelTimer, CompleteWorkflowExecution, StartTimer},
     workflow_completion::WfActivationCompletion,
 };
-use temporal_sdk_core::test_workflow_driver::{CommandSender, TestRustWorker};
-use test_utils::{init_core_and_create_wf, CoreTestHelpers, CoreWfStarter, NAMESPACE};
+use temporal_sdk_core::test_workflow_driver::{TestRustWorker, WfContext};
+use test_utils::{init_core_and_create_wf, CoreTestHelpers, CoreWfStarter};
 
-pub async fn timer_wf(mut command_sink: CommandSender) {
+pub async fn timer_wf(mut command_sink: WfContext) {
     let timer = StartTimer {
         timer_id: "super_timer_id".to_string(),
         start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -22,9 +22,9 @@ async fn timer_workflow_workflow_driver() {
     let tq = starter.get_task_queue().to_owned();
     let core = starter.get_core().await;
 
-    let worker = TestRustWorker::new(core.clone(), NAMESPACE.to_owned(), tq);
+    let worker = TestRustWorker::new(core.clone(), tq);
     worker
-        .submit_wf(wf_name.to_owned(), Arc::new(timer_wf))
+        .submit_wf(vec![], wf_name.to_owned(), timer_wf)
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -112,7 +112,7 @@ async fn timer_immediate_cancel_workflow() {
     .unwrap();
 }
 
-async fn parallel_timer_wf(mut command_sink: CommandSender) {
+async fn parallel_timer_wf(mut command_sink: WfContext) {
     let t1 = command_sink.timer(StartTimer {
         timer_id: "timer_1".to_string(),
         start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -132,9 +132,9 @@ async fn parallel_timers() {
     let tq = starter.get_task_queue().to_owned();
     let core = starter.get_core().await;
 
-    let worker = TestRustWorker::new(core.clone(), NAMESPACE.to_owned(), tq.clone());
+    let worker = TestRustWorker::new(core.clone(), tq.clone());
     worker
-        .submit_wf(wf_name.to_owned(), Arc::new(parallel_timer_wf))
+        .submit_wf(vec![], wf_name.to_owned(), parallel_timer_wf)
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

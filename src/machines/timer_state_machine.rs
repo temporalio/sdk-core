@@ -67,7 +67,7 @@ pub(super) fn new_timer(attribs: StartTimer) -> NewMachineWithCommand<TimerMachi
 
 impl TimerMachine {
     /// Create a new timer and immediately schedule it
-    pub(crate) fn new_scheduled(attribs: StartTimer) -> (Self, Command) {
+    fn new_scheduled(attribs: StartTimer) -> (Self, Command) {
         let mut s = Self::new(attribs);
         OnEventWrapper::on_event_mut(&mut s, TimerMachineEvents::Schedule)
             .expect("Scheduling timers doesn't fail");
@@ -174,7 +174,6 @@ impl StartCommandCreated {
         self,
         _id: HistoryEventId,
     ) -> TimerMachineTransition<StartCommandRecorded> {
-        // TODO: Java recorded an initial event ID, but it seemingly was never used.
         TransitionResult::default()
     }
     pub(super) fn on_cancel(self, dat: SharedState) -> TimerMachineTransition<Canceled> {
@@ -274,7 +273,7 @@ mod test {
     use crate::{
         machines::workflow_machines::WorkflowMachines,
         test_help::{canned_histories, TestHistoryBuilder},
-        test_workflow_driver::{CommandSender, TestWorkflowDriver},
+        test_workflow_driver::{TestWorkflowDriver, WfContext},
         workflow::WorkflowManager,
     };
     use rstest::{fixture, rstest};
@@ -293,7 +292,7 @@ mod test {
             timer to fire. In the all-in-one-go test, the timer is created and resolved in the same
             task, hence no extra loop.
         */
-        let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
+        let twd = TestWorkflowDriver::new(vec![], |mut command_sink: WfContext| async move {
             let timer = StartTimer {
                 timer_id: "timer1".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
@@ -347,7 +346,7 @@ mod test {
 
     #[test]
     fn mismatched_timer_ids_errors() {
-        let twd = TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
+        let twd = TestWorkflowDriver::new(vec![], |mut command_sink: WfContext| async move {
             let timer = StartTimer {
                 timer_id: "realid".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
@@ -373,7 +372,7 @@ mod test {
 
     #[fixture]
     fn cancellation_setup() -> WorkflowMachines {
-        let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
+        let twd = TestWorkflowDriver::new(vec![], |mut cmd_sink: WfContext| async move {
             let cancel_timer_fut = cmd_sink.timer(StartTimer {
                 timer_id: "cancel_timer".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(500).into()),
@@ -435,7 +434,7 @@ mod test {
 
     #[test]
     fn cancel_before_sent_to_server() {
-        let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
+        let twd = TestWorkflowDriver::new(vec![], |mut cmd_sink: WfContext| async move {
             let cancel_timer_fut = cmd_sink.timer(StartTimer {
                 timer_id: "cancel_timer".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(500).into()),

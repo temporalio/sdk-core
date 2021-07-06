@@ -699,7 +699,7 @@ mod test {
             workflow_activation::WfActivation, workflow_commands::CompleteWorkflowExecution,
         },
         test_help::{canned_histories, TestHistoryBuilder},
-        test_workflow_driver::{CommandSender, TestWorkflowDriver},
+        test_workflow_driver::{TestWorkflowDriver, WfContext},
         workflow::WorkflowManager,
     };
     use rstest::{fixture, rstest};
@@ -736,7 +736,7 @@ mod test {
     }
 
     fn activity_workflow_driver(activity_id: &'static str) -> TestWorkflowDriver {
-        TestWorkflowDriver::new(move |mut command_sink: CommandSender| async move {
+        TestWorkflowDriver::new(vec![], move |mut command_sink: WfContext| async move {
             let activity = ScheduleActivity {
                 activity_id: activity_id.to_string(),
                 ..Default::default()
@@ -792,7 +792,7 @@ mod test {
 
     #[test]
     fn immediate_activity_cancelation() {
-        let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
+        let twd = TestWorkflowDriver::new(vec![], |mut cmd_sink: WfContext| async move {
             let cancel_activity_future = cmd_sink.activity(ScheduleActivity {
                 activity_id: "activity-id-1".to_string(),
                 ..Default::default()

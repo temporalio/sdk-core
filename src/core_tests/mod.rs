@@ -1,22 +1,19 @@
-use std::time::Duration;
-
-use futures::FutureExt;
-use tokio::time::sleep;
-
-use crate::test_help::{build_fake_core, fake_sg_opts, hist_to_poll_resp, TEST_Q};
-use crate::{
-    errors::{PollActivityError, PollWfError},
-    pollers::MockManualGateway,
-    protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
-    test_help::canned_histories,
-    Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
-};
-
 mod activity_tasks;
 mod queries;
 mod replay_flag;
 mod workers;
 mod workflow_tasks;
+
+use crate::{
+    errors::{PollActivityError, PollWfError},
+    pollers::MockManualGateway,
+    protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
+    test_help::{build_fake_core, canned_histories, fake_sg_opts, hist_to_poll_resp, TEST_Q},
+    Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
+};
+use futures::FutureExt;
+use std::time::Duration;
+use tokio::time::sleep;
 
 #[tokio::test]
 async fn after_shutdown_server_is_not_polled() {

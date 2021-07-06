@@ -337,14 +337,15 @@ impl WorkflowTaskManager {
                     i += 1;
                 }
             }
+
             // Send commands from lang into the machines
             self.access_wf_machine(run_id, move |mgr| mgr.push_commands(commands))?;
             self.enqueue_next_activation_if_needed(run_id)?;
             // We want to fetch the outgoing commands only after any new activation has been queued,
             // as doing so may have altered the outgoing commands.
             let server_cmds = self.access_wf_machine(run_id, |w| Ok(w.get_server_commands()))?;
-            // We only actually want to send commands back to the server if there are no more pending
-            // activations and we are caught up on replay.
+            // We only actually want to send commands back to the server if there are no more
+            // pending activations and we are caught up on replay.
             if !self.pending_activations.has_pending(run_id) && !server_cmds.replaying {
                 Some(ServerCommandsWithWorkflowInfo {
                     task_token,
