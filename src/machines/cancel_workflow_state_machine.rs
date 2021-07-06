@@ -108,3 +108,67 @@ impl WFMachinesAdapter for CancelWorkflowMachine {
 }
 
 impl Cancellable for CancelWorkflowMachine {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        machines::{workflow_machines::WorkflowMachines, StartTimer},
+        protos::coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
+        test_help::canned_histories,
+        test_workflow_driver::{TestWorkflowDriver, WfContext},
+        tracing_init,
+        workflow::WorkflowManager,
+    };
+    use std::time::Duration;
+
+    async fn wf_with_timer(mut ctx: WfContext) {
+        ctx.timer(StartTimer {
+            timer_id: "timer1".to_string(),
+            start_to_fire_timeout: Some(Duration::from_millis(500).into()),
+        })
+        .await;
+        ctx.cancelled();
+    }
+
+    #[test]
+    fn wf_completing_with_cancelled() {
+        tracing_init();
+        let twd = TestWorkflowDriver::new(vec![], wf_with_timer);
+        let t = canned_histories::timer_then_cancelled("timer1");
+        let state_machines = WorkflowMachines::new(
+            "wfid".to_string(),
+            "runid".to_string(),
+            t.as_history_update(),
+            Box::new(twd).into(),
+        );
+        let mut wfm = WorkflowManager::new_from_machines(state_machines);
+        wfm.get_next_activation().unwrap();
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+
+        let act = wfm.get_next_activation().unwrap();
+        assert_matches!(
+            act.jobs.as_slice(),
+            [
+                WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::FireTimer(_)),
+                },
+                WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::CancelWorkflow(_)),
+                }
+            ]
+        );
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].command_type,
+            CommandType::CancelWorkflowExecution as i32
+        );
+
+        assert!(wfm.get_next_activation().unwrap().jobs.is_empty());
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 0);
+    }
+}

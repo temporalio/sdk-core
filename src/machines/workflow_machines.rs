@@ -395,6 +395,7 @@ impl WorkflowMachines {
                 }
             }
             Some(EventType::WorkflowExecutionCancelRequested) => {
+                error!("Cancel req");
                 if let Some(history_event::Attributes::WorkflowExecutionCanceledEventAttributes(
                     attrs,
                 )) = &event.attributes
@@ -438,6 +439,7 @@ impl WorkflowMachines {
     /// "no work" situation. Possibly, it may know about some work the machines don't, like queries.
     pub(crate) fn get_wf_activation(&mut self) -> WfActivation {
         let jobs = self.drive_me.drain_jobs();
+        info!("Jobs: {:#?}", jobs);
         WfActivation {
             timestamp: self.current_wf_time.map(Into::into),
             is_replaying: self.replaying,

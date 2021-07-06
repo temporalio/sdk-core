@@ -10,8 +10,9 @@ use crate::{
             wf_activation_job::Variant, FireTimer, ResolveActivity, WfActivation, WfActivationJob,
         },
         workflow_commands::{
-            CancelTimer, CompleteWorkflowExecution, ContinueAsNewWorkflowExecution,
-            RequestCancelActivity, ScheduleActivity, StartTimer, WorkflowCommand,
+            AckWorkflowExecutionCancelled, CancelTimer, CompleteWorkflowExecution,
+            ContinueAsNewWorkflowExecution, RequestCancelActivity, ScheduleActivity, StartTimer,
+            WorkflowCommand,
         },
     },
     workflow::CommandID,
@@ -618,6 +619,14 @@ impl WfContext {
     pub fn continue_as_new(&self, command: ContinueAsNewWorkflowExecution) {
         let c = WorkflowCommand {
             variant: Some(command.into()),
+        };
+        self.send(c);
+    }
+
+    /// Acknowledge the workflow was cancelled
+    pub fn cancelled(&self) {
+        let c = WorkflowCommand {
+            variant: Some(AckWorkflowExecutionCancelled::default().into()),
         };
         self.send(c);
     }

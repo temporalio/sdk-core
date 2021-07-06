@@ -67,6 +67,7 @@ fn spawn_save_coverage_at_end() -> SyncSender<(String, CoveredTransition)> {
 #[cfg(test)]
 mod machine_coverage_report {
     use super::*;
+    use crate::machines::cancel_workflow_state_machine::CancelWorkflowMachine;
     use crate::machines::{
         activity_state_machine::ActivityMachine,
         complete_workflow_state_machine::CompleteWorkflowMachine,
@@ -105,6 +106,7 @@ mod machine_coverage_report {
         let mut wf_task = WorkflowTaskMachine::visualizer().to_owned();
         let mut fail_wf = FailWorkflowMachine::visualizer().to_owned();
         let mut cont_as_new = ContinueAsNewWorkflowMachine::visualizer().to_owned();
+        let mut cancel_wf = CancelWorkflowMachine::visualizer().to_owned();
 
         // This isn't at all efficient but doesn't need to be.
         // Replace transitions in the vizzes with green color if they are covered.
@@ -119,6 +121,7 @@ mod machine_coverage_report {
                 m @ "ContinueAsNewWorkflowMachine" => {
                     cover_transitions(m, &mut cont_as_new, coverage)
                 }
+                m @ "CancelWorkflowMachine" => cover_transitions(m, &mut cancel_wf, coverage),
                 m => panic!("Unknown machine {}", m),
             }
         }

@@ -1185,3 +1185,32 @@ pub fn timer_then_continue_as_new(timer_id: &str) -> TestHistoryBuilder {
     t.add_continued_as_new();
     t
 }
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_TIMER_STARTED
+///  6: EVENT_TYPE_TIMER_FIRED
+///  7: EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED
+///  8: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  9: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 10: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 11: EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED
+pub fn timer_then_cancelled(timer_id: &str) -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add(
+        EventType::TimerFired,
+        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+            started_event_id: timer_started_event_id,
+            timer_id: timer_id.to_string(),
+        }),
+    );
+    t.add_cancel_requested();
+    t.add_full_wf_task();
+    t.add_cancelled();
+    t
+}

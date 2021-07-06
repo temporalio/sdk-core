@@ -6,7 +6,8 @@ use crate::{
         enums::v1::{EventType, WorkflowTaskFailedCause},
         history::v1::{
             history_event::Attributes, ActivityTaskCancelRequestedEventAttributes, HistoryEvent,
-            TimerStartedEventAttributes, WorkflowExecutionCompletedEventAttributes,
+            TimerStartedEventAttributes, WorkflowExecutionCancelRequestedEventAttributes,
+            WorkflowExecutionCanceledEventAttributes, WorkflowExecutionCompletedEventAttributes,
             WorkflowExecutionContinuedAsNewEventAttributes,
             WorkflowExecutionStartedEventAttributes, WorkflowTaskCompletedEventAttributes,
             WorkflowTaskFailedEventAttributes, WorkflowTaskScheduledEventAttributes,
@@ -120,6 +121,16 @@ impl TestHistoryBuilder {
     pub fn add_continued_as_new(&mut self) {
         let attrs = WorkflowExecutionContinuedAsNewEventAttributes::default();
         self.build_and_push_event(EventType::WorkflowExecutionContinuedAsNew, attrs.into());
+    }
+
+    pub fn add_cancel_requested(&mut self) {
+        let attrs = WorkflowExecutionCancelRequestedEventAttributes::default();
+        self.build_and_push_event(EventType::WorkflowExecutionCancelRequested, attrs.into());
+    }
+
+    pub fn add_cancelled(&mut self) {
+        let attrs = WorkflowExecutionCanceledEventAttributes::default();
+        self.build_and_push_event(EventType::WorkflowExecutionCanceled, attrs.into());
     }
 
     pub fn add_activity_task_cancel_requested(&mut self, scheduled_event_id: i64) {
