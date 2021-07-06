@@ -1,3 +1,4 @@
+use crate::machines::cancel_workflow_state_machine::cancel_workflow;
 use crate::machines::continue_as_new_workflow_state_machine::continue_as_new;
 use crate::{
     core_tracing::VecDisplayer,
@@ -394,7 +395,14 @@ impl WorkflowMachines {
                 }
             }
             Some(EventType::WorkflowExecutionCancelRequested) => {
-                // TODO: Cancel callbacks
+                if let Some(history_event::Attributes::WorkflowExecutionCanceledEventAttributes(
+                    attrs,
+                )) = &event.attributes
+                {
+                    self.drive_me.cancel(attrs.clone().into());
+                } else {
+                    // err
+                }
             }
             _ => {
                 return Err(WFMachinesError::UnexpectedEvent(
@@ -590,6 +598,10 @@ impl WorkflowMachines {
                 WFCommand::ContinueAsNew(attrs) => {
                     let canm = self.add_new_machine(continue_as_new(attrs));
                     self.current_wf_task_commands.push_back(canm);
+                }
+                WFCommand::AckCancelled(attrs) => {
+                    let cancm = self.add_new_machine(cancel_workflow(attrs));
+                    self.current_wf_task_commands.push_back(cancm);
                 }
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level

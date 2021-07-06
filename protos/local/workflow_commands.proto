@@ -21,10 +21,10 @@ message WorkflowCommand {
         CompleteWorkflowExecution complete_workflow_execution = 6;
         FailWorkflowExecution fail_workflow_execution = 7;
         ContinueAsNewWorkflowExecution continue_as_new_workflow_execution = 8;
+        AckWorkflowExecutionCancelled ack_execution_cancelled = 9;
 
         // To be added as/if needed:
         //  RequestCancelActivityTask request_cancel_activity_task_command_attributes = 6;
-        //  CancelWorkflowExecution cancel_workflow_execution_command_attributes = 8;
         //  RequestCancelExternalWorkflowExecution request_cancel_external_workflow_execution_command_attributes = 9;
         //  RecordMarker record_marker_command_attributes = 10;
         //  ContinueAsNewWorkflowExecution continue_as_new_workflow_execution_command_attributes = 11;
@@ -133,4 +133,10 @@ message ContinueAsNewWorkflowExecution {
     map<string, common.Payload> header = 7;
     /// Search attributes
     map<string, common.Payload> search_attributes = 8;
+}
+
+/// Activations containing a workflow cancellation are expected to be replied to with this command
+message AckWorkflowExecutionCancelled {
+    // TODO: Review note - server technically accepts a payload of details here, but
+    //   java SDK never populates it. Do we care?
 }

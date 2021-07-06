@@ -13,7 +13,6 @@ pub mod coresdk {
     use crate::protos::temporal::api::{
         common::v1::{Payloads, WorkflowExecution},
         failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
-        history::v1::WorkflowExecutionSignaledEventAttributes,
         workflowservice::v1::PollActivityTaskQueueResponse,
     };
     use activity_result::ActivityResult;
@@ -23,7 +22,7 @@ pub mod coresdk {
         convert::TryFrom,
         fmt::{Display, Formatter},
     };
-    use workflow_activation::{wf_activation_job, SignalWorkflow, WfActivationJob};
+    use workflow_activation::{wf_activation_job, WfActivationJob};
     use workflow_commands::{workflow_command, workflow_command::Variant, WorkflowCommand};
     use workflow_completion::{wf_activation_completion, WfActivationCompletion};
 
@@ -81,8 +80,14 @@ pub mod coresdk {
         }
     }
     pub mod workflow_activation {
-        use crate::core_tracing::VecDisplayer;
-        use crate::workflow::LEGACY_QUERY_ID;
+        use crate::{
+            core_tracing::VecDisplayer,
+            protos::coresdk::PayloadsExt,
+            protos::temporal::api::history::v1::{
+                WorkflowExecutionCanceledEventAttributes, WorkflowExecutionSignaledEventAttributes,
+            },
+            workflow::LEGACY_QUERY_ID,
+        };
         use std::fmt::{Display, Formatter};
 
         tonic::include_proto!("coresdk.workflow_activation");
@@ -157,7 +162,26 @@ pub mod coresdk {
                 }
             }
         }
+
+        impl From<WorkflowExecutionSignaledEventAttributes> for SignalWorkflow {
+            fn from(a: WorkflowExecutionSignaledEventAttributes) -> Self {
+                Self {
+                    signal_name: a.signal_name,
+                    input: Vec::from_payloads(a.input),
+                    identity: a.identity,
+                }
+            }
+        }
+
+        impl From<WorkflowExecutionCanceledEventAttributes> for CancelWorkflow {
+            fn from(a: WorkflowExecutionCanceledEventAttributes) -> Self {
+                Self {
+                    details: Vec::from_payloads(a.details),
+                }
+            }
+        }
     }
+
     pub mod workflow_completion {
         use crate::protos::coresdk::workflow_completion::wf_activation_completion::Status;
         tonic::include_proto!("coresdk.workflow_completion");
@@ -202,6 +226,9 @@ pub mod coresdk {
                         }
                         workflow_command::Variant::ContinueAsNewWorkflowExecution(_) => {
                             write!(f, "ContinueAsNewWorkflowExecution")
+                        }
+                        workflow_command::Variant::AckExecutionCancelled(_) => {
+                            write!(f, "AckExecutionCancelled")
                         }
                     },
                 }
@@ -568,16 +595,6 @@ pub mod coresdk {
         }
     }
 
-    impl From<WorkflowExecutionSignaledEventAttributes> for SignalWorkflow {
-        fn from(a: WorkflowExecutionSignaledEventAttributes) -> Self {
-            Self {
-                signal_name: a.signal_name,
-                input: Vec::from_payloads(a.input),
-                identity: a.identity,
-            }
-        }
-    }
-
     impl From<WorkflowExecution> for common::WorkflowExecution {
         fn from(w: WorkflowExecution) -> Self {
             Self {
@@ -640,6 +657,10 @@ pub mod temporal {
                                     attributes: Some(a),
                                 }
                             }
+                            a @ Attributes::CancelWorkflowExecutionCommandAttributes(_) => Self {
+                                command_type: CommandType::CancelWorkflowExecution as i32,
+                                attributes: Some(a),
+                            },
                             _ => unimplemented!(),
                         }
                     }
@@ -736,6 +757,15 @@ pub mod temporal {
                                 search_attributes: Some(c.search_attributes.into()),
                                 ..Default::default()
                             },
+                        )
+                    }
+                }
+
+                impl From<workflow_commands::AckWorkflowExecutionCancelled> for command::Attributes {
+                    fn from(_c: workflow_commands::AckWorkflowExecutionCancelled) -> Self {
+                        Self::CancelWorkflowExecutionCommandAttributes(
+                            // TODO: See other review note
+                            CancelWorkflowExecutionCommandAttributes { details: None },
                         )
                     }
                 }
