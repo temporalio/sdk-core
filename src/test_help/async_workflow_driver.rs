@@ -10,6 +10,8 @@ use crate::{
 use futures::executor::block_on;
 use std::convert::TryInto;
 
+// TODO: This is bad and I want to get rid of it.
+
 impl WorkflowFetcher for TestWorkflowDriver {
     fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
         let wf_is_done = self.wait_until_wf_iteration_done();

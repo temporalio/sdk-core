@@ -339,6 +339,10 @@ impl WorkflowMachines {
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
+        debug!(
+            event = %event,
+            "handling non-stateful event"
+        );
         match EventType::from_i32(event.event_type) {
             Some(EventType::WorkflowExecutionStarted) => {
                 if let Some(history_event::Attributes::WorkflowExecutionStartedEventAttributes(
@@ -396,9 +400,11 @@ impl WorkflowMachines {
             }
             Some(EventType::WorkflowExecutionCancelRequested) => {
                 error!("Cancel req");
-                if let Some(history_event::Attributes::WorkflowExecutionCanceledEventAttributes(
-                    attrs,
-                )) = &event.attributes
+                if let Some(
+                    history_event::Attributes::WorkflowExecutionCancelRequestedEventAttributes(
+                        attrs,
+                    ),
+                ) = &event.attributes
                 {
                     self.drive_me.cancel(attrs.clone().into());
                 } else {

@@ -9,20 +9,7 @@ use crate::{
             failure::v1::Failure,
             query::v1::{WorkflowQuery, WorkflowQueryResult},
             taskqueue::v1::TaskQueue,
-            workflowservice::v1::{
-                workflow_service_client::WorkflowServiceClient, PollActivityTaskQueueRequest,
-                PollActivityTaskQueueResponse, PollWorkflowTaskQueueRequest,
-                PollWorkflowTaskQueueResponse, QueryWorkflowRequest, QueryWorkflowResponse,
-                RecordActivityTaskHeartbeatRequest, RecordActivityTaskHeartbeatResponse,
-                RespondActivityTaskCanceledRequest, RespondActivityTaskCanceledResponse,
-                RespondActivityTaskCompletedRequest, RespondActivityTaskCompletedResponse,
-                RespondActivityTaskFailedRequest, RespondActivityTaskFailedResponse,
-                RespondQueryTaskCompletedRequest, RespondQueryTaskCompletedResponse,
-                RespondWorkflowTaskCompletedRequest, RespondWorkflowTaskCompletedResponse,
-                RespondWorkflowTaskFailedRequest, RespondWorkflowTaskFailedResponse,
-                SignalWorkflowExecutionRequest, SignalWorkflowExecutionResponse,
-                StartWorkflowExecutionRequest, StartWorkflowExecutionResponse,
-            },
+            workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
         },
     },
     protosext::WorkflowTaskCompletion,
@@ -261,12 +248,26 @@ pub trait ServerGatewayApis {
         query: WorkflowQuery,
     ) -> Result<QueryWorkflowResponse>;
 
+    /// Get information about a workflow run
+    async fn describe_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: Option<String>,
+    ) -> Result<DescribeWorkflowExecutionResponse>;
+
     /// Respond to a legacy query-only workflow task
     async fn respond_legacy_query(
         &self,
         task_token: TaskToken,
         query_result: QueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse>;
+
+    /// Cancel a currently executing workflow
+    async fn cancel_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: Option<String>,
+    ) -> Result<RequestCancelWorkflowExecutionResponse>;
 }
 
 #[async_trait::async_trait]
@@ -525,6 +526,26 @@ impl ServerGatewayApis for ServerGateway {
             .into_inner())
     }
 
+    /// Get information about a workflow run
+    async fn describe_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: Option<String>,
+    ) -> Result<DescribeWorkflowExecutionResponse> {
+        Ok(self
+            .service
+            .clone()
+            .describe_workflow_execution(DescribeWorkflowExecutionRequest {
+                namespace: self.opts.namespace.clone(),
+                execution: Some(WorkflowExecution {
+                    workflow_id,
+                    run_id: run_id.unwrap_or_default(),
+                }),
+            })
+            .await?
+            .into_inner())
+    }
+
     async fn respond_legacy_query(
         &self,
         task_token: TaskToken,
@@ -540,6 +561,29 @@ impl ServerGatewayApis for ServerGateway {
                 query_result,
                 error_message,
                 namespace: self.opts.namespace.clone(),
+            })
+            .await?
+            .into_inner())
+    }
+
+    /// Cancel a currently executing workflow
+    async fn cancel_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: Option<String>,
+    ) -> Result<RequestCancelWorkflowExecutionResponse> {
+        Ok(self
+            .service
+            .clone()
+            .request_cancel_workflow_execution(RequestCancelWorkflowExecutionRequest {
+                namespace: self.opts.namespace.clone(),
+                workflow_execution: Some(WorkflowExecution {
+                    workflow_id,
+                    run_id: run_id.unwrap_or_default(),
+                }),
+                identity: self.opts.identity.clone(),
+                request_id: "".to_string(),
+                first_execution_run_id: "".to_string(),
             })
             .await?
             .into_inner())
@@ -630,11 +674,25 @@ mockall::mock! {
         ) -> impl Future<Output = Result<QueryWorkflowResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
+        fn describe_workflow_execution<'a, 'b>(
+            &self,
+            workflow_id: String,
+            run_id: Option<String>,
+        ) -> impl Future<Output = Result<DescribeWorkflowExecutionResponse>> + Send + 'b
+            where 'a: 'b, Self: 'b;
+
         fn respond_legacy_query<'a, 'b>(
             &self,
             task_token: TaskToken,
             query_result: QueryResult,
         ) -> impl Future<Output = Result<RespondQueryTaskCompletedResponse>> + Send + 'b
+            where 'a: 'b, Self: 'b;
+
+        fn cancel_workflow_execution<'a, 'b>(
+            &self,
+            workflow_id: String,
+            run_id: Option<String>,
+        ) -> impl Future<Output = Result<RequestCancelWorkflowExecutionResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
     }
 }

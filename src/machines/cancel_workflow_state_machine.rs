@@ -117,7 +117,6 @@ mod tests {
         protos::coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
         test_help::canned_histories,
         test_workflow_driver::{TestWorkflowDriver, WfContext},
-        tracing_init,
         workflow::WorkflowManager,
     };
     use std::time::Duration;
@@ -128,12 +127,11 @@ mod tests {
             start_to_fire_timeout: Some(Duration::from_millis(500).into()),
         })
         .await;
-        ctx.cancelled();
+        ctx.complete_cancelled();
     }
 
     #[test]
     fn wf_completing_with_cancelled() {
-        tracing_init();
         let twd = TestWorkflowDriver::new(vec![], wf_with_timer);
         let t = canned_histories::timer_then_cancelled("timer1");
         let state_machines = WorkflowMachines::new(

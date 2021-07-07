@@ -1,6 +1,9 @@
 //! This module is essentially a rough prototype Rust SDK. It can be used to create closures that
 //! look sort of like normal workflow code. It should only depend on things in the core crate that
 //! are already publicly exposed.
+//!
+//! As it stands I do *not* like this design. Way too easy to create races and deadlocks. Needs
+//! a rethink.
 
 use crate::{
     protos::coresdk::{
@@ -36,7 +39,7 @@ use tokio::{
     runtime::Runtime,
     sync::{
         mpsc::{unbounded_channel, UnboundedSender},
-        oneshot, Notify,
+        oneshot, watch, Notify,
     },
     task::{JoinError, JoinHandle},
 };
@@ -139,7 +142,9 @@ impl TestRustWorker {
                             }),
                             Variant::UpdateRandomSeed(_) => {}
                             Variant::QueryWorkflow(_) => {}
-                            Variant::CancelWorkflow(_) => {}
+                            Variant::CancelWorkflow(_) => {
+                                twd.mark_wf_cancelled();
+                            }
                             Variant::SignalWorkflow(_) => {}
                             Variant::RemoveFromCache(_) => {
                                 twd.kill().await;
@@ -252,11 +257,10 @@ impl TestWorkflowDriver {
         F: Fn(WfContext) -> Fut,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        let twd_cache = Arc::new(TestWfDriverCache::default());
-        let (sender, receiver) = WfContext::new(twd_cache.clone(), args);
+        let (wf_context, twd_cache, cmd_receiver) = WfContext::new(args);
 
         let twd_clone = twd_cache.clone();
-        let wf_inner_fut = workflow_fn(sender);
+        let wf_inner_fut = workflow_fn(wf_context);
         let kill_notifier = Arc::new(Notify::new());
         let killed = kill_notifier.clone();
         let wf_future = async move {
@@ -289,7 +293,7 @@ impl TestWorkflowDriver {
 
         Self {
             join_handle,
-            commands_from_wf: receiver,
+            commands_from_wf: cmd_receiver,
             cache: twd_cache,
             kill_notifier,
             deadlock_time: Duration::from_secs(1),
@@ -313,6 +317,15 @@ impl TestWorkflowDriver {
         self.cache.unblock(unblock_evt);
     }
 
+    /// Indicate that the workflow has been cancelled
+    pub(crate) fn mark_wf_cancelled(&mut self) {
+        warn!("Marking cancelled");
+        self.cache
+            .cancelled_send
+            .send(true)
+            .expect("Must be able to send cancelled");
+    }
+
     /// If there are no commands, and the workflow isn't done, we need to wait for one of those
     /// things to become true before we fetch commands. Otherwise, time out via panic.
     ///
@@ -323,11 +336,21 @@ impl TestWorkflowDriver {
     //  on a command before the main wf code path does, it will cause a spurious wakeup.
     pub fn wait_until_wf_iteration_done(&mut self) -> bool {
         let mut bc_lock = self.cache.blocking_info.lock();
-        while !bc_lock.wf_is_done && bc_lock.num_blocked_cmds() == 0 {
+
+        // TODO: If there was a cancellation, we should wait for a condition to change (new
+        //  command or wf exit) -- because cancel is likely going to cause some other futures to
+        //  get dropped or the WF to exit. This isn't fun and should be dealt with more smartly
+        //  as part of a general redesign of this whole thing. Need a way to more generally
+        //  handle the idea of "wait until we are blocked on a *new* top level command or the wf
+        //  has exited".
+        let mut must_wait_cancel = *self.cache.cancelled_send.borrow();
+
+        while (!bc_lock.wf_is_done && bc_lock.num_blocked_cmds() == 0) || must_wait_cancel {
             let timeout_res = self
                 .cache
                 .condvar
                 .wait_for(&mut bc_lock, self.deadlock_time);
+            must_wait_cancel = false;
             if timeout_res.timed_out() {
                 panic!("Workflow deadlocked (1 second)")
             }
@@ -384,10 +407,12 @@ enum WfExitKind {
     ContinueAsNew,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct TestWfDriverCache {
     blocking_info: Mutex<BlockingCondInfo>,
     condvar: Condvar,
+    cancelled_send: watch::Sender<bool>,
+    cancelled_watch: watch::Receiver<bool>,
 }
 
 macro_rules! add_sent_cmd_decl {
@@ -408,6 +433,16 @@ macro_rules! add_sent_cmd_decl {
 }
 
 impl TestWfDriverCache {
+    fn new() -> Self {
+        let (cancelled_send, cancelled_watch) = watch::channel(false);
+        TestWfDriverCache {
+            blocking_info: Default::default(),
+            condvar: Condvar::new(),
+            cancelled_send,
+            cancelled_watch,
+        }
+    }
+
     /// Unblock a command
     fn unblock(&self, unblock_evt: UnblockEvent) {
         let mut bc = self.blocking_info.lock();
@@ -423,6 +458,18 @@ impl TestWfDriverCache {
                 }
             }
         };
+    }
+
+    fn drop_cmd(&self, id: CommandID) {
+        let mut bc = self.blocking_info.lock();
+        match &id {
+            CommandID::Timer(id) => {
+                bc.issued_timers.remove(id);
+            }
+            CommandID::Activity(id) => {
+                bc.issued_activities.remove(id);
+            }
+        }
     }
 
     /// Cancel a timer by ID. Timers get some special handling here since they are always
@@ -512,18 +559,19 @@ pub struct WfContext {
 }
 
 impl WfContext {
-    fn new(
-        twd_cache: Arc<TestWfDriverCache>,
-        args: Vec<Payload>,
-    ) -> (Self, Receiver<WorkflowCommand>) {
+    /// Create a new wf context, returning the context itself, the shared cache for blocked
+    /// commands, and a receiver which outputs commands sent from the workflow.
+    fn new(args: Vec<Payload>) -> (Self, Arc<TestWfDriverCache>, Receiver<WorkflowCommand>) {
+        let twd_cache = Arc::new(TestWfDriverCache::new());
         // We need to use a normal std channel since our receiving side is non-async
         let (chan, rx) = crossbeam::channel::unbounded();
         (
             Self {
                 chan,
-                twd_cache,
+                twd_cache: twd_cache.clone(),
                 args,
             },
+            twd_cache,
             rx,
         )
     }
@@ -531,6 +579,19 @@ impl WfContext {
     /// Get the arguments provided to the workflow upon execution start
     pub fn get_args(&self) -> &[Payload] {
         self.args.as_slice()
+    }
+
+    /// A future that resolves if/when the workflow is cancelled
+    pub async fn cancelled(&self) {
+        if !*self.twd_cache.cancelled_watch.borrow() {
+            self.twd_cache
+                .cancelled_watch
+                .clone()
+                .changed()
+                .await
+                .expect("Cancelled watch not dropped")
+        }
+        warn!("Cancelled resolved");
     }
 
     /// Request to create a timer
@@ -570,10 +631,14 @@ impl WfContext {
         let rx = sent_adder(&self);
         let cache_clone = self.twd_cache.clone();
         async move {
-            cache_clone.set_cmd_blocked(id);
+            cache_clone.set_cmd_blocked(id.clone());
             // Dropping the handle can happen on an "eviction", and we don't want to spew unwrap
             // panics when that happens, so `ok` is used.
-            rx.await.ok()
+            let res = rx.await.ok();
+            if res.is_none() {
+                cache_clone.drop_cmd(id);
+            }
+            res
         }
     }
 
@@ -624,7 +689,7 @@ impl WfContext {
     }
 
     /// Acknowledge the workflow was cancelled
-    pub fn cancelled(&self) {
+    pub fn complete_cancelled(&self) {
         let c = WorkflowCommand {
             variant: Some(AckWorkflowExecutionCancelled::default().into()),
         };

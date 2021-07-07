@@ -1,5 +1,8 @@
 //! Integration tests
 
+#[macro_use]
+extern crate tracing;
+
 #[cfg(test)]
 mod integ_tests {
     use std::{str::FromStr, time::Duration};

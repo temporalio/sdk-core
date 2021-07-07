@@ -84,7 +84,8 @@ pub mod coresdk {
             core_tracing::VecDisplayer,
             protos::coresdk::PayloadsExt,
             protos::temporal::api::history::v1::{
-                WorkflowExecutionCanceledEventAttributes, WorkflowExecutionSignaledEventAttributes,
+                WorkflowExecutionCancelRequestedEventAttributes,
+                WorkflowExecutionSignaledEventAttributes,
             },
             workflow::LEGACY_QUERY_ID,
         };
@@ -173,11 +174,10 @@ pub mod coresdk {
             }
         }
 
-        impl From<WorkflowExecutionCanceledEventAttributes> for CancelWorkflow {
-            fn from(a: WorkflowExecutionCanceledEventAttributes) -> Self {
-                Self {
-                    details: Vec::from_payloads(a.details),
-                }
+        impl From<WorkflowExecutionCancelRequestedEventAttributes> for CancelWorkflow {
+            fn from(_a: WorkflowExecutionCancelRequestedEventAttributes) -> Self {
+                // TODO: Pass more stuff
+                Self { details: vec![] }
             }
         }
     }
