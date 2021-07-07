@@ -282,7 +282,7 @@ async fn scheduled_activity_timeout(hist_batches: &[usize]) {
             // Activity is getting resolved right away as it has been timed out.
             gen_assert_and_reply(
                 &|res| {
-                assert_matches!(
+                    assert_matches!(
                     res.jobs.as_slice(),
                     [
                         WfActivationJob {
@@ -697,7 +697,7 @@ async fn complete_activation_with_failure(
         true,
         Some(1),
     );
-    let core = fake_core_from_mock_sg(mock_sg);
+    let core = fake_core_from_mocks(mock_sg);
 
     poll_and_reply(
         &core,
@@ -811,7 +811,7 @@ async fn workflow_failures_only_reported_once() {
         // We should only call the server to say we failed twice (once after each success)
         Some(2),
     );
-    let core = fake_core_from_mock_sg(mock_sg);
+    let core = fake_core_from_mocks(mock_sg);
 
     poll_and_reply(
         &core,
@@ -1061,7 +1061,7 @@ async fn lots_of_workflows() {
     });
 
     let mock = build_multihist_mock_sg(hists, false, None);
-    let core = &mock_core(mock.sg);
+    let core = &mock_core(mock);
 
     fanout_tasks(5, |_| async move {
         while let Ok(wft) = core.poll_workflow_task(TEST_Q).await {
@@ -1144,7 +1144,7 @@ async fn complete_after_eviction() {
     let mut mock = MockServerGatewayApis::new();
     mock.expect_complete_workflow_task().times(0);
     let mock = single_hist_mock_sg(wfid, t, &[2], mock, true);
-    let core = fake_core_from_mock_sg(mock);
+    let core = fake_core_from_mocks(mock);
 
     let activation = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
     // We just got start workflow, immediately evict
@@ -1175,7 +1175,7 @@ async fn sends_appropriate_sticky_task_queue_responses() {
     let mock = single_hist_mock_sg(wfid, t, &[1], mock, false);
     let mut opts = CoreInitOptionsBuilder::default();
     opts.max_cached_workflows(10_usize);
-    let core = mock_core_with_opts(mock.sg, opts);
+    let core = mock_core_with_opts(mock, opts);
 
     let activation = core.poll_workflow_task(TEST_Q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmd(
