@@ -1,9 +1,9 @@
-use crate::machines::cancel_workflow_state_machine::cancel_workflow;
-use crate::machines::continue_as_new_workflow_state_machine::continue_as_new;
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
-        activity_state_machine::new_activity, complete_workflow_state_machine::complete_workflow,
+        activity_state_machine::new_activity, cancel_workflow_state_machine::cancel_workflow,
+        complete_workflow_state_machine::complete_workflow,
+        continue_as_new_workflow_state_machine::continue_as_new,
         fail_workflow_state_machine::fail_workflow, timer_state_machine::new_timer,
         workflow_task_state_machine::WorkflowTaskMachine, NewMachineWithCommand, ProtoCommand,
         TemporalStateMachine, WFCommand,
@@ -399,7 +399,6 @@ impl WorkflowMachines {
                 }
             }
             Some(EventType::WorkflowExecutionCancelRequested) => {
-                error!("Cancel req");
                 if let Some(
                     history_event::Attributes::WorkflowExecutionCancelRequestedEventAttributes(
                         attrs,
@@ -445,7 +444,6 @@ impl WorkflowMachines {
     /// "no work" situation. Possibly, it may know about some work the machines don't, like queries.
     pub(crate) fn get_wf_activation(&mut self) -> WfActivation {
         let jobs = self.drive_me.drain_jobs();
-        info!("Jobs: {:#?}", jobs);
         WfActivation {
             timestamp: self.current_wf_time.map(Into::into),
             is_replaying: self.replaying,

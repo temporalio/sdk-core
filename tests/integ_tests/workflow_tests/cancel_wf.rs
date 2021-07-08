@@ -3,7 +3,6 @@ use temporal_sdk_core::{
     protos::coresdk::workflow_commands::StartTimer,
     protos::temporal::api::enums::v1::WorkflowExecutionStatus,
     test_workflow_driver::{TestRustWorker, WfContext},
-    tracing_init,
 };
 use test_utils::CoreWfStarter;
 
@@ -27,7 +26,6 @@ async fn cancelled_wf(mut ctx: WfContext) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cancel_during_timer() {
-    tracing_init();
     let wf_name = "cancel_during_timer";
     let mut starter = CoreWfStarter::new(wf_name);
     let tq = starter.get_task_queue().to_owned();

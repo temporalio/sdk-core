@@ -591,7 +591,6 @@ impl WfContext {
                 .await
                 .expect("Cancelled watch not dropped")
         }
-        warn!("Cancelled resolved");
     }
 
     /// Request to create a timer

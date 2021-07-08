@@ -176,7 +176,6 @@ pub mod coresdk {
 
         impl From<WorkflowExecutionCancelRequestedEventAttributes> for CancelWorkflow {
             fn from(_a: WorkflowExecutionCancelRequestedEventAttributes) -> Self {
-                // TODO: Pass more stuff
                 Self { details: vec![] }
             }
         }
@@ -764,7 +763,6 @@ pub mod temporal {
                 impl From<workflow_commands::CancelWorkflowExecution> for command::Attributes {
                     fn from(_c: workflow_commands::CancelWorkflowExecution) -> Self {
                         Self::CancelWorkflowExecutionCommandAttributes(
-                            // TODO: See other review note
                             CancelWorkflowExecutionCommandAttributes { details: None },
                         )
                     }
