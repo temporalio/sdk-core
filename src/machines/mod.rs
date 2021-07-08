@@ -70,7 +70,7 @@ pub enum WFCommand {
     FailWorkflow(FailWorkflowExecution),
     QueryResponse(QueryResult),
     ContinueAsNew(ContinueAsNewWorkflowExecution),
-    AckCancelled(CancelWorkflowExecution),
+    CancelWorkflow(CancelWorkflowExecution),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
@@ -96,7 +96,9 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::ContinueAsNewWorkflowExecution(s) => {
                 Ok(WFCommand::ContinueAsNew(s))
             }
-            workflow_command::Variant::AckExecutionCancelled(s) => Ok(WFCommand::AckCancelled(s)),
+            workflow_command::Variant::CancelWorkflowExecution(s) => {
+                Ok(WFCommand::CancelWorkflow(s))
+            }
         }
     }
 }

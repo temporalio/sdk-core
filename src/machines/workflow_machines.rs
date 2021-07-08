@@ -605,7 +605,7 @@ impl WorkflowMachines {
                     let canm = self.add_new_machine(continue_as_new(attrs));
                     self.current_wf_task_commands.push_back(canm);
                 }
-                WFCommand::AckCancelled(attrs) => {
+                WFCommand::CancelWorkflow(attrs) => {
                     let cancm = self.add_new_machine(cancel_workflow(attrs));
                     self.current_wf_task_commands.push_back(cancm);
                 }

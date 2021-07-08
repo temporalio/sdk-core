@@ -21,7 +21,7 @@ message WorkflowCommand {
         CompleteWorkflowExecution complete_workflow_execution = 6;
         FailWorkflowExecution fail_workflow_execution = 7;
         ContinueAsNewWorkflowExecution continue_as_new_workflow_execution = 8;
-        CancelWorkflowExecution ack_execution_cancelled = 9;
+        CancelWorkflowExecution cancel_workflow_execution = 9;
 
         // To be added as/if needed:
         //  RequestCancelActivityTask request_cancel_activity_task_command_attributes = 6;

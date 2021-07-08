@@ -99,6 +99,7 @@ message QueryWorkflow {
 
 /// Cancel a running workflow
 message CancelWorkflow {
+    /// Information from the cancellation request
     repeated common.Payload details = 1;
 }
 

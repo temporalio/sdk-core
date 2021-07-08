@@ -226,8 +226,8 @@ pub mod coresdk {
                         workflow_command::Variant::ContinueAsNewWorkflowExecution(_) => {
                             write!(f, "ContinueAsNewWorkflowExecution")
                         }
-                        workflow_command::Variant::AckExecutionCancelled(_) => {
-                            write!(f, "AckExecutionCancelled")
+                        workflow_command::Variant::CancelWorkflowExecution(_) => {
+                            write!(f, "CancelWorkflowExecution")
                         }
                     },
                 }
