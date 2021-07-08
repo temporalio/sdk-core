@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn wf_completing_with_cancelled() {
         let twd = TestWorkflowDriver::new(vec![], wf_with_timer);
-        let t = canned_histories::timer_then_cancelled("timer1");
+        let t = canned_histories::timer_wf_cancel_req_cancelled("timer1");
         let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),

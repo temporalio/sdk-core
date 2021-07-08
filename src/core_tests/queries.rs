@@ -29,9 +29,9 @@ async fn legacy_query(#[case] include_history: bool) {
     let query_resp = "response";
     let t = canned_histories::single_timer("fake_timer");
     let tasks = VecDeque::from(vec![
-        hist_to_poll_resp(&t, wfid.to_owned(), 1, TEST_Q.to_string()),
+        hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
         {
-            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1, TEST_Q.to_string());
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string());
             pr.query = Some(WorkflowQuery {
                 query_type: "query-type".to_string(),
                 query_args: Some(b"hi".into()),
@@ -41,7 +41,7 @@ async fn legacy_query(#[case] include_history: bool) {
             }
             pr
         },
-        hist_to_poll_resp(&t, wfid.to_owned(), 2, TEST_Q.to_string()),
+        hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()),
     ]);
     let mut mock_gateway = MockServerGatewayApis::new();
     mock_gateway
@@ -138,9 +138,9 @@ async fn new_queries(#[case] num_queries: usize) {
     let query_resp = "response";
     let t = canned_histories::single_timer("fake_timer");
     let tasks = VecDeque::from(vec![
-        hist_to_poll_resp(&t, wfid.to_owned(), 1, TEST_Q.to_string()),
+        hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
         {
-            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 2, TEST_Q.to_string());
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string());
             pr.queries = HashMap::new();
             for i in 1..=num_queries {
                 pr.queries.insert(
@@ -220,9 +220,9 @@ async fn legacy_query_failure_on_wft_failure() {
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("fake_timer");
     let tasks = VecDeque::from(vec![
-        hist_to_poll_resp(&t, wfid.to_owned(), 1, TEST_Q.to_string()),
+        hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
         {
-            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1, TEST_Q.to_string());
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string());
             pr.query = Some(WorkflowQuery {
                 query_type: "query-type".to_string(),
                 query_args: Some(b"hi".into()),
@@ -230,7 +230,7 @@ async fn legacy_query_failure_on_wft_failure() {
             pr.history = Some(History { events: vec![] });
             pr
         },
-        hist_to_poll_resp(&t, wfid.to_owned(), 2, TEST_Q.to_string()),
+        hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()),
     ]);
     let mut mock_gateway = MockServerGatewayApis::new();
     mock_gateway

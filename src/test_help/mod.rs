@@ -58,6 +58,25 @@ pub(crate) struct FakeCore {
 /// run id -> task token
 pub type OutstandingWfTaskMap = Arc<RwLock<BiMap<String, TaskToken>>>;
 
+/// When constructing responses for mocks, indicates how a given response should be built
+#[derive(derive_more::From, Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum ResponseType {
+    ToTaskNum(usize),
+    AllHistory,
+}
+
+impl From<&usize> for ResponseType {
+    fn from(u: &usize) -> Self {
+        ResponseType::ToTaskNum(*u)
+    }
+}
+// :shrug:
+impl From<&ResponseType> for ResponseType {
+    fn from(r: &ResponseType) -> Self {
+        *r
+    }
+}
+
 /// Given identifiers for a workflow/run, and a test history builder, construct an instance of
 /// the core SDK with a mock server gateway that will produce the responses as appropriate.
 ///
@@ -67,13 +86,13 @@ pub type OutstandingWfTaskMap = Arc<RwLock<BiMap<String, TaskToken>>>;
 pub(crate) fn build_fake_core(
     wf_id: &str,
     t: TestHistoryBuilder,
-    response_batches: &[usize],
+    response_batches: impl IntoIterator<Item = impl Into<ResponseType>>,
 ) -> FakeCore {
     let mock_gateway = build_multihist_mock_sg(
         vec![FakeWfResponses {
             wf_id: wf_id.to_owned(),
             hist: t,
-            response_batches: response_batches.to_vec(),
+            response_batches: response_batches.into_iter().map(Into::into).collect(),
             task_q: TEST_Q.to_owned(),
         }],
         true,
@@ -140,7 +159,7 @@ where
 pub struct FakeWfResponses {
     pub wf_id: String,
     pub hist: TestHistoryBuilder,
-    pub response_batches: Vec<usize>,
+    pub response_batches: Vec<ResponseType>,
     pub task_q: String,
 }
 
@@ -243,7 +262,7 @@ pub fn build_multihist_mock_sg(
 pub fn single_hist_mock_sg(
     wf_id: &str,
     t: TestHistoryBuilder,
-    response_batches: &[usize],
+    response_batches: impl IntoIterator<Item = impl Into<ResponseType>>,
     mock_gateway: MockServerGatewayApis,
     enforce_num_polls: bool,
 ) -> MocksHolder<MockServerGatewayApis> {
@@ -251,7 +270,7 @@ pub fn single_hist_mock_sg(
         vec![FakeWfResponses {
             wf_id: wf_id.to_owned(),
             hist: t,
-            response_batches: response_batches.to_vec(),
+            response_batches: response_batches.into_iter().map(Into::into).collect(),
             task_q: TEST_Q.to_owned(),
         }],
         enforce_num_polls,
@@ -275,22 +294,26 @@ pub fn build_mock_pollers(
     for hist in hists {
         let full_hist_info = hist.hist.get_full_history_info().unwrap();
         // Ensure no response batch is trying to return more tasks than the history contains
-        for rb_wf_num in &hist.response_batches {
-            assert!(
-                *rb_wf_num <= full_hist_info.wf_task_count(),
-                "Wf task count {} is not <= total task count {}",
-                rb_wf_num,
-                full_hist_info.wf_task_count()
-            );
+        for respt in &hist.response_batches {
+            if let ResponseType::ToTaskNum(rb_wf_num) = respt {
+                assert!(
+                    *rb_wf_num <= full_hist_info.wf_task_count(),
+                    "Wf task count {} is not <= total task count {}",
+                    rb_wf_num,
+                    full_hist_info.wf_task_count()
+                );
+            }
         }
+
+        // TODO: Fix -- or not? Sticky invalidation could make this pointless anyway
         // Verify response batches only ever return longer histories (IE: Are sorted ascending)
-        assert!(
-            hist.response_batches
-                .as_slice()
-                .windows(2)
-                .all(|w| w[0] <= w[1]),
-            "response batches must have increasing wft numbers"
-        );
+        // assert!(
+        //     hist.response_batches
+        //         .as_slice()
+        //         .windows(2)
+        //         .all(|w| w[0] <= w[1]),
+        //     "response batches must have increasing wft numbers"
+        // );
 
         if enforce_correct_number_of_polls {
             *correct_num_polls.get_or_insert(0) += hist.response_batches.len();
@@ -390,7 +413,7 @@ pub fn build_mock_pollers(
 pub fn hist_to_poll_resp(
     t: &TestHistoryBuilder,
     wf_id: String,
-    to_task_num: usize,
+    response_type: ResponseType,
     task_queue: String,
 ) -> PollWorkflowTaskQueueResponse {
     let run_id = t.get_orig_run_id();
@@ -398,7 +421,10 @@ pub fn hist_to_poll_resp(
         workflow_id: wf_id,
         run_id: run_id.to_string(),
     };
-    let hist_info = t.get_history_info(to_task_num).unwrap();
+    let hist_info = match response_type {
+        ResponseType::ToTaskNum(tn) => t.get_history_info(tn).unwrap(),
+        ResponseType::AllHistory => t.get_full_history_info().unwrap(),
+    };
     let batch = hist_info.events().to_vec();
     let task_token: [u8; 16] = thread_rng().gen();
     PollWorkflowTaskQueueResponse {

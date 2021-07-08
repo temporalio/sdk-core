@@ -42,7 +42,6 @@ impl ActivationListener for TestWorkflowDriver {
     fn on_activation_job(&mut self, activation: &wf_activation_job::Variant) {
         match activation {
             Variant::FireTimer(FireTimer { timer_id }) => {
-                info!("Hurr timer fired in listener");
                 self.unblock(UnblockEvent::Timer(timer_id.to_owned()));
             }
             Variant::ResolveActivity(ResolveActivity {

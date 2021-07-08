@@ -4,15 +4,7 @@ use crate::{
     protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes,
     protos::temporal::api::{
         enums::v1::{EventType, WorkflowTaskFailedCause},
-        history::v1::{
-            history_event::Attributes, ActivityTaskCancelRequestedEventAttributes, HistoryEvent,
-            TimerStartedEventAttributes, WorkflowExecutionCancelRequestedEventAttributes,
-            WorkflowExecutionCanceledEventAttributes, WorkflowExecutionCompletedEventAttributes,
-            WorkflowExecutionContinuedAsNewEventAttributes,
-            WorkflowExecutionStartedEventAttributes, WorkflowTaskCompletedEventAttributes,
-            WorkflowTaskFailedEventAttributes, WorkflowTaskScheduledEventAttributes,
-            WorkflowTaskStartedEventAttributes, WorkflowTaskTimedOutEventAttributes,
-        },
+        history::v1::{history_event::Attributes, *},
     },
     test_help::{
         history_info::{HistoryInfo, HistoryInfoError},
@@ -116,6 +108,14 @@ impl TestHistoryBuilder {
             ..Default::default()
         };
         self.build_and_push_event(EventType::WorkflowExecutionCompleted, attrs.into());
+    }
+
+    pub fn add_workflow_execution_failed(&mut self) {
+        let attrs = WorkflowExecutionFailedEventAttributes {
+            workflow_task_completed_event_id: self.previous_task_completed_id,
+            ..Default::default()
+        };
+        self.build_and_push_event(EventType::WorkflowExecutionFailed, attrs.into());
     }
 
     pub fn add_continued_as_new(&mut self) {
