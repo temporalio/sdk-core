@@ -1,6 +1,6 @@
 use std::time::Duration;
 use temporal_sdk_core::{
-    protos::coresdk::workflow_commands::{ContinueAsNewWorkflowExecution, StartTimer},
+    protos::coresdk::workflow_commands::StartTimer,
     protos::temporal::api::enums::v1::WorkflowExecutionStatus,
     test_workflow_driver::{TestRustWorker, WfContext},
     tracing_init,
@@ -8,7 +8,6 @@ use temporal_sdk_core::{
 use test_utils::CoreWfStarter;
 
 async fn cancelled_wf(mut ctx: WfContext) {
-    let run_ct = ctx.get_args()[0].data[0];
     let timer = StartTimer {
         timer_id: "longtimer".to_string(),
         start_to_fire_timeout: Some(Duration::from_secs(500).into()),
@@ -36,7 +35,7 @@ async fn cancel_during_timer() {
 
     let worker = TestRustWorker::new(core.clone(), tq);
     worker
-        .submit_wf(vec![[1].into()], wf_name.to_owned(), cancelled_wf)
+        .submit_wf(vec![], wf_name.to_owned(), cancelled_wf)
         .await
         .unwrap();
 

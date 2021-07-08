@@ -3,7 +3,7 @@ use crate::{
         Cancellable, HistoryEvent, MachineResponse, NewMachineWithCommand, OnEventWrapper,
         WFMachinesAdapter, WFMachinesError,
     },
-    protos::coresdk::workflow_commands::AckWorkflowExecutionCancelled,
+    protos::coresdk::workflow_commands::CancelWorkflowExecution,
     protos::temporal::api::command::v1::Command,
     protos::temporal::api::enums::v1::{CommandType, EventType},
 };
@@ -31,7 +31,7 @@ pub(super) enum CancelWorkflowMachineError {}
 pub(super) enum CancelWorkflowCommand {}
 
 pub(super) fn cancel_workflow(
-    attribs: AckWorkflowExecutionCancelled,
+    attribs: CancelWorkflowExecution,
 ) -> NewMachineWithCommand<CancelWorkflowMachine> {
     let mut machine = CancelWorkflowMachine {
         state: Created {}.into(),

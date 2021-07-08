@@ -761,8 +761,8 @@ pub mod temporal {
                     }
                 }
 
-                impl From<workflow_commands::AckWorkflowExecutionCancelled> for command::Attributes {
-                    fn from(_c: workflow_commands::AckWorkflowExecutionCancelled) -> Self {
+                impl From<workflow_commands::CancelWorkflowExecution> for command::Attributes {
+                    fn from(_c: workflow_commands::CancelWorkflowExecution) -> Self {
                         Self::CancelWorkflowExecutionCommandAttributes(
                             // TODO: See other review note
                             CancelWorkflowExecutionCommandAttributes { details: None },

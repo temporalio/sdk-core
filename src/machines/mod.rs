@@ -36,9 +36,9 @@ use crate::{
     machines::workflow_machines::MachineResponse,
     protos::{
         coresdk::workflow_commands::{
-            workflow_command, AckWorkflowExecutionCancelled, CancelTimer,
-            CompleteWorkflowExecution, ContinueAsNewWorkflowExecution, FailWorkflowExecution,
-            QueryResult, RequestCancelActivity, ScheduleActivity, StartTimer, WorkflowCommand,
+            workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
+            ContinueAsNewWorkflowExecution, FailWorkflowExecution, QueryResult,
+            RequestCancelActivity, ScheduleActivity, StartTimer, WorkflowCommand,
         },
         temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
     },
@@ -70,7 +70,7 @@ pub enum WFCommand {
     FailWorkflow(FailWorkflowExecution),
     QueryResponse(QueryResult),
     ContinueAsNew(ContinueAsNewWorkflowExecution),
-    AckCancelled(AckWorkflowExecutionCancelled),
+    AckCancelled(CancelWorkflowExecution),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]

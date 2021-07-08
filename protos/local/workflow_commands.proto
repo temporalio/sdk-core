@@ -21,7 +21,7 @@ message WorkflowCommand {
         CompleteWorkflowExecution complete_workflow_execution = 6;
         FailWorkflowExecution fail_workflow_execution = 7;
         ContinueAsNewWorkflowExecution continue_as_new_workflow_execution = 8;
-        AckWorkflowExecutionCancelled ack_execution_cancelled = 9;
+        CancelWorkflowExecution ack_execution_cancelled = 9;
 
         // To be added as/if needed:
         //  RequestCancelActivityTask request_cancel_activity_task_command_attributes = 6;
@@ -135,8 +135,6 @@ message ContinueAsNewWorkflowExecution {
     map<string, common.Payload> search_attributes = 8;
 }
 
-/// Activations containing a workflow cancellation are expected to be replied to with this command
-message AckWorkflowExecutionCancelled {
-    // TODO: Review note - server technically accepts a payload of details here, but
-    //   java SDK never populates it. Do we care?
-}
+/// Indicate a workflow has completed as cancelled. Generally sent as a response to an activation
+/// containing a cancellation job.
+message CancelWorkflowExecution {}
