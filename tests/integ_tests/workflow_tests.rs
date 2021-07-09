@@ -16,12 +16,13 @@ use temporal_sdk_core::{
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
-    Core, IntoCompletion, PollWfError,
+    tracing_init, Core, IntoCompletion, PollWfError,
 };
 use test_utils::{
     init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreTestHelpers, CoreWfStarter, GwApi,
 };
 use tokio::time::sleep;
+use tracing::debug;
 use uuid::Uuid;
 
 // TODO: We should get expected histories for these tests and confirm that the history at the end
@@ -80,32 +81,39 @@ async fn parallel_workflows_same_queue() {
 
 #[tokio::test]
 async fn workflow_cache_evictions() {
+    tracing_init();
     let mut starter = CoreWfStarter::new("workflow_cache_evictions");
     starter
         .max_cached_workflows(1)
-        .wft_timeout(Duration::from_secs(600));
+        .wft_timeout(Duration::from_secs(1));
     let core = starter.get_core().await;
     let task_q = starter.get_task_queue();
-    let num_workflows = 2usize;
+    let num_workflows = 2;
 
-    let run_ids: Vec<_> = future::join_all(
-        (0..num_workflows).map(|_| starter.start_wf_with_id(format!("{}", Uuid::new_v4()))),
-    )
-    .await;
+    let run_ids: Vec<_> =
+        future::join_all((0..2).map(|_| starter.start_wf_with_id(format!("{}", Uuid::new_v4()))))
+            .await;
 
     let mut send_chans = HashMap::new();
     async fn wf_task(core: Arc<dyn Core>, mut task_chan: UnboundedReceiver<WfActivation>) {
-        let task = task_chan.next().await.unwrap();
-        assert_matches!(
-            task.jobs.as_slice(),
-            [WfActivationJob {
+        loop {
+            let task = task_chan.next().await.unwrap();
+            if let [WfActivationJob {
                 variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
-            }]
-        );
-        core.complete_timer(&task.run_id, "timer", Duration::from_secs(1))
-            .await;
-        let task = task_chan.next().await.unwrap();
-        core.complete_execution(&task.run_id).await;
+            }] = task.jobs.as_slice()
+            {
+                debug!(run_id=%task.run_id.clone(), "scheduling timer");
+                core.complete_timer(&task.run_id, "timer", Duration::from_secs(1))
+                    .await;
+            } else if let [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::FireTimer(_)),
+            }] = task.jobs.as_slice()
+            {
+                debug!(run_id=%task.run_id.clone(), "completing execution");
+                core.complete_execution(&task.run_id).await;
+                break;
+            }
+        }
     }
 
     let handles: Vec<_> = run_ids
@@ -117,7 +125,7 @@ async fn workflow_cache_evictions() {
         })
         .collect();
 
-    for _ in 0..num_workflows * 2 {
+    for _ in 0..num_workflows * 2 + 1 {
         let task = core.poll_workflow_task(&task_q).await.unwrap();
         send_chans
             .get(&task.run_id)

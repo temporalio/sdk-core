@@ -142,6 +142,8 @@ pub enum WFMachinesError {
     InvalidTransition(String),
     #[error("Unrecoverable network error while fetching history: {0}")]
     HistoryFetchingError(tonic::Status),
+    #[error("Unable to process partial event history because workflow is no longer cached.")]
+    ResetSticky,
 }
 
 impl WorkflowMachines {
@@ -172,10 +174,10 @@ impl WorkflowMachines {
         }
     }
 
-    pub(crate) async fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
+    pub(crate) fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
         self.last_history_from_server = update;
         self.replaying = self.last_history_from_server.previous_started_event_id > 0;
-        self.apply_next_wft_from_history().await?;
+        self.apply_next_wft_from_history()?;
         Ok(())
     }
 
@@ -496,6 +498,17 @@ impl WorkflowMachines {
             if last_event.event_type == EventType::WorkflowTaskStarted as i32 {
                 self.next_started_event_id = last_event.event_id;
             }
+        }
+
+        let first_event_id = match events.first() {
+            Some(event) => event.event_id,
+            None => 0,
+        };
+        // Workflow has been evicted, but we've received partial history from the server.
+        // Need to reset sticky and trigger another poll.
+        if self.current_started_event_id == 0 && first_event_id != 1 && !events.is_empty() {
+            debug!("Workflow cache miss. Resetting sticky and triggering another poll.");
+            return Err(WFMachinesError::ResetSticky);
         }
 
         let mut history = events.iter().peekable();

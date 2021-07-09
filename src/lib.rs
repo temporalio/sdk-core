@@ -56,6 +56,7 @@ use crate::{
             ActivityHeartbeat, ActivityTaskCompletion,
         },
         temporal::api::enums::v1::WorkflowTaskFailedCause,
+        temporal::api::failure::v1::Failure,
     },
     protosext::{ValidPollWFTQResponse, WorkflowTaskCompletion},
     task_token::TaskToken,
@@ -338,7 +339,10 @@ where
                 }
                 Ok(Some(work)) => match self.apply_server_work(work).await? {
                     Some(a) => return Ok(a),
-                    None => continue,
+                    None => {
+                        debug!("Skipping to the next poll");
+                        continue;
+                    }
                 },
                 // Drain pending activations in case of shutdown.
                 Err(PollWfError::ShutDown) => continue,
@@ -572,6 +576,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         work: ValidPollWFTQResponse,
     ) -> Result<Option<WfActivation>, CompleteWfError> {
         let we = work.workflow_execution.clone();
+        let tt = work.task_token.clone();
         match self
             .wft_manager
             .apply_new_poll_resp(work, self.server_gateway.clone())
@@ -590,6 +595,21 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                     status: Some(workflow_completion::Success::from_variants(vec![]).into()),
                 })
                 .await?;
+                Ok(None)
+            }
+            NewWfTaskOutcome::ResetSticky => {
+                debug!(workflow_execution=?we,
+                "Unable to process workflow task with partial history because workflow cache does not contain workflow anymore. Resetting sticky execution.");
+                self.server_gateway
+                    .fail_workflow_task(
+                        tt,
+                        WorkflowTaskFailedCause::ResetStickyTaskQueue,
+                        Some(Failure {
+                            message: "Unable to process workflow task with partial history because workflow cache does not contain workflow anymore.".to_string(),
+                            ..Default::default()
+                        }),
+                    )
+                    .await?;
                 Ok(None)
             }
         }

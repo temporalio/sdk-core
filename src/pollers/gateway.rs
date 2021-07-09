@@ -180,6 +180,14 @@ pub trait ServerGatewayApis {
     async fn poll_activity_task(&self, task_queue: String)
         -> Result<PollActivityTaskQueueResponse>;
 
+    /// Notifies the server that workflow tasks for a given workflow should be sent to the normal non-sticky task queue.
+    /// This normally happens when workflow has been evicted from the cache.
+    async fn reset_sticky_task_queue(
+        &self,
+        workflow_id: String,
+        run_id: String,
+    ) -> Result<ResetStickyTaskQueueResponse>;
+
     /// Complete a workflow activation.
     async fn complete_workflow_task(
         &self,
@@ -352,6 +360,26 @@ impl ServerGatewayApis for ServerGateway {
             .service
             .clone()
             .poll_activity_task_queue(request)
+            .await?
+            .into_inner())
+    }
+
+    async fn reset_sticky_task_queue(
+        &self,
+        workflow_id: String,
+        run_id: String,
+    ) -> Result<ResetStickyTaskQueueResponse> {
+        let request = ResetStickyTaskQueueRequest {
+            namespace: self.opts.namespace.clone(),
+            execution: Some(WorkflowExecution {
+                workflow_id,
+                run_id,
+            }),
+        };
+        Ok(self
+            .service
+            .clone()
+            .reset_sticky_task_queue(request)
             .await?
             .into_inner())
     }
@@ -642,6 +670,13 @@ mockall::mock! {
 
         fn poll_activity_task<'a, 'b>(&self, task_queue: String)
             -> impl Future<Output = Result<PollActivityTaskQueueResponse>> + Send + 'b
+            where 'a: 'b, Self: 'b;
+
+        fn reset_sticky_task_queue<'a, 'b>(
+            &self,
+            workflow_id: String,
+            run_id: String,
+        ) -> impl Future<Output = Result<ResetStickyTaskQueueResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
         fn complete_workflow_task<'a, 'b>(
