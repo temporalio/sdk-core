@@ -1,3 +1,4 @@
+use crate::test_help::ResponseType;
 use crate::{
     errors::PollWfError::TonicError,
     pollers::{BoxedWFPoller, MockManualGateway, MockManualPoller, MockServerGatewayApis},
@@ -30,7 +31,7 @@ async fn multi_workers() {
         FakeWfResponses {
             wf_id,
             hist,
-            response_batches: vec![1, 2],
+            response_batches: vec![1.into(), 2.into()],
             task_q: format!("q-{}", i),
         }
     });
@@ -52,8 +53,8 @@ async fn multi_workers() {
 #[tokio::test]
 async fn no_worker_for_queue_error_returned_properly() {
     let t = canned_histories::single_timer("fake_timer");
-    // Empty batches array to specify 0 calls to poll expectation
-    let core = build_fake_core("fake_wf_id", t, &[]);
+    // Empty batches to specify 0 calls to poll expectation
+    let core = build_fake_core("fake_wf_id", t, Vec::<ResponseType>::new());
 
     let fake_q = "not a registered queue";
     let res = core.inner.poll_workflow_task(&fake_q).await.unwrap_err();
@@ -64,7 +65,7 @@ async fn no_worker_for_queue_error_returned_properly() {
 #[tokio::test]
 async fn worker_double_register_is_err() {
     let t = canned_histories::single_timer("fake_timer");
-    let core = build_fake_core("fake_wf_id", t, &[]);
+    let core = build_fake_core("fake_wf_id", t, Vec::<ResponseType>::new());
     assert!(core
         .inner
         .register_worker(
@@ -88,7 +89,7 @@ async fn pending_activities_only_returned_for_their_queue() {
         FakeWfResponses {
             wf_id: "wf1".to_string(),
             hist,
-            response_batches: vec![1, 2],
+            response_batches: vec![1.into(), 2.into()],
             task_q: qname,
         }
     };
@@ -231,7 +232,12 @@ fn worker_shutdown() -> (CoreSDK<MockServerGatewayApis>, watch::Sender<bool>) {
                 let t = canned_histories::single_timer("fake_timer");
                 // Don't resolve polls until worker shuts down
                 rx.changed().await.unwrap();
-                Some(Ok(hist_to_poll_resp(&t, "wf".to_string(), 100, tqc)))
+                Some(Ok(hist_to_poll_resp(
+                    &t,
+                    "wf".to_string(),
+                    ResponseType::AllHistory,
+                    tqc,
+                )))
             }
             .boxed()
         });

@@ -1,8 +1,9 @@
-use crate::machines::continue_as_new_workflow_state_machine::continue_as_new;
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
-        activity_state_machine::new_activity, complete_workflow_state_machine::complete_workflow,
+        activity_state_machine::new_activity, cancel_workflow_state_machine::cancel_workflow,
+        complete_workflow_state_machine::complete_workflow,
+        continue_as_new_workflow_state_machine::continue_as_new,
         fail_workflow_state_machine::fail_workflow, timer_state_machine::new_timer,
         workflow_task_state_machine::WorkflowTaskMachine, NewMachineWithCommand, ProtoCommand,
         TemporalStateMachine, WFCommand,
@@ -338,6 +339,10 @@ impl WorkflowMachines {
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
+        debug!(
+            event = %event,
+            "handling non-stateful event"
+        );
         match EventType::from_i32(event.event_type) {
             Some(EventType::WorkflowExecutionStarted) => {
                 if let Some(history_event::Attributes::WorkflowExecutionStartedEventAttributes(
@@ -394,7 +399,16 @@ impl WorkflowMachines {
                 }
             }
             Some(EventType::WorkflowExecutionCancelRequested) => {
-                // TODO: Cancel callbacks
+                if let Some(
+                    history_event::Attributes::WorkflowExecutionCancelRequestedEventAttributes(
+                        attrs,
+                    ),
+                ) = &event.attributes
+                {
+                    self.drive_me.cancel(attrs.clone().into());
+                } else {
+                    // err
+                }
             }
             _ => {
                 return Err(WFMachinesError::UnexpectedEvent(
@@ -590,6 +604,10 @@ impl WorkflowMachines {
                 WFCommand::ContinueAsNew(attrs) => {
                     let canm = self.add_new_machine(continue_as_new(attrs));
                     self.current_wf_task_commands.push_back(canm);
+                }
+                WFCommand::CancelWorkflow(attrs) => {
+                    let cancm = self.add_new_machine(cancel_workflow(attrs));
+                    self.current_wf_task_commands.push_back(cancm);
                 }
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level

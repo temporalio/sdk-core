@@ -1,10 +1,10 @@
 use crate::{
     machines::WFCommand,
     protos::{
-        coresdk::workflow_activation::{wf_activation_job, SignalWorkflow, WfActivationJob},
-        temporal::api::history::v1::{
-            WorkflowExecutionCanceledEventAttributes, WorkflowExecutionStartedEventAttributes,
+        coresdk::workflow_activation::{
+            wf_activation_job, CancelWorkflow, SignalWorkflow, WfActivationJob,
         },
+        temporal::api::history::v1::WorkflowExecutionStartedEventAttributes,
     },
 };
 use std::collections::VecDeque;
@@ -58,7 +58,9 @@ impl DrivenWorkflow {
     }
 
     /// Cancel the workflow
-    pub fn _cancel(&mut self, _attribs: WorkflowExecutionCanceledEventAttributes) {}
+    pub fn cancel(&mut self, attribs: CancelWorkflow) {
+        self.send_job(wf_activation_job::Variant::CancelWorkflow(attribs))
+    }
 }
 
 impl WorkflowFetcher for DrivenWorkflow {

@@ -5,7 +5,6 @@ mod workflow_machines;
 mod activity_state_machine;
 #[allow(unused)]
 mod cancel_external_state_machine;
-#[allow(unused)]
 mod cancel_workflow_state_machine;
 #[allow(unused)]
 mod child_workflow_state_machine;
@@ -37,7 +36,7 @@ use crate::{
     machines::workflow_machines::MachineResponse,
     protos::{
         coresdk::workflow_commands::{
-            workflow_command, CancelTimer, CompleteWorkflowExecution,
+            workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
             ContinueAsNewWorkflowExecution, FailWorkflowExecution, QueryResult,
             RequestCancelActivity, ScheduleActivity, StartTimer, WorkflowCommand,
         },
@@ -71,6 +70,7 @@ pub enum WFCommand {
     FailWorkflow(FailWorkflowExecution),
     QueryResponse(QueryResult),
     ContinueAsNew(ContinueAsNewWorkflowExecution),
+    CancelWorkflow(CancelWorkflowExecution),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
@@ -95,6 +95,9 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::RespondToQuery(s) => Ok(WFCommand::QueryResponse(s)),
             workflow_command::Variant::ContinueAsNewWorkflowExecution(s) => {
                 Ok(WFCommand::ContinueAsNew(s))
+            }
+            workflow_command::Variant::CancelWorkflowExecution(s) => {
+                Ok(WFCommand::CancelWorkflow(s))
             }
         }
     }

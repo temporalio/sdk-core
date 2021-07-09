@@ -4,14 +4,7 @@ use crate::{
     protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes,
     protos::temporal::api::{
         enums::v1::{EventType, WorkflowTaskFailedCause},
-        history::v1::{
-            history_event::Attributes, ActivityTaskCancelRequestedEventAttributes, HistoryEvent,
-            TimerStartedEventAttributes, WorkflowExecutionCompletedEventAttributes,
-            WorkflowExecutionContinuedAsNewEventAttributes,
-            WorkflowExecutionStartedEventAttributes, WorkflowTaskCompletedEventAttributes,
-            WorkflowTaskFailedEventAttributes, WorkflowTaskScheduledEventAttributes,
-            WorkflowTaskStartedEventAttributes, WorkflowTaskTimedOutEventAttributes,
-        },
+        history::v1::{history_event::Attributes, *},
     },
     test_help::{
         history_info::{HistoryInfo, HistoryInfoError},
@@ -117,9 +110,27 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowExecutionCompleted, attrs.into());
     }
 
+    pub fn add_workflow_execution_failed(&mut self) {
+        let attrs = WorkflowExecutionFailedEventAttributes {
+            workflow_task_completed_event_id: self.previous_task_completed_id,
+            ..Default::default()
+        };
+        self.build_and_push_event(EventType::WorkflowExecutionFailed, attrs.into());
+    }
+
     pub fn add_continued_as_new(&mut self) {
         let attrs = WorkflowExecutionContinuedAsNewEventAttributes::default();
         self.build_and_push_event(EventType::WorkflowExecutionContinuedAsNew, attrs.into());
+    }
+
+    pub fn add_cancel_requested(&mut self) {
+        let attrs = WorkflowExecutionCancelRequestedEventAttributes::default();
+        self.build_and_push_event(EventType::WorkflowExecutionCancelRequested, attrs.into());
+    }
+
+    pub fn add_cancelled(&mut self) {
+        let attrs = WorkflowExecutionCanceledEventAttributes::default();
+        self.build_and_push_event(EventType::WorkflowExecutionCanceled, attrs.into());
     }
 
     pub fn add_activity_task_cancel_requested(&mut self, scheduled_event_id: i64) {

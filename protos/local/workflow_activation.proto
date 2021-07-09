@@ -99,7 +99,8 @@ message QueryWorkflow {
 
 /// Cancel a running workflow
 message CancelWorkflow {
-    // TODO: add attributes here
+    /// Information from the cancellation request
+    repeated common.Payload details = 1;
 }
 
 /// Send a signal to a workflow

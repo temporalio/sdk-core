@@ -2,8 +2,10 @@ mod activity_tasks;
 mod queries;
 mod replay_flag;
 mod workers;
+mod workflow_cancels;
 mod workflow_tasks;
 
+use crate::test_help::ResponseType;
 use crate::{
     errors::{PollActivityError, PollWfError},
     pollers::MockManualGateway,
@@ -56,7 +58,7 @@ async fn shutdown_interrupts_both_polls() {
                 Ok(hist_to_poll_resp(
                     &t,
                     "wf".to_string(),
-                    100,
+                    ResponseType::AllHistory,
                     TEST_Q.to_string(),
                 ))
             }

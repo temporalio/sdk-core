@@ -21,10 +21,10 @@ message WorkflowCommand {
         CompleteWorkflowExecution complete_workflow_execution = 6;
         FailWorkflowExecution fail_workflow_execution = 7;
         ContinueAsNewWorkflowExecution continue_as_new_workflow_execution = 8;
+        CancelWorkflowExecution cancel_workflow_execution = 9;
 
         // To be added as/if needed:
         //  RequestCancelActivityTask request_cancel_activity_task_command_attributes = 6;
-        //  CancelWorkflowExecution cancel_workflow_execution_command_attributes = 8;
         //  RequestCancelExternalWorkflowExecution request_cancel_external_workflow_execution_command_attributes = 9;
         //  RecordMarker record_marker_command_attributes = 10;
         //  ContinueAsNewWorkflowExecution continue_as_new_workflow_execution_command_attributes = 11;
@@ -134,3 +134,7 @@ message ContinueAsNewWorkflowExecution {
     /// Search attributes
     map<string, common.Payload> search_attributes = 8;
 }
+
+/// Indicate a workflow has completed as cancelled. Generally sent as a response to an activation
+/// containing a cancellation job.
+message CancelWorkflowExecution {}
