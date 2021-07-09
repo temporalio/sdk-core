@@ -1,5 +1,6 @@
 //! Management of workflow tasks
 
+use crate::machines::WFMachinesError;
 use crate::workflow::WorkflowCacheManager;
 use crate::{
     errors::WorkflowUpdateError,
@@ -92,6 +93,8 @@ pub enum NewWfTaskOutcome {
     /// The workflow task should be auto-completed with an empty command list, as it must be replied
     /// to but there is no meaningful work for lang to do.
     Autocomplete,
+    /// Notify server that workflow tasks for a given workflow should be sent onto a regular task queue.
+    ResetSticky,
 }
 
 #[derive(Debug)]
@@ -243,10 +246,6 @@ impl WorkflowTaskManager {
             history_length = %work.history.events.len(),
             "Applying new workflow task from server"
         );
-        self.cache_manager
-            .write()
-            .evict(&work.workflow_execution.run_id);
-
         if let Some(mut outstanding_entry) = self
             .outstanding_workflow_tasks
             .get_mut(&work.workflow_execution.run_id)
@@ -264,7 +263,17 @@ impl WorkflowTaskManager {
             arguments: Vec::from_payloads(q.query_args),
         });
 
-        let (info, mut next_activation) = self.instantiate_or_update_workflow(work)?;
+        let (info, mut next_activation) = match self.instantiate_or_update_workflow(work) {
+            Ok((info, next_activation)) => (info, next_activation),
+            Err(e) => {
+                if let WorkflowError::UnderlyingMachinesError(WFMachinesError::ResetSticky) =
+                    e.source
+                {
+                    return Ok(NewWfTaskOutcome::ResetSticky);
+                }
+                return Err(e);
+            }
+        };
 
         // Immediately dispatch query activation if no other jobs
         let legacy_query = if next_activation.jobs.is_empty() {
