@@ -82,6 +82,7 @@ use tokio::sync::{
 
 #[cfg(test)]
 use crate::pollers::{BoxedActPoller, BoxedWFPoller};
+use std::future::Future;
 
 lazy_static::lazy_static! {
     /// A process-wide unique string, which will be different on every startup
@@ -633,21 +634,19 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                     Some(WorkerStatus::Live(worker)) => {
                         let sticky_attrs = worker.get_sticky_attrs();
                         completion.sticky_attributes = sticky_attrs;
-                        let res = self.server_gateway.complete_workflow_task(completion).await;
-                        if let Err(ts) = res {
-                            let should_evict = self.handle_wft_complete_errs(ts)?;
-                            if should_evict {
-                                self.wft_manager.evict_run(run_id);
-                            }
-                        }
+                        self.handle_wft_complete_errs(run_id, || async {
+                            self.server_gateway.complete_workflow_task(completion).await
+                        })
+                        .await?;
                     }
                     Some(WorkerStatus::Shutdown) => {
                         // If the worker is shutdown we still want to be able to complete the WF,
                         // but sticky queue no longer makes sense, so we complete directly through
                         // gateway with no sticky info
-                        self.server_gateway
-                            .complete_workflow_task(completion)
-                            .await?;
+                        self.handle_wft_complete_errs(run_id, || async {
+                            self.server_gateway.complete_workflow_task(completion).await
+                        })
+                        .await?;
                     }
                     None => {
                         return Err(CompleteWfError::NoWorkerForQueue(task_queue));
@@ -678,13 +677,16 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     ) -> Result<(), CompleteWfError> {
         match self.wft_manager.failed_activation(run_id) {
             FailedActivationOutcome::Report(tt) => {
-                self.server_gateway
-                    .fail_workflow_task(
-                        tt,
-                        WorkflowTaskFailedCause::Unspecified,
-                        failure.failure.map(Into::into),
-                    )
-                    .await?;
+                self.handle_wft_complete_errs(run_id, || async {
+                    self.server_gateway
+                        .fail_workflow_task(
+                            tt,
+                            WorkflowTaskFailedCause::Unspecified,
+                            failure.failure.map(Into::into),
+                        )
+                        .await
+                })
+                .await?;
             }
             FailedActivationOutcome::ReportLegacyQueryFailure(task_token) => {
                 self.server_gateway
@@ -706,23 +708,39 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         self.shutdown_requested.load(Ordering::Relaxed)
     }
 
-    /// Handle server errors from either completing or failing a workflow task
-    ///
-    /// Returns `Ok(true)` if the workflow should be evicted, `Err(_)` if the error should be
-    /// propagated, and `Ok(false)` if it is safe to ignore entirely.
-    fn handle_wft_complete_errs(&self, err: tonic::Status) -> Result<bool, CompleteWfError> {
-        match err.code() {
-            // Silence unhandled command errors since the lang SDK cannot do anything about them
-            // besides poll again, which it will do anyway.
-            tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
-                warn!("Unhandled command response when completing");
-                Ok(false)
+    /// Handle server errors from either completing or failing a workflow task. Returns any errors
+    /// that can't be automatically handled.
+    async fn handle_wft_complete_errs<T, Fut>(
+        &self,
+        run_id: &str,
+        completer: impl FnOnce() -> Fut,
+    ) -> Result<(), CompleteWfError>
+    where
+        Fut: Future<Output = Result<T, tonic::Status>>,
+    {
+        let mut should_evict = false;
+        let res = match completer().await {
+            Err(err) => {
+                match err.code() {
+                    // Silence unhandled command errors since the lang SDK cannot do anything about
+                    // them besides poll again, which it will do anyway.
+                    tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
+                        warn!("Unhandled command response when completing");
+                        Ok(())
+                    }
+                    tonic::Code::NotFound => {
+                        warn!("Task not found when completing: {}", err);
+                        should_evict = true;
+                        Ok(())
+                    }
+                    _ => Err(err),
+                }
             }
-            tonic::Code::NotFound => {
-                warn!("Task not found when completing: {}", err);
-                Ok(true)
-            }
-            _ => Err(err.into()),
+            _ => Ok(()),
+        };
+        if should_evict {
+            self.wft_manager.evict_run(run_id);
         }
+        res.map_err(Into::into)
     }
 }
