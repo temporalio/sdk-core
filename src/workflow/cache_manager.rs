@@ -22,7 +22,7 @@ impl WorkflowCacheManager {
     /// Touches record associated with run id in the cache.
     /// Once cache reaches capacity, overflow records will be returned back to the caller.
     /// Caller is responsible for doing all cleanup for the run id.
-    pub fn touch(&mut self, run_id: &str) -> Option<String> {
+    pub fn insert(&mut self, run_id: &str) -> Option<String> {
         if self.cache.len() < self.cache.cap() {
             // Blindly add a record into the cache, since it still has capacity.
             self.cache.put(run_id.to_owned(), ());
@@ -38,8 +38,8 @@ impl WorkflowCacheManager {
     }
 
     /// Removes run id from the cache.
-    pub fn evict(&mut self, run_id: &str) {
-        self.cache.pop(&run_id.to_owned());
+    pub fn touch(&mut self, run_id: &str) {
+        self.cache.get(&run_id.to_owned());
     }
 }
 
@@ -47,40 +47,39 @@ impl WorkflowCacheManager {
 mod tests {
     use super::*;
     #[test]
-    fn touch_with_overflow() {
+    fn insert_with_overflow() {
         let mut wcm = WorkflowCacheManager::new(WorkflowCachingPolicy::Sticky {
             max_cached_workflows: 2,
         });
-        assert_matches!(wcm.touch("1"), None);
-        assert_matches!(wcm.touch("2"), None);
-        assert_matches!(wcm.touch("3"), Some(run_id) => {
+        assert_matches!(wcm.insert("1"), None);
+        assert_matches!(wcm.insert("2"), None);
+        assert_matches!(wcm.insert("3"), Some(run_id) => {
             assert_eq!(run_id, "1")
         });
     }
 
     #[test]
-    fn touch_and_evict() {
+    fn insert_and_touch() {
         let mut wcm = WorkflowCacheManager::new(WorkflowCachingPolicy::Sticky {
             max_cached_workflows: 2,
         });
-        assert_matches!(wcm.touch("1"), None);
-        assert_matches!(wcm.touch("2"), None);
-        wcm.evict("1");
-        assert_matches!(wcm.touch("3"), None);
-        assert_matches!(wcm.touch("4"), Some(run_id) => {
+        assert_matches!(wcm.insert("1"), None);
+        assert_matches!(wcm.insert("2"), None);
+        wcm.touch("1");
+        assert_matches!(wcm.insert("3"), Some(run_id) => {
             assert_eq!(run_id, "2")
         });
     }
 
     #[test]
-    fn evict_early() {
+    fn touch_early() {
         let mut wcm = WorkflowCacheManager::new(WorkflowCachingPolicy::Sticky {
             max_cached_workflows: 2,
         });
-        wcm.evict("1");
-        assert_matches!(wcm.touch("1"), None);
-        assert_matches!(wcm.touch("2"), None);
-        assert_matches!(wcm.touch("3"), Some(run_id) => {
+        wcm.touch("1");
+        assert_matches!(wcm.insert("1"), None);
+        assert_matches!(wcm.insert("2"), None);
+        assert_matches!(wcm.insert("3"), Some(run_id) => {
             assert_eq!(run_id, "1")
         });
     }
@@ -90,10 +89,10 @@ mod tests {
         let mut wcm = WorkflowCacheManager::new(WorkflowCachingPolicy::Sticky {
             max_cached_workflows: 0,
         });
-        assert_matches!(wcm.touch("1"), Some(run_id) => {
+        assert_matches!(wcm.insert("1"), Some(run_id) => {
             assert_eq!(run_id, "1")
         });
-        assert_matches!(wcm.touch("2"), Some(run_id) => {
+        assert_matches!(wcm.insert("2"), Some(run_id) => {
             assert_eq!(run_id, "2")
         });
     }
@@ -101,10 +100,10 @@ mod tests {
     #[test]
     fn non_sticky_always_pending_eviction() {
         let mut wcm = WorkflowCacheManager::new(WorkflowCachingPolicy::NonSticky);
-        assert_matches!(wcm.touch("1"), Some(run_id) => {
+        assert_matches!(wcm.insert("1"), Some(run_id) => {
             assert_eq!(run_id, "1")
         });
-        assert_matches!(wcm.touch("2"), Some(run_id) => {
+        assert_matches!(wcm.insert("2"), Some(run_id) => {
             assert_eq!(run_id, "2")
         });
     }

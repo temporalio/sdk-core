@@ -97,8 +97,8 @@ pub enum NewWfTaskOutcome {
     /// The workflow task should be auto-completed with an empty command list, as it must be replied
     /// to but there is no meaningful work for lang to do.
     Autocomplete,
-    /// Notify server that workflow tasks for a given workflow should be sent onto a regular task queue.
-    ResetSticky,
+    /// Workflow task had partial history and workflow was not present in the cache.
+    CacheMiss,
 }
 
 #[derive(Debug)]
@@ -174,7 +174,7 @@ impl WorkflowTaskManager {
         if let Some(act) = maybe_act.as_ref() {
             self.insert_outstanding_activation(&act);
             // Evict from the workflow cache to ensure that run id is not going to be invalidated before activation is complete.
-            self.cache_manager.write().evict(&act.run_id);
+            self.cache_manager.write().touch(&act.run_id);
         }
         maybe_act
     }
@@ -202,14 +202,10 @@ impl WorkflowTaskManager {
     /// Evict a workflow from the cache by its run id and enqueue a pending activation to evict the
     /// workflow. Any existing pending activations will be destroyed, and any outstanding
     /// activations invalidated.
-    /// In case if evict_from_cache flag is passed, run id will also be removed from the LRU cache.
-    ///
     /// Returns that workflow's task info if it was present.
-    pub fn evict_run(&self, run_id: &str, evict_from_cache: bool) -> Option<WorkflowTaskInfo> {
+    pub fn evict_run(&self, run_id: &str) -> Option<WorkflowTaskInfo> {
         debug!(run_id=%run_id, "Evicting run");
-        if evict_from_cache {
-            self.cache_manager.write().evict(run_id);
-        }
+        self.cache_manager.write().touch(run_id);
         self.workflow_machines.evict(run_id);
         self.outstanding_activations.remove(run_id);
         self.pending_activations.remove_all_with_run_id(run_id);
@@ -286,10 +282,10 @@ impl WorkflowTaskManager {
             match self.instantiate_or_update_workflow(work, gateway).await? {
                 Ok((info, next_activation)) => (info, next_activation),
                 Err(e) => {
-                    if let WorkflowError::UnderlyingMachinesError(WFMachinesError::ResetSticky) =
+                    if let WorkflowError::UnderlyingMachinesError(WFMachinesError::CacheMiss) =
                         e.source
                     {
-                        return Ok(NewWfTaskOutcome::ResetSticky);
+                        return Ok(NewWfTaskOutcome::CacheMiss);
                     }
                     return Err(e);
                 }
@@ -427,7 +423,7 @@ impl WorkflowTaskManager {
             );
             return FailedActivationOutcome::NoReport;
         };
-        self.cache_manager.write().evict(run_id);
+        self.cache_manager.write().touch(run_id);
         // If the outstanding activation is a legacy query task, report that we need to fail it
         let ret = if let Some(OutstandingActivation::LegacyQuery) =
             self.outstanding_activations.get(run_id).map(|at| *at)
@@ -435,7 +431,7 @@ impl WorkflowTaskManager {
             FailedActivationOutcome::ReportLegacyQueryFailure(tt)
         } else {
             // Blow up any cached data associated with the workflow, including LRU cache.
-            let should_report = if let Some(wti) = self.evict_run(run_id, true) {
+            let should_report = if let Some(wti) = self.evict_run(run_id) {
                 // Only report to server if the last task wasn't also a failure (avoid spam)
                 wti.attempt <= 1
             } else {
@@ -550,9 +546,10 @@ impl WorkflowTaskManager {
             }
 
             // Evict run id if we are in non-sticky mode or if we have too many cached run ids.
-            if let Some(evict_run_id) = self.cache_manager.write().touch(run_id) {
+            let maybe_evicted = self.cache_manager.write().insert(run_id);
+            if let Some(evicted_run_id) = maybe_evicted {
                 // Not removing from the cache as record has already been removed and we are still holding cache manager lock.
-                self.evict_run(&evict_run_id, false);
+                self.evict_run(&evicted_run_id);
             }
 
             // The evict may or may not have already done this, but even when we aren't evicting

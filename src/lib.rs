@@ -340,7 +340,6 @@ where
                 Ok(Some(work)) => match self.apply_server_work(work).await? {
                     Some(a) => return Ok(a),
                     None => {
-                        debug!("Skipping to the next poll");
                         continue;
                     }
                 },
@@ -475,7 +474,7 @@ where
     }
 
     fn request_workflow_eviction(&self, run_id: &str) {
-        self.wft_manager.evict_run(run_id, true);
+        self.wft_manager.evict_run(run_id);
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {
@@ -597,7 +596,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                 .await?;
                 Ok(None)
             }
-            NewWfTaskOutcome::ResetSticky => {
+            NewWfTaskOutcome::CacheMiss => {
                 debug!(workflow_execution=?we,
                 "Unable to process workflow task with partial history because workflow cache does not contain workflow anymore. Resetting sticky execution.");
                 self.server_gateway
