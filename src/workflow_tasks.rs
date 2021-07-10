@@ -423,7 +423,6 @@ impl WorkflowTaskManager {
             );
             return FailedActivationOutcome::NoReport;
         };
-        self.cache_manager.write().touch(run_id);
         // If the outstanding activation is a legacy query task, report that we need to fail it
         let ret = if let Some(OutstandingActivation::LegacyQuery) =
             self.outstanding_activations.get(run_id).map(|at| *at)
