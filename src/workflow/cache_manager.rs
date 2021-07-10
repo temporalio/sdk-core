@@ -19,9 +19,9 @@ impl WorkflowCacheManager {
         }
     }
 
-    /// Touches record associated with run id in the cache.
+    /// Inserts a record associated with the run id into the cache.
     /// Once cache reaches capacity, overflow records will be returned back to the caller.
-    /// Caller is responsible for doing all cleanup for the run id.
+    /// Caller is responsible for doing all cleanup for the records returned.
     pub fn insert(&mut self, run_id: &str) -> Option<String> {
         if self.cache.len() < self.cache.cap() {
             // Blindly add a record into the cache, since it still has capacity.
@@ -37,7 +37,7 @@ impl WorkflowCacheManager {
         }
     }
 
-    /// Removes run id from the cache.
+    /// If run id exists in the cache it will be moved to the top of the LRU cache.
     pub fn touch(&mut self, run_id: &str) {
         self.cache.get(&run_id.to_owned());
     }
