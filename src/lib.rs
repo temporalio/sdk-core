@@ -598,7 +598,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             }
             NewWfTaskOutcome::CacheMiss => {
                 debug!(workflow_execution=?we,
-                "Unable to process workflow task with partial history because workflow cache does not contain workflow anymore. Resetting sticky execution.");
+                "Unable to process workflow task with partial history because workflow cache does not contain workflow anymore.");
                 self.server_gateway
                     .fail_workflow_task(
                         tt,
