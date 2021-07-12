@@ -89,9 +89,10 @@ async fn workflow_cache_evictions() {
     let task_q = starter.get_task_queue();
     let num_workflows = 2;
 
-    let run_ids: Vec<_> =
-        future::join_all((0..2).map(|_| starter.start_wf_with_id(format!("{}", Uuid::new_v4()))))
-            .await;
+    let run_ids: Vec<_> = future::join_all(
+        (0..2).map(|_| starter.start_wf_with_id(format!("wce-{}", Uuid::new_v4()))),
+    )
+    .await;
 
     let mut send_chans = HashMap::new();
     async fn wf_task(core: Arc<dyn Core>, mut task_chan: UnboundedReceiver<WfActivation>) {
