@@ -547,7 +547,8 @@ impl WorkflowTaskManager {
             // Evict run id if we are in non-sticky mode or if we have too many cached run ids.
             let maybe_evicted = self.cache_manager.write().insert(run_id);
             if let Some(evicted_run_id) = maybe_evicted {
-                // Not removing from the cache as record has already been removed and we are still holding cache manager lock.
+                self.evict_run(&evicted_run_id);
+            } else if self.eviction_policy == WorkflowCachingPolicy::NonSticky {
                 self.evict_run(&evicted_run_id);
             }
 
