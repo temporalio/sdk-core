@@ -544,7 +544,7 @@ impl WorkflowTaskManager {
                 }
             }
 
-            // Evict run id if we are in non-sticky mode or if we have too many cached run ids.
+            // Evict run id if cache is full. Non-sticky will always evict.
             let maybe_evicted = self.cache_manager.write().insert(run_id);
             if let Some(evicted_run_id) = maybe_evicted {
                 self.evict_run(&evicted_run_id);
