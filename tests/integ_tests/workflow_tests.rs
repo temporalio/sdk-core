@@ -16,7 +16,7 @@ use temporal_sdk_core::{
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
-    tracing_init, Core, IntoCompletion, PollWfError,
+    Core, IntoCompletion, PollWfError,
 };
 use test_utils::{
     init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreTestHelpers, CoreWfStarter, GwApi,
@@ -81,7 +81,6 @@ async fn parallel_workflows_same_queue() {
 
 #[tokio::test]
 async fn workflow_cache_evictions() {
-    tracing_init();
     let mut starter = CoreWfStarter::new("workflow_cache_evictions");
     starter
         .max_cached_workflows(1)
