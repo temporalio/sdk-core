@@ -549,7 +549,7 @@ impl WorkflowTaskManager {
             if let Some(evicted_run_id) = maybe_evicted {
                 self.evict_run(&evicted_run_id);
             } else if self.eviction_policy == WorkflowCachingPolicy::NonSticky {
-                self.evict_run(&evicted_run_id);
+                self.evict_run(&run_id);
             }
 
             // The evict may or may not have already done this, but even when we aren't evicting
