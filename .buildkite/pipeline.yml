@@ -58,10 +58,10 @@ steps:
     agents:
       queue: "default"
       docker: "*"
-    command: "node packages/test/lib/bench.js --server-address $TEMPORAL_SERVICE_ADDRESS --namespace bench-node"
     timeout_in_minutes: 15
     plugins:
       - docker-compose#v3.0.0:
           run: bench-test
           config: .buildkite/docker/docker-compose.yaml
+          command: ["node", "packages/test/lib/bench.js", "--server-address", "$TEMPORAL_SERVICE_ADDRESS", "--namespace", "bench-node"]
   - wait
