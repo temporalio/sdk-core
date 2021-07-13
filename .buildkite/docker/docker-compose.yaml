@@ -41,10 +41,10 @@ services:
   unit-test:
     build:
       context: ../../
-      dockerfile: .buildkite/docker/Dockerfile
+      dockerfile: .buildkite/docker/build.Dockerfile
     security_opt:
       - seccomp:unconfined
-    command: /bin/sh -c ".buildkite/docker/build.sh"
+    command: /bin/sh -c ".buildkite/docker/build-standard.sh"
     environment:
       - "USER=unittest"
     volumes:
@@ -53,10 +53,23 @@ services:
   integ-test:
     build:
       context: ../../
-      dockerfile: .buildkite/docker/Dockerfile
-    command: /bin/sh -c ".buildkite/docker/build.sh"
+      dockerfile: .buildkite/docker/build.Dockerfile
+    command: /bin/sh -c ".buildkite/docker/build-standard.sh"
     environment:
-      - "USER=unittest"
+      - "USER=integtest"
+      - "TEMPORAL_SERVICE_ADDRESS=http://temporal:7233"
+    depends_on:
+      - temporal
+    volumes:
+      - "../../:/sdk-core"
+
+  bench-test:
+    build:
+      context: ../../
+      dockerfile: .buildkite/docker/bench.Dockerfile
+    command: /bin/sh -c "build-bench.sh"
+    environment:
+      - "USER=benchtest"
       - "TEMPORAL_SERVICE_ADDRESS=http://temporal:7233"
     depends_on:
       - temporal

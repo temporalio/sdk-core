@@ -54,4 +54,14 @@ steps:
       - docker-compose#v3.0.0:
           run: integ-test
           config: .buildkite/docker/docker-compose.yaml
+  - label: "bench-test"
+    agents:
+      queue: "default"
+      docker: "*"
+    timeout_in_minutes: 15
+    plugins:
+      - docker-compose#v3.0.0:
+          run: bench-test
+          config: .buildkite/docker/docker-compose.yaml
+          command: ["node", "packages/test/lib/bench.js", "--server-address", "$TEMPORAL_SERVICE_ADDRESS", "--namespace", "bench-node"]
   - wait
