@@ -54,4 +54,14 @@ steps:
       - docker-compose#v3.0.0:
           run: integ-test
           config: .buildkite/docker/docker-compose.yaml
+  - label: "bench-test"
+    agents:
+      queue: "default"
+      docker: "*"
+    command: "cargo test --test bench-tests"
+    timeout_in_minutes: 15
+    plugins:
+      - docker-compose#v3.0.0:
+          run: bench-test
+          config: .buildkite/docker/docker-compose.yaml
   - wait
