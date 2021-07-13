@@ -112,6 +112,8 @@ pub enum MachineResponse {
 
 #[derive(thiserror::Error, Debug)]
 // TODO: Some of these are redundant with MachineError -- we should try to dedupe / simplify
+//  This also probably doesn't need to be public. The only important thing is if the error is a
+//  nondeterminism error.
 pub enum WFMachinesError {
     #[error("Event {0:?} was not expected: {1}")]
     UnexpectedEvent(HistoryEvent, &'static str),
@@ -121,6 +123,7 @@ pub enum WFMachinesError {
     MalformedEvent(HistoryEvent, String),
     // Expected to be transformed into a `MalformedEvent` with the full event by workflow machines,
     // when emitted by a sub-machine
+    // TODO: This is really an unexpected, rather than malformed event.
     #[error("{0}")]
     MalformedEventDetail(String),
     #[error("Command type {0:?} was not expected")]
@@ -138,8 +141,6 @@ pub enum WFMachinesError {
 
     #[error("Machine encountered an invalid transition: {0}")]
     InvalidTransition(String),
-    #[error("Invalid cancelation type: {0}")]
-    InvalidCancelationType(i32),
 }
 
 impl WorkflowMachines {
@@ -475,7 +476,7 @@ impl WorkflowMachines {
         Ok(has_new_lang_jobs)
     }
 
-    /// Apply events from history to this machines instance
+    /// Apply the next entire workflow task from history to these machines.
     pub(crate) fn apply_next_wft_from_history(&mut self) -> Result<()> {
         let events = self
             .last_history_from_server

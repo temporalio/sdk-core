@@ -451,8 +451,10 @@ impl WorkflowTaskManager {
 
     /// Check if thew workflow run needs another activation and queue it up if there is one by
     /// pushing it into the pending activations list
-    fn enqueue_next_activation_if_needed(&self, run_id: &str) -> Result<bool, WorkflowUpdateError> {
-        let mut new_activation = false;
+    fn enqueue_next_activation_if_needed(&self, run_id: &str) -> Result<(), WorkflowUpdateError> {
+        // TODO: Have this return some indication that new events are needed to completely
+        //  apply the next workflow task. Do that, and feed them back into the machine until
+        //  a complete WFT is returned.
         let next_activation =
             self.access_wf_machine(run_id, move |mgr| mgr.get_next_activation())?;
         if !next_activation.jobs.is_empty() {
@@ -462,12 +464,11 @@ impl WorkflowTaskManager {
                 .expect("Workflow task is present in map if there is a new pending activation");
             self.pending_activations
                 .push(next_activation, wf_entry.info.task_queue.clone());
-            new_activation = true;
             let _ = self
                 .workflow_activations_update
                 .send(WfActivationUpdate::NewPendingActivation);
         }
-        Ok(new_activation)
+        Ok(())
     }
 
     /// Called after every WFT completion or failure, updates outstanding task status & issues
