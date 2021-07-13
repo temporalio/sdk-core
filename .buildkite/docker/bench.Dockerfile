@@ -19,9 +19,7 @@ RUN git clone https://github.com/temporalio/sdk-node.git /sdk-node
 
 # Instead of initializing submodule as we would normally do, we make a copy of the current (patched) sdk-core state.
 WORKDIR /sdk-core
-RUN mkdir -p /sdk-node/packages/worker/native && cp -R /sdk-core /sdk-node/packages/worker/native/sdk-core
+RUN rm -rf /sdk-node/packages/core-bridge/sdk-core && ln -s /sdk-core /sdk-node/packages/core-bridge/sdk-core
 
 # Init bench
 WORKDIR /sdk-node
-
-RUN git checkout add-ns
