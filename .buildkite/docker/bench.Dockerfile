@@ -26,6 +26,3 @@ RUN git submodule init && git submodule update
 # Build nodejs app
 RUN npm ci
 RUN npm run build
-
-# Start bench test when docker image as ran.
-CMD ["node", "packages/test/lib/bench.js", "--server-address", "$TEMPORAL_SERVICE_ADDRESS", "--namespace", "bench-node"]
