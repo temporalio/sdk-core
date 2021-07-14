@@ -1,4 +1,4 @@
-FROM cimg/rust:1.45-node AS builder
+FROM cimg/rust:1.53-node AS builder
 USER root
 
 # Update rust and tools

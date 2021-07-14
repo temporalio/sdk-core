@@ -69,7 +69,6 @@ services:
       dockerfile: .buildkite/docker/bench.Dockerfile
     environment:
       - "USER=benchtest"
-      - "TEMPORAL_SERVICE_ADDRESS=http://temporal:7233"
     depends_on:
       - temporal
     volumes:
