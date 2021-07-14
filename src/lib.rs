@@ -443,7 +443,7 @@ where
         };
         let (res, should_remove) = match maybe_net_err {
             Some(e) if e.code() == tonic::Code::NotFound => {
-                warn!(task_token = ?tt, details = ?e, "Activity not found on completion.\
+                warn!(task_token = ?tt, details = ?e, "Activity not found on completion. \
                  This may happen if the activity has already been cancelled but completed anyway.");
                 (Ok(()), true)
             }

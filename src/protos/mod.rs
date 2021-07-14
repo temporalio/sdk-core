@@ -33,11 +33,17 @@ pub mod coresdk {
         tonic::include_proto!("coresdk.activity_task");
 
         impl ActivityTask {
-            pub fn cancel_from_ids(task_token: TaskToken, activity_id: String) -> Self {
+            pub fn cancel_from_ids(
+                task_token: TaskToken,
+                activity_id: String,
+                reason: ActivityCancelReason,
+            ) -> Self {
                 ActivityTask {
                     task_token: task_token.0,
                     activity_id,
-                    variant: Some(activity_task::Variant::Cancel(Cancel {})),
+                    variant: Some(activity_task::Variant::Cancel(Cancel {
+                        reason: reason as i32,
+                    })),
                 }
             }
         }

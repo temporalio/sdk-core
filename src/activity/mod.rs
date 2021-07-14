@@ -43,7 +43,7 @@ impl ActivityTaskManager {
 
             maybe_tt = self.activity_heartbeat_manager_handle.next_pending_cancel() => {
                 // Issue cancellations for anything we noticed was cancelled during heartbeating
-                if let Some(task_token) = maybe_tt {
+                if let Some((task_token, cancel_reason)) = maybe_tt {
                     // It's possible that activity has been completed and we no longer have an
                     // outstanding activity task. This is fine because it means that we no
                     // longer need to cancel this activity, so we'll just ignore such orphaned
@@ -58,6 +58,7 @@ impl ActivityTaskManager {
                             return Ok(Some(ActivityTask::cancel_from_ids(
                                 task_token,
                                 details.activity_id.clone(),
+                                cancel_reason
                             )));
                     } else {
                         warn!(task_token = ?task_token,
