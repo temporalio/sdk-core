@@ -18,8 +18,8 @@ COPY .buildkite/docker/build-bench.sh /usr/bin/build-bench.sh
 RUN git clone https://github.com/temporalio/sdk-node.git /sdk-node
 
 # Instead of initializing submodule as we would normally do, we make a copy of the current (patched) sdk-core state.
-WORKDIR /sdk-core
-RUN rm -rf /sdk-node/packages/core-bridge/sdk-core && ln -s /sdk-core /sdk-node/packages/core-bridge/sdk-core
+COPY . /sdk-node/packages/core-bridge/sdk-core
 
-# Init bench
+# Build bench
 WORKDIR /sdk-node
+RUN build-bench.sh

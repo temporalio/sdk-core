@@ -67,7 +67,6 @@ services:
     build:
       context: ../../
       dockerfile: .buildkite/docker/bench.Dockerfile
-    command: /bin/sh -c "build-bench.sh"
     environment:
       - "USER=benchtest"
       - "TEMPORAL_SERVICE_ADDRESS=http://temporal:7233"
