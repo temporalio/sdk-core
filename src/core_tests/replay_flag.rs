@@ -38,21 +38,22 @@ fn fire_happy_hist(num_timers: usize) -> WorkflowMachines {
 #[rstest]
 #[case::one_timer(fire_happy_hist(1), 1)]
 #[case::five_timers(fire_happy_hist(5), 5)]
-fn replay_flag_is_correct(#[case] setup: WorkflowMachines, #[case] num_timers: usize) {
+#[tokio::test(flavor = "multi_thread")]
+async fn replay_flag_is_correct(#[case] setup: WorkflowMachines, #[case] num_timers: usize) {
     // Verify replay flag is correct by constructing a workflow manager that already has a complete
     // history fed into it. The first (few, depending on test a params) activation(s) will be under
     // replay while the last should not
     let mut wfm = WorkflowManager::new_from_machines(setup);
 
     for _ in 1..=num_timers {
-        let act = wfm.get_next_activation().unwrap();
+        let act = wfm.get_next_activation().await.unwrap();
         assert!(act.is_replaying);
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
     }
 
-    let act = wfm.get_next_activation().unwrap();
+    let act = wfm.get_next_activation().await.unwrap();
     assert!(!act.is_replaying);
     let commands = wfm.get_server_commands().commands;
     assert_eq!(commands.len(), 1);
@@ -62,8 +63,8 @@ fn replay_flag_is_correct(#[case] setup: WorkflowMachines, #[case] num_timers: u
     );
 }
 
-#[test]
-fn replay_flag_is_correct_partial_history() {
+#[tokio::test]
+async fn replay_flag_is_correct_partial_history() {
     let twd = timers_wf(1);
     // Add 1 b/c history takes # wf tasks, not timers
     let t = canned_histories::long_sequential_timers(2);
@@ -76,7 +77,7 @@ fn replay_flag_is_correct_partial_history() {
     );
     let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
-    let act = wfm.get_next_activation().unwrap();
+    let act = wfm.get_next_activation().await.unwrap();
     assert!(!act.is_replaying);
     let commands = wfm.get_server_commands().commands;
     assert_eq!(commands.len(), 1);

@@ -97,9 +97,12 @@ impl WorkflowManager {
     ///
     /// Should only be called when a workflow has caught up on replay (or is just beginning). It
     /// will return a workflow activation if one is needed.
-    pub fn feed_history_from_server(&mut self, update: HistoryUpdate) -> Result<WfActivation> {
-        self.machines.new_history_from_server(update)?;
-        self.get_next_activation()
+    pub async fn feed_history_from_server(
+        &mut self,
+        update: HistoryUpdate,
+    ) -> Result<WfActivation> {
+        self.machines.new_history_from_server(update).await?;
+        self.get_next_activation().await
     }
 
     /// Fetch the next workflow activation for this workflow if one is required. Doing so will apply
@@ -107,14 +110,14 @@ impl WorkflowManager {
     ///
     /// Callers may also need to call [get_server_commands] after this to issue any pending commands
     /// to the server.
-    pub fn get_next_activation(&mut self) -> Result<WfActivation> {
+    pub async fn get_next_activation(&mut self) -> Result<WfActivation> {
         // First check if there are already some pending jobs, which can be a result of replay.
         let activation = self.machines.get_wf_activation();
         if !activation.jobs.is_empty() {
             return Ok(activation);
         }
 
-        self.machines.apply_next_wft_from_history()?;
+        self.machines.apply_next_wft_from_history().await?;
         Ok(self.machines.get_wf_activation())
     }
 
@@ -134,12 +137,12 @@ impl WorkflowManager {
     /// This is meant to be used with the TestWorkflowDriver which can automatically produce
     /// commands.
     #[cfg(test)]
-    pub fn process_all_activations(&mut self) -> Result<WfActivation> {
-        let mut last_act = self.get_next_activation()?;
-        let mut next_act = self.get_next_activation()?;
+    pub async fn process_all_activations(&mut self) -> Result<WfActivation> {
+        let mut last_act = self.get_next_activation().await?;
+        let mut next_act = self.get_next_activation().await?;
         while !next_act.jobs.is_empty() {
             last_act = next_act;
-            next_act = self.get_next_activation()?;
+            next_act = self.get_next_activation().await?;
         }
         Ok(last_act)
     }

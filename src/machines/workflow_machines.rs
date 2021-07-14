@@ -171,10 +171,10 @@ impl WorkflowMachines {
         }
     }
 
-    pub(crate) fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
+    pub(crate) async fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
         self.last_history_from_server = update;
         self.replaying = self.last_history_from_server.previous_started_event_id > 0;
-        self.apply_next_wft_from_history()?;
+        self.apply_next_wft_from_history().await?;
         Ok(())
     }
 
@@ -477,10 +477,12 @@ impl WorkflowMachines {
     }
 
     /// Apply the next entire workflow task from history to these machines.
-    pub(crate) fn apply_next_wft_from_history(&mut self) -> Result<()> {
+    pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<()> {
+        let last_handled_wft_started_id = self.last_handled_wft_started_id();
         let events = self
             .last_history_from_server
-            .take_next_wft_sequence(self.last_handled_wft_started_id());
+            .take_next_wft_sequence(last_handled_wft_started_id)
+            .await;
 
         // We're caught up on reply if there are no new events to process
         // TODO: Probably this is unneeded if we evict whenever history is from non-sticky queue

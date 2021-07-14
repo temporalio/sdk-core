@@ -751,11 +751,12 @@ mod test {
         case::success(activity_happy_hist()),
         case::failure(activity_failure_hist())
     )]
-    fn single_activity_inc(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
+    #[tokio::test]
+    async fn single_activity_inc(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
         let (t, state_machines) = hist_batches;
         let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
-        wfm.get_next_activation().unwrap();
+        wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
@@ -763,7 +764,7 @@ mod test {
             CommandType::ScheduleActivityTask as i32
         );
 
-        wfm.get_next_activation().unwrap();
+        wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
@@ -777,11 +778,12 @@ mod test {
         case::success(activity_happy_hist()),
         case::failure(activity_failure_hist())
     )]
-    fn single_activity_full(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
+    #[tokio::test]
+    async fn single_activity_full(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
         let (t, state_machines) = hist_batches;
         let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
-        wfm.process_all_activations().unwrap();
+        wfm.process_all_activations().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
@@ -790,8 +792,8 @@ mod test {
         );
     }
 
-    #[test]
-    fn immediate_activity_cancelation() {
+    #[tokio::test]
+    async fn immediate_activity_cancelation() {
         let twd = TestWorkflowDriver::new(vec![], |mut cmd_sink: WfContext| async move {
             let cancel_activity_future = cmd_sink.activity(ScheduleActivity {
                 activity_id: "activity-id-1".to_string(),
@@ -817,7 +819,7 @@ mod test {
         );
         let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
-        let activation = wfm.process_all_activations().unwrap();
+        let activation = wfm.process_all_activations().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_matches!(
             activation.jobs.as_slice(),

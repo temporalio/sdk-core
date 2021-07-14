@@ -133,8 +133,8 @@ mod tests {
         });
     }
 
-    #[test]
-    fn wf_completing_with_continue_as_new() {
+    #[tokio::test]
+    async fn wf_completing_with_continue_as_new() {
         let twd = TestWorkflowDriver::new(vec![], wf_with_timer);
         let t = canned_histories::timer_then_continue_as_new("timer1");
         let state_machines = WorkflowMachines::new(
@@ -144,12 +144,12 @@ mod tests {
             Box::new(twd).into(),
         );
         let mut wfm = WorkflowManager::new_from_machines(state_machines);
-        wfm.get_next_activation().unwrap();
+        wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
 
-        wfm.get_next_activation().unwrap();
+        wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands.len(), 1);
@@ -158,7 +158,7 @@ mod tests {
             CommandType::ContinueAsNewWorkflowExecution as i32
         );
 
-        assert!(wfm.get_next_activation().unwrap().jobs.is_empty());
+        assert!(wfm.get_next_activation().await.unwrap().jobs.is_empty());
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
     }

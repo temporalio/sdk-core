@@ -6,6 +6,7 @@ use crate::{
 use core::convert::From;
 use std::collections::VecDeque;
 
+// TODO: Rename PollRespHistory ?
 /// A slimmed down version of a poll workflow task response which includes just the info needed
 /// by [WorkflowManager]. History events are expected to be consumed from it and applied to the
 /// state machines.
@@ -46,7 +47,7 @@ impl HistoryUpdate {
     /// remaining history is returned.
     ///
     /// Events are *consumed* by this process, to keep things efficient in workflow machines
-    pub fn take_next_wft_sequence(&mut self, from_wft_started_id: i64) -> Vec<HistoryEvent> {
+    pub async fn take_next_wft_sequence(&mut self, from_wft_started_id: i64) -> Vec<HistoryEvent> {
         let mut events_to_next_wft_started = vec![];
 
         // This flag tracks if, while determining events to be returned, we have seen the next
@@ -108,48 +109,48 @@ impl From<ValidPollWFTQResponse> for HistoryUpdate {
 mod tests {
     use crate::test_help::canned_histories;
 
-    #[test]
-    fn consumes_standard_wft_sequence() {
+    #[tokio::test]
+    async fn consumes_standard_wft_sequence() {
         let timer_hist = canned_histories::single_timer("t");
         let mut update = timer_hist.as_history_update();
-        let seq_1 = update.take_next_wft_sequence(0);
+        let seq_1 = update.take_next_wft_sequence(0).await;
         assert_eq!(seq_1.len(), 3);
         assert_eq!(seq_1.last().unwrap().event_id, 3);
-        let seq_2 = update.take_next_wft_sequence(3);
+        let seq_2 = update.take_next_wft_sequence(3).await;
         assert_eq!(seq_2.len(), 5);
         assert_eq!(seq_2.last().unwrap().event_id, 8);
     }
 
-    #[test]
-    fn skips_wft_failed() {
+    #[tokio::test]
+    async fn skips_wft_failed() {
         let failed_hist = canned_histories::workflow_fails_with_reset_after_timer("t", "runid");
         let mut update = failed_hist.as_history_update();
-        let seq_1 = update.take_next_wft_sequence(0);
+        let seq_1 = update.take_next_wft_sequence(0).await;
         assert_eq!(seq_1.len(), 3);
         assert_eq!(seq_1.last().unwrap().event_id, 3);
-        let seq_2 = update.take_next_wft_sequence(3);
+        let seq_2 = update.take_next_wft_sequence(3).await;
         assert_eq!(seq_2.len(), 8);
         assert_eq!(seq_2.last().unwrap().event_id, 11);
     }
 
-    #[test]
-    fn skips_wft_timeout() {
+    #[tokio::test]
+    async fn skips_wft_timeout() {
         let failed_hist = canned_histories::wft_timeout_repro();
         let mut update = failed_hist.as_history_update();
-        let seq_1 = update.take_next_wft_sequence(0);
+        let seq_1 = update.take_next_wft_sequence(0).await;
         assert_eq!(seq_1.len(), 3);
         assert_eq!(seq_1.last().unwrap().event_id, 3);
-        let seq_2 = update.take_next_wft_sequence(3);
+        let seq_2 = update.take_next_wft_sequence(3).await;
         assert_eq!(seq_2.len(), 11);
         assert_eq!(seq_2.last().unwrap().event_id, 14);
     }
 
-    #[test]
-    fn skips_events_before_desired_wft() {
+    #[tokio::test]
+    async fn skips_events_before_desired_wft() {
         let timer_hist = canned_histories::single_timer("t");
         let mut update = timer_hist.as_history_update();
         // We haven't processed the first 3 events, but we should still only get the second sequence
-        let seq_2 = update.take_next_wft_sequence(3);
+        let seq_2 = update.take_next_wft_sequence(3).await;
         assert_eq!(seq_2.len(), 5);
         assert_eq!(seq_2.last().unwrap().event_id, 8);
     }
