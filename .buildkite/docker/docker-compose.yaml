@@ -70,6 +70,7 @@ services:
     command: /bin/sh -c "node packages/test/lib/bench.js --server-address temporal:7233"
     environment:
       - "USER=benchtest"
+      - "TEMPORAL_SERVICE_ADDRESS=http://temporal:7233"
     depends_on:
       - temporal
     volumes:
