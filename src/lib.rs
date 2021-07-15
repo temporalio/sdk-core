@@ -486,7 +486,6 @@ where
                 w.shutdown_complete().await;
             }
         }
-        self.wft_manager.shutdown();
         self.act_manager.shutdown().await;
     }
 

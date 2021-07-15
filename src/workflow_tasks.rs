@@ -150,10 +150,6 @@ impl WorkflowTaskManager {
         }
     }
 
-    pub fn shutdown(&self) {
-        self.workflow_machines.shutdown();
-    }
-
     pub fn next_pending_activation(&self, task_queue: &str) -> Option<WfActivation> {
         // It is important that we do not issue pending activations for any workflows which already
         // have an outstanding activation. If we did, it can result in races where an in-progress

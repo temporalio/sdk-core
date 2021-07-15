@@ -7,7 +7,7 @@ use crate::{
 use dashmap::DashMap;
 use futures::future::{BoxFuture, FutureExt};
 use std::fmt::Debug;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::Mutex;
 
 // TODO: Redo docstr
 /// Provides a thread-safe way to access workflow machines which live exclusively on one thread
@@ -16,17 +16,12 @@ use tokio::sync::{watch, Mutex};
 pub(crate) struct WorkflowConcurrencyManager {
     /// Maps run id -> task containing machines for that run
     machines: DashMap<String, Mutex<Option<WorkflowManager>>>,
-    /// Is set to true when a shutdown is requested
-    shutdown_chan: watch::Sender<bool>,
 }
 
 impl WorkflowConcurrencyManager {
     pub fn new() -> Self {
-        let (shutdown_chan, shutdown_rx) = watch::channel(false);
-
         Self {
             machines: Default::default(),
-            shutdown_chan,
         }
     }
 
@@ -86,29 +81,14 @@ impl WorkflowConcurrencyManager {
                 run_id: run_id.to_string(),
             })?;
         let mut wfm_mutex = m.lock().await;
-        let mut wfm = wfm_mutex.take().expect("Machine can't be used twice");
+        let mut wfm = wfm_mutex
+            .take()
+            .expect("Machine cannot possibly be accessed simultaneously");
         let res = mutator(&mut wfm).await;
+        // Reinsert machine behind lock
         wfm_mutex.insert(wfm);
 
         res
-    }
-
-    /// Attempt to join the thread where the workflow machines live.
-    ///
-    /// # Panics
-    /// If the workflow machine thread panicked
-    pub fn shutdown(&self) {
-        // TODO: Anything to do here?
-        // let mut wf_thread = self.wf_thread.lock();
-        // if wf_thread.is_none() {
-        //     return;
-        // }
-        // let _ = self.shutdown_chan.send(true);
-        // wf_thread
-        //     .take()
-        //     .unwrap()
-        //     .join()
-        //     .expect("Workflow manager thread should shut down cleanly");
     }
 
     /// Remove the workflow with the provided run id from management
@@ -120,42 +100,11 @@ impl WorkflowConcurrencyManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        protos::temporal::api::common::v1::WorkflowExecution,
-        protos::temporal::api::enums::v1::EventType, protos::temporal::api::history::v1::History,
-        test_help::TestHistoryBuilder,
-    };
+    use crate::protos::temporal::api::history::v1::History;
 
     // We test mostly error paths here since the happy paths are well covered by the tests of the
     // core sdk itself, and setting up the fake data is onerous here. If we make the concurrency
     // manager generic, testing the happy path is simpler.
-
-    #[tokio::test]
-    async fn can_shutdown_after_creating_machine() {
-        let mgr = WorkflowConcurrencyManager::new();
-        let mut t = TestHistoryBuilder::default();
-        t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_full_wf_task();
-
-        let activation = mgr
-            .create_or_update(
-                "some_run_id",
-                HistoryUpdate::new_from_events(
-                    t.get_history_info(1).unwrap().events().to_vec(),
-                    0,
-                    3,
-                ),
-                WorkflowExecution {
-                    workflow_id: "wid".to_string(),
-                    run_id: "rid".to_string(),
-                },
-            )
-            .await
-            .unwrap();
-        assert!(!activation.jobs.is_empty());
-
-        mgr.shutdown();
-    }
 
     #[tokio::test]
     async fn returns_errors_on_creation() {
