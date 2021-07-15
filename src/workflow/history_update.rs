@@ -68,6 +68,7 @@ impl Stream for HistoryPaginator {
         let history_req = if let Some(req) = self.open_history_request.as_mut() {
             req
         } else {
+            debug!(run_id=%self.run_id, "Fetching new history page");
             // We're out of stored events and we have a page token - fetch additional history from
             // the server. Note that server can return page tokens that point to an empty page.
             let gw = self.gateway.clone();
