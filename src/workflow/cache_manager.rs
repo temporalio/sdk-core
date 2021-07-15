@@ -41,6 +41,10 @@ impl WorkflowCacheManager {
     pub fn touch(&mut self, run_id: &str) {
         self.cache.get(&run_id.to_owned());
     }
+
+    pub fn remove(&mut self, run_id: &str) {
+        self.cache.pop(&run_id.to_owned());
+    }
 }
 
 #[cfg(test)]
@@ -55,6 +59,19 @@ mod tests {
         assert_matches!(wcm.insert("2"), None);
         assert_matches!(wcm.insert("3"), Some(run_id) => {
             assert_eq!(run_id, "1")
+        });
+    }
+
+    #[test]
+    fn insert_remove_insert() {
+        let mut wcm = WorkflowCacheManager::new(WorkflowCachingPolicy::Sticky {
+            max_cached_workflows: 1,
+        });
+        assert_matches!(wcm.insert("1"), None);
+        wcm.remove("1");
+        assert_matches!(wcm.insert("2"), None);
+        assert_matches!(wcm.insert("3"), Some(run_id) => {
+            assert_eq!(run_id, "2")
         });
     }
 

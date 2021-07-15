@@ -210,11 +210,6 @@ impl WorkflowTaskManager {
         self.outstanding_activations.remove(run_id);
         self.pending_activations.remove_all_with_run_id(run_id);
 
-        // Queue up an eviction activation
-        self.pending_activations.push(
-            create_evict_activation(run_id.to_string()),
-            info.task_queue.clone(),
-        );
         if let Some((
             _,
             OutstandingTask {
@@ -224,6 +219,11 @@ impl WorkflowTaskManager {
             },
         )) = self.outstanding_workflow_tasks.remove(run_id)
         {
+            // Queue up an eviction activation
+            self.pending_activations.push(
+                create_evict_activation(run_id.to_string()),
+                info.task_queue.clone(),
+            );
             let _ =
                 self.workflow_activations_update
                     .send(WfActivationUpdate::WorkflowTaskComplete {
