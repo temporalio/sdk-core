@@ -133,7 +133,7 @@ mod tests {
         });
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn wf_completing_with_continue_as_new() {
         let twd = TestWorkflowDriver::new(vec![], wf_with_timer);
         let t = canned_histories::timer_then_continue_as_new("timer1");

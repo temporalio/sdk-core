@@ -63,7 +63,7 @@ async fn replay_flag_is_correct(#[case] setup: WorkflowMachines, #[case] num_tim
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn replay_flag_is_correct_partial_history() {
     let twd = timers_wf(1);
     // Add 1 b/c history takes # wf tasks, not timers

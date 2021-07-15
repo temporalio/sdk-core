@@ -751,7 +751,7 @@ mod test {
         case::success(activity_happy_hist()),
         case::failure(activity_failure_hist())
     )]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn single_activity_inc(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
         let (t, state_machines) = hist_batches;
         let mut wfm = WorkflowManager::new_from_machines(state_machines);
@@ -778,7 +778,7 @@ mod test {
         case::success(activity_happy_hist()),
         case::failure(activity_failure_hist())
     )]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn single_activity_full(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
         let (t, state_machines) = hist_batches;
         let mut wfm = WorkflowManager::new_from_machines(state_machines);
@@ -792,7 +792,7 @@ mod test {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn immediate_activity_cancelation() {
         let twd = TestWorkflowDriver::new(vec![], |mut cmd_sink: WfContext| async move {
             let cancel_activity_future = cmd_sink.activity(ScheduleActivity {

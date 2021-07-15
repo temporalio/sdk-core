@@ -366,7 +366,7 @@ impl TestWorkflowDriver {
         run_id: String,
     ) -> Result<WfExitKind, CompleteWfError> {
         // Since waiting until the iteration is done may block and isn't async, we need to use
-        // block_in_place here.
+        // block_in_place here. TODO: This is awful - fix this so TWD is async.
         let wf_is_done = tokio::task::block_in_place(|| self.wait_until_wf_iteration_done());
         let outgoing = self.drain_pending_commands();
         let completion = outgoing.into_completion(run_id);

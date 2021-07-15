@@ -130,7 +130,7 @@ mod tests {
         ctx.complete_cancelled();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn wf_completing_with_cancelled() {
         let twd = TestWorkflowDriver::new(vec![], wf_with_timer);
         let t = canned_histories::timer_wf_cancel_req_cancelled("timer1");

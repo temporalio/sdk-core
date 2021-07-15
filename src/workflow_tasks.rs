@@ -24,7 +24,6 @@ use dashmap::DashMap;
 use futures::FutureExt;
 use std::{collections::VecDeque, fmt::Debug};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::Span;
 
 /// Centralizes concerns related to applying new workflow tasks and reporting the activations they
 /// produce.
