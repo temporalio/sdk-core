@@ -12,6 +12,6 @@ RUN apt-get -y install git
 ENV NPM_CONFIG_LOGLEVEL info
 ENV NPM_CONFIG_FOREGROUND_SCRIPTS true
 
-COPY .buildkite/docker/build-bench.sh /usr/bin/build-bench.sh
+COPY .buildkite/docker/build-and-run-bench.sh /usr/bin/build-and-run-bench.sh
 
 WORKDIR /sdk-node
