@@ -67,7 +67,7 @@ services:
     build:
       context: ../../
       dockerfile: .buildkite/docker/bench.Dockerfile
-    command: /bin/sh -c "node packages/test/lib/bench.js --server-address temporal:7233"
+    command: /bin/sh -c "build-and-run-bench.sh"
     environment:
       - "USER=benchtest"
       - "TEMPORAL_SERVICE_ADDRESS=http://temporal:7233"
