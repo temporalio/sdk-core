@@ -138,9 +138,10 @@ pub enum WFMachinesError {
     MissingAssociatedMachine(String),
     #[error("There was {0} when we expected exactly one payload while applying event: {1:?}")]
     NotExactlyOnePayload(PayloadsToPayloadError, HistoryEvent),
-
     #[error("Machine encountered an invalid transition: {0}")]
     InvalidTransition(String),
+    #[error("Unrecoverable network error while fetching history: {0}")]
+    HistoryFetchingError(tonic::Status),
 }
 
 impl WorkflowMachines {
@@ -482,7 +483,8 @@ impl WorkflowMachines {
         let events = self
             .last_history_from_server
             .take_next_wft_sequence(last_handled_wft_started_id)
-            .await;
+            .await
+            .map_err(WFMachinesError::HistoryFetchingError)?;
 
         // We're caught up on reply if there are no new events to process
         // TODO: Probably this is unneeded if we evict whenever history is from non-sticky queue

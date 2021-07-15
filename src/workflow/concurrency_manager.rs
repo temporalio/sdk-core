@@ -100,7 +100,6 @@ impl WorkflowConcurrencyManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protos::temporal::api::history::v1::History;
 
     // We test mostly error paths here since the happy paths are well covered by the tests of the
     // core sdk itself, and setting up the fake data is onerous here. If we make the concurrency
@@ -112,7 +111,7 @@ mod tests {
         let res = mgr
             .create_or_update(
                 "some_run_id",
-                HistoryUpdate::new(History::default(), 0, 0),
+                HistoryUpdate::new_from_events(vec![], 0),
                 Default::default(),
             )
             .await;

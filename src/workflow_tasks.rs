@@ -1,5 +1,6 @@
 //! Management of workflow tasks
 
+use crate::workflow::HistoryPaginator;
 use crate::{
     errors::WorkflowUpdateError,
     machines::{ProtoCommand, WFCommand},
@@ -18,12 +19,16 @@ use crate::{
         HistoryUpdate, WorkflowCachingPolicy, WorkflowConcurrencyManager, WorkflowError,
         WorkflowManager, LEGACY_QUERY_ID,
     },
-    WfActivationUpdate,
+    ServerGatewayApis, WfActivationUpdate,
 };
 use dashmap::DashMap;
 use futures::FutureExt;
+use std::sync::Arc;
 use std::{collections::VecDeque, fmt::Debug};
 use tokio::sync::mpsc::UnboundedSender;
+
+// TODO: Ideally have only one map keyed by run-id, rather than syncing these various maps. Possibly
+//  combine with concurrency mgr / workflow mgr?
 
 /// Centralizes concerns related to applying new workflow tasks and reporting the activations they
 /// produce.
@@ -242,6 +247,7 @@ impl WorkflowTaskManager {
     pub(crate) async fn apply_new_poll_resp(
         &self,
         mut work: ValidPollWFTQResponse,
+        gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
     ) -> Result<NewWfTaskOutcome, WorkflowUpdateError> {
         debug!(
             task_token = %&work.task_token,
@@ -266,7 +272,8 @@ impl WorkflowTaskManager {
             arguments: Vec::from_payloads(q.query_args),
         });
 
-        let (info, mut next_activation) = self.instantiate_or_update_workflow(work).await?;
+        let (info, mut next_activation) =
+            self.instantiate_or_update_workflow(work, gateway).await?;
 
         // Immediately dispatch query activation if no other jobs
         let legacy_query = if next_activation.jobs.is_empty() {
@@ -432,6 +439,7 @@ impl WorkflowTaskManager {
     async fn instantiate_or_update_workflow(
         &self,
         poll_wf_resp: ValidPollWFTQResponse,
+        gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
     ) -> Result<(WorkflowTaskInfo, WfActivation), WorkflowUpdateError> {
         let run_id = poll_wf_resp.workflow_execution.run_id.clone();
 
@@ -447,9 +455,14 @@ impl WorkflowTaskManager {
             .create_or_update(
                 &run_id,
                 HistoryUpdate::new(
-                    poll_wf_resp.history,
+                    HistoryPaginator::new(
+                        poll_wf_resp.history,
+                        poll_wf_resp.workflow_execution.workflow_id.clone(),
+                        poll_wf_resp.workflow_execution.run_id.clone(),
+                        poll_wf_resp.next_page_token,
+                        gateway,
+                    ),
                     poll_wf_resp.previous_started_event_id,
-                    poll_wf_resp.started_event_id,
                 ),
                 poll_wf_resp.workflow_execution,
             )

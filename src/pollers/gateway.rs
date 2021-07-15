@@ -255,6 +255,14 @@ pub trait ServerGatewayApis {
         run_id: Option<String>,
     ) -> Result<DescribeWorkflowExecutionResponse>;
 
+    /// Get history for a particular workflow run
+    async fn get_workflow_execution_history(
+        &self,
+        workflow_id: String,
+        run_id: Option<String>,
+        page_token: Vec<u8>,
+    ) -> Result<GetWorkflowExecutionHistoryResponse>;
+
     /// Respond to a legacy query-only workflow task
     async fn respond_legacy_query(
         &self,
@@ -526,7 +534,6 @@ impl ServerGatewayApis for ServerGateway {
             .into_inner())
     }
 
-    /// Get information about a workflow run
     async fn describe_workflow_execution(
         &self,
         workflow_id: String,
@@ -541,6 +548,28 @@ impl ServerGatewayApis for ServerGateway {
                     workflow_id,
                     run_id: run_id.unwrap_or_default(),
                 }),
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn get_workflow_execution_history(
+        &self,
+        workflow_id: String,
+        run_id: Option<String>,
+        page_token: Vec<u8>,
+    ) -> Result<GetWorkflowExecutionHistoryResponse> {
+        Ok(self
+            .service
+            .clone()
+            .get_workflow_execution_history(GetWorkflowExecutionHistoryRequest {
+                namespace: self.opts.namespace.clone(),
+                execution: Some(WorkflowExecution {
+                    workflow_id,
+                    run_id: run_id.unwrap_or_default(),
+                }),
+                next_page_token: page_token,
+                ..Default::default()
             })
             .await?
             .into_inner())
@@ -679,6 +708,14 @@ mockall::mock! {
             workflow_id: String,
             run_id: Option<String>,
         ) -> impl Future<Output = Result<DescribeWorkflowExecutionResponse>> + Send + 'b
+            where 'a: 'b, Self: 'b;
+
+        fn get_workflow_execution_history<'a, 'b>(
+            &self,
+            workflow_id: String,
+            run_id: Option<String>,
+            page_token: Vec<u8>
+        ) -> impl Future<Output = Result<GetWorkflowExecutionHistoryResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
         fn respond_legacy_query<'a, 'b>(

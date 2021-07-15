@@ -572,7 +572,11 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         work: ValidPollWFTQResponse,
     ) -> Result<Option<WfActivation>, CompleteWfError> {
         let we = work.workflow_execution.clone();
-        match self.wft_manager.apply_new_poll_resp(work).await? {
+        match self
+            .wft_manager
+            .apply_new_poll_resp(work, self.server_gateway.clone())
+            .await?
+        {
             NewWfTaskOutcome::IssueActivation(a) => {
                 debug!(activation=%a, "Sending activation to lang");
                 Ok(Some(a))

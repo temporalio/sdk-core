@@ -6,7 +6,7 @@ mod history_update;
 pub(crate) use bridge::WorkflowBridge;
 pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
 pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFetcher};
-pub(crate) use history_update::HistoryUpdate;
+pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
 
 use crate::{
     machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
