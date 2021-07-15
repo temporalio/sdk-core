@@ -76,7 +76,7 @@ impl WorkflowConcurrencyManager {
     {
         let m = self
             .machines
-            .get_mut(run_id)
+            .get(run_id)
             .ok_or_else(|| WorkflowError::MissingMachine {
                 run_id: run_id.to_string(),
             })?;
