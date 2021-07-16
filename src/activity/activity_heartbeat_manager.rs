@@ -2,7 +2,7 @@ use crate::{
     errors::ActivityHeartbeatError,
     pollers::ServerGatewayApis,
     protos::{
-        coresdk::{common, ActivityHeartbeat, PayloadsExt},
+        coresdk::{activity_task::ActivityCancelReason, common, ActivityHeartbeat, PayloadsExt},
         temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
     },
     task_token::TaskToken,
@@ -35,7 +35,7 @@ pub(crate) struct ActivityHeartbeatManager<SG> {
     events_rx: UnboundedReceiver<LifecycleEvent>,
     shutdown_tx: Sender<bool>,
     shutdown_rx: Receiver<bool>,
-    cancels_tx: UnboundedSender<TaskToken>,
+    cancels_tx: UnboundedSender<(TaskToken, ActivityCancelReason)>,
     server_gateway: Arc<SG>,
 }
 
@@ -46,7 +46,7 @@ pub(crate) struct ActivityHeartbeatManagerHandle {
     events: UnboundedSender<LifecycleEvent>,
     /// Cancellations that have been received when heartbeating are queued here and can be consumed
     /// by [fetch_cancellations]
-    incoming_cancels: Mutex<UnboundedReceiver<TaskToken>>,
+    incoming_cancels: Mutex<UnboundedReceiver<(TaskToken, ActivityCancelReason)>>,
     /// Used during `shutdown` to await until all inflight requests are sent.
     join_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -70,7 +70,7 @@ struct ActivityHeartbeatProcessor<SG> {
     /// Used to send CleanupProcessor event at the end of the processor loop.
     events_tx: UnboundedSender<LifecycleEvent>,
     /// Used to send cancellation notices that we learned about when heartbeating back up to core
-    cancels_tx: UnboundedSender<TaskToken>,
+    cancels_tx: UnboundedSender<(TaskToken, ActivityCancelReason)>,
     server_gateway: Arc<SG>,
 }
 
@@ -119,7 +119,7 @@ impl ActivityHeartbeatManagerHandle {
 
     /// Returns a future that resolves any time there is a new activity cancel that must be
     /// dispatched to lang
-    pub async fn next_pending_cancel(&self) -> Option<TaskToken> {
+    pub async fn next_pending_cancel(&self) -> Option<(TaskToken, ActivityCancelReason)> {
         self.incoming_cancels.lock().await.recv().await
     }
 
@@ -266,7 +266,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
             Ok(RecordActivityTaskHeartbeatResponse { cancel_requested }) => {
                 if cancel_requested {
                     self.cancels_tx
-                        .send(self.task_token.clone())
+                        .send((self.task_token.clone(), ActivityCancelReason::Cancelled))
                         .expect("Receive half of heartbeat cancels not blocked");
                 }
             }
@@ -274,7 +274,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
             // one thing not found implies - other reasons would seem equally valid).
             Err(s) if s.code() == tonic::Code::NotFound => {
                 self.cancels_tx
-                    .send(self.task_token.clone())
+                    .send((self.task_token.clone(), ActivityCancelReason::NotFound))
                     .expect("Receive half of heartbeat cancels not blocked");
             }
             Err(e) => {

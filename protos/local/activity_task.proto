@@ -52,6 +52,14 @@ message Start {
 
 /// Attempt to cancel a running activity
 message Cancel {
+    ActivityCancelReason reason = 1;
+}
+
+enum ActivityCancelReason {
+    /// The activity no longer exists according to server (may be already completed)
+    NOT_FOUND = 0;
+    /// Activity was explicitly cancelled
+    CANCELLED = 1;
 }
 
 
