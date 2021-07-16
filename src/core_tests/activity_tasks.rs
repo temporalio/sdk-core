@@ -116,11 +116,11 @@ async fn activity_not_found_returns_ok() {
 }
 
 #[tokio::test]
-async fn heartbeats_report_cancels() {
+async fn heartbeats_report_cancels_only_once() {
     let mut mock_gateway = MockServerGatewayApis::new();
     mock_gateway
         .expect_record_activity_heartbeat()
-        .times(1)
+        .times(2)
         .returning(|_, _| {
             Ok(RecordActivityTaskHeartbeatResponse {
                 cancel_requested: true,
@@ -130,31 +130,61 @@ async fn heartbeats_report_cancels() {
     let core = mock_core(MocksHolder::from_gateway_with_responses(
         mock_gateway,
         vec![].into(),
-        vec![PollActivityTaskQueueResponse {
-            task_token: vec![1],
-            activity_id: "act1".to_string(),
-            heartbeat_timeout: Some(Duration::from_secs(1).into()),
-            ..Default::default()
-        }]
+        vec![
+            PollActivityTaskQueueResponse {
+                task_token: vec![1],
+                activity_id: "act1".to_string(),
+                heartbeat_timeout: Some(Duration::from_millis(1).into()),
+                ..Default::default()
+            },
+            PollActivityTaskQueueResponse {
+                task_token: vec![2],
+                activity_id: "act2".to_string(),
+                heartbeat_timeout: Some(Duration::from_millis(1).into()),
+                ..Default::default()
+            },
+        ]
         .into(),
     ));
 
     let act = core.poll_activity_task(TEST_Q).await.unwrap();
     core.record_activity_heartbeat(ActivityHeartbeat {
-        task_token: act.task_token,
+        task_token: act.task_token.clone(),
         details: vec![vec![1u8, 2, 3].into()],
     });
     // We have to wait a beat for the heartbeat to be processed
-    sleep(Duration::from_millis(50)).await;
+    sleep(Duration::from_millis(10)).await;
+    let act = core.poll_activity_task(TEST_Q).await.unwrap();
+    assert_matches!(
+        &act,
+        ActivityTask {
+            task_token,
+            variant: Some(activity_task::Variant::Cancel(_)),
+            ..
+        } => { task_token == &vec![1] }
+    );
+
+    // Verify if we try to record another heartbeat for this task we do not issue a double cancel
+    // Allow heartbeat delay to elapse
+    sleep(Duration::from_millis(10)).await;
+    core.record_activity_heartbeat(ActivityHeartbeat {
+        task_token: act.task_token,
+        details: vec![vec![1u8, 2, 3].into()],
+    });
+    sleep(Duration::from_millis(10)).await;
+    // Since cancels always come before new tasks, if we get a new non-cancel task, we did not
+    // double-issue cancels.
     let act = core.poll_activity_task(TEST_Q).await.unwrap();
     assert_matches!(
         act,
         ActivityTask {
             task_token,
-            variant: Some(activity_task::Variant::Cancel(_)),
+            variant: Some(activity_task::Variant::Start(_)),
             ..
-        } => { task_token == vec![1] }
+        } => { task_token == vec![2] }
     );
+    dbg!("Shutdown");
+    core.shutdown().await;
 }
 
 #[tokio::test]
