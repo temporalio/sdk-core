@@ -5,7 +5,7 @@ mod history_update;
 
 pub(crate) use bridge::WorkflowBridge;
 pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
-pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFetcher};
+pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
 pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
 
 use crate::{
@@ -77,6 +77,7 @@ impl WorkflowManager {
         }
     }
 
+    // TODO: Should probably just go away in favor of real core w/ mocked responses
     #[cfg(test)]
     pub fn new_from_machines(workflow_machines: WorkflowMachines) -> Self {
         Self {
@@ -130,30 +131,13 @@ impl WorkflowManager {
         }
     }
 
-    /// During testing it can be useful to run through all activations to simulate replay easily.
-    /// Returns the last produced activation with jobs in it, or an activation with no jobs if
-    /// the first call had no jobs.
-    ///
-    /// This is meant to be used with the TestWorkflowDriver which can automatically produce
-    /// commands.
-    #[cfg(test)]
-    pub async fn process_all_activations(&mut self) -> Result<WfActivation> {
-        let mut last_act = self.get_next_activation().await?;
-        let mut next_act = self.get_next_activation().await?;
-        while !next_act.jobs.is_empty() {
-            last_act = next_act;
-            next_act = self.get_next_activation().await?;
-        }
-        Ok(last_act)
-    }
-
     /// Feed the workflow machines new commands issued by the executing workflow code, and iterate
     /// the machines.
-    pub fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<()> {
+    pub async fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<()> {
         if let Some(cs) = self.command_sink.as_mut() {
             cs.send(cmds)?;
         }
-        self.machines.iterate_machines()?;
+        self.machines.iterate_machines().await?;
         Ok(())
     }
 }
@@ -175,4 +159,60 @@ pub(crate) enum WorkflowCachingPolicy {
     /// even if there are pending activations
     #[cfg(test)]
     AfterEveryReply,
+}
+
+#[cfg(test)]
+pub mod managed_wf {
+    use super::*;
+    use crate::{
+        protos::coresdk::common::Payload, test_help::TestHistoryBuilder,
+        test_workflow_driver::WorkflowFunction,
+    };
+    use tokio::sync::mpsc::UnboundedSender;
+
+    pub struct ManagedWFFunc {
+        mgr: WorkflowManager,
+        activation_tx: UnboundedSender<WfActivation>,
+    }
+
+    impl ManagedWFFunc {
+        pub fn new(hist: TestHistoryBuilder, func: WorkflowFunction, args: Vec<Payload>) -> Self {
+            let (driver, activation_tx) = func.as_future_driver(args);
+            // TODO: Need to be able to feed partial history
+            let state_machines = WorkflowMachines::new(
+                "wfid".to_string(),
+                "runid".to_string(),
+                hist.as_history_update(),
+                Box::new(driver).into(),
+            );
+            let mgr = WorkflowManager::new_from_machines(state_machines);
+            Self { mgr, activation_tx }
+        }
+
+        pub async fn get_next_activation(&mut self) -> Result<WfActivation> {
+            let res = self.mgr.get_next_activation().await?;
+            // Feed it back in to the workflow code and iterate machines
+            // TODO: See if can do a more ordered shutdown
+            let _ = self.activation_tx.send(res.clone());
+            self.mgr.machines.iterate_machines().await.unwrap();
+            Ok(res)
+        }
+
+        pub async fn get_server_commands(&mut self) -> OutgoingServerCommands {
+            self.mgr.get_server_commands()
+        }
+
+        /// During testing it can be useful to run through all activations to simulate replay
+        /// easily. Returns the last produced activation with jobs in it, or an activation with no
+        /// jobs if the first call had no jobs.
+        pub async fn process_all_activations(&mut self) -> Result<WfActivation> {
+            let mut last_act = self.get_next_activation().await?;
+            let mut next_act = self.get_next_activation().await?;
+            while !next_act.jobs.is_empty() {
+                last_act = next_act;
+                next_act = self.get_next_activation().await?;
+            }
+            Ok(last_act)
+        }
+    }
 }

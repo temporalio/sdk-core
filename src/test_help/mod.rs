@@ -402,6 +402,9 @@ pub fn build_mock_pollers(
             outstanding.write().remove_by_right(&tt);
             Ok(Default::default())
         });
+    mock_gateway
+        .expect_start_workflow()
+        .returning(|_, _, _, _, _| Ok(Default::default()));
 
     MocksHolder {
         sg: mock_gateway,

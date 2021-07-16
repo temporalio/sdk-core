@@ -13,14 +13,14 @@ use std::collections::VecDeque;
 /// jobs and fetching output from it.
 pub struct DrivenWorkflow {
     started_attrs: Option<WorkflowExecutionStartedEventAttributes>,
-    fetcher: Box<dyn ExternalWorkflow>,
+    fetcher: Box<dyn WorkflowFetcher>,
     /// Outgoing activation jobs that need to be sent to the lang sdk
     outgoing_wf_activation_jobs: VecDeque<wf_activation_job::Variant>,
 }
 
 impl<WF> From<Box<WF>> for DrivenWorkflow
 where
-    WF: ExternalWorkflow + 'static,
+    WF: WorkflowFetcher + 'static,
 {
     fn from(wf: Box<WF>) -> Self {
         Self {
@@ -40,7 +40,6 @@ impl DrivenWorkflow {
 
     /// Enqueue a new job to be sent to the driven workflow
     pub fn send_job(&mut self, job: wf_activation_job::Variant) {
-        self.fetcher.on_activation_job(&job);
         self.outgoing_wf_activation_jobs.push_back(job);
     }
 
@@ -63,23 +62,16 @@ impl DrivenWorkflow {
     }
 }
 
+#[async_trait::async_trait]
 impl WorkflowFetcher for DrivenWorkflow {
-    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
-        self.fetcher.fetch_workflow_iteration_output()
+    async fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
+        self.fetcher.fetch_workflow_iteration_output().await
     }
 }
-
-impl ActivationListener for DrivenWorkflow {
-    fn on_activation_job(&mut self, a: &wf_activation_job::Variant) {
-        self.fetcher.on_activation_job(a)
-    }
-}
-
-pub trait ExternalWorkflow: WorkflowFetcher + ActivationListener {}
-impl<T> ExternalWorkflow for T where T: WorkflowFetcher + ActivationListener {}
 
 /// Implementors of this trait represent a way to fetch output from executing/iterating some
 /// workflow code (or a mocked workflow).
+#[async_trait::async_trait]
 pub trait WorkflowFetcher: Send {
     /// Obtain any output from the workflow's recent execution(s). Because the lang sdk is
     /// responsible for calling workflow code as a result of receiving tasks from
@@ -89,11 +81,5 @@ pub trait WorkflowFetcher: Send {
     ///
     /// In the case of the real [WorkflowBridge] implementation, commands are simply pulled from
     /// a buffer that the language side sinks into when it calls [crate::Core::complete_task]
-    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand>;
-}
-
-/// Allows observers to listen to newly generated outgoing activation jobs. Used for testing, where
-/// some activations must be handled before outgoing commands are issued to avoid deadlocking.
-pub trait ActivationListener {
-    fn on_activation_job(&mut self, _activation: &wf_activation_job::Variant) {}
+    async fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand>;
 }

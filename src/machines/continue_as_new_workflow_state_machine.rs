@@ -114,10 +114,10 @@ impl Cancellable for ContinueAsNewWorkflowMachine {}
 mod tests {
     use super::*;
     use crate::{
-        machines::{workflow_machines::WorkflowMachines, StartTimer},
+        machines::{StartTimer},
         test_help::canned_histories,
-        test_workflow_driver::{TestWorkflowDriver, WfContext},
-        workflow::WorkflowManager,
+        test_workflow_driver::{WfContext, WorkflowFunction},
+        workflow::{managed_wf::ManagedWFFunc},
     };
     use std::time::Duration;
 
@@ -135,22 +135,16 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn wf_completing_with_continue_as_new() {
-        let twd = TestWorkflowDriver::new(vec![], wf_with_timer);
+        let func = WorkflowFunction::new(wf_with_timer);
         let t = canned_histories::timer_then_continue_as_new("timer1");
-        let state_machines = WorkflowMachines::new(
-            "wfid".to_string(),
-            "runid".to_string(),
-            t.as_history_update(),
-            Box::new(twd).into(),
-        );
-        let mut wfm = WorkflowManager::new_from_machines(state_machines);
+        let mut wfm = ManagedWFFunc::new(t, func, vec![]);
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
+        let commands = wfm.get_server_commands().await.commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
 
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
+        let commands = wfm.get_server_commands().await.commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands.len(), 1);
         assert_eq!(
@@ -159,7 +153,7 @@ mod tests {
         );
 
         assert!(wfm.get_next_activation().await.unwrap().jobs.is_empty());
-        let commands = wfm.get_server_commands().commands;
+        let commands = wfm.get_server_commands().await.commands;
         assert_eq!(commands.len(), 0);
     }
 }
