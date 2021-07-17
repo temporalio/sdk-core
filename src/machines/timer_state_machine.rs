@@ -314,15 +314,16 @@ mod test {
     }
 
     #[rstest]
-    fn test_fire_happy_path_inc(fire_happy_hist: WorkflowMachines) {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_fire_happy_path_inc(fire_happy_hist: WorkflowMachines) {
         let mut wfm = WorkflowManager::new_from_machines(fire_happy_hist);
 
-        wfm.get_next_activation().unwrap();
+        wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
 
-        wfm.get_next_activation().unwrap();
+        wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands.len(), 1);
@@ -333,9 +334,10 @@ mod test {
     }
 
     #[rstest]
-    fn test_fire_happy_path_full(fire_happy_hist: WorkflowMachines) {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_fire_happy_path_full(fire_happy_hist: WorkflowMachines) {
         let mut wfm = WorkflowManager::new_from_machines(fire_happy_hist);
-        wfm.process_all_activations().unwrap();
+        wfm.process_all_activations().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
@@ -344,8 +346,8 @@ mod test {
         );
     }
 
-    #[test]
-    fn mismatched_timer_ids_errors() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mismatched_timer_ids_errors() {
         let twd = TestWorkflowDriver::new(vec![], |mut command_sink: WfContext| async move {
             let timer = StartTimer {
                 timer_id: "realid".to_string(),
@@ -363,7 +365,7 @@ mod test {
         );
 
         let mut wfm = WorkflowManager::new_from_machines(state_machines);
-        let act = wfm.process_all_activations();
+        let act = wfm.process_all_activations().await;
         assert!(act
             .unwrap_err()
             .to_string()
@@ -399,16 +401,17 @@ mod test {
     }
 
     #[rstest]
-    fn incremental_cancellation(cancellation_setup: WorkflowMachines) {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn incremental_cancellation(cancellation_setup: WorkflowMachines) {
         let mut wfm = WorkflowManager::new_from_machines(cancellation_setup);
 
-        wfm.get_next_activation().unwrap();
+        wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
         assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
 
-        wfm.get_next_activation().unwrap();
+        wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].command_type, CommandType::CancelTimer as i32);
@@ -417,23 +420,24 @@ mod test {
             CommandType::CompleteWorkflowExecution as i32
         );
 
-        assert!(wfm.get_next_activation().unwrap().jobs.is_empty());
+        assert!(wfm.get_next_activation().await.unwrap().jobs.is_empty());
         let commands = wfm.get_server_commands().commands;
         // There should be no commands - the wf completed at the same time the timer was cancelled
         assert_eq!(commands.len(), 0);
     }
 
     #[rstest]
-    fn full_cancellation(cancellation_setup: WorkflowMachines) {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn full_cancellation(cancellation_setup: WorkflowMachines) {
         let mut wfm = WorkflowManager::new_from_machines(cancellation_setup);
-        wfm.process_all_activations().unwrap();
+        wfm.process_all_activations().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         // There should be no commands - the wf completed at the same time the timer was cancelled
         assert_eq!(commands.len(), 0);
     }
 
-    #[test]
-    fn cancel_before_sent_to_server() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancel_before_sent_to_server() {
         let twd = TestWorkflowDriver::new(vec![], |mut cmd_sink: WfContext| async move {
             let cancel_timer_fut = cmd_sink.timer(StartTimer {
                 timer_id: "cancel_timer".to_string(),
@@ -457,7 +461,7 @@ mod test {
         );
         let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
-        wfm.process_all_activations().unwrap();
+        wfm.process_all_activations().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
     }
