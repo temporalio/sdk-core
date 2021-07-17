@@ -1,7 +1,6 @@
 mod workflow_machines;
 
 // TODO: Move all these inside a submachines module
-#[allow(unused)]
 mod activity_state_machine;
 #[allow(unused)]
 mod cancel_external_state_machine;

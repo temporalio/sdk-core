@@ -1284,3 +1284,81 @@ pub fn immediate_wf_cancel() -> TestHistoryBuilder {
     t.add_cancelled();
     t
 }
+
+/// 1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+/// 2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 5: EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+/// 6: EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED
+/// 7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 10: EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED
+/// 11: EVENT_TYPE_TIMER_STARTED
+/// 12: EVENT_TYPE_ACTIVITY_TASK_STARTED
+/// 13: EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT
+/// 14: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 15: EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED
+/// 16: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 17: EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT
+/// 18: EVENT_TYPE_TIMER_FIRED
+/// 19: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 20: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 21: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 22: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+pub fn activity_double_resolve_repro() -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let act_sched_id = t.add_get_event_id(
+        EventType::ActivityTaskScheduled,
+        Some(
+            history_event::Attributes::ActivityTaskScheduledEventAttributes(
+                ActivityTaskScheduledEventAttributes {
+                    activity_id: "act".to_string(),
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    t.add_we_signaled("sig1", vec![]);
+    t.add_full_wf_task();
+    t.add_activity_task_cancel_requested(act_sched_id);
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add_get_event_id(
+        EventType::ActivityTaskStarted,
+        Some(
+            history_event::Attributes::ActivityTaskStartedEventAttributes(
+                ActivityTaskStartedEventAttributes {
+                    scheduled_event_id: act_sched_id,
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    t.add(
+        EventType::ActivityTaskTimedOut,
+        history_event::Attributes::ActivityTaskTimedOutEventAttributes(
+            ActivityTaskTimedOutEventAttributes {
+                scheduled_event_id: act_sched_id,
+                ..Default::default()
+            },
+        ),
+    );
+    t.add_workflow_task_scheduled();
+    t.add_we_signaled("sig2", vec![]);
+    t.add_workflow_task_started();
+    t.add_workflow_task_timed_out();
+    t.add(
+        EventType::TimerFired,
+        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+            started_event_id: timer_started_event_id,
+            timer_id: "timer".to_string(),
+        }),
+    );
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    t
+}

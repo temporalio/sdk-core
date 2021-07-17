@@ -1,9 +1,17 @@
 use crate::{
     errors::PollActivityError,
+    job_assert,
     pollers::{BoxedActPoller, BoxedWFPoller, MockManualGateway, MockServerGatewayApis},
     protos::{
         coresdk::{
-            activity_result::ActivityResult, activity_task::activity_task, ActivityTaskCompletion,
+            activity_result::{activity_result, ActivityResult},
+            activity_task::activity_task,
+            workflow_activation::{wf_activation_job, ResolveActivity, WfActivationJob},
+            workflow_commands::{
+                ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity,
+                ScheduleActivity, StartTimer,
+            },
+            ActivityTaskCompletion,
         },
         temporal::api::workflowservice::v1::{
             PollActivityTaskQueueResponse, RecordActivityTaskHeartbeatResponse,
@@ -11,9 +19,11 @@ use crate::{
         },
     },
     test_help::{
-        fake_sg_opts, mock_core, mock_core_with_opts_no_workers, mock_manual_poller, mock_poller,
+        build_fake_core, canned_histories, fake_sg_opts, gen_assert_and_reply, mock_core,
+        mock_core_with_opts_no_workers, mock_manual_poller, mock_poller, poll_and_reply,
         MocksHolder, TEST_Q,
     },
+    workflow::WorkflowCachingPolicy::NonSticky,
     ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
 };
 use futures::FutureExt;
@@ -403,4 +413,63 @@ async fn many_concurrent_heartbeat_cancels() {
         0
     );
     core.shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_timeout_no_double_resolve() {
+    let t = canned_histories::activity_double_resolve_repro();
+    let core = build_fake_core("fake_wf_id", t, &[3]);
+    let activity_id = "act";
+
+    poll_and_reply(
+        &core,
+        NonSticky,
+        &[
+            gen_assert_and_reply(
+                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                vec![ScheduleActivity {
+                    activity_id: activity_id.to_string(),
+                    cancellation_type: ActivityCancellationType::TryCancel as i32,
+                    ..Default::default()
+                }
+                .into()],
+            ),
+            gen_assert_and_reply(
+                &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                vec![
+                    RequestCancelActivity {
+                        activity_id: activity_id.to_string(),
+                        ..Default::default()
+                    }
+                    .into(),
+                    StartTimer {
+                        timer_id: "timer".to_owned(),
+                        ..Default::default()
+                    }
+                    .into(),
+                ],
+            ),
+            gen_assert_and_reply(
+                &job_assert!(wf_activation_job::Variant::ResolveActivity(
+                    ResolveActivity {
+                        result: Some(ActivityResult {
+                            status: Some(activity_result::Status::Canceled(..)),
+                        }),
+                        ..
+                    }
+                )),
+                vec![],
+            ),
+            gen_assert_and_reply(
+                &job_assert!(
+                    wf_activation_job::Variant::SignalWorkflow(_),
+                    wf_activation_job::Variant::FireTimer(_)
+                ),
+                vec![CompleteWorkflowExecution { result: None }.into()],
+            ),
+        ],
+    )
+    .await;
+
+    core.inner.shutdown().await;
 }
