@@ -1,5 +1,6 @@
 //! Management of workflow tasks
 
+use crate::workflow::HistoryPaginator;
 use crate::{
     errors::WorkflowUpdateError,
     machines::{ProtoCommand, WFCommand},
@@ -18,12 +19,16 @@ use crate::{
         HistoryUpdate, WorkflowCachingPolicy, WorkflowConcurrencyManager, WorkflowError,
         WorkflowManager, LEGACY_QUERY_ID,
     },
-    WfActivationUpdate,
+    ServerGatewayApis, WfActivationUpdate,
 };
 use dashmap::DashMap;
+use futures::FutureExt;
+use std::sync::Arc;
 use std::{collections::VecDeque, fmt::Debug};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::Span;
+
+// TODO: Ideally have only one map keyed by run-id, rather than syncing these various maps. Possibly
+//  combine with concurrency mgr / workflow mgr?
 
 /// Centralizes concerns related to applying new workflow tasks and reporting the activations they
 /// produce.
@@ -116,6 +121,24 @@ pub enum ActivationAction {
     RespondLegacyQuery { result: QueryResult },
 }
 
+macro_rules! machine_mut {
+    ($myself:ident, $run_id:ident, $clos:expr) => {{
+        // let curspan = Span::current();
+        // let mutator = move |wfm: &mut WorkflowManager| {
+        //     let _e = curspan.enter();
+        //     $clos(wfm)
+        // };
+        $myself
+            .workflow_machines
+            .access($run_id, $clos)
+            .await
+            .map_err(|source| WorkflowUpdateError {
+                source,
+                run_id: $run_id.to_owned(),
+            })
+    }};
+}
+
 impl WorkflowTaskManager {
     pub(crate) fn new(
         workflow_activations_update: UnboundedSender<WfActivationUpdate>,
@@ -130,10 +153,6 @@ impl WorkflowTaskManager {
             workflow_activations_update,
             eviction_policy,
         }
-    }
-
-    pub fn shutdown(&self) {
-        self.workflow_machines.shutdown();
     }
 
     pub fn next_pending_activation(&self, task_queue: &str) -> Option<WfActivation> {
@@ -225,9 +244,10 @@ impl WorkflowTaskManager {
     ///
     /// The new activation is immediately considered to be an outstanding workflow task - so it is
     /// expected that new activations will be dispatched to lang right away.
-    pub(crate) fn apply_new_poll_resp(
+    pub(crate) async fn apply_new_poll_resp(
         &self,
         mut work: ValidPollWFTQResponse,
+        gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
     ) -> Result<NewWfTaskOutcome, WorkflowUpdateError> {
         debug!(
             task_token = %&work.task_token,
@@ -252,7 +272,8 @@ impl WorkflowTaskManager {
             arguments: Vec::from_payloads(q.query_args),
         });
 
-        let (info, mut next_activation) = self.instantiate_or_update_workflow(work)?;
+        let (info, mut next_activation) =
+            self.instantiate_or_update_workflow(work, gateway).await?;
 
         // Immediately dispatch query activation if no other jobs
         let legacy_query = if next_activation.jobs.is_empty() {
@@ -285,7 +306,7 @@ impl WorkflowTaskManager {
 
     /// Record a successful activation. Returns (if any) commands that should be reported to the
     /// server as part of wft completion
-    pub(crate) fn successful_activation(
+    pub(crate) async fn successful_activation(
         &self,
         run_id: &str,
         mut commands: Vec<WFCommand>,
@@ -339,11 +360,15 @@ impl WorkflowTaskManager {
             }
 
             // Send commands from lang into the machines
-            self.access_wf_machine(run_id, move |mgr| mgr.push_commands(commands))?;
-            self.enqueue_next_activation_if_needed(run_id)?;
+            machine_mut!(self, run_id, |wfm: &mut WorkflowManager| {
+                async move { wfm.push_commands(commands) }.boxed()
+            })?;
+            self.enqueue_next_activation_if_needed(run_id).await?;
             // We want to fetch the outgoing commands only after any new activation has been queued,
             // as doing so may have altered the outgoing commands.
-            let server_cmds = self.access_wf_machine(run_id, |w| Ok(w.get_server_commands()))?;
+            let server_cmds = machine_mut!(self, run_id, |wfm: &mut WorkflowManager| {
+                async move { Ok(wfm.get_server_commands()) }.boxed()
+            })?;
             // We only actually want to send commands back to the server if there are no more
             // pending activations and we are caught up on replay.
             if !self.pending_activations.has_pending(run_id) && !server_cmds.replaying {
@@ -411,9 +436,10 @@ impl WorkflowTaskManager {
     /// feed the existing manager the updated history we received from the server.
     ///
     /// Returns the next workflow activation and some info about it, if an activation is needed.
-    fn instantiate_or_update_workflow(
+    async fn instantiate_or_update_workflow(
         &self,
         poll_wf_resp: ValidPollWFTQResponse,
+        gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
     ) -> Result<(WorkflowTaskInfo, WfActivation), WorkflowUpdateError> {
         let run_id = poll_wf_resp.workflow_execution.run_id.clone();
 
@@ -424,15 +450,24 @@ impl WorkflowTaskManager {
             task_token: poll_wf_resp.task_token,
         };
 
-        match self.workflow_machines.create_or_update(
-            &run_id,
-            HistoryUpdate::new(
-                poll_wf_resp.history,
-                poll_wf_resp.previous_started_event_id,
-                poll_wf_resp.started_event_id,
-            ),
-            poll_wf_resp.workflow_execution,
-        ) {
+        match self
+            .workflow_machines
+            .create_or_update(
+                &run_id,
+                HistoryUpdate::new(
+                    HistoryPaginator::new(
+                        poll_wf_resp.history,
+                        poll_wf_resp.workflow_execution.workflow_id.clone(),
+                        poll_wf_resp.workflow_execution.run_id.clone(),
+                        poll_wf_resp.next_page_token,
+                        gateway,
+                    ),
+                    poll_wf_resp.previous_started_event_id,
+                ),
+                poll_wf_resp.workflow_execution,
+            )
+            .await
+        {
             Ok(mut activation) => {
                 // If there are in-poll queries, insert jobs for those queries into the activation
                 if !poll_wf_resp.query_requests.is_empty() {
@@ -451,10 +486,13 @@ impl WorkflowTaskManager {
 
     /// Check if thew workflow run needs another activation and queue it up if there is one by
     /// pushing it into the pending activations list
-    fn enqueue_next_activation_if_needed(&self, run_id: &str) -> Result<bool, WorkflowUpdateError> {
-        let mut new_activation = false;
-        let next_activation =
-            self.access_wf_machine(run_id, move |mgr| mgr.get_next_activation())?;
+    async fn enqueue_next_activation_if_needed(
+        &self,
+        run_id: &str,
+    ) -> Result<(), WorkflowUpdateError> {
+        let next_activation = machine_mut!(self, run_id, move |mgr: &mut WorkflowManager| mgr
+            .get_next_activation()
+            .boxed())?;
         if !next_activation.jobs.is_empty() {
             let wf_entry = self
                 .outstanding_workflow_tasks
@@ -462,12 +500,11 @@ impl WorkflowTaskManager {
                 .expect("Workflow task is present in map if there is a new pending activation");
             self.pending_activations
                 .push(next_activation, wf_entry.info.task_queue.clone());
-            new_activation = true;
             let _ = self
                 .workflow_activations_update
                 .send(WfActivationUpdate::NewPendingActivation);
         }
-        Ok(new_activation)
+        Ok(())
     }
 
     /// Called after every WFT completion or failure, updates outstanding task status & issues
@@ -508,30 +545,6 @@ impl WorkflowTaskManager {
                 );
             }
         }
-    }
-
-    /// Wraps access to `self.workflow_machines.access`, properly passing in the current tracing
-    /// span to the wf machines thread.
-    fn access_wf_machine<F, Fout>(
-        &self,
-        run_id: &str,
-        mutator: F,
-    ) -> Result<Fout, WorkflowUpdateError>
-    where
-        F: FnOnce(&mut WorkflowManager) -> Result<Fout, WorkflowError> + Send + 'static,
-        Fout: Send + Debug + 'static,
-    {
-        let curspan = Span::current();
-        let mutator = move |wfm: &mut WorkflowManager| {
-            let _e = curspan.enter();
-            mutator(wfm)
-        };
-        self.workflow_machines
-            .access(run_id, mutator)
-            .map_err(|source| WorkflowUpdateError {
-                source,
-                run_id: run_id.to_owned(),
-            })
     }
 
     fn insert_outstanding_activation(&self, act: &WfActivation) {

@@ -112,11 +112,13 @@ impl HistoryInfo {
 
 impl From<HistoryInfo> for HistoryUpdate {
     fn from(v: HistoryInfo) -> Self {
-        HistoryUpdate::new_from_events(
-            v.events,
-            v.previous_started_event_id,
-            v.workflow_task_started_event_id,
-        )
+        HistoryUpdate::new_from_events(v.events, v.previous_started_event_id)
+    }
+}
+
+impl From<HistoryInfo> for History {
+    fn from(i: HistoryInfo) -> Self {
+        Self { events: i.events }
     }
 }
 

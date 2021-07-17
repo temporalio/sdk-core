@@ -112,6 +112,8 @@ pub enum MachineResponse {
 
 #[derive(thiserror::Error, Debug)]
 // TODO: Some of these are redundant with MachineError -- we should try to dedupe / simplify
+//  This also probably doesn't need to be public. The only important thing is if the error is a
+//  nondeterminism error.
 pub enum WFMachinesError {
     #[error("Event {0:?} was not expected: {1}")]
     UnexpectedEvent(HistoryEvent, &'static str),
@@ -121,6 +123,7 @@ pub enum WFMachinesError {
     MalformedEvent(HistoryEvent, String),
     // Expected to be transformed into a `MalformedEvent` with the full event by workflow machines,
     // when emitted by a sub-machine
+    // TODO: This is really an unexpected, rather than malformed event.
     #[error("{0}")]
     MalformedEventDetail(String),
     #[error("Command type {0:?} was not expected")]
@@ -135,11 +138,10 @@ pub enum WFMachinesError {
     MissingAssociatedMachine(String),
     #[error("There was {0} when we expected exactly one payload while applying event: {1:?}")]
     NotExactlyOnePayload(PayloadsToPayloadError, HistoryEvent),
-
     #[error("Machine encountered an invalid transition: {0}")]
     InvalidTransition(String),
-    #[error("Invalid cancelation type: {0}")]
-    InvalidCancelationType(i32),
+    #[error("Unrecoverable network error while fetching history: {0}")]
+    HistoryFetchingError(tonic::Status),
 }
 
 impl WorkflowMachines {
@@ -170,10 +172,10 @@ impl WorkflowMachines {
         }
     }
 
-    pub(crate) fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
+    pub(crate) async fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
         self.last_history_from_server = update;
         self.replaying = self.last_history_from_server.previous_started_event_id > 0;
-        self.apply_next_wft_from_history()?;
+        self.apply_next_wft_from_history().await?;
         Ok(())
     }
 
@@ -475,11 +477,14 @@ impl WorkflowMachines {
         Ok(has_new_lang_jobs)
     }
 
-    /// Apply events from history to this machines instance
-    pub(crate) fn apply_next_wft_from_history(&mut self) -> Result<()> {
+    /// Apply the next entire workflow task from history to these machines.
+    pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<()> {
+        let last_handled_wft_started_id = self.last_handled_wft_started_id();
         let events = self
             .last_history_from_server
-            .take_next_wft_sequence(self.last_handled_wft_started_id());
+            .take_next_wft_sequence(last_handled_wft_started_id)
+            .await
+            .map_err(WFMachinesError::HistoryFetchingError)?;
 
         // We're caught up on reply if there are no new events to process
         // TODO: Probably this is unneeded if we evict whenever history is from non-sticky queue

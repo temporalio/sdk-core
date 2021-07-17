@@ -130,8 +130,8 @@ mod tests {
         ctx.complete_cancelled();
     }
 
-    #[test]
-    fn wf_completing_with_cancelled() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn wf_completing_with_cancelled() {
         let twd = TestWorkflowDriver::new(vec![], wf_with_timer);
         let t = canned_histories::timer_wf_cancel_req_cancelled("timer1");
         let state_machines = WorkflowMachines::new(
@@ -141,12 +141,12 @@ mod tests {
             Box::new(twd).into(),
         );
         let mut wfm = WorkflowManager::new_from_machines(state_machines);
-        wfm.get_next_activation().unwrap();
+        wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
 
-        let act = wfm.get_next_activation().unwrap();
+        let act = wfm.get_next_activation().await.unwrap();
         assert_matches!(
             act.jobs.as_slice(),
             [
@@ -165,7 +165,7 @@ mod tests {
             CommandType::CancelWorkflowExecution as i32
         );
 
-        assert!(wfm.get_next_activation().unwrap().jobs.is_empty());
+        assert!(wfm.get_next_activation().await.unwrap().jobs.is_empty());
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
     }

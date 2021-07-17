@@ -1,5 +1,6 @@
 use assert_matches::assert_matches;
 use crossbeam::channel::{unbounded, RecvTimeoutError};
+use futures::future::join_all;
 use std::time::Duration;
 use temporal_sdk_core::protos::coresdk::{
     activity_task::activity_task as act_task,
@@ -7,9 +8,11 @@ use temporal_sdk_core::protos::coresdk::{
     workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
     workflow_completion::WfActivationCompletion,
 };
-use temporal_sdk_core::{Core, CoreInitOptionsBuilder, IntoCompletion};
+use temporal_sdk_core::test_workflow_driver::{TestRustWorker, WfContext};
+use temporal_sdk_core::{tracing_init, Core, CoreInitOptionsBuilder, IntoCompletion};
 use test_utils::{
     get_integ_server_options, init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers,
+    CoreWfStarter,
 };
 use tokio::time::timeout;
 
@@ -118,4 +121,41 @@ async fn long_poll_timeout_is_retried() {
     });
     let err = rx.recv_timeout(Duration::from_secs(4)).unwrap_err();
     assert_matches!(err, RecvTimeoutError::Timeout);
+}
+
+pub async fn many_parallel_timers_longhist(mut ctx: WfContext) {
+    for timer_set in 0..100 {
+        let mut futs = vec![];
+        for i in 0..1000 {
+            let timer = StartTimer {
+                timer_id: format!("t-{}-{}", timer_set, i),
+                start_to_fire_timeout: Some(Duration::from_millis(100).into()),
+            };
+            futs.push(ctx.timer(timer));
+        }
+        join_all(futs).await;
+    }
+    ctx.complete_workflow_execution();
+}
+
+// Ignored for now because I can't actually get this to produce pages. Need to generate some
+// large payloads I think.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn can_paginate_long_history() {
+    tracing_init();
+    let wf_name = "can_paginate_long_history";
+    let mut starter = CoreWfStarter::new(wf_name);
+    // Do not use sticky queues so we are forced to paginate once history gets long
+    starter.max_cached_workflows(0);
+    let tq = starter.get_task_queue().to_owned();
+    let core = starter.get_core().await;
+
+    let worker = TestRustWorker::new(core.clone(), tq);
+    worker
+        .submit_wf(vec![], wf_name.to_owned(), many_parallel_timers_longhist)
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    core.shutdown().await;
 }
