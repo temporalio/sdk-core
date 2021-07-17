@@ -1,19 +1,9 @@
 steps:
-  - label: "fmt"
+  - label: "fmt & doc"
     agents:
       queue: "default"
       docker: "*"
-    command: "cargo fmt --all -- --check"
-    timeout_in_minutes: 15
-    plugins:
-      - docker-compose#v3.0.0:
-          run: unit-test
-          config: .buildkite/docker/docker-compose.yaml
-  - label: "doc"
-    agents:
-      queue: "default"
-      docker: "*"
-    command: "cargo doc --workspace --all-features --no-deps"
+    command: "cargo fmt --all -- --check && cargo doc --workspace --all-features --no-deps"
     timeout_in_minutes: 15
     plugins:
       - docker-compose#v3.0.0:
