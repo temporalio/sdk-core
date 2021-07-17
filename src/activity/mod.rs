@@ -106,6 +106,7 @@ impl ActivityTaskManager {
         &self,
         details: ActivityHeartbeat,
     ) -> Result<(), ActivityHeartbeatError> {
+        // TODO: Propagate these back as cancels. Silent fails is too nonobvious
         let t: Duration = self
             .outstanding_activity_tasks
             .get(&TaskToken(details.task_token.clone()))
