@@ -790,7 +790,7 @@ mod test {
         let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
         let activation = wfm.process_all_activations().unwrap();
-        wfm.get_server_commands().commands;
+        wfm.get_server_commands();
         assert_matches!(
             activation.jobs.as_slice(),
             [
