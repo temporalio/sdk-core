@@ -108,6 +108,9 @@ pub trait Core: Send + Sync {
     /// The returned activation is guaranteed to be for the same task queue / worker which was
     /// provided as the `task_queue` argument.
     ///
+    /// It is rarely a good idea to call poll concurrently. It handles polling the server
+    /// concurrently internally.
+    ///
     /// TODO: Examples
     async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError>;
 
@@ -118,17 +121,20 @@ pub trait Core: Send + Sync {
     /// The returned activation is guaranteed to be for the same task queue / worker which was
     /// provided as the `task_queue` argument.
     ///
+    /// It is rarely a good idea to call poll concurrently. It handles polling the server
+    /// concurrently internally.
+    ///
     /// TODO: Examples
     async fn poll_activity_task(&self, task_queue: &str)
         -> Result<ActivityTask, PollActivityError>;
 
-    /// Tell the core that a workflow activation has completed
+    /// Tell the core that a workflow activation has completed. May be freely called concurrently.
     async fn complete_workflow_task(
         &self,
         completion: WfActivationCompletion,
     ) -> Result<(), CompleteWfError>;
 
-    /// Tell the core that an activity has finished executing
+    /// Tell the core that an activity has finished executing. May be freely called concurrently.
     async fn complete_activity_task(
         &self,
         completion: ActivityTaskCompletion,

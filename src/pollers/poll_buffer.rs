@@ -87,6 +87,7 @@ where
     /// then polling will happen concurrently.
     ///
     /// Returns `None` if the poll buffer has been shut down
+    #[instrument(name = "long_poll", level = "trace", skip(self))]
     async fn poll(&self) -> Option<pollers::Result<T>> {
         self.polls_requested.add_permits(1);
         let mut locked = self.buffered_polls.lock().await;
