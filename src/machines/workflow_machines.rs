@@ -174,10 +174,10 @@ impl WorkflowMachines {
         }
     }
 
-    pub(crate) fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
+    pub(crate) async fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
         self.last_history_from_server = update;
         self.replaying = self.last_history_from_server.previous_started_event_id > 0;
-        self.apply_next_wft_from_history()?;
+        self.apply_next_wft_from_history().await?;
         Ok(())
     }
 

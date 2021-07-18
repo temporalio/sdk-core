@@ -25,6 +25,7 @@ use crate::{
 };
 use dashmap::DashMap;
 use futures::FutureExt;
+use parking_lot::RwLock;
 use std::sync::Arc;
 use std::{collections::VecDeque, fmt::Debug};
 use tokio::sync::mpsc::UnboundedSender;
@@ -173,7 +174,6 @@ impl WorkflowTaskManager {
             });
         if let Some(act) = maybe_act.as_ref() {
             self.insert_outstanding_activation(&act);
-            // Evict from the workflow cache to ensure that run id is not going to be invalidated before activation is complete.
             self.cache_manager.write().touch(&act.run_id);
         }
         maybe_act
@@ -279,7 +279,7 @@ impl WorkflowTaskManager {
         });
 
         let (info, mut next_activation) =
-            match self.instantiate_or_update_workflow(work, gateway).await? {
+            match self.instantiate_or_update_workflow(work, gateway).await {
                 Ok((info, next_activation)) => (info, next_activation),
                 Err(e) => {
                     if let WorkflowError::UnderlyingMachinesError(WFMachinesError::CacheMiss) =
