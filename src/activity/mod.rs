@@ -7,7 +7,9 @@ pub(crate) use activity_heartbeat_manager::{
 pub(crate) use details::InflightActivityDetails;
 
 use crate::{
-    protos::coresdk::activity_task::ActivityTask, task_token::TaskToken, worker::Worker,
+    protos::coresdk::activity_task::{ActivityCancelReason, ActivityTask},
+    task_token::TaskToken,
+    worker::Worker,
     ActivityHeartbeat, ActivityHeartbeatError, PollActivityError, ServerGatewayApis,
 };
 use dashmap::DashMap;
@@ -55,6 +57,9 @@ impl ActivityTaskManager {
                                 return Ok(None)
                             }
                             details.issued_cancel_to_lang = true;
+                            if cancel_reason == ActivityCancelReason::NotFound {
+                                details.known_not_found = true;
+                            }
                             return Ok(Some(ActivityTask::cancel_from_ids(
                                 task_token,
                                 details.activity_id.clone(),
@@ -81,6 +86,7 @@ impl ActivityTaskManager {
                             InflightActivityDetails::new(
                                 work.activity_id.clone(),
                                 work.heartbeat_timeout.clone(),
+                                false,
                                 false,
                                 worker.task_queue().to_owned()
                             ),
@@ -124,5 +130,12 @@ impl ActivityTaskManager {
         }
         self.activity_heartbeat_manager_handle
             .record(details, t.div(2))
+    }
+
+    pub(crate) fn is_known_not_found(&self, task_token: &TaskToken) -> bool {
+        self.outstanding_activity_tasks
+            .get(&task_token)
+            .map(|d| d.known_not_found)
+            .unwrap_or_default()
     }
 }

@@ -423,36 +423,47 @@ where
                 completion: None,
             });
         };
-        let tt = task_token.clone();
-        let maybe_net_err = match status {
-            activity_result::Status::Completed(ar::Success { result }) => self
-                .server_gateway
-                .complete_activity_task(task_token, result.map(Into::into))
-                .await
-                .err(),
-            activity_result::Status::Failed(ar::Failure { failure }) => self
-                .server_gateway
-                .fail_activity_task(task_token, failure.map(Into::into))
-                .await
-                .err(),
-            activity_result::Status::Canceled(ar::Cancelation { details }) => self
-                .server_gateway
-                .cancel_activity_task(task_token, details.map(Into::into))
-                .await
-                .err(),
-        };
-        let (res, should_remove) = match maybe_net_err {
-            Some(e) if e.code() == tonic::Code::NotFound => {
-                warn!(task_token = ?tt, details = ?e, "Activity not found on completion. \
-                 This may happen if the activity has already been cancelled but completed anyway.");
-                (Ok(()), true)
+
+        let is_known_not_found = self.act_manager.is_known_not_found(&task_token);
+
+        // No need to report activities which we already know the server doesn't care about
+        let (res, should_remove) = if !is_known_not_found {
+            let maybe_net_err = match status {
+                activity_result::Status::Completed(ar::Success { result }) => self
+                    .server_gateway
+                    .complete_activity_task(task_token.clone(), result.map(Into::into))
+                    .await
+                    .err(),
+                activity_result::Status::Failed(ar::Failure { failure }) => self
+                    .server_gateway
+                    .fail_activity_task(task_token.clone(), failure.map(Into::into))
+                    .await
+                    .err(),
+                activity_result::Status::Canceled(ar::Cancelation { details }) => self
+                    .server_gateway
+                    .cancel_activity_task(task_token.clone(), details.map(Into::into))
+                    .await
+                    .err(),
+            };
+            match maybe_net_err {
+                Some(e) if e.code() == tonic::Code::NotFound => {
+                    if !is_known_not_found {
+                        warn!(task_token = ?task_token, details = ?e, "Activity not found on \
+                        completion. This may happen if the activity has already been cancelled but \
+                        completed anyway.");
+                    }
+                    (Ok(()), true)
+                }
+                Some(err) => (Err(err), false),
+                None => (Ok(()), true),
             }
-            Some(err) => (Err(err), false),
-            None => (Ok(()), true),
+        } else {
+            (Ok(()), true)
         };
+
         if should_remove {
             // Remove the activity from tracking and tell the worker a slot is free
-            if let Some(deets) = self.act_manager.mark_complete(&tt) {
+            if let Some(deets) = self.act_manager.mark_complete(&task_token) {
                 if let Some(WorkerStatus::Live(worker)) =
                     self.workers.read().await.get(&deets.task_queue)
                 {
