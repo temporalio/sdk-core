@@ -1,9 +1,7 @@
 mod activity_heartbeat_manager;
 mod details;
 
-pub(crate) use activity_heartbeat_manager::{
-    ActivityHeartbeatManager, ActivityHeartbeatManagerHandle,
-};
+pub(crate) use activity_heartbeat_manager::ActivityHeartbeatManager;
 pub(crate) use details::InflightActivityDetails;
 
 use crate::{
@@ -17,7 +15,7 @@ use std::{convert::TryInto, ops::Div, sync::Arc, time::Duration};
 
 pub(crate) struct ActivityTaskManager {
     /// Handle to the heartbeat manager
-    activity_heartbeat_manager_handle: ActivityHeartbeatManagerHandle,
+    activity_heartbeat_manager: ActivityHeartbeatManager,
     /// Activities that have been issued to lang but not yet completed
     outstanding_activity_tasks: DashMap<TaskToken, InflightActivityDetails>,
 }
@@ -25,13 +23,13 @@ pub(crate) struct ActivityTaskManager {
 impl ActivityTaskManager {
     pub(crate) fn new<SG: ServerGatewayApis + Send + Sync + 'static>(sg: Arc<SG>) -> Self {
         Self {
-            activity_heartbeat_manager_handle: ActivityHeartbeatManager::new(sg),
+            activity_heartbeat_manager: ActivityHeartbeatManager::new(sg),
             outstanding_activity_tasks: Default::default(),
         }
     }
 
     pub(crate) async fn shutdown(&self) {
-        self.activity_heartbeat_manager_handle.shutdown().await;
+        self.activity_heartbeat_manager.shutdown().await;
     }
 
     /// Poll for an activity task using the provided worker. Returns `Ok(None)` if no activity is
@@ -43,7 +41,7 @@ impl ActivityTaskManager {
         tokio::select! {
             biased;
 
-            maybe_tt = self.activity_heartbeat_manager_handle.next_pending_cancel() => {
+            maybe_tt = self.activity_heartbeat_manager.next_pending_cancel() => {
                 // Issue cancellations for anything we noticed was cancelled during heartbeating
                 if let Some((task_token, cancel_reason)) = maybe_tt {
                     // It's possible that activity has been completed and we no longer have an
@@ -102,6 +100,7 @@ impl ActivityTaskManager {
     /// Mark the activity associated with the task token as complete, returning the details about it
     /// if it was present.
     pub(crate) fn mark_complete(&self, task_token: &TaskToken) -> Option<InflightActivityDetails> {
+        self.activity_heartbeat_manager.evict(task_token.clone());
         self.outstanding_activity_tasks
             .remove(&task_token)
             .map(|x| x.1)
@@ -128,8 +127,7 @@ impl ActivityTaskManager {
         if t.as_millis() == 0 {
             return Err(ActivityHeartbeatError::HeartbeatTimeoutNotSet);
         }
-        self.activity_heartbeat_manager_handle
-            .record(details, t.div(2))
+        self.activity_heartbeat_manager.record(details, t.div(2))
     }
 
     pub(crate) fn is_known_not_found(&self, task_token: &TaskToken) -> bool {
