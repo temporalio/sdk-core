@@ -737,7 +737,7 @@ mod test {
         case::success(activity_happy_hist()),
         case::failure(activity_failure_hist())
     )]
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn single_activity_inc(mut wfm: ManagedWFFunc) {
         wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().await.commands;
@@ -761,7 +761,7 @@ mod test {
         case::success(activity_happy_hist()),
         case::failure(activity_failure_hist())
     )]
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn single_activity_full(mut wfm: ManagedWFFunc) {
         wfm.process_all_activations().await.unwrap();
         let commands = wfm.get_server_commands().await.commands;
@@ -772,7 +772,7 @@ mod test {
         );
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn immediate_activity_cancelation() {
         let func = WorkflowFunction::new(|mut cmd_sink: WfContext| async move {
             let cancel_activity_future = cmd_sink.activity(ScheduleActivity {

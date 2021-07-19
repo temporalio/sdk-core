@@ -307,7 +307,7 @@ mod test {
     }
 
     #[rstest]
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn test_fire_happy_path_inc(mut happy_wfm: ManagedWFFunc) {
         happy_wfm.get_next_activation().await.unwrap();
         let commands = happy_wfm.get_server_commands().await.commands;
@@ -325,7 +325,7 @@ mod test {
     }
 
     #[rstest]
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn test_fire_happy_path_full(mut happy_wfm: ManagedWFFunc) {
         happy_wfm.process_all_activations().await.unwrap();
         let commands = happy_wfm.get_server_commands().await.commands;
@@ -336,7 +336,7 @@ mod test {
         );
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn mismatched_timer_ids_errors() {
         let func = WorkflowFunction::new(|mut command_sink: WfContext| async move {
             let timer = StartTimer {
@@ -380,7 +380,7 @@ mod test {
     }
 
     #[rstest]
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn incremental_cancellation(#[from(cancellation_setup)] mut wfm: ManagedWFFunc) {
         wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().await.commands;
@@ -404,7 +404,7 @@ mod test {
     }
 
     #[rstest]
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn full_cancellation(#[from(cancellation_setup)] mut wfm: ManagedWFFunc) {
         wfm.process_all_activations().await.unwrap();
         let commands = wfm.get_server_commands().await.commands;
@@ -412,7 +412,7 @@ mod test {
         assert_eq!(commands.len(), 0);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn cancel_before_sent_to_server() {
         let func = WorkflowFunction::new(|mut cmd_sink: WfContext| async move {
             let cancel_timer_fut = cmd_sink.timer(StartTimer {

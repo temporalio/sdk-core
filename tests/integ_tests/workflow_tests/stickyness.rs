@@ -9,7 +9,7 @@ use temporal_sdk_core::{
 };
 use test_utils::CoreWfStarter;
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn timer_workflow_not_sticky() {
     let wf_name = "timer_wf_not_sticky";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -41,7 +41,7 @@ async fn timer_timeout_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     Ok(().into())
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn timer_workflow_timeout_on_sticky() {
     // This test intentionally times out a workflow task in order to make the next task be scheduled
     // on a not-sticky queue

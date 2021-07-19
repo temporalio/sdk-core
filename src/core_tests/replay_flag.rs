@@ -32,7 +32,7 @@ fn fire_happy_hist(num_timers: usize) -> ManagedWFFunc {
 #[rstest]
 #[case::one_timer(fire_happy_hist(1), 1)]
 #[case::five_timers(fire_happy_hist(5), 5)]
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn replay_flag_is_correct(#[case] mut wfm: ManagedWFFunc, #[case] num_timers: usize) {
     // Verify replay flag is correct by constructing a workflow manager that already has a complete
     // history fed into it. The first (few, depending on test a params) activation(s) will be under
@@ -56,7 +56,7 @@ async fn replay_flag_is_correct(#[case] mut wfm: ManagedWFFunc, #[case] num_time
     );
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn replay_flag_is_correct_partial_history() {
     let func = timers_wf(1);
     // Add 1 b/c history takes # wf tasks, not timers

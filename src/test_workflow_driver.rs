@@ -221,7 +221,6 @@ impl WfContext {
         );
         cmd.map(|ue| {
             if let UnblockEvent::Timer(_) = ue {
-                ()
             } else {
                 panic!("Wrong unblock event")
             }
@@ -606,7 +605,7 @@ mod tests {
         let wf_id = "fakeid";
         let t = canned_histories::single_timer("fake_timer");
         let core = build_fake_core(wf_id, t, [2]);
-        let worker = TestRustWorker::new(Arc::new(core.inner), TEST_Q.to_string());
+        let worker = TestRustWorker::new(Arc::new(core.inner), TEST_Q.to_string(), None);
 
         worker
             .submit_wf(vec![], wf_id.to_string(), WorkflowFunction::new(timer_wf))

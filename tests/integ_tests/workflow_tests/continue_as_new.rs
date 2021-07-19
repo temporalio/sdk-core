@@ -22,7 +22,7 @@ async fn continue_as_new_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     })
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn continue_as_new_happy_path() {
     let wf_name = "continue_as_new_happy_path";
     let mut starter = CoreWfStarter::new(wf_name);

@@ -24,7 +24,7 @@ async fn cancelled_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn cancel_during_timer() {
     let wf_name = "cancel_during_timer";
     let mut starter = CoreWfStarter::new(wf_name);

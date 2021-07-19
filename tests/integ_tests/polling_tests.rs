@@ -142,7 +142,7 @@ pub async fn many_parallel_timers_longhist(mut ctx: WfContext) -> WorkflowResult
 
 // Ignored for now because I can't actually get this to produce pages. Need to generate some
 // large payloads I think.
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 #[ignore]
 async fn can_paginate_long_history() {
     tracing_init();

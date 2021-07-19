@@ -12,7 +12,7 @@ use test_utils::{fanout_tasks, CoreWfStarter};
 
 const CONCURRENCY: usize = 1000;
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn activity_load() {
     let mut starter = CoreWfStarter::new("activity_load");
     starter

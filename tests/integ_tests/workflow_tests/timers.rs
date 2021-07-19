@@ -15,7 +15,7 @@ pub async fn timer_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
     Ok(().into())
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn timer_workflow_workflow_driver() {
     let wf_name = "timer_wf_new";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -123,7 +123,7 @@ async fn parallel_timer_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
     Ok(().into())
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn parallel_timers() {
     let wf_name = "parallel_timers";
     let mut starter = CoreWfStarter::new(wf_name);
