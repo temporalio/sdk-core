@@ -231,32 +231,35 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
     async fn run(mut self) {
         // Each processor is initialized with heartbeat payloads, first thing we need to do is send
         // it out.
-        self.record_heartbeat().await;
-        loop {
-            sleep(self.delay).await;
-            select! {
-                biased;
+        let not_found = self.record_heartbeat().await;
+        if !not_found {
+            loop {
+                sleep(self.delay).await;
+                select! {
+                    biased;
 
-                _ = self.heartbeat_rx.changed() => {
-                    self.record_heartbeat().await;
-                }
-                _ = self.shutdown_rx.changed() => {
-                    break;
-                }
-                _ = sleep(self.delay) => {
-                    // Timed out while waiting for the next heartbeat. We waited 2 * delay in total,
-                    // where delay is 1/2 of the activity heartbeat timeout. This means that
-                    // activity has either timed out or completed by now.
-                    break;
-                }
-            };
+                    _ = self.heartbeat_rx.changed() => {
+                        self.record_heartbeat().await;
+                    }
+                    _ = self.shutdown_rx.changed() => {
+                        break;
+                    }
+                    _ = sleep(self.delay) => {
+                        // Timed out while waiting for the next heartbeat. We waited 2 * delay in
+                        // total, where delay is 1/2 of the activity heartbeat timeout. This means
+                        // that activity has either timed out or completed by now.
+                        break;
+                    }
+                };
+            }
         }
         self.events_tx
             .send(LifecycleEvent::CleanupProcessor(self.task_token))
             .expect("cleanup requests should not be dropped");
     }
 
-    async fn record_heartbeat(&mut self) {
+    // Returns true if activity not found
+    async fn record_heartbeat(&mut self) -> bool {
         let details = self.heartbeat_rx.borrow().clone();
         match self
             .server_gateway
@@ -269,6 +272,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
                         .send((self.task_token.clone(), ActivityCancelReason::Cancelled))
                         .expect("Receive half of heartbeat cancels not closed");
                 }
+                false
             }
             // Send cancels for any activity that learns its workflow already finished (which is
             // one thing not found implies - other reasons would seem equally valid).
@@ -276,9 +280,11 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ActivityHeartbeatProcessor<S
                 self.cancels_tx
                     .send((self.task_token.clone(), ActivityCancelReason::NotFound))
                     .expect("Receive half of heartbeat cancels not closed");
+                true
             }
             Err(e) => {
-                warn!("Error when recording heartbeat: {:?}", e)
+                warn!("Error when recording heartbeat: {:?}", e);
+                false
             }
         }
     }
