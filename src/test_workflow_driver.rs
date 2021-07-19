@@ -461,7 +461,6 @@ impl Future for WorkflowFuture {
                         activation_cmds.push(workflow_command::Variant::RequestCancelActivity(
                             RequestCancelActivity {
                                 activity_id: aid.clone(),
-                                scheduled_event_id: 0,
                             },
                         ));
                     }

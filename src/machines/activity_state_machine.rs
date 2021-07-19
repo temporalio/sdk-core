@@ -10,12 +10,10 @@ use crate::{
             activity_result::{self as ar, activity_result, ActivityResult},
             common::Payload,
             workflow_activation::ResolveActivity,
-            workflow_commands::{
-                ActivityCancellationType, RequestCancelActivity, ScheduleActivity,
-            },
+            workflow_commands::{ActivityCancellationType, ScheduleActivity},
         },
         temporal::api::{
-            command::v1::Command,
+            command::v1::{command, Command, RequestCancelActivityTaskCommandAttributes},
             common::v1::{ActivityType, Payloads},
             enums::v1::{CommandType, EventType},
             failure::v1::{
@@ -592,11 +590,11 @@ where
     let cmd = Command {
         command_type: CommandType::RequestCancelActivityTask as i32,
         attributes: Some(
-            RequestCancelActivity {
-                scheduled_event_id: dat.scheduled_event_id,
-                activity_id: dat.attrs.activity_id,
-            }
-            .into(),
+            command::Attributes::RequestCancelActivityTaskCommandAttributes(
+                RequestCancelActivityTaskCommandAttributes {
+                    scheduled_event_id: dat.scheduled_event_id,
+                },
+            ),
         ),
     };
     ActivityMachineTransition::ok(

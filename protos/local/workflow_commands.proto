@@ -77,17 +77,16 @@ enum ActivityCancellationType {
     /// Initiate a cancellation request and immediately report cancellation to the workflow.
     TRY_CANCEL = 0;
     /// Wait for activity cancellation completion. Note that activity must heartbeat to receive a
-    /// cancellation notification. This can block the cancellation for a long time if activity doesn't
-    /// heartbeat or chooses to ignore the cancellation request.
+    /// cancellation notification. This can block the cancellation for a long time if activity
+    /// doesn't heartbeat or chooses to ignore the cancellation request.
     WAIT_CANCELLATION_COMPLETED = 1;
-    /// Do not request cancellation of the activity and immediately report cancellation to the workflow
+    /// Do not request cancellation of the activity and immediately report cancellation to the
+    /// workflow
     ABANDON = 2;
 }
 
 message RequestCancelActivity {
     string activity_id = 1;
-    // TODO: Delete
-    int64 scheduled_event_id = 2;
 }
 
 message QueryResult {
