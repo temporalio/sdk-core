@@ -269,7 +269,6 @@ async fn activity_cancellation_try_cancel() {
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![RequestCancelActivity {
             activity_id: activity_id.to_owned(),
-            ..Default::default()
         }
         .into()],
         task.run_id,
@@ -318,7 +317,6 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![RequestCancelActivity {
             activity_id: activity_id.to_owned(),
-            ..Default::default()
         }
         .into()],
         task.run_id,
@@ -477,7 +475,6 @@ async fn activity_cancellation_wait_cancellation_completed() {
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![RequestCancelActivity {
             activity_id: activity_id.to_owned(),
-            ..Default::default()
         }
         .into()],
         task.run_id,
@@ -550,7 +547,6 @@ async fn activity_cancellation_abandon() {
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![RequestCancelActivity {
             activity_id: activity_id.to_owned(),
-            ..Default::default()
         }
         .into()],
         task.run_id,

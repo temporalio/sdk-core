@@ -115,7 +115,6 @@ async fn pending_activities_only_returned_for_their_queue() {
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![RequestCancelActivity {
             activity_id: act_id.to_string(),
-            ..Default::default()
         }
         .into()],
         res.run_id,

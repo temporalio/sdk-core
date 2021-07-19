@@ -514,6 +514,7 @@ impl Future for WorkflowFuture {
 }
 
 #[derive(derive_more::From)]
+#[allow(clippy::large_enum_variant)]
 enum RustWfCmd {
     #[from(ignore)]
     CancelTimer(String),

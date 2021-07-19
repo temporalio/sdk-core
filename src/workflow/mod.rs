@@ -225,7 +225,7 @@ pub mod managed_wf {
             args: Vec<Payload>,
         ) -> Self {
             let (completions_tx, completions_rx) = unbounded_channel();
-            let (wff, activations) = func.start_workflow(args, completions_tx.clone());
+            let (wff, activations) = func.start_workflow(args, completions_tx);
             let spawned = tokio::spawn(wff);
             let driver = WFFutureDriver { completions_rx };
             let state_machines = WorkflowMachines::new(

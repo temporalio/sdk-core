@@ -91,7 +91,6 @@ async fn out_of_order_completion_doesnt_hang() {
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![RequestCancelActivity {
             activity_id: activity_id.to_string(),
-            ..Default::default()
         }
         .into()],
         task.run_id,

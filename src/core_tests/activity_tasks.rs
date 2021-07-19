@@ -438,7 +438,6 @@ async fn activity_timeout_no_double_resolve() {
                 vec![
                     RequestCancelActivity {
                         activity_id: activity_id.to_string(),
-                        ..Default::default()
                     }
                     .into(),
                     StartTimer {
