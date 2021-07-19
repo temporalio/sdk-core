@@ -298,6 +298,7 @@ mod test {
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
             };
             command_sink.timer(timer).await;
+            Ok(().into())
         });
 
         let t = canned_histories::single_timer("timer1");
@@ -343,6 +344,7 @@ mod test {
                 start_to_fire_timeout: Some(Duration::from_secs(5).into()),
             };
             command_sink.timer(timer).await;
+            Ok(().into())
         });
 
         let t = canned_histories::single_timer("badid");
@@ -369,9 +371,8 @@ mod test {
                 .await;
             // Cancel the first timer after having waited on the second
             cmd_sink.cancel_timer("cancel_timer");
-            dbg!("Cancelled timersent ");
             cancel_timer_fut.await;
-            dbg!("Cancelled done await ");
+            Ok(().into())
         });
 
         let t = canned_histories::cancel_timer("wait_timer", "cancel_timer");
@@ -421,6 +422,7 @@ mod test {
             // Immediately cancel the timer
             cmd_sink.cancel_timer("cancel_timer");
             cancel_timer_fut.await;
+            Ok(().into())
         });
 
         let mut t = TestHistoryBuilder::default();

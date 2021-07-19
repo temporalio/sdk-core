@@ -17,6 +17,7 @@ fn timers_wf(num_timers: usize) -> WorkflowFunction {
             };
             command_sink.timer(timer).await;
         }
+        Ok(().into())
     })
 }
 
@@ -60,8 +61,8 @@ async fn replay_flag_is_correct_partial_history() {
     let func = timers_wf(1);
     // Add 1 b/c history takes # wf tasks, not timers
     let t = canned_histories::long_sequential_timers(2);
-    // TODO: Should be broken, need partial history
-    let mut wfm = ManagedWFFunc::new(t, func, vec![]);
+    let mut wfm =
+        ManagedWFFunc::new_from_update(t.get_history_info(1).unwrap().into(), func, vec![]);
 
     let act = wfm.get_next_activation().await.unwrap();
     assert!(!act.is_replaying);

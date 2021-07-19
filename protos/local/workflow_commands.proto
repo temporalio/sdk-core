@@ -86,6 +86,7 @@ enum ActivityCancellationType {
 
 message RequestCancelActivity {
     string activity_id = 1;
+    // TODO: Delete
     int64 scheduled_event_id = 2;
 }
 

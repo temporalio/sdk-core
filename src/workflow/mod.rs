@@ -177,12 +177,19 @@ pub mod managed_wf {
 
     impl ManagedWFFunc {
         pub fn new(hist: TestHistoryBuilder, func: WorkflowFunction, args: Vec<Payload>) -> Self {
+            Self::new_from_update(hist.as_history_update(), func, args)
+        }
+
+        pub fn new_from_update(
+            hist: HistoryUpdate,
+            func: WorkflowFunction,
+            args: Vec<Payload>,
+        ) -> Self {
             let (driver, activation_tx) = func.as_future_driver(args);
-            // TODO: Need to be able to feed partial history
             let state_machines = WorkflowMachines::new(
                 "wfid".to_string(),
                 "runid".to_string(),
-                hist.as_history_update(),
+                hist,
                 Box::new(driver).into(),
             );
             let mgr = WorkflowManager::new_from_machines(state_machines);
@@ -198,6 +205,7 @@ pub mod managed_wf {
             Ok(res)
         }
 
+        /// Return outgoing server commands as of the last iteration
         pub async fn get_server_commands(&mut self) -> OutgoingServerCommands {
             self.mgr.get_server_commands()
         }

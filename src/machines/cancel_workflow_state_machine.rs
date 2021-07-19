@@ -112,22 +112,23 @@ impl Cancellable for CancelWorkflowMachine {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_workflow_driver::WfExitValue;
     use crate::{
-        machines::{StartTimer},
+        machines::StartTimer,
         protos::coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
         test_help::canned_histories,
-        test_workflow_driver::{WfContext, WorkflowFunction},
-        workflow::{managed_wf::ManagedWFFunc},
+        test_workflow_driver::{WfContext, WorkflowFunction, WorkflowResult},
+        workflow::managed_wf::ManagedWFFunc,
     };
     use std::time::Duration;
 
-    async fn wf_with_timer(mut ctx: WfContext) {
+    async fn wf_with_timer(mut ctx: WfContext) -> WorkflowResult<()> {
         ctx.timer(StartTimer {
             timer_id: "timer1".to_string(),
             start_to_fire_timeout: Some(Duration::from_millis(500).into()),
         })
         .await;
-        ctx.complete_cancelled();
+        Ok(WfExitValue::Cancelled)
     }
 
     #[tokio::test(flavor = "multi_thread")]

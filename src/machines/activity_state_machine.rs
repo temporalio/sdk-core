@@ -693,7 +693,7 @@ fn convert_payloads(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_workflow_driver::WorkflowFunction;
+    use crate::test_workflow_driver::{WorkflowFunction, WorkflowResult};
     use crate::workflow::managed_wf::ManagedWFFunc;
     use crate::{
         machines::workflow_machines::WorkflowMachines,
@@ -723,12 +723,13 @@ mod test {
         ManagedWFFunc::new(t, func, vec![])
     }
 
-    async fn activity_wf(mut command_sink: WfContext) {
+    async fn activity_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
         let activity = ScheduleActivity {
             activity_id: "activity-id-1".to_string(),
             ..Default::default()
         };
         command_sink.activity(activity).await;
+        Ok(().into())
     }
 
     #[rstest(
@@ -781,6 +782,7 @@ mod test {
             // Immediately cancel the activity
             cmd_sink.cancel_activity("activity-id-1");
             cancel_activity_future.await;
+            Ok(().into())
         });
 
         let mut t = TestHistoryBuilder::default();
@@ -793,21 +795,16 @@ mod test {
         let commands = wfm.get_server_commands().await.commands;
         assert_matches!(
             activation.jobs.as_slice(),
-            [
-                WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
-                },
-                WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::ResolveActivity(
-                        ResolveActivity {
-                            activity_id,
-                            result: Some(ActivityResult {
-                                status: Some(activity_result::Status::Canceled(_))
-                            })
-                        }
-                    )),
-                },
-            ]
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveActivity(
+                    ResolveActivity {
+                        activity_id,
+                        result: Some(ActivityResult {
+                            status: Some(activity_result::Status::Canceled(_))
+                        })
+                    }
+                )),
+            },]
         )
     }
 }

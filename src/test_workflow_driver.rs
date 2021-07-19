@@ -8,13 +8,14 @@
 use crate::{
     protos::coresdk::{
         activity_result::ActivityResult,
-        common::Payload,
+        common::{Payload, UserCodeFailure},
         workflow_activation::{
             wf_activation_job::Variant, FireTimer, ResolveActivity, WfActivation, WfActivationJob,
         },
         workflow_commands::{
-            workflow_command, CancelTimer, CompleteWorkflowExecution,
-            ContinueAsNewWorkflowExecution, ScheduleActivity, StartTimer,
+            workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
+            ContinueAsNewWorkflowExecution, FailWorkflowExecution, RequestCancelActivity,
+            ScheduleActivity, StartTimer,
         },
         workflow_completion::WfActivationCompletion,
     },
@@ -27,6 +28,7 @@ use dashmap::DashMap;
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use std::{
     collections::HashMap,
+    fmt::Debug,
     future::Future,
     pin::Pin,
     sync::{
@@ -57,9 +59,9 @@ pub struct TestRustWorker {
     incomplete_workflows: Arc<AtomicUsize>,
     /// Handles for each spawned workflow run are inserted here to be cleaned up when all runs
     /// are finished
-    join_handles: FuturesUnordered<JoinHandle<Result<(), anyhow::Error>>>,
+    join_handles: FuturesUnordered<JoinHandle<WorkflowResult<()>>>,
 }
-type WfFunc = dyn Fn(WfContext) -> BoxFuture<'static, ()> + Send + Sync + 'static;
+type WfFunc = dyn Fn(WfContext) -> BoxFuture<'static, WorkflowResult<()>> + Send + Sync + 'static;
 
 impl TestRustWorker {
     /// Create a new rust worker using the provided core instance, namespace, and task queue
@@ -242,13 +244,8 @@ impl WfContext {
     }
 
     /// Cancel activity
-    pub fn cancel_activity(&self, _activity_id: &str) {
-        todo!()
-    }
-
-    /// Continue as new
-    pub fn continue_as_new(&self, _command: ContinueAsNewWorkflowExecution) {
-        todo!()
+    pub fn cancel_activity(&self, activity_id: &str) {
+        self.send(RustWfCmd::CancelActivity(activity_id.to_string()))
     }
 
     /// Acknowledge the workflow was cancelled
@@ -263,7 +260,7 @@ impl WfContext {
 
 #[cfg(test)]
 pub(crate) struct WFFutureDriver {
-    fut: JoinHandle<Result<(), anyhow::Error>>,
+    fut: JoinHandle<WorkflowResult<()>>,
     pub completions_rx: UnboundedReceiver<WfActivationCompletion>,
 }
 
@@ -278,7 +275,7 @@ impl WorkflowFunction {
     where
         F: Fn(WfContext) -> Fut + Send + Sync + 'static,
         // TODO: Output should be result
-        Fut: Future<Output = ()> + Send + 'static,
+        Fut: Future<Output = WorkflowResult<()>> + Send + 'static,
     {
         Self {
             wf_func: Box::new(move |ctx: WfContext| wf_func(ctx).boxed()),
@@ -324,7 +321,7 @@ impl WorkflowFunction {
 
 pub(crate) struct WorkflowFuture {
     /// Future produced by calling the workflow function
-    inner: BoxFuture<'static, ()>,
+    inner: BoxFuture<'static, WorkflowResult<()>>,
     /// Commands produced inside user's wf code
     incoming_commands: Receiver<RustWfCmd>,
     /// Once blocked or the workflow has finished or errored out, the result is sent here
@@ -350,8 +347,24 @@ impl WorkflowFuture {
     }
 }
 
+/// The result of running a workflow
+pub type WorkflowResult<T> = Result<WfExitValue<T>, anyhow::Error>;
+
+/// Workflow functions may return these values when exiting
+#[derive(Debug, derive_more::From)]
+pub enum WfExitValue<T: Debug> {
+    /// Continue the workflow as a new execution
+    #[from(ignore)]
+    ContinueAsNew(ContinueAsNewWorkflowExecution),
+    /// Confirm the workflow was cancelled (can be automatic in a more advanced iteration)
+    #[from(ignore)]
+    Cancelled,
+    /// Finish with a result
+    Normal(T),
+}
+
 impl Future for WorkflowFuture {
-    type Output = Result<(), anyhow::Error>;
+    type Output = WorkflowResult<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         dbg!("Wf future poll");
@@ -386,8 +399,7 @@ impl Future for WorkflowFuture {
                         Variant::UpdateRandomSeed(_) => {}
                         Variant::QueryWorkflow(_) => {}
                         Variant::CancelWorkflow(_) => {
-                            // twd.mark_wf_cancelled();
-                            todo!()
+                            // TODO: Cancel pending futures, etc
                         }
                         Variant::SignalWorkflow(_) => {}
                         Variant::RemoveFromCache(_) => {
@@ -414,6 +426,14 @@ impl Future for WorkflowFuture {
                         // Re-poll wf future since a timer is now unblocked
                         res = self.inner.poll_unpin(cx);
                     }
+                    RustWfCmd::CancelActivity(aid) => {
+                        activation_cmds.push(workflow_command::Variant::RequestCancelActivity(
+                            RequestCancelActivity {
+                                activity_id: aid.clone(),
+                                scheduled_event_id: 0,
+                            },
+                        ));
+                    }
                     RustWfCmd::NewCmd(cmd) => {
                         activation_cmds.push(cmd.cmd.clone());
 
@@ -437,11 +457,38 @@ impl Future for WorkflowFuture {
                     }
                 }
             }
-            let do_finish = if let Poll::Ready(_res) = res {
-                // TODO: Actual results, failures.
-                activation_cmds.push(workflow_command::Variant::CompleteWorkflowExecution(
-                    CompleteWorkflowExecution { result: None },
-                ));
+            let do_finish = if let Poll::Ready(res) = res {
+                // TODO: Auto reply with cancel when cancelled
+                match res {
+                    Ok(exit_val) => match exit_val {
+                        // TODO: Generic values
+                        WfExitValue::Normal(_) => {
+                            activation_cmds.push(
+                                workflow_command::Variant::CompleteWorkflowExecution(
+                                    CompleteWorkflowExecution { result: None },
+                                ),
+                            );
+                        }
+                        WfExitValue::ContinueAsNew(cmd) => activation_cmds.push(cmd.into()),
+                        WfExitValue::Cancelled => {
+                            activation_cmds.push(
+                                workflow_command::Variant::CancelWorkflowExecution(
+                                    CancelWorkflowExecution {},
+                                ),
+                            );
+                        }
+                    },
+                    Err(e) => {
+                        activation_cmds.push(workflow_command::Variant::FailWorkflowExecution(
+                            FailWorkflowExecution {
+                                failure: Some(UserCodeFailure {
+                                    message: e.to_string(),
+                                    ..Default::default()
+                                }),
+                            },
+                        ));
+                    }
+                }
                 true
             } else {
                 false
@@ -450,7 +497,7 @@ impl Future for WorkflowFuture {
                 .send(WfActivationCompletion::from_cmds(activation_cmds, run_id))
                 .expect("Completion channel intact");
             if do_finish {
-                return Poll::Ready(Ok(()));
+                return Poll::Ready(Ok(().into()));
             }
         }
     }
@@ -458,7 +505,10 @@ impl Future for WorkflowFuture {
 
 #[derive(derive_more::From)]
 enum RustWfCmd {
+    #[from(ignore)]
     CancelTimer(String),
+    #[from(ignore)]
+    CancelActivity(String),
     NewCmd(CommandCreateRequest),
 }
 
@@ -505,14 +555,13 @@ mod tests {
     use super::*;
     use crate::test_help::{build_fake_core, canned_histories, TEST_Q};
 
-    pub async fn timer_wf(mut ctx: WfContext) {
+    pub async fn timer_wf(mut ctx: WfContext) -> WorkflowResult<()> {
         let timer = StartTimer {
             timer_id: "fake_timer".to_string(),
             start_to_fire_timeout: Some(Duration::from_secs(1).into()),
         };
-        dbg!("Issuing / awaiting timer");
         ctx.timer(timer).await;
-        dbg!("Wf done");
+        Ok(().into())
     }
 
     #[tokio::test]

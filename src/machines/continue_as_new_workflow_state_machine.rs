@@ -113,24 +113,25 @@ impl Cancellable for ContinueAsNewWorkflowMachine {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_workflow_driver::{WfExitValue, WorkflowResult};
     use crate::{
-        machines::{StartTimer},
+        machines::StartTimer,
         test_help::canned_histories,
         test_workflow_driver::{WfContext, WorkflowFunction},
-        workflow::{managed_wf::ManagedWFFunc},
+        workflow::managed_wf::ManagedWFFunc,
     };
     use std::time::Duration;
 
-    async fn wf_with_timer(mut ctx: WfContext) {
+    async fn wf_with_timer(mut ctx: WfContext) -> WorkflowResult<()> {
         ctx.timer(StartTimer {
             timer_id: "timer1".to_string(),
             start_to_fire_timeout: Some(Duration::from_millis(500).into()),
         })
         .await;
-        ctx.continue_as_new(ContinueAsNewWorkflowExecution {
+        Ok(WfExitValue::ContinueAsNew(ContinueAsNewWorkflowExecution {
             arguments: vec![[1].into()],
             ..Default::default()
-        });
+        }))
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -145,7 +146,6 @@ mod tests {
 
         wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().await.commands;
-        assert_eq!(commands.len(), 1);
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
