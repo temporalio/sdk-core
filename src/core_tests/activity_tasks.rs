@@ -193,7 +193,6 @@ async fn heartbeats_report_cancels_only_once() {
             ..
         } => { task_token == vec![2] }
     );
-    dbg!("Shutdown");
     core.shutdown().await;
 }
 

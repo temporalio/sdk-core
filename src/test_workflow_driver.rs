@@ -108,7 +108,6 @@ impl TestRustWorker {
             let (completions_tx, mut completions_rx) = unbounded_channel();
             loop {
                 let activation = self.core.poll_workflow_task(&self.task_queue).await?;
-                dbg!(&activation);
 
                 // If the activation is to start a workflow, create a new workflow driver for it,
                 // using the function associated with that workflow id
@@ -126,7 +125,7 @@ impl TestRustWorker {
                         wf_function.start_workflow(sw.arguments.clone(), completions_tx.clone());
                     let live_wfs = self.incomplete_workflows.clone();
                     let jh = tokio::spawn(async move {
-                        let res = dbg!(wff.await);
+                        let res = wff.await;
                         if !matches!(&res, Ok(WfExitValue::Evicted)) {
                             live_wfs.fetch_sub(1, Ordering::SeqCst);
                         }
@@ -139,17 +138,13 @@ impl TestRustWorker {
                 // The activation is expected to apply to some workflow we know about. Use it to
                 // unblock things and advance the workflow.
                 if let Some(tx) = self.workflows.get_mut(&activation.run_id) {
-                    dbg!("Sending activation");
                     tx.send(activation).unwrap();
                 } else {
                     bail!("Got activation for unknown workflow");
                 }
-                dbg!("Activation sent");
 
                 let completion = completions_rx.recv().await.expect("No workflows left?");
-                dbg!(&completion);
                 self.core.complete_workflow_task(completion).await.unwrap();
-                dbg!("Done completing");
                 if self.incomplete_workflows.load(Ordering::SeqCst) == 0 {
                     break Ok(self);
                 }
@@ -286,7 +281,6 @@ impl WorkflowFunction {
     pub fn new<F, Fut>(wf_func: F) -> Self
     where
         F: Fn(WfContext) -> Fut + Send + Sync + 'static,
-        // TODO: Output should be result
         Fut: Future<Output = WorkflowResult<()>> + Send + 'static,
     {
         Self {
@@ -342,7 +336,7 @@ pub(crate) struct WorkflowFuture {
     incoming_commands: Receiver<RustWfCmd>,
     /// Once blocked or the workflow has finished or errored out, the result is sent here
     outgoing_completions: UnboundedSender<WfActivationCompletion>,
-    /// Activations from core TODO: Could be bounded to 1?
+    /// Activations from core
     incoming_activations: UnboundedReceiver<WfActivation>,
     /// Commands by ID -> blocked status
     command_status: HashMap<CommandID, WFCommandFutInfo>,
@@ -376,14 +370,13 @@ impl Future for WorkflowFuture {
                 Poll::Pending => return Poll::Pending,
             };
 
-            dbg!("Got activation", &activation);
             let run_id = activation.run_id;
 
             for WfActivationJob { variant } in activation.jobs {
                 if let Some(v) = variant {
                     match v {
                         Variant::StartWorkflow(_) => {
-                            // TODO: Can assign randomness seed
+                            // TODO: Can assign randomness seed whenever needed
                         }
                         Variant::FireTimer(FireTimer { timer_id }) => {
                             self.unblock(UnblockEvent::Timer(timer_id))
@@ -416,7 +409,6 @@ impl Future for WorkflowFuture {
                     return Err(anyhow!("Empty activation job variant")).into();
                 }
             }
-            dbg!("Done activation");
 
             // TODO: Trap panics in wf code here?
             let mut res = self.inner.poll_unpin(cx);
