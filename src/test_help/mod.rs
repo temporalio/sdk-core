@@ -1,6 +1,5 @@
 pub mod canned_histories;
 
-mod async_workflow_driver;
 mod history_builder;
 mod history_info;
 

@@ -165,14 +165,53 @@ pub(crate) enum WorkflowCachingPolicy {
 pub mod managed_wf {
     use super::*;
     use crate::{
-        protos::coresdk::common::Payload, test_help::TestHistoryBuilder,
-        test_workflow_driver::WorkflowFunction,
+        machines::WFCommand,
+        protos::coresdk::{
+            common::Payload,
+            workflow_completion::{wf_activation_completion::Status, WfActivationCompletion},
+        },
+        test_help::TestHistoryBuilder,
+        test_workflow_driver::{WorkflowFunction, WorkflowResult},
+        workflow::WorkflowFetcher,
     };
-    use tokio::sync::mpsc::UnboundedSender;
+    use std::convert::TryInto;
+    use tokio::{
+        sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+        task::JoinHandle,
+    };
 
+    pub(crate) struct WFFutureDriver {
+        completions_rx: UnboundedReceiver<WfActivationCompletion>,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkflowFetcher for WFFutureDriver {
+        async fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
+            if let Some(completion) = self.completions_rx.recv().await {
+                completion
+                    .status
+                    .map(|s| match s {
+                        Status::Successful(s) => s
+                            .commands
+                            .into_iter()
+                            .map(|cmd| cmd.try_into().unwrap())
+                            .collect(),
+                        Status::Failed(_) => panic!("Ahh failed"),
+                    })
+                    .unwrap_or_default()
+            } else {
+                // Sender went away so nothing to do here. End of wf/test.
+                vec![]
+            }
+        }
+    }
+
+    #[must_use]
     pub struct ManagedWFFunc {
         mgr: WorkflowManager,
         activation_tx: UnboundedSender<WfActivation>,
+        future_handle: Option<JoinHandle<WorkflowResult<()>>>,
+        was_shutdown: bool,
     }
 
     impl ManagedWFFunc {
@@ -185,7 +224,10 @@ pub mod managed_wf {
             func: WorkflowFunction,
             args: Vec<Payload>,
         ) -> Self {
-            let (driver, activation_tx) = func.as_future_driver(args);
+            let (completions_tx, completions_rx) = unbounded_channel();
+            let (wff, activations) = func.start_workflow(args, completions_tx.clone());
+            let spawned = tokio::spawn(wff);
+            let driver = WFFutureDriver { completions_rx };
             let state_machines = WorkflowMachines::new(
                 "wfid".to_string(),
                 "runid".to_string(),
@@ -193,7 +235,12 @@ pub mod managed_wf {
                 Box::new(driver).into(),
             );
             let mgr = WorkflowManager::new_from_machines(state_machines);
-            Self { mgr, activation_tx }
+            Self {
+                mgr,
+                activation_tx: activations,
+                future_handle: Some(spawned),
+                was_shutdown: false,
+            }
         }
 
         pub async fn get_next_activation(&mut self) -> Result<WfActivation> {
@@ -221,6 +268,19 @@ pub mod managed_wf {
                 next_act = self.get_next_activation().await?;
             }
             Ok(last_act)
+        }
+
+        pub async fn shutdown(&mut self) -> WorkflowResult<()> {
+            self.was_shutdown = true;
+            self.future_handle.take().unwrap().await.unwrap()
+        }
+    }
+
+    impl Drop for ManagedWFFunc {
+        fn drop(&mut self) {
+            if !self.was_shutdown {
+                panic!("You must call `shutdown` to properly use ManagedWFFunc in tests")
+            }
         }
     }
 }

@@ -266,12 +266,6 @@ impl WfContext {
     }
 }
 
-#[cfg(test)]
-pub(crate) struct WFFutureDriver {
-    fut: JoinHandle<WorkflowResult<()>>,
-    pub completions_rx: UnboundedReceiver<WfActivationCompletion>,
-}
-
 /// The user's async function / workflow code
 pub struct WorkflowFunction {
     wf_func: Box<WfFunc>,
@@ -280,7 +274,6 @@ pub struct WorkflowFunction {
 impl<F, Fut> From<F> for WorkflowFunction
 where
     F: Fn(WfContext) -> Fut + Send + Sync + 'static,
-    // TODO: Output should be result
     Fut: Future<Output = WorkflowResult<()>> + Send + 'static,
 {
     fn from(wf_func: F) -> Self {
@@ -299,23 +292,6 @@ impl WorkflowFunction {
         Self {
             wf_func: Box::new(move |ctx: WfContext| wf_func(ctx).boxed()),
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn as_future_driver(
-        &self,
-        args: Vec<Payload>,
-    ) -> (WFFutureDriver, UnboundedSender<WfActivation>) {
-        let (completions_tx, completions_rx) = unbounded_channel();
-        let (wff, activations) = self.start_workflow(args, completions_tx.clone());
-        let spawned = tokio::spawn(wff);
-        (
-            WFFutureDriver {
-                fut: spawned,
-                completions_rx,
-            },
-            activations,
-        )
     }
 
     pub(crate) fn start_workflow(

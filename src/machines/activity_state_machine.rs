@@ -721,6 +721,7 @@ mod test {
             commands[0].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
+        wfm.shutdown().await.unwrap();
     }
 
     #[rstest(
@@ -737,6 +738,7 @@ mod test {
             commands[0].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
+        wfm.shutdown().await.unwrap();
     }
 
     #[tokio::test]
@@ -772,6 +774,7 @@ mod test {
                     }
                 )),
             },]
-        )
+        );
+        wfm.shutdown().await.unwrap();
     }
 }
