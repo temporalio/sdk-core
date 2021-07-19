@@ -23,6 +23,7 @@ use crate::{
         mock_core_with_opts_no_workers, mock_manual_poller, mock_poller, poll_and_reply,
         MocksHolder, TEST_Q,
     },
+    tracing_init,
     workflow::WorkflowCachingPolicy::NonSticky,
     ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
 };
@@ -199,6 +200,7 @@ async fn heartbeats_report_cancels_only_once() {
 
 #[tokio::test]
 async fn activity_cancel_interrupts_poll() {
+    tracing_init();
     let mut mock_poller = mock_manual_poller();
     let mut poll_resps = VecDeque::from(vec![
         async {
