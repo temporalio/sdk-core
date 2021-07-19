@@ -336,7 +336,7 @@ mod test {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn mismatched_timer_ids_errors() {
         let func = WorkflowFunction::new(|mut command_sink: WfContext| async move {
             let timer = StartTimer {
@@ -412,7 +412,7 @@ mod test {
         assert_eq!(commands.len(), 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn cancel_before_sent_to_server() {
         let func = WorkflowFunction::new(|mut cmd_sink: WfContext| async move {
             let cancel_timer_fut = cmd_sink.timer(StartTimer {

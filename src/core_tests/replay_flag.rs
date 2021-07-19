@@ -56,7 +56,7 @@ async fn replay_flag_is_correct(#[case] mut wfm: ManagedWFFunc, #[case] num_time
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn replay_flag_is_correct_partial_history() {
     let func = timers_wf(1);
     // Add 1 b/c history takes # wf tasks, not timers
