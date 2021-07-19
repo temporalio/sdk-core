@@ -54,6 +54,7 @@ async fn replay_flag_is_correct(#[case] mut wfm: ManagedWFFunc, #[case] num_time
         commands[0].command_type,
         CommandType::CompleteWorkflowExecution as i32
     );
+    wfm.shutdown().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -69,4 +70,5 @@ async fn replay_flag_is_correct_partial_history() {
     let commands = wfm.get_server_commands().await.commands;
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+    wfm.shutdown().await.unwrap();
 }

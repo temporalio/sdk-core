@@ -155,5 +155,6 @@ mod tests {
         assert!(wfm.get_next_activation().await.unwrap().jobs.is_empty());
         let commands = wfm.get_server_commands().await.commands;
         assert_eq!(commands.len(), 0);
+        wfm.shutdown().await.unwrap();
     }
 }

@@ -380,7 +380,6 @@ impl Future for WorkflowFuture {
             let run_id = activation.run_id;
 
             for WfActivationJob { variant } in activation.jobs {
-                dbg!(&variant);
                 if let Some(v) = variant {
                     match v {
                         Variant::StartWorkflow(_) => {

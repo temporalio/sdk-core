@@ -322,6 +322,7 @@ mod test {
             commands[0].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
+        happy_wfm.shutdown().await.unwrap();
     }
 
     #[rstest]
@@ -334,6 +335,7 @@ mod test {
             commands[0].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
+        happy_wfm.shutdown().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -354,6 +356,7 @@ mod test {
             .unwrap_err()
             .to_string()
             .contains("Timer fired event did not have expected timer id realid!"));
+        wfm.shutdown().await.unwrap();
     }
 
     #[fixture]
@@ -401,6 +404,7 @@ mod test {
         let commands = wfm.get_server_commands().await.commands;
         // There should be no commands - the wf completed at the same time the timer was cancelled
         assert_eq!(commands.len(), 0);
+        wfm.shutdown().await.unwrap();
     }
 
     #[rstest]
@@ -410,6 +414,7 @@ mod test {
         let commands = wfm.get_server_commands().await.commands;
         // There should be no commands - the wf completed at the same time the timer was cancelled
         assert_eq!(commands.len(), 0);
+        wfm.shutdown().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -434,5 +439,6 @@ mod test {
         wfm.process_all_activations().await.unwrap();
         let commands = wfm.get_server_commands().await.commands;
         assert_eq!(commands.len(), 0);
+        wfm.shutdown().await.unwrap();
     }
 }

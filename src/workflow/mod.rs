@@ -77,7 +77,6 @@ impl WorkflowManager {
         }
     }
 
-    // TODO: Should probably just go away in favor of real core w/ mocked responses
     #[cfg(test)]
     pub fn new_from_machines(workflow_machines: WorkflowMachines) -> Self {
         Self {
@@ -164,6 +163,7 @@ pub(crate) enum WorkflowCachingPolicy {
 #[cfg(test)]
 pub mod managed_wf {
     use super::*;
+    use crate::protos::coresdk::workflow_activation::create_evict_activation;
     use crate::{
         machines::WFCommand,
         protos::coresdk::{
@@ -245,10 +245,15 @@ pub mod managed_wf {
 
         pub async fn get_next_activation(&mut self) -> Result<WfActivation> {
             let res = self.mgr.get_next_activation().await?;
+            if res.jobs.is_empty() {
+                // Nothing to do here
+                return Ok(res);
+            }
             // Feed it back in to the workflow code and iterate machines
-            // TODO: See if can do a more ordered shutdown
-            let _ = self.activation_tx.send(res.clone());
-            self.mgr.machines.iterate_machines().await.unwrap();
+            self.activation_tx
+                .send(res.clone())
+                .expect("Workflow should not be dropped if we are still sending activations");
+            self.mgr.machines.iterate_machines().await?;
             Ok(res)
         }
 
@@ -272,13 +277,18 @@ pub mod managed_wf {
 
         pub async fn shutdown(&mut self) -> WorkflowResult<()> {
             self.was_shutdown = true;
+            // Send an eviction to ensure wf exits if it has not finished (ex: feeding partial hist)
+            let _ = self.activation_tx.send(create_evict_activation(
+                "not actually important".to_string(),
+            ));
             self.future_handle.take().unwrap().await.unwrap()
         }
     }
 
     impl Drop for ManagedWFFunc {
         fn drop(&mut self) {
-            if !self.was_shutdown {
+            // Double panics cause a SIGILL
+            if !self.was_shutdown && !std::thread::panicking() {
                 panic!("You must call `shutdown` to properly use ManagedWFFunc in tests")
             }
         }
