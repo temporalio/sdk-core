@@ -22,12 +22,9 @@ use tokio::{
     task::JoinHandle,
 };
 
-// TODO: Not needed
-pub(crate) struct ActivityHeartbeatManager {}
-
 /// Used to supply new heartbeat events to the activity heartbeat manager, or to send a shutdown
 /// request.
-pub(crate) struct ActivityHeartbeatManagerHandle {
+pub(crate) struct ActivityHeartbeatManager {
     heartbeat_tx: UnboundedSender<ValidActivityHeartbeat>,
     /// Cancellations that have been received when heartbeating are queued here and can be consumed
     /// by [fetch_cancellations]
@@ -47,7 +44,7 @@ pub struct ValidActivityHeartbeat {
 /// Handle that is used by the core for all interactions with the manager, allows sending new
 /// heartbeats or requesting and awaiting for the shutdown. When shutdown is requested, signal gets
 /// sent to all processors, which allows them to complete gracefully.
-impl ActivityHeartbeatManagerHandle {
+impl ActivityHeartbeatManager {
     /// Records a new heartbeat, note that first call would result in an immediate call to the
     /// server, while rapid successive calls would accumulate for up to `delay`
     /// and then latest heartbeat details will be sent to the server. If there is no activity for
@@ -111,13 +108,9 @@ struct ActivityHbState {
 }
 
 impl ActivityHeartbeatManager {
-    // TODO: Move to handle and rename
-    #![allow(clippy::new_ret_no_self)]
     /// Creates a new instance of an activity heartbeat manager and returns a handle to the user,
     /// which allows to send new heartbeats and initiate the shutdown.
-    pub fn new<SG: ServerGatewayApis + Send + Sync + 'static>(
-        sg: Arc<SG>,
-    ) -> ActivityHeartbeatManagerHandle {
+    pub fn new<SG: ServerGatewayApis + Send + Sync + 'static>(sg: Arc<SG>) -> Self {
         let (heartbeat_tx, heartbeat_rx) = unbounded_channel();
         let (cancels_tx, cancels_rx) = unbounded_channel();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -210,7 +203,7 @@ impl ActivityHeartbeatManager {
             }),
         );
 
-        ActivityHeartbeatManagerHandle {
+        Self {
             heartbeat_tx,
             incoming_cancels: Mutex::new(cancels_rx),
             shutting_down: shutdown_tx,
@@ -321,7 +314,7 @@ mod test {
     }
 
     fn record_heartbeat(
-        hm: &ActivityHeartbeatManagerHandle,
+        hm: &ActivityHeartbeatManager,
         task_token: Vec<u8>,
         payload_data: u8,
         delay: Duration,
