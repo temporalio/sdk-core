@@ -2,14 +2,16 @@ use assert_matches::assert_matches;
 use crossbeam::channel::{unbounded, RecvTimeoutError};
 use futures::future::join_all;
 use std::time::Duration;
-use temporal_sdk_core::protos::coresdk::{
-    activity_task::activity_task as act_task,
-    workflow_activation::{wf_activation_job, FireTimer, WfActivationJob},
-    workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
-    workflow_completion::WfActivationCompletion,
+use temporal_sdk_core::{
+    protos::coresdk::{
+        activity_task::activity_task as act_task,
+        workflow_activation::{wf_activation_job, FireTimer, WfActivationJob},
+        workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
+        workflow_completion::WfActivationCompletion,
+    },
+    test_workflow_driver::{WfContext, WorkflowResult},
+    tracing_init, Core, CoreInitOptionsBuilder, IntoCompletion,
 };
-use temporal_sdk_core::test_workflow_driver::{TestRustWorker, WfContext};
-use temporal_sdk_core::{tracing_init, Core, CoreInitOptionsBuilder, IntoCompletion};
 use test_utils::{
     get_integ_server_options, init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers,
     CoreWfStarter,
@@ -123,7 +125,7 @@ async fn long_poll_timeout_is_retried() {
     assert_matches!(err, RecvTimeoutError::Timeout);
 }
 
-pub async fn many_parallel_timers_longhist(mut ctx: WfContext) {
+pub async fn many_parallel_timers_longhist(mut ctx: WfContext) -> WorkflowResult<()> {
     for timer_set in 0..100 {
         let mut futs = vec![];
         for i in 0..1000 {
@@ -135,7 +137,7 @@ pub async fn many_parallel_timers_longhist(mut ctx: WfContext) {
         }
         join_all(futs).await;
     }
-    ctx.complete_workflow_execution();
+    Ok(().into())
 }
 
 // Ignored for now because I can't actually get this to produce pages. Need to generate some
@@ -148,14 +150,12 @@ async fn can_paginate_long_history() {
     let mut starter = CoreWfStarter::new(wf_name);
     // Do not use sticky queues so we are forced to paginate once history gets long
     starter.max_cached_workflows(0);
-    let tq = starter.get_task_queue().to_owned();
-    let core = starter.get_core().await;
 
-    let worker = TestRustWorker::new(core.clone(), tq);
+    let worker = starter.worker().await;
     worker
         .submit_wf(vec![], wf_name.to_owned(), many_parallel_timers_longhist)
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    core.shutdown().await;
+    starter.shutdown().await;
 }

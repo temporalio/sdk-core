@@ -3,32 +3,30 @@ use temporal_sdk_core::protos::coresdk::{
     workflow_commands::{CancelTimer, CompleteWorkflowExecution, StartTimer},
     workflow_completion::WfActivationCompletion,
 };
-use temporal_sdk_core::test_workflow_driver::{TestRustWorker, WfContext};
+use temporal_sdk_core::test_workflow_driver::{WfContext, WorkflowResult};
 use test_utils::{init_core_and_create_wf, CoreTestHelpers, CoreWfStarter};
 
-pub async fn timer_wf(mut command_sink: WfContext) {
+pub async fn timer_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
     let timer = StartTimer {
         timer_id: "super_timer_id".to_string(),
         start_to_fire_timeout: Some(Duration::from_secs(1).into()),
     };
     command_sink.timer(timer).await;
-    command_sink.complete_workflow_execution();
+    Ok(().into())
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn timer_workflow_workflow_driver() {
     let wf_name = "timer_wf_new";
     let mut starter = CoreWfStarter::new(wf_name);
-    let tq = starter.get_task_queue().to_owned();
-    let core = starter.get_core().await;
+    let worker = starter.worker().await;
 
-    let worker = TestRustWorker::new(core.clone(), tq);
     worker
         .submit_wf(vec![], wf_name.to_owned(), timer_wf)
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    core.shutdown().await;
+    starter.shutdown().await;
 }
 
 #[tokio::test]
@@ -112,7 +110,7 @@ async fn timer_immediate_cancel_workflow() {
     .unwrap();
 }
 
-async fn parallel_timer_wf(mut command_sink: WfContext) {
+async fn parallel_timer_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
     let t1 = command_sink.timer(StartTimer {
         timer_id: "timer_1".to_string(),
         start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -122,21 +120,19 @@ async fn parallel_timer_wf(mut command_sink: WfContext) {
         start_to_fire_timeout: Some(Duration::from_secs(1).into()),
     });
     let _ = tokio::join!(t1, t2);
-    command_sink.complete_workflow_execution();
+    Ok(().into())
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn parallel_timers() {
     let wf_name = "parallel_timers";
     let mut starter = CoreWfStarter::new(wf_name);
-    let tq = starter.get_task_queue().to_owned();
-    let core = starter.get_core().await;
+    let worker = starter.worker().await;
 
-    let worker = TestRustWorker::new(core.clone(), tq.clone());
     worker
         .submit_wf(vec![], wf_name.to_owned(), parallel_timer_wf)
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    core.shutdown().await;
+    starter.shutdown().await;
 }

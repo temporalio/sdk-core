@@ -41,7 +41,7 @@ use std::{
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        oneshot,
+        oneshot, watch,
     },
     task::JoinHandle,
 };
@@ -50,7 +50,7 @@ use tokio::{
 pub struct TestRustWorker {
     core: Arc<dyn Core>,
     task_queue: String,
-    deadlock_override: Option<Duration>,
+    task_timeout: Option<Duration>,
     /// Maps run id to the driver
     workflows: DashMap<String, UnboundedSender<WfActivation>>,
     /// Maps workflow id to the function for executing workflow runs with that ID
@@ -65,30 +65,25 @@ type WfFunc = dyn Fn(WfContext) -> BoxFuture<'static, WorkflowResult<()>> + Send
 
 impl TestRustWorker {
     /// Create a new rust worker using the provided core instance, namespace, and task queue
-    pub fn new(core: Arc<dyn Core>, task_queue: String) -> Self {
+    pub fn new(core: Arc<dyn Core>, task_queue: String, task_timeout: Option<Duration>) -> Self {
         Self {
             core,
             task_queue,
+            task_timeout,
             workflows: Default::default(),
             workflow_fns: Default::default(),
             incomplete_workflows: Arc::new(AtomicUsize::new(0)),
-            deadlock_override: None,
             join_handles: FuturesUnordered::new(),
         }
     }
 
-    /// Force the workflow deadlock timeout to a different value
-    pub fn override_deadlock(&mut self, new_time: Duration) {
-        self.deadlock_override = Some(new_time);
-    }
-
     /// Create a workflow, asking the server to start it with the provided workflow ID and using the
-    /// provided [WorkflowFunction] as the workflow code.
-    pub async fn submit_wf(
+    /// provided workflow function.
+    pub async fn submit_wf<F: Into<WorkflowFunction>>(
         &self,
         input: Vec<Payload>,
         workflow_id: String,
-        wf_function: WorkflowFunction,
+        wf_function: F,
     ) -> Result<(), tonic::Status> {
         self.core
             .server_gateway()
@@ -97,11 +92,11 @@ impl TestRustWorker {
                 self.task_queue.clone(),
                 workflow_id.clone(),
                 workflow_id.clone(),
-                None,
+                self.task_timeout,
             )
             .await?;
 
-        self.workflow_fns.insert(workflow_id, wf_function);
+        self.workflow_fns.insert(workflow_id, wf_function.into());
         self.incomplete_workflows.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -132,9 +127,9 @@ impl TestRustWorker {
                     let live_wfs = self.incomplete_workflows.clone();
                     let jh = tokio::spawn(async move {
                         let res = dbg!(wff.await);
-                        // TODO: This is probably not necessary any longer. All completion senders
-                        //   will be dropped when they are all dead.
-                        live_wfs.fetch_sub(1, Ordering::SeqCst);
+                        if !matches!(&res, Ok(WfExitValue::Evicted)) {
+                            live_wfs.fetch_sub(1, Ordering::SeqCst);
+                        }
                         res
                     });
                     self.workflows
@@ -179,15 +174,23 @@ pub(crate) enum UnblockEvent {
 pub struct WfContext {
     chan: Sender<RustWfCmd>,
     args: Vec<Payload>,
+    am_cancelled: watch::Receiver<bool>,
 }
 
 impl WfContext {
     /// Create a new wf context, returning the context itself, the shared cache for blocked
     /// commands, and a receiver which outputs commands sent from the workflow.
-    fn new(args: Vec<Payload>) -> (Self, Receiver<RustWfCmd>) {
+    fn new(args: Vec<Payload>, am_cancelled: watch::Receiver<bool>) -> (Self, Receiver<RustWfCmd>) {
         // We need to use a normal std channel since our receiving side is non-async
         let (chan, rx) = crossbeam::channel::unbounded();
-        (Self { chan, args }, rx)
+        (
+            Self {
+                chan,
+                args,
+                am_cancelled,
+            },
+            rx,
+        )
     }
 
     /// Get the arguments provided to the workflow upon execution start
@@ -196,8 +199,14 @@ impl WfContext {
     }
 
     /// A future that resolves if/when the workflow is cancelled
-    pub async fn cancelled(&self) {
-        todo!()
+    pub async fn cancelled(&mut self) {
+        if *self.am_cancelled.borrow() {
+            return;
+        }
+        self.am_cancelled
+            .changed()
+            .await
+            .expect("Cancelled send half not dropped")
     }
 
     /// Request to create a timer
@@ -248,9 +257,9 @@ impl WfContext {
         self.send(RustWfCmd::CancelActivity(activity_id.to_string()))
     }
 
-    /// Acknowledge the workflow was cancelled
-    pub fn complete_cancelled(&self) {
-        todo!()
+    /// Force a workflow task timeout by waiting too long and gumming up the entire runtime
+    pub fn force_timeout(&self, by_waiting_for: Duration) {
+        self.send(RustWfCmd::ForceTimeout(by_waiting_for))
     }
 
     fn send(&self, c: RustWfCmd) {
@@ -267,6 +276,17 @@ pub(crate) struct WFFutureDriver {
 /// The user's async function / workflow code
 pub struct WorkflowFunction {
     wf_func: Box<WfFunc>,
+}
+
+impl<F, Fut> From<F> for WorkflowFunction
+where
+    F: Fn(WfContext) -> Fut + Send + Sync + 'static,
+    // TODO: Output should be result
+    Fut: Future<Output = WorkflowResult<()>> + Send + 'static,
+{
+    fn from(wf_func: F) -> Self {
+        Self::new(wf_func)
+    }
 }
 
 impl WorkflowFunction {
@@ -304,7 +324,8 @@ impl WorkflowFunction {
         args: Vec<Payload>,
         outgoing_completions: UnboundedSender<WfActivationCompletion>,
     ) -> (WorkflowFuture, UnboundedSender<WfActivation>) {
-        let (wf_context, cmd_receiver) = WfContext::new(args);
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let (wf_context, cmd_receiver) = WfContext::new(args, cancel_rx);
         let (tx, incoming_activations) = unbounded_channel();
         (
             WorkflowFuture {
@@ -313,10 +334,30 @@ impl WorkflowFunction {
                 outgoing_completions,
                 incoming_activations,
                 command_status: Default::default(),
+                cancel_sender: cancel_tx,
             },
             tx,
         )
     }
+}
+
+/// The result of running a workflow
+pub type WorkflowResult<T> = Result<WfExitValue<T>, anyhow::Error>;
+
+/// Workflow functions may return these values when exiting
+#[derive(Debug, derive_more::From)]
+pub enum WfExitValue<T: Debug> {
+    /// Continue the workflow as a new execution
+    #[from(ignore)]
+    ContinueAsNew(ContinueAsNewWorkflowExecution),
+    /// Confirm the workflow was cancelled (can be automatic in a more advanced iteration)
+    #[from(ignore)]
+    Cancelled,
+    /// TODO: Will go away once we have eviction confirmation
+    #[from(ignore)]
+    Evicted,
+    /// Finish with a result
+    Normal(T),
 }
 
 pub(crate) struct WorkflowFuture {
@@ -330,6 +371,8 @@ pub(crate) struct WorkflowFuture {
     incoming_activations: UnboundedReceiver<WfActivation>,
     /// Commands by ID -> blocked status
     command_status: HashMap<CommandID, WFCommandFutInfo>,
+    /// Use to notify workflow code of cancellation
+    cancel_sender: watch::Sender<bool>,
 }
 
 impl WorkflowFuture {
@@ -347,29 +390,11 @@ impl WorkflowFuture {
     }
 }
 
-/// The result of running a workflow
-pub type WorkflowResult<T> = Result<WfExitValue<T>, anyhow::Error>;
-
-/// Workflow functions may return these values when exiting
-#[derive(Debug, derive_more::From)]
-pub enum WfExitValue<T: Debug> {
-    /// Continue the workflow as a new execution
-    #[from(ignore)]
-    ContinueAsNew(ContinueAsNewWorkflowExecution),
-    /// Confirm the workflow was cancelled (can be automatic in a more advanced iteration)
-    #[from(ignore)]
-    Cancelled,
-    /// Finish with a result
-    Normal(T),
-}
-
 impl Future for WorkflowFuture {
     type Output = WorkflowResult<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        dbg!("Wf future poll");
         loop {
-            dbg!("Wf future loop");
             // WF must always receive an activation first before responding with commands
             let activation = match self.incoming_activations.poll_recv(cx) {
                 Poll::Ready(a) => a.expect("activation channel not dropped"),
@@ -400,11 +425,17 @@ impl Future for WorkflowFuture {
                         Variant::QueryWorkflow(_) => {}
                         Variant::CancelWorkflow(_) => {
                             // TODO: Cancel pending futures, etc
+                            self.cancel_sender
+                                .send(true)
+                                .expect("Cancel rx not dropped");
                         }
                         Variant::SignalWorkflow(_) => {}
                         Variant::RemoveFromCache(_) => {
-                            // twd.kill().await;
-                            todo!()
+                            // Will make more sense once we have completions for evictions
+                            self.outgoing_completions
+                                .send(WfActivationCompletion::from_cmds(vec![], run_id))
+                                .expect("Completion channel intact");
+                            return Ok(WfExitValue::Evicted).into();
                         }
                     }
                 } else {
@@ -413,6 +444,7 @@ impl Future for WorkflowFuture {
             }
             dbg!("Done activation");
 
+            // TODO: Trap panics in wf code here?
             let mut res = self.inner.poll_unpin(cx);
 
             let mut activation_cmds = vec![];
@@ -451,12 +483,16 @@ impl Future for WorkflowFuture {
                             command_id,
                             WFCommandFutInfo {
                                 unblocker: cmd.unblocker,
-                                // awaited: Arc::new(Default::default()),
                             },
                         );
                     }
+                    RustWfCmd::ForceTimeout(dur) => {
+                        // This is nasty
+                        std::thread::sleep(dur);
+                    }
                 }
             }
+
             let do_finish = if let Poll::Ready(res) = res {
                 // TODO: Auto reply with cancel when cancelled
                 match res {
@@ -477,6 +513,9 @@ impl Future for WorkflowFuture {
                                 ),
                             );
                         }
+                        WfExitValue::Evicted => {
+                            panic!("Don't explicitly return this")
+                        }
                     },
                     Err(e) => {
                         activation_cmds.push(workflow_command::Variant::FailWorkflowExecution(
@@ -493,6 +532,12 @@ impl Future for WorkflowFuture {
             } else {
                 false
             };
+            if activation_cmds.is_empty() {
+                panic!(
+                    "Workflow did not produce any commands or exit, but awaited. This \
+                     means it will deadlock. You probably awaited on a non-WfContext future."
+                );
+            }
             self.outgoing_completions
                 .send(WfActivationCompletion::from_cmds(activation_cmds, run_id))
                 .expect("Completion channel intact");
@@ -509,6 +554,8 @@ enum RustWfCmd {
     CancelTimer(String),
     #[from(ignore)]
     CancelActivity(String),
+    #[from(ignore)]
+    ForceTimeout(Duration),
     NewCmd(CommandCreateRequest),
 }
 
@@ -519,24 +566,16 @@ struct CommandCreateRequest {
 
 struct WFCommandFutInfo {
     unblocker: oneshot::Sender<UnblockEvent>,
-    // awaited: Arc<AtomicBool>,
 }
 
 struct WFCommandFut {
     result_rx: oneshot::Receiver<UnblockEvent>,
-    // awaited: Arc<AtomicBool>,
 }
 
 impl WFCommandFut {
     fn new() -> (Self, oneshot::Sender<UnblockEvent>) {
         let (tx, rx) = oneshot::channel();
-        (
-            Self {
-                result_rx: rx,
-                // awaited: Arc::new(AtomicBool::new(false)),
-            },
-            tx,
-        )
+        (Self { result_rx: rx }, tx)
     }
 }
 
@@ -544,8 +583,6 @@ impl Future for WFCommandFut {
     type Output = UnblockEvent;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        dbg!("awaited");
-        // self.awaited.store(true, Ordering::Release);
         self.result_rx.poll_unpin(cx).map(|x| x.unwrap())
     }
 }

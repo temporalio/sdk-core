@@ -47,7 +47,15 @@ impl CoreWfStarter {
     }
 
     pub async fn worker(&mut self) -> TestRustWorker {
-        TestRustWorker::new(self.get_core().await, self.worker_config.task_queue.clone())
+        TestRustWorker::new(
+            self.get_core().await,
+            self.worker_config.task_queue.clone(),
+            self.wft_timeout,
+        )
+    }
+
+    pub async fn shutdown(&mut self) {
+        self.get_core().await.shutdown().await
     }
 
     pub async fn get_core(&mut self) -> Arc<dyn Core> {

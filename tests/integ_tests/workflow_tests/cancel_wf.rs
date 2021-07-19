@@ -2,11 +2,11 @@ use std::time::Duration;
 use temporal_sdk_core::{
     protos::coresdk::workflow_commands::StartTimer,
     protos::temporal::api::enums::v1::WorkflowExecutionStatus,
-    test_workflow_driver::{TestRustWorker, WfContext},
+    test_workflow_driver::{WfContext, WfExitValue, WorkflowResult},
 };
 use test_utils::CoreWfStarter;
 
-async fn cancelled_wf(mut ctx: WfContext) {
+async fn cancelled_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     let timer = StartTimer {
         timer_id: "longtimer".to_string(),
         start_to_fire_timeout: Some(Duration::from_secs(500).into()),
@@ -18,7 +18,7 @@ async fn cancelled_wf(mut ctx: WfContext) {
     };
 
     if cancelled {
-        ctx.complete_cancelled();
+        Ok(WfExitValue::Cancelled)
     } else {
         panic!("Should have been cancelled")
     }
@@ -28,10 +28,9 @@ async fn cancelled_wf(mut ctx: WfContext) {
 async fn cancel_during_timer() {
     let wf_name = "cancel_during_timer";
     let mut starter = CoreWfStarter::new(wf_name);
-    let tq = starter.get_task_queue().to_owned();
     let core = starter.get_core().await;
+    let worker = starter.worker().await;
 
-    let worker = TestRustWorker::new(core.clone(), tq);
     worker
         .submit_wf(vec![], wf_name.to_owned(), cancelled_wf)
         .await
@@ -59,5 +58,5 @@ async fn cancel_during_timer() {
         WorkflowExecutionStatus::Canceled as i32
     );
 
-    core.shutdown().await;
+    starter.shutdown().await;
 }
