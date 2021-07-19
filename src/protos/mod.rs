@@ -1,6 +1,6 @@
 //! Contains the protobuf definitions used as arguments to and return values from interactions with
-//! [super::Core]. Language SDK authors can generate structs using the proto definitions that will match
-//! the generated structs in this module.
+//! [super::Core]. Language SDK authors can generate structs using the proto definitions that will
+//! match the generated structs in this module.
 
 #[allow(clippy::large_enum_variant)]
 // I'd prefer not to do this, but there are some generated things that just don't need it.
@@ -10,6 +10,22 @@ pub mod coresdk {
 
     tonic::include_proto!("coresdk");
 
+    use crate::protos::temporal::api::{
+        common::v1::{Payloads, WorkflowExecution},
+        failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
+        workflowservice::v1::PollActivityTaskQueueResponse,
+    };
+    use activity_result::ActivityResult;
+    use activity_task::ActivityTask;
+    use common::{Payload, UserCodeFailure};
+    use std::{
+        convert::TryFrom,
+        fmt::{Display, Formatter},
+    };
+    use workflow_activation::{wf_activation_job, WfActivationJob};
+    use workflow_commands::{workflow_command, workflow_command::Variant, WorkflowCommand};
+    use workflow_completion::{wf_activation_completion, WfActivationCompletion};
+
     #[allow(clippy::module_inception)]
     pub mod activity_task {
         use crate::task_token::TaskToken;
@@ -17,11 +33,17 @@ pub mod coresdk {
         tonic::include_proto!("coresdk.activity_task");
 
         impl ActivityTask {
-            pub fn cancel_from_ids(task_token: TaskToken, activity_id: String) -> Self {
+            pub fn cancel_from_ids(
+                task_token: TaskToken,
+                activity_id: String,
+                reason: ActivityCancelReason,
+            ) -> Self {
                 ActivityTask {
                     task_token: task_token.0,
                     activity_id,
-                    variant: Some(activity_task::Variant::Cancel(Cancel {})),
+                    variant: Some(activity_task::Variant::Cancel(Cancel {
+                        reason: reason as i32,
+                    })),
                 }
             }
         }
@@ -44,36 +66,78 @@ pub mod coresdk {
     pub mod common {
         tonic::include_proto!("coresdk.common");
 
-        impl From<Vec<u8>> for Payload {
-            fn from(data: Vec<u8>) -> Self {
+        impl<T> From<T> for Payload
+        where
+            T: AsRef<[u8]>,
+        {
+            fn from(v: T) -> Self {
                 Self {
                     metadata: Default::default(),
-                    data,
+                    data: v.as_ref().to_vec(),
                 }
+            }
+        }
+
+        impl Payload {
+            // Is it's own function b/c asref causes implementation conflicts
+            pub fn as_slice(&self) -> &[u8] {
+                self.data.as_slice()
             }
         }
     }
     pub mod workflow_activation {
-        use crate::core_tracing::VecDisplayer;
-        use crate::task_token::{fmt_tt, TaskToken};
+        use crate::{
+            core_tracing::VecDisplayer,
+            protos::coresdk::PayloadsExt,
+            protos::temporal::api::history::v1::{
+                WorkflowExecutionCancelRequestedEventAttributes,
+                WorkflowExecutionSignaledEventAttributes,
+            },
+            workflow::LEGACY_QUERY_ID,
+        };
         use std::fmt::{Display, Formatter};
 
         tonic::include_proto!("coresdk.workflow_activation");
-        pub fn create_evict_activation(task_token: TaskToken, run_id: String) -> WfActivation {
+        pub fn create_evict_activation(run_id: String) -> WfActivation {
             WfActivation {
-                task_token: task_token.0,
                 timestamp: None,
                 run_id,
+                is_replaying: false,
                 jobs: vec![WfActivationJob::from(
                     wf_activation_job::Variant::RemoveFromCache(true),
                 )],
             }
         }
 
+        pub fn create_query_activation(
+            run_id: String,
+            queries: impl IntoIterator<Item = QueryWorkflow>,
+        ) -> WfActivation {
+            WfActivation {
+                timestamp: None,
+                run_id,
+                is_replaying: false,
+                jobs: queries
+                    .into_iter()
+                    .map(|qr| wf_activation_job::Variant::QueryWorkflow(qr).into())
+                    .collect(),
+            }
+        }
+
+        impl WfActivation {
+            /// Returns true if this activation has one and only one job to perform a legacy query
+            pub(crate) fn is_legacy_query(&self) -> bool {
+                matches!(&self.jobs.as_slice(), &[WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::QueryWorkflow(qr))
+                }] if qr.query_id == LEGACY_QUERY_ID)
+            }
+        }
+
         impl Display for WfActivation {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                write!(f, "WfActivation({}, ", fmt_tt(&self.task_token),)?;
+                write!(f, "WfActivation(")?;
                 write!(f, "run_id: {}, ", self.run_id)?;
+                write!(f, "is_replaying: {}, ", self.is_replaying)?;
                 write!(f, "jobs: {})", self.jobs.display())
             }
         }
@@ -105,7 +169,24 @@ pub mod coresdk {
                 }
             }
         }
+
+        impl From<WorkflowExecutionSignaledEventAttributes> for SignalWorkflow {
+            fn from(a: WorkflowExecutionSignaledEventAttributes) -> Self {
+                Self {
+                    signal_name: a.signal_name,
+                    input: Vec::from_payloads(a.input),
+                    identity: a.identity,
+                }
+            }
+        }
+
+        impl From<WorkflowExecutionCancelRequestedEventAttributes> for CancelWorkflow {
+            fn from(_a: WorkflowExecutionCancelRequestedEventAttributes) -> Self {
+                Self { details: vec![] }
+            }
+        }
     }
+
     pub mod workflow_completion {
         use crate::protos::coresdk::workflow_completion::wf_activation_completion::Status;
         tonic::include_proto!("coresdk.workflow_completion");
@@ -120,8 +201,13 @@ pub mod coresdk {
         }
     }
     pub mod workflow_commands {
-        use std::fmt::{Display, Formatter};
         tonic::include_proto!("coresdk.workflow_commands");
+
+        use super::workflow_completion;
+        use crate::protos::temporal::api::common::v1::Payloads;
+        use crate::protos::temporal::api::enums::v1::QueryResultType;
+        use crate::workflow::LEGACY_QUERY_ID;
+        use std::fmt::{Display, Formatter};
 
         impl Display for WorkflowCommand {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -143,35 +229,56 @@ pub mod coresdk {
                         workflow_command::Variant::FailWorkflowExecution(_) => {
                             write!(f, "FailWorkflowExecution")
                         }
+                        workflow_command::Variant::ContinueAsNewWorkflowExecution(_) => {
+                            write!(f, "ContinueAsNewWorkflowExecution")
+                        }
+                        workflow_command::Variant::CancelWorkflowExecution(_) => {
+                            write!(f, "CancelWorkflowExecution")
+                        }
                     },
                 }
             }
         }
-    }
 
-    use crate::protos::{
-        coresdk::{
-            activity_result::ActivityResult,
-            activity_task::ActivityTask,
-            common::{Payload, UserCodeFailure},
-            workflow_activation::SignalWorkflow,
-            workflow_commands::workflow_command::Variant,
-            workflow_completion::Success,
-        },
-        temporal::api::{
-            common::v1::{Payloads, WorkflowExecution},
-            failure::v1::ApplicationFailureInfo,
-            failure::v1::{failure::FailureInfo, Failure},
-            history::v1::WorkflowExecutionSignaledEventAttributes,
-            workflowservice::v1::PollActivityTaskQueueResponse,
-        },
-    };
-    use crate::task_token::{fmt_tt, TaskToken};
-    use std::convert::TryFrom;
-    use std::fmt::{Display, Formatter};
-    use workflow_activation::{wf_activation_job, WfActivationJob};
-    use workflow_commands::{workflow_command, WorkflowCommand};
-    use workflow_completion::{wf_activation_completion, WfActivationCompletion};
+        impl QueryResult {
+            /// Helper to construct the Temporal API query result types.
+            pub fn into_components(self) -> (String, QueryResultType, Option<Payloads>, String) {
+                match self {
+                    QueryResult {
+                        variant: Some(query_result::Variant::Succeeded(qs)),
+                        query_id,
+                    } => (
+                        query_id,
+                        QueryResultType::Answered,
+                        qs.response.map(Into::into),
+                        "".to_string(),
+                    ),
+                    QueryResult {
+                        variant: Some(query_result::Variant::Failed(err)),
+                        query_id,
+                    } => (query_id, QueryResultType::Failed, None, err.message),
+                    QueryResult {
+                        variant: None,
+                        query_id,
+                    } => (
+                        query_id,
+                        QueryResultType::Failed,
+                        None,
+                        "Query response was empty".to_string(),
+                    ),
+                }
+            }
+
+            pub fn legacy_failure(fail: workflow_completion::Failure) -> Self {
+                QueryResult {
+                    query_id: LEGACY_QUERY_ID.to_string(),
+                    variant: Some(query_result::Variant::Failed(
+                        fail.failure.unwrap_or_default(),
+                    )),
+                }
+            }
+        }
+    }
 
     pub type HistoryEventId = i64;
 
@@ -193,7 +300,7 @@ pub mod coresdk {
         }
     }
 
-    impl Success {
+    impl workflow_completion::Success {
         pub fn from_variants(cmds: Vec<Variant>) -> Self {
             let cmds: Vec<_> = cmds
                 .into_iter()
@@ -205,26 +312,26 @@ pub mod coresdk {
 
     impl WfActivationCompletion {
         /// Create a successful activation from a list of commands
-        pub fn from_cmds(cmds: Vec<workflow_command::Variant>, task_token: Vec<u8>) -> Self {
-            let success = Success::from_variants(cmds);
+        pub fn from_cmds(cmds: Vec<workflow_command::Variant>, run_id: String) -> Self {
+            let success = workflow_completion::Success::from_variants(cmds);
             Self {
-                task_token,
+                run_id,
                 status: Some(wf_activation_completion::Status::Successful(success)),
             }
         }
 
         /// Create a successful activation from just one command
-        pub fn from_cmd(cmds: workflow_command::Variant, task_token: Vec<u8>) -> Self {
-            let success = Success::from_variants(vec![cmds]);
+        pub fn from_cmd(cmd: workflow_command::Variant, run_id: String) -> Self {
+            let success = workflow_completion::Success::from_variants(vec![cmd]);
             Self {
-                task_token,
+                run_id,
                 status: Some(wf_activation_completion::Status::Successful(success)),
             }
         }
 
-        pub fn fail(task_token: Vec<u8>, failure: UserCodeFailure) -> Self {
+        pub fn fail(run_id: String, failure: UserCodeFailure) -> Self {
             Self {
-                task_token,
+                run_id,
                 status: Some(wf_activation_completion::Status::Failed(
                     workflow_completion::Failure {
                         failure: Some(failure),
@@ -233,11 +340,43 @@ pub mod coresdk {
             }
         }
 
-        pub fn from_status(task_token: Vec<u8>, status: wf_activation_completion::Status) -> Self {
+        pub fn from_status(run_id: String, status: wf_activation_completion::Status) -> Self {
             Self {
-                task_token,
+                run_id,
                 status: Some(status),
             }
+        }
+
+        /// Returns true if the activation contains a continue as new workflow execution command
+        pub fn has_continue_as_new(&self) -> bool {
+            if let Some(wf_activation_completion::Status::Successful(s)) = &self.status {
+                return s.commands.iter().any(|wfc| {
+                    matches!(
+                        wfc,
+                        WorkflowCommand {
+                            variant: Some(
+                                workflow_command::Variant::ContinueAsNewWorkflowExecution(_)
+                            ),
+                        }
+                    )
+                });
+            }
+            false
+        }
+
+        /// Returns true if the activation contains a complete workflow execution command
+        pub fn has_complete_workflow_execution(&self) -> bool {
+            if let Some(wf_activation_completion::Status::Successful(s)) = &self.status {
+                return s.commands.iter().any(|wfc| {
+                    matches!(
+                        wfc,
+                        WorkflowCommand {
+                            variant: Some(workflow_command::Variant::CompleteWorkflowExecution(_)),
+                        }
+                    )
+                });
+            }
+            false
         }
     }
 
@@ -245,8 +384,8 @@ pub mod coresdk {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             write!(
                 f,
-                "WfActivationCompletion(task_token: {}, status: ",
-                fmt_tt(&self.task_token),
+                "WfActivationCompletion(run_id: {}, status: ",
+                &self.run_id
             )?;
             match &self.status {
                 None => write!(f, "empty")?,
@@ -259,7 +398,9 @@ pub mod coresdk {
     impl Display for wf_activation_completion::Status {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
-                wf_activation_completion::Status::Successful(Success { commands }) => {
+                wf_activation_completion::Status::Successful(workflow_completion::Success {
+                    commands,
+                }) => {
                     write!(f, "Success(")?;
                     for c in commands {
                         write!(f, " {} ", c)?;
@@ -293,12 +434,9 @@ pub mod coresdk {
     }
 
     impl ActivityTask {
-        pub fn start_from_poll_resp(
-            r: PollActivityTaskQueueResponse,
-            task_token: TaskToken,
-        ) -> Self {
+        pub fn start_from_poll_resp(r: PollActivityTaskQueueResponse) -> Self {
             ActivityTask {
-                task_token: task_token.0,
+                task_token: r.task_token,
                 activity_id: r.activity_id,
                 variant: Some(activity_task::activity_task::Variant::Start(
                     activity_task::Start {
@@ -410,8 +548,31 @@ pub mod coresdk {
 
     impl From<common::Payload> for Payloads {
         fn from(p: Payload) -> Self {
-            Payloads {
+            Self {
                 payloads: vec![p.into()],
+            }
+        }
+    }
+
+    impl<T> From<T> for super::temporal::api::common::v1::Payload
+    where
+        T: AsRef<[u8]>,
+    {
+        fn from(v: T) -> Self {
+            Self {
+                metadata: Default::default(),
+                data: v.as_ref().to_vec(),
+            }
+        }
+    }
+
+    impl<T> From<T> for Payloads
+    where
+        T: AsRef<[u8]>,
+    {
+        fn from(v: T) -> Self {
+            Payloads {
+                payloads: vec![v.into()],
             }
         }
     }
@@ -435,16 +596,6 @@ pub mod coresdk {
                         Ok(p.into())
                     }
                 }
-            }
-        }
-    }
-
-    impl From<WorkflowExecutionSignaledEventAttributes> for SignalWorkflow {
-        fn from(a: WorkflowExecutionSignaledEventAttributes) -> Self {
-            Self {
-                signal_name: a.signal_name,
-                input: Vec::from_payloads(a.input),
-                identity: a.identity,
             }
         }
     }
@@ -502,6 +653,17 @@ pub mod temporal {
                             },
                             a @ Attributes::RequestCancelActivityTaskCommandAttributes(_) => Self {
                                 command_type: CommandType::RequestCancelActivityTask as i32,
+                                attributes: Some(a),
+                            },
+                            a @ Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(_) => {
+                                Self {
+                                    command_type: CommandType::ContinueAsNewWorkflowExecution
+                                        as i32,
+                                    attributes: Some(a),
+                                }
+                            }
+                            a @ Attributes::CancelWorkflowExecutionCommandAttributes(_) => Self {
+                                command_type: CommandType::CancelWorkflowExecution as i32,
                                 attributes: Some(a),
                             },
                             _ => unimplemented!(),
@@ -585,6 +747,32 @@ pub mod temporal {
                         )
                     }
                 }
+
+                impl From<workflow_commands::ContinueAsNewWorkflowExecution> for command::Attributes {
+                    fn from(c: workflow_commands::ContinueAsNewWorkflowExecution) -> Self {
+                        Self::ContinueAsNewWorkflowExecutionCommandAttributes(
+                            ContinueAsNewWorkflowExecutionCommandAttributes {
+                                workflow_type: Some(c.workflow_type.into()),
+                                task_queue: Some(c.task_queue.into()),
+                                input: c.arguments.into_payloads(),
+                                workflow_run_timeout: c.workflow_run_timeout,
+                                workflow_task_timeout: c.workflow_task_timeout,
+                                memo: Some(c.memo.into()),
+                                header: Some(c.header.into()),
+                                search_attributes: Some(c.search_attributes.into()),
+                                ..Default::default()
+                            },
+                        )
+                    }
+                }
+
+                impl From<workflow_commands::CancelWorkflowExecution> for command::Attributes {
+                    fn from(_c: workflow_commands::CancelWorkflowExecution) -> Self {
+                        Self::CancelWorkflowExecutionCommandAttributes(
+                            CancelWorkflowExecutionCommandAttributes { details: None },
+                        )
+                    }
+                }
             }
         }
         pub mod enums {
@@ -622,6 +810,22 @@ pub mod temporal {
                     }
                 }
 
+                impl From<HashMap<String, common::Payload>> for Memo {
+                    fn from(h: HashMap<String, common::Payload>) -> Self {
+                        Self {
+                            fields: h.into_iter().map(|(k, v)| (k, v.into())).collect(),
+                        }
+                    }
+                }
+
+                impl From<HashMap<String, common::Payload>> for SearchAttributes {
+                    fn from(h: HashMap<String, common::Payload>) -> Self {
+                        Self {
+                            indexed_fields: h.into_iter().map(|(k, v)| (k, v.into())).collect(),
+                        }
+                    }
+                }
+
                 impl From<common::RetryPolicy> for RetryPolicy {
                     fn from(r: common::RetryPolicy) -> Self {
                         Self {
@@ -652,61 +856,10 @@ pub mod temporal {
                 use crate::protos::temporal::api::{
                     enums::v1::EventType, history::v1::history_event::Attributes,
                 };
-                use crate::protosext::HistoryInfoError;
                 use prost::alloc::fmt::Formatter;
                 use std::fmt::Display;
 
                 tonic::include_proto!("temporal.api.history.v1");
-
-                impl History {
-                    /// Counts the number of whole workflow tasks. Looks for WFTaskStarted followed
-                    /// by WFTaskCompleted, adding one to the count for every match. It will
-                    /// additionally count a WFTaskStarted at the end of the event list.
-                    ///
-                    /// If `up_to_event_id` is provided, the count will be returned as soon as
-                    /// processing advances past that id.
-                    pub(crate) fn get_workflow_task_count(
-                        &self,
-                        up_to_event_id: Option<i64>,
-                    ) -> Result<usize, HistoryInfoError> {
-                        let mut last_wf_started_id = 0;
-                        let mut count = 0;
-                        let mut history = self.events.iter().peekable();
-                        while let Some(event) = history.next() {
-                            let next_event = history.peek();
-
-                            if event.is_final_wf_execution_event() {
-                                // If the workflow is complete, we're done.
-                                return Ok(count);
-                            }
-
-                            if let Some(upto) = up_to_event_id {
-                                if event.event_id > upto {
-                                    return Ok(count);
-                                }
-                            }
-
-                            let next_is_completed = next_event.map_or(false, |ne| {
-                                ne.event_type == EventType::WorkflowTaskCompleted as i32
-                            });
-
-                            if event.event_type == EventType::WorkflowTaskStarted as i32
-                                && (next_event.is_none() || next_is_completed)
-                            {
-                                last_wf_started_id = event.event_id;
-                                count += 1;
-                            }
-
-                            if next_event.is_none() {
-                                if last_wf_started_id != event.event_id {
-                                    return Err(HistoryInfoError::HistoryEndsUnexpectedly);
-                                }
-                                return Ok(count);
-                            }
-                        }
-                        Ok(count)
-                    }
-                }
 
                 impl HistoryEvent {
                     /// Returns true if this is an event created to mirror a command
@@ -850,7 +1003,56 @@ pub mod temporal {
 
         pub mod workflowservice {
             pub mod v1 {
+                use std::fmt::{Display, Formatter};
+
                 tonic::include_proto!("temporal.api.workflowservice.v1");
+
+                impl Display for PollWorkflowTaskQueueResponse {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        let last_event = self
+                            .history
+                            .as_ref()
+                            .map(|h| h.events.last().map(|he| he.event_id))
+                            .flatten()
+                            .unwrap_or(0);
+                        write!(
+                            f,
+                            "PollWFTQResp(run_id: {}, attempt: {}, last_event: {})",
+                            self.workflow_execution
+                                .as_ref()
+                                .map(|we| we.run_id.as_str())
+                                .unwrap_or(""),
+                            self.attempt,
+                            last_event
+                        )
+                    }
+                }
+
+                /// Can be used while debugging to avoid filling up a whole screen with poll resps
+                pub struct CompactHist<'a>(pub &'a PollWorkflowTaskQueueResponse);
+                impl Display for CompactHist<'_> {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        writeln!(
+                            f,
+                            "PollWorkflowTaskQueueResponse (prev_started: {}, started: {})",
+                            self.0.previous_started_event_id, self.0.started_event_id
+                        )?;
+                        if let Some(h) = self.0.history.as_ref() {
+                            for event in &h.events {
+                                writeln!(f, "{}", event)?;
+                            }
+                        }
+                        writeln!(f, "query: {:#?}", self.0.query)?;
+                        writeln!(f, "queries: {:#?}", self.0.queries)
+                    }
+                }
+
+                impl QueryWorkflowResponse {
+                    /// Unwrap a successful response as vec of payloads
+                    pub fn unwrap(self) -> Vec<crate::protos::temporal::api::common::v1::Payload> {
+                        self.query_result.unwrap().payloads
+                    }
+                }
             }
         }
     }

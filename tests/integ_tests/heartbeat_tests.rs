@@ -5,19 +5,18 @@ use temporal_sdk_core::protos::coresdk::{
     activity_task::activity_task as act_task,
     common::Payload,
     workflow_activation::{wf_activation_job, ResolveActivity, WfActivationJob},
-    workflow_commands::{ActivityCancellationType, CompleteWorkflowExecution},
-    workflow_completion::WfActivationCompletion,
+    workflow_commands::ActivityCancellationType,
     ActivityHeartbeat, ActivityTaskCompletion,
 };
 use temporal_sdk_core::IntoCompletion;
-use test_utils::{init_core_and_create_wf, schedule_activity_cmd};
+use test_utils::{init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers};
 use tokio::time::sleep;
 
 #[tokio::test]
 async fn activity_heartbeat() {
     let (core, task_q) = init_core_and_create_wf("activity_heartbeat").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_task().await.unwrap();
+    let task = core.poll_workflow_task(&task_q).await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_task(
         schedule_activity_cmd(
@@ -27,12 +26,12 @@ async fn activity_heartbeat() {
             Duration::from_secs(60),
             Duration::from_secs(1),
         )
-        .into_completion(task.task_token),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
-    let task = core.poll_activity_task().await.unwrap();
+    let task = core.poll_activity_task(&task_q).await.unwrap();
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -62,7 +61,7 @@ async fn activity_heartbeat() {
     .await
     .unwrap();
     // Poll workflow task and verify that activity has succeeded.
-    let task = core.poll_workflow_task().await.unwrap();
+    let task = core.poll_workflow_task(&task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -78,10 +77,5 @@ async fn activity_heartbeat() {
             assert_eq!(r, &response_payload);
         }
     );
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
-        task.task_token,
-    ))
-    .await
-    .unwrap()
+    core.complete_execution(&task.run_id).await;
 }

@@ -1,11 +1,11 @@
-use crate::task_token::TaskToken;
 use crate::{
     errors::ActivityHeartbeatError,
+    pollers::ServerGatewayApis,
     protos::{
-        coresdk::{common, ActivityHeartbeat, PayloadsExt},
+        coresdk::{activity_task::ActivityCancelReason, common, ActivityHeartbeat, PayloadsExt},
         temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
     },
-    ServerGatewayApis,
+    task_token::TaskToken,
 };
 use futures::StreamExt;
 use std::{
@@ -37,7 +37,7 @@ pub(crate) struct ActivityHeartbeatManagerHandle {
     heartbeat_tx: UnboundedSender<ValidActivityHeartbeat>,
     /// Cancellations that have been received when heartbeating are queued here and can be consumed
     /// by [fetch_cancellations]
-    incoming_cancels: Mutex<UnboundedReceiver<TaskToken>>,
+    incoming_cancels: Mutex<UnboundedReceiver<(TaskToken, ActivityCancelReason)>>,
     /// Used during `shutdown` to await until all inflight requests are sent.
     join_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -80,7 +80,7 @@ impl ActivityHeartbeatManagerHandle {
 
     /// Returns a future that resolves any time there is a new activity cancel that must be
     /// dispatched to lang
-    pub async fn next_pending_cancel(&self) -> Option<TaskToken> {
+    pub async fn next_pending_cancel(&self) -> Option<(TaskToken, ActivityCancelReason)> {
         self.incoming_cancels.lock().await.recv().await
     }
 

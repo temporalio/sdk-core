@@ -1,13 +1,16 @@
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
-        activity_state_machine::new_activity, complete_workflow_state_machine::complete_workflow,
+        activity_state_machine::new_activity, cancel_workflow_state_machine::cancel_workflow,
+        complete_workflow_state_machine::complete_workflow,
+        continue_as_new_workflow_state_machine::continue_as_new,
         fail_workflow_state_machine::fail_workflow, timer_state_machine::new_timer,
         workflow_task_state_machine::WorkflowTaskMachine, NewMachineWithCommand, ProtoCommand,
         TemporalStateMachine, WFCommand,
     },
     protos::{
         coresdk::{
+            common::Payload,
             workflow_activation::{
                 wf_activation_job::{self, Variant},
                 StartWorkflow, UpdateRandomSeed, WfActivation,
@@ -15,12 +18,12 @@ use crate::{
             PayloadsExt, PayloadsToPayloadError,
         },
         temporal::api::{
+            common::v1::Header,
             enums::v1::{CommandType, EventType},
             history::v1::{history_event, HistoryEvent},
         },
     },
-    protosext::HistoryInfo,
-    workflow::{CommandID, DrivenWorkflow, WorkflowFetcher},
+    workflow::{CommandID, DrivenWorkflow, HistoryUpdate, WorkflowFetcher},
 };
 use slotmap::SlotMap;
 use std::{
@@ -37,17 +40,18 @@ type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 /// comprise the logic of an executing workflow. One instance will exist per currently executing
 /// (or cached) workflow on the worker.
 pub(crate) struct WorkflowMachines {
-    /// The event id of the last wf task started event in the history which is expected to be
-    /// [current_started_event_id] except during replay.
-    workflow_task_started_event_id: i64,
+    /// The last recorded history we received from the server for this workflow run. This must be
+    /// kept because the lang side polls & completes for every workflow task, but we do not need
+    /// to poll the server that often during replay.
+    last_history_from_server: HistoryUpdate,
     /// EventId of the last handled WorkflowTaskStarted event
     current_started_event_id: i64,
-    /// The event id of the started event of the last successfully executed workflow task
-    previous_started_event_id: i64,
+    /// The event id of the next workflow task started event that the machines need to process.
+    /// Eventually, this number should reach the started id in the latest history update, but
+    /// we must incrementally apply the history while communicating with lang.
+    next_started_event_id: i64,
     /// True if the workflow is replaying from history
-    /// TODO: This seems wrong when I try to use it in contexts I expect it to return true, and
-    ///   is currently unused, but some unimplemented state machines need it so kept for now.
-    replaying: bool,
+    pub replaying: bool,
     /// Workflow identifier
     pub workflow_id: String,
     /// Identifies the current run
@@ -108,6 +112,8 @@ pub enum MachineResponse {
 
 #[derive(thiserror::Error, Debug)]
 // TODO: Some of these are redundant with MachineError -- we should try to dedupe / simplify
+//  This also probably doesn't need to be public. The only important thing is if the error is a
+//  nondeterminism error.
 pub enum WFMachinesError {
     #[error("Event {0:?} was not expected: {1}")]
     UnexpectedEvent(HistoryEvent, &'static str),
@@ -117,6 +123,7 @@ pub enum WFMachinesError {
     MalformedEvent(HistoryEvent, String),
     // Expected to be transformed into a `MalformedEvent` with the full event by workflow machines,
     // when emitted by a sub-machine
+    // TODO: This is really an unexpected, rather than malformed event.
     #[error("{0}")]
     MalformedEventDetail(String),
     #[error("Command type {0:?} was not expected")]
@@ -131,24 +138,31 @@ pub enum WFMachinesError {
     MissingAssociatedMachine(String),
     #[error("There was {0} when we expected exactly one payload while applying event: {1:?}")]
     NotExactlyOnePayload(PayloadsToPayloadError, HistoryEvent),
-
     #[error("Machine encountered an invalid transition: {0}")]
     InvalidTransition(String),
-    #[error("Invalid cancelation type: {0}")]
-    InvalidCancelationType(i32),
+    #[error("Unrecoverable network error while fetching history: {0}")]
+    HistoryFetchingError(tonic::Status),
 }
 
 impl WorkflowMachines {
-    pub(crate) fn new(workflow_id: String, run_id: String, driven_wf: DrivenWorkflow) -> Self {
+    pub(crate) fn new(
+        workflow_id: String,
+        run_id: String,
+        history: HistoryUpdate,
+        driven_wf: DrivenWorkflow,
+    ) -> Self {
+        let replaying = history.previous_started_event_id > 0;
         Self {
+            last_history_from_server: history,
             workflow_id,
             run_id,
             drive_me: driven_wf,
             // In an ideal world one could say ..Default::default() here and it'd still work.
-            workflow_task_started_event_id: 0,
             current_started_event_id: 0,
-            previous_started_event_id: 0,
-            replaying: false,
+            next_started_event_id: 0,
+            // Default to true since application of events will appropriately set false if needed
+            // replaying: true,
+            replaying,
             current_wf_time: None,
             all_machines: Default::default(),
             machines_by_event_id: Default::default(),
@@ -158,8 +172,15 @@ impl WorkflowMachines {
         }
     }
 
+    pub(crate) async fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
+        self.last_history_from_server = update;
+        self.replaying = self.last_history_from_server.previous_started_event_id > 0;
+        self.apply_next_wft_from_history().await?;
+        Ok(())
+    }
+
     /// Returns the id of the last seen WorkflowTaskStarted event
-    pub(crate) fn get_last_started_event_id(&self) -> i64 {
+    pub(crate) fn last_handled_wft_started_id(&self) -> i64 {
         self.current_started_event_id
     }
 
@@ -182,7 +203,8 @@ impl WorkflowMachines {
         })?;
 
         if self.replaying
-            && self.current_started_event_id >= self.previous_started_event_id
+            && self.current_started_event_id
+                >= self.last_history_from_server.previous_started_event_id
             && event_type != EventType::WorkflowTaskCompleted
         {
             // Replay is finished
@@ -319,6 +341,10 @@ impl WorkflowMachines {
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
+        debug!(
+            event = %event,
+            "handling non-stateful event"
+        );
         match EventType::from_i32(event.event_type) {
             Some(EventType::WorkflowExecutionStarted) => {
                 if let Some(history_event::Attributes::WorkflowExecutionStartedEventAttributes(
@@ -339,6 +365,13 @@ impl WorkflowMachines {
                             randomness_seed: str_to_randomness_seed(
                                 &attrs.original_execution_run_id,
                             ),
+                            headers: match &attrs.header {
+                                None => HashMap::new(),
+                                Some(Header { fields }) => fields
+                                    .iter()
+                                    .map(|(k, v)| (k.clone(), Payload::from(v.clone())))
+                                    .collect(),
+                            },
                         }
                         .into(),
                     );
@@ -352,7 +385,7 @@ impl WorkflowMachines {
                 }
             }
             Some(EventType::WorkflowTaskScheduled) => {
-                let wf_task_sm = WorkflowTaskMachine::new(self.workflow_task_started_event_id);
+                let wf_task_sm = WorkflowTaskMachine::new(self.next_started_event_id);
                 let key = self.all_machines.insert(Box::new(wf_task_sm));
                 self.submachine_handle_event(key, event, has_next_event)?;
                 self.machines_by_event_id.insert(event.event_id, key);
@@ -368,7 +401,16 @@ impl WorkflowMachines {
                 }
             }
             Some(EventType::WorkflowExecutionCancelRequested) => {
-                // TODO: Cancel callbacks
+                if let Some(
+                    history_event::Attributes::WorkflowExecutionCancelRequestedEventAttributes(
+                        attrs,
+                    ),
+                ) = &event.attributes
+                {
+                    self.drive_me.cancel(attrs.clone().into());
+                } else {
+                    // err
+                }
             }
             _ => {
                 return Err(WFMachinesError::UnexpectedEvent(
@@ -400,32 +442,16 @@ impl WorkflowMachines {
     /// timer, etc. This does *not* cause any advancement of the state machines, it merely drains
     /// from the outgoing queue of activation jobs.
     ///
-    /// Importantly, the returned activation will have an empty task token. A meaningful one is
-    /// expected to be attached by something higher in the call stack.
-    pub(crate) fn get_wf_activation(&mut self) -> Option<WfActivation> {
+    /// The job list may be empty, in which case it is expected the caller handles what to do in a
+    /// "no work" situation. Possibly, it may know about some work the machines don't, like queries.
+    pub(crate) fn get_wf_activation(&mut self) -> WfActivation {
         let jobs = self.drive_me.drain_jobs();
-        if jobs.is_empty() {
-            None
-        } else {
-            Some(WfActivation {
-                timestamp: self.current_wf_time.map(Into::into),
-                run_id: self.run_id.clone(),
-                jobs,
-                task_token: vec![],
-            })
+        WfActivation {
+            timestamp: self.current_wf_time.map(Into::into),
+            is_replaying: self.replaying,
+            run_id: self.run_id.clone(),
+            jobs,
         }
-    }
-
-    /// Given an event id (possibly zero) of the last successfully executed workflow task and an
-    /// id of the last event, sets the ids internally and appropriately sets the replaying flag.
-    pub(crate) fn set_started_ids(
-        &mut self,
-        previous_started_event_id: i64,
-        workflow_task_started_event_id: i64,
-    ) {
-        self.previous_started_event_id = previous_started_event_id;
-        self.workflow_task_started_event_id = workflow_task_started_event_id;
-        self.replaying = previous_started_event_id > 0;
     }
 
     fn set_current_time(&mut self, time: SystemTime) -> SystemTime {
@@ -451,21 +477,28 @@ impl WorkflowMachines {
         Ok(has_new_lang_jobs)
     }
 
-    /// Apply events from history to this machines instance
-    pub(crate) fn apply_history_events(&mut self, history_info: &HistoryInfo) -> Result<()> {
-        let (_, events) = history_info
-            .events()
-            .split_at(self.get_last_started_event_id() as usize);
+    /// Apply the next entire workflow task from history to these machines.
+    pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<()> {
+        let last_handled_wft_started_id = self.last_handled_wft_started_id();
+        let events = self
+            .last_history_from_server
+            .take_next_wft_sequence(last_handled_wft_started_id)
+            .await
+            .map_err(WFMachinesError::HistoryFetchingError)?;
+
+        // We're caught up on reply if there are no new events to process
+        // TODO: Probably this is unneeded if we evict whenever history is from non-sticky queue
+        if events.is_empty() {
+            self.replaying = false;
+        }
+
+        if let Some(last_event) = events.last() {
+            if last_event.event_type == EventType::WorkflowTaskStarted as i32 {
+                self.next_started_event_id = last_event.event_id;
+            }
+        }
+
         let mut history = events.iter().peekable();
-
-        self.set_started_ids(
-            history_info.previous_started_event_id,
-            history_info.workflow_task_started_event_id,
-        );
-
-        // HistoryInfo's constructor enforces some rules about the structure of history that
-        // could be enforced here, but needn't be because they have already been guaranteed by it.
-        // See the errors that can be returned from [HistoryInfo::new_from_events] for detail.
 
         while let Some(event) = history.next() {
             let next_event = history.peek();
@@ -476,13 +509,6 @@ impl WorkflowMachines {
             }
 
             self.handle_event(event, next_event.is_some())?;
-
-            if next_event.is_none() {
-                if event.is_final_wf_execution_event() {
-                    return Ok(());
-                }
-                unreachable!()
-            }
         }
 
         Ok(())
@@ -537,11 +563,12 @@ impl WorkflowMachines {
         Ok(())
     }
 
-    /// Handles results of the workflow activation, delegating work to the appropriate state machine.
-    /// Returns a list of workflow jobs that should be queued in the pending activation for the next poll.
-    /// This list will be populated only if state machine produced lang activations as part of command processing.
-    /// For example some types of activity cancellation need to immediately unblock lang side without
-    /// having it to poll for an actual workflow task from the server.
+    /// Handles results of the workflow activation, delegating work to the appropriate state
+    /// machine. Returns a list of workflow jobs that should be queued in the pending activation for
+    /// the next poll. This list will be populated only if state machine produced lang activations
+    /// as part of command processing. For example some types of activity cancellation need to
+    /// immediately unblock lang side without having it to poll for an actual workflow task from the
+    /// server.
     fn handle_driven_results(
         &mut self,
         results: Vec<WFCommand>,
@@ -576,8 +603,20 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(cwfm);
                 }
                 WFCommand::FailWorkflow(attrs) => {
-                    let cwfm = self.add_new_machine(fail_workflow(attrs));
-                    self.current_wf_task_commands.push_back(cwfm);
+                    let fwfm = self.add_new_machine(fail_workflow(attrs));
+                    self.current_wf_task_commands.push_back(fwfm);
+                }
+                WFCommand::ContinueAsNew(attrs) => {
+                    let canm = self.add_new_machine(continue_as_new(attrs));
+                    self.current_wf_task_commands.push_back(canm);
+                }
+                WFCommand::CancelWorkflow(attrs) => {
+                    let cancm = self.add_new_machine(cancel_workflow(attrs));
+                    self.current_wf_task_commands.push_back(cancm);
+                }
+                WFCommand::QueryResponse(_) => {
+                    // Nothing to do here, queries are handled above the machine level
+                    unimplemented!("Query responses should not make it down into the machines")
                 }
                 WFCommand::NoCommandsFromLang => (),
             }

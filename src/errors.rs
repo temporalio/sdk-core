@@ -55,6 +55,9 @@ pub enum PollWfError {
     /// even though we already cancelled it)
     #[error("Unhandled error when auto-completing workflow task: {0:?}")]
     AutocompleteError(#[from] CompleteWfError),
+    /// There is no worker registered for the queue being polled
+    #[error("No worker registered for queue: {0}")]
+    NoWorkerForQueue(String),
 }
 
 impl From<WorkflowUpdateError> for PollWfError {
@@ -83,6 +86,9 @@ pub enum PollActivityError {
     /// errors, so lang should consider this fatal.
     #[error("Unhandled error when calling the temporal server: {0:?}")]
     TonicError(#[from] tonic::Status),
+    /// There is no worker registered for the queue being polled
+    #[error("No worker registered for queue: {0}")]
+    NoWorkerForQueue(String),
 }
 
 impl From<ShutdownErr> for PollActivityError {
@@ -112,6 +118,9 @@ pub enum CompleteWfError {
         /// The run id of the erring workflow
         run_id: String,
     },
+    /// There is no worker registered for the queue being polled
+    #[error("No worker registered for queue: {0}")]
+    NoWorkerForQueue(String),
     /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
     /// errors, so lang should consider this fatal.
     #[error("Unhandled error when calling the temporal server: {0:?}")]
@@ -160,4 +169,12 @@ pub enum ActivityHeartbeatError {
     /// Core is shutting down and thus new heartbeats are not accepted
     #[error("New heartbeat requests are not accepted while shutting down")]
     ShuttingDown,
+}
+
+/// Errors thrown by [crate::Core::register_worker]
+#[derive(thiserror::Error, Debug)]
+pub enum WorkerRegistrationError {
+    /// A worker has already been registered on this queue
+    #[error("Worker already registered for queue: {0}")]
+    WorkerAlreadyRegisteredForQueue(String),
 }

@@ -1,22 +1,22 @@
 mod bridge;
 mod concurrency_manager;
 mod driven_workflow;
+mod history_update;
 
 pub(crate) use bridge::WorkflowBridge;
 pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
 pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFetcher};
+pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
 
-use crate::task_token::TaskToken;
 use crate::{
     machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
     protos::{
-        coresdk::workflow_activation::WfActivation,
-        temporal::api::{common::v1::WorkflowExecution, history::v1::History},
+        coresdk::workflow_activation::WfActivation, temporal::api::common::v1::WorkflowExecution,
     },
-    protosext::{HistoryInfo, HistoryInfoError},
 };
 use std::sync::mpsc::{SendError, Sender};
 
+pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
 type Result<T, E = WorkflowError> = std::result::Result<T, E>;
 
 /// Errors relating to workflow management and machine logic. These are going to be passed up and
@@ -31,17 +31,18 @@ pub enum WorkflowError {
     /// Underlying error in state machines
     #[error("Underlying error in state machines: {0:?}")]
     UnderlyingMachinesError(#[from] WFMachinesError),
-    /// There was an error in the history associated with the workflow: {0:?}
-    #[error("There was an error in the history associated with the workflow: {0:?}")]
-    HistoryError(#[from] HistoryInfoError),
     /// Error buffering commands coming in from the lang side. This shouldn't happen unless we've
     /// run out of memory or there is a logic bug. Considered fatal.
     #[error("Internal error buffering workflow commands")]
     CommandBufferingError(#[from] SendError<Vec<WFCommand>>),
-    /// We tried to instantiate a workflow instance, but the provided history resulted in no
-    /// new activations. There is nothing to do.
+    /// We tried to instantiate a workflow instance, but the provided history resulted in nothing
+    /// for lang to do.
     #[error("Machine created with no activations for run_id {run_id}")]
-    MachineWasCreatedWithNoActivations { run_id: String },
+    MachineWasCreatedWithNoJobs { run_id: String },
+    /// Lang responded with other commands in addition to a legacy query response, which is not
+    /// allowed.
+    #[error("Lang responded with other commands in addition to legacy query response")]
+    LegacyQueryResponseIncludedOtherCommands,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -54,124 +55,124 @@ pub(crate) enum CommandID {
 /// associated with that specific workflow run.
 pub(crate) struct WorkflowManager {
     machines: WorkflowMachines,
-    command_sink: Sender<Vec<WFCommand>>,
-    /// The last recorded history we received from the server for this workflow run. This must be
-    /// kept because the lang side polls & completes for every workflow task, but we do not need
-    /// to poll the server that often during replay.
-    last_history_from_server: History,
-    last_history_task_count: usize,
-    /// The current workflow task number this run is on. Starts at one and monotonically increases.
-    current_wf_task_num: usize,
+    /// Is always `Some` in normal operation. Optional to allow for unit testing with the test
+    /// workflow driver, which does not need to complete activations the normal way.
+    command_sink: Option<Sender<Vec<WFCommand>>>,
 }
 
 impl WorkflowManager {
     /// Create a new workflow manager given workflow history and execution info as would be found
     /// in [PollWorkflowTaskQueueResponse]
-    pub fn new(
-        history: History,
-        workflow_execution: WorkflowExecution,
-    ) -> Result<Self, HistoryInfoError> {
+    pub fn new(history: HistoryUpdate, workflow_execution: WorkflowExecution) -> Self {
         let (wfb, cmd_sink) = WorkflowBridge::new();
         let state_machines = WorkflowMachines::new(
             workflow_execution.workflow_id,
             workflow_execution.run_id,
+            history,
             Box::new(wfb).into(),
         );
-        Ok(Self {
+        Self {
             machines: state_machines,
-            command_sink: cmd_sink,
-            last_history_task_count: history.get_workflow_task_count(None)?,
-            last_history_from_server: history,
-            current_wf_task_num: 1,
-        })
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct NextWfActivation {
-    /// Keep this private, so we can ensure task tokens are attached via [Self::finalize]
-    activation: WfActivation,
-}
-
-impl NextWfActivation {
-    /// Attach a task token to the activation so it can be sent out to the lang sdk
-    pub fn finalize(self, task_token: TaskToken) -> WfActivation {
-        let mut a = self.activation;
-        a.task_token = task_token.0;
-        a
+            command_sink: Some(cmd_sink),
+        }
     }
 
-    pub fn run_id(&self) -> &str {
-        &self.activation.run_id
+    #[cfg(test)]
+    pub fn new_from_machines(workflow_machines: WorkflowMachines) -> Self {
+        Self {
+            machines: workflow_machines,
+            command_sink: None,
+        }
     }
 }
 
 #[derive(Debug)]
 pub struct OutgoingServerCommands {
     pub commands: Vec<ProtoCommand>,
-    pub at_final_workflow_task: bool,
+    pub replaying: bool,
 }
 
 impl WorkflowManager {
     /// Given history that was just obtained from the server, pipe it into this workflow's machines.
     ///
     /// Should only be called when a workflow has caught up on replay (or is just beginning). It
-    /// will return a workflow activation if one is needed, as well as a bool indicating if there
-    /// are more workflow tasks that need to be performed to replay the remaining history.
-    pub fn feed_history_from_server(&mut self, hist: History) -> Result<Option<NextWfActivation>> {
-        let task_hist = HistoryInfo::new_from_history(&hist, Some(self.current_wf_task_num))?;
-        let task_ct = hist.get_workflow_task_count(None)?;
-        self.last_history_task_count = task_ct;
-        self.last_history_from_server = hist;
-        self.machines.apply_history_events(&task_hist)?;
-        let activation = self.machines.get_wf_activation();
-
-        self.current_wf_task_num += 1;
-        Ok(activation.map(|activation| NextWfActivation { activation }))
+    /// will return a workflow activation if one is needed.
+    pub async fn feed_history_from_server(
+        &mut self,
+        update: HistoryUpdate,
+    ) -> Result<WfActivation> {
+        self.machines.new_history_from_server(update).await?;
+        self.get_next_activation().await
     }
 
-    /// Fetch any pending commands that should be sent to the server, as well as if this workflow
-    /// is at it's final workflow task in current history.
+    /// Fetch the next workflow activation for this workflow if one is required. Doing so will apply
+    /// the next unapplied workflow task if such a sequence exists in history we already know about.
+    ///
+    /// Callers may also need to call [get_server_commands] after this to issue any pending commands
+    /// to the server.
+    pub async fn get_next_activation(&mut self) -> Result<WfActivation> {
+        // First check if there are already some pending jobs, which can be a result of replay.
+        let activation = self.machines.get_wf_activation();
+        if !activation.jobs.is_empty() {
+            return Ok(activation);
+        }
+
+        self.machines.apply_next_wft_from_history().await?;
+        Ok(self.machines.get_wf_activation())
+    }
+
+    /// Typically called after [get_next_activation], use this to retrieve commands to be sent to
+    /// the server which been generated by the machines since it was last called.
     pub fn get_server_commands(&self) -> OutgoingServerCommands {
         OutgoingServerCommands {
             commands: self.machines.get_commands(),
-            at_final_workflow_task: self.at_latest_wf_task(),
+            replaying: self.machines.replaying,
         }
     }
 
-    /// Return true if the workflow has reached the final workflow task in the latest history
-    /// we have from server
-    pub fn at_latest_wf_task(&self) -> bool {
-        self.current_wf_task_num >= self.last_history_task_count
-    }
-
-    /// Fetch the next workflow activation for this workflow if one is required. Callers may
-    /// also need to call [get_server_commands] after this to issue any pending commands to the
-    /// server.
-    pub fn get_next_activation(&mut self) -> Result<Option<NextWfActivation>> {
-        // First check if there are already some pending jobs, which can be a result of replay.
-        let activation = self.machines.get_wf_activation();
-        if let Some(act) = activation {
-            return Ok(Some(NextWfActivation { activation: act }));
+    /// During testing it can be useful to run through all activations to simulate replay easily.
+    /// Returns the last produced activation with jobs in it, or an activation with no jobs if
+    /// the first call had no jobs.
+    ///
+    /// This is meant to be used with the TestWorkflowDriver which can automatically produce
+    /// commands.
+    #[cfg(test)]
+    pub async fn process_all_activations(&mut self) -> Result<WfActivation> {
+        let mut last_act = self.get_next_activation().await?;
+        let mut next_act = self.get_next_activation().await?;
+        while !next_act.jobs.is_empty() {
+            last_act = next_act;
+            next_act = self.get_next_activation().await?;
         }
-
-        let hist = &self.last_history_from_server;
-        let task_hist = HistoryInfo::new_from_history(hist, Some(self.current_wf_task_num))?;
-        self.machines.apply_history_events(&task_hist)?;
-        let activation = self.machines.get_wf_activation();
-
-        if activation.is_some() {
-            self.current_wf_task_num += 1;
-        }
-
-        Ok(activation.map(|activation| NextWfActivation { activation }))
+        Ok(last_act)
     }
 
     /// Feed the workflow machines new commands issued by the executing workflow code, and iterate
     /// the machines.
     pub fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<()> {
-        self.command_sink.send(cmds)?;
+        if let Some(cs) = self.command_sink.as_mut() {
+            cs.send(cmds)?;
+        }
         self.machines.iterate_machines()?;
         Ok(())
     }
+}
+
+/// Determines when workflows are kept in the cache or evicted
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum WorkflowCachingPolicy {
+    /// Workflows are cached until evicted explicitly or the cache size limit is reached, in which
+    /// case they are evicted by least-recently-used ordering.
+    Sticky {
+        /// The maximum number of workflows that will be kept in the cache
+        max_cached_workflows: usize,
+    },
+    /// Workflows are evicted after each workflow task completion. Note that this is *not* after
+    /// each workflow activation - there are often multiple activations per workflow task.
+    NonSticky,
+
+    /// Not a real mode, but good for imitating crashes. Evict workflows after *every* reply,
+    /// even if there are pending activations
+    #[cfg(test)]
+    AfterEveryReply,
 }

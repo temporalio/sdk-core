@@ -3,10 +3,13 @@ use rand::{distributions::Standard, Rng};
 use std::{convert::TryFrom, env, future::Future, sync::Arc, time::Duration};
 use temporal_sdk_core::{
     protos::coresdk::workflow_commands::{
-        workflow_command, ActivityCancellationType, ScheduleActivity,
+        workflow_command, ActivityCancellationType, CompleteWorkflowExecution, ScheduleActivity,
+        StartTimer,
     },
+    protos::coresdk::workflow_completion::WfActivationCompletion,
     test_workflow_driver::TestRustWorker,
     Core, CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayApis, ServerGatewayOptions,
+    WorkerConfig, WorkerConfigBuilder,
 };
 use url::Url;
 
@@ -16,8 +19,8 @@ pub type GwApi = Arc<dyn ServerGatewayApis>;
 /// Implements a builder pattern to help integ tests initialize core and create workflows
 pub struct CoreWfStarter {
     test_name: String,
-    task_queue: String,
     core_options: CoreInitOptions,
+    worker_config: WorkerConfig,
     wft_timeout: Option<Duration>,
     initted_core: Option<Arc<dyn Core>>,
 }
@@ -30,22 +33,21 @@ impl CoreWfStarter {
         Self {
             test_name: test_name.to_owned(),
             core_options: CoreInitOptionsBuilder::default()
-                .gateway_opts(get_integ_server_options(&task_queue))
-                .evict_after_pending_cleared(false)
+                .gateway_opts(get_integ_server_options())
+                .max_cached_workflows(1000usize)
                 .build()
                 .unwrap(),
-            task_queue,
+            worker_config: WorkerConfigBuilder::default()
+                .task_queue(task_queue)
+                .build()
+                .unwrap(),
             wft_timeout: None,
             initted_core: None,
         }
     }
 
     pub async fn worker(&mut self) -> TestRustWorker {
-        TestRustWorker::new(
-            self.get_core().await,
-            NAMESPACE.to_owned(),
-            self.task_queue.clone(),
-        )
+        TestRustWorker::new(self.get_core().await, self.worker_config.task_queue.clone())
     }
 
     pub async fn get_core(&mut self) -> Arc<dyn Core> {
@@ -68,8 +70,8 @@ impl CoreWfStarter {
                 .as_ref(),
             |gw: GwApi| async move {
                 gw.start_workflow(
-                    NAMESPACE.to_owned(),
-                    self.task_queue.clone(),
+                    vec![],
+                    self.worker_config.task_queue.clone(),
                     workflow_id,
                     self.test_name.clone(),
                     self.wft_timeout,
@@ -83,25 +85,25 @@ impl CoreWfStarter {
     }
 
     pub fn get_task_queue(&self) -> &str {
-        &self.task_queue
+        &self.worker_config.task_queue
     }
 
     pub fn get_wf_id(&self) -> &str {
         &self.test_name
     }
 
-    pub fn evict_after_pending_cleared(&mut self, evict_after_pending_cleared: bool) -> &mut Self {
-        self.core_options.evict_after_pending_cleared = evict_after_pending_cleared;
+    pub fn max_cached_workflows(&mut self, num: usize) -> &mut Self {
+        self.core_options.max_cached_workflows = num;
         self
     }
 
     pub fn max_wft(&mut self, max: usize) -> &mut Self {
-        self.core_options.max_outstanding_workflow_tasks = max;
+        self.worker_config.max_outstanding_workflow_tasks = max;
         self
     }
 
     pub fn max_at(&mut self, max: usize) -> &mut Self {
-        self.core_options.max_outstanding_activities = max;
+        self.worker_config.max_outstanding_activities = max;
         self
     }
 
@@ -113,7 +115,12 @@ impl CoreWfStarter {
     async fn get_or_init_core(&mut self) -> Arc<dyn Core> {
         let opts = self.core_options.clone();
         if self.initted_core.is_none() {
-            self.initted_core = Some(Arc::new(temporal_sdk_core::init(opts).await.unwrap()));
+            let core = temporal_sdk_core::init(opts).await.unwrap();
+            // Register a worker for the task queue
+            core.register_worker(self.worker_config.clone())
+                .await
+                .unwrap();
+            self.initted_core = Some(Arc::new(core));
         }
         self.initted_core.as_ref().unwrap().clone()
     }
@@ -134,7 +141,7 @@ pub async fn with_gw<F: FnOnce(GwApi) -> Fout, Fout: Future>(
     fun(gw).await
 }
 
-pub fn get_integ_server_options(task_q: &str) -> ServerGatewayOptions {
+pub fn get_integ_server_options() -> ServerGatewayOptions {
     let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
         Ok(addr) => addr,
         Err(_) => "http://localhost:7233".to_owned(),
@@ -142,26 +149,12 @@ pub fn get_integ_server_options(task_q: &str) -> ServerGatewayOptions {
     let url = Url::try_from(&*temporal_server_address).unwrap();
     ServerGatewayOptions {
         namespace: NAMESPACE.to_string(),
-        task_queue: task_q.to_string(),
         identity: "integ_tester".to_string(),
         worker_binary_id: "".to_string(),
         long_poll_timeout: Duration::from_secs(60),
         target_url: url,
         tls_cfg: None,
     }
-}
-
-pub async fn get_integ_core(task_q: &str) -> impl Core {
-    let gateway_opts = get_integ_server_options(task_q);
-    temporal_sdk_core::init(
-        CoreInitOptionsBuilder::default()
-            .gateway_opts(gateway_opts)
-            .evict_after_pending_cleared(false)
-            .build()
-            .unwrap(),
-    )
-    .await
-    .unwrap()
 }
 
 pub fn schedule_activity_cmd(
@@ -192,7 +185,7 @@ pub fn schedule_activity_cmd(
 /// Annoyingly, because of a sorta-bug in the way async blocks work, the async block produced by
 /// the closure must be `async move` if it uses the provided iteration number. On the plus side,
 /// since you're usually just accessing core in the closure, if core is a reference everything just
-/// works. See https://github.com/rust-lang/rust/issues/81653
+/// works. See <https://github.com/rust-lang/rust/issues/81653>
 pub async fn fanout_tasks<FutureMaker, Fut>(num: usize, fm: FutureMaker)
 where
     FutureMaker: Fn(usize) -> Fut,
@@ -204,4 +197,38 @@ where
     }
 
     while tasks.next().await.is_some() {}
+}
+
+#[async_trait::async_trait]
+pub trait CoreTestHelpers {
+    async fn complete_execution(&self, run_id: &str);
+    async fn complete_timer(&self, run_id: &str, timer_id: &str, duration: Duration);
+}
+
+#[async_trait::async_trait]
+impl<T> CoreTestHelpers for T
+where
+    T: Core + ?Sized,
+{
+    async fn complete_execution(&self, run_id: &str) {
+        self.complete_workflow_task(WfActivationCompletion::from_cmds(
+            vec![CompleteWorkflowExecution { result: None }.into()],
+            run_id.to_string(),
+        ))
+        .await
+        .unwrap();
+    }
+
+    async fn complete_timer(&self, run_id: &str, timer_id: &str, duration: Duration) {
+        self.complete_workflow_task(WfActivationCompletion::from_cmds(
+            vec![StartTimer {
+                timer_id: timer_id.to_string(),
+                start_to_fire_timeout: Some(duration.into()),
+            }
+            .into()],
+            run_id.to_string(),
+        ))
+        .await
+        .unwrap();
+    }
 }

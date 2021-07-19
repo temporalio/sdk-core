@@ -10,6 +10,11 @@ use crate::{
 use futures::executor::block_on;
 use std::convert::TryInto;
 
+// TODO: This is bad and I want to get rid of it. Specifically:
+//   We should only use the normal workflow bridge -- somehow have TWD complete tasks automatically
+//   (like happens from the worker). Maybe just use worker in tests that don't use it yet? Or
+//   explicitly complete tasks?
+
 impl WorkflowFetcher for TestWorkflowDriver {
     fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
         let wf_is_done = self.wait_until_wf_iteration_done();

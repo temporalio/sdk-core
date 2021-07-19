@@ -191,7 +191,7 @@ struct StateMachineDefinition {
 impl StateMachineDefinition {
     fn is_final_state(&self, state: &Ident) -> bool {
         // If no transitions go from this state, it's a final state.
-        self.transitions.iter().find(|t| t.from == *state).is_none()
+        !self.transitions.iter().any(|t| t.from == *state)
     }
 }
 

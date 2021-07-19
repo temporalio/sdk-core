@@ -1,16 +1,13 @@
 mod workflow_machines;
 
 // TODO: Move all these inside a submachines module
-#[allow(unused)]
 mod activity_state_machine;
 #[allow(unused)]
 mod cancel_external_state_machine;
-#[allow(unused)]
 mod cancel_workflow_state_machine;
 #[allow(unused)]
 mod child_workflow_state_machine;
 mod complete_workflow_state_machine;
-#[allow(unused)]
 mod continue_as_new_workflow_state_machine;
 mod fail_workflow_state_machine;
 #[allow(unused)]
@@ -29,8 +26,7 @@ mod version_state_machine;
 mod workflow_task_state_machine;
 
 #[cfg(test)]
-#[macro_use]
-pub(crate) mod test_help;
+mod transition_coverage;
 
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
@@ -39,7 +35,8 @@ use crate::{
     machines::workflow_machines::MachineResponse,
     protos::{
         coresdk::workflow_commands::{
-            workflow_command, CancelTimer, CompleteWorkflowExecution, FailWorkflowExecution,
+            workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
+            ContinueAsNewWorkflowExecution, FailWorkflowExecution, QueryResult,
             RequestCancelActivity, ScheduleActivity, StartTimer, WorkflowCommand,
         },
         temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
@@ -53,7 +50,7 @@ use std::{
 };
 
 #[cfg(test)]
-use crate::machines::test_help::add_coverage;
+use transition_coverage::add_coverage;
 
 pub(crate) type ProtoCommand = Command;
 
@@ -70,6 +67,9 @@ pub enum WFCommand {
     CancelTimer(CancelTimer),
     CompleteWorkflow(CompleteWorkflowExecution),
     FailWorkflow(FailWorkflowExecution),
+    QueryResponse(QueryResult),
+    ContinueAsNew(ContinueAsNewWorkflowExecution),
+    CancelWorkflow(CancelWorkflowExecution),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
@@ -91,7 +91,13 @@ impl TryFrom<WorkflowCommand> for WFCommand {
                 Ok(WFCommand::CompleteWorkflow(c))
             }
             workflow_command::Variant::FailWorkflowExecution(s) => Ok(WFCommand::FailWorkflow(s)),
-            _ => unimplemented!(),
+            workflow_command::Variant::RespondToQuery(s) => Ok(WFCommand::QueryResponse(s)),
+            workflow_command::Variant::ContinueAsNewWorkflowExecution(s) => {
+                Ok(WFCommand::ContinueAsNew(s))
+            }
+            workflow_command::Variant::CancelWorkflowExecution(s) => {
+                Ok(WFCommand::CancelWorkflow(s))
+            }
         }
     }
 }

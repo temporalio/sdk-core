@@ -12,6 +12,7 @@ mod integ_tests {
 
     mod heartbeat_tests;
     mod polling_tests;
+    mod queries_tests;
     mod workflow_tests;
 
     // TODO: Currently ignored because starting up the docker image with TLS requires some hoop
@@ -39,7 +40,6 @@ mod integ_tests {
         let sgo = ServerGatewayOptions {
             target_url: Url::from_str("https://localhost:7233").unwrap(),
             namespace: NAMESPACE.to_string(),
-            task_queue: "whatever".to_string(),
             identity: "ident".to_string(),
             worker_binary_id: "binident".to_string(),
             long_poll_timeout: Duration::from_secs(60),

@@ -1,12 +1,16 @@
 use crate::{
-    pollers, protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
-    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse, ServerGatewayApis,
+    pollers::{self, Poller},
+    protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
+    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
+    ServerGatewayApis,
 };
+use futures::{prelude::stream::FuturesUnordered, StreamExt};
 use std::{fmt::Debug, future::Future, sync::Arc};
 use tokio::sync::{
     mpsc::{channel, Receiver},
     watch, Mutex, Semaphore,
 };
+use tokio::task::JoinHandle;
 
 pub struct LongPollBuffer<T> {
     buffered_polls: Mutex<Receiver<pollers::Result<T>>>,
@@ -15,6 +19,7 @@ pub struct LongPollBuffer<T> {
     /// *asked* it to be polled - otherwise we might spin and buffer polls constantly. This also
     /// means unit tests can continue to function in a predictable manner when calling mocks.
     polls_requested: Arc<Semaphore>,
+    join_handles: FuturesUnordered<JoinHandle<()>>,
 }
 
 impl<T> LongPollBuffer<T>
@@ -32,13 +37,14 @@ where
         let (tx, rx) = channel(buffer_size);
         let polls_requested = Arc::new(Semaphore::new(0));
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let join_handles = FuturesUnordered::new();
         let pf = Arc::new(poll_fn);
         for _ in 0..concurrent_pollers {
             let tx = tx.clone();
             let pf = pf.clone();
             let mut shutdown = shutdown_rx.clone();
             let polls_requested = polls_requested.clone();
-            tokio::spawn(async move {
+            let jh = tokio::spawn(async move {
                 loop {
                     if *shutdown.borrow() {
                         break;
@@ -55,38 +61,106 @@ where
                     let _ = tx.send(r).await;
                 }
             });
+            join_handles.push(jh);
         }
         Self {
             buffered_polls: Mutex::new(rx),
             shutdown: shutdown_tx,
             polls_requested,
+            join_handles,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl<T> Poller<T> for LongPollBuffer<T>
+where
+    T: Send + Sync + Debug + 'static,
+{
+    /// Poll the buffer. Adds one permit to the polling pool - the point of this being that the
+    /// buffer may support many concurrent pollers, but there is no reason to have them poll unless
+    /// enough polls have actually been requested. Calling this function adds a permit that any
+    /// concurrent poller may fulfill.
+    ///
+    /// EX: If this function is only ever called serially and always `await`ed, there will be no
+    /// concurrent polling. If it is called many times and the futures are awaited concurrently,
+    /// then polling will happen concurrently.
+    ///
+    /// Returns `None` if the poll buffer has been shut down
+    async fn poll(&self) -> Option<pollers::Result<T>> {
+        self.polls_requested.add_permits(1);
+        let mut locked = self.buffered_polls.lock().await;
+        (*locked).recv().await
+    }
+
+    fn notify_shutdown(&self) {
+        let _ = self.shutdown.send(true);
+    }
+
+    async fn shutdown(mut self) {
+        let _ = self.shutdown.send(true);
+        while self.join_handles.next().await.is_some() {}
+    }
+
+    async fn shutdown_box(self: Box<Self>) {
+        let this = *self;
+        this.shutdown().await
+    }
+}
+
+/// A poller capable of polling on a sticky and a nonsticky queue simultaneously for workflow tasks.
+#[derive(derive_more::Constructor)]
+pub struct WorkflowTaskPoller {
+    normal_poller: PollWorkflowTaskBuffer,
+    sticky_poller: Option<PollWorkflowTaskBuffer>,
+}
+
+#[async_trait::async_trait]
+impl Poller<PollWorkflowTaskQueueResponse> for WorkflowTaskPoller {
+    async fn poll(&self) -> Option<pollers::Result<PollWorkflowTaskQueueResponse>> {
+        if let Some(sq) = self.sticky_poller.as_ref() {
+            tokio::select! {
+                biased; // TODO: Remove once mocking happens above this level
+                r = self.normal_poller.poll() => r,
+                r = sq.poll() => r,
+            }
+        } else {
+            self.normal_poller.poll().await
         }
     }
 
-    pub async fn poll(&self) -> pollers::Result<T> {
-        self.polls_requested.add_permits(1);
-        let mut locked = self.buffered_polls.lock().await;
-        (*locked)
-            .recv()
-            .await
-            .expect("There is always another item in the stream")
+    fn notify_shutdown(&self) {
+        self.normal_poller.notify_shutdown();
+        if let Some(sq) = self.sticky_poller.as_ref() {
+            sq.notify_shutdown();
+        }
     }
 
-    pub fn shutdown(&self) {
-        let _ = self.shutdown.send(true);
+    async fn shutdown(mut self) {
+        self.normal_poller.shutdown().await;
+        if let Some(sq) = self.sticky_poller {
+            sq.shutdown().await;
+        }
+    }
+
+    async fn shutdown_box(self: Box<Self>) {
+        let this = *self;
+        this.shutdown().await
     }
 }
 
 pub type PollWorkflowTaskBuffer = LongPollBuffer<PollWorkflowTaskQueueResponse>;
 pub fn new_workflow_task_buffer(
     sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>,
+    task_queue: String,
     concurrent_pollers: usize,
     buffer_size: usize,
 ) -> PollWorkflowTaskBuffer {
     LongPollBuffer::new(
         move || {
             let sg = sg.clone();
-            async move { sg.poll_workflow_task().await }
+            let task_queue = task_queue.clone();
+            async move { sg.poll_workflow_task(task_queue).await }
         },
         concurrent_pollers,
         buffer_size,
@@ -96,13 +170,15 @@ pub fn new_workflow_task_buffer(
 pub type PollActivityTaskBuffer = LongPollBuffer<PollActivityTaskQueueResponse>;
 pub fn new_activity_task_buffer(
     sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>,
+    task_queue: String,
     concurrent_pollers: usize,
     buffer_size: usize,
 ) -> PollActivityTaskBuffer {
     LongPollBuffer::new(
         move || {
             let sg = sg.clone();
-            async move { sg.poll_activity_task().await }
+            let task_queue = task_queue.clone();
+            async move { sg.poll_activity_task(task_queue).await }
         },
         concurrent_pollers,
         buffer_size,
@@ -112,7 +188,7 @@ pub fn new_activity_task_buffer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pollers::manual_mock::MockManualGateway;
+    use crate::pollers::MockManualGateway;
     use futures::FutureExt;
     use std::time::Duration;
     use tokio::{select, sync::mpsc::channel};
@@ -123,7 +199,7 @@ mod tests {
         mock_gateway
             .expect_poll_workflow_task()
             .times(2)
-            .returning(move || {
+            .returning(move |_| {
                 async {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     Ok(Default::default())
@@ -132,7 +208,7 @@ mod tests {
             });
         let mock_gateway = Arc::new(mock_gateway);
 
-        let pb = new_workflow_task_buffer(mock_gateway, 1, 1);
+        let pb = new_workflow_task_buffer(mock_gateway, "someq".to_string(), 1, 1);
 
         // Poll a bunch of times, "interrupting" it each time, we should only actually have polled
         // once since the poll takes a while
@@ -155,7 +231,7 @@ mod tests {
         assert!(last_val);
         // Now we grab the buffered poll response, the poll task will go again but we don't grab it,
         // therefore we will have only polled twice.
-        pb.poll().await.unwrap();
-        pb.shutdown();
+        pb.poll().await.unwrap().unwrap();
+        pb.shutdown().await;
     }
 }

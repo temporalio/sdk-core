@@ -1,16 +1,19 @@
 use assert_matches::assert_matches;
 use crossbeam::channel::{unbounded, RecvTimeoutError};
+use futures::future::join_all;
 use std::time::Duration;
 use temporal_sdk_core::protos::coresdk::{
     activity_task::activity_task as act_task,
     workflow_activation::{wf_activation_job, FireTimer, WfActivationJob},
-    workflow_commands::{
-        ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity, StartTimer,
-    },
+    workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
     workflow_completion::WfActivationCompletion,
 };
-use temporal_sdk_core::{Core, CoreInitOptionsBuilder, IntoCompletion};
-use test_utils::{get_integ_server_options, init_core_and_create_wf, schedule_activity_cmd};
+use temporal_sdk_core::test_workflow_driver::{TestRustWorker, WfContext};
+use temporal_sdk_core::{tracing_init, Core, CoreInitOptionsBuilder, IntoCompletion};
+use test_utils::{
+    get_integ_server_options, init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers,
+    CoreWfStarter,
+};
 use tokio::time::timeout;
 
 #[tokio::test]
@@ -18,7 +21,7 @@ async fn out_of_order_completion_doesnt_hang() {
     let (core, task_q) = init_core_and_create_wf("out_of_order_completion_doesnt_hang").await;
     let activity_id = "act-1";
     let timer_id = "timer-1";
-    let task = core.poll_workflow_task().await.unwrap();
+    let task = core.poll_workflow_task(&task_q).await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
     core.complete_workflow_task(
         vec![
@@ -35,13 +38,13 @@ async fn out_of_order_completion_doesnt_hang() {
             }
             .into(),
         ]
-        .into_completion(task.task_token),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
     // complete it in this test as activity is try-cancelled.
-    let activity_task = core.poll_activity_task().await.unwrap();
+    let activity_task = core.poll_activity_task(&task_q).await.unwrap();
     assert_matches!(
         activity_task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -49,7 +52,7 @@ async fn out_of_order_completion_doesnt_hang() {
         }
     );
     // Poll workflow task and verify that activity has failed.
-    let task = core.poll_workflow_task().await.unwrap();
+    let task = core.poll_workflow_task(&task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -67,7 +70,7 @@ async fn out_of_order_completion_doesnt_hang() {
     let cc = core.clone();
     let jh = tokio::spawn(async move {
         // We want to fail the test if this takes too long -- we should not hit long poll timeout
-        let task = timeout(Duration::from_secs(1), cc.poll_workflow_task())
+        let task = timeout(Duration::from_secs(1), cc.poll_workflow_task(&task_q))
             .await
             .expect("Poll should come back right away")
             .unwrap();
@@ -77,12 +80,7 @@ async fn out_of_order_completion_doesnt_hang() {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(_)),
             }]
         );
-        cc.complete_workflow_task(WfActivationCompletion::from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
-            task.task_token,
-        ))
-        .await
-        .unwrap();
+        cc.complete_execution(&task.run_id).await;
     });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -94,7 +92,7 @@ async fn out_of_order_completion_doesnt_hang() {
             ..Default::default()
         }
         .into()],
-        task.task_token,
+        task.run_id,
     ))
     .await
     .unwrap();
@@ -104,7 +102,7 @@ async fn out_of_order_completion_doesnt_hang() {
 
 #[tokio::test]
 async fn long_poll_timeout_is_retried() {
-    let mut gateway_opts = get_integ_server_options("some_task_q");
+    let mut gateway_opts = get_integ_server_options();
     // Server whines unless long poll > 2 seconds
     gateway_opts.long_poll_timeout = Duration::from_secs(3);
     let core = temporal_sdk_core::init(
@@ -118,9 +116,46 @@ async fn long_poll_timeout_is_retried() {
     // Should block for more than 3 seconds, since we internally retry long poll
     let (tx, rx) = unbounded();
     tokio::spawn(async move {
-        core.poll_workflow_task().await.unwrap();
+        core.poll_workflow_task("doesnt_matter").await.unwrap();
         tx.send(())
     });
     let err = rx.recv_timeout(Duration::from_secs(4)).unwrap_err();
     assert_matches!(err, RecvTimeoutError::Timeout);
+}
+
+pub async fn many_parallel_timers_longhist(mut ctx: WfContext) {
+    for timer_set in 0..100 {
+        let mut futs = vec![];
+        for i in 0..1000 {
+            let timer = StartTimer {
+                timer_id: format!("t-{}-{}", timer_set, i),
+                start_to_fire_timeout: Some(Duration::from_millis(100).into()),
+            };
+            futs.push(ctx.timer(timer));
+        }
+        join_all(futs).await;
+    }
+    ctx.complete_workflow_execution();
+}
+
+// Ignored for now because I can't actually get this to produce pages. Need to generate some
+// large payloads I think.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn can_paginate_long_history() {
+    tracing_init();
+    let wf_name = "can_paginate_long_history";
+    let mut starter = CoreWfStarter::new(wf_name);
+    // Do not use sticky queues so we are forced to paginate once history gets long
+    starter.max_cached_workflows(0);
+    let tq = starter.get_task_queue().to_owned();
+    let core = starter.get_core().await;
+
+    let worker = TestRustWorker::new(core.clone(), tq);
+    worker
+        .submit_wf(vec![], wf_name.to_owned(), many_parallel_timers_longhist)
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    core.shutdown().await;
 }

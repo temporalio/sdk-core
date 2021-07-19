@@ -14,12 +14,13 @@ import "google/protobuf/timestamp.proto";
 /// An instruction to the lang sdk to run some workflow code, whether for the first time or from
 /// a cached state.
 message WFActivation {
-    // A unique identifier for this task
-    bytes task_token = 1;
+    /// The id of the currently active run of the workflow. Also used as a cache key. There may
+    /// only ever be one active workflow task (and hence activation) of a run at one time.
+    string run_id = 1;
     /// The current time as understood by the workflow, which is set by workflow task started events
     google.protobuf.Timestamp timestamp = 2;
-    /// The id of the currently active run of the workflow
-    string run_id = 3;
+    /// Whether or not the activation is replaying past events
+    bool is_replaying = 3;
     /// The things to do upon activating the workflow
     repeated WFActivationJob jobs = 4;
 }
@@ -62,6 +63,8 @@ message StartWorkflow {
     /// The seed must be used to initialize the random generator used by SDK.
     /// RandomSeedUpdatedAttributes are used to deliver seed updates.
     uint64 randomness_seed = 4;
+    /// Used to add metadata e.g. for tracing and auth, meant to be read and written to by interceptors.
+    map<string, common.Payload> headers = 5;
 
     // TODO: Do we need namespace here, or should that just be fetchable easily?
     //   will be others - workflow exe started attrs, etc
@@ -85,13 +88,19 @@ message UpdateRandomSeed {
 
 /// Query a workflow
 message QueryWorkflow {
-    string query_type = 1;
-    repeated common.Payload arguments = 2;
+    /// For PollWFTResp `query` field, this will be set to the special value `legacy`. For the
+    /// `queries` field, the server provides a unique identifier. If it is a `legacy` query,
+    /// lang cannot issue any commands in response other than to answer the query.
+    string query_id = 1;
+    /// The query's function/method/etc name
+    string query_type = 2;
+    repeated common.Payload arguments = 3;
 }
 
 /// Cancel a running workflow
 message CancelWorkflow {
-    // TODO: add attributes here
+    /// Information from the cancellation request
+    repeated common.Payload details = 1;
 }
 
 /// Send a signal to a workflow

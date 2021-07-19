@@ -1,32 +1,29 @@
-use super::Result;
-use crate::protos::temporal::api::common::v1::{Payload, Payloads};
-use crate::protos::temporal::api::failure::v1::Failure;
-use crate::protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes;
 use crate::{
-    machines::{workflow_machines::WorkflowMachines, ProtoCommand},
+    protos::temporal::api::common::v1::{Payload, Payloads},
+    protos::temporal::api::failure::v1::Failure,
+    protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes,
     protos::temporal::api::{
         enums::v1::{EventType, WorkflowTaskFailedCause},
-        history::v1::{
-            history_event::Attributes, ActivityTaskCancelRequestedEventAttributes, History,
-            HistoryEvent, TimerStartedEventAttributes, WorkflowExecutionCompletedEventAttributes,
-            WorkflowExecutionStartedEventAttributes, WorkflowTaskCompletedEventAttributes,
-            WorkflowTaskFailedEventAttributes, WorkflowTaskScheduledEventAttributes,
-            WorkflowTaskStartedEventAttributes, WorkflowTaskTimedOutEventAttributes,
-        },
+        history::v1::{history_event::Attributes, *},
     },
-    protosext::{HistoryInfo, HistoryInfoError},
+    test_help::{
+        history_info::{HistoryInfo, HistoryInfoError},
+        Result,
+    },
+    workflow::HistoryUpdate,
 };
 use anyhow::bail;
 use std::time::SystemTime;
 use uuid::Uuid;
 
-#[derive(Default, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct TestHistoryBuilder {
     events: Vec<HistoryEvent>,
     /// Is incremented every time a new event is added, and that *new* value is used as that event's
     /// id
     current_event_id: i64,
     workflow_task_scheduled_event_id: i64,
+    final_workflow_task_started_event_id: i64,
     previous_started_event_id: i64,
     previous_task_completed_id: i64,
     original_run_id: String,
@@ -84,7 +81,8 @@ impl TestHistoryBuilder {
             scheduled_event_id: self.workflow_task_scheduled_event_id,
             ..Default::default()
         };
-        self.build_and_push_event(EventType::WorkflowTaskStarted, attrs.into());
+        self.final_workflow_task_started_event_id =
+            self.add_get_event_id(EventType::WorkflowTaskStarted, Some(attrs.into()));
     }
 
     pub fn add_workflow_task_completed(&mut self) {
@@ -110,6 +108,29 @@ impl TestHistoryBuilder {
             ..Default::default()
         };
         self.build_and_push_event(EventType::WorkflowExecutionCompleted, attrs.into());
+    }
+
+    pub fn add_workflow_execution_failed(&mut self) {
+        let attrs = WorkflowExecutionFailedEventAttributes {
+            workflow_task_completed_event_id: self.previous_task_completed_id,
+            ..Default::default()
+        };
+        self.build_and_push_event(EventType::WorkflowExecutionFailed, attrs.into());
+    }
+
+    pub fn add_continued_as_new(&mut self) {
+        let attrs = WorkflowExecutionContinuedAsNewEventAttributes::default();
+        self.build_and_push_event(EventType::WorkflowExecutionContinuedAsNew, attrs.into());
+    }
+
+    pub fn add_cancel_requested(&mut self) {
+        let attrs = WorkflowExecutionCancelRequestedEventAttributes::default();
+        self.build_and_push_event(EventType::WorkflowExecutionCancelRequested, attrs.into());
+    }
+
+    pub fn add_cancelled(&mut self) {
+        let attrs = WorkflowExecutionCanceledEventAttributes::default();
+        self.build_and_push_event(EventType::WorkflowExecutionCanceled, attrs.into());
     }
 
     pub fn add_activity_task_cancel_requested(&mut self, scheduled_event_id: i64) {
@@ -157,25 +178,8 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowExecutionSignaled, attrs.into());
     }
 
-    pub fn as_history(&self) -> History {
-        History {
-            events: self.events.clone(),
-        }
-    }
-
-    /// Handle workflow task(s) using the provided [WorkflowMachines]. Will process as many workflow
-    /// tasks as the provided `to_wf_task_num` parameter.
-    ///
-    /// # Panics
-    /// * Can panic if the passed in machines have been manipulated outside of this builder
-    pub(crate) fn handle_workflow_task_take_cmds(
-        &self,
-        wf_machines: &mut WorkflowMachines,
-        to_wf_task_num: Option<usize>,
-    ) -> Result<Vec<ProtoCommand>> {
-        let histinfo = HistoryInfo::new_from_events(&self.events, to_wf_task_num)?;
-        wf_machines.apply_history_events(&histinfo)?;
-        Ok(wf_machines.get_commands())
+    pub(crate) fn as_history_update(&self) -> HistoryUpdate {
+        self.get_full_history_info().unwrap().into()
     }
 
     pub fn get_orig_run_id(&self) -> &str {
@@ -188,13 +192,13 @@ impl TestHistoryBuilder {
         &self,
         to_wf_task_num: usize,
     ) -> Result<HistoryInfo, HistoryInfoError> {
-        HistoryInfo::new_from_events(&self.events, Some(to_wf_task_num))
+        HistoryInfo::new_from_history(&self.events.clone().into(), Some(to_wf_task_num))
     }
 
     /// Iterates over the events in this builder to return a [HistoryInfo] representing *all*
     /// events in the history
     pub(crate) fn get_full_history_info(&self) -> Result<HistoryInfo, HistoryInfoError> {
-        HistoryInfo::new_from_events(&self.events, None)
+        HistoryInfo::new_from_history(&self.events.clone().into(), None)
     }
 
     fn build_and_push_event(&mut self, event_type: EventType, attribs: Attributes) {

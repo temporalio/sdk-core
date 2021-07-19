@@ -20,10 +20,11 @@ message WorkflowCommand {
         CancelTimer cancel_timer = 5;
         CompleteWorkflowExecution complete_workflow_execution = 6;
         FailWorkflowExecution fail_workflow_execution = 7;
+        ContinueAsNewWorkflowExecution continue_as_new_workflow_execution = 8;
+        CancelWorkflowExecution cancel_workflow_execution = 9;
 
         // To be added as/if needed:
         //  RequestCancelActivityTask request_cancel_activity_task_command_attributes = 6;
-        //  CancelWorkflowExecution cancel_workflow_execution_command_attributes = 8;
         //  RequestCancelExternalWorkflowExecution request_cancel_external_workflow_execution_command_attributes = 9;
         //  RecordMarker record_marker_command_attributes = 10;
         //  ContinueAsNewWorkflowExecution continue_as_new_workflow_execution_command_attributes = 11;
@@ -47,7 +48,6 @@ message ScheduleActivity {
     string activity_type = 2;
     string namespace = 3;
     // The name of the task queue to place this activity request in
-    //  TODO: Do we care about sticky/not sticky?
     string task_queue = 4;
     map<string, common.Payload> header_fields = 5;
     /// Arguments/input to the activity. Called "input" upstream.
@@ -62,7 +62,6 @@ message ScheduleActivity {
     google.protobuf.Duration schedule_to_start_timeout = 8;
     /// Maximum time an activity is allowed to execute after a pick up by a worker. This timeout is
     /// always retryable. Either this or schedule_to_close_timeout must be specified.
-    /// TODO: Is this really either or can you do both? Make oneof if mutually exclusive
     google.protobuf.Duration start_to_close_timeout = 9;
     /// Maximum time allowed between successful worker heartbeats.
     google.protobuf.Duration heartbeat_timeout = 10;
@@ -91,9 +90,11 @@ message RequestCancelActivity {
 }
 
 message QueryResult {
+    /// Corresponds to the id provided in the activation job
+    string query_id = 1;
     oneof variant {
-        QuerySuccess succeeded = 1;
-        string failed_with_message = 2;
+        QuerySuccess succeeded = 2;
+        common.UserCodeFailure failed = 3;
     }
 }
 
@@ -110,3 +111,30 @@ message CompleteWorkflowExecution {
 message FailWorkflowExecution {
     common.UserCodeFailure failure = 1;
 }
+
+// TODO: Maybe combine all execution resolves into one message
+/// Continue the workflow as a new execution. Unless noted otherwise, unset or default field values
+/// will re-use the issuing workflow's values.
+message ContinueAsNewWorkflowExecution {
+    /// The identifier the lang-specific sdk uses to execute workflow code
+    string workflow_type = 1;
+    /// Task queue for the new workflow execution
+    string task_queue = 2;
+    /// Inputs to the workflow code. Should be specified. Will not re-use old arguments, as that
+    /// typically wouldn't make any sense.
+    repeated common.Payload arguments = 3;
+    /// Timeout for a single run of the new workflow.
+    google.protobuf.Duration workflow_run_timeout = 4;
+    /// Timeout of a single workflow task.
+    google.protobuf.Duration workflow_task_timeout = 5;
+    /// Memo fields
+    map<string, common.Payload> memo = 6;
+    /// Header fields
+    map<string, common.Payload> header = 7;
+    /// Search attributes
+    map<string, common.Payload> search_attributes = 8;
+}
+
+/// Indicate a workflow has completed as cancelled. Generally sent as a response to an activation
+/// containing a cancellation job.
+message CancelWorkflowExecution {}

@@ -67,15 +67,16 @@ fn spawn_save_coverage_at_end() -> SyncSender<(String, CoveredTransition)> {
 #[cfg(test)]
 mod machine_coverage_report {
     use super::*;
-    use crate::machines::fail_workflow_state_machine::FailWorkflowMachine;
     use crate::machines::{
         activity_state_machine::ActivityMachine,
+        cancel_workflow_state_machine::CancelWorkflowMachine,
         complete_workflow_state_machine::CompleteWorkflowMachine,
-        timer_state_machine::TimerMachine, workflow_task_state_machine::WorkflowTaskMachine,
+        continue_as_new_workflow_state_machine::ContinueAsNewWorkflowMachine,
+        fail_workflow_state_machine::FailWorkflowMachine, timer_state_machine::TimerMachine,
+        workflow_task_state_machine::WorkflowTaskMachine,
     };
     use rustfsm::StateMachine;
-    use std::fs::File;
-    use std::io::Write;
+    use std::{fs::File, io::Write};
 
     // This "test" needs to exist so that we have a way to join the spawned thread. Otherwise
     // it'll just get abandoned.
@@ -104,6 +105,8 @@ mod machine_coverage_report {
         let mut complete_wf = CompleteWorkflowMachine::visualizer().to_owned();
         let mut wf_task = WorkflowTaskMachine::visualizer().to_owned();
         let mut fail_wf = FailWorkflowMachine::visualizer().to_owned();
+        let mut cont_as_new = ContinueAsNewWorkflowMachine::visualizer().to_owned();
+        let mut cancel_wf = CancelWorkflowMachine::visualizer().to_owned();
 
         // This isn't at all efficient but doesn't need to be.
         // Replace transitions in the vizzes with green color if they are covered.
@@ -115,6 +118,10 @@ mod machine_coverage_report {
                 m @ "CompleteWorkflowMachine" => cover_transitions(m, &mut complete_wf, coverage),
                 m @ "WorkflowTaskMachine" => cover_transitions(m, &mut wf_task, coverage),
                 m @ "FailWorkflowMachine" => cover_transitions(m, &mut fail_wf, coverage),
+                m @ "ContinueAsNewWorkflowMachine" => {
+                    cover_transitions(m, &mut cont_as_new, coverage)
+                }
+                m @ "CancelWorkflowMachine" => cover_transitions(m, &mut cancel_wf, coverage),
                 m => panic!("Unknown machine {}", m),
             }
         }

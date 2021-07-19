@@ -1,7 +1,5 @@
 #![allow(clippy::large_enum_variant)]
 
-use crate::protos::coresdk::common::Payload;
-use crate::protos::temporal::api::history::v1::ActivityTaskTimedOutEventAttributes;
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, OnEventWrapper,
@@ -10,28 +8,24 @@ use crate::{
     protos::{
         coresdk::{
             activity_result::{self as ar, activity_result, ActivityResult},
-            activity_task,
-            workflow_activation::{
-                wf_activation_job::{self, Variant},
-                ResolveActivity, StartWorkflow, WfActivationJob,
-            },
+            common::Payload,
+            workflow_activation::ResolveActivity,
             workflow_commands::{
                 ActivityCancellationType, RequestCancelActivity, ScheduleActivity,
             },
-            PayloadsExt,
         },
         temporal::api::{
             command::v1::Command,
             common::v1::{ActivityType, Payloads},
-            enums::v1::{CommandType, EventType, RetryState, RetryState::CancelRequested},
+            enums::v1::{CommandType, EventType},
             failure::v1::{
-                failure::{self, FailureInfo},
-                ActivityFailureInfo, CanceledFailureInfo, Failure,
+                failure::{self},
+                ActivityFailureInfo, Failure,
             },
             history::v1::{
                 history_event, ActivityTaskCanceledEventAttributes,
                 ActivityTaskCompletedEventAttributes, ActivityTaskFailedEventAttributes,
-                HistoryEvent,
+                ActivityTaskTimedOutEventAttributes, HistoryEvent,
             },
         },
     },
@@ -80,7 +74,7 @@ fsm! {
     StartedActivityCancelCommandCreated --(ActivityTaskCancelRequested) --> StartedActivityCancelEventRecorded;
 
     StartedActivityCancelEventRecorded --(ActivityTaskFailed(ActivityTaskFailedEventAttributes),
-        on_activity_task_failed) --> Failed;
+        shared on_activity_task_failed) --> Failed;
     StartedActivityCancelEventRecorded --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes),
         shared on_activity_task_completed) --> Completed;
     StartedActivityCancelEventRecorded --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes),
@@ -287,7 +281,7 @@ impl Cancellable for ActivityMachine {
                 ActivityMachineCommand::RequestCancellation(cmd) => {
                     self.machine_responses_from_cancel_request(cmd)
                 }
-                ActivityMachineCommand::Cancel(details) => {
+                ActivityMachineCommand::Cancel(_details) => {
                     // TODO: Convert payloads
                     vec![self.create_cancelation_resolve(None).into()]
                 }
@@ -348,7 +342,7 @@ impl ScheduleCommandCreated {
             ActivityCancellationType::Abandon => {
                 ActivityMachineTransition::ok_shared(vec![], Canceled::default(), canceled_state)
             }
-            _ => notify_lang_activity_cancelled(canceled_state, None, Canceled::default()),
+            _ => notify_lang_activity_cancelled(canceled_state, None),
         }
     }
 }
@@ -389,7 +383,7 @@ impl ScheduledEventRecorded {
         )
     }
     pub(super) fn on_abandoned(self, dat: SharedState) -> ActivityMachineTransition<Canceled> {
-        notify_lang_activity_cancelled(dat, None, Canceled::default())
+        notify_lang_activity_cancelled(dat, None)
     }
 }
 
@@ -434,7 +428,7 @@ impl Started {
         )
     }
     pub(super) fn on_abandoned(self, dat: SharedState) -> ActivityMachineTransition<Canceled> {
-        notify_lang_activity_cancelled(dat, None, Canceled::default())
+        notify_lang_activity_cancelled(dat, None)
     }
 }
 
@@ -450,7 +444,7 @@ impl ScheduledActivityCancelEventRecorded {
         dat: SharedState,
         attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition<Canceled> {
-        on_activity_task_canceled(dat, attrs)
+        notify_if_not_already_cancelled(dat, |dat| notify_lang_activity_cancelled(dat, Some(attrs)))
     }
 
     pub(super) fn on_activity_task_timed_out(
@@ -458,18 +452,7 @@ impl ScheduledActivityCancelEventRecorded {
         dat: SharedState,
         attrs: ActivityTaskTimedOutEventAttributes,
     ) -> ActivityMachineTransition<TimedOut> {
-        match dat.cancellation_type {
-            /// At this point if we are in TryCancel mode, we've already sent a cancellation failure
-            /// to lang unblocking it, so there is no need to send another activation for the timeout.
-            ActivityCancellationType::TryCancel => ActivityMachineTransition::default(),
-            ActivityCancellationType::WaitCancellationCompleted => {
-                notify_lang_activity_timed_out(dat, attrs)
-            }
-            /// Abandon results in going into Cancelled immediately, so we should never reach this state.
-            ActivityCancellationType::Abandon => unreachable!(
-                "Cancellations with type Abandon should go into terminal state immediately."
-            ),
-        }
+        notify_if_not_already_cancelled(dat, |dat| notify_lang_activity_timed_out(dat, attrs))
     }
 }
 
@@ -491,52 +474,48 @@ impl StartedActivityCancelEventRecorded {
         dat: SharedState,
         attrs: ActivityTaskCompletedEventAttributes,
     ) -> ActivityMachineTransition<Completed> {
-        // We don want to tell lang about completions if we already pre-emptively canceled the
-        // activity
-        let cmds = if dat.cancellation_type == ActivityCancellationType::WaitCancellationCompleted {
-            vec![ActivityMachineCommand::Complete(attrs.result)]
-        } else {
-            vec![]
-        };
-        ActivityMachineTransition::ok(cmds, Completed::default())
+        notify_if_not_already_cancelled(dat, |_| {
+            TransitionResult::commands(vec![ActivityMachineCommand::Complete(attrs.result)])
+        })
     }
     pub(super) fn on_activity_task_failed(
         self,
+        dat: SharedState,
         attrs: ActivityTaskFailedEventAttributes,
     ) -> ActivityMachineTransition<Failed> {
-        ActivityMachineTransition::ok(
-            vec![ActivityMachineCommand::Fail(attrs.failure)],
-            Failed::default(),
-        )
+        notify_if_not_already_cancelled(dat, |_| {
+            TransitionResult::commands(vec![ActivityMachineCommand::Fail(attrs.failure)])
+        })
     }
     pub(super) fn on_activity_task_timed_out(
         self,
         dat: SharedState,
         attrs: ActivityTaskTimedOutEventAttributes,
     ) -> ActivityMachineTransition<TimedOut> {
-        notify_lang_activity_timed_out(dat, attrs)
+        notify_if_not_already_cancelled(dat, |dat| notify_lang_activity_timed_out(dat, attrs))
     }
     pub(super) fn on_activity_task_canceled(
         self,
         dat: SharedState,
         attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition<Canceled> {
-        on_activity_task_canceled(dat, attrs)
+        notify_if_not_already_cancelled(dat, |dat| notify_lang_activity_cancelled(dat, Some(attrs)))
     }
 }
 
-fn on_activity_task_canceled(
+fn notify_if_not_already_cancelled<S>(
     dat: SharedState,
-    attrs: ActivityTaskCanceledEventAttributes,
-) -> ActivityMachineTransition<Canceled> {
-    match dat.cancellation_type {
-        /// At this point if we are in TryCancel mode, we've already sent a cancellation failure
-        /// to lang unblocking it, so there is no need to send another activation.
+    notifier: impl FnOnce(SharedState) -> ActivityMachineTransition<S>,
+) -> ActivityMachineTransition<S>
+where
+    S: Into<ActivityMachineState> + Default,
+{
+    match &dat.cancellation_type {
+        // At this point if we are in TryCancel mode, we've already sent a cancellation failure
+        // to lang unblocking it, so there is no need to send another activation.
         ActivityCancellationType::TryCancel => ActivityMachineTransition::default(),
-        ActivityCancellationType::WaitCancellationCompleted => {
-            notify_lang_activity_cancelled(dat, Some(attrs), Canceled::default())
-        }
-        /// Abandon results in going into Cancelled immediately, so we should never reach this state.
+        ActivityCancellationType::WaitCancellationCompleted => notifier(dat),
+        // Abandon results in going into Cancelled immediately, so we should never reach this state
         ActivityCancellationType::Abandon => unreachable!(
             "Cancellations with type Abandon should go into terminal state immediately."
         ),
@@ -644,19 +623,15 @@ fn notify_lang_activity_timed_out(
 /// Notifies lang side that activity has been cancelled by sending a failure with cancelled failure
 /// as a cause. Optional cancelled_event, if passed, is used to supply event IDs. State machine will
 /// transition into the `next_state` provided as a parameter.
-fn notify_lang_activity_cancelled<S>(
+fn notify_lang_activity_cancelled(
     dat: SharedState,
     canceled_event: Option<ActivityTaskCanceledEventAttributes>,
-    next_state: S,
-) -> ActivityMachineTransition<S>
-where
-    S: Into<ActivityMachineState>,
-{
+) -> ActivityMachineTransition<Canceled> {
     ActivityMachineTransition::ok_shared(
         vec![ActivityMachineCommand::Cancel(
             canceled_event.map(|e| e.details).flatten(),
         )],
-        next_state,
+        Canceled::default(),
         dat,
     )
 }
@@ -694,15 +669,13 @@ fn convert_payloads(
 mod test {
     use super::*;
     use crate::{
-        machines::{test_help::TestHistoryBuilder, workflow_machines::WorkflowMachines},
-        protos::coresdk::{
-            workflow_activation::WfActivation, workflow_commands::CompleteWorkflowExecution,
-        },
-        test_help::canned_histories,
-        test_workflow_driver::{CommandSender, TestWorkflowDriver},
+        machines::workflow_machines::WorkflowMachines,
+        protos::coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
+        test_help::{canned_histories, TestHistoryBuilder},
+        test_workflow_driver::{TestWorkflowDriver, WfContext},
+        workflow::WorkflowManager,
     };
     use rstest::{fixture, rstest};
-    use std::time::Duration;
 
     #[fixture]
     fn activity_happy_hist() -> (TestHistoryBuilder, WorkflowMachines) {
@@ -711,10 +684,11 @@ mod test {
         let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
+            t.as_history_update(),
             Box::new(twd).into(),
         );
 
-        assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
+        assert_eq!(2, t.get_full_history_info().unwrap().wf_task_count());
         (t, state_machines)
     }
 
@@ -725,15 +699,16 @@ mod test {
         let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
+            t.as_history_update(),
             Box::new(twd).into(),
         );
 
-        assert_eq!(2, t.as_history().get_workflow_task_count(None).unwrap());
+        assert_eq!(2, t.get_full_history_info().unwrap().wf_task_count());
         (t, state_machines)
     }
 
     fn activity_workflow_driver(activity_id: &'static str) -> TestWorkflowDriver {
-        TestWorkflowDriver::new(|mut command_sink: CommandSender| async move {
+        TestWorkflowDriver::new(vec![], move |mut command_sink: WfContext| async move {
             let activity = ScheduleActivity {
                 activity_id: activity_id.to_string(),
                 ..Default::default()
@@ -748,22 +723,21 @@ mod test {
         case::success(activity_happy_hist()),
         case::failure(activity_failure_hist())
     )]
-    fn single_activity_inc(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
-        let (t, mut state_machines) = hist_batches;
+    #[tokio::test(flavor = "multi_thread")]
+    async fn single_activity_inc(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
+        let (_, state_machines) = hist_batches;
+        let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(1))
-            .unwrap();
-        state_machines.get_wf_activation();
+        wfm.get_next_activation().await.unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
             CommandType::ScheduleActivityTask as i32
         );
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, Some(2))
-            .unwrap();
-        state_machines.get_wf_activation();
+
+        wfm.get_next_activation().await.unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -776,11 +750,13 @@ mod test {
         case::success(activity_happy_hist()),
         case::failure(activity_failure_hist())
     )]
-    fn single_activity_full(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
-        let (t, mut state_machines) = hist_batches;
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, None)
-            .unwrap();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn single_activity_full(hist_batches: (TestHistoryBuilder, WorkflowMachines)) {
+        let (_, state_machines) = hist_batches;
+        let mut wfm = WorkflowManager::new_from_machines(state_machines);
+
+        wfm.process_all_activations().await.unwrap();
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -788,9 +764,9 @@ mod test {
         );
     }
 
-    #[test]
-    fn immediate_activity_cancelation() {
-        let twd = TestWorkflowDriver::new(|mut cmd_sink: CommandSender| async move {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn immediate_activity_cancelation() {
+        let twd = TestWorkflowDriver::new(vec![], |mut cmd_sink: WfContext| async move {
             let cancel_activity_future = cmd_sink.activity(ScheduleActivity {
                 activity_id: "activity-id-1".to_string(),
                 ..Default::default()
@@ -807,17 +783,16 @@ mod test {
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
 
-        let mut state_machines = WorkflowMachines::new(
+        let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
+            t.as_history_update(),
             Box::new(twd).into(),
         );
+        let mut wfm = WorkflowManager::new_from_machines(state_machines);
 
-        let commands = t
-            .handle_workflow_task_take_cmds(&mut state_machines, None)
-            .unwrap();
-        assert_eq!(commands.len(), 0);
-        let activation = state_machines.get_wf_activation().unwrap();
+        let activation = wfm.process_all_activations().await.unwrap();
+        wfm.get_server_commands();
         assert_matches!(
             activation.jobs.as_slice(),
             [
@@ -827,10 +802,10 @@ mod test {
                 WfActivationJob {
                     variant: Some(wf_activation_job::Variant::ResolveActivity(
                         ResolveActivity {
-                            activity_id,
                             result: Some(ActivityResult {
                                 status: Some(activity_result::Status::Canceled(_))
-                            })
+                            }),
+                            ..
                         }
                     )),
                 },
