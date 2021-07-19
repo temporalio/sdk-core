@@ -8,6 +8,7 @@ use crate::{
     task_token::TaskToken,
 };
 use futures::StreamExt;
+use std::collections::hash_map::Entry;
 use std::{
     collections::HashMap,
     sync::Arc,
@@ -122,7 +123,7 @@ impl ActivityHeartbeatManager {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         let join_handle = tokio::spawn(
-            // The stream of incoming heartbeats uses scan to carry state across each item in the
+            // The stream of incoming heartbeats uses unfold to carry state across each item in the
             // stream The closure checks if, for any given activity, we should heartbeat or not
             // depending on its delay and when we last issued a heartbeat for it.
             futures::stream::unfold(HbStreamState::new(heartbeat_rx), move |mut hb_states| {
@@ -139,17 +140,26 @@ impl ActivityHeartbeatManager {
                         _ = shutdown.changed() => return None
                     };
 
-                    let do_record = if !hb_states.last_sent.contains_key(&hb.task_token) {
-                        hb_states.last_sent.insert(
-                            hb.task_token.clone(),
-                            ActivityHbState {
+                    let do_record = match hb_states.last_sent.entry(hb.task_token.clone()) {
+                        Entry::Vacant(e) => {
+                            e.insert(ActivityHbState {
                                 delay: hb.delay,
                                 last_sent: Instant::now(),
-                            },
-                        );
-                        true
-                    } else {
-                        false
+                            });
+                            true
+                        }
+                        Entry::Occupied(mut o) => {
+                            let o = o.get_mut();
+                            let now = Instant::now();
+                            let elapsed = o.last_sent.elapsed();
+                            // We are willing to issue heartbeats 2x as often as the hb timeout
+                            let do_rec = elapsed >= o.delay / 2;
+                            if do_rec {
+                                o.last_sent = now;
+                                o.delay = hb.delay;
+                            }
+                            do_rec
+                        }
                     };
 
                     if *shutdown.borrow() {
@@ -212,9 +222,13 @@ impl ActivityHeartbeatManager {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::pollers::MockServerGatewayApis;
-    use crate::protos::coresdk::common::Payload;
-    use crate::protos::temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse;
+    use crate::{
+        pollers::MockServerGatewayApis,
+        protos::{
+            coresdk::common::Payload,
+            temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
+        },
+    };
     use std::time::Duration;
     use tokio::time::sleep;
 
@@ -229,12 +243,12 @@ mod test {
             .times(2);
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
         let fake_task_token = vec![1, 2, 3];
-        // Sending heartbeat requests for 400ms, this should send first hearbeat right away, and all
-        // other requests should be aggregated and last one should be sent to the server in 500ms
-        // (1/2 of heartbeat timeout).
-        for i in 0u8..40 {
-            sleep(Duration::from_millis(10)).await;
+        // Sending heartbeat requests for 600ms, this should send first heartbeat right away, and
+        // all other requests should be aggregated and last one should be sent to the server in
+        // 500ms (1/2 of heartbeat timeout).
+        for i in 0u8..60 {
             record_heartbeat(&hm, fake_task_token.clone(), i, Duration::from_millis(1000));
+            sleep(Duration::from_millis(10)).await;
         }
         hm.shutdown().await;
     }
@@ -247,21 +261,19 @@ mod test {
         mock_gateway
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
-            .times(2);
+            .times(1);
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
         let fake_task_token = vec![1, 2, 3];
-        // Sending heartbeat requests for 400ms, this should send first heartbeat right away, and
-        // all other requests should be aggregated and last one should be sent to the server in
-        // 500ms (1/2 of heartbeat timeout).
+        // Send a whole bunch of heartbeats very fast. We should still only send one total.
         for i in 0u8..u8::MAX {
             record_heartbeat(&hm, fake_task_token.clone(), i, Duration::from_millis(1000));
         }
+        // Let it propagate
+        sleep(Duration::from_millis(50)).await;
         hm.shutdown().await;
     }
 
-    /// This test reports one heartbeat and waits until processor times out and exits then sends
-    /// another one. Expectation is that new processor should be spawned and heartbeat shouldn't get
-    /// lost.
+    /// This test reports one heartbeat and waits for the delay to elapse before sending another
     #[tokio::test]
     async fn report_heartbeat_after_timeout() {
         let mut mock_gateway = MockServerGatewayApis::new();
@@ -274,6 +286,8 @@ mod test {
         record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
         sleep(Duration::from_millis(500)).await;
         record_heartbeat(&hm, fake_task_token.clone(), 1, Duration::from_millis(100));
+        // Let it propagate
+        sleep(Duration::from_millis(50)).await;
         hm.shutdown().await;
     }
 
@@ -309,7 +323,7 @@ mod test {
     fn record_heartbeat(
         hm: &ActivityHeartbeatManagerHandle,
         task_token: Vec<u8>,
-        i: u8,
+        payload_data: u8,
         delay: Duration,
     ) {
         hm.record(
@@ -317,7 +331,7 @@ mod test {
                 task_token,
                 details: vec![Payload {
                     metadata: Default::default(),
-                    data: vec![i],
+                    data: vec![payload_data],
                 }],
             },
             delay,
