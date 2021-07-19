@@ -32,6 +32,7 @@ impl WorkflowConcurrencyManager {
     pub async fn create_or_update(
         &self,
         run_id: &str,
+        task_queue: String,
         history: HistoryUpdate,
         workflow_execution: WorkflowExecution,
     ) -> Result<WfActivation> {
@@ -51,7 +52,7 @@ impl WorkflowConcurrencyManager {
         } else {
             // Create a new workflow machines instance for this workflow, initialize it, and
             // track it.
-            let mut wfm = WorkflowManager::new(history, workflow_execution);
+            let mut wfm = WorkflowManager::new(history, workflow_execution, task_queue);
             match wfm.get_next_activation().await {
                 Ok(activation) => {
                     if activation.jobs.is_empty() {
@@ -111,6 +112,7 @@ mod tests {
         let res = mgr
             .create_or_update(
                 "some_run_id",
+                "some_tq".to_string(),
                 HistoryUpdate::new_from_events(vec![], 0),
                 Default::default(),
             )

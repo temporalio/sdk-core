@@ -137,6 +137,7 @@ mod tests {
         let state_machines = WorkflowMachines::new(
             "wfid".to_string(),
             "runid".to_string(),
+            "tq".to_string(),
             t.as_history_update(),
             Box::new(twd).into(),
         );

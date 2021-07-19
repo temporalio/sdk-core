@@ -203,46 +203,47 @@ impl WorkflowTaskManager {
     /// workflow. Any existing pending activations will be destroyed, and any outstanding
     /// activations invalidated.
     /// Returns that workflow's task info if it was present.
-    pub fn evict_run(&self, run_id: &str) -> Option<WorkflowTaskInfo> {
+    pub async fn evict_run(&self, run_id: &str) -> Option<WorkflowTaskInfo> {
         debug!(run_id=%run_id, "Evicting run");
+        let task_queue = self
+            .workflow_machines
+            .access(run_id, |wfm: &mut WorkflowManager| {
+                async move { Ok(wfm.get_task_queue()) }.boxed()
+            })
+            .await;
         self.cache_manager.write().remove(run_id);
         self.workflow_machines.evict(run_id);
         self.outstanding_activations.remove(run_id);
         self.pending_activations.remove_all_with_run_id(run_id);
 
-        if let Some((
-            _,
-            OutstandingTask {
-                info,
-                buffered_resp,
-                ..
-            },
-        )) = self.outstanding_workflow_tasks.remove(run_id)
-        {
+        if let Ok(task_queue) = task_queue {
             // Queue up an eviction activation
             self.pending_activations.push(
                 create_evict_activation(run_id.to_string()),
-                info.task_queue.clone(),
+                task_queue.clone(),
             );
             let _ =
                 self.workflow_activations_update
                     .send(WfActivationUpdate::WorkflowTaskComplete {
-                        task_queue: info.task_queue.clone(),
+                        task_queue: task_queue.clone(),
                     });
+        }
+        // TODO this probably needs to go as outstanding tasks are getting removed upon task completion
+        // and eviction is happening later according to the cache policy, which means that it's likely
+        // that there will be no outstanding workflow task.
+        self.outstanding_workflow_tasks.remove(run_id).map(|f| {
             // If we just evicted something and there was a buffered poll response for the workflow,
             // it is now ready to be produced by the next poll. (Not immediate next, since, ignoring
             // other workflows, the next poll will be the eviction we just produced. Buffered polls
             // always are popped after pending activations)
-            if let Some(buffered_poll) = buffered_resp {
+            if let Some(buffered_poll) = f.1.buffered_resp {
                 self.ready_buffered_wft
-                    .entry(info.task_queue.clone())
+                    .entry(f.1.info.task_queue.clone())
                     .or_default()
                     .push_back(buffered_poll);
-            }
-            Some(info)
-        } else {
-            None
-        }
+            };
+            f.1.info
+        })
     }
 
     /// Given a validated poll response from the server, prepare an activation (if there is one) to
@@ -413,7 +414,7 @@ impl WorkflowTaskManager {
 
     /// Record that an activation failed, returns enum that indicates if failure should be reported to the
     /// server
-    pub fn failed_activation(&self, run_id: &str) -> FailedActivationOutcome {
+    pub async fn failed_activation(&self, run_id: &str) -> FailedActivationOutcome {
         let tt = if let Some(entry) = self.outstanding_workflow_tasks.get(run_id) {
             entry.info.task_token.clone()
         } else {
@@ -430,7 +431,7 @@ impl WorkflowTaskManager {
             FailedActivationOutcome::ReportLegacyQueryFailure(tt)
         } else {
             // Blow up any cached data associated with the workflow, including LRU cache.
-            let should_report = if let Some(wti) = self.evict_run(run_id) {
+            let should_report = if let Some(wti) = self.evict_run(run_id).await {
                 // Only report to server if the last task wasn't also a failure (avoid spam)
                 wti.attempt <= 1
             } else {
@@ -443,7 +444,7 @@ impl WorkflowTaskManager {
             }
         };
 
-        self.after_wft_report(run_id);
+        self.after_wft_report(run_id).await;
         ret
     }
 
@@ -469,6 +470,7 @@ impl WorkflowTaskManager {
             .workflow_machines
             .create_or_update(
                 &run_id,
+                wft_info.task_queue.clone(),
                 HistoryUpdate::new(
                     HistoryPaginator::new(
                         poll_wf_resp.history,
@@ -526,7 +528,7 @@ impl WorkflowTaskManager {
     /// evictions if required. It is important this is called *after* reporting a successful WFT
     /// to server, as some replies (task not found) may require an eviction, which could be avoided
     /// if this is called too early.
-    pub(crate) fn after_wft_report(&self, run_id: &str) {
+    pub(crate) async fn after_wft_report(&self, run_id: &str) {
         // Workflows with no more pending activations (IE: They have completed a WFT) must be
         // removed from the outstanding tasks map
         if !self.pending_activations.has_pending(run_id) {
@@ -547,7 +549,7 @@ impl WorkflowTaskManager {
             // Evict run id if cache is full. Non-sticky will always evict.
             let maybe_evicted = self.cache_manager.write().insert(run_id);
             if let Some(evicted_run_id) = maybe_evicted {
-                self.evict_run(&evicted_run_id);
+                self.evict_run(&evicted_run_id).await;
             }
 
             // The evict may or may not have already done this, but even when we aren't evicting

@@ -65,11 +65,16 @@ pub(crate) struct WorkflowManager {
 impl WorkflowManager {
     /// Create a new workflow manager given workflow history and execution info as would be found
     /// in [PollWorkflowTaskQueueResponse]
-    pub fn new(history: HistoryUpdate, workflow_execution: WorkflowExecution) -> Self {
+    pub fn new(
+        history: HistoryUpdate,
+        workflow_execution: WorkflowExecution,
+        task_queue: String,
+    ) -> Self {
         let (wfb, cmd_sink) = WorkflowBridge::new();
         let state_machines = WorkflowMachines::new(
             workflow_execution.workflow_id,
             workflow_execution.run_id,
+            task_queue,
             history,
             Box::new(wfb).into(),
         );
@@ -130,6 +135,10 @@ impl WorkflowManager {
             commands: self.machines.get_commands(),
             replaying: self.machines.replaying,
         }
+    }
+
+    pub fn get_task_queue(&self) -> String {
+        self.machines.task_queue.clone()
     }
 
     /// During testing it can be useful to run through all activations to simulate replay easily.

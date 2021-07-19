@@ -160,7 +160,7 @@ pub trait Core: Send + Sync {
     /// with the eviction job inside it to be eventually returned by [Core::poll_workflow_task]. If
     /// the workflow had any existing outstanding activations, such activations are invalidated and
     /// subsequent completions of them will do nothing and log a warning.
-    fn request_workflow_eviction(&self, run_id: &str);
+    async fn request_workflow_eviction(&self, run_id: &str);
 
     /// Returns core's instance of the [ServerGatewayApis] implementor it is using.
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis>;
@@ -473,8 +473,8 @@ where
         }
     }
 
-    fn request_workflow_eviction(&self, run_id: &str) {
-        self.wft_manager.evict_run(run_id);
+    async fn request_workflow_eviction(&self, run_id: &str) {
+        self.wft_manager.evict_run(run_id).await;
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {
@@ -687,7 +687,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             None => {}
         }
 
-        self.wft_manager.after_wft_report(run_id);
+        self.wft_manager.after_wft_report(run_id).await;
         Ok(())
     }
 
@@ -697,7 +697,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         run_id: &str,
         failure: workflow_completion::Failure,
     ) -> Result<(), CompleteWfError> {
-        match self.wft_manager.failed_activation(run_id) {
+        match self.wft_manager.failed_activation(run_id).await {
             FailedActivationOutcome::Report(tt) => {
                 self.handle_wft_complete_errs(run_id, || async {
                     self.server_gateway
@@ -761,7 +761,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             _ => Ok(()),
         };
         if should_evict {
-            self.wft_manager.evict_run(run_id);
+            self.wft_manager.evict_run(run_id).await;
         }
         res.map_err(Into::into)
     }

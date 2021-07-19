@@ -124,7 +124,7 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
     let run_id = do_workflow().await;
 
     if do_evict {
-        core.request_workflow_eviction(&run_id);
+        core.request_workflow_eviction(&run_id).await;
     }
 
     let query_fut = with_gw(core.as_ref(), |gw: GwApi| async move {

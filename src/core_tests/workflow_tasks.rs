@@ -1148,7 +1148,9 @@ async fn complete_after_eviction() {
 
     let activation = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
     // We just got start workflow, immediately evict
-    core.inner.request_workflow_eviction(&activation.run_id);
+    core.inner
+        .request_workflow_eviction(&activation.run_id)
+        .await;
     // Try to complete it. No error should be returned, and nothing happens or is sent to server.
     core.inner
         .complete_workflow_task(WfActivationCompletion::from_cmd(
