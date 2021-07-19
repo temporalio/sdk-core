@@ -78,6 +78,8 @@ impl ActivityHeartbeatManager {
         Ok(())
     }
 
+    /// Tell the heartbeat manager we are done forever with a certain task, so it may be forgotten.
+    /// Record should *not* be called with the same TaskToken after calling this.
     pub fn evict(&self, task_token: TaskToken) {
         let _ = self.heartbeat_tx.send(HBAction::Evict(task_token));
     }
