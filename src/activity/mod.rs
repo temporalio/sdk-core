@@ -94,6 +94,7 @@ impl ActivityTaskManager {
     /// Mark the activity associated with the task token as complete, returning the details about it
     /// if it was present.
     pub(crate) fn mark_complete(&self, task_token: &TaskToken) -> Option<InflightActivityDetails> {
+        self.activity_heartbeat_manager.evict(task_token.clone());
         self.outstanding_activity_tasks
             .remove(&task_token)
             .map(|x| x.1)

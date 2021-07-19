@@ -23,7 +23,6 @@ use crate::{
         mock_core_with_opts_no_workers, mock_manual_poller, mock_poller, poll_and_reply,
         MocksHolder, TEST_Q,
     },
-    tracing_init,
     workflow::WorkflowCachingPolicy::NonSticky,
     ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
 };
@@ -200,7 +199,6 @@ async fn heartbeats_report_cancels_only_once() {
 
 #[tokio::test]
 async fn activity_cancel_interrupts_poll() {
-    tracing_init();
     let mut mock_poller = mock_manual_poller();
     let mut poll_resps = VecDeque::from(vec![
         async {
@@ -305,7 +303,7 @@ async fn many_concurrent_heartbeat_cancels() {
                 async move {
                     Ok(PollActivityTaskQueueResponse {
                         task_token: i.to_be_bytes().to_vec(),
-                        heartbeat_timeout: Some(Duration::from_millis(500).into()),
+                        heartbeat_timeout: Some(Duration::from_millis(200).into()),
                         ..Default::default()
                     })
                 }
@@ -375,12 +373,12 @@ async fn many_concurrent_heartbeat_cancels() {
     // Spawn "activities"
     fanout_tasks(CONCURRENCY_NUM, |i| async move {
         let task_token = i.to_be_bytes().to_vec();
-        for _ in 0..10 {
+        for _ in 0..12 {
             core.record_activity_heartbeat(ActivityHeartbeat {
                 task_token: task_token.clone(),
                 details: vec![],
             });
-            sleep(Duration::from_millis(100)).await;
+            sleep(Duration::from_millis(50)).await;
         }
     })
     .await;
