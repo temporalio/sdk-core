@@ -270,11 +270,11 @@ impl Cancellable for TimerMachine {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_workflow_driver::WorkflowFunction;
+    use crate::prototype_rust_sdk::WorkflowFunction;
     use crate::workflow::managed_wf::ManagedWFFunc;
     use crate::{
+        prototype_rust_sdk::WfContext,
         test_help::{canned_histories, TestHistoryBuilder},
-        test_workflow_driver::WfContext,
     };
     use rstest::{fixture, rstest};
     use std::time::Duration;

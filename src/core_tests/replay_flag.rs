@@ -2,8 +2,8 @@ use crate::workflow::managed_wf::ManagedWFFunc;
 use crate::{
     protos::coresdk::workflow_commands::StartTimer,
     protos::temporal::api::enums::v1::CommandType,
+    prototype_rust_sdk::{WfContext, WorkflowFunction},
     test_help::canned_histories,
-    test_workflow_driver::{WfContext, WorkflowFunction},
 };
 use rstest::{fixture, rstest};
 use std::time::Duration;

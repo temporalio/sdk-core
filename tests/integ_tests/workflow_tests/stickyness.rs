@@ -5,7 +5,7 @@ use std::{
 };
 use temporal_sdk_core::{
     protos::coresdk::workflow_commands::StartTimer,
-    test_workflow_driver::{WfContext, WorkflowResult},
+    prototype_rust_sdk::{WfContext, WorkflowResult},
 };
 use test_utils::CoreWfStarter;
 

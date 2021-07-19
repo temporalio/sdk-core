@@ -9,7 +9,7 @@ use temporal_sdk_core::{
         workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
         workflow_completion::WfActivationCompletion,
     },
-    test_workflow_driver::{WfContext, WorkflowResult},
+    prototype_rust_sdk::{WfContext, WorkflowResult},
     tracing_init, Core, CoreInitOptionsBuilder, IntoCompletion,
 };
 use test_utils::{

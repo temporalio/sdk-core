@@ -2,7 +2,7 @@ use std::time::Duration;
 use temporal_sdk_core::{
     protos::coresdk::workflow_commands::StartTimer,
     protos::temporal::api::enums::v1::WorkflowExecutionStatus,
-    test_workflow_driver::{WfContext, WfExitValue, WorkflowResult},
+    prototype_rust_sdk::{WfContext, WfExitValue, WorkflowResult},
 };
 use test_utils::CoreWfStarter;
 

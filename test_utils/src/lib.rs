@@ -7,7 +7,7 @@ use temporal_sdk_core::{
         StartTimer,
     },
     protos::coresdk::workflow_completion::WfActivationCompletion,
-    test_workflow_driver::TestRustWorker,
+    prototype_rust_sdk::TestRustWorker,
     Core, CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayApis, ServerGatewayOptions,
     WorkerConfig, WorkerConfigBuilder,
 };

@@ -112,12 +112,12 @@ impl Cancellable for CancelWorkflowMachine {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_workflow_driver::WfExitValue;
+    use crate::prototype_rust_sdk::WfExitValue;
     use crate::{
         machines::StartTimer,
         protos::coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
+        prototype_rust_sdk::{WfContext, WorkflowFunction, WorkflowResult},
         test_help::canned_histories,
-        test_workflow_driver::{WfContext, WorkflowFunction, WorkflowResult},
         workflow::managed_wf::ManagedWFFunc,
     };
     use std::time::Duration;

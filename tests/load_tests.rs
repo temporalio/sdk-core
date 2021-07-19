@@ -7,7 +7,7 @@ use temporal_sdk_core::protos::coresdk::{
     workflow_commands::{ActivityCancellationType, ScheduleActivity},
     ActivityTaskCompletion,
 };
-use temporal_sdk_core::test_workflow_driver::WfContext;
+use temporal_sdk_core::prototype_rust_sdk::WfContext;
 use test_utils::{fanout_tasks, CoreWfStarter};
 
 const CONCURRENCY: usize = 1000;

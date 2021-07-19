@@ -170,8 +170,8 @@ pub mod managed_wf {
             common::Payload,
             workflow_completion::{wf_activation_completion::Status, WfActivationCompletion},
         },
+        prototype_rust_sdk::{WorkflowFunction, WorkflowResult},
         test_help::TestHistoryBuilder,
-        test_workflow_driver::{WorkflowFunction, WorkflowResult},
         workflow::WorkflowFetcher,
     };
     use std::convert::TryInto;

@@ -11,7 +11,7 @@ pub extern crate assert_matches;
 extern crate tracing;
 
 pub mod protos;
-pub mod test_workflow_driver;
+pub mod prototype_rust_sdk;
 
 mod activity;
 pub(crate) mod core_tracing;

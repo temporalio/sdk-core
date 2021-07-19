@@ -668,8 +668,8 @@ mod test {
     use super::*;
     use crate::{
         protos::coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
+        prototype_rust_sdk::{WfContext, WorkflowFunction, WorkflowResult},
         test_help::{canned_histories, TestHistoryBuilder},
-        test_workflow_driver::{WfContext, WorkflowFunction, WorkflowResult},
         workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::{fixture, rstest};
