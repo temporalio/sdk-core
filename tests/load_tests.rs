@@ -1,23 +1,29 @@
 use assert_matches::assert_matches;
 use futures::future::join_all;
 use std::time::{Duration, Instant};
-use temporal_sdk_core::protos::coresdk::{
-    activity_result::ActivityResult,
-    activity_task::activity_task as act_task,
-    workflow_commands::{ActivityCancellationType, ScheduleActivity},
-    ActivityTaskCompletion,
+use temporal_sdk_core::{
+    protos::coresdk::{
+        activity_result::ActivityResult,
+        activity_task::activity_task as act_task,
+        workflow_commands::{ActivityCancellationType, ScheduleActivity},
+        ActivityTaskCompletion,
+    },
+    test_workflow_driver::WfContext,
+    tracing_init,
 };
-use temporal_sdk_core::test_workflow_driver::WfContext;
-use test_utils::{fanout_tasks, CoreWfStarter};
+use test_utils::CoreWfStarter;
 
 const CONCURRENCY: usize = 1000;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn activity_load() {
+    tracing_init();
+
     let mut starter = CoreWfStarter::new("activity_load");
     starter
         .max_wft(CONCURRENCY)
         .max_cached_workflows(CONCURRENCY)
+        .max_at_polls(10)
         .max_at(CONCURRENCY);
     let worker = starter.worker().await;
     let task_q = &starter.get_task_queue().to_owned();
@@ -69,26 +75,36 @@ async fn activity_load() {
     dbg!(starting.elapsed());
 
     let running = Instant::now();
-    let core = &starter.get_core().await;
+    let core = starter.get_core().await;
+
     // Poll for and complete all activities
-    let all_acts = fanout_tasks(CONCURRENCY, |_| {
-        let payload_dat = payload_dat.clone();
-        async move {
-            let task = core.poll_activity_task(task_q).await.unwrap();
+    let c2 = core.clone();
+    let all_acts = async move {
+        let mut act_complete_futs = vec![];
+        for _ in 0..CONCURRENCY {
+            let task = c2.poll_activity_task(task_q).await.unwrap();
             assert_matches!(
                 task.variant,
-                Some(act_task::Variant::Start(start_activity)) => {
-                    assert_eq!(start_activity.activity_type, "test_activity".to_string())
+                Some(act_task::Variant::Start(ref start_activity)) => {
+                    assert_eq!(start_activity.activity_type, "test_activity")
                 }
             );
-            core.complete_activity_task(ActivityTaskCompletion {
-                task_token: task.task_token,
-                result: Some(ActivityResult::ok(payload_dat.into())),
-            })
-            .await
-            .unwrap();
+            let pd = payload_dat.clone();
+            let core = c2.clone();
+            act_complete_futs.push(tokio::spawn(async move {
+                core.complete_activity_task(ActivityTaskCompletion {
+                    task_token: task.task_token,
+                    result: Some(ActivityResult::ok(pd.into())),
+                })
+                .await
+                .unwrap()
+            }));
         }
-    });
+        join_all(act_complete_futs)
+            .await
+            .into_iter()
+            .for_each(|h| h.unwrap());
+    };
     tokio::join! {
         async {
             worker.run_until_done().await.unwrap();

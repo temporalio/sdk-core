@@ -34,6 +34,7 @@ rand = "0.8.3"
 slotmap = "1.0"
 thiserror = "1.0"
 tokio = { version = "1.1", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs"] }
+tokio-stream = "0.1"
 tonic = { version = "0.4", features = ["tls", "tls-roots"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-futures = "0.2"
