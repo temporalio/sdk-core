@@ -286,6 +286,7 @@ async fn worker_shutdown_during_multiple_poll_doesnt_deadlock(
     let poll2fut = core.poll_workflow_task("q2");
     let shutdownfut = async {
         core.shutdown_worker("q1").await;
+        // Will allow both workers to proceed
         let _ = tx.send(true);
     };
     let (pollres, poll2res, _) = tokio::join!(pollfut, poll2fut, shutdownfut);
