@@ -91,6 +91,7 @@ impl ActivityHeartbeatManager {
         self.incoming_cancels.lock().await.recv().await
     }
 
+    // TODO: Can own self now!
     /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all heartbeat
     /// processors to terminate gracefully.
     pub async fn shutdown(&self) {

@@ -140,7 +140,7 @@ where
                 .task_queue(tq)
                 .build()
                 .unwrap(),
-            Some(mockpoll.0),
+            mockpoll.0,
             mockpoll.1,
         );
     }

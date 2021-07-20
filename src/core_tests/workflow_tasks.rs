@@ -1087,9 +1087,8 @@ async fn lots_of_workflows() {
     assert_eq!(core.wft_manager.outstanding_wft(), 0);
     assert_eq!(
         core.workers
-            .read()
-            .await
             .get(TEST_Q)
+            .await
             .unwrap()
             .unwrap()
             .outstanding_workflow_tasks(),

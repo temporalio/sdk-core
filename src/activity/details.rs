@@ -12,6 +12,4 @@ pub(crate) struct InflightActivityDetails {
     /// we have learned from heartbeating and issued a cancel task, in which case we may simply
     /// discard the reply.
     pub known_not_found: bool,
-    /// The task queue this activity came from
-    pub task_queue: String,
 }
