@@ -121,7 +121,6 @@ impl Poller<PollWorkflowTaskQueueResponse> for WorkflowTaskPoller {
     async fn poll(&self) -> Option<pollers::Result<PollWorkflowTaskQueueResponse>> {
         if let Some(sq) = self.sticky_poller.as_ref() {
             tokio::select! {
-                biased; // TODO: Remove once mocking happens above this level
                 r = self.normal_poller.poll() => r,
                 r = sq.poll() => r,
             }

@@ -53,6 +53,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "coresdk.activity_result.ActivityResult.status",
             "#[derive(::derive_more::From)]",
         )
+        .type_attribute(
+            "coresdk.activity_task.ActivityCancelReason",
+            "#[derive(::derive_more::Display)]",
+        )
         .type_attribute("coresdk.Task.variant", "#[derive(::derive_more::From)]")
         .compile(
             &[
