@@ -1,6 +1,5 @@
 pub mod canned_histories;
 
-mod async_workflow_driver;
 mod history_builder;
 mod history_info;
 
@@ -402,6 +401,9 @@ pub fn build_mock_pollers(
             outstanding.write().remove_by_right(&tt);
             Ok(Default::default())
         });
+    mock_gateway
+        .expect_start_workflow()
+        .returning(|_, _, _, _, _| Ok(Default::default()));
 
     MocksHolder {
         sg: mock_gateway,

@@ -245,7 +245,6 @@ async fn scheduled_activity_cancellation_try_cancel(hist_batches: &[usize]) {
                 &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
                 vec![RequestCancelActivity {
                     activity_id: activity_id.to_string(),
-                    ..Default::default()
                 }
                 .into()],
             ),
@@ -388,7 +387,6 @@ async fn cancelled_activity_timeout(hist_batches: &[usize]) {
                 &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
                 vec![RequestCancelActivity {
                     activity_id: activity_id.to_string(),
-                    ..Default::default()
                 }
                 .into()],
             ),
@@ -488,7 +486,6 @@ async fn verify_activity_cancellation(
                 &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
                 vec![RequestCancelActivity {
                     activity_id: activity_id.to_string(),
-                    ..Default::default()
                 }
                 .into()],
             ),
@@ -559,7 +556,6 @@ async fn verify_activity_cancellation_wait_for_cancellation(activity_id: &str, c
                 &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
                 vec![RequestCancelActivity {
                     activity_id: activity_id.to_string(),
-                    ..Default::default()
                 }
                 .into()],
             ),
@@ -971,7 +967,6 @@ async fn activity_not_canceled_on_replay_repro(hist_batches: &[usize]) {
                 &job_assert!(wf_activation_job::Variant::FireTimer(_)),
                 vec![RequestCancelActivity {
                     activity_id: activity_id.to_string(),
-                    ..Default::default()
                 }
                 .into()],
             ),
@@ -1021,7 +1016,6 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &[usize])
                 vec![
                     RequestCancelActivity {
                         activity_id: activity_id.to_string(),
-                        ..Default::default()
                     }
                     .into(),
                     StartTimer {

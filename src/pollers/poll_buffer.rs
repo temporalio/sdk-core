@@ -87,6 +87,7 @@ where
     /// then polling will happen concurrently.
     ///
     /// Returns `None` if the poll buffer has been shut down
+    #[instrument(name = "long_poll", level = "trace", skip(self))]
     async fn poll(&self) -> Option<pollers::Result<T>> {
         self.polls_requested.add_permits(1);
         let mut locked = self.buffered_polls.lock().await;
@@ -120,7 +121,6 @@ impl Poller<PollWorkflowTaskQueueResponse> for WorkflowTaskPoller {
     async fn poll(&self) -> Option<pollers::Result<PollWorkflowTaskQueueResponse>> {
         if let Some(sq) = self.sticky_poller.as_ref() {
             tokio::select! {
-                biased; // TODO: Remove once mocking happens above this level
                 r = self.normal_poller.poll() => r,
                 r = sq.poll() => r,
             }

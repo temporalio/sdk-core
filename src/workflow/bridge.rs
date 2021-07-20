@@ -1,7 +1,4 @@
-use crate::{
-    machines::WFCommand,
-    workflow::{ActivationListener, WorkflowFetcher},
-};
+use crate::{machines::WFCommand, workflow::WorkflowFetcher};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 /// The [DrivenWorkflow] trait expects to be called to make progress, but the [CoreSDKService]
@@ -25,8 +22,9 @@ impl WorkflowBridge {
     }
 }
 
+#[async_trait::async_trait]
 impl WorkflowFetcher for WorkflowBridge {
-    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
+    async fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
         let in_cmds = self.incoming_commands.try_recv();
 
         let in_cmds = in_cmds.unwrap_or_else(|_| vec![WFCommand::NoCommandsFromLang]);
@@ -34,6 +32,3 @@ impl WorkflowFetcher for WorkflowBridge {
         in_cmds
     }
 }
-
-// Real bridge doesn't actually need to listen
-impl ActivationListener for WorkflowBridge {}

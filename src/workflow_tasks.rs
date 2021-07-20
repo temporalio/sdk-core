@@ -377,7 +377,7 @@ impl WorkflowTaskManager {
 
             // Send commands from lang into the machines
             machine_mut!(self, run_id, |wfm: &mut WorkflowManager| {
-                async move { wfm.push_commands(commands) }.boxed()
+                wfm.push_commands(commands).boxed()
             })?;
             self.enqueue_next_activation_if_needed(run_id).await?;
             // We want to fetch the outgoing commands only after any new activation has been queued,

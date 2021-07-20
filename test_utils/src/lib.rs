@@ -7,7 +7,7 @@ use temporal_sdk_core::{
         StartTimer,
     },
     protos::coresdk::workflow_completion::WfActivationCompletion,
-    test_workflow_driver::TestRustWorker,
+    prototype_rust_sdk::TestRustWorker,
     Core, CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayApis, ServerGatewayOptions,
     WorkerConfig, WorkerConfigBuilder,
 };
@@ -47,7 +47,15 @@ impl CoreWfStarter {
     }
 
     pub async fn worker(&mut self) -> TestRustWorker {
-        TestRustWorker::new(self.get_core().await, self.worker_config.task_queue.clone())
+        TestRustWorker::new(
+            self.get_core().await,
+            self.worker_config.task_queue.clone(),
+            self.wft_timeout,
+        )
+    }
+
+    pub async fn shutdown(&mut self) {
+        self.get_core().await.shutdown().await
     }
 
     pub async fn get_core(&mut self) -> Arc<dyn Core> {
@@ -104,6 +112,11 @@ impl CoreWfStarter {
 
     pub fn max_at(&mut self, max: usize) -> &mut Self {
         self.worker_config.max_outstanding_activities = max;
+        self
+    }
+
+    pub fn max_at_polls(&mut self, max: usize) -> &mut Self {
+        self.worker_config.max_concurrent_at_polls = max;
         self
     }
 

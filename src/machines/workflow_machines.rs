@@ -276,10 +276,6 @@ impl WorkflowMachines {
 
         self.current_started_event_id = task_started_event_id;
         self.set_current_time(time);
-        // TODO: Ideally this would actually be called every time a command is pushed from a
-        //  workflow that isn't going across the public api, but as it stands that isn't really
-        //  doable, so this has to exist here for test workflow driver
-        self.iterate_machines()?;
         Ok(())
     }
 
@@ -469,11 +465,13 @@ impl WorkflowMachines {
     }
 
     /// Iterate the state machines, which consists of grabbing any pending outgoing commands from
-    /// the workflow, handling them, and preparing them to be sent off to the server.
-    /// Returns a boolean flag which indicates whether or not new activations were produced by the state
-    /// machine. If true, pending activation should be created by the caller making jobs available to the lang side.
-    pub(crate) fn iterate_machines(&mut self) -> Result<bool> {
-        let results = self.drive_me.fetch_workflow_iteration_output();
+    /// the workflow code, handling them, and preparing them to be sent off to the server.
+    ///
+    /// Returns a boolean flag which indicates whether or not new activations were produced by the
+    /// state machine. If true, pending activation should be created by the caller making jobs
+    /// available to the lang side.
+    pub(crate) async fn iterate_machines(&mut self) -> Result<bool> {
+        let results = self.drive_me.fetch_workflow_iteration_output().await;
         let jobs = self.handle_driven_results(results)?;
         let has_new_lang_jobs = !jobs.is_empty();
         for job in jobs.into_iter() {
