@@ -193,7 +193,6 @@ async fn heartbeats_report_cancels_only_once() {
             ..
         } => { task_token == vec![2] }
     );
-    dbg!("Shutdown");
     core.shutdown().await;
 }
 
@@ -439,7 +438,6 @@ async fn activity_timeout_no_double_resolve() {
                 vec![
                     RequestCancelActivity {
                         activity_id: activity_id.to_string(),
-                        ..Default::default()
                     }
                     .into(),
                     StartTimer {

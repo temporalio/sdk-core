@@ -8,14 +8,14 @@ use temporal_sdk_core::{
         workflow_commands::{ActivityCancellationType, ScheduleActivity},
         ActivityTaskCompletion,
     },
-    test_workflow_driver::WfContext,
+    prototype_rust_sdk::WfContext,
     tracing_init,
 };
 use test_utils::CoreWfStarter;
 
 const CONCURRENCY: usize = 1000;
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn activity_load() {
     tracing_init();
 
@@ -34,7 +34,7 @@ async fn activity_load() {
     let task_queue = starter.get_task_queue().to_owned();
 
     let pd = payload_dat.clone();
-    let wf_fn = move |mut command_sink: WfContext| {
+    let wf_fn = move |mut ctx: WfContext| {
         let task_queue = task_queue.clone();
         let payload_dat = pd.clone();
 
@@ -50,13 +50,9 @@ async fn activity_load() {
                 cancellation_type: ActivityCancellationType::TryCancel as i32,
                 ..Default::default()
             };
-            let res = command_sink
-                .activity(activity)
-                .await
-                .unwrap()
-                .unwrap_ok_payload();
+            let res = ctx.activity(activity).await.unwrap_ok_payload();
             assert_eq!(res.data, payload_dat);
-            command_sink.complete_workflow_execution();
+            Ok(().into())
         }
     };
 

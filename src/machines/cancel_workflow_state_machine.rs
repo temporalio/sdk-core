@@ -112,37 +112,32 @@ impl Cancellable for CancelWorkflowMachine {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prototype_rust_sdk::WfExitValue;
     use crate::{
-        machines::{workflow_machines::WorkflowMachines, StartTimer},
+        machines::StartTimer,
         protos::coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
+        prototype_rust_sdk::{WfContext, WorkflowFunction, WorkflowResult},
         test_help::canned_histories,
-        test_workflow_driver::{TestWorkflowDriver, WfContext},
-        workflow::WorkflowManager,
+        workflow::managed_wf::ManagedWFFunc,
     };
     use std::time::Duration;
 
-    async fn wf_with_timer(mut ctx: WfContext) {
+    async fn wf_with_timer(mut ctx: WfContext) -> WorkflowResult<()> {
         ctx.timer(StartTimer {
             timer_id: "timer1".to_string(),
             start_to_fire_timeout: Some(Duration::from_millis(500).into()),
         })
         .await;
-        ctx.complete_cancelled();
+        Ok(WfExitValue::Cancelled)
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn wf_completing_with_cancelled() {
-        let twd = TestWorkflowDriver::new(vec![], wf_with_timer);
+        let func = WorkflowFunction::new(wf_with_timer);
         let t = canned_histories::timer_wf_cancel_req_cancelled("timer1");
-        let state_machines = WorkflowMachines::new(
-            "wfid".to_string(),
-            "runid".to_string(),
-            t.as_history_update(),
-            Box::new(twd).into(),
-        );
-        let mut wfm = WorkflowManager::new_from_machines(state_machines);
+        let mut wfm = ManagedWFFunc::new(t, func, vec![]);
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
+        let commands = wfm.get_server_commands().await.commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
 
@@ -158,7 +153,7 @@ mod tests {
                 }
             ]
         );
-        let commands = wfm.get_server_commands().commands;
+        let commands = wfm.get_server_commands().await.commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -166,7 +161,8 @@ mod tests {
         );
 
         assert!(wfm.get_next_activation().await.unwrap().jobs.is_empty());
-        let commands = wfm.get_server_commands().commands;
+        let commands = wfm.get_server_commands().await.commands;
         assert_eq!(commands.len(), 0);
+        wfm.shutdown().await.unwrap();
     }
 }
