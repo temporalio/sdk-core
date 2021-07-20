@@ -77,7 +77,7 @@ use std::{
 };
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver},
-    Mutex, Notify, RwLock,
+    Mutex, Notify, RwLock, RwLockReadGuard,
 };
 
 #[cfg(test)]
@@ -299,10 +299,19 @@ where
                 }
             }
 
-            let activation_update_fut = self
+            // Optimization to avoid polling if we already know there's a task update
+            if let Some(update) = self
                 .workflow_activations_update
                 .lock()
-                .then(|mut l| async move { l.recv().await });
+                .await
+                .recv()
+                .now_or_never()
+            {
+                let workers_rg = self.workers.read().await;
+                Self::maybe_mark_task_done(update, workers_rg);
+                continue;
+            }
+
             let workers_rg = self.workers.read().await;
             let worker = workers_rg
                 .get(task_queue)
@@ -312,6 +321,11 @@ where
             } else {
                 return Err(PollWfError::ShutDown);
             };
+
+            let activation_update_fut = self
+                .workflow_activations_update
+                .lock()
+                .then(|mut l| async move { l.recv().await });
             let poll_result_future = worker.workflow_poll().map_err(Into::into);
             let selected_f = tokio::select! {
                 biased;
@@ -319,15 +333,10 @@ where
                 // If a task is completed while we are waiting on polling, we need to restart the
                 // loop right away to provide any potential new pending activation
                 update = activation_update_fut => {
-                    // If the update indicates a task completed, free a slot in the worker
-                    if let Some(WfActivationUpdate::WorkflowTaskComplete {task_queue}) = update {
-                        if let Some(WorkerStatus::Live(w)) = workers_rg.get(&task_queue) {
-                            w.workflow_task_done();
-                        }
-                    }
+                    Self::maybe_mark_task_done(update, workers_rg);
                     continue;
                 }
-                r = poll_result_future => {r},
+                r = poll_result_future => r,
                 shutdown = self.shutdown_or_continue_notifier() => {
                     if shutdown {
                         return Err(PollWfError::ShutDown);
@@ -762,5 +771,17 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             self.wft_manager.evict_run(run_id);
         }
         res.map_err(Into::into)
+    }
+
+    fn maybe_mark_task_done(
+        update: Option<WfActivationUpdate>,
+        workers_rg: RwLockReadGuard<HashMap<String, WorkerStatus>>,
+    ) {
+        // If the update indicates a task completed, free a slot in the worker
+        if let Some(WfActivationUpdate::WorkflowTaskComplete { task_queue }) = update {
+            if let Some(WorkerStatus::Live(w)) = workers_rg.get(&task_queue) {
+                w.workflow_task_done();
+            }
+        }
     }
 }
