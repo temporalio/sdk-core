@@ -1,3 +1,4 @@
+use crate::activity::PendingActivityCancel;
 use crate::{
     errors::ActivityHeartbeatError,
     pollers::ServerGatewayApis,
@@ -28,7 +29,7 @@ pub(crate) struct ActivityHeartbeatManager {
     heartbeat_tx: UnboundedSender<HBAction>,
     /// Cancellations that have been received when heartbeating are queued here and can be consumed
     /// by [fetch_cancellations]
-    incoming_cancels: Mutex<UnboundedReceiver<(TaskToken, ActivityCancelReason)>>,
+    incoming_cancels: Mutex<UnboundedReceiver<PendingActivityCancel>>,
     shutting_down: watch::Sender<bool>,
     /// Used during `shutdown` to await until all inflight requests are sent.
     join_handle: Mutex<Option<JoinHandle<()>>>,
@@ -86,7 +87,7 @@ impl ActivityHeartbeatManager {
 
     /// Returns a future that resolves any time there is a new activity cancel that must be
     /// dispatched to lang
-    pub async fn next_pending_cancel(&self) -> Option<(TaskToken, ActivityCancelReason)> {
+    pub async fn next_pending_cancel(&self) -> Option<PendingActivityCancel> {
         self.incoming_cancels.lock().await.recv().await
     }
 
@@ -208,7 +209,10 @@ impl ActivityHeartbeatManager {
                         Ok(RecordActivityTaskHeartbeatResponse { cancel_requested }) => {
                             if cancel_requested {
                                 cancels_tx
-                                    .send((hb.task_token.clone(), ActivityCancelReason::Cancelled))
+                                    .send(PendingActivityCancel::new(
+                                        hb.task_token.clone(),
+                                        ActivityCancelReason::Cancelled,
+                                    ))
                                     .expect("Receive half of heartbeat cancels not blocked");
                             }
                         }
@@ -217,7 +221,10 @@ impl ActivityHeartbeatManager {
                         // valid).
                         Err(s) if s.code() == tonic::Code::NotFound => {
                             cancels_tx
-                                .send((hb.task_token.clone(), ActivityCancelReason::NotFound))
+                                .send(PendingActivityCancel::new(
+                                    hb.task_token.clone(),
+                                    ActivityCancelReason::NotFound,
+                                ))
                                 .expect("Receive half of heartbeat cancels not blocked");
                         }
                         Err(e) => {

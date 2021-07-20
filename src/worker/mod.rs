@@ -1,6 +1,9 @@
-use crate::pollers::{BoxedActPoller, BoxedWFPoller};
 use crate::{
-    pollers::{new_activity_task_buffer, new_workflow_task_buffer, Poller, WorkflowTaskPoller},
+    activity::PendingActivityCancel,
+    pollers::{
+        new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, BoxedWFPoller, Poller,
+        WorkflowTaskPoller,
+    },
     protos::{
         temporal::api::enums::v1::TaskQueueKind,
         temporal::api::taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
@@ -11,6 +14,7 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     PollActivityError, PollWfError, ServerGatewayApis,
 };
+use crossbeam::queue::SegQueue;
 use std::{convert::TryInto, sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
 
@@ -79,6 +83,8 @@ pub(crate) struct Worker {
     /// Buffers activity task polling in the event we need to return a cancellation while a poll is
     /// ongoing. May be `None` if this worker does not poll for activities.
     at_task_poll_buffer: Option<BoxedActPoller>,
+    /// Buffers activity task cancellations we have learned about
+    cancelled_activities_buffer: SegQueue<PendingActivityCancel>,
 
     /// Ensures we stay at or below this worker's maximum concurrent workflow limit
     workflows_semaphore: Semaphore,
@@ -133,6 +139,7 @@ impl Worker {
             sticky_name: sticky_queue_name,
             wf_task_poll_buffer,
             at_task_poll_buffer,
+            cancelled_activities_buffer: Default::default(),
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             activities_semaphore: Semaphore::new(config.max_outstanding_activities),
             config,
@@ -150,6 +157,7 @@ impl Worker {
             sticky_name: sticky_queue_name,
             wf_task_poll_buffer: wft_poller,
             at_task_poll_buffer: act_poller,
+            cancelled_activities_buffer: Default::default(),
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             activities_semaphore: Semaphore::new(config.max_outstanding_activities),
             config,
