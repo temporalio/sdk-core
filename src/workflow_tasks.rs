@@ -203,30 +203,23 @@ impl WorkflowTaskManager {
     /// workflow. Any existing pending activations will be destroyed, and any outstanding
     /// activations invalidated.
     /// Returns that workflow's task info if it was present.
-    pub async fn evict_run(&self, run_id: &str) -> Option<WorkflowTaskInfo> {
+    pub fn evict_run(&self, run_id: &str) -> Option<WorkflowTaskInfo> {
         debug!(run_id=%run_id, "Evicting run");
-        let task_queue = self
-            .workflow_machines
-            .access(run_id, |wfm: &mut WorkflowManager| {
-                async move { Ok(wfm.get_task_queue()) }.boxed()
-            })
-            .await;
+        let maybe_tq = self.workflow_machines.task_queue_for(run_id);
         self.cache_manager.write().remove(run_id);
         self.workflow_machines.evict(run_id);
         self.outstanding_activations.remove(run_id);
         self.pending_activations.remove_all_with_run_id(run_id);
 
-        if let Ok(task_queue) = task_queue {
+        if let Some(task_queue) = maybe_tq {
             // Queue up an eviction activation
             self.pending_activations.push(
-                create_evict_activation(run_id.to_string()),
+                create_evict_activation(run_id.to_owned()),
                 task_queue.clone(),
             );
-            let _ =
-                self.workflow_activations_update
-                    .send(WfActivationUpdate::WorkflowTaskComplete {
-                        task_queue: task_queue.clone(),
-                    });
+            let _ = self
+                .workflow_activations_update
+                .send(WfActivationUpdate::WorkflowTaskComplete { task_queue });
         }
         // TODO this probably needs to go as outstanding tasks are getting removed upon task completion
         // and eviction is happening later according to the cache policy, which means that it's likely
@@ -414,7 +407,7 @@ impl WorkflowTaskManager {
 
     /// Record that an activation failed, returns enum that indicates if failure should be reported to the
     /// server
-    pub async fn failed_activation(&self, run_id: &str) -> FailedActivationOutcome {
+    pub fn failed_activation(&self, run_id: &str) -> FailedActivationOutcome {
         let tt = if let Some(entry) = self.outstanding_workflow_tasks.get(run_id) {
             entry.info.task_token.clone()
         } else {
@@ -431,7 +424,7 @@ impl WorkflowTaskManager {
             FailedActivationOutcome::ReportLegacyQueryFailure(tt)
         } else {
             // Blow up any cached data associated with the workflow, including LRU cache.
-            let should_report = if let Some(wti) = self.evict_run(run_id).await {
+            let should_report = if let Some(wti) = self.evict_run(run_id) {
                 // Only report to server if the last task wasn't also a failure (avoid spam)
                 wti.attempt <= 1
             } else {
@@ -444,7 +437,7 @@ impl WorkflowTaskManager {
             }
         };
 
-        self.after_wft_report(run_id).await;
+        self.after_wft_report(run_id);
         ret
     }
 
@@ -528,7 +521,7 @@ impl WorkflowTaskManager {
     /// evictions if required. It is important this is called *after* reporting a successful WFT
     /// to server, as some replies (task not found) may require an eviction, which could be avoided
     /// if this is called too early.
-    pub(crate) async fn after_wft_report(&self, run_id: &str) {
+    pub(crate) fn after_wft_report(&self, run_id: &str) {
         // Workflows with no more pending activations (IE: They have completed a WFT) must be
         // removed from the outstanding tasks map
         if !self.pending_activations.has_pending(run_id) {
@@ -549,7 +542,7 @@ impl WorkflowTaskManager {
             // Evict run id if cache is full. Non-sticky will always evict.
             let maybe_evicted = self.cache_manager.write().insert(run_id);
             if let Some(evicted_run_id) = maybe_evicted {
-                self.evict_run(&evicted_run_id).await;
+                self.evict_run(&evicted_run_id);
             }
 
             // The evict may or may not have already done this, but even when we aren't evicting

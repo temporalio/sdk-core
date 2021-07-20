@@ -70,7 +70,6 @@ impl WorkflowManager {
         let state_machines = WorkflowMachines::new(
             workflow_execution.workflow_id,
             workflow_execution.run_id,
-            task_queue,
             history,
             Box::new(wfb).into(),
         );

@@ -533,7 +533,7 @@ pub(crate) async fn poll_and_reply<'a>(
                 WorkflowCachingPolicy::NonSticky => (),
                 WorkflowCachingPolicy::AfterEveryReply => {
                     if evictions < expected_evictions {
-                        core.inner.request_workflow_eviction(&res.run_id).await;
+                        core.inner.request_workflow_eviction(&res.run_id);
                         evictions += 1;
                         continue 'outer;
                     }

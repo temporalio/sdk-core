@@ -56,8 +56,6 @@ pub(crate) struct WorkflowMachines {
     pub workflow_id: String,
     /// Identifies the current run
     pub run_id: String,
-    /// Tasks queue from the last poll response.
-    pub task_queue: String,
     /// The current workflow time if it has been established
     current_wf_time: Option<SystemTime>,
 
@@ -152,7 +150,6 @@ impl WorkflowMachines {
     pub(crate) fn new(
         workflow_id: String,
         run_id: String,
-        task_queue: String,
         history: HistoryUpdate,
         driven_wf: DrivenWorkflow,
     ) -> Self {
@@ -161,7 +158,6 @@ impl WorkflowMachines {
             last_history_from_server: history,
             workflow_id,
             run_id,
-            task_queue,
             drive_me: driven_wf,
             // In an ideal world one could say ..Default::default() here and it'd still work.
             current_started_event_id: 0,
