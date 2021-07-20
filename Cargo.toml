@@ -29,14 +29,14 @@ once_cell = "1.5"
 opentelemetry = { version = "0.14", features = ["rt-tokio"] }
 opentelemetry-jaeger = "0.13"
 parking_lot = "0.11"
-prost = "0.7"
-prost-types = "0.7"
+prost = "0.8"
+prost-types = "0.8"
 rand = "0.8.3"
 slotmap = "1.0"
 thiserror = "1.0"
 tokio = { version = "1.1", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs"] }
 tokio-stream = "0.1"
-tonic = { version = "0.4", features = ["tls", "tls-roots"] }
+tonic = { version = "0.5", features = ["tls", "tls-roots"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-futures = "0.2"
 tracing-opentelemetry = "0.13"
@@ -51,12 +51,12 @@ version = "0.1"
 [dev-dependencies]
 assert_matches = "1.4"
 bimap = "0.6.1"
-mockall = "0.9"
+mockall = "0.10"
 rstest = "0.10"
 test_utils = { path = "test_utils" }
 
 [build-dependencies]
-tonic-build = "0.4"
+tonic-build = "0.5"
 
 [workspace]
 members = [".", "fsm", "test_utils"]
