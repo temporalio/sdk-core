@@ -107,6 +107,11 @@ impl CoreWfStarter {
         self
     }
 
+    pub fn max_at_polls(&mut self, max: usize) -> &mut Self {
+        self.worker_config.max_concurrent_at_polls = max;
+        self
+    }
+
     pub fn wft_timeout(&mut self, timeout: Duration) -> &mut Self {
         self.wft_timeout = Some(timeout);
         self
