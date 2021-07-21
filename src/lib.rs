@@ -13,7 +13,6 @@ extern crate tracing;
 pub mod protos;
 pub mod prototype_rust_sdk;
 
-mod activity;
 pub(crate) mod core_tracing;
 mod errors;
 mod machines;
@@ -56,6 +55,8 @@ use crate::{
         temporal::api::enums::v1::WorkflowTaskFailedCause,
     },
     protosext::{ValidPollWFTQResponse, WorkflowTaskCompletion},
+    task_token::TaskToken,
+    worker::{WorkerDispatcher, WorkerStatus},
     workflow::WorkflowCachingPolicy,
     workflow_tasks::{
         ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
@@ -65,6 +66,7 @@ use crate::{
 use futures::{FutureExt, TryFutureExt};
 use std::{
     convert::TryInto,
+    future::Future,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -75,11 +77,8 @@ use tokio::sync::{
     Mutex, Notify,
 };
 
-use crate::activity::ActivityTaskManager;
 #[cfg(test)]
 use crate::pollers::{BoxedActPoller, BoxedWFPoller};
-use crate::worker::{WorkerDispatcher, WorkerStatus};
-use std::future::Future;
 
 lazy_static::lazy_static! {
     /// A process-wide unique string, which will be different on every startup
@@ -218,8 +217,6 @@ struct CoreSDK<WP> {
     workers: Arc<WorkerDispatcher>,
     /// Workflow task management
     wft_manager: WorkflowTaskManager,
-    /// Workflow task management
-    act_manager: ActivityTaskManager,
     /// Has shutdown been called?
     shutdown_requested: AtomicBool,
     /// Used to wake up future which checks shutdown state
@@ -344,11 +341,20 @@ where
             if self.shutdown_requested.load(Ordering::Relaxed) {
                 return Err(PollActivityError::ShutDown);
             }
+            let worker = self.workers.get(task_queue).await;
+            let worker = worker
+                .as_deref()
+                .ok_or_else(|| PollActivityError::NoWorkerForQueue(task_queue.to_owned()))?;
+            let worker = if let WorkerStatus::Live(w) = worker {
+                w
+            } else {
+                return Err(PollActivityError::ShutDown);
+            };
 
             tokio::select! {
                 biased;
 
-                r = self.act_manager.poll(task_queue, self.workers.as_ref()) => {
+                r = worker.activity_poll() => {
                     match r.transpose() {
                         None => continue,
                         Some(r) => return r
@@ -392,18 +398,38 @@ where
         &self,
         completion: ActivityTaskCompletion,
     ) -> Result<(), CompleteActivityError> {
-        self.act_manager
-            .complete(
-                completion,
-                self.workers.as_ref(),
-                self.server_gateway.as_ref(),
-            )
+        let task_token = TaskToken(completion.task_token);
+        let status = if let Some(s) = completion.result.and_then(|r| r.status) {
+            s
+        } else {
+            return Err(CompleteActivityError::MalformedActivityCompletion {
+                reason: "Activity completion had empty result/status field".to_owned(),
+                completion: None,
+            });
+        };
+
+        let worker = self.workers.get(&completion.task_queue).await;
+        let worker = if let Some(WorkerStatus::Live(w)) = worker.as_deref() {
+            w
+        } else {
+            return Err(CompleteActivityError::NoWorkerForQueue(
+                completion.task_queue,
+            ));
+        };
+
+        worker
+            .complete_activity(task_token, status, self.server_gateway.as_ref())
             .await
     }
 
     fn record_activity_heartbeat(&self, details: ActivityHeartbeat) {
-        self.act_manager
-            .record_heartbeat(details, self.workers.clone())
+        let workers = self.workers.clone();
+        // TODO: Ugh. Can we avoid making this async in a better way?
+        let _ = tokio::task::spawn(async move {
+            if let Some(WorkerStatus::Live(w)) = workers.get(&details.task_queue).await.as_deref() {
+                w.record_heartbeat(details)
+            }
+        });
     }
 
     fn request_workflow_eviction(&self, run_id: &str) {
@@ -442,7 +468,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         Self {
             server_gateway: sg,
             wft_manager: WorkflowTaskManager::new(wau_tx, cache_policy),
-            act_manager: ActivityTaskManager::new(),
             workers,
             init_options,
             shutdown_requested: AtomicBool::new(false),

@@ -19,11 +19,15 @@ import "google/protobuf/empty.proto";
 // A request as given to [crate::Core::record_activity_heartbeat]
 message ActivityHeartbeat {
     bytes task_token = 1;
-    repeated common.Payload details = 2;
+    // The task queue / worker this activity is associated with
+    string task_queue = 2;
+    repeated common.Payload details = 3;
 }
 
 // A request as given to [crate::Core::complete_activity_task]
 message ActivityTaskCompletion {
     bytes task_token = 1;
-    activity_result.ActivityResult result = 2;
+    // The task queue / worker this task is associated with
+    string task_queue = 2;
+    activity_result.ActivityResult result = 3;
 }

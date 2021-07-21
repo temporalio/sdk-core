@@ -2,7 +2,6 @@ use std::time::Duration;
 use temporal_sdk_core::{
     protos::coresdk::workflow_commands::{ContinueAsNewWorkflowExecution, StartTimer},
     prototype_rust_sdk::{WfContext, WfExitValue, WorkflowResult},
-    tracing_init,
 };
 use test_utils::CoreWfStarter;
 
@@ -25,7 +24,6 @@ async fn continue_as_new_wf(mut ctx: WfContext) -> WorkflowResult<()> {
 
 #[tokio::test]
 async fn continue_as_new_happy_path() {
-    tracing_init();
     let wf_name = "continue_as_new_happy_path";
     let mut starter = CoreWfStarter::new(wf_name);
     let worker = starter.worker().await;

@@ -10,7 +10,7 @@ use temporal_sdk_core::{
         workflow_completion::WfActivationCompletion,
     },
     prototype_rust_sdk::{WfContext, WorkflowResult},
-    tracing_init, Core, CoreInitOptionsBuilder, IntoCompletion,
+    Core, CoreInitOptionsBuilder, IntoCompletion,
 };
 use test_utils::{
     get_integ_server_options, init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers,
@@ -144,7 +144,6 @@ pub async fn many_parallel_timers_longhist(mut ctx: WfContext) -> WorkflowResult
 #[tokio::test]
 #[ignore]
 async fn can_paginate_long_history() {
-    tracing_init();
     let wf_name = "can_paginate_long_history";
     let mut starter = CoreWfStarter::new(wf_name);
     // Do not use sticky queues so we are forced to paginate once history gets long

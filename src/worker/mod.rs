@@ -10,6 +10,7 @@ use crate::{
         new_activity_task_buffer, new_workflow_task_buffer, BoxedWFPoller, WorkflowTaskPoller,
     },
     protos::{
+        coresdk::activity_result::activity_result,
         coresdk::activity_task::ActivityTask,
         temporal::api::enums::v1::TaskQueueKind,
         temporal::api::taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
@@ -17,7 +18,7 @@ use crate::{
     },
     protosext::ValidPollWFTQResponse,
     task_token::TaskToken,
-    ActivityHeartbeat, PollActivityError, PollWfError, ServerGatewayApis,
+    ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, ServerGatewayApis,
 };
 use activities::WorkerActivityTasks;
 use std::{convert::TryInto, sync::Arc};
@@ -207,10 +208,20 @@ impl Worker {
             })
     }
 
-    /// Tell the worker an activity has completed, for tracking max outstanding activities
-    pub(crate) fn activity_done(&self, task_token: &TaskToken) {
-        if let Some(mgr) = self.at_task_mgr.as_ref() {
-            mgr.mark_complete(task_token);
+    pub(crate) async fn complete_activity(
+        &self,
+        task_token: TaskToken,
+        status: activity_result::Status,
+        gateway: &(dyn ServerGatewayApis + Send + Sync),
+    ) -> Result<(), CompleteActivityError> {
+        if let Some(atm) = &self.at_task_mgr {
+            atm.complete(task_token, status, gateway).await
+        } else {
+            error!(
+                "Tried to complete activity {} on a worker that does not have an activity manager",
+                task_token
+            );
+            Ok(())
         }
     }
 

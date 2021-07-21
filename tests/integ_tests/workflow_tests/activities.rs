@@ -48,6 +48,7 @@ async fn activity_workflow() {
     // Complete activity successfully.
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
+        task_queue: task_q.to_string(),
         result: Some(ActivityResult::ok(response_payload.clone())),
     })
     .await
@@ -106,6 +107,7 @@ async fn activity_non_retryable_failure() {
     };
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
+        task_queue: task_q.to_string(),
         result: Some(ActivityResult {
             status: Some(activity_result::activity_result::Status::Failed(
                 activity_result::Failure {
@@ -169,6 +171,7 @@ async fn activity_retry() {
     };
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
+        task_queue: task_q.to_string(),
         result: Some(ActivityResult {
             status: Some(activity_result::activity_result::Status::Failed(
                 activity_result::Failure {
@@ -194,6 +197,7 @@ async fn activity_retry() {
     };
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
+        task_queue: task_q.to_string(),
         result: Some(ActivityResult::ok(response_payload.clone())),
     })
     .await
@@ -353,6 +357,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     // Now say the activity completes anyways
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: activity_task.task_token,
+        task_queue: task_q.to_string(),
         result: Some(ActivityResult {
             status: Some(
                 activity_result::Success {
@@ -483,6 +488,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
     .unwrap();
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: activity_task.task_token,
+        task_queue: task_q.to_string(),
         result: Some(ActivityResult {
             status: Some(activity_result::activity_result::Status::Canceled(
                 activity_result::Cancelation { details: None },

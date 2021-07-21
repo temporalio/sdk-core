@@ -151,6 +151,9 @@ pub enum CompleteActivityError {
     /// errors, so lang should consider this fatal.
     #[error("Unhandled error when calling the temporal server: {0:?}")]
     TonicError(#[from] tonic::Status),
+    /// There is no worker registered or alive for the activity being completed
+    #[error("No worker registered or alive for queue: {0}")]
+    NoWorkerForQueue(String),
 }
 
 /// Errors thrown by [crate::Core::record_activity_heartbeat]
