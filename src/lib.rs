@@ -269,7 +269,7 @@ where
                 }
             }
 
-            // Optimization to avoid polling if we already know there's a task update
+            // Optimization avoiding worker access if we know we need to handle update immediately
             if let Some(update) = self
                 .workflow_activations_update
                 .lock()
