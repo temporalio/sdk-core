@@ -5,7 +5,7 @@ mod history_update;
 
 pub(crate) use bridge::WorkflowBridge;
 pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
-pub(crate) use driven_workflow::{ActivationListener, DrivenWorkflow, WorkflowFetcher};
+pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
 pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
 
 use crate::{
@@ -130,30 +130,13 @@ impl WorkflowManager {
         }
     }
 
-    /// During testing it can be useful to run through all activations to simulate replay easily.
-    /// Returns the last produced activation with jobs in it, or an activation with no jobs if
-    /// the first call had no jobs.
-    ///
-    /// This is meant to be used with the TestWorkflowDriver which can automatically produce
-    /// commands.
-    #[cfg(test)]
-    pub async fn process_all_activations(&mut self) -> Result<WfActivation> {
-        let mut last_act = self.get_next_activation().await?;
-        let mut next_act = self.get_next_activation().await?;
-        while !next_act.jobs.is_empty() {
-            last_act = next_act;
-            next_act = self.get_next_activation().await?;
-        }
-        Ok(last_act)
-    }
-
     /// Feed the workflow machines new commands issued by the executing workflow code, and iterate
     /// the machines.
-    pub fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<()> {
+    pub async fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<()> {
         if let Some(cs) = self.command_sink.as_mut() {
             cs.send(cmds)?;
         }
-        self.machines.iterate_machines()?;
+        self.machines.iterate_machines().await?;
         Ok(())
     }
 }
@@ -175,4 +158,139 @@ pub(crate) enum WorkflowCachingPolicy {
     /// even if there are pending activations
     #[cfg(test)]
     AfterEveryReply,
+}
+
+#[cfg(test)]
+pub mod managed_wf {
+    use super::*;
+    use crate::protos::coresdk::workflow_activation::create_evict_activation;
+    use crate::{
+        machines::WFCommand,
+        protos::coresdk::{
+            common::Payload,
+            workflow_completion::{wf_activation_completion::Status, WfActivationCompletion},
+        },
+        prototype_rust_sdk::{WorkflowFunction, WorkflowResult},
+        test_help::TestHistoryBuilder,
+        workflow::WorkflowFetcher,
+    };
+    use std::convert::TryInto;
+    use tokio::{
+        sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+        task::JoinHandle,
+    };
+
+    pub(crate) struct WFFutureDriver {
+        completions_rx: UnboundedReceiver<WfActivationCompletion>,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkflowFetcher for WFFutureDriver {
+        async fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
+            if let Some(completion) = self.completions_rx.recv().await {
+                completion
+                    .status
+                    .map(|s| match s {
+                        Status::Successful(s) => s
+                            .commands
+                            .into_iter()
+                            .map(|cmd| cmd.try_into().unwrap())
+                            .collect(),
+                        Status::Failed(_) => panic!("Ahh failed"),
+                    })
+                    .unwrap_or_default()
+            } else {
+                // Sender went away so nothing to do here. End of wf/test.
+                vec![]
+            }
+        }
+    }
+
+    #[must_use]
+    pub struct ManagedWFFunc {
+        mgr: WorkflowManager,
+        activation_tx: UnboundedSender<WfActivation>,
+        future_handle: Option<JoinHandle<WorkflowResult<()>>>,
+        was_shutdown: bool,
+    }
+
+    impl ManagedWFFunc {
+        pub fn new(hist: TestHistoryBuilder, func: WorkflowFunction, args: Vec<Payload>) -> Self {
+            Self::new_from_update(hist.as_history_update(), func, args)
+        }
+
+        pub fn new_from_update(
+            hist: HistoryUpdate,
+            func: WorkflowFunction,
+            args: Vec<Payload>,
+        ) -> Self {
+            let (completions_tx, completions_rx) = unbounded_channel();
+            let (wff, activations) = func.start_workflow(args, completions_tx);
+            let spawned = tokio::spawn(wff);
+            let driver = WFFutureDriver { completions_rx };
+            let state_machines = WorkflowMachines::new(
+                "wfid".to_string(),
+                "runid".to_string(),
+                hist,
+                Box::new(driver).into(),
+            );
+            let mgr = WorkflowManager::new_from_machines(state_machines);
+            Self {
+                mgr,
+                activation_tx: activations,
+                future_handle: Some(spawned),
+                was_shutdown: false,
+            }
+        }
+
+        pub async fn get_next_activation(&mut self) -> Result<WfActivation> {
+            let res = self.mgr.get_next_activation().await?;
+            if res.jobs.is_empty() {
+                // Nothing to do here
+                return Ok(res);
+            }
+            // Feed it back in to the workflow code and iterate machines
+            self.activation_tx
+                .send(res.clone())
+                .expect("Workflow should not be dropped if we are still sending activations");
+            self.mgr.machines.iterate_machines().await?;
+            Ok(res)
+        }
+
+        /// Return outgoing server commands as of the last iteration
+        pub async fn get_server_commands(&mut self) -> OutgoingServerCommands {
+            self.mgr.get_server_commands()
+        }
+
+        /// During testing it can be useful to run through all activations to simulate replay
+        /// easily. Returns the last produced activation with jobs in it, or an activation with no
+        /// jobs if the first call had no jobs.
+        pub async fn process_all_activations(&mut self) -> Result<WfActivation> {
+            let mut last_act = self.get_next_activation().await?;
+            let mut next_act = self.get_next_activation().await?;
+            while !next_act.jobs.is_empty() {
+                last_act = next_act;
+                next_act = self.get_next_activation().await?;
+            }
+            Ok(last_act)
+        }
+
+        pub async fn shutdown(&mut self) -> WorkflowResult<()> {
+            self.was_shutdown = true;
+            // Send an eviction to ensure wf exits if it has not finished (ex: feeding partial hist)
+            let _ = self.activation_tx.send(create_evict_activation(
+                "not actually important".to_string(),
+            ));
+            self.future_handle.take().unwrap().await.unwrap()
+        }
+    }
+
+    impl Drop for ManagedWFFunc {
+        fn drop(&mut self) {
+            // Double panics cause a SIGILL
+            if !self.was_shutdown && !std::thread::panicking() {
+                panic!("You must call `shutdown` to properly use ManagedWFFunc in tests")
+            }
+        }
+    }
 }
