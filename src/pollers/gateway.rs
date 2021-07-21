@@ -276,6 +276,13 @@ pub trait ServerGatewayApis {
         workflow_id: String,
         run_id: Option<String>,
     ) -> Result<RequestCancelWorkflowExecutionResponse>;
+
+    /// Terminate a currently executing workflow
+    async fn terminate_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: Option<String>,
+    ) -> Result<TerminateWorkflowExecutionResponse>;
 }
 
 #[async_trait::async_trait]
@@ -617,6 +624,30 @@ impl ServerGatewayApis for ServerGateway {
             .await?
             .into_inner())
     }
+
+    /// Terminate a currently executing workflow
+    async fn terminate_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: Option<String>,
+    ) -> Result<TerminateWorkflowExecutionResponse> {
+        Ok(self
+            .service
+            .clone()
+            .terminate_workflow_execution(TerminateWorkflowExecutionRequest {
+                namespace: self.opts.namespace.clone(),
+                workflow_execution: Some(WorkflowExecution {
+                    workflow_id,
+                    run_id: run_id.unwrap_or_default(),
+                }),
+                reason: "".to_string(),
+                details: None,
+                identity: self.opts.identity.clone(),
+                first_execution_run_id: "".to_string(),
+            })
+            .await?
+            .into_inner())
+    }
 }
 
 // Need a version of the mock that can return futures so we can return potentially pending
@@ -730,6 +761,13 @@ mockall::mock! {
             workflow_id: String,
             run_id: Option<String>,
         ) -> impl Future<Output = Result<RequestCancelWorkflowExecutionResponse>> + Send + 'b
+            where 'a: 'b, Self: 'b;
+
+        fn terminate_workflow_execution<'a, 'b>(
+            &self,
+            workflow_id: String,
+            run_id: Option<String>,
+        ) -> impl Future<Output = Result<TerminateWorkflowExecutionResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
     }
 }
