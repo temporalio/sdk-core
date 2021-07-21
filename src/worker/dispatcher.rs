@@ -17,6 +17,7 @@ impl WorkerStatus {
     }
 }
 
+/// Allows access to workers by task queue name
 #[derive(Default)]
 pub struct WorkerDispatcher {
     /// Maps task queue names to workers

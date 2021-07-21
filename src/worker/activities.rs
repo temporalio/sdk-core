@@ -50,10 +50,10 @@ pub(crate) struct WorkerActivityTasks {
 }
 
 impl WorkerActivityTasks {
-    pub(crate) fn new<SG: ServerGatewayApis + Send + Sync + 'static>(
+    pub(crate) fn new(
         max_activity_tasks: usize,
         poller: BoxedActPoller,
-        sg: Arc<SG>,
+        sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>,
     ) -> Self {
         Self {
             heartbeat_manager: ActivityHeartbeatManager::new(sg),

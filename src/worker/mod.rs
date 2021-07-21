@@ -44,10 +44,10 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub(crate) fn new<SG: ServerGatewayApis + Send + Sync + 'static>(
+    pub(crate) fn new(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
-        sg: Arc<SG>,
+        sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>,
     ) -> Self {
         let max_nonsticky_polls = if sticky_queue_name.is_some() {
             config.max_nonsticky_polls()
@@ -97,10 +97,10 @@ impl Worker {
     }
 
     #[cfg(test)]
-    pub(crate) fn new_with_pollers<SG: ServerGatewayApis + Send + Sync + 'static>(
+    pub(crate) fn new_with_pollers(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
-        sg: Arc<SG>,
+        sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>,
         wft_poller: BoxedWFPoller,
         act_poller: Option<BoxedActPoller>,
     ) -> Self {
