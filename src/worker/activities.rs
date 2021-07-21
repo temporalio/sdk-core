@@ -129,13 +129,13 @@ impl WorkerActivityTasks {
         status: activity_result::Status,
         gateway: &(dyn ServerGatewayApis + Send + Sync),
     ) -> Result<(), CompleteActivityError> {
-        let (res, should_remove) = if let Some(is_known_not_found) = self
+        if let Some(is_known_not_found) = self
             .outstanding_activity_tasks
             .get(&task_token)
             .map(|t| t.known_not_found)
         {
             // No need to report activities which we already know the server doesn't care about
-            if !is_known_not_found {
+            let should_remove = if !is_known_not_found {
                 let maybe_net_err = match status {
                     activity_result::Status::Completed(ar::Success { result }) => gateway
                         .complete_activity_task(task_token.clone(), result.map(Into::into))
@@ -155,35 +155,35 @@ impl WorkerActivityTasks {
                         warn!(task_token = ?task_token, details = ?e, "Activity not found on \
                         completion. This may happen if the activity has already been cancelled but \
                         completed anyway.");
-                        (Ok(()), true)
+                        true
                     }
-                    Some(err) => (Err(err), false),
-                    None => (Ok(()), true),
+                    Some(err) => return Err(err.into()),
+                    None => true,
                 }
             } else {
-                (Ok(()), true)
+                true
+            };
+
+            if should_remove
+                && self
+                    .outstanding_activity_tasks
+                    .remove(&task_token)
+                    .is_some()
+            {
+                self.activities_semaphore.add_permits(1);
+                self.outstanding_activity_tasks
+                    .remove(&task_token)
+                    .map(|x| x.1);
+                self.heartbeat_manager.evict(task_token);
             }
+            Ok(())
         } else {
             warn!(
                 "Attempted to complete activity task {} but we were not tracking it",
                 &task_token
             );
-            return Ok(());
-        };
-
-        if should_remove
-            && self
-                .outstanding_activity_tasks
-                .remove(&task_token)
-                .is_some()
-        {
-            self.activities_semaphore.add_permits(1);
-            self.outstanding_activity_tasks
-                .remove(&task_token)
-                .map(|x| x.1);
-            self.heartbeat_manager.evict(task_token);
+            Ok(())
         }
-        Ok(res?)
     }
 
     /// Attempt to record an activity heartbeat
