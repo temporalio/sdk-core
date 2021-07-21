@@ -9,10 +9,7 @@ use futures::future::{BoxFuture, FutureExt};
 use std::fmt::Debug;
 use tokio::sync::Mutex;
 
-// TODO: Redo docstr
-/// Provides a thread-safe way to access workflow machines which live exclusively on one thread
-/// managed by this struct. We could make this generic for any collection of things which need
-/// to live on one thread, if desired.
+/// Provides a thread-safe way to access workflow machines
 pub(crate) struct WorkflowConcurrencyManager {
     /// Maps run id -> task containing machines for that run
     machines: DashMap<String, Mutex<Option<WorkflowManager>>>,

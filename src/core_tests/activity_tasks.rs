@@ -409,15 +409,6 @@ async fn many_concurrent_heartbeat_cancels() {
     })
     .await;
 
-    // assert_eq!(
-    //     core.workers
-    //         .get(TEST_Q)
-    //         .await
-    //         .unwrap()
-    //         .unwrap()
-    //         .outstanding_activities(),
-    //     0
-    // );
     core.shutdown().await;
 }
 

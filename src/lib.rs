@@ -676,7 +676,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                     // Silence unhandled command errors since the lang SDK cannot do anything about
                     // them besides poll again, which it will do anyway.
                     tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
-                        warn!("Unhandled command response when completing");
+                        warn!("Unhandled command response when completing: {}", err);
                         Ok(())
                     }
                     tonic::Code::NotFound => {
