@@ -1,4 +1,3 @@
-use crate::activity::PendingActivityCancel;
 use crate::{
     errors::ActivityHeartbeatError,
     pollers::ServerGatewayApis,
@@ -7,11 +6,11 @@ use crate::{
         temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
     },
     task_token::TaskToken,
+    worker::activities::PendingActivityCancel,
 };
 use futures::StreamExt;
-use std::collections::hash_map::Entry;
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     sync::Arc,
     time::{self, Duration, Instant},
 };
@@ -59,7 +58,7 @@ impl ActivityHeartbeatManager {
     /// It is important that this function is never called with a task token equal to one given
     /// to [Self::evict] after it has been called, doing so will cause a memory leak, as there is
     /// no longer an efficient way to forget about that task token.
-    pub fn record(
+    pub(super) fn record(
         &self,
         details: ActivityHeartbeat,
         delay: Duration,
@@ -81,20 +80,20 @@ impl ActivityHeartbeatManager {
 
     /// Tell the heartbeat manager we are done forever with a certain task, so it may be forgotten.
     /// Record should *not* be called with the same TaskToken after calling this.
-    pub fn evict(&self, task_token: TaskToken) {
+    pub(super) fn evict(&self, task_token: TaskToken) {
         let _ = self.heartbeat_tx.send(HBAction::Evict(task_token));
     }
 
     /// Returns a future that resolves any time there is a new activity cancel that must be
     /// dispatched to lang
-    pub async fn next_pending_cancel(&self) -> Option<PendingActivityCancel> {
+    pub(super) async fn next_pending_cancel(&self) -> Option<PendingActivityCancel> {
         self.incoming_cancels.lock().await.recv().await
     }
 
     // TODO: Can own self now!
     /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all heartbeat
     /// processors to terminate gracefully.
-    pub async fn shutdown(&self) {
+    pub(super) async fn shutdown(&self) {
         let _ = self.shutting_down.send(true);
         let mut handle = self.join_handle.lock().await;
         if let Some(h) = handle.take() {

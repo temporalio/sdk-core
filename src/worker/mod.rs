@@ -1,3 +1,4 @@
+mod activities;
 mod config;
 mod dispatcher;
 
@@ -5,7 +6,6 @@ pub use crate::worker::config::{WorkerConfig, WorkerConfigBuilder};
 pub use dispatcher::{WorkerDispatcher, WorkerStatus};
 
 use crate::{
-    activity::WorkerActivityTasks,
     pollers::{
         new_activity_task_buffer, new_workflow_task_buffer, BoxedWFPoller, WorkflowTaskPoller,
     },
@@ -19,6 +19,7 @@ use crate::{
     task_token::TaskToken,
     ActivityHeartbeat, PollActivityError, PollWfError, ServerGatewayApis,
 };
+use activities::WorkerActivityTasks;
 use std::{convert::TryInto, sync::Arc};
 use tokio::sync::Semaphore;
 
@@ -233,9 +234,10 @@ impl WorkerConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::pollers::MockServerGatewayApis;
     use crate::protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
+
+    use super::*;
 
     #[tokio::test]
     async fn activity_timeouts_dont_eat_permits() {
