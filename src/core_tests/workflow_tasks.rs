@@ -281,7 +281,7 @@ async fn scheduled_activity_timeout(hist_batches: &[usize]) {
             // Activity is getting resolved right away as it has been timed out.
             gen_assert_and_reply(
                 &|res| {
-                assert_matches!(
+                    assert_matches!(
                     res.jobs.as_slice(),
                     [
                         WfActivationJob {

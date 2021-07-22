@@ -6,7 +6,9 @@ mod timers;
 
 use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{collections::HashMap, sync::Arc, time::Duration};
+use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core::{
     protos::coresdk::{
         activity_result::ActivityResult,
@@ -22,6 +24,7 @@ use test_utils::{
     init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreTestHelpers, CoreWfStarter, GwApi,
 };
 use tokio::time::sleep;
+use uuid::Uuid;
 
 // TODO: We should get expected histories for these tests and confirm that the history at the end
 //  matches.
@@ -75,6 +78,42 @@ async fn parallel_workflows_same_queue() {
     for handle in handles {
         handle.await.unwrap()
     }
+}
+
+static RUN_CT: AtomicUsize = AtomicUsize::new(0);
+pub async fn cache_evictions_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
+    RUN_CT.fetch_add(1, Ordering::SeqCst);
+    let timer = StartTimer {
+        timer_id: "super_timer_id".to_string(),
+        start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+    };
+    command_sink.timer(timer).await;
+    Ok(().into())
+}
+
+#[tokio::test]
+async fn workflow_lru_cache_evictions() {
+    let wf_name = "workflow_lru_cache_evictions";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.max_cached_workflows(1);
+    let worker = starter.worker().await;
+
+    let n_workflows = 3;
+    for _ in 0..n_workflows {
+        worker
+            .submit_wf(
+                vec![],
+                format!("wce-{}", Uuid::new_v4()),
+                cache_evictions_wf,
+            )
+            .await
+            .unwrap();
+    }
+    worker.run_until_done().await.unwrap();
+    starter.shutdown().await;
+    // The wf must have started more than # workflows times, since all but one must experience
+    // an eviction
+    assert!(RUN_CT.load(Ordering::SeqCst) > n_workflows);
 }
 
 // Ideally this would be a unit test, but returning a pending future with mockall bloats the mock
