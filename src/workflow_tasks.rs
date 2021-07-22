@@ -183,14 +183,6 @@ impl WorkflowTaskManager {
             .flatten()
     }
 
-    pub(crate) fn activation_done(&self, run_id: &str) {
-        if self.outstanding_activations.remove(run_id).is_some() {
-            let _ = self
-                .workflow_activations_update
-                .send(WfActivationUpdate::NewPendingActivation);
-        }
-    }
-
     #[cfg(test)]
     pub fn outstanding_wft(&self) -> usize {
         self.outstanding_workflow_tasks.len()
@@ -551,6 +543,19 @@ impl WorkflowTaskManager {
                     },
                 );
             }
+        }
+    }
+
+    /// Must be called after *every* activation is replied to, regardless of whether or not we
+    /// had some issue reporting it to server or anything else. This upholds the invariant that
+    /// every activation we issue to lang has exactly one reply.
+    ///
+    /// Any subsequent action that needs to be taken will be created as a new activation
+    pub(crate) fn activation_done(&self, run_id: &str) {
+        if self.outstanding_activations.remove(run_id).is_some() {
+            let _ = self
+                .workflow_activations_update
+                .send(WfActivationUpdate::NewPendingActivation);
         }
     }
 
