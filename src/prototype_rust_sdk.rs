@@ -44,7 +44,7 @@ pub struct TestRustWorker {
     task_queue: String,
     task_timeout: Option<Duration>,
     /// Maps run id to the driver
-    workflows: DashMap<String, UnboundedSender<WfActivation>>,
+    workflows: Arc<DashMap<String, UnboundedSender<WfActivation>>>,
     /// Maps workflow id to the function for executing workflow runs with that ID
     workflow_fns: DashMap<String, WorkflowFunction>,
     /// Number of live workflows
@@ -116,9 +116,13 @@ impl TestRustWorker {
                     let (wff, activations) =
                         wf_function.start_workflow(sw.arguments.clone(), completions_tx.clone());
                     let live_wfs = self.incomplete_workflows.clone();
+                    // TODO: Cloning this map is silly and will go away with eviction handshake
+                    let wfs_map = self.workflows.clone();
+                    let run_id = activation.run_id.clone();
                     let jh = tokio::spawn(async move {
                         let res = wff.await;
                         if !matches!(&res, Ok(WfExitValue::Evicted)) {
+                            wfs_map.remove(&run_id);
                             live_wfs.fetch_sub(1, Ordering::SeqCst);
                         }
                         res
@@ -129,16 +133,23 @@ impl TestRustWorker {
                 }
                 // The activation is expected to apply to some workflow we know about. Use it to
                 // unblock things and advance the workflow.
-                if let Some(tx) = self.workflows.get_mut(&activation.run_id) {
+                let did_send = if let Some(tx) = self.workflows.get_mut(&activation.run_id) {
                     tx.send(activation).unwrap();
+                    true
                 } else {
-                    bail!("Got activation for unknown workflow");
-                }
+                    // TODO: fix with eviction handshake
+                    if !activation.is_eviction() {
+                        bail!("Got activation for unknown workflow");
+                    }
+                    false
+                };
 
-                let completion = completions_rx.recv().await.expect("No workflows left?");
-                self.core.complete_workflow_task(completion).await.unwrap();
-                if self.incomplete_workflows.load(Ordering::SeqCst) == 0 {
-                    break Ok(self);
+                if did_send {
+                    let completion = completions_rx.recv().await.expect("No workflows left?");
+                    self.core.complete_workflow_task(completion).await.unwrap();
+                    if self.incomplete_workflows.load(Ordering::SeqCst) == 0 {
+                        break Ok(self);
+                    }
                 }
             }
         };

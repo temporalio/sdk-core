@@ -1,9 +1,8 @@
 //! Management of workflow tasks
 
-use crate::workflow::HistoryPaginator;
 use crate::{
     errors::WorkflowUpdateError,
-    machines::{ProtoCommand, WFCommand},
+    machines::{ProtoCommand, WFCommand, WFMachinesError},
     pending_activations::PendingActivations,
     protos::coresdk::{
         workflow_activation::{
@@ -16,19 +15,19 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     task_token::TaskToken,
     workflow::{
-        HistoryUpdate, WorkflowCachingPolicy, WorkflowConcurrencyManager, WorkflowError,
-        WorkflowManager, LEGACY_QUERY_ID,
+        HistoryPaginator, HistoryUpdate, WorkflowCacheManager, WorkflowCachingPolicy,
+        WorkflowConcurrencyManager, WorkflowError, WorkflowManager, LEGACY_QUERY_ID,
     },
     ServerGatewayApis, WfActivationUpdate,
 };
 use dashmap::DashMap;
 use futures::FutureExt;
-use std::sync::Arc;
-use std::{collections::VecDeque, fmt::Debug};
+use parking_lot::Mutex;
+use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 use tokio::sync::mpsc::UnboundedSender;
 
 // TODO: Ideally have only one map keyed by run-id, rather than syncing these various maps. Possibly
-//  combine with concurrency mgr / workflow mgr?
+//  combine with concurrency mgr / workflow mgr? (Move inside worker like activity management)
 
 /// Centralizes concerns related to applying new workflow tasks and reporting the activations they
 /// produce.
@@ -51,7 +50,9 @@ pub struct WorkflowTaskManager {
     ready_buffered_wft: DashMap<String, VecDeque<ValidPollWFTQResponse>>,
     /// Used to wake blocked workflow task polling
     workflow_activations_update: UnboundedSender<WfActivationUpdate>,
-    eviction_policy: WorkflowCachingPolicy,
+    /// Lock guarded cache manager, which is the authority for limit-based workflow machine eviction
+    /// from the cache.
+    cache_manager: Mutex<WorkflowCacheManager>,
 }
 
 #[derive(Clone, Debug)]
@@ -94,6 +95,8 @@ pub enum NewWfTaskOutcome {
     /// The workflow task should be auto-completed with an empty command list, as it must be replied
     /// to but there is no meaningful work for lang to do.
     Autocomplete,
+    /// Workflow task had partial history and workflow was not present in the cache.
+    CacheMiss,
 }
 
 #[derive(Debug)]
@@ -151,7 +154,7 @@ impl WorkflowTaskManager {
             outstanding_activations: Default::default(),
             ready_buffered_wft: Default::default(),
             workflow_activations_update,
-            eviction_policy,
+            cache_manager: Mutex::new(WorkflowCacheManager::new(eviction_policy)),
         }
     }
 
@@ -168,6 +171,7 @@ impl WorkflowTaskManager {
             });
         if let Some(act) = maybe_act.as_ref() {
             self.insert_outstanding_activation(&act);
+            self.cache_manager.lock().touch(&act.run_id);
         }
         maybe_act
     }
@@ -199,43 +203,36 @@ impl WorkflowTaskManager {
     /// Returns that workflow's task info if it was present.
     pub fn evict_run(&self, run_id: &str) -> Option<WorkflowTaskInfo> {
         debug!(run_id=%run_id, "Evicting run");
+        let maybe_tq = self.workflow_machines.task_queue_for(run_id);
+        self.cache_manager.lock().remove(run_id);
         self.workflow_machines.evict(run_id);
         self.outstanding_activations.remove(run_id);
         self.pending_activations.remove_all_with_run_id(run_id);
 
-        if let Some((
-            _,
-            OutstandingTask {
-                info,
-                buffered_resp,
-                ..
-            },
-        )) = self.outstanding_workflow_tasks.remove(run_id)
-        {
+        if let Some(task_queue) = maybe_tq {
             // Queue up an eviction activation
             self.pending_activations.push(
-                create_evict_activation(run_id.to_string()),
-                info.task_queue.clone(),
+                create_evict_activation(run_id.to_owned()),
+                task_queue.clone(),
             );
-            let _ =
-                self.workflow_activations_update
-                    .send(WfActivationUpdate::WorkflowTaskComplete {
-                        task_queue: info.task_queue.clone(),
-                    });
+            let _ = self
+                .workflow_activations_update
+                .send(WfActivationUpdate::WorkflowTaskComplete { task_queue });
+        }
+
+        self.outstanding_workflow_tasks.remove(run_id).map(|f| {
             // If we just evicted something and there was a buffered poll response for the workflow,
             // it is now ready to be produced by the next poll. (Not immediate next, since, ignoring
             // other workflows, the next poll will be the eviction we just produced. Buffered polls
             // always are popped after pending activations)
-            if let Some(buffered_poll) = buffered_resp {
+            if let Some(buffered_poll) = f.1.buffered_resp {
                 self.ready_buffered_wft
-                    .entry(info.task_queue.clone())
+                    .entry(f.1.info.task_queue.clone())
                     .or_default()
                     .push_back(buffered_poll);
-            }
-            Some(info)
-        } else {
-            None
-        }
+            };
+            f.1.info
+        })
     }
 
     /// Given a validated poll response from the server, prepare an activation (if there is one) to
@@ -254,7 +251,6 @@ impl WorkflowTaskManager {
             history_length = %work.history.events.len(),
             "Applying new workflow task from server"
         );
-
         if let Some(mut outstanding_entry) = self
             .outstanding_workflow_tasks
             .get_mut(&work.workflow_execution.run_id)
@@ -273,7 +269,17 @@ impl WorkflowTaskManager {
         });
 
         let (info, mut next_activation) =
-            self.instantiate_or_update_workflow(work, gateway).await?;
+            match self.instantiate_or_update_workflow(work, gateway).await {
+                Ok((info, next_activation)) => (info, next_activation),
+                Err(e) => {
+                    if let WorkflowError::UnderlyingMachinesError(WFMachinesError::CacheMiss) =
+                        e.source
+                    {
+                        return Ok(NewWfTaskOutcome::CacheMiss);
+                    }
+                    return Err(e);
+                }
+            };
 
         // Immediately dispatch query activation if no other jobs
         let legacy_query = if next_activation.jobs.is_empty() {
@@ -286,7 +292,6 @@ impl WorkflowTaskManager {
         } else {
             legacy_query
         };
-
         self.outstanding_workflow_tasks.insert(
             info.run_id.clone(),
             OutstandingTask {
@@ -396,7 +401,7 @@ impl WorkflowTaskManager {
         Ok(ret)
     }
 
-    /// Record that an activation failed, returns true if the failure should be reported to the
+    /// Record that an activation failed, returns enum that indicates if failure should be reported to the
     /// server
     pub fn failed_activation(&self, run_id: &str) -> FailedActivationOutcome {
         let tt = if let Some(entry) = self.outstanding_workflow_tasks.get(run_id) {
@@ -414,7 +419,7 @@ impl WorkflowTaskManager {
         {
             FailedActivationOutcome::ReportLegacyQueryFailure(tt)
         } else {
-            // Blow up any cached data associated with the workflow
+            // Blow up any cached data associated with the workflow, including LRU cache.
             let should_report = if let Some(wti) = self.evict_run(run_id) {
                 // Only report to server if the last task wasn't also a failure (avoid spam)
                 wti.attempt <= 1
@@ -454,6 +459,7 @@ impl WorkflowTaskManager {
             .workflow_machines
             .create_or_update(
                 &run_id,
+                wft_info.task_queue.clone(),
                 HistoryUpdate::new(
                     HistoryPaginator::new(
                         poll_wf_resp.history,
@@ -529,9 +535,10 @@ impl WorkflowTaskManager {
                 }
             }
 
-            // Blow them up if we're in non-sticky mode as well
-            if self.eviction_policy == WorkflowCachingPolicy::NonSticky {
-                self.evict_run(run_id);
+            // Evict run id if cache is full. Non-sticky will always evict.
+            let maybe_evicted = self.cache_manager.lock().insert(run_id);
+            if let Some(evicted_run_id) = maybe_evicted {
+                self.evict_run(&evicted_run_id);
             }
 
             // The evict may or may not have already done this, but even when we aren't evicting

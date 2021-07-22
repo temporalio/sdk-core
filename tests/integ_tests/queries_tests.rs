@@ -106,19 +106,29 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
     let (core, task_q) = init_core_and_create_wf(workflow_id).await;
 
     let do_workflow = || async {
-        let task = core.poll_workflow_task(&task_q).await.unwrap();
-        assert_matches!(
-            task.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
-            }]
-        );
-        let run_id = task.run_id.clone();
-        core.complete_timer(&task.run_id, "timer-1", Duration::from_millis(500))
-            .await;
-        let task = core.poll_workflow_task(&task_q).await.unwrap();
-        core.complete_execution(&task.run_id).await;
-        run_id
+        loop {
+            let task = core.poll_workflow_task(&task_q).await.unwrap();
+            if matches!(
+                task.jobs.as_slice(),
+                [WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+                }]
+            ) {
+                continue;
+            }
+            assert_matches!(
+                task.jobs.as_slice(),
+                [WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
+                }]
+            );
+            let run_id = task.run_id.clone();
+            core.complete_timer(&task.run_id, "timer-1", Duration::from_millis(500))
+                .await;
+            let task = core.poll_workflow_task(&task_q).await.unwrap();
+            core.complete_execution(&task.run_id).await;
+            break run_id;
+        }
     };
 
     let run_id = do_workflow().await;

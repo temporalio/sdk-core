@@ -9,13 +9,23 @@ use futures::future::{BoxFuture, FutureExt};
 use std::fmt::Debug;
 use tokio::sync::Mutex;
 
-// TODO: Redo docstr
-/// Provides a thread-safe way to access workflow machines which live exclusively on one thread
-/// managed by this struct. We could make this generic for any collection of things which need
-/// to live on one thread, if desired.
+/// Provides a thread-safe way to access workflow machines for specific workflow runs
 pub(crate) struct WorkflowConcurrencyManager {
-    /// Maps run id -> task containing machines for that run
-    machines: DashMap<String, Mutex<Option<WorkflowManager>>>,
+    /// Maps run id -> data about and machines for that run
+    machines: DashMap<String, ManagedRun>,
+}
+
+struct ManagedRun {
+    wfm: Mutex<Option<WorkflowManager>>,
+    task_queue: String,
+}
+impl ManagedRun {
+    fn new(wfm: WorkflowManager, task_queue: String) -> Self {
+        Self {
+            wfm: Mutex::new(Some(wfm)),
+            task_queue,
+        }
+    }
 }
 
 impl WorkflowConcurrencyManager {
@@ -29,9 +39,14 @@ impl WorkflowConcurrencyManager {
         self.machines.contains_key(run_id)
     }
 
+    pub fn task_queue_for(&self, run_id: &str) -> Option<String> {
+        self.machines.get(run_id).map(|mr| mr.task_queue.clone())
+    }
+
     pub async fn create_or_update(
         &self,
         run_id: &str,
+        task_queue: String,
         history: HistoryUpdate,
         workflow_execution: WorkflowExecution,
     ) -> Result<WfActivation> {
@@ -60,7 +75,7 @@ impl WorkflowConcurrencyManager {
                         })
                     } else {
                         self.machines
-                            .insert(run_id.to_string(), Mutex::new(Some(wfm)));
+                            .insert(run_id.to_string(), ManagedRun::new(wfm, task_queue));
                         Ok(activation)
                     }
                 }
@@ -80,7 +95,7 @@ impl WorkflowConcurrencyManager {
             .ok_or_else(|| WorkflowError::MissingMachine {
                 run_id: run_id.to_string(),
             })?;
-        let mut wfm_mutex = m.lock().await;
+        let mut wfm_mutex = m.wfm.lock().await;
         let mut wfm = wfm_mutex
             .take()
             .expect("Machine cannot possibly be accessed simultaneously");
@@ -111,6 +126,7 @@ mod tests {
         let res = mgr
             .create_or_update(
                 "some_run_id",
+                "some_tq".to_string(),
                 HistoryUpdate::new_from_events(vec![], 0),
                 Default::default(),
             )
