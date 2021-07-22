@@ -138,7 +138,7 @@ impl TestRustWorker {
                     true
                 } else {
                     // TODO: fix with eviction handshake
-                    if !activation.has_eviction() {
+                    if !activation.eviction_index().is_some() {
                         bail!("Got activation for unknown workflow");
                     }
                     false
@@ -254,7 +254,7 @@ mod tests {
         let wf_id = "fakeid";
         let t = canned_histories::single_timer("fake_timer");
         let core = build_fake_core(wf_id, t, [2]);
-        let worker = TestRustWorker::new(Arc::new(core.inner), TEST_Q.to_string(), None);
+        let worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
         worker
             .submit_wf(vec![], wf_id.to_string(), WorkflowFunction::new(timer_wf))

@@ -20,13 +20,14 @@ use crate::{
         },
     },
     test_help::{
-        build_fake_core, build_multihist_mock_sg, canned_histories, fake_core_from_mocks,
-        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_core,
-        mock_core_with_opts, mock_core_with_opts_no_workers, poll_and_reply, single_hist_mock_sg,
-        FakeCore, FakeWfResponses, ResponseType, TestHistoryBuilder, TEST_Q,
+        build_fake_core, build_multihist_mock_sg, canned_histories, gen_assert_and_fail,
+        gen_assert_and_reply, hist_to_poll_resp, mock_core, mock_core_with_opts,
+        mock_core_with_opts_no_workers, poll_and_reply, single_hist_mock_sg, FakeWfResponses,
+        ResponseType, TestHistoryBuilder, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
-    Core, CoreInitOptionsBuilder, WfActivationCompletion, WorkerConfigBuilder,
+    Core, CoreInitOptionsBuilder, CoreSDK, ServerGatewayApis, WfActivationCompletion,
+    WorkerConfigBuilder,
 };
 use rstest::{fixture, rstest};
 use std::{
@@ -36,7 +37,9 @@ use std::{
 use test_utils::fanout_tasks;
 
 #[fixture(hist_batches = &[])]
-fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
+fn single_timer_setup(
+    hist_batches: &'static [usize],
+) -> CoreSDK<impl ServerGatewayApis + Send + Sync + 'static> {
     let wfid = "fake_wf_id";
 
     let t = canned_histories::single_timer("fake_timer");
@@ -44,7 +47,9 @@ fn single_timer_setup(hist_batches: &[usize]) -> FakeCore {
 }
 
 #[fixture(hist_batches = &[])]
-fn single_activity_setup(hist_batches: &[usize]) -> FakeCore {
+fn single_activity_setup(
+    hist_batches: &'static [usize],
+) -> CoreSDK<impl ServerGatewayApis + Send + Sync + 'static> {
     let wfid = "fake_wf_id";
 
     let t = canned_histories::single_activity("fake_activity");
@@ -52,7 +57,9 @@ fn single_activity_setup(hist_batches: &[usize]) -> FakeCore {
 }
 
 #[fixture(hist_batches = &[])]
-fn single_activity_failure_setup(hist_batches: &[usize]) -> FakeCore {
+fn single_activity_failure_setup(
+    hist_batches: &'static [usize],
+) -> CoreSDK<impl ServerGatewayApis + Send + Sync + 'static> {
     let wfid = "fake_wf_id";
 
     let t = canned_histories::single_failed_activity("fake_activity");
@@ -65,7 +72,10 @@ fn single_activity_failure_setup(hist_batches: &[usize]) -> FakeCore {
 #[case::incremental_evict(single_timer_setup(&[1, 2]), AfterEveryReply)]
 #[case::replay_evict(single_timer_setup(&[2, 2]), AfterEveryReply)]
 #[tokio::test]
-async fn single_timer(#[case] core: FakeCore, #[case] evict: WorkflowCachingPolicy) {
+async fn single_timer(
+    #[case] core: CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
+    #[case] evict: WorkflowCachingPolicy,
+) {
     poll_and_reply(
         &core,
         evict,
@@ -94,7 +104,7 @@ case::replay(single_activity_setup(&[2])),
 case::replay_activity_failure(single_activity_failure_setup(&[2]))
 )]
 #[tokio::test]
-async fn single_activity_completion(core: FakeCore) {
+async fn single_activity_completion(core: CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>) {
     poll_and_reply(
         &core,
         NonSticky,
@@ -118,7 +128,7 @@ async fn single_activity_completion(core: FakeCore) {
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
 #[tokio::test]
-async fn parallel_timer_test_across_wf_bridge(hist_batches: &[usize]) {
+async fn parallel_timer_test_across_wf_bridge(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let timer_1_id = "timer1";
     let timer_2_id = "timer2";
@@ -175,7 +185,7 @@ async fn parallel_timer_test_across_wf_bridge(hist_batches: &[usize]) {
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
 #[tokio::test]
-async fn timer_cancel(hist_batches: &[usize]) {
+async fn timer_cancel(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let timer_id = "wait_timer";
     let cancel_timer_id = "cancel_timer";
@@ -219,7 +229,7 @@ async fn timer_cancel(hist_batches: &[usize]) {
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
 #[tokio::test]
-async fn scheduled_activity_cancellation_try_cancel(hist_batches: &[usize]) {
+async fn scheduled_activity_cancellation_try_cancel(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let activity_id = "fake_activity";
     let signal_id = "signal";
@@ -259,7 +269,7 @@ async fn scheduled_activity_cancellation_try_cancel(hist_batches: &[usize]) {
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
 #[tokio::test]
-async fn scheduled_activity_timeout(hist_batches: &[usize]) {
+async fn scheduled_activity_timeout(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let activity_id = "fake_activity";
 
@@ -310,7 +320,7 @@ async fn scheduled_activity_timeout(hist_batches: &[usize]) {
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
 #[tokio::test]
-async fn started_activity_timeout(hist_batches: &[usize]) {
+async fn started_activity_timeout(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let activity_id = "fake_activity";
 
@@ -362,7 +372,7 @@ async fn started_activity_timeout(hist_batches: &[usize]) {
 
 #[rstest(hist_batches, case::incremental(&[1, 3]), case::replay(&[3]))]
 #[tokio::test]
-async fn cancelled_activity_timeout(hist_batches: &[usize]) {
+async fn cancelled_activity_timeout(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let activity_id = "fake_activity";
     let signal_id = "signal";
@@ -408,7 +418,7 @@ async fn cancelled_activity_timeout(hist_batches: &[usize]) {
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
 #[tokio::test]
-async fn scheduled_activity_cancellation_abandon(hist_batches: &[usize]) {
+async fn scheduled_activity_cancellation_abandon(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let activity_id = "fake_activity";
     let signal_id = "signal";
@@ -421,7 +431,7 @@ async fn scheduled_activity_cancellation_abandon(hist_batches: &[usize]) {
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
 #[tokio::test]
-async fn started_activity_cancellation_abandon(hist_batches: &[usize]) {
+async fn started_activity_cancellation_abandon(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let activity_id = "fake_activity";
     let signal_id = "signal";
@@ -434,7 +444,7 @@ async fn started_activity_cancellation_abandon(hist_batches: &[usize]) {
 
 #[rstest(hist_batches, case::incremental(&[1, 3]), case::replay(&[3]))]
 #[tokio::test]
-async fn scheduled_activity_cancellation_try_cancel_task_canceled(hist_batches: &[usize]) {
+async fn scheduled_activity_cancellation_try_cancel_task_canceled(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let activity_id = "fake_activity";
     let signal_id = "signal";
@@ -450,7 +460,7 @@ async fn scheduled_activity_cancellation_try_cancel_task_canceled(hist_batches: 
 
 #[rstest(hist_batches, case::incremental(&[1, 3]), case::replay(&[3]))]
 #[tokio::test]
-async fn started_activity_cancellation_try_cancel_task_canceled(hist_batches: &[usize]) {
+async fn started_activity_cancellation_try_cancel_task_canceled(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let activity_id = "fake_activity";
     let signal_id = "signal";
@@ -464,7 +474,7 @@ async fn started_activity_cancellation_try_cancel_task_canceled(hist_batches: &[
 
 /// Verification for try cancel & abandon histories
 async fn verify_activity_cancellation(
-    core: &FakeCore,
+    core: &CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
     activity_id: &str,
     cancel_type: ActivityCancellationType,
 ) {
@@ -507,7 +517,7 @@ async fn verify_activity_cancellation(
 
 #[rstest(hist_batches, case::incremental(&[1, 2, 3, 4]), case::replay(&[4]))]
 #[tokio::test]
-async fn scheduled_activity_cancellation_wait_for_cancellation(hist_batches: &[usize]) {
+async fn scheduled_activity_cancellation_wait_for_cancellation(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let activity_id = "fake_activity";
     let signal_id = "signal";
@@ -523,7 +533,7 @@ async fn scheduled_activity_cancellation_wait_for_cancellation(hist_batches: &[u
 
 #[rstest(hist_batches, case::incremental(&[1, 2, 3, 4]), case::replay(&[4]))]
 #[tokio::test]
-async fn started_activity_cancellation_wait_for_cancellation(hist_batches: &[usize]) {
+async fn started_activity_cancellation_wait_for_cancellation(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let activity_id = "fake_activity";
     let signal_id = "signal";
@@ -537,7 +547,10 @@ async fn started_activity_cancellation_wait_for_cancellation(hist_batches: &[usi
     verify_activity_cancellation_wait_for_cancellation(activity_id, &core).await;
 }
 
-async fn verify_activity_cancellation_wait_for_cancellation(activity_id: &str, core: &FakeCore) {
+async fn verify_activity_cancellation_wait_for_cancellation(
+    activity_id: &str,
+    core: &CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
+) {
     poll_and_reply(
         &core,
         NonSticky,
@@ -675,7 +688,7 @@ async fn cancel_timer_before_sent_wf_bridge() {
 #[case::no_evict(&[2, 2], NonSticky)]
 #[tokio::test]
 async fn complete_activation_with_failure(
-    #[case] batches: &[usize],
+    #[case] batches: &'static [usize],
     #[case] evict: WorkflowCachingPolicy,
 ) {
     let wfid = "fake_wf_id";
@@ -692,7 +705,7 @@ async fn complete_activation_with_failure(
         true,
         Some(1),
     );
-    let core = fake_core_from_mocks(mock_sg);
+    let core = mock_core(mock_sg);
 
     poll_and_reply(
         &core,
@@ -714,12 +727,12 @@ async fn complete_activation_with_failure(
         ],
     )
     .await;
-    core.inner.shutdown().await;
+    core.shutdown().await;
 }
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
 #[tokio::test]
-async fn simple_timer_fail_wf_execution(hist_batches: &[usize]) {
+async fn simple_timer_fail_wf_execution(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let timer_id = "timer1";
 
@@ -755,7 +768,7 @@ async fn simple_timer_fail_wf_execution(hist_batches: &[usize]) {
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
 #[tokio::test]
-async fn two_signals(hist_batches: &[usize]) {
+async fn two_signals(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
 
     let t = canned_histories::two_signals("sig1", "sig2");
@@ -795,7 +808,7 @@ async fn workflow_failures_only_reported_once() {
         // Poll again after evicting after second good reply, then two more fails
         3, 3, 3,
     ];
-    let mock_sg = build_multihist_mock_sg(
+    let mocks = build_multihist_mock_sg(
         vec![FakeWfResponses {
             wf_id: wfid.to_string(),
             hist,
@@ -806,7 +819,7 @@ async fn workflow_failures_only_reported_once() {
         // We should only call the server to say we failed twice (once after each success)
         Some(2),
     );
-    let core = fake_core_from_mocks(mock_sg);
+    let core = mock_core(mocks);
 
     poll_and_reply(
         &core,
@@ -935,7 +948,7 @@ async fn max_concurrent_wft_respected() {
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[3]))]
 #[tokio::test]
-async fn activity_not_canceled_on_replay_repro(hist_batches: &[usize]) {
+async fn activity_not_canceled_on_replay_repro(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let t = canned_histories::unsent_at_cancel_repro();
     let core = build_fake_core(wfid, t, hist_batches);
@@ -991,7 +1004,7 @@ async fn activity_not_canceled_on_replay_repro(hist_batches: &[usize]) {
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[3]))]
 #[tokio::test]
-async fn activity_not_canceled_when_also_completed_repro(hist_batches: &[usize]) {
+async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let t = canned_histories::cancel_not_sent_when_also_complete_repro();
     let core = build_fake_core(wfid, t, hist_batches);
@@ -1092,7 +1105,7 @@ async fn lots_of_workflows() {
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
 #[tokio::test]
-async fn wft_timeout_repro(hist_batches: &[usize]) {
+async fn wft_timeout_repro(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let t = canned_histories::wft_timeout_repro();
     let core = build_fake_core(wfid, t, hist_batches);
@@ -1136,24 +1149,23 @@ async fn complete_after_eviction() {
     let mut mock = MockServerGatewayApis::new();
     mock.expect_complete_workflow_task().times(0);
     let mock = single_hist_mock_sg(wfid, t, &[2], mock, true);
-    let core = fake_core_from_mocks(mock);
+    let core = mock_core(mock);
 
-    let activation = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    let activation = core.poll_workflow_task(TEST_Q).await.unwrap();
     // We just got start workflow, immediately evict
-    core.inner.request_workflow_eviction(&activation.run_id);
+    core.request_workflow_eviction(&activation.run_id);
     // Original task must be completed before we get the eviction
-    core.inner
-        .complete_workflow_task(WfActivationCompletion::from_cmd(
-            StartTimer {
-                timer_id: "fake_timer".to_string(),
-                ..Default::default()
-            }
-            .into(),
-            activation.run_id,
-        ))
-        .await
-        .unwrap();
-    let eviction_activation = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    core.complete_workflow_task(WfActivationCompletion::from_cmd(
+        StartTimer {
+            timer_id: "fake_timer".to_string(),
+            ..Default::default()
+        }
+        .into(),
+        activation.run_id,
+    ))
+    .await
+    .unwrap();
+    let eviction_activation = core.poll_workflow_task(TEST_Q).await.unwrap();
     assert_matches!(
         eviction_activation.jobs.as_slice(),
         [
@@ -1166,14 +1178,13 @@ async fn complete_after_eviction() {
         ]
     );
     // Complete the activation containing the eviction, the way we normally would have
-    core.inner
-        .complete_workflow_task(WfActivationCompletion::from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
-            eviction_activation.run_id,
-        ))
-        .await
-        .unwrap();
-    core.inner.shutdown().await;
+    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+        vec![CompleteWorkflowExecution { result: None }.into()],
+        eviction_activation.run_id,
+    ))
+    .await
+    .unwrap();
+    core.shutdown().await;
 }
 
 #[tokio::test]

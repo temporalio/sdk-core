@@ -115,6 +115,18 @@ fn merge_joblists(
     existing_list
         .as_mut_slice()
         .sort_by(evictions_always_last_compare);
+    // Drop any duplicate evictions
+    let truncate_len = if let Some(last_non_evict_job) = existing_list.iter().rev().position(|j| {
+        !matches!(
+            j.variant,
+            Some(wf_activation_job::Variant::RemoveFromCache(_))
+        )
+    }) {
+        existing_list.len() - last_non_evict_job + 1
+    } else {
+        1
+    };
+    existing_list.truncate(truncate_len)
 }
 
 fn evictions_always_last_compare(a: &WfActivationJob, b: &WfActivationJob) -> Ordering {

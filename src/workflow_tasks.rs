@@ -78,6 +78,16 @@ enum OutstandingActivation {
     /// An activation for a legacy query
     LegacyQuery,
 }
+impl OutstandingActivation {
+    fn has_eviction(&self) -> bool {
+        matches!(
+            &self,
+            OutstandingActivation::Normal {
+                contains_eviction: true
+            }
+        )
+    }
+}
 
 /// Contains important information about a given workflow task that we need to memorize while
 /// lang handles it.
@@ -334,10 +344,19 @@ impl WorkflowTaskManager {
                 //   not a real perf concern.
                 (entry.info.task_token.clone(), entry.info.task_queue.clone())
             } else {
-                warn!(
-                    run_id,
-                    "Attempted to complete activation for nonexistent run"
-                );
+                if !self
+                    .outstanding_activations
+                    .get(run_id)
+                    .map(|oa| oa.value().has_eviction())
+                    .unwrap_or_default()
+                {
+                    // Don't bother warning if this was an eviction, since it's normal to issue
+                    // eviction activations without an associated workflow task in that case.
+                    warn!(
+                        run_id,
+                        "Attempted to complete activation for nonexistent run"
+                    );
+                }
                 return Ok(None);
             };
 
@@ -600,7 +619,7 @@ impl WorkflowTaskManager {
             OutstandingActivation::LegacyQuery
         } else {
             OutstandingActivation::Normal {
-                contains_eviction: act.has_eviction(),
+                contains_eviction: act.eviction_index().is_some(),
             }
         };
         self.outstanding_activations

@@ -132,9 +132,10 @@ pub mod coresdk {
                 }] if qr.query_id == LEGACY_QUERY_ID)
             }
 
-            /// Returns true if this activation contains an eviction in the joblist
-            pub(crate) fn has_eviction(&self) -> bool {
-                self.jobs.iter().any(|j| {
+            /// Returns the index of the eviction job if this activation contains one. If present
+            /// it should always be the last job in the list.
+            pub(crate) fn eviction_index(&self) -> Option<usize> {
+                self.jobs.iter().position(|j| {
                     matches!(
                         j,
                         WfActivationJob {

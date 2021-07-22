@@ -13,7 +13,7 @@ use crate::{
     protos::{
         coresdk::{
             common::UserCodeFailure,
-            workflow_activation::{wf_activation_job, WfActivation, WfActivationJob},
+            workflow_activation::WfActivation,
             workflow_commands::workflow_command,
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
         },
@@ -45,14 +45,6 @@ use std::{
 
 pub type Result<T, E = anyhow::Error> = std::result::Result<T, E>;
 pub const TEST_Q: &str = "q";
-
-/// This wrapper around core is required when using [build_multihist_mock_sg] with [poll_and_reply].
-/// It allows the latter to update the mock's understanding of workflows with outstanding tasks
-/// by removing those which have been evicted.
-pub(crate) struct FakeCore {
-    pub(crate) inner: CoreSDK<MockServerGatewayApis>,
-    pub(crate) outstanding_wf_tasks: OutstandingWfTaskMap,
-}
 
 /// run id -> task token
 pub type OutstandingWfTaskMap = Arc<RwLock<BiMap<String, TaskToken>>>;
@@ -86,28 +78,19 @@ pub(crate) fn build_fake_core(
     wf_id: &str,
     t: TestHistoryBuilder,
     response_batches: impl IntoIterator<Item = impl Into<ResponseType>>,
-) -> FakeCore {
+) -> CoreSDK<impl ServerGatewayApis + Send + Sync + 'static> {
+    let response_batches = response_batches.into_iter().map(Into::into).collect();
     let mock_gateway = build_multihist_mock_sg(
         vec![FakeWfResponses {
             wf_id: wf_id.to_owned(),
             hist: t,
-            response_batches: response_batches.into_iter().map(Into::into).collect(),
+            response_batches,
             task_q: TEST_Q.to_owned(),
         }],
         true,
         None,
     );
-    fake_core_from_mocks(mock_gateway)
-}
-
-/// See [build_fake_core] -- assemble a mock gateway into the final fake core
-pub(crate) fn fake_core_from_mocks(mocks: MocksHolder<MockServerGatewayApis>) -> FakeCore {
-    let outstanding_wf_tasks = mocks.task_map.clone();
-    let core = mock_core(mocks);
-    FakeCore {
-        inner: core,
-        outstanding_wf_tasks,
-    }
+    mock_core(mock_gateway)
 }
 
 pub(crate) fn mock_core<SG>(mocks: MocksHolder<SG>) -> CoreSDK<SG>
@@ -464,13 +447,17 @@ type AsserterWithReply<'a> = (&'a dyn Fn(&WfActivation), wf_activation_completio
 /// since they clearly can't be returned every time we replay the workflow, or it could never
 /// proceed
 pub(crate) async fn poll_and_reply<'a>(
-    core: &'a FakeCore,
+    core: &'a CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
     eviction_mode: WorkflowCachingPolicy,
     expect_and_reply: &'a [AsserterWithReply<'a>],
 ) {
     let mut evictions = 0;
     let expected_evictions = expect_and_reply.len() - 1;
     let mut executed_failures = HashSet::new();
+    let expected_fail_count = expect_and_reply
+        .iter()
+        .filter(|(_, reply)| !reply.is_success())
+        .count();
 
     'outer: loop {
         let expect_iter = expect_and_reply.iter();
@@ -483,49 +470,42 @@ pub(crate) async fn poll_and_reply<'a>(
                 continue;
             }
 
-            let mut res = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
-            let contains_eviction = res.jobs.iter().position(|j| {
-                matches!(
-                    j,
-                    WfActivationJob {
-                        variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
-                    }
-                )
-            });
+            let mut res = core.poll_workflow_task(TEST_Q).await.unwrap();
+            let contains_eviction = res.eviction_index();
 
             if let Some(eviction_job_ix) = contains_eviction {
                 // If the job list has an eviction, make sure it was the last item in the list
-                // then remove it and run the asserter against that smaller list, and then restart
-                // expectations from the beginning.
+                // then remove it, since in the tests we don't explicitly specify evict assertions
                 assert_eq!(
                     eviction_job_ix,
                     res.jobs.len() - 1,
                     "Eviction job was not last job in job list"
                 );
                 res.jobs.remove(eviction_job_ix);
-                if !res.jobs.is_empty() {
-                    asserter(&res);
-                }
-                core.outstanding_wf_tasks
-                    .write()
-                    .remove_by_left(&res.run_id);
+            }
+
+            // TODO: Can remove this if?
+            if !res.jobs.is_empty() {
+                asserter(&res);
+            }
+
+            let reply = if res.jobs.is_empty() {
+                // Just an eviction
+                WfActivationCompletion::empty(res.run_id.clone())
+            } else {
+                // Eviction plus some work, we still want to issue the reply
+                WfActivationCompletion::from_status(res.run_id.clone(), reply.clone())
+            };
+
+            core.complete_workflow_task(reply).await.unwrap();
+
+            // Restart assertions from the beginning if it was an eviction
+            if contains_eviction.is_some() {
                 continue 'outer;
             }
 
-            asserter(&res);
-
-            core.inner
-                .complete_workflow_task(WfActivationCompletion::from_status(
-                    res.run_id.clone(),
-                    reply.clone(),
-                ))
-                .await
-                .unwrap();
-
             if complete_is_failure {
                 executed_failures.insert(i);
-                // restart b/c we evicted due to failure and need to start all over again
-                continue 'outer;
             }
 
             match eviction_mode {
@@ -533,9 +513,8 @@ pub(crate) async fn poll_and_reply<'a>(
                 WorkflowCachingPolicy::NonSticky => (),
                 WorkflowCachingPolicy::AfterEveryReply => {
                     if evictions < expected_evictions {
-                        core.inner.request_workflow_eviction(&res.run_id);
+                        core.request_workflow_eviction(&res.run_id);
                         evictions += 1;
-                        continue 'outer;
                     }
                 }
             }
@@ -543,7 +522,9 @@ pub(crate) async fn poll_and_reply<'a>(
 
         break;
     }
-    assert_eq!(core.inner.wft_manager.outstanding_wft(), 0);
+
+    assert_eq!(expected_fail_count, executed_failures.len());
+    assert_eq!(core.wft_manager.outstanding_wft(), 0);
 }
 
 pub(crate) fn gen_assert_and_reply(

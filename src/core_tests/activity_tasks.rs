@@ -467,7 +467,7 @@ async fn activity_timeout_no_double_resolve() {
     )
     .await;
 
-    core.inner.shutdown().await;
+    core.shutdown().await;
 }
 
 #[tokio::test]
