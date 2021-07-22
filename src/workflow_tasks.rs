@@ -1,11 +1,8 @@
 //! Management of workflow tasks
 
-use crate::machines::WFMachinesError;
-use crate::workflow::HistoryPaginator;
-use crate::workflow::WorkflowCacheManager;
 use crate::{
     errors::WorkflowUpdateError,
-    machines::{ProtoCommand, WFCommand},
+    machines::{ProtoCommand, WFCommand, WFMachinesError},
     pending_activations::PendingActivations,
     protos::coresdk::{
         workflow_activation::{
@@ -18,20 +15,19 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     task_token::TaskToken,
     workflow::{
-        HistoryUpdate, WorkflowCachingPolicy, WorkflowConcurrencyManager, WorkflowError,
-        WorkflowManager, LEGACY_QUERY_ID,
+        HistoryPaginator, HistoryUpdate, WorkflowCacheManager, WorkflowCachingPolicy,
+        WorkflowConcurrencyManager, WorkflowError, WorkflowManager, LEGACY_QUERY_ID,
     },
     ServerGatewayApis, WfActivationUpdate,
 };
 use dashmap::DashMap;
 use futures::FutureExt;
-use parking_lot::RwLock;
-use std::sync::Arc;
-use std::{collections::VecDeque, fmt::Debug};
+use parking_lot::Mutex;
+use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 use tokio::sync::mpsc::UnboundedSender;
 
 // TODO: Ideally have only one map keyed by run-id, rather than syncing these various maps. Possibly
-//  combine with concurrency mgr / workflow mgr?
+//  combine with concurrency mgr / workflow mgr? (Move inside worker like activity management)
 
 /// Centralizes concerns related to applying new workflow tasks and reporting the activations they
 /// produce.
@@ -54,8 +50,9 @@ pub struct WorkflowTaskManager {
     ready_buffered_wft: DashMap<String, VecDeque<ValidPollWFTQResponse>>,
     /// Used to wake blocked workflow task polling
     workflow_activations_update: UnboundedSender<WfActivationUpdate>,
-    /// Lock guarded cache manager, which is the authority for limit-based workflow machine eviction from the cache.
-    cache_manager: RwLock<WorkflowCacheManager>,
+    /// Lock guarded cache manager, which is the authority for limit-based workflow machine eviction
+    /// from the cache.
+    cache_manager: Mutex<WorkflowCacheManager>,
 }
 
 #[derive(Clone, Debug)]
@@ -157,7 +154,7 @@ impl WorkflowTaskManager {
             outstanding_activations: Default::default(),
             ready_buffered_wft: Default::default(),
             workflow_activations_update,
-            cache_manager: RwLock::new(WorkflowCacheManager::new(eviction_policy)),
+            cache_manager: Mutex::new(WorkflowCacheManager::new(eviction_policy)),
         }
     }
 
@@ -174,7 +171,7 @@ impl WorkflowTaskManager {
             });
         if let Some(act) = maybe_act.as_ref() {
             self.insert_outstanding_activation(&act);
-            self.cache_manager.write().touch(&act.run_id);
+            self.cache_manager.lock().touch(&act.run_id);
         }
         maybe_act
     }
@@ -202,11 +199,12 @@ impl WorkflowTaskManager {
     /// Evict a workflow from the cache by its run id and enqueue a pending activation to evict the
     /// workflow. Any existing pending activations will be destroyed, and any outstanding
     /// activations invalidated.
+    ///
     /// Returns that workflow's task info if it was present.
     pub fn evict_run(&self, run_id: &str) -> Option<WorkflowTaskInfo> {
         debug!(run_id=%run_id, "Evicting run");
         let maybe_tq = self.workflow_machines.task_queue_for(run_id);
-        self.cache_manager.write().remove(run_id);
+        self.cache_manager.lock().remove(run_id);
         self.workflow_machines.evict(run_id);
         self.outstanding_activations.remove(run_id);
         self.pending_activations.remove_all_with_run_id(run_id);
@@ -221,9 +219,7 @@ impl WorkflowTaskManager {
                 .workflow_activations_update
                 .send(WfActivationUpdate::WorkflowTaskComplete { task_queue });
         }
-        // TODO this probably needs to go as outstanding tasks are getting removed upon task completion
-        // and eviction is happening later according to the cache policy, which means that it's likely
-        // that there will be no outstanding workflow task.
+
         self.outstanding_workflow_tasks.remove(run_id).map(|f| {
             // If we just evicted something and there was a buffered poll response for the workflow,
             // it is now ready to be produced by the next poll. (Not immediate next, since, ignoring
@@ -540,7 +536,7 @@ impl WorkflowTaskManager {
             }
 
             // Evict run id if cache is full. Non-sticky will always evict.
-            let maybe_evicted = self.cache_manager.write().insert(run_id);
+            let maybe_evicted = self.cache_manager.lock().insert(run_id);
             if let Some(evicted_run_id) = maybe_evicted {
                 self.evict_run(&evicted_run_id);
             }
