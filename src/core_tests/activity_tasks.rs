@@ -20,19 +20,21 @@ use crate::{
     },
     test_help::{
         build_fake_core, canned_histories, fake_sg_opts, gen_assert_and_reply, mock_core,
-        mock_core_with_opts_no_workers, mock_manual_poller, mock_poller, poll_and_reply,
-        MocksHolder, TEST_Q,
+        mock_core_with_opts_no_workers, mock_manual_poller, mock_poller, mock_poller_from_resps,
+        poll_and_reply, MocksHolder, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::NonSticky,
     ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
 };
 use futures::FutureExt;
+use std::sync::Arc;
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
 use test_utils::fanout_tasks;
+use tokio::sync::Notify;
 use tokio::time::sleep;
 
 #[tokio::test]
@@ -90,6 +92,7 @@ async fn max_activities_respected() {
         async {
             core.complete_activity_task(ActivityTaskCompletion {
                 task_token: r1.task_token,
+                task_queue: TEST_Q.to_string(),
                 result: Some(ActivityResult::ok(vec![1].into()))
             }).await.unwrap();
             last_finisher.store(1, Ordering::SeqCst);
@@ -106,10 +109,8 @@ async fn max_activities_respected() {
 #[tokio::test]
 async fn activity_not_found_returns_ok() {
     let mut mock_gateway = MockServerGatewayApis::new();
-    mock_gateway
-        .expect_complete_activity_task()
-        .times(1)
-        .returning(|_, _| Err(tonic::Status::not_found("unimportant")));
+    // Mock won't even be called, since we weren't tracking activity
+    mock_gateway.expect_complete_activity_task().times(0);
 
     let core = mock_core(MocksHolder::from_gateway_with_responses(
         mock_gateway,
@@ -119,10 +120,12 @@ async fn activity_not_found_returns_ok() {
 
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: vec![1],
+        task_queue: TEST_Q.to_string(),
         result: Some(ActivityResult::ok(vec![1].into())),
     })
     .await
     .unwrap();
+    core.shutdown().await;
 }
 
 #[tokio::test]
@@ -160,6 +163,7 @@ async fn heartbeats_report_cancels_only_once() {
     let act = core.poll_activity_task(TEST_Q).await.unwrap();
     core.record_activity_heartbeat(ActivityHeartbeat {
         task_token: act.task_token.clone(),
+        task_queue: TEST_Q.to_string(),
         details: vec![vec![1u8, 2, 3].into()],
     });
     // We have to wait a beat for the heartbeat to be processed
@@ -179,6 +183,7 @@ async fn heartbeats_report_cancels_only_once() {
     sleep(Duration::from_millis(10)).await;
     core.record_activity_heartbeat(ActivityHeartbeat {
         task_token: act.task_token,
+        task_queue: TEST_Q.to_string(),
         details: vec![vec![1u8, 2, 3].into()],
     });
     sleep(Duration::from_millis(10)).await;
@@ -249,6 +254,7 @@ async fn activity_cancel_interrupts_poll() {
         async {
             core.record_activity_heartbeat(ActivityHeartbeat {
                 task_token: act.task_token,
+                task_queue: TEST_Q.to_string(),
                 details: vec![vec![1u8, 2, 3].into()],
             });
             last_finisher.store(1, Ordering::SeqCst);
@@ -293,7 +299,7 @@ async fn activity_poll_timeout_retries() {
 async fn many_concurrent_heartbeat_cancels() {
     // Run a whole bunch of activities in parallel, having the server return cancellations for
     // them after a few successful heartbeats
-    const CONCURRENCY_NUM: usize = 1000;
+    const CONCURRENCY_NUM: usize = 5;
 
     let mut mock_gateway = MockManualGateway::new();
     let mut poll_resps = VecDeque::from(
@@ -375,6 +381,7 @@ async fn many_concurrent_heartbeat_cancels() {
         for _ in 0..12 {
             core.record_activity_heartbeat(ActivityHeartbeat {
                 task_token: task_token.clone(),
+                task_queue: TEST_Q.to_string(),
                 details: vec![],
             });
             sleep(Duration::from_millis(50)).await;
@@ -394,6 +401,7 @@ async fn many_concurrent_heartbeat_cancels() {
         );
         core.complete_activity_task(ActivityTaskCompletion {
             task_token: r.task_token.clone(),
+            task_queue: TEST_Q.to_string(),
             result: Some(ActivityResult::cancel_from_details(None)),
         })
         .await
@@ -401,16 +409,6 @@ async fn many_concurrent_heartbeat_cancels() {
     })
     .await;
 
-    assert_eq!(
-        core.workers
-            .read()
-            .await
-            .get(TEST_Q)
-            .unwrap()
-            .unwrap()
-            .outstanding_activities(),
-        0
-    );
     core.shutdown().await;
 }
 
@@ -470,4 +468,80 @@ async fn activity_timeout_no_double_resolve() {
     .await;
 
     core.inner.shutdown().await;
+}
+
+#[tokio::test]
+async fn only_returns_cancels_for_desired_queue() {
+    let mut mock_gateway = MockServerGatewayApis::new();
+    let seen_cancel = Arc::new(Notify::new());
+    let sc = seen_cancel.clone();
+    mock_gateway
+        .expect_record_activity_heartbeat()
+        .times(1)
+        .returning(move |_, _| {
+            // Mark the activity as needing cancel when heartbeated
+            sc.notify_one();
+            Ok(RecordActivityTaskHeartbeatResponse {
+                cancel_requested: true,
+            })
+        });
+
+    let mut pollers = HashMap::new();
+    pollers.insert(
+        "q1".to_string(),
+        (
+            mock_poller_from_resps(Default::default()),
+            Some(mock_poller_from_resps(
+                vec![PollActivityTaskQueueResponse {
+                    task_token: vec![1],
+                    activity_id: "act1".to_string(),
+                    heartbeat_timeout: Some(Duration::from_millis(1).into()),
+                    ..Default::default()
+                }]
+                .into(),
+            )),
+        ),
+    );
+    let mut mock_act_poller = mock_poller();
+    mock_act_poller
+        .expect_poll()
+        .returning(|| Some(Ok(Default::default())));
+    pollers.insert(
+        "q2".to_string(),
+        (
+            mock_poller_from_resps(Default::default()),
+            Some(Box::from(mock_act_poller)),
+        ),
+    );
+
+    let core = mock_core(MocksHolder::from_mock_pollers(mock_gateway, pollers));
+    // First poll should get the activity
+    core.poll_activity_task("q1").await.unwrap();
+    // Now record a heartbeat which will get the cancel response and mark the act as cancelled
+    core.record_activity_heartbeat(ActivityHeartbeat {
+        task_token: vec![1],
+        task_queue: "q1".to_string(),
+        details: vec![],
+    });
+    // Worker two's poll should never resolve, since it's just getting pretend long poll timeouts
+    let q1poll = async {
+        // Wait for cancel to propagate
+        seen_cancel.notified().await;
+        core.poll_activity_task("q1").await
+    };
+    let q1_res = tokio::select! {
+        _ = core.poll_activity_task("q2") => panic!("q2 poll resolved!"),
+        r = q1poll => {
+            r.unwrap()
+        }
+    };
+    assert_matches!(
+        q1_res,
+        ActivityTask {
+            variant: Some(activity_task::Variant::Cancel(_)),
+            ..
+        }
+    );
+
+    core.shutdown().await;
 }

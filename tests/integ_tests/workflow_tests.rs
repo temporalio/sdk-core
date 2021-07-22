@@ -411,6 +411,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     // Complete activity successfully.
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: ac_task.task_token,
+        task_queue: task_q.to_string(),
         result: Some(ActivityResult::ok(Default::default())),
     })
     .await

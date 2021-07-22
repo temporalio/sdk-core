@@ -13,7 +13,6 @@ extern crate tracing;
 pub mod protos;
 pub mod prototype_rust_sdk;
 
-mod activity;
 pub(crate) mod core_tracing;
 mod errors;
 mod machines;
@@ -44,11 +43,9 @@ pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
 use crate::{
-    activity::ActivityTaskManager,
     machines::EmptyWorkflowCommandErr,
     protos::{
         coresdk::{
-            activity_result::{self as ar, activity_result},
             activity_task::ActivityTask,
             workflow_activation::WfActivation,
             workflow_commands::QueryResult,
@@ -60,7 +57,7 @@ use crate::{
     },
     protosext::{ValidPollWFTQResponse, WorkflowTaskCompletion},
     task_token::TaskToken,
-    worker::Worker,
+    worker::{WorkerDispatcher, WorkerStatus},
     workflow::WorkflowCachingPolicy,
     workflow_tasks::{
         ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
@@ -69,8 +66,8 @@ use crate::{
 };
 use futures::{FutureExt, TryFutureExt};
 use std::{
-    collections::HashMap,
     convert::TryInto,
+    future::Future,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -78,12 +75,11 @@ use std::{
 };
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver},
-    Mutex, Notify, RwLock, RwLockReadGuard,
+    Mutex, Notify,
 };
 
 #[cfg(test)]
 use crate::pollers::{BoxedActPoller, BoxedWFPoller};
-use std::future::Future;
 
 lazy_static::lazy_static! {
     /// A process-wide unique string, which will be different on every startup
@@ -218,12 +214,10 @@ struct CoreSDK<WP> {
     init_options: CoreInitOptions,
     /// Provides work in the form of responses the server would send from polling task Qs
     server_gateway: Arc<WP>,
-    /// Maps task queue names to workers
-    workers: RwLock<HashMap<String, WorkerStatus>>,
+    /// Controls access to workers
+    workers: Arc<WorkerDispatcher>,
     /// Workflow task management
     wft_manager: WorkflowTaskManager,
-    /// Activity task management
-    act_manager: ActivityTaskManager,
     /// Has shutdown been called?
     shutdown_requested: AtomicBool,
     /// Used to wake up future which checks shutdown state
@@ -238,40 +232,16 @@ enum WfActivationUpdate {
     WorkflowTaskComplete { task_queue: String },
 }
 
-enum WorkerStatus {
-    Live(Worker),
-    Shutdown,
-}
-
-impl WorkerStatus {
-    #[cfg(test)]
-    pub fn unwrap(&self) -> &Worker {
-        match self {
-            WorkerStatus::Live(w) => w,
-            WorkerStatus::Shutdown => panic!("Worker not present"),
-        }
-    }
-}
-
 #[async_trait::async_trait]
 impl<WP> Core for CoreSDK<WP>
 where
     WP: ServerGatewayApis + Send + Sync + 'static,
 {
     async fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError> {
-        if let Some(WorkerStatus::Live(_)) = self.workers.read().await.get(&config.task_queue) {
-            return Err(WorkerRegistrationError::WorkerAlreadyRegisteredForQueue(
-                config.task_queue,
-            ));
-        }
-        let tq = config.task_queue.clone();
         let sticky_q = self.get_sticky_q_name_for_worker(&config);
-        let worker = Worker::new(config, sticky_q, self.server_gateway.clone());
         self.workers
-            .write()
+            .store_worker(config, sticky_q, self.server_gateway.clone())
             .await
-            .insert(tq, WorkerStatus::Live(worker));
-        Ok(())
     }
 
     #[instrument(skip(self))]
@@ -300,7 +270,7 @@ where
                 }
             }
 
-            // Optimization to avoid polling if we already know there's a task update
+            // Optimization avoiding worker access if we know we need to handle update immediately
             if let Some(update) = self
                 .workflow_activations_update
                 .lock()
@@ -308,15 +278,15 @@ where
                 .recv()
                 .now_or_never()
             {
-                let workers_rg = self.workers.read().await;
-                Self::maybe_mark_task_done(update, workers_rg);
+                self.maybe_mark_task_done(update).await;
                 continue;
             }
 
-            let workers_rg = self.workers.read().await;
-            let worker = workers_rg
-                .get(task_queue)
+            let worker = self.workers.get(task_queue).await;
+            let worker = worker
+                .as_deref()
                 .ok_or_else(|| PollWfError::NoWorkerForQueue(task_queue.to_owned()))?;
+
             let worker = if let WorkerStatus::Live(w) = worker {
                 w
             } else {
@@ -334,7 +304,7 @@ where
                 // If a task is completed while we are waiting on polling, we need to restart the
                 // loop right away to provide any potential new pending activation
                 update = activation_update_fut => {
-                    Self::maybe_mark_task_done(update, workers_rg);
+                    self.maybe_mark_task_done(update).await;
                     continue;
                 }
                 r = poll_result_future => r,
@@ -374,10 +344,9 @@ where
             if self.shutdown_requested.load(Ordering::Relaxed) {
                 return Err(PollActivityError::ShutDown);
             }
-
-            let workers_rg = self.workers.read().await;
-            let worker = workers_rg
-                .get(task_queue)
+            let worker = self.workers.get(task_queue).await;
+            let worker = worker
+                .as_deref()
                 .ok_or_else(|| PollActivityError::NoWorkerForQueue(task_queue.to_owned()))?;
             let worker = if let WorkerStatus::Live(w) = worker {
                 w
@@ -388,7 +357,7 @@ where
             tokio::select! {
                 biased;
 
-                r = self.act_manager.poll(&worker) => {
+                r = worker.activity_poll() => {
                     match r.transpose() {
                         None => continue,
                         Some(r) => return r
@@ -442,61 +411,28 @@ where
             });
         };
 
-        let is_known_not_found = self.act_manager.is_known_not_found(&task_token);
-
-        // No need to report activities which we already know the server doesn't care about
-        let (res, should_remove) = if !is_known_not_found {
-            let maybe_net_err = match status {
-                activity_result::Status::Completed(ar::Success { result }) => self
-                    .server_gateway
-                    .complete_activity_task(task_token.clone(), result.map(Into::into))
-                    .await
-                    .err(),
-                activity_result::Status::Failed(ar::Failure { failure }) => self
-                    .server_gateway
-                    .fail_activity_task(task_token.clone(), failure.map(Into::into))
-                    .await
-                    .err(),
-                activity_result::Status::Canceled(ar::Cancelation { details }) => self
-                    .server_gateway
-                    .cancel_activity_task(task_token.clone(), details.map(Into::into))
-                    .await
-                    .err(),
-            };
-            match maybe_net_err {
-                Some(e) if e.code() == tonic::Code::NotFound => {
-                    if !is_known_not_found {
-                        warn!(task_token = ?task_token, details = ?e, "Activity not found on \
-                        completion. This may happen if the activity has already been cancelled but \
-                        completed anyway.");
-                    }
-                    (Ok(()), true)
-                }
-                Some(err) => (Err(err), false),
-                None => (Ok(()), true),
-            }
+        let worker = self.workers.get(&completion.task_queue).await;
+        let worker = if let Some(WorkerStatus::Live(w)) = worker.as_deref() {
+            w
         } else {
-            (Ok(()), true)
+            return Err(CompleteActivityError::NoWorkerForQueue(
+                completion.task_queue,
+            ));
         };
 
-        if should_remove {
-            // Remove the activity from tracking and tell the worker a slot is free
-            if let Some(deets) = self.act_manager.mark_complete(&task_token) {
-                if let Some(WorkerStatus::Live(worker)) =
-                    self.workers.read().await.get(&deets.task_queue)
-                {
-                    worker.activity_done();
-                }
-            }
-        }
-        Ok(res?)
+        worker
+            .complete_activity(task_token, status, self.server_gateway.as_ref())
+            .await
     }
 
     fn record_activity_heartbeat(&self, details: ActivityHeartbeat) {
-        let tt = details.task_token.clone();
-        if let Err(e) = self.act_manager.record_activity_heartbeat(details) {
-            warn!(task_token = ?tt, details = ?e, "Activity heartbeat failed.")
-        }
+        let workers = self.workers.clone();
+        // TODO: Ugh. Can we avoid making this async in a better way?
+        let _ = tokio::task::spawn(async move {
+            if let Some(WorkerStatus::Live(w)) = workers.get(&details.task_queue).await.as_deref() {
+                w.record_heartbeat(details)
+            }
+        });
     }
 
     fn request_workflow_eviction(&self, run_id: &str) {
@@ -510,31 +446,13 @@ where
     async fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
         self.poll_loop_notify.notify_waiters();
-        for (_, w) in self.workers.write().await.drain() {
-            if let WorkerStatus::Live(w) = w {
-                w.shutdown_complete().await;
-            }
-        }
-        self.act_manager.shutdown().await;
+        self.workers.shutdown_all().await;
     }
 
     async fn shutdown_worker(&self, task_queue: &str) {
-        info!("Shutting down worker on queue {}", task_queue);
-        if let Some(WorkerStatus::Live(w)) = self.workers.read().await.get(task_queue) {
-            w.notify_shutdown();
-        }
-        let mut workers = match self.workers.try_write() {
-            Ok(wg) => wg,
-            Err(_) => {
-                self.poll_loop_notify.notify_waiters();
-                self.workers.write().await
-            }
-        };
-        if let Some(WorkerStatus::Live(w)) = workers.remove(task_queue) {
-            workers.insert(task_queue.to_owned(), WorkerStatus::Shutdown);
-            drop(workers);
-            w.shutdown_complete().await;
-        }
+        self.workers
+            .shutdown_one(task_queue, &self.poll_loop_notify)
+            .await;
     }
 }
 
@@ -549,11 +467,11 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             }
         };
         let (wau_tx, wau_rx) = unbounded_channel();
+        let workers = Arc::new(WorkerDispatcher::default());
         Self {
-            wft_manager: WorkflowTaskManager::new(wau_tx, cache_policy),
-            act_manager: ActivityTaskManager::new(sg.clone()),
             server_gateway: sg,
-            workers: RwLock::new(HashMap::new()),
+            wft_manager: WorkflowTaskManager::new(wau_tx, cache_policy),
+            workers,
             init_options,
             shutdown_requested: AtomicBool::new(false),
             poll_loop_notify: Notify::new(),
@@ -563,22 +481,26 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
 
     /// Allow construction of workers with mocked poll responses during testing
     #[cfg(test)]
-    fn reg_worker_sync(
+    pub(crate) fn reg_worker_sync(
         &mut self,
         config: WorkerConfig,
-        wft_poller: Option<BoxedWFPoller>,
+        wft_poller: BoxedWFPoller,
         act_poller: Option<BoxedActPoller>,
     ) {
-        let tq = config.task_queue.clone();
+        use crate::worker::Worker;
+
         let sticky_q = self.get_sticky_q_name_for_worker(&config);
-        let worker = if let Some(wfp) = wft_poller {
-            Worker::new_with_pollers(config, sticky_q, wfp, act_poller)
-        } else {
-            Worker::new(config, sticky_q, self.server_gateway.clone())
-        };
-        self.workers
-            .get_mut()
-            .insert(tq, WorkerStatus::Live(worker));
+        let tq = config.task_queue.clone();
+        let worker = Worker::new_with_pollers(
+            config,
+            sticky_q,
+            self.server_gateway.clone(),
+            wft_poller,
+            act_poller,
+        );
+        Arc::get_mut(&mut self.workers)
+            .expect("No other worker dispatch yet")
+            .store_worker_mut(tq, worker);
     }
 
     fn get_sticky_q_name_for_worker(&self, config: &WorkerConfig) -> Option<String> {
@@ -678,7 +600,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                     return_new_workflow_task: false,
                     force_create_new_workflow_task: false,
                 };
-                match self.workers.read().await.get(&task_queue) {
+                match self.workers.get(&task_queue).await.as_deref() {
                     Some(WorkerStatus::Live(worker)) => {
                         let sticky_attrs = worker.get_sticky_attrs();
                         completion.sticky_attributes = sticky_attrs;
@@ -773,7 +695,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                     // Silence unhandled command errors since the lang SDK cannot do anything about
                     // them besides poll again, which it will do anyway.
                     tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
-                        warn!("Unhandled command response when completing");
+                        warn!("Unhandled command response when completing: {}", err);
                         Ok(())
                     }
                     tonic::Code::NotFound => {
@@ -792,13 +714,10 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         res.map_err(Into::into)
     }
 
-    fn maybe_mark_task_done(
-        update: Option<WfActivationUpdate>,
-        workers_rg: RwLockReadGuard<HashMap<String, WorkerStatus>>,
-    ) {
+    async fn maybe_mark_task_done(&self, update: Option<WfActivationUpdate>) {
         // If the update indicates a task completed, free a slot in the worker
         if let Some(WfActivationUpdate::WorkflowTaskComplete { task_queue }) = update {
-            if let Some(WorkerStatus::Live(w)) = workers_rg.get(&task_queue) {
+            if let Some(WorkerStatus::Live(w)) = self.workers.get(&task_queue).await.as_deref() {
                 w.workflow_task_done();
             }
         }

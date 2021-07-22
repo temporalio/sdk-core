@@ -6,11 +6,11 @@ use crate::{
         temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
     },
     task_token::TaskToken,
+    worker::activities::PendingActivityCancel,
 };
 use futures::StreamExt;
-use std::collections::hash_map::Entry;
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     sync::Arc,
     time::{self, Duration, Instant},
 };
@@ -28,7 +28,7 @@ pub(crate) struct ActivityHeartbeatManager {
     heartbeat_tx: UnboundedSender<HBAction>,
     /// Cancellations that have been received when heartbeating are queued here and can be consumed
     /// by [fetch_cancellations]
-    incoming_cancels: Mutex<UnboundedReceiver<(TaskToken, ActivityCancelReason)>>,
+    incoming_cancels: Mutex<UnboundedReceiver<PendingActivityCancel>>,
     shutting_down: watch::Sender<bool>,
     /// Used during `shutdown` to await until all inflight requests are sent.
     join_handle: Mutex<Option<JoinHandle<()>>>,
@@ -58,7 +58,7 @@ impl ActivityHeartbeatManager {
     /// It is important that this function is never called with a task token equal to one given
     /// to [Self::evict] after it has been called, doing so will cause a memory leak, as there is
     /// no longer an efficient way to forget about that task token.
-    pub fn record(
+    pub(super) fn record(
         &self,
         details: ActivityHeartbeat,
         delay: Duration,
@@ -80,19 +80,20 @@ impl ActivityHeartbeatManager {
 
     /// Tell the heartbeat manager we are done forever with a certain task, so it may be forgotten.
     /// Record should *not* be called with the same TaskToken after calling this.
-    pub fn evict(&self, task_token: TaskToken) {
+    pub(super) fn evict(&self, task_token: TaskToken) {
         let _ = self.heartbeat_tx.send(HBAction::Evict(task_token));
     }
 
     /// Returns a future that resolves any time there is a new activity cancel that must be
     /// dispatched to lang
-    pub async fn next_pending_cancel(&self) -> Option<(TaskToken, ActivityCancelReason)> {
+    pub(super) async fn next_pending_cancel(&self) -> Option<PendingActivityCancel> {
         self.incoming_cancels.lock().await.recv().await
     }
 
+    // TODO: Can own self now!
     /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all heartbeat
     /// processors to terminate gracefully.
-    pub async fn shutdown(&self) {
+    pub(super) async fn shutdown(&self) {
         let _ = self.shutting_down.send(true);
         let mut handle = self.join_handle.lock().await;
         if let Some(h) = handle.take() {
@@ -125,7 +126,7 @@ struct ActivityHbState {
 impl ActivityHeartbeatManager {
     /// Creates a new instance of an activity heartbeat manager and returns a handle to the user,
     /// which allows to send new heartbeats and initiate the shutdown.
-    pub fn new<SG: ServerGatewayApis + Send + Sync + 'static>(sg: Arc<SG>) -> Self {
+    pub fn new(sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>) -> Self {
         let (heartbeat_tx, heartbeat_rx) = unbounded_channel();
         let (cancels_tx, cancels_rx) = unbounded_channel();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -208,7 +209,10 @@ impl ActivityHeartbeatManager {
                         Ok(RecordActivityTaskHeartbeatResponse { cancel_requested }) => {
                             if cancel_requested {
                                 cancels_tx
-                                    .send((hb.task_token.clone(), ActivityCancelReason::Cancelled))
+                                    .send(PendingActivityCancel::new(
+                                        hb.task_token.clone(),
+                                        ActivityCancelReason::Cancelled,
+                                    ))
                                     .expect("Receive half of heartbeat cancels not blocked");
                             }
                         }
@@ -217,7 +221,10 @@ impl ActivityHeartbeatManager {
                         // valid).
                         Err(s) if s.code() == tonic::Code::NotFound => {
                             cancels_tx
-                                .send((hb.task_token.clone(), ActivityCancelReason::NotFound))
+                                .send(PendingActivityCancel::new(
+                                    hb.task_token.clone(),
+                                    ActivityCancelReason::NotFound,
+                                ))
                                 .expect("Receive half of heartbeat cancels not blocked");
                         }
                         Err(e) => {
@@ -240,6 +247,7 @@ impl ActivityHeartbeatManager {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::test_help::TEST_Q;
     use crate::{
         pollers::MockServerGatewayApis,
         protos::{
@@ -340,6 +348,7 @@ mod test {
         match hm.record(
             ActivityHeartbeat {
                 task_token: vec![1, 2, 3],
+                task_queue: TEST_Q.to_string(),
                 details: vec![Payload {
                     // payload doesn't matter in this case, as it shouldn't get sent anyways.
                     ..Default::default()
@@ -365,6 +374,7 @@ mod test {
         hm.record(
             ActivityHeartbeat {
                 task_token,
+                task_queue: TEST_Q.to_string(),
                 details: vec![Payload {
                     metadata: Default::default(),
                     data: vec![payload_data],
