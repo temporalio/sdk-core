@@ -131,6 +131,16 @@ pub mod coresdk {
                     variant: Some(wf_activation_job::Variant::QueryWorkflow(qr))
                 }] if qr.query_id == LEGACY_QUERY_ID)
             }
+
+            /// Returns true if this activation has one and only one job to perform an eviction
+            pub(crate) fn is_eviction(&self) -> bool {
+                matches!(
+                    &self.jobs.as_slice(),
+                    &[WfActivationJob {
+                        variant: Some(wf_activation_job::Variant::RemoveFromCache(_))
+                    }]
+                )
+            }
         }
 
         impl Display for WfActivation {

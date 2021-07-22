@@ -23,7 +23,6 @@ use test_utils::{
     init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreTestHelpers, CoreWfStarter, GwApi,
 };
 use tokio::time::sleep;
-use tracing::debug;
 use uuid::Uuid;
 
 // TODO: We should get expected histories for these tests and confirm that the history at the end
