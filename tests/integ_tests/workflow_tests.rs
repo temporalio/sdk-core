@@ -7,6 +7,7 @@ mod timers;
 use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
 use std::{collections::HashMap, sync::Arc, time::Duration};
+use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core::{
     protos::coresdk::{
         activity_result::ActivityResult,
@@ -79,65 +80,31 @@ async fn parallel_workflows_same_queue() {
     }
 }
 
+pub async fn timer_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
+    let timer = StartTimer {
+        timer_id: "super_timer_id".to_string(),
+        start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+    };
+    command_sink.timer(timer).await;
+    Ok(().into())
+}
+
 #[tokio::test]
-async fn workflow_cache_evictions() {
-    let mut starter = CoreWfStarter::new("workflow_cache_evictions");
-    starter
-        .max_cached_workflows(1)
-        .wft_timeout(Duration::from_secs(1));
-    let core = starter.get_core().await;
-    let task_q = starter.get_task_queue();
-    let num_workflows = 2;
+async fn workflow_cache_evictions_new() {
+    let wf_name = "timer_wf_not_sticky";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.max_cached_workflows(1);
+    let worker = starter.worker().await;
 
-    let run_ids: Vec<_> = future::join_all(
-        (0..2).map(|_| starter.start_wf_with_id(format!("wce-{}", Uuid::new_v4()))),
-    )
-    .await;
-
-    let mut send_chans = HashMap::new();
-    async fn wf_task(core: Arc<dyn Core>, mut task_chan: UnboundedReceiver<WfActivation>) {
-        loop {
-            let task = task_chan.next().await.unwrap();
-            if let [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
-            }] = task.jobs.as_slice()
-            {
-                debug!(run_id=%task.run_id.clone(), "scheduling timer");
-                core.complete_timer(&task.run_id, "timer", Duration::from_secs(1))
-                    .await;
-            } else if let [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::FireTimer(_)),
-            }] = task.jobs.as_slice()
-            {
-                debug!(run_id=%task.run_id.clone(), "completing execution");
-                core.complete_execution(&task.run_id).await;
-                break;
-            }
-        }
-    }
-
-    let handles: Vec<_> = run_ids
-        .iter()
-        .map(|run_id| {
-            let (tx, rx) = futures::channel::mpsc::unbounded();
-            send_chans.insert(run_id.clone(), tx);
-            tokio::spawn(wf_task(core.clone(), rx))
-        })
-        .collect();
-
-    for _ in 0..num_workflows * 2 + 1 {
-        let task = core.poll_workflow_task(&task_q).await.unwrap();
-        send_chans
-            .get(&task.run_id)
-            .unwrap()
-            .send(task)
+    let n_workflows = 3;
+    for _ in 0..n_workflows {
+        worker
+            .submit_wf(vec![], format!("wce-{}", Uuid::new_v4()), timer_wf)
             .await
             .unwrap();
     }
-
-    for handle in handles {
-        handle.await.unwrap()
-    }
+    worker.run_until_done().await.unwrap();
+    starter.shutdown().await;
 }
 
 // Ideally this would be a unit test, but returning a pending future with mockall bloats the mock
