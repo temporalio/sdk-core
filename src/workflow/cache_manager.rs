@@ -1,6 +1,7 @@
 use crate::workflow::WorkflowCachingPolicy;
 use lru::LruCache;
 
+#[derive(Debug)]
 pub(crate) struct WorkflowCacheManager {
     /// LRU cache of run IDs.
     cache: LruCache<String, ()>,
@@ -28,9 +29,13 @@ impl WorkflowCacheManager {
             self.cache.put(run_id.to_owned(), ());
             None
         } else if self.cache.cap() != 0 {
-            let result = self.cache.peek_lru().map(|r| r.0.to_owned());
-            self.cache.put(run_id.to_owned(), ());
-            result
+            let maybe_got_evicted = self.cache.peek_lru().map(|r| r.0.to_owned());
+            let already_existed = self.cache.put(run_id.to_owned(), ()).is_some();
+            if !already_existed {
+                maybe_got_evicted
+            } else {
+                None
+            }
         } else {
             // Run id should be evicted right away as cache size is 0.
             Some(run_id.to_owned())
@@ -73,6 +78,15 @@ mod tests {
         assert_matches!(wcm.insert("3"), Some(run_id) => {
             assert_eq!(run_id, "2")
         });
+    }
+
+    #[test]
+    fn insert_same_id_twice_doesnt_evict_self() {
+        let mut wcm = WorkflowCacheManager::new(WorkflowCachingPolicy::Sticky {
+            max_cached_workflows: 1,
+        });
+        assert_matches!(wcm.insert("1"), None);
+        assert_matches!(wcm.insert("1"), None);
     }
 
     #[test]

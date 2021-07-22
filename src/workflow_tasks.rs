@@ -206,8 +206,8 @@ impl WorkflowTaskManager {
     ///
     /// Returns, if found, the number of attempts on the current workflow task
     pub fn request_eviction(&self, run_id: &str) -> Option<u32> {
-        debug!(run_id, "Eviction requested for");
         if let Some(tq) = self.workflow_machines.task_queue_for(run_id) {
+            debug!(%run_id, "Eviction requested for");
             // Queue up an eviction activation
             self.pending_activations
                 .push(create_evict_activation(run_id.to_string()), tq);
@@ -218,7 +218,7 @@ impl WorkflowTaskManager {
                 .get(run_id)
                 .map(|owt| owt.info.attempt)
         } else {
-            warn!("Eviction requested for unknown run {}", run_id);
+            warn!(%run_id, "Eviction requested for unknown run");
             None
         }
     }
@@ -230,11 +230,12 @@ impl WorkflowTaskManager {
     /// Returns that workflow's task info if it was present.
     fn evict_run(&self, run_id: &str) -> Option<WorkflowTaskInfo> {
         debug!(run_id=%run_id, "Evicting run");
-        let maybe_tq = self.workflow_machines.task_queue_for(run_id);
+
         self.cache_manager.lock().remove(run_id);
         self.workflow_machines.evict(run_id);
         self.outstanding_activations.remove(run_id);
         self.pending_activations.remove_all_with_run_id(run_id);
+        let maybe_tq = self.workflow_machines.task_queue_for(run_id);
 
         if let Some(task_queue) = maybe_tq {
             let _ = self
@@ -579,12 +580,14 @@ impl WorkflowTaskManager {
                 }
             }
 
-            // Evict run id if cache is full. Non-sticky will always evict.
-            let maybe_evicted = self.cache_manager.lock().insert(run_id);
-            if let Some(evicted_run_id) = maybe_evicted {
-                // Don't try to re-evict something we just evicted
-                if evicted_run_id != run_id || !just_evicted {
-                    self.request_eviction(&evicted_run_id);
+            if !just_evicted {
+                // Evict run id if cache is full. Non-sticky will always evict.
+                let maybe_evicted = self.cache_manager.lock().insert(run_id);
+                if let Some(evicted_run_id) = maybe_evicted {
+                    // Don't try to re-evict something we just evicted
+                    if evicted_run_id != run_id || !just_evicted {
+                        self.request_eviction(&evicted_run_id);
+                    }
                 }
             }
 
