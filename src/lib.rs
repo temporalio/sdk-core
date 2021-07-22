@@ -436,7 +436,7 @@ where
     }
 
     fn request_workflow_eviction(&self, run_id: &str) {
-        self.wft_manager.evict_run(run_id);
+        self.wft_manager.request_eviction(run_id);
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {
@@ -709,7 +709,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             _ => Ok(()),
         };
         if should_evict {
-            self.wft_manager.evict_run(run_id);
+            self.wft_manager.request_eviction(run_id);
         }
         res.map_err(Into::into)
     }

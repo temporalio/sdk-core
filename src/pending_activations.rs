@@ -1,6 +1,9 @@
-use crate::protos::coresdk::workflow_activation::WfActivation;
+use crate::protos::coresdk::workflow_activation::{
+    wf_activation_job, WfActivation, WfActivationJob,
+};
 use parking_lot::RwLock;
 use slotmap::SlotMap;
+use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 
 /// Tracks pending activations using an internal queue, while also allowing lookup and removal of
@@ -21,6 +24,10 @@ struct PaInner {
 }
 
 impl PendingActivations {
+    /// Push a pending activation into the given task queue.
+    ///
+    /// Importantly, if there already exist activations for same workflow run in the queue, those
+    /// activations will be merged.
     pub fn push(&self, v: WfActivation, task_queue: String) {
         let mut inner = self.inner.write();
 
@@ -30,7 +37,7 @@ impl PendingActivations {
                 .activations
                 .get_mut(key)
                 .expect("PA run id mapping is always in sync with slot map");
-            act.jobs.extend(v.jobs);
+            merge_joblists(&mut act.jobs, v.jobs.into_iter());
         } else {
             let run_id = v.run_id.clone();
             let key = inner.activations.insert(v);
@@ -96,6 +103,39 @@ impl PendingActivations {
             inner.activations.remove(k);
         }
     }
+}
+
+/// TODO: This might break with legacy queries, which cannot be merged with anything. Fix.
+fn merge_joblists(
+    existing_list: &mut Vec<WfActivationJob>,
+    other_jobs: impl Iterator<Item = WfActivationJob>,
+) {
+    existing_list.extend(other_jobs);
+    // Move any evictions to the end of the list
+    existing_list
+        .as_mut_slice()
+        .sort_by(evictions_always_last_compare);
+}
+
+fn evictions_always_last_compare(a: &WfActivationJob, b: &WfActivationJob) -> Ordering {
+    if a == b {
+        return Ordering::Equal;
+    }
+    // Any eviction always goes last
+    if matches!(
+        a.variant,
+        Some(wf_activation_job::Variant::RemoveFromCache(_))
+    ) {
+        return Ordering::Greater;
+    }
+    if matches!(
+        b.variant,
+        Some(wf_activation_job::Variant::RemoveFromCache(_))
+    ) {
+        return Ordering::Less;
+    }
+    // All jobs should not change order except evictions
+    Ordering::Equal
 }
 
 #[cfg(test)]

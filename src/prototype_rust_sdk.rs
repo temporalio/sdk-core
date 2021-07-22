@@ -138,7 +138,7 @@ impl TestRustWorker {
                     true
                 } else {
                     // TODO: fix with eviction handshake
-                    if !activation.is_eviction() {
+                    if !activation.has_eviction() {
                         bail!("Got activation for unknown workflow");
                     }
                     false

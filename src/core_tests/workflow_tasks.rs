@@ -1,4 +1,3 @@
-use crate::test_help::ResponseType;
 use crate::{
     job_assert,
     pollers::MockServerGatewayApis,
@@ -24,7 +23,7 @@ use crate::{
         build_fake_core, build_multihist_mock_sg, canned_histories, fake_core_from_mocks,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_core,
         mock_core_with_opts, mock_core_with_opts_no_workers, poll_and_reply, single_hist_mock_sg,
-        FakeCore, FakeWfResponses, TestHistoryBuilder, TEST_Q,
+        FakeCore, FakeWfResponses, ResponseType, TestHistoryBuilder, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
     Core, CoreInitOptionsBuilder, WfActivationCompletion, WorkerConfigBuilder,
@@ -1142,11 +1141,35 @@ async fn complete_after_eviction() {
     let activation = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
     // We just got start workflow, immediately evict
     core.inner.request_workflow_eviction(&activation.run_id);
-    // Try to complete it. No error should be returned, and nothing happens or is sent to server.
+    // Original task must be completed before we get the eviction
     core.inner
         .complete_workflow_task(WfActivationCompletion::from_cmd(
-            CompleteWorkflowExecution { result: None }.into(),
+            StartTimer {
+                timer_id: "fake_timer".to_string(),
+                ..Default::default()
+            }
+            .into(),
             activation.run_id,
+        ))
+        .await
+        .unwrap();
+    let eviction_activation = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    assert_matches!(
+        eviction_activation.jobs.as_slice(),
+        [
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::FireTimer(_)),
+            },
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+            }
+        ]
+    );
+    // Complete the activation containing the eviction, the way we normally would have
+    core.inner
+        .complete_workflow_task(WfActivationCompletion::from_cmds(
+            vec![CompleteWorkflowExecution { result: None }.into()],
+            eviction_activation.run_id,
         ))
         .await
         .unwrap();

@@ -132,14 +132,16 @@ pub mod coresdk {
                 }] if qr.query_id == LEGACY_QUERY_ID)
             }
 
-            /// Returns true if this activation has one and only one job to perform an eviction
-            pub(crate) fn is_eviction(&self) -> bool {
-                matches!(
-                    &self.jobs.as_slice(),
-                    &[WfActivationJob {
-                        variant: Some(wf_activation_job::Variant::RemoveFromCache(_))
-                    }]
-                )
+            /// Returns true if this activation contains an eviction in the joblist
+            pub(crate) fn has_eviction(&self) -> bool {
+                self.jobs.iter().any(|j| {
+                    matches!(
+                        j,
+                        WfActivationJob {
+                            variant: Some(wf_activation_job::Variant::RemoveFromCache(_))
+                        }
+                    )
+                })
             }
         }
 
@@ -321,6 +323,15 @@ pub mod coresdk {
     }
 
     impl WfActivationCompletion {
+        /// Create a successful activation with no commands in it
+        pub fn empty(run_id: String) -> Self {
+            let success = workflow_completion::Success::from_variants(vec![]);
+            Self {
+                run_id,
+                status: Some(wf_activation_completion::Status::Successful(success)),
+            }
+        }
+
         /// Create a successful activation from a list of commands
         pub fn from_cmds(cmds: Vec<workflow_command::Variant>, run_id: String) -> Self {
             let success = workflow_completion::Success::from_variants(cmds);
