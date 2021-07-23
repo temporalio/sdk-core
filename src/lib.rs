@@ -105,6 +105,16 @@ pub trait Core: Send + Sync {
     /// The returned activation is guaranteed to be for the same task queue / worker which was
     /// provided as the `task_queue` argument.
     ///
+    /// It is important to understand that all activations must be responded to. There can only
+    /// be one outstanding activation for a particular run of a workflow at any time. If an
+    /// activation is not responded to, it will cause that workflow to become stuck forever.
+    ///
+    /// Activations that contain only a `remove_from_cache` job should not cause the workflow code
+    /// to be invoked and may be responded to with an empty command list. Eviction jobs may also
+    /// appear with other jobs, but will always appear last in the job list. In this case it is
+    /// expected that the workflow code will be invoked, and the response produced as normal, but
+    /// the caller should evict the run after doing so.
+    ///
     /// It is rarely a good idea to call poll concurrently. It handles polling the server
     /// concurrently internally.
     ///

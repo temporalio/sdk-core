@@ -121,7 +121,7 @@ impl TestRustWorker {
                     let jh = tokio::spawn(async move {
                         tokio::select! {
                             r = wff => r,
-                            _ = shutdown_rx.changed() => Ok(WfExitValue::Evicted).into()
+                            _ = shutdown_rx.changed() => Ok(WfExitValue::Evicted)
                         }
                     });
                     self.workflows
