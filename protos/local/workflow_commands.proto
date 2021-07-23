@@ -22,6 +22,7 @@ message WorkflowCommand {
         FailWorkflowExecution fail_workflow_execution = 7;
         ContinueAsNewWorkflowExecution continue_as_new_workflow_execution = 8;
         CancelWorkflowExecution cancel_workflow_execution = 9;
+        VersionCheck version_check = 10;
 
         // To be added as/if needed:
         //  RequestCancelActivityTask request_cancel_activity_task_command_attributes = 6;
@@ -138,3 +139,29 @@ message ContinueAsNewWorkflowExecution {
 /// Indicate a workflow has completed as cancelled. Generally sent as a response to an activation
 /// containing a cancellation job.
 message CancelWorkflowExecution {}
+
+/// A request to set/check version information for a certain change. See field docs for details.
+message VersionCheck {
+    // A user-chosen identifier for this version check. If the same identifier is used in multiple
+    // places in the code, those places are considered to be versioned as one unit. IE: The same
+    // number will be returned for all of them
+    string change_id = 1;
+    // May be zero, but must only be set to zero if the user passes a special (ideally, well typed)
+    // constant named `DEFAULT_VERSION` or similar.
+    //
+    // Such a special value that indicates the codepath that should be chosen by workflows which do
+    // not have any version information in their history for the associated change id. In other
+    // words, if the workflow code has reached `version_check`, but is replaying and there
+    // is no marker for this change in history, then this value is returned.
+    //
+    // For nonzero/not-default values:
+    // * If replaying: There must be a version marker and it must be >= this value
+    // * If not replaying: Irrelevant
+    uint32 min_version = 2;
+    // Cannot be zero.
+    // Upon a call to `version_check`:
+    // * If replaying: There must be a version marker and it must be <= than this value.
+    // * If not replaying: We will record the version marker for this change into history with this
+    //   value.
+    uint32 max_version = 3;
+}

@@ -1,7 +1,10 @@
+use crate::machines::{NewMachineWithCommand, WFMachinesError};
 use rustfsm::{fsm, TransitionResult};
 
 fsm! {
-    pub(super) name VersionMachine; command VersionCommand; error VersionMachineError;
+    pub(super) name VersionMachine;
+    command VersionCommand;
+    error WFMachinesError;
 
     Created --(CheckExecutionState, on_check_execution_state) --> Replaying;
     Created --(CheckExecutionState, on_check_execution_state) --> Executing;
@@ -24,10 +27,31 @@ fsm! {
     Skipped --(CommandRecordMarker, on_command_record_marker) --> SkippedNotified;
 }
 
-#[derive(thiserror::Error, Debug)]
-pub(super) enum VersionMachineError {}
+#[derive(Debug, derive_more::Display)]
+pub(super) enum VersionCommand {
+    // TODO: probably need to include change ID
+    /// Issued when the version machine resolves with what version the workflow should be told about
+    #[display(fmt = "ReturnVersion({})", _0)]
+    ReturnVersion(usize),
+}
 
-pub(super) enum VersionCommand {}
+/// Version machines are created when the user invokes `get_version` (or whatever it may be named
+/// in that lang).
+///
+/// `change_id`: identifier of a particular change. All calls to get_version that share a change id
+/// are guaranteed to return the same version number.
+/// `replaying_when_invoked`: If the workflow is replaying when this invocation occurs, this needs
+/// to be set to true.
+pub(super) fn get_version_invoked(
+    change_id: String,
+    replaying_when_invoked: bool,
+) -> NewMachineWithCommand<VersionMachine> {
+    let (activity, add_cmd) = VersionMachine::new_scheduled(attribs);
+    NewMachineWithCommand {
+        command: add_cmd,
+        machine: activity,
+    }
+}
 
 #[derive(Default, Clone)]
 pub(super) struct Created {}
