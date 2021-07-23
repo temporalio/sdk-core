@@ -1,13 +1,22 @@
-use crate::machines::{NewMachineWithCommand, WFMachinesError};
+use crate::{
+    machines::{
+        workflow_machines::MachineResponse, Cancellable, OnEventWrapper, WFMachinesAdapter,
+        WFMachinesError,
+    },
+    protos::temporal::api::{enums::v1::CommandType, history::v1::HistoryEvent},
+};
 use rustfsm::{fsm, TransitionResult};
+use std::{convert::TryFrom, num::NonZeroU32};
 
 fsm! {
     pub(super) name VersionMachine;
     command VersionCommand;
     error WFMachinesError;
+    shared_state SharedState;
 
-    Created --(CheckExecutionState, on_check_execution_state) --> Replaying;
-    Created --(CheckExecutionState, on_check_execution_state) --> Executing;
+    // Bool inside this event is if we are replaying or not
+    Created --(CheckExecutionState(bool), on_check_execution_state) --> Replaying;
+    Created --(CheckExecutionState(bool), on_check_execution_state) --> Executing;
 
     Executing --(Schedule, on_schedule) --> MarkerCommandCreated;
     Executing --(Schedule, on_schedule) --> Skipped;
@@ -27,6 +36,28 @@ fsm! {
     Skipped --(CommandRecordMarker, on_command_record_marker) --> SkippedNotified;
 }
 
+#[derive(Clone)]
+pub enum MinVersion {
+    Default,
+    Numbered(u32),
+}
+impl From<u32> for MinVersion {
+    fn from(v: u32) -> Self {
+        if v == 0 {
+            MinVersion::Default
+        } else {
+            MinVersion::Numbered(v)
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct SharedState {
+    change_id: String,
+    min_version: MinVersion,
+    max_version: NonZeroU32,
+}
+
 #[derive(Debug, derive_more::Display)]
 pub(super) enum VersionCommand {
     // TODO: probably need to include change ID
@@ -42,14 +73,36 @@ pub(super) enum VersionCommand {
 /// are guaranteed to return the same version number.
 /// `replaying_when_invoked`: If the workflow is replaying when this invocation occurs, this needs
 /// to be set to true.
-pub(super) fn get_version_invoked(
+pub(super) fn version_check(
     change_id: String,
     replaying_when_invoked: bool,
-) -> NewMachineWithCommand<VersionMachine> {
-    let (activity, add_cmd) = VersionMachine::new_scheduled(attribs);
-    NewMachineWithCommand {
-        command: add_cmd,
-        machine: activity,
+    min_version: MinVersion,
+    max_version: NonZeroU32,
+) -> VersionMachine {
+    VersionMachine::new_scheduled(
+        SharedState {
+            change_id,
+            min_version,
+            max_version,
+        },
+        replaying_when_invoked,
+    )
+}
+
+impl VersionMachine {
+    fn new_scheduled(state: SharedState, replaying_when_invoked: bool) -> Self {
+        let mut machine = VersionMachine {
+            state: Created {}.into(),
+            shared_state: state,
+        };
+        OnEventWrapper::on_event_mut(
+            &mut machine,
+            VersionMachineEvents::CheckExecutionState(replaying_when_invoked),
+        )
+        .expect("Version machine checking replay state doesn't fail");
+        OnEventWrapper::on_event_mut(&mut machine, VersionMachineEvents::Schedule)
+            .expect("Version machine scheduling doesn't fail");
+        machine
     }
 }
 
@@ -57,8 +110,15 @@ pub(super) fn get_version_invoked(
 pub(super) struct Created {}
 
 impl Created {
-    pub(super) fn on_check_execution_state(self) -> VersionMachineTransition<ReplayingOrExecuting> {
-        unimplemented!()
+    pub(super) fn on_check_execution_state(
+        self,
+        replaying_when_invoked: bool,
+    ) -> VersionMachineTransition<ReplayingOrExecuting> {
+        if replaying_when_invoked {
+            TransitionResult::ok(vec![], ReplayingOrExecuting::Replaying(Replaying {}))
+        } else {
+            TransitionResult::ok(vec![], ReplayingOrExecuting::Executing(Executing {}))
+        }
     }
 }
 
@@ -135,3 +195,32 @@ impl Skipped {
 
 #[derive(Default, Clone)]
 pub(super) struct SkippedNotified {}
+
+impl WFMachinesAdapter for VersionMachine {
+    fn adapt_response(
+        &self,
+        event: &HistoryEvent,
+        has_next_event: bool,
+        my_command: Self::Command,
+    ) -> Result<Vec<MachineResponse>, WFMachinesError> {
+        todo!()
+    }
+}
+
+impl Cancellable for VersionMachine {}
+
+impl TryFrom<CommandType> for VersionMachineEvents {
+    type Error = ();
+
+    fn try_from(c: CommandType) -> Result<Self, Self::Error> {
+        todo!()
+    }
+}
+
+impl TryFrom<HistoryEvent> for VersionMachineEvents {
+    type Error = WFMachinesError;
+
+    fn try_from(value: HistoryEvent) -> Result<Self, Self::Error> {
+        todo!()
+    }
+}

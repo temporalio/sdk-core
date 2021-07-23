@@ -36,7 +36,7 @@ use crate::{
         coresdk::workflow_commands::{
             workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
             ContinueAsNewWorkflowExecution, FailWorkflowExecution, QueryResult,
-            RequestCancelActivity, ScheduleActivity, StartTimer, WorkflowCommand,
+            RequestCancelActivity, ScheduleActivity, StartTimer, VersionCheck, WorkflowCommand,
         },
         temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
     },
@@ -69,6 +69,7 @@ pub enum WFCommand {
     QueryResponse(QueryResult),
     ContinueAsNew(ContinueAsNewWorkflowExecution),
     CancelWorkflow(CancelWorkflowExecution),
+    VersionCheck(VersionCheck),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
@@ -97,6 +98,7 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::CancelWorkflowExecution(s) => {
                 Ok(WFCommand::CancelWorkflow(s))
             }
+            workflow_command::Variant::VersionCheck(s) => Ok(WFCommand::VersionCheck(s)),
         }
     }
 }

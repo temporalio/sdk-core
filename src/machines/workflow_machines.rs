@@ -1,3 +1,4 @@
+use crate::machines::version_state_machine::version_check;
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
@@ -26,6 +27,7 @@ use crate::{
     workflow::{CommandID, DrivenWorkflow, HistoryUpdate, WorkflowFetcher},
 };
 use slotmap::SlotMap;
+use std::convert::TryInto;
 use std::{
     borrow::{Borrow, BorrowMut},
     collections::{hash_map::DefaultHasher, HashMap, VecDeque},
@@ -61,8 +63,8 @@ pub(crate) struct WorkflowMachines {
 
     all_machines: SlotMap<MachineKey, Box<dyn TemporalStateMachine + 'static>>,
 
-    /// A mapping for accessing all the machines, where the key is the id of the initiating event
-    /// for that machine.
+    /// A mapping for accessing machines associated to a particular event, where the key is the id
+    /// of the initiating event for that machine.
     machines_by_event_id: HashMap<i64, MachineKey>,
 
     /// Maps command ids as created by workflow authors to their associated machines.
@@ -144,6 +146,8 @@ pub enum WFMachinesError {
     HistoryFetchingError(tonic::Status),
     #[error("Unable to process partial event history because workflow is no longer cached.")]
     CacheMiss,
+    #[error("Lang sent us an invalid command {0:?}: {1}")]
+    BadWfCommand(WFCommand, String),
 }
 
 impl WorkflowMachines {
@@ -589,7 +593,7 @@ impl WorkflowMachines {
             match cmd {
                 WFCommand::AddTimer(attrs) => {
                     let tid = attrs.timer_id.clone();
-                    let timer = self.add_new_machine(new_timer(attrs));
+                    let timer = self.add_new_command_machine(new_timer(attrs));
                     self.id_to_machine
                         .insert(CommandID::Timer(tid), timer.machine);
                     self.current_wf_task_commands.push_back(timer);
@@ -600,7 +604,7 @@ impl WorkflowMachines {
                 )?,
                 WFCommand::AddActivity(attrs) => {
                     let aid = attrs.activity_id.clone();
-                    let activity = self.add_new_machine(new_activity(attrs));
+                    let activity = self.add_new_command_machine(new_activity(attrs));
                     self.id_to_machine
                         .insert(CommandID::Activity(aid), activity.machine);
                     self.current_wf_task_commands.push_back(activity);
@@ -610,20 +614,39 @@ impl WorkflowMachines {
                     &mut jobs,
                 )?,
                 WFCommand::CompleteWorkflow(attrs) => {
-                    let cwfm = self.add_new_machine(complete_workflow(attrs));
+                    let cwfm = self.add_new_command_machine(complete_workflow(attrs));
                     self.current_wf_task_commands.push_back(cwfm);
                 }
                 WFCommand::FailWorkflow(attrs) => {
-                    let fwfm = self.add_new_machine(fail_workflow(attrs));
+                    let fwfm = self.add_new_command_machine(fail_workflow(attrs));
                     self.current_wf_task_commands.push_back(fwfm);
                 }
                 WFCommand::ContinueAsNew(attrs) => {
-                    let canm = self.add_new_machine(continue_as_new(attrs));
+                    let canm = self.add_new_command_machine(continue_as_new(attrs));
                     self.current_wf_task_commands.push_back(canm);
                 }
                 WFCommand::CancelWorkflow(attrs) => {
-                    let cancm = self.add_new_machine(cancel_workflow(attrs));
+                    let cancm = self.add_new_command_machine(cancel_workflow(attrs));
                     self.current_wf_task_commands.push_back(cancm);
+                }
+                WFCommand::VersionCheck(attrs) => {
+                    let max_version = if let Ok(m) = attrs.max_version.try_into() {
+                        m
+                    } else {
+                        return Err(WFMachinesError::BadWfCommand(
+                            WFCommand::VersionCheck(attrs),
+                            "Max version in version check command must be greater than zero"
+                                .to_string(),
+                        ));
+                    };
+                    let verm_key = self.all_machines.insert(Box::new(version_check(
+                        attrs.change_id.clone(),
+                        self.replaying,
+                        attrs.min_version.into(),
+                        max_version,
+                    )));
+                    self.id_to_machine
+                        .insert(CommandID::VersionCheck(attrs.change_id), verm_key);
                 }
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level
@@ -690,7 +713,7 @@ impl WorkflowMachines {
         Ok(())
     }
 
-    fn add_new_machine<T: TemporalStateMachine + 'static>(
+    fn add_new_command_machine<T: TemporalStateMachine + 'static>(
         &mut self,
         machine: NewMachineWithCommand<T>,
     ) -> CommandAndMachine {
