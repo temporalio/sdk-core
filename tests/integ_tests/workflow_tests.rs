@@ -6,9 +6,14 @@ mod timers;
 
 use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::{collections::HashMap, sync::Arc, time::Duration};
-use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use temporal_sdk_core::{
     protos::coresdk::{
         activity_result::ActivityResult,
@@ -18,7 +23,8 @@ use temporal_sdk_core::{
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
-    tracing_init, Core, IntoCompletion, PollWfError,
+    prototype_rust_sdk::{WfContext, WorkflowResult},
+    Core, IntoCompletion, PollWfError,
 };
 use test_utils::{
     init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreTestHelpers, CoreWfStarter, GwApi,
@@ -93,7 +99,6 @@ pub async fn cache_evictions_wf(mut command_sink: WfContext) -> WorkflowResult<(
 
 #[tokio::test]
 async fn workflow_lru_cache_evictions() {
-    tracing_init();
     let wf_name = "workflow_lru_cache_evictions";
     let mut starter = CoreWfStarter::new(wf_name);
     starter.max_cached_workflows(1);
@@ -174,7 +179,10 @@ async fn fail_wf_task() {
             variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
         }]
     );
-    // So poll again
+    core.complete_workflow_task(WfActivationCompletion::empty(task.run_id))
+        .await
+        .unwrap();
+
     let task = core.poll_workflow_task(&task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![StartTimer {
@@ -432,6 +440,9 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
             variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
         }]
     );
+    core.complete_workflow_task(WfActivationCompletion::empty(wf_task.run_id))
+        .await
+        .unwrap();
     // Start from the beginning
     let wf_task = poll_sched_act_poll().await;
     // Time out this time
@@ -452,6 +463,9 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
             variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
         }]
     );
+    core.complete_workflow_task(WfActivationCompletion::empty(wf_task.run_id))
+        .await
+        .unwrap();
     // Do it all over again, without timing out this time
     let wf_task = poll_sched_act_poll().await;
     core.complete_execution(&wf_task.run_id).await;

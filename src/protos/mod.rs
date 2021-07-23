@@ -144,6 +144,11 @@ pub mod coresdk {
                     )
                 })
             }
+
+            /// Returns true if the only job is eviction
+            pub(crate) fn is_only_eviction(&self) -> bool {
+                self.jobs.len() == 1 && self.eviction_index().is_some()
+            }
         }
 
         impl Display for WfActivation {
@@ -367,6 +372,45 @@ pub mod coresdk {
                 run_id,
                 status: Some(status),
             }
+        }
+
+        /// Returns true if the activation has either a fail, continue, cancel, or complete workflow
+        /// execution command in it.
+        pub fn has_execution_ending(&self) -> bool {
+            self.has_complete_workflow_execution()
+                || self.has_fail_execution()
+                || self.has_continue_as_new()
+                || self.has_cancel_workflow_execution()
+        }
+
+        /// Returns true if the activation contains a fail workflow execution command
+        pub fn has_fail_execution(&self) -> bool {
+            if let Some(wf_activation_completion::Status::Successful(s)) = &self.status {
+                return s.commands.iter().any(|wfc| {
+                    matches!(
+                        wfc,
+                        WorkflowCommand {
+                            variant: Some(workflow_command::Variant::FailWorkflowExecution(_)),
+                        }
+                    )
+                });
+            }
+            false
+        }
+
+        /// Returns true if the activation contains a cancel workflow execution command
+        pub fn has_cancel_workflow_execution(&self) -> bool {
+            if let Some(wf_activation_completion::Status::Successful(s)) = &self.status {
+                return s.commands.iter().any(|wfc| {
+                    matches!(
+                        wfc,
+                        WorkflowCommand {
+                            variant: Some(workflow_command::Variant::CancelWorkflowExecution(_)),
+                        }
+                    )
+                });
+            }
+            false
         }
 
         /// Returns true if the activation contains a continue as new workflow execution command
