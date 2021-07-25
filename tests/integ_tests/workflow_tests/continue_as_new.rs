@@ -27,9 +27,10 @@ async fn continue_as_new_happy_path() {
     let wf_name = "continue_as_new_happy_path";
     let mut starter = CoreWfStarter::new(wf_name);
     let worker = starter.worker().await;
+    worker.register_wf(wf_name.to_string(), continue_as_new_wf);
 
     worker
-        .submit_wf(vec![[1].into()], wf_name.to_owned(), continue_as_new_wf)
+        .submit_wf(wf_name.to_string(), wf_name.to_string(), vec![[1].into()])
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

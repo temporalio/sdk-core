@@ -37,7 +37,8 @@ use crate::{
         coresdk::workflow_commands::{
             workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
             ContinueAsNewWorkflowExecution, FailWorkflowExecution, QueryResult,
-            RequestCancelActivity, ScheduleActivity, SetChangeMarker, StartTimer, WorkflowCommand,
+            RequestCancelActivity, RequestCancelExternalWorkflowExecution, ScheduleActivity,
+            SetChangeMarker, StartChildWorkflowExecution, StartTimer, WorkflowCommand,
         },
         temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
     },
@@ -71,6 +72,8 @@ pub enum WFCommand {
     ContinueAsNew(ContinueAsNewWorkflowExecution),
     CancelWorkflow(CancelWorkflowExecution),
     SetChangeMarker(SetChangeMarker),
+    AddChildWorkflow(StartChildWorkflowExecution),
+    RequestCancelChildWorkflow(RequestCancelExternalWorkflowExecution),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
@@ -100,6 +103,15 @@ impl TryFrom<WorkflowCommand> for WFCommand {
                 Ok(WFCommand::CancelWorkflow(s))
             }
             workflow_command::Variant::SetChangeMarker(s) => Ok(WFCommand::SetChangeMarker(s)),
+            workflow_command::Variant::StartChildWorkflowExecution(s) => {
+                Ok(WFCommand::AddChildWorkflow(s))
+            }
+            workflow_command::Variant::RequestCancelExternalWorkflowExecution(s) => {
+                Ok(WFCommand::RequestCancelChildWorkflow(s))
+            }
+            workflow_command::Variant::SignalExternalWorkflowExecution(_) => {
+                Err(EmptyWorkflowCommandErr) // TODO
+            }
         }
     }
 }
@@ -108,6 +120,7 @@ impl TryFrom<WorkflowCommand> for WFCommand {
 enum MachineKind {
     Activity,
     CancelWorkflow,
+    ChildWorkflow,
     CompleteWorkflow,
     ContinueAsNewWorkflow,
     FailWorkflow,

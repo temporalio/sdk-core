@@ -3,6 +3,7 @@ use crate::{
     core_tracing::VecDisplayer,
     machines::{
         activity_state_machine::new_activity, cancel_workflow_state_machine::cancel_workflow,
+        child_workflow_state_machine::new_child_workflow,
         complete_workflow_state_machine::complete_workflow,
         continue_as_new_workflow_state_machine::continue_as_new,
         fail_workflow_state_machine::fail_workflow, timer_state_machine::new_timer,
@@ -662,6 +663,18 @@ impl WorkflowMachines {
                         }
                     }
                 }
+                WFCommand::AddChildWorkflow(attrs) => {
+                    let wfid = attrs.workflow_id.clone();
+                    let child_workflow = self.add_new_command_machine(new_child_workflow(attrs));
+                    // TODO: workflow_id is not a good identifier, it is not guaranteed to be unique.
+                    self.id_to_machine
+                        .insert(CommandID::ChildWorkflowStart(wfid), child_workflow.machine);
+                    self.current_wf_task_commands.push_back(child_workflow);
+                }
+                WFCommand::RequestCancelChildWorkflow(attrs) => self.process_cancellation(
+                    &CommandID::ChildWorkflowStart(attrs.workflow_id.to_owned()),
+                    &mut jobs,
+                )?,
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level
                     unimplemented!("Query responses should not make it down into the machines")

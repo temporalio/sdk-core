@@ -208,6 +208,12 @@ pub mod coresdk {
                         wf_activation_job::Variant::NotifyHasChange(_) => {
                             write!(f, "NotifyHasChange")
                         }
+                        wf_activation_job::Variant::ResolveChildWorkflowExecutionStart(_) => {
+                            write!(f, "ResolveChildWorkflowExecutionStart")
+                        }
+                        wf_activation_job::Variant::ResolveChildWorkflowExecution(_) => {
+                            write!(f, "ResolveChildWorkflowExecution")
+                        }
                         wf_activation_job::Variant::RemoveFromCache(_) => {
                             write!(f, "RemoveFromCache")
                         }
@@ -246,6 +252,10 @@ pub mod coresdk {
             }
         }
     }
+    pub mod child_workflow {
+        tonic::include_proto!("coresdk.child_workflow");
+    }
+
     pub mod workflow_commands {
         tonic::include_proto!("coresdk.workflow_commands");
 
@@ -283,6 +293,15 @@ pub mod coresdk {
                         }
                         workflow_command::Variant::SetChangeMarker(_) => {
                             write!(f, "SetChangeMarker")
+                        }
+                        workflow_command::Variant::StartChildWorkflowExecution(_) => {
+                            write!(f, "StartChildWorkflowExecution")
+                        }
+                        workflow_command::Variant::RequestCancelExternalWorkflowExecution(_) => {
+                            write!(f, "RequestCancelExternalWorkflowExecution")
+                        }
+                        workflow_command::Variant::SignalExternalWorkflowExecution(_) => {
+                            write!(f, "SignalExternalWorkflowExecution")
                         }
                     },
                 }
@@ -731,7 +750,7 @@ pub mod temporal {
 
                 use crate::protos::{
                     coresdk::{workflow_commands, PayloadsExt},
-                    temporal::api::common::v1::ActivityType,
+                    temporal::api::common::v1::{ActivityType, WorkflowType},
                     temporal::api::enums::v1::CommandType,
                 };
                 use command::Attributes;
@@ -822,6 +841,33 @@ pub mod temporal {
                                 start_to_close_timeout: s.start_to_close_timeout,
                                 heartbeat_timeout: s.heartbeat_timeout,
                                 retry_policy: s.retry_policy.map(Into::into),
+                            },
+                        )
+                    }
+                }
+
+                impl From<workflow_commands::StartChildWorkflowExecution> for command::Attributes {
+                    fn from(s: workflow_commands::StartChildWorkflowExecution) -> Self {
+                        Self::StartChildWorkflowExecutionCommandAttributes(
+                            StartChildWorkflowExecutionCommandAttributes {
+                                workflow_id: s.workflow_id,
+                                workflow_type: Some(WorkflowType {
+                                    name: s.workflow_type,
+                                }),
+                                control: "".into(),
+                                namespace: s.namespace,
+                                task_queue: Some(s.task_queue.into()),
+                                header: Some(s.header.into()),
+                                memo: Some(s.memo.into()),
+                                search_attributes: Some(s.search_attributes.into()),
+                                input: s.input.into_payloads(),
+                                workflow_id_reuse_policy: s.workflow_id_reuse_policy,
+                                workflow_execution_timeout: s.workflow_execution_timeout,
+                                workflow_run_timeout: s.workflow_run_timeout,
+                                workflow_task_timeout: s.workflow_task_timeout,
+                                retry_policy: s.retry_policy.map(Into::into),
+                                cron_schedule: s.cron_schedule.clone(),
+                                parent_close_policy: s.parent_close_policy,
                             },
                         )
                     }

@@ -3,8 +3,6 @@ pub mod canned_histories;
 mod history_builder;
 mod history_info;
 
-pub(crate) use history_builder::TestHistoryBuilder;
-
 use crate::{
     pollers::{
         BoxedActPoller, BoxedPoller, BoxedWFPoller, MockManualPoller, MockPoller,
@@ -16,7 +14,7 @@ use crate::{
             workflow_commands::workflow_command,
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
         },
-        temporal::api::common::v1::WorkflowExecution,
+        temporal::api::common::v1::{WorkflowExecution, WorkflowType},
         temporal::api::enums::v1::TaskQueueKind,
         temporal::api::failure::v1::Failure,
         temporal::api::history::v1::History,
@@ -33,6 +31,8 @@ use crate::{
 };
 use bimap::BiMap;
 use futures::FutureExt;
+pub(crate) use history_builder::TestHistoryBuilder;
+pub(crate) use history_builder::DEFAULT_WORKFLOW_TYPE;
 use mockall::TimesRange;
 use parking_lot::RwLock;
 use rand::{thread_rng, Rng};
@@ -451,6 +451,9 @@ pub fn hist_to_poll_resp(
         history: Some(History { events: batch }),
         workflow_execution: Some(wf),
         task_token: task_token.to_vec(),
+        workflow_type: Some(WorkflowType {
+            name: DEFAULT_WORKFLOW_TYPE.to_owned(),
+        }),
         workflow_execution_task_queue: Some(TaskQueue {
             name: task_queue,
             kind: TaskQueueKind::Normal as i32,

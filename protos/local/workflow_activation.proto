@@ -8,7 +8,9 @@ package coresdk.workflow_activation;
 
 import "common.proto";
 import "activity_result.proto";
+import "child_workflow.proto";
 
+import "temporal/api/failure/v1/message.proto";
 import "google/protobuf/timestamp.proto";
 
 /// An instruction to the lang sdk to run some workflow code, whether for the first time or from
@@ -39,13 +41,16 @@ message WFActivationJob {
         CancelWorkflow cancel_workflow = 6;
         /// A request to signal the workflow was received.
         SignalWorkflow signal_workflow = 7;
-        /// An activity was resolved with, result could be completed, failed or cancelled
+        /// An activity was resolved, result could be completed, failed or cancelled
         ResolveActivity resolve_activity = 8;
         /// A change marker has been detected and lang is being told that change exists. This
         /// job is strange in that it is sent pre-emptively to lang without any corresponding
         /// command being sent first.
         NotifyHasChange notify_has_change = 9;
-
+        /// A child workflow execution has started or failed to start
+        ResolveChildWorkflowExecutionStart resolve_child_workflow_execution_start = 10;
+        /// A child workflow was resolved, result could be completed or failed
+        ResolveChildWorkflowExecution resolve_child_workflow_execution = 11;
         /// Remove the workflow identified by the [WFActivation] containing this job from the cache
         /// after performing the activation.
         ///
@@ -83,6 +88,41 @@ message FireTimer {
 message ResolveActivity {
     string activity_id = 1;
     activity_result.ActivityResult result = 2;
+}
+
+/// Notify a workflow that a start child workflow execution request has succeeded, failed or was cancelled.
+message ResolveChildWorkflowExecutionStart {
+    string workflow_id = 1;
+    oneof status {
+        ResolveChildWorkflowExecutionStartSuccess succeeded = 2;
+        ResolveChildWorkflowExecutionStartFailure failed = 3;
+        ResolveChildWorkflowExecutionStartCancelled cancelled = 4;
+    }
+}
+
+/// Simply pass the run_id to lang
+message ResolveChildWorkflowExecutionStartSuccess {
+    string run_id = 1;
+}
+
+/// Provide lang the cause of failure
+message ResolveChildWorkflowExecutionStartFailure {
+    /// Lang should have this information but it's more convenient to pass it back
+    /// for error construction on the lang side.
+    string workflow_type = 1;
+    child_workflow.StartChildWorkflowExecutionFailedCause cause = 2;
+}
+
+/// `failure` should be ChildWorkflowFailure with cause set to CancelledFailure.
+/// The failure is constructed in core for lang's convenience.
+message ResolveChildWorkflowExecutionStartCancelled {
+  temporal.api.failure.v1.Failure failure = 1;
+}
+
+/// Notify a workflow that a child workflow execution has been resolved
+message ResolveChildWorkflowExecution {
+    string workflow_id = 1;
+    child_workflow.ChildWorkflowResult result = 2;
 }
 
 /// Update the workflow's random seed

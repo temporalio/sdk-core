@@ -2,12 +2,14 @@ use crate::{
     protos::coresdk::{
         common::Payload,
         workflow_activation::{
-            wf_activation_job::Variant, FireTimer, NotifyHasChange, ResolveActivity, WfActivation,
+            wf_activation_job::Variant, FireTimer, NotifyHasChange, ResolveActivity,
+            ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart, WfActivation,
             WfActivationJob,
         },
         workflow_commands::{
             workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
-            FailWorkflowExecution, RequestCancelActivity, ScheduleActivity, StartTimer,
+            FailWorkflowExecution, RequestCancelActivity, RequestCancelExternalWorkflowExecution,
+            ScheduleActivity, StartChildWorkflowExecution, StartTimer,
         },
         workflow_completion::WfActivationCompletion,
     },
@@ -87,6 +89,8 @@ impl WorkflowFuture {
         let cmd_id = match &event {
             UnblockEvent::Timer(t) => CommandID::Timer(t.clone()),
             UnblockEvent::Activity(id, _) => CommandID::Activity(id.clone()),
+            UnblockEvent::WorkflowStart(id, _) => CommandID::ChildWorkflowStart(id.clone()),
+            UnblockEvent::WorkflowComplete(id, _) => CommandID::ChildWorkflowComplete(id.clone()),
         };
         let unblocker = self.command_status.remove(&cmd_id);
         unblocker
@@ -128,6 +132,22 @@ impl Future for WorkflowFuture {
                         }) => self.unblock(UnblockEvent::Activity(
                             activity_id,
                             Box::new(result.expect("Activity must have result")),
+                        )),
+                        Variant::ResolveChildWorkflowExecutionStart(
+                            ResolveChildWorkflowExecutionStart {
+                                workflow_id,
+                                status,
+                            },
+                        ) => self.unblock(UnblockEvent::WorkflowStart(
+                            workflow_id,
+                            Box::new(status.expect("Workflow start must have status")),
+                        )),
+                        Variant::ResolveChildWorkflowExecution(ResolveChildWorkflowExecution {
+                            workflow_id,
+                            result,
+                        }) => self.unblock(UnblockEvent::WorkflowComplete(
+                            workflow_id,
+                            Box::new(result.expect("Child Workflow execution must have a result")),
                         )),
                         Variant::UpdateRandomSeed(_) => {}
                         Variant::QueryWorkflow(_) => {
@@ -183,6 +203,16 @@ impl Future for WorkflowFuture {
                             },
                         ));
                     }
+                    RustWfCmd::CancelChildWorkflow(wfid) => {
+                        activation_cmds.push(
+                            workflow_command::Variant::RequestCancelExternalWorkflowExecution(
+                                RequestCancelExternalWorkflowExecution {
+                                    workflow_id: wfid.clone(),
+                                    ..Default::default()
+                                },
+                            ),
+                        );
+                    }
                     RustWfCmd::NewCmd(cmd) => {
                         activation_cmds.push(cmd.cmd.clone());
 
@@ -197,6 +227,9 @@ impl Future for WorkflowFuture {
                             workflow_command::Variant::SetChangeMarker(_) => {
                                 panic!("Set change marker should be a nonblocking command")
                             }
+                            workflow_command::Variant::StartChildWorkflowExecution(
+                                StartChildWorkflowExecution { workflow_id, .. },
+                            ) => CommandID::ChildWorkflowStart(workflow_id),
                             _ => unimplemented!("Command type not implemented"),
                         };
                         self.command_status.insert(
@@ -208,6 +241,14 @@ impl Future for WorkflowFuture {
                     }
                     RustWfCmd::NewNonblockingCmd(cmd) => {
                         activation_cmds.push(cmd);
+                    }
+                    RustWfCmd::SubscribeChildWorkflowCompletion(sub) => {
+                        self.command_status.insert(
+                            CommandID::ChildWorkflowComplete(sub.workflow_id),
+                            WFCommandFutInfo {
+                                unblocker: sub.unblocker,
+                            },
+                        );
                     }
                     RustWfCmd::ForceWFTFailure(err) => {
                         self.outgoing_completions
@@ -255,12 +296,6 @@ impl Future for WorkflowFuture {
                 }
             }
 
-            if activation_cmds.is_empty() {
-                panic!(
-                    "Workflow did not produce any commands or exit, but awaited. This \
-                 means it will deadlock. You probably awaited on a non-WfContext future."
-                );
-            }
             self.outgoing_completions
                 .send(WfActivationCompletion::from_cmds(activation_cmds, run_id))
                 .expect("Completion channel intact");
