@@ -1,6 +1,5 @@
 use std::collections::{HashMap, VecDeque};
 
-use crate::test_help::{hist_to_poll_resp, mock_core_with_opts, MocksHolder, TEST_Q};
 use crate::{
     pollers::MockServerGatewayApis,
     protos::{
@@ -16,8 +15,8 @@ use crate::{
             RespondQueryTaskCompletedResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
-    test_help::canned_histories,
-    tracing_init, Core, CoreInitOptionsBuilder,
+    test_help::{canned_histories, hist_to_poll_resp, mock_core_with_opts, MocksHolder, TEST_Q},
+    Core, CoreInitOptionsBuilder,
 };
 
 #[rstest::rstest]
@@ -25,7 +24,6 @@ use crate::{
 #[case::without_history(false)]
 #[tokio::test]
 async fn legacy_query(#[case] include_history: bool) {
-    tracing_init();
     let wfid = "fake_wf_id";
     let query_resp = "response";
     let t = canned_histories::single_timer("fake_timer");

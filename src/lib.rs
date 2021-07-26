@@ -22,7 +22,6 @@ mod protosext;
 pub(crate) mod task_token;
 mod worker;
 mod workflow;
-mod workflow_tasks;
 
 #[cfg(test)]
 mod core_tests;
@@ -58,10 +57,12 @@ use crate::{
     protosext::{ValidPollWFTQResponse, WorkflowTaskCompletion},
     task_token::TaskToken,
     worker::{WorkerDispatcher, WorkerStatus},
-    workflow::WorkflowCachingPolicy,
-    workflow_tasks::{
-        ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
-        ServerCommandsWithWorkflowInfo, WorkflowTaskManager,
+    workflow::{
+        workflow_tasks::{
+            ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
+            ServerCommandsWithWorkflowInfo, WorkflowTaskManager,
+        },
+        WorkflowCachingPolicy,
     },
 };
 use futures::{FutureExt, TryFutureExt};
@@ -262,7 +263,7 @@ where
             // We must first check if there are pending workflow activations for workflows that are
             // currently replaying or otherwise need immediate jobs, and issue those before
             // bothering the server.
-            if let Some(pa) = self.wft_manager.next_pending_activation(task_queue) {
+            if let Some(pa) = self.wft_manager.next_pending_activation(task_queue)? {
                 debug!(activation=%pa, "Sending pending activation to lang");
                 return Ok(pa);
             }
@@ -402,7 +403,7 @@ where
             }),
         };
 
-        self.wft_manager.activation_done(&completion.run_id);
+        self.wft_manager.on_activation_done(&completion.run_id);
         r
     }
 
@@ -531,7 +532,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     async fn apply_server_work(
         &self,
         work: ValidPollWFTQResponse,
-    ) -> Result<Option<WfActivation>, CompleteWfError> {
+    ) -> Result<Option<WfActivation>, PollWfError> {
         let we = work.workflow_execution.clone();
         let tt = work.task_token.clone();
         match self
@@ -555,14 +556,16 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                 Ok(None)
             }
             NewWfTaskOutcome::CacheMiss => {
-                debug!(workflow_execution=?we,
-                "Unable to process workflow task with partial history because workflow cache does not contain workflow anymore.");
+                debug!(workflow_execution=?we, "Unable to process workflow task with partial \
+                history because workflow cache does not contain workflow anymore.");
                 self.server_gateway
                     .fail_workflow_task(
                         tt,
                         WorkflowTaskFailedCause::ResetStickyTaskQueue,
                         Some(Failure {
-                            message: "Unable to process workflow task with partial history because workflow cache does not contain workflow anymore.".to_string(),
+                            message: "Unable to process workflow task with partial history \
+                                      because workflow cache does not contain workflow anymore."
+                                .to_string(),
                             ..Default::default()
                         }),
                     )
@@ -645,7 +648,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             None => {}
         }
 
-        self.wft_manager.after_wft_report(run_id);
+        self.wft_manager.after_wft_report(run_id)?;
         Ok(())
     }
 
@@ -655,7 +658,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         run_id: &str,
         failure: workflow_completion::Failure,
     ) -> Result<(), CompleteWfError> {
-        match self.wft_manager.failed_activation(run_id) {
+        match self.wft_manager.failed_activation(run_id)? {
             FailedActivationOutcome::Report(tt) => {
                 self.handle_wft_complete_errs(run_id, || async {
                     self.server_gateway

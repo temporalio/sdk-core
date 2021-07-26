@@ -1,12 +1,9 @@
 mod bridge;
-mod cache_manager;
-mod concurrency_manager;
 mod driven_workflow;
 mod history_update;
+pub(crate) mod workflow_tasks;
 
 pub(crate) use bridge::WorkflowBridge;
-pub(crate) use cache_manager::WorkflowCacheManager;
-pub(crate) use concurrency_manager::WorkflowConcurrencyManager;
 pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
 pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
 
@@ -27,9 +24,9 @@ type Result<T, E = WorkflowError> = std::result::Result<T, E>;
 #[derive(thiserror::Error, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum WorkflowError {
-    /// The workflow machines associated with `run_id` were not found in memory
-    #[error("Workflow machines associated with `{run_id}` not found")]
-    MissingMachine { run_id: String },
+    /// The workflow machines associated with the requested workflow were not found in memory
+    #[error("Workflow machines not found")]
+    MissingMachine,
     /// Underlying error in state machines
     #[error("Underlying error in state machines: {0:?}")]
     UnderlyingMachinesError(#[from] WFMachinesError),

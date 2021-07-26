@@ -1078,7 +1078,12 @@ async fn lots_of_workflows() {
                     ..Default::default()
                 }
                 .into(),
-                Some(wf_activation_job::Variant::RemoveFromCache(_)) => continue,
+                Some(wf_activation_job::Variant::RemoveFromCache(_)) => {
+                    core.complete_workflow_task(WfActivationCompletion::empty(wft.run_id))
+                        .await
+                        .unwrap();
+                    continue;
+                }
                 _ => CompleteWorkflowExecution { result: None }.into(),
             };
             core.complete_workflow_task(WfActivationCompletion::from_status(
@@ -1215,5 +1220,39 @@ async fn sends_appropriate_sticky_task_queue_responses() {
     ))
     .await
     .unwrap();
+    core.shutdown().await;
+}
+
+#[tokio::test]
+#[should_panic(expected = "called more than 2 times")]
+async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation() {
+    let wfid = "fake_wf_id";
+    let t = canned_histories::single_timer("fake_timer");
+    let mock = MockServerGatewayApis::new();
+    let mock = single_hist_mock_sg(wfid, t, &[1, 2], mock, true);
+    let core = mock_core(mock);
+
+    // Poll for and complete first workflow task
+    let activation = core.poll_workflow_task(TEST_Q).await.unwrap();
+    core.complete_workflow_task(WfActivationCompletion::from_cmd(
+        StartTimer {
+            timer_id: "fake_timer".to_string(),
+            ..Default::default()
+        }
+        .into(),
+        activation.run_id,
+    ))
+    .await
+    .unwrap();
+    let eviction_activation = core.poll_workflow_task(TEST_Q).await.unwrap();
+    assert_matches!(
+        eviction_activation.jobs.as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+        }]
+    );
+    // Poll again. We should not overwrite the eviction with the new work from the server to fire
+    // the timer. IE: We will panic here because the mock has no more responses.
+    core.poll_workflow_task(TEST_Q).await.unwrap();
     core.shutdown().await;
 }
