@@ -30,6 +30,7 @@ use uuid::Uuid;
 use crate::protos::coresdk::PayloadsExt;
 #[cfg(test)]
 use futures::Future;
+use tonic::codegen::InterceptedService;
 
 /// Options for the connection to the temporal server
 #[derive(Clone, Debug)]
@@ -87,7 +88,12 @@ impl Debug for ClientTlsConfig {
 
 impl ServerGatewayOptions {
     /// Attempt to establish a connection to the Temporal server
-    pub async fn connect(&self) -> Result<ServerGateway, CoreInitError> {
+    pub async fn connect(
+        &self,
+    ) -> Result<
+        ServerGateway<impl Fn(Request<()>) -> Result<Request<()>, Status> + Clone + Send + Sync>,
+        CoreInitError,
+    > {
         let channel = Channel::from_shared(self.target_url.to_string())?;
         let channel = self.add_tls_to_channel(channel).await?;
         let channel = channel.connect().await?;
@@ -128,30 +134,27 @@ impl ServerGatewayOptions {
 
 /// This function will get called on each outbound request. Returning a `Status` here will cancel
 /// the request and have that status returned to the caller.
-fn intercept(opts: &ServerGatewayOptions) -> impl Fn(Request<()>) -> Result<Request<()>, Status> {
-    let timeout_str = format!("{}m", opts.long_poll_timeout.as_millis());
+fn intercept(
+    opts: &ServerGatewayOptions,
+) -> impl Fn(Request<()>) -> Result<Request<()>, Status> + Clone {
+    let timeout = opts.long_poll_timeout;
     move |mut req: Request<()>| {
         let metadata = req.metadata_mut();
-        // TODO: Only apply this to long poll requests
-        metadata.insert(
-            "grpc-timeout",
-            timeout_str
-                .parse()
-                .expect("Timeout string construction cannot fail"),
-        );
         metadata.insert(
             "client-name",
             "core-sdk".parse().expect("Static value is parsable"),
         );
+        // TODO: Only apply this to long poll requests
+        req.set_timeout(timeout);
         Ok(req)
     }
 }
 
 /// Contains an instance of a client for interacting with the temporal server
 #[derive(Debug)]
-pub struct ServerGateway {
+pub struct ServerGateway<F: Clone> {
     /// Client for interacting with workflow service
-    pub service: WorkflowServiceClient<tonic::transport::Channel>,
+    pub service: WorkflowServiceClient<InterceptedService<Channel, F>>,
     /// Options gateway was initialized with
     pub opts: ServerGatewayOptions,
 }
@@ -294,7 +297,10 @@ pub trait ServerGatewayApis {
 }
 
 #[async_trait::async_trait]
-impl ServerGatewayApis for ServerGateway {
+impl<F> ServerGatewayApis for ServerGateway<F>
+where
+    F: Fn(Request<()>) -> Result<Request<()>, Status> + Clone + Send + Sync,
+{
     async fn start_workflow(
         &self,
         input: Vec<Payload>,
