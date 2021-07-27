@@ -18,19 +18,24 @@ use crate::{
 };
 use std::{
     fmt::{Debug, Formatter},
+    future,
     time::Duration,
 };
 use tonic::{
     transport::{Certificate, Channel, Endpoint, Identity},
-    Request, Status,
+    Request, Response, Status,
 };
+use tower::{Service, ServiceBuilder};
 use url::Url;
 use uuid::Uuid;
 
 use crate::protos::coresdk::PayloadsExt;
 #[cfg(test)]
 use futures::Future;
-use tonic::codegen::InterceptedService;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tonic::codegen::{Body, InterceptedService};
+use tower::retry::Policy;
 
 /// Options for the connection to the temporal server
 #[derive(Clone, Debug)]
@@ -79,6 +84,39 @@ pub struct ClientTlsConfig {
     pub client_private_key: Vec<u8>,
 }
 
+pub struct GrpcRetryPolicy(usize);
+
+type Req = Request<()>;
+type Res = Response<()>;
+impl<E> Policy<Req, Res, E> for GrpcRetryPolicy {
+    type Future = future::Ready<Self>;
+
+    fn retry(&self, req: &Req, result: Result<&Res, &E>) -> Option<Self::Future> {
+        match result {
+            Ok(_) => {
+                // Treat all `Response`s as success,
+                // so don't retry...
+                None
+            }
+            Err(_) => {
+                // Treat all errors as failures...
+                // But we limit the number of attempts...
+                if self.0 > 0 {
+                    // Try again!
+                    Some(future::ready(GrpcRetryPolicy(self.0 - 1)))
+                } else {
+                    // Used all our attempts, no retry...
+                    None
+                }
+            }
+        }
+    }
+
+    fn clone_request(&self, req: &Req) -> Option<Req> {
+        todo!()
+    }
+}
+
 impl Debug for ClientTlsConfig {
     // Intentionally omit details here since they could leak a key if ever printed
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -97,8 +135,12 @@ impl ServerGatewayOptions {
         let channel = Channel::from_shared(self.target_url.to_string())?;
         let channel = self.add_tls_to_channel(channel).await?;
         let channel = channel.connect().await?;
-        let interceptor = intercept(&self);
-        let service = WorkflowServiceClient::with_interceptor(channel, interceptor);
+        let channel = ServiceBuilder::new()
+            // Interceptors can be also be applied as middleware
+            .layer(tonic::service::interceptor_fn(intercept(&self)))
+            .retry(GrpcRetryPolicy(3))
+            .service(channel);
+        let service = WorkflowServiceClient::new(channel);
         Ok(ServerGateway {
             service,
             opts: self.clone(),

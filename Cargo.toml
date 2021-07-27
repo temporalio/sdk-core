@@ -37,6 +37,7 @@ thiserror = "1.0"
 tokio = { version = "1.1", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs"] }
 tokio-stream = "0.1"
 tonic = { version = "0.5", features = ["tls", "tls-roots"] }
+tower = { version = "0.4.8", features = ["retry"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-futures = "0.2"
 tracing-opentelemetry = "0.14"
