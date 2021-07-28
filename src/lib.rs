@@ -22,7 +22,6 @@ mod protosext;
 pub(crate) mod task_token;
 mod worker;
 mod workflow;
-mod workflow_tasks;
 
 #[cfg(test)]
 mod core_tests;
@@ -58,10 +57,12 @@ use crate::{
     protosext::{ValidPollWFTQResponse, WorkflowTaskCompletion},
     task_token::TaskToken,
     worker::{WorkerDispatcher, WorkerStatus},
-    workflow::WorkflowCachingPolicy,
-    workflow_tasks::{
-        ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
-        ServerCommandsWithWorkflowInfo, WorkflowTaskManager,
+    workflow::{
+        workflow_tasks::{
+            ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
+            ServerCommandsWithWorkflowInfo, WorkflowTaskManager,
+        },
+        WorkflowCachingPolicy,
     },
 };
 use futures::{FutureExt, TryFutureExt};
@@ -104,6 +105,16 @@ pub trait Core: Send + Sync {
     ///
     /// The returned activation is guaranteed to be for the same task queue / worker which was
     /// provided as the `task_queue` argument.
+    ///
+    /// It is important to understand that all activations must be responded to. There can only
+    /// be one outstanding activation for a particular run of a workflow at any time. If an
+    /// activation is not responded to, it will cause that workflow to become stuck forever.
+    ///
+    /// Activations that contain only a `remove_from_cache` job should not cause the workflow code
+    /// to be invoked and may be responded to with an empty command list. Eviction jobs may also
+    /// appear with other jobs, but will always appear last in the job list. In this case it is
+    /// expected that the workflow code will be invoked, and the response produced as normal, but
+    /// the caller should evict the run after doing so.
     ///
     /// It is rarely a good idea to call poll concurrently. It handles polling the server
     /// concurrently internally.
@@ -252,7 +263,7 @@ where
             // We must first check if there are pending workflow activations for workflows that are
             // currently replaying or otherwise need immediate jobs, and issue those before
             // bothering the server.
-            if let Some(pa) = self.wft_manager.next_pending_activation(task_queue) {
+            if let Some(pa) = self.wft_manager.next_pending_activation(task_queue)? {
                 debug!(activation=%pa, "Sending pending activation to lang");
                 return Ok(pa);
             }
@@ -392,7 +403,7 @@ where
             }),
         };
 
-        self.wft_manager.activation_done(&completion.run_id);
+        self.wft_manager.on_activation_done(&completion.run_id);
         r
     }
 
@@ -436,7 +447,7 @@ where
     }
 
     fn request_workflow_eviction(&self, run_id: &str) {
-        self.wft_manager.evict_run(run_id);
+        self.wft_manager.request_eviction(run_id);
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {
@@ -521,7 +532,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     async fn apply_server_work(
         &self,
         work: ValidPollWFTQResponse,
-    ) -> Result<Option<WfActivation>, CompleteWfError> {
+    ) -> Result<Option<WfActivation>, PollWfError> {
         let we = work.workflow_execution.clone();
         let tt = work.task_token.clone();
         match self
@@ -545,14 +556,16 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                 Ok(None)
             }
             NewWfTaskOutcome::CacheMiss => {
-                debug!(workflow_execution=?we,
-                "Unable to process workflow task with partial history because workflow cache does not contain workflow anymore.");
+                debug!(workflow_execution=?we, "Unable to process workflow task with partial \
+                history because workflow cache does not contain workflow anymore.");
                 self.server_gateway
                     .fail_workflow_task(
                         tt,
                         WorkflowTaskFailedCause::ResetStickyTaskQueue,
                         Some(Failure {
-                            message: "Unable to process workflow task with partial history because workflow cache does not contain workflow anymore.".to_string(),
+                            message: "Unable to process workflow task with partial history \
+                                      because workflow cache does not contain workflow anymore."
+                                .to_string(),
                             ..Default::default()
                         }),
                     )
@@ -635,7 +648,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             None => {}
         }
 
-        self.wft_manager.after_wft_report(run_id);
+        self.wft_manager.after_wft_report(run_id)?;
         Ok(())
     }
 
@@ -645,7 +658,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         run_id: &str,
         failure: workflow_completion::Failure,
     ) -> Result<(), CompleteWfError> {
-        match self.wft_manager.failed_activation(run_id) {
+        match self.wft_manager.failed_activation(run_id)? {
             FailedActivationOutcome::Report(tt) => {
                 self.handle_wft_complete_errs(run_id, || async {
                     self.server_gateway
@@ -709,7 +722,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             _ => Ok(()),
         };
         if should_evict {
-            self.wft_manager.evict_run(run_id);
+            self.wft_manager.request_eviction(run_id);
         }
         res.map_err(Into::into)
     }

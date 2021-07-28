@@ -30,6 +30,7 @@ use std::{
     },
     time::Duration,
 };
+use tokio::sync::watch;
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedSender},
@@ -44,7 +45,7 @@ pub struct TestRustWorker {
     task_queue: String,
     task_timeout: Option<Duration>,
     /// Maps run id to the driver
-    workflows: Arc<DashMap<String, UnboundedSender<WfActivation>>>,
+    workflows: DashMap<String, UnboundedSender<WfActivation>>,
     /// Maps workflow id to the function for executing workflow runs with that ID
     workflow_fns: DashMap<String, WorkflowFunction>,
     /// Number of live workflows
@@ -96,6 +97,7 @@ impl TestRustWorker {
     /// Drives all workflows until they have all finished, repeatedly polls server to fetch work
     /// for them.
     pub async fn run_until_done(self) -> Result<(), anyhow::Error> {
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let poller = async move {
             let (completions_tx, mut completions_rx) = unbounded_channel();
             loop {
@@ -115,46 +117,41 @@ impl TestRustWorker {
                     // NOTE: Don't clone args if this gets ported to be a non-test rust worker
                     let (wff, activations) =
                         wf_function.start_workflow(sw.arguments.clone(), completions_tx.clone());
-                    let live_wfs = self.incomplete_workflows.clone();
-                    // TODO: Cloning this map is silly and will go away with eviction handshake
-                    let wfs_map = self.workflows.clone();
-                    let run_id = activation.run_id.clone();
+                    let mut shutdown_rx = shutdown_rx.clone();
                     let jh = tokio::spawn(async move {
-                        let res = wff.await;
-                        if !matches!(&res, Ok(WfExitValue::Evicted)) {
-                            wfs_map.remove(&run_id);
-                            live_wfs.fetch_sub(1, Ordering::SeqCst);
+                        tokio::select! {
+                            r = wff => r,
+                            _ = shutdown_rx.changed() => Ok(WfExitValue::Evicted)
                         }
-                        res
                     });
                     self.workflows
                         .insert(activation.run_id.clone(), activations);
                     self.join_handles.push(jh);
                 }
+
                 // The activation is expected to apply to some workflow we know about. Use it to
                 // unblock things and advance the workflow.
-                let did_send = if let Some(tx) = self.workflows.get_mut(&activation.run_id) {
+                if let Some(tx) = self.workflows.get_mut(&activation.run_id) {
                     tx.send(activation).unwrap();
-                    true
                 } else {
-                    // TODO: fix with eviction handshake
-                    if !activation.is_eviction() {
-                        bail!("Got activation for unknown workflow");
-                    }
-                    false
+                    bail!("Got activation for unknown workflow");
                 };
 
-                if did_send {
-                    let completion = completions_rx.recv().await.expect("No workflows left?");
-                    self.core.complete_workflow_task(completion).await.unwrap();
-                    if self.incomplete_workflows.load(Ordering::SeqCst) == 0 {
-                        break Ok(self);
-                    }
+                let completion = completions_rx.recv().await.expect("No workflows left?");
+                if completion.has_execution_ending() {
+                    self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
+                }
+                self.core.complete_workflow_task(completion).await.unwrap();
+                if self.incomplete_workflows.load(Ordering::SeqCst) == 0 {
+                    break Ok(self);
                 }
             }
         };
 
         let mut myself = poller.await?;
+
+        // Die rebel scum
+        let _ = shutdown_tx.send(true);
         while let Some(h) = myself.join_handles.next().await {
             h??;
         }
@@ -254,7 +251,7 @@ mod tests {
         let wf_id = "fakeid";
         let t = canned_histories::single_timer("fake_timer");
         let core = build_fake_core(wf_id, t, [2]);
-        let worker = TestRustWorker::new(Arc::new(core.inner), TEST_Q.to_string(), None);
+        let worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
         worker
             .submit_wf(vec![], wf_id.to_string(), WorkflowFunction::new(timer_wf))

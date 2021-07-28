@@ -114,6 +114,9 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
                     variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
                 }]
             ) {
+                core.complete_workflow_task(WfActivationCompletion::empty(task.run_id))
+                    .await
+                    .unwrap();
                 continue;
             }
             assert_matches!(
