@@ -1,6 +1,5 @@
 use std::collections::{HashMap, VecDeque};
 
-use crate::test_help::{hist_to_poll_resp, mock_core_with_opts, MocksHolder, TEST_Q};
 use crate::{
     pollers::MockServerGatewayApis,
     protos::{
@@ -16,7 +15,7 @@ use crate::{
             RespondQueryTaskCompletedResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
-    test_help::canned_histories,
+    test_help::{canned_histories, hist_to_poll_resp, mock_core_with_opts, MocksHolder, TEST_Q},
     Core, CoreInitOptionsBuilder,
 };
 
@@ -74,11 +73,17 @@ async fn legacy_query(#[case] include_history: bool) {
         .await
         .unwrap();
     };
+    let clear_eviction = || async {
+        let t = core.poll_workflow_task(TEST_Q).await.unwrap();
+        core.complete_workflow_task(WfActivationCompletion::empty(t.run_id))
+            .await
+            .unwrap();
+    };
+
     first_wft().await;
 
-    // Clear eviction
     if include_history {
-        core.poll_workflow_task(TEST_Q).await.unwrap();
+        clear_eviction().await;
         first_wft().await;
     }
 
@@ -107,9 +112,8 @@ async fn legacy_query(#[case] include_history: bool) {
     .await
     .unwrap();
 
-    // Clear eviction
     if include_history {
-        core.poll_workflow_task(TEST_Q).await.unwrap();
+        clear_eviction().await;
         first_wft().await;
     }
 

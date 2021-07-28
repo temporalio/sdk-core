@@ -21,12 +21,12 @@ use tokio::time::sleep;
 async fn after_shutdown_server_is_not_polled() {
     let t = canned_histories::single_timer("fake_timer");
     let core = build_fake_core("fake_wf_id", t, &[1]);
-    let res = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    let res = core.poll_workflow_task(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
 
-    core.inner.shutdown().await;
+    core.shutdown().await;
     assert_matches!(
-        core.inner.poll_workflow_task(TEST_Q).await.unwrap_err(),
+        core.poll_workflow_task(TEST_Q).await.unwrap_err(),
         PollWfError::ShutDown
     );
 }

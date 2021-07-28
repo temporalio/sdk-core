@@ -132,14 +132,22 @@ pub mod coresdk {
                 }] if qr.query_id == LEGACY_QUERY_ID)
             }
 
-            /// Returns true if this activation has one and only one job to perform an eviction
-            pub(crate) fn is_eviction(&self) -> bool {
-                matches!(
-                    &self.jobs.as_slice(),
-                    &[WfActivationJob {
-                        variant: Some(wf_activation_job::Variant::RemoveFromCache(_))
-                    }]
-                )
+            /// Returns the index of the eviction job if this activation contains one. If present
+            /// it should always be the last job in the list.
+            pub(crate) fn eviction_index(&self) -> Option<usize> {
+                self.jobs.iter().position(|j| {
+                    matches!(
+                        j,
+                        WfActivationJob {
+                            variant: Some(wf_activation_job::Variant::RemoveFromCache(_))
+                        }
+                    )
+                })
+            }
+
+            /// Returns true if the only job is eviction
+            pub(crate) fn is_only_eviction(&self) -> bool {
+                self.jobs.len() == 1 && self.eviction_index().is_some()
             }
         }
 
@@ -324,6 +332,15 @@ pub mod coresdk {
     }
 
     impl WfActivationCompletion {
+        /// Create a successful activation with no commands in it
+        pub fn empty(run_id: String) -> Self {
+            let success = workflow_completion::Success::from_variants(vec![]);
+            Self {
+                run_id,
+                status: Some(wf_activation_completion::Status::Successful(success)),
+            }
+        }
+
         /// Create a successful activation from a list of commands
         pub fn from_cmds(cmds: Vec<workflow_command::Variant>, run_id: String) -> Self {
             let success = workflow_completion::Success::from_variants(cmds);
@@ -358,6 +375,45 @@ pub mod coresdk {
                 run_id,
                 status: Some(status),
             }
+        }
+
+        /// Returns true if the activation has either a fail, continue, cancel, or complete workflow
+        /// execution command in it.
+        pub fn has_execution_ending(&self) -> bool {
+            self.has_complete_workflow_execution()
+                || self.has_fail_execution()
+                || self.has_continue_as_new()
+                || self.has_cancel_workflow_execution()
+        }
+
+        /// Returns true if the activation contains a fail workflow execution command
+        pub fn has_fail_execution(&self) -> bool {
+            if let Some(wf_activation_completion::Status::Successful(s)) = &self.status {
+                return s.commands.iter().any(|wfc| {
+                    matches!(
+                        wfc,
+                        WorkflowCommand {
+                            variant: Some(workflow_command::Variant::FailWorkflowExecution(_)),
+                        }
+                    )
+                });
+            }
+            false
+        }
+
+        /// Returns true if the activation contains a cancel workflow execution command
+        pub fn has_cancel_workflow_execution(&self) -> bool {
+            if let Some(wf_activation_completion::Status::Successful(s)) = &self.status {
+                return s.commands.iter().any(|wfc| {
+                    matches!(
+                        wfc,
+                        WorkflowCommand {
+                            variant: Some(workflow_command::Variant::CancelWorkflowExecution(_)),
+                        }
+                    )
+                });
+            }
+            false
         }
 
         /// Returns true if the activation contains a continue as new workflow execution command

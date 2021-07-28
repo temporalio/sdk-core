@@ -57,9 +57,9 @@ async fn no_worker_for_queue_error_returned_properly() {
     let core = build_fake_core("fake_wf_id", t, Vec::<ResponseType>::new());
 
     let fake_q = "not a registered queue";
-    let res = core.inner.poll_workflow_task(&fake_q).await.unwrap_err();
+    let res = core.poll_workflow_task(&fake_q).await.unwrap_err();
     assert_matches!(res, PollWfError::NoWorkerForQueue(err_q) => err_q == fake_q);
-    core.inner.shutdown().await;
+    core.shutdown().await;
 }
 
 #[tokio::test]
@@ -67,7 +67,6 @@ async fn worker_double_register_is_err() {
     let t = canned_histories::single_timer("fake_timer");
     let core = build_fake_core("fake_wf_id", t, Vec::<ResponseType>::new());
     assert!(core
-        .inner
         .register_worker(
             WorkerConfigBuilder::default()
                 .task_queue(TEST_Q)
@@ -143,11 +142,11 @@ async fn nonexistent_worker_poll_returns_not_registered() {
 async fn after_shutdown_of_worker_get_shutdown_err() {
     let t = canned_histories::single_timer("fake_timer");
     let core = build_fake_core("fake_wf_id", t, &[1]);
-    let res = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    let res = core.poll_workflow_task(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
-    core.inner.shutdown_worker(TEST_Q).await;
+    core.shutdown_worker(TEST_Q).await;
     assert_matches!(
-        core.inner.poll_workflow_task(TEST_Q).await.unwrap_err(),
+        core.poll_workflow_task(TEST_Q).await.unwrap_err(),
         PollWfError::ShutDown
     );
 }
@@ -156,17 +155,17 @@ async fn after_shutdown_of_worker_get_shutdown_err() {
 async fn after_shutdown_of_worker_can_be_reregistered() {
     let t = canned_histories::single_timer("fake_timer");
     let mut core = build_fake_core("fake_wf_id", t.clone(), &[1]);
-    let res = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    let res = core.poll_workflow_task(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
     // Need to recreate mock to re-register worker
     let mocks = single_hist_mock_sg("fake_wf_id", t, &[1, 2], MockServerGatewayApis::new(), true);
-    core.inner.shutdown_worker(TEST_Q).await;
-    register_mock_workers(&mut core.inner, mocks.mock_pollers);
+    core.shutdown_worker(TEST_Q).await;
+    register_mock_workers(&mut core, mocks.mock_pollers);
     // The mock doesn't understand about shutdowns, but all we need to do is make sure the poller
     // gets hit (the mock) -- it will return no work here since there is still an outstanding WFT,
     // which is persistent across the recreated worker.
     assert_matches!(
-        core.inner.poll_workflow_task(TEST_Q).await.unwrap_err(),
+        core.poll_workflow_task(TEST_Q).await.unwrap_err(),
         TonicError(_)
     );
 }
@@ -175,37 +174,35 @@ async fn after_shutdown_of_worker_can_be_reregistered() {
 async fn shutdown_worker_can_complete_pending_activation() {
     let t = canned_histories::single_timer("fake_timer");
     let core = build_fake_core("fake_wf_id", t, &[2]);
-    let res = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    let res = core.poll_workflow_task(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
     // Complete the timer, will queue PA
-    core.inner
-        .complete_workflow_task(WfActivationCompletion::from_cmds(
-            vec![StartTimer {
-                timer_id: "fake_timer".to_string(),
-                ..Default::default()
-            }
-            .into()],
-            res.run_id,
-        ))
-        .await
-        .unwrap();
+    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+        vec![StartTimer {
+            timer_id: "fake_timer".to_string(),
+            ..Default::default()
+        }
+        .into()],
+        res.run_id,
+    ))
+    .await
+    .unwrap();
 
-    core.inner.shutdown_worker(TEST_Q).await;
-    let res = core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    core.shutdown_worker(TEST_Q).await;
+    let res = core.poll_workflow_task(TEST_Q).await.unwrap();
     // The timer fires
     assert_eq!(res.jobs.len(), 1);
-    core.inner
-        .complete_workflow_task(WfActivationCompletion::from_cmds(
-            vec![CompleteWorkflowExecution::default().into()],
-            res.run_id,
-        ))
-        .await
-        .unwrap();
+    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+        vec![CompleteWorkflowExecution::default().into()],
+        res.run_id,
+    ))
+    .await
+    .unwrap();
     // Since non-sticky, one more activation for eviction
-    core.inner.poll_workflow_task(TEST_Q).await.unwrap();
+    core.poll_workflow_task(TEST_Q).await.unwrap();
     // Now it's shut down
     assert_matches!(
-        core.inner.poll_workflow_task(TEST_Q).await.unwrap_err(),
+        core.poll_workflow_task(TEST_Q).await.unwrap_err(),
         PollWfError::ShutDown
     );
 }

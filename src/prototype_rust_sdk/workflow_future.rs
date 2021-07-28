@@ -100,7 +100,9 @@ impl Future for WorkflowFuture {
                 Poll::Pending => return Poll::Pending,
             };
 
+            let is_only_eviction = activation.is_only_eviction();
             let run_id = activation.run_id;
+            let mut die_of_eviction_when_done = false;
 
             for WfActivationJob { variant } in activation.jobs {
                 if let Some(v) = variant {
@@ -128,16 +130,20 @@ impl Future for WorkflowFuture {
                         }
                         Variant::SignalWorkflow(_) => {}
                         Variant::RemoveFromCache(_) => {
-                            // Will make more sense once we have completions for evictions
-                            self.outgoing_completions
-                                .send(WfActivationCompletion::from_cmds(vec![], run_id))
-                                .expect("Completion channel intact");
-                            return Ok(WfExitValue::Evicted).into();
+                            die_of_eviction_when_done = true;
                         }
                     }
                 } else {
                     return Err(anyhow!("Empty activation job variant")).into();
                 }
+            }
+
+            if is_only_eviction {
+                // No need to do anything with the workflow code in this case
+                self.outgoing_completions
+                    .send(WfActivationCompletion::from_cmds(vec![], run_id))
+                    .expect("Completion channel intact");
+                return Ok(WfExitValue::Evicted).into();
             }
 
             // TODO: Trap panics in wf code here?
@@ -188,8 +194,8 @@ impl Future for WorkflowFuture {
                 }
             }
 
-            let do_finish = if let Poll::Ready(res) = res {
-                // TODO: Auto reply with cancel when cancelled
+            if let Poll::Ready(res) = res {
+                // TODO: Auto reply with cancel when cancelled (instead of normal exit value)
                 match res {
                     Ok(exit_val) => match exit_val {
                         // TODO: Generic values
@@ -223,10 +229,7 @@ impl Future for WorkflowFuture {
                         ));
                     }
                 }
-                true
-            } else {
-                false
-            };
+            }
             if activation_cmds.is_empty() {
                 panic!(
                     "Workflow did not produce any commands or exit, but awaited. This \
@@ -236,9 +239,13 @@ impl Future for WorkflowFuture {
             self.outgoing_completions
                 .send(WfActivationCompletion::from_cmds(activation_cmds, run_id))
                 .expect("Completion channel intact");
-            if do_finish {
-                return Poll::Ready(Ok(().into()));
+
+            if die_of_eviction_when_done {
+                return Ok(WfExitValue::Evicted).into();
             }
+
+            // We don't actually return here, since we could be queried after finishing executing,
+            // and it allows us to rely on evictions for death and cache management
         }
     }
 }

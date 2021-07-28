@@ -1,6 +1,9 @@
-use crate::protos::coresdk::workflow_activation::WfActivation;
+use crate::protos::coresdk::workflow_activation::{
+    wf_activation_job, WfActivation, WfActivationJob,
+};
 use parking_lot::RwLock;
 use slotmap::SlotMap;
+use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 
 /// Tracks pending activations using an internal queue, while also allowing lookup and removal of
@@ -21,6 +24,18 @@ struct PaInner {
 }
 
 impl PendingActivations {
+    /// Push a pending activation into the given task queue.
+    ///
+    /// Importantly, if there already exist activations for same workflow run in the queue, and the
+    /// new activation (or pending one) is just an eviction job, it can be merged into the existing
+    /// activation.
+    ///
+    /// Any other attempt to enqueue a pending activation while there is already one for a given
+    /// run is a violation of our logic and will cause a panic. This is because there should never
+    /// be new activations with real work in them queued up when one is already queued, because they
+    /// should not be produced until the last one is completed (only one outstanding activation at
+    /// a time rule). New work from the server similarily should not be pushed here, as it is
+    /// buffered until any oustanding workflow task is completed.
     pub fn push(&self, v: WfActivation, task_queue: String) {
         let mut inner = self.inner.write();
 
@@ -30,7 +45,15 @@ impl PendingActivations {
                 .activations
                 .get_mut(key)
                 .expect("PA run id mapping is always in sync with slot map");
-            act.jobs.extend(v.jobs);
+            if v.is_only_eviction() || act.is_only_eviction() {
+                merge_joblists(&mut act.jobs, v.jobs.into_iter());
+            } else {
+                panic!(
+                    "Cannot enqueue non-eviction pending activation for run with an \
+                    existing non-eviction PA: {:?}",
+                    v
+                );
+            }
         } else {
             let run_id = v.run_id.clone();
             let key = inner.activations.insert(v);
@@ -98,16 +121,61 @@ impl PendingActivations {
     }
 }
 
+fn merge_joblists(
+    existing_list: &mut Vec<WfActivationJob>,
+    other_jobs: impl Iterator<Item = WfActivationJob>,
+) {
+    existing_list.extend(other_jobs);
+    // Move any evictions to the end of the list
+    existing_list
+        .as_mut_slice()
+        .sort_by(evictions_always_last_compare);
+    // Drop any duplicate evictions
+    let truncate_len = if let Some(last_non_evict_job) = existing_list.iter().rev().position(|j| {
+        !matches!(
+            j.variant,
+            Some(wf_activation_job::Variant::RemoveFromCache(_))
+        )
+    }) {
+        existing_list.len() - last_non_evict_job + 1
+    } else {
+        1
+    };
+    existing_list.truncate(truncate_len)
+}
+
+fn evictions_always_last_compare(a: &WfActivationJob, b: &WfActivationJob) -> Ordering {
+    if a == b {
+        return Ordering::Equal;
+    }
+    // Any eviction always goes last
+    if matches!(
+        a.variant,
+        Some(wf_activation_job::Variant::RemoveFromCache(_))
+    ) {
+        return Ordering::Greater;
+    }
+    if matches!(
+        b.variant,
+        Some(wf_activation_job::Variant::RemoveFromCache(_))
+    ) {
+        return Ordering::Less;
+    }
+    // All jobs should not change order except evictions
+    Ordering::Equal
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protos::coresdk::workflow_activation::create_evict_activation;
     use rstest::{fixture, rstest};
 
     const TQ: &str = "task_q";
     const TQ2: &str = "task_q_2";
 
     #[test]
-    fn merges_same_ids() {
+    fn merges_same_ids_with_evictions() {
         let pas = PendingActivations::default();
         let rid1 = "1".to_string();
         let rid2 = "2".to_string();
@@ -118,20 +186,8 @@ mod tests {
             },
             TQ.to_owned(),
         );
-        pas.push(
-            WfActivation {
-                run_id: rid2.clone(),
-                ..Default::default()
-            },
-            TQ.to_owned(),
-        );
-        pas.push(
-            WfActivation {
-                run_id: rid2.clone(),
-                ..Default::default()
-            },
-            TQ.to_owned(),
-        );
+        pas.push(create_evict_activation(rid1.clone()), TQ.to_owned());
+        pas.push(create_evict_activation(rid2.clone()), TQ.to_owned());
         pas.push(
             WfActivation {
                 run_id: rid2.clone(),
@@ -153,19 +209,33 @@ mod tests {
     }
 
     #[test]
-    fn can_remove_all_with_id() {
+    #[should_panic(expected = "Cannot enqueue non-eviction")]
+    fn panics_merging_non_evict() {
         let pas = PendingActivations::default();
-        let remove_me = "2".to_string();
+        let rid1 = "1".to_string();
         pas.push(
             WfActivation {
-                run_id: "1".to_owned(),
+                run_id: rid1.clone(),
                 ..Default::default()
             },
             TQ.to_owned(),
         );
         pas.push(
             WfActivation {
-                run_id: remove_me.clone(),
+                run_id: rid1,
+                ..Default::default()
+            },
+            TQ.to_owned(),
+        );
+    }
+
+    #[test]
+    fn can_remove_all_with_id() {
+        let pas = PendingActivations::default();
+        let remove_me = "2".to_string();
+        pas.push(
+            WfActivation {
+                run_id: "1".to_owned(),
                 ..Default::default()
             },
             TQ.to_owned(),

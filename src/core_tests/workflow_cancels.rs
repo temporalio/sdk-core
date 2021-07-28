@@ -20,15 +20,15 @@ enum CompletionType {
 }
 
 #[rstest]
-#[case::incremental_cancel(&[1.into(), ResponseType::AllHistory], CompletionType::Cancel)]
-#[case::replay_cancel(&[ResponseType::AllHistory], CompletionType::Cancel)]
-#[case::incremental_complete(&[1.into(), ResponseType::AllHistory], CompletionType::Complete)]
-#[case::replay_complete(&[ResponseType::AllHistory], CompletionType::Complete)]
-#[case::incremental_fail(&[1.into(), ResponseType::AllHistory], CompletionType::Fail)]
-#[case::replay_fail(&[ResponseType::AllHistory], CompletionType::Fail)]
+#[case::incremental_cancel(vec![1.into(), ResponseType::AllHistory], CompletionType::Cancel)]
+#[case::replay_cancel(vec![ResponseType::AllHistory], CompletionType::Cancel)]
+#[case::incremental_complete(vec![1.into(), ResponseType::AllHistory], CompletionType::Complete)]
+#[case::replay_complete(vec![ResponseType::AllHistory], CompletionType::Complete)]
+#[case::incremental_fail(vec![1.into(), ResponseType::AllHistory], CompletionType::Fail)]
+#[case::replay_fail(vec![ResponseType::AllHistory], CompletionType::Fail)]
 #[tokio::test]
 async fn timer_then_cancel_req(
-    #[case] hist_batches: &[ResponseType],
+    #[case] hist_batches: Vec<ResponseType>,
     #[case] completion_type: CompletionType,
 ) {
     let wfid = "fake_wf_id";
