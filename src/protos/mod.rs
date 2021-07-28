@@ -253,8 +253,8 @@ pub mod coresdk {
                         workflow_command::Variant::CancelWorkflowExecution(_) => {
                             write!(f, "CancelWorkflowExecution")
                         }
-                        workflow_command::Variant::VersionCheck(_) => {
-                            write!(f, "VersionCheck")
+                        workflow_command::Variant::HasChange(_) => {
+                            write!(f, "HasChange")
                         }
                     },
                 }

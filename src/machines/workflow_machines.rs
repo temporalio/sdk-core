@@ -1,4 +1,4 @@
-use crate::machines::version_state_machine::version_check;
+use crate::machines::version_state_machine::has_change;
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
@@ -27,7 +27,6 @@ use crate::{
     workflow::{CommandID, DrivenWorkflow, HistoryUpdate, WorkflowFetcher},
 };
 use slotmap::SlotMap;
-use std::convert::TryInto;
 use std::{
     borrow::{Borrow, BorrowMut},
     collections::{hash_map::DefaultHasher, HashMap, VecDeque},
@@ -629,24 +628,13 @@ impl WorkflowMachines {
                     let cancm = self.add_new_command_machine(cancel_workflow(attrs));
                     self.current_wf_task_commands.push_back(cancm);
                 }
-                WFCommand::VersionCheck(attrs) => {
-                    let max_version = if let Ok(m) = attrs.max_version.try_into() {
-                        m
-                    } else {
-                        return Err(WFMachinesError::BadWfCommand(
-                            WFCommand::VersionCheck(attrs),
-                            "Max version in version check command must be greater than zero"
-                                .to_string(),
-                        ));
-                    };
-                    let verm_key = self.all_machines.insert(Box::new(version_check(
+                WFCommand::HasChange(attrs) => {
+                    let verm_key = self.all_machines.insert(Box::new(has_change(
                         attrs.change_id.clone(),
                         self.replaying,
-                        attrs.min_version.into(),
-                        max_version,
                     )));
                     self.id_to_machine
-                        .insert(CommandID::VersionCheck(attrs.change_id), verm_key);
+                        .insert(CommandID::HasChange(attrs.change_id), verm_key);
                 }
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level

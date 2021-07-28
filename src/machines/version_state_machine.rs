@@ -1,3 +1,20 @@
+//! The version machine can be difficult to follow. Refer to this table for behavior:
+//!
+//! | History Has                  | Workflow Has          | Outcome                                                                            |
+//! |------------------------------|-----------------------|------------------------------------------------------------------------------------|
+//! | not replaying                | no has_change         | Nothing interesting. Versioning not involved.                                      |
+//! | marker for change            | no has_change         | No matching command / workflow does not support this version                       |
+//! | deprecated marker for change | no has_change         | Marker ignored, workflow continues as if it didn't exist                           |
+//! | replaying, no marker         | no has_change         | Nothing interesting. Versioning not involved.                                      |
+//! | not replaying                | has_change            | Marker command sent to server and recorded. Call returns true                      |
+//! | marker for change            | has_change            | Call returns true upon replay                                                      |
+//! | deprecated marker for change | has_change            | Call returns true upon replay                                                      |
+//! | replaying, no marker         | has_change            | Call returns false upon replay                                                     |
+//! | not replaying                | has_change deprecated | Marker command sent to server and recorded with deprecated flag. Call returns true |
+//! | marker for change            | has_change deprecated | Call returns true upon replay                                                      |
+//! | deprecated marker for change | has_change deprecated | Call returns true upon replay                                                      |
+//! | replaying, no marker         | has_change deprecated | No matching event / history too old or too new                                     |
+
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, OnEventWrapper, WFMachinesAdapter,
@@ -6,7 +23,7 @@ use crate::{
     protos::temporal::api::{enums::v1::CommandType, history::v1::HistoryEvent},
 };
 use rustfsm::{fsm, TransitionResult};
-use std::{convert::TryFrom, num::NonZeroU32};
+use std::convert::TryFrom;
 
 fsm! {
     pub(super) name VersionMachine;
@@ -14,18 +31,14 @@ fsm! {
     error WFMachinesError;
     shared_state SharedState;
 
-    // Bool inside this event is if we are replaying or not
-    Created --(CheckExecutionState(bool), on_check_execution_state) --> Replaying;
-    Created --(CheckExecutionState(bool), on_check_execution_state) --> Executing;
-
     Executing --(Schedule, on_schedule) --> MarkerCommandCreated;
     Executing --(Schedule, on_schedule) --> Skipped;
+
+    Replaying --(Schedule, on_schedule) --> MarkerCommandCreatedReplaying;
 
     MarkerCommandCreated --(CommandRecordMarker, on_command_record_marker) --> ResultNotified;
 
     MarkerCommandCreatedReplaying --(CommandRecordMarker) --> ResultNotifiedReplaying;
-
-    Replaying --(Schedule, on_schedule) --> MarkerCommandCreatedReplaying;
 
     ResultNotified --(MarkerRecorded, on_marker_recorded) --> MarkerCommandRecorded;
 
@@ -37,88 +50,43 @@ fsm! {
 }
 
 #[derive(Clone)]
-pub enum MinVersion {
-    Default,
-    Numbered(u32),
-}
-impl From<u32> for MinVersion {
-    fn from(v: u32) -> Self {
-        if v == 0 {
-            MinVersion::Default
-        } else {
-            MinVersion::Numbered(v)
-        }
-    }
-}
-
-#[derive(Clone)]
 pub(super) struct SharedState {
     change_id: String,
-    min_version: MinVersion,
-    max_version: NonZeroU32,
 }
 
 #[derive(Debug, derive_more::Display)]
 pub(super) enum VersionCommand {
-    // TODO: probably need to include change ID
-    /// Issued when the version machine resolves with what version the workflow should be told about
-    #[display(fmt = "ReturnVersion({})", _0)]
-    ReturnVersion(usize),
+    /// Issued when the version machine finds resolves the `has_change` call for the indicated
+    /// change id, with the bool flag being true if the marker is present in history.
+    #[display(fmt = "ChangeStatus({}, {})", _0, _1)]
+    ChangeStatus(String, bool),
 }
 
-/// Version machines are created when the user invokes `get_version` (or whatever it may be named
+/// Version machines are created when the user invokes `has_change` (or whatever it may be named
 /// in that lang).
 ///
 /// `change_id`: identifier of a particular change. All calls to get_version that share a change id
-/// are guaranteed to return the same version number.
+/// are guaranteed to return the same value.
 /// `replaying_when_invoked`: If the workflow is replaying when this invocation occurs, this needs
 /// to be set to true.
-pub(super) fn version_check(
-    change_id: String,
-    replaying_when_invoked: bool,
-    min_version: MinVersion,
-    max_version: NonZeroU32,
-) -> VersionMachine {
-    VersionMachine::new_scheduled(
-        SharedState {
-            change_id,
-            min_version,
-            max_version,
-        },
-        replaying_when_invoked,
-    )
+pub(super) fn has_change(change_id: String, replaying_when_invoked: bool) -> VersionMachine {
+    VersionMachine::new_scheduled(SharedState { change_id }, replaying_when_invoked)
 }
 
 impl VersionMachine {
     fn new_scheduled(state: SharedState, replaying_when_invoked: bool) -> Self {
+        let initial_state = if replaying_when_invoked {
+            Replaying {}.into()
+        } else {
+            Executing {}.into()
+        };
         let mut machine = VersionMachine {
-            state: Created {}.into(),
+            state: initial_state,
             shared_state: state,
         };
-        OnEventWrapper::on_event_mut(
-            &mut machine,
-            VersionMachineEvents::CheckExecutionState(replaying_when_invoked),
-        )
-        .expect("Version machine checking replay state doesn't fail");
         OnEventWrapper::on_event_mut(&mut machine, VersionMachineEvents::Schedule)
             .expect("Version machine scheduling doesn't fail");
         machine
-    }
-}
-
-#[derive(Default, Clone)]
-pub(super) struct Created {}
-
-impl Created {
-    pub(super) fn on_check_execution_state(
-        self,
-        replaying_when_invoked: bool,
-    ) -> VersionMachineTransition<ReplayingOrExecuting> {
-        if replaying_when_invoked {
-            TransitionResult::ok(vec![], ReplayingOrExecuting::Replaying(Replaying {}))
-        } else {
-            TransitionResult::ok(vec![], ReplayingOrExecuting::Executing(Executing {}))
-        }
     }
 }
 
