@@ -35,7 +35,7 @@ use futures::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tonic::codegen::{Body, InterceptedService};
-use tower::retry::Policy;
+use tower::retry::{Policy, Retry};
 
 /// Options for the connection to the temporal server
 #[derive(Clone, Debug)]
@@ -84,11 +84,10 @@ pub struct ClientTlsConfig {
     pub client_private_key: Vec<u8>,
 }
 
+#[derive(Clone, Debug)]
 pub struct GrpcRetryPolicy(usize);
 
-type Req = Request<()>;
-type Res = Response<()>;
-impl<E> Policy<Req, Res, E> for GrpcRetryPolicy {
+impl<Req, Res, E> Policy<Req, Res, E> for GrpcRetryPolicy {
     type Future = future::Ready<Self>;
 
     fn retry(&self, req: &Req, result: Result<&Res, &E>) -> Option<Self::Future> {
@@ -196,7 +195,7 @@ fn intercept(
 #[derive(Debug)]
 pub struct ServerGateway<F: Clone> {
     /// Client for interacting with workflow service
-    pub service: WorkflowServiceClient<InterceptedService<Channel, F>>,
+    pub service: WorkflowServiceClient<InterceptedService<Retry<GrpcRetryPolicy, Channel>, F>>,
     /// Options gateway was initialized with
     pub opts: ServerGatewayOptions,
 }
