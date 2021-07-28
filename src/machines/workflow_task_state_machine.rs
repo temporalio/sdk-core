@@ -11,6 +11,7 @@ use crate::{
     },
 };
 use rustfsm::{fsm, TransitionResult};
+use std::convert::TryInto;
 use std::{convert::TryFrom, time::SystemTime};
 
 fsm! {
@@ -94,14 +95,28 @@ impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
         Ok(match EventType::from_i32(e.event_type) {
             Some(EventType::WorkflowTaskScheduled) => Self::WorkflowTaskScheduled,
-            Some(EventType::WorkflowTaskStarted) => Self::WorkflowTaskStarted(WFTStartedDat {
-                started_event_id: e.event_id,
-                current_time_millis: e.event_time.clone().map(|ts| ts.into()).ok_or_else(|| {
-                    WFMachinesError::MalformedEvent(
+            Some(EventType::WorkflowTaskStarted) => Self::WorkflowTaskStarted({
+                let time = if let Some(time) = e.event_time.clone() {
+                    match time.try_into() {
+                        Ok(t) => t,
+                        Err(_) => {
+                            return Err(WFMachinesError::MalformedEvent(
+                                e,
+                                "Workflow task started event timestamp was inconvertible"
+                                    .to_string(),
+                            ))
+                        }
+                    }
+                } else {
+                    return Err(WFMachinesError::MalformedEvent(
                         e,
                         "Workflow task started event must contain timestamp".to_string(),
-                    )
-                })?,
+                    ));
+                };
+                WFTStartedDat {
+                    started_event_id: e.event_id,
+                    current_time_millis: time,
+                }
             }),
             Some(EventType::WorkflowTaskTimedOut) => Self::WorkflowTaskTimedOut,
             Some(EventType::WorkflowTaskCompleted) => Self::WorkflowTaskCompleted,
