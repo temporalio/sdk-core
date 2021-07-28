@@ -21,7 +21,7 @@ use tokio::sync::Mutex;
 /// Provides a thread-safe way to access workflow machines for specific workflow runs
 pub(crate) struct WorkflowConcurrencyManager {
     /// Maps run id -> data about and machines for that run
-    machines: RwLock<HashMap<String, ManagedRun>>,
+    runs: RwLock<HashMap<String, ManagedRun>>,
 }
 
 struct ManagedRun {
@@ -51,7 +51,7 @@ impl ManagedRun {
 impl WorkflowConcurrencyManager {
     pub fn new() -> Self {
         Self {
-            machines: Default::default(),
+            runs: Default::default(),
         }
     }
 
@@ -61,7 +61,7 @@ impl WorkflowConcurrencyManager {
         &self,
         run_id: &str,
     ) -> Option<impl Deref<Target = OutstandingTask> + '_> {
-        let readlock = self.machines.read();
+        let readlock = self.runs.read();
         if let Some(run) = readlock.get(run_id) {
             if run.wft.is_some() {
                 Some(RwLockReadGuard::map(readlock, |hm| {
@@ -79,7 +79,7 @@ impl WorkflowConcurrencyManager {
     /// Allows access to outstanding activation slot for a run. Returns `None` if there is no
     /// knowledge of the run at all, or if the run exists but there is no outstanding activation.
     pub(crate) fn get_activation(&self, run_id: &str) -> Option<OutstandingActivation> {
-        let readlock = self.machines.read();
+        let readlock = self.runs.read();
         if readlock.contains_key(run_id) {
             readlock.get(run_id).unwrap().activation
         } else {
@@ -94,7 +94,7 @@ impl WorkflowConcurrencyManager {
     ) -> Result<impl DerefMut<Target = Option<OutstandingTask>> + '_, WorkflowUpdateError> {
         // TODO: Lock could probably just be around whole managed run and then we only ever need
         //   read lock for entire machines map
-        let writelock = self.machines.write();
+        let writelock = self.runs.write();
         if writelock.contains_key(run_id) {
             Ok(RwLockWriteGuard::map(writelock, |hm| {
                 // Unwrap is safe because we hold the lock and just ensured run is in the map
@@ -114,7 +114,7 @@ impl WorkflowConcurrencyManager {
         &self,
         work: ValidPollWFTQResponse,
     ) -> Option<ValidPollWFTQResponse> {
-        let mut writelock = self.machines.write();
+        let mut writelock = self.runs.write();
         if let Some(mut run) = writelock.get_mut(&work.workflow_execution.run_id) {
             if run.wft.is_some() || run.activation.is_some() {
                 debug!("Got new WFT for a run with outstanding work");
@@ -151,7 +151,7 @@ impl WorkflowConcurrencyManager {
         run_id: &str,
         activation: OutstandingActivation,
     ) -> Result<Option<OutstandingActivation>, WorkflowUpdateError> {
-        let mut writelock = self.machines.write();
+        let mut writelock = self.runs.write();
         let machine_ref = writelock.get_mut(run_id);
         if let Some(run) = machine_ref {
             Ok(run.activation.replace(activation))
@@ -164,7 +164,7 @@ impl WorkflowConcurrencyManager {
     }
 
     pub fn delete_activation(&self, run_id: &str) -> Option<OutstandingActivation> {
-        let mut writelock = self.machines.write();
+        let mut writelock = self.runs.write();
         let machine_ref = writelock.get_mut(run_id);
         if let Some(run) = machine_ref {
             run.activation.take()
@@ -174,10 +174,7 @@ impl WorkflowConcurrencyManager {
     }
 
     pub fn task_queue_for(&self, run_id: &str) -> Option<String> {
-        self.machines
-            .read()
-            .get(run_id)
-            .map(|mr| mr.task_queue.clone())
+        self.runs.read().get(run_id).map(|mr| mr.task_queue.clone())
     }
 
     pub async fn create_or_update(
@@ -189,7 +186,7 @@ impl WorkflowConcurrencyManager {
     ) -> Result<WfActivation> {
         let span = debug_span!("create_or_update machines", %run_id);
 
-        if self.machines.read().contains_key(run_id) {
+        if self.runs.read().contains_key(run_id) {
             let activation = self
                 .access(run_id, move |wfm: &mut WorkflowManager| {
                     async move {
@@ -211,7 +208,7 @@ impl WorkflowConcurrencyManager {
                             run_id: wfm.machines.run_id,
                         })
                     } else {
-                        self.machines
+                        self.runs
                             .write()
                             .insert(run_id.to_string(), ManagedRun::new(wfm, task_queue));
                         Ok(activation)
@@ -227,7 +224,7 @@ impl WorkflowConcurrencyManager {
         F: for<'a> FnOnce(&'a mut WorkflowManager) -> BoxFuture<Result<Fout>>,
         Fout: Send + Debug,
     {
-        let readlock = self.machines.read();
+        let readlock = self.runs.read();
         let m = readlock.get(run_id).ok_or(WorkflowError::MissingMachine)?;
         let mut wfm_mutex = m.wfm.lock().await;
         let mut wfm = wfm_mutex
@@ -242,13 +239,13 @@ impl WorkflowConcurrencyManager {
 
     /// Remove the workflow with the provided run id from management
     pub fn evict(&self, run_id: &str) -> Option<ValidPollWFTQResponse> {
-        let val = self.machines.write().remove(run_id);
+        let val = self.runs.write().remove(run_id);
         val.map(|v| v.buffered_resp).flatten()
     }
 
     #[cfg(test)]
     pub fn outstanding_wft(&self) -> usize {
-        self.machines
+        self.runs
             .read()
             .iter()
             .filter(|(_, run)| run.wft.is_some())

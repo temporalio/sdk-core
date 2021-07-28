@@ -78,13 +78,13 @@ async fn legacy_query(#[case] include_history: bool) {
         core.complete_workflow_task(WfActivationCompletion::empty(t.run_id))
             .await
             .unwrap();
-        first_wft().await;
     };
 
     first_wft().await;
 
     if include_history {
-        clear_eviction().await
+        clear_eviction().await;
+        first_wft().await;
     }
 
     let task = core.poll_workflow_task(TEST_Q).await.unwrap();
@@ -113,7 +113,8 @@ async fn legacy_query(#[case] include_history: bool) {
     .unwrap();
 
     if include_history {
-        clear_eviction().await
+        clear_eviction().await;
+        first_wft().await;
     }
 
     let task = core.poll_workflow_task(TEST_Q).await.unwrap();
