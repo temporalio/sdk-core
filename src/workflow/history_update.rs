@@ -13,7 +13,6 @@ use std::{
     task::{Context, Poll},
 };
 
-// TODO: Rename PollRespHistory ?
 /// A slimmed down version of a poll workflow task response which includes just the info needed
 /// by [WorkflowManager]. History events are expected to be consumed from it and applied to the
 /// state machines.

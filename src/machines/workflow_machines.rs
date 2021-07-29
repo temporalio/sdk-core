@@ -184,11 +184,6 @@ impl WorkflowMachines {
         Ok(())
     }
 
-    /// Returns the id of the last seen WorkflowTaskStarted event
-    pub(crate) fn last_handled_wft_started_id(&self) -> i64 {
-        self.current_started_event_id
-    }
-
     /// Handle a single event from the workflow history. `has_next_event` should be false if `event`
     /// is the last event in the history.
     ///
@@ -246,22 +241,9 @@ impl WorkflowMachines {
 
     /// Called when we want to run the event loop because a workflow task started event has
     /// triggered
-    pub(super) fn task_started(
-        &mut self,
-        task_started_event_id: i64,
-        time: SystemTime,
-    ) -> Result<()> {
+    fn task_started(&mut self, task_started_event_id: i64, time: SystemTime) -> Result<()> {
         let s = span!(Level::DEBUG, "Task started trigger");
         let _enter = s.enter();
-
-        // TODO: Seems to only matter for version machine. Figure out then.
-        // // If some new commands are pending and there are no more command events.
-        // for (CancellableCommand cancellableCommand : commands) {
-        //     if (cancellableCommand == null) {
-        //         break;
-        //     }
-        //     cancellableCommand.handleWorkflowTaskStarted();
-        // }
 
         // TODO: Local activity machines
         // // Give local activities a chance to recreate their requests if they were lost due
@@ -467,12 +449,15 @@ impl WorkflowMachines {
 
     /// Apply the next entire workflow task from history to these machines.
     pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<()> {
-        let last_handled_wft_started_id = self.last_handled_wft_started_id();
+        let last_handled_wft_started_id = self.current_started_event_id;
         let events = self
             .last_history_from_server
             .take_next_wft_sequence(last_handled_wft_started_id)
             .await
             .map_err(WFMachinesError::HistoryFetchingError)?;
+
+        // Scan through to the next WFT, searching for any version markers, so that we can
+        // pre-resolve them.
 
         // We're caught up on reply if there are no new events to process
         // TODO: Probably this is unneeded if we evict whenever history is from non-sticky queue
@@ -695,7 +680,9 @@ impl WorkflowMachines {
         Ok(())
     }
 
-    fn get_machine_key(&mut self, id: &CommandID) -> Result<MachineKey> {
+    fn scan_for_version_markers(&self, wft_events: &[HistoryEvent]) {}
+
+    fn get_machine_key(&self, id: &CommandID) -> Result<MachineKey> {
         Ok(*self.id_to_machine.get(id).ok_or_else(|| {
             WFMachinesError::MissingAssociatedMachine(format!(
                 "Missing associated machine for {:?}",

@@ -156,7 +156,7 @@ pub(super) struct Replaying {}
 
 impl Replaying {
     pub(super) fn on_schedule(self) -> VersionMachineTransition<MarkerCommandCreatedReplaying> {
-        unimplemented!()
+        TransitionResult::default()
     }
 }
 
@@ -242,15 +242,15 @@ mod tests {
         tracing_init,
         workflow::managed_wf::ManagedWFFunc,
     };
+    use rstest::{fixture, rstest};
     use std::time::Duration;
 
-    #[tokio::test]
-    async fn version_machine_with_call() {
-        tracing_init();
+    const MY_CHANGE_ID: &str = "change_name";
 
-        let my_change_id = "change_name";
+    #[fixture(replaying = false)]
+    fn version_hist(replaying: bool) -> ManagedWFFunc {
         let wfn = WorkflowFunction::new(move |mut ctx: WfContext| async move {
-            if ctx.has_version(my_change_id).await {
+            if ctx.has_version(MY_CHANGE_ID).await {
                 ctx.timer(StartTimer {
                     timer_id: "had_change".to_string(),
                     start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -266,10 +266,21 @@ mod tests {
             Ok(().into())
         });
 
-        let t = canned_histories::has_change_different_timers(Some(my_change_id), false);
-        // Not-replaying mode TODO: Fixtureize
-        let mut wfm =
-            ManagedWFFunc::new_from_update(t.get_history_info(1).unwrap().into(), wfn, vec![]);
+        let t = canned_histories::has_change_different_timers(Some(MY_CHANGE_ID), false);
+        let histinfo = if replaying {
+            t.get_full_history_info()
+        } else {
+            t.get_history_info(1)
+        };
+        ManagedWFFunc::new_from_update(histinfo.unwrap().into(), wfn, vec![])
+    }
+
+    #[rstest]
+    #[case(version_hist(false))]
+    #[tokio::test]
+    async fn version_machine_with_call_not_replay(#[case] mut wfm: ManagedWFFunc) {
+        tracing_init();
+
         // Start workflow activation
         let act = wfm.get_next_activation().await.unwrap();
         assert!(!act.is_replaying);
@@ -284,7 +295,40 @@ mod tests {
                         is_present
                     }
                 ))
-            }] => change_id == my_change_id && *is_present == true
+            }] => change_id == MY_CHANGE_ID && *is_present == true
+        );
+        let commands = wfm.get_server_commands().await.commands;
+        // Should have record marker and start timer
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
+        assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
+
+        dbg!(wfm.get_next_activation().await.unwrap());
+
+        wfm.shutdown().await.unwrap();
+    }
+
+    #[rstest]
+    #[case(version_hist(true))]
+    #[tokio::test]
+    async fn version_machine_with_call_replay(#[case] mut wfm: ManagedWFFunc) {
+        tracing_init();
+
+        // Start workflow activation and resolve change should come right away
+        let act = wfm.get_next_activation().await.unwrap();
+        assert_matches!(
+            act.jobs.as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::StartWorkflow(_))
+             },
+             WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveHasChange(
+                    ResolveHasChange {
+                        change_id,
+                        is_present
+                    }
+                ))
+            }] => change_id == MY_CHANGE_ID && *is_present == true
         );
         let commands = wfm.get_server_commands().await.commands;
         // Should have record marker and start timer
