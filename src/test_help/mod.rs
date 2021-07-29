@@ -12,8 +12,8 @@ use crate::{
     },
     protos::{
         coresdk::{
-            common::UserCodeFailure,
-            workflow_activation::WfActivation,
+            failure::Failure,
+            workflow_activation::{wf_activation_job, WfActivation, WfActivationJob},
             workflow_commands::workflow_command,
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
         },
@@ -576,7 +576,7 @@ pub(crate) fn gen_assert_and_fail(asserter: &dyn Fn(&WfActivation)) -> AsserterW
     (
         asserter,
         workflow_completion::Failure {
-            failure: Some(UserCodeFailure {
+            failure: Some(Failure {
                 message: "Intentional test failure".to_string(),
                 ..Default::default()
             }),

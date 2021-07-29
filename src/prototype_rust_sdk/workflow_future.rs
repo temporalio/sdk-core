@@ -1,6 +1,7 @@
 use crate::{
     protos::coresdk::{
-        common::{Payload, UserCodeFailure},
+        common::Payload,
+        failure::Failure,
         workflow_activation::{
             wf_activation_job::Variant, FireTimer, NotifyHasChange, ResolveActivity, WfActivation,
             WfActivationJob,
@@ -244,7 +245,7 @@ impl Future for WorkflowFuture {
                     Err(e) => {
                         activation_cmds.push(workflow_command::Variant::FailWorkflowExecution(
                             FailWorkflowExecution {
-                                failure: Some(UserCodeFailure {
+                                failure: Some(Failure {
                                     message: e.to_string(),
                                     ..Default::default()
                                 }),

@@ -17,10 +17,7 @@ use crate::{
             command::v1::{command, Command, RequestCancelActivityTaskCommandAttributes},
             common::v1::{ActivityType, Payloads},
             enums::v1::{CommandType, EventType},
-            failure::v1::{
-                failure::{self},
-                ActivityFailureInfo, Failure,
-            },
+            failure::v1::{self as failure, failure::FailureInfo, ActivityFailureInfo, Failure},
             history::v1::{
                 history_event, ActivityTaskCanceledEventAttributes,
                 ActivityTaskCompletedEventAttributes, ActivityTaskFailedEventAttributes,
@@ -54,7 +51,7 @@ fsm! {
     Started --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes),
         on_activity_task_completed) --> Completed;
     Started --(ActivityTaskFailed(ActivityTaskFailedEventAttributes),
-        on_activity_task_failed) --> Failed;
+        shared on_activity_task_failed) --> Failed;
     Started --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes),
         shared on_activity_task_timed_out) --> TimedOut;
     Started --(Cancel, shared on_canceled) --> StartedActivityCancelCommandCreated;
@@ -87,7 +84,7 @@ pub(super) enum ActivityMachineCommand {
     #[display(fmt = "Complete")]
     Complete(Option<Payloads>),
     #[display(fmt = "Fail")]
-    Fail(Option<Failure>),
+    Fail(Failure),
     #[display(fmt = "Cancel")]
     Cancel(Option<Payloads>),
     #[display(fmt = "RequestCancellation")]
@@ -236,7 +233,13 @@ impl WFMachinesAdapter for ActivityMachine {
                     activity_id: self.shared_state.attrs.activity_id.clone(),
                     result: Some(ActivityResult {
                         status: Some(activity_result::Status::Failed(ar::Failure {
-                            failure: failure.map(Into::into),
+                            failure: Some(failure.into()),
+                            ..Default::default()
+                            // TODO
+                            // identity: ev.identity,
+                            // retry_state: ev.retry_state,
+                            // scheduled_event_id: ev.scheduled_event_id,
+                            // started_event_id: ev.started_event_id,
                         })),
                     }),
                 }
@@ -417,10 +420,11 @@ impl Started {
     }
     pub(super) fn on_activity_task_failed(
         self,
+        dat: SharedState,
         attrs: ActivityTaskFailedEventAttributes,
     ) -> ActivityMachineTransition<Failed> {
         ActivityMachineTransition::ok(
-            vec![ActivityMachineCommand::Fail(attrs.failure)],
+            vec![ActivityMachineCommand::Fail(new_failure(dat, attrs))],
             Failed::default(),
         )
     }
@@ -498,8 +502,8 @@ impl StartedActivityCancelEventRecorded {
         dat: SharedState,
         attrs: ActivityTaskFailedEventAttributes,
     ) -> ActivityMachineTransition<Failed> {
-        notify_if_not_already_cancelled(dat, |_| {
-            TransitionResult::commands(vec![ActivityMachineCommand::Fail(attrs.failure)])
+        notify_if_not_already_cancelled(dat, |dat| {
+            TransitionResult::commands(vec![ActivityMachineCommand::Fail(new_failure(dat, attrs))])
         })
     }
     pub(super) fn on_activity_task_timed_out(
@@ -627,9 +631,9 @@ fn notify_lang_activity_timed_out(
     attrs: ActivityTaskTimedOutEventAttributes,
 ) -> TransitionResult<ActivityMachine, TimedOut> {
     ActivityMachineTransition::ok_shared(
-        vec![ActivityMachineCommand::Fail(Some(new_timeout_failure(
+        vec![ActivityMachineCommand::Fail(new_timeout_failure(
             &dat, attrs,
-        )))],
+        ))],
         TimedOut::default(),
         dat,
     )
@@ -651,6 +655,26 @@ fn notify_lang_activity_cancelled(
     )
 }
 
+fn new_failure(dat: SharedState, attrs: ActivityTaskFailedEventAttributes) -> Failure {
+    return Failure {
+        message: "Activity task failed".to_owned(),
+        cause: attrs.failure.map(Box::new),
+        failure_info: Some(FailureInfo::ActivityFailureInfo(
+            failure::ActivityFailureInfo {
+                identity: attrs.identity,
+                activity_type: Some(ActivityType {
+                    name: dat.attrs.activity_type.to_string(),
+                }),
+                activity_id: dat.attrs.activity_id.to_string(),
+                retry_state: attrs.retry_state,
+                started_event_id: attrs.started_event_id,
+                scheduled_event_id: attrs.scheduled_event_id,
+            },
+        )),
+        ..Default::default()
+    };
+}
+
 fn new_timeout_failure(dat: &SharedState, attrs: ActivityTaskTimedOutEventAttributes) -> Failure {
     let failure_info = ActivityFailureInfo {
         activity_id: dat.attrs.activity_id.to_string(),
@@ -659,13 +683,13 @@ fn new_timeout_failure(dat: &SharedState, attrs: ActivityTaskTimedOutEventAttrib
         }),
         scheduled_event_id: attrs.scheduled_event_id,
         started_event_id: attrs.started_event_id,
-        identity: "workflow".to_string(),
         retry_state: attrs.retry_state,
+        ..Default::default()
     };
     Failure {
         message: "Activity task timed out".to_string(),
         cause: attrs.failure.map(Box::new),
-        failure_info: Some(failure::FailureInfo::ActivityFailureInfo(failure_info)),
+        failure_info: Some(FailureInfo::ActivityFailureInfo(failure_info)),
         ..Default::default()
     }
 }

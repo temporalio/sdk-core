@@ -2,7 +2,7 @@ use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_sdk_core::protos::{
     coresdk::{
-        common::UserCodeFailure,
+        failure::Failure,
         workflow_activation::{wf_activation_job, WfActivationJob},
         workflow_commands::{QueryResult, QuerySuccess, StartTimer},
         workflow_completion::WfActivationCompletion,
@@ -378,7 +378,7 @@ async fn fail_legacy_query() {
         // Fail this task
         core.complete_workflow_task(WfActivationCompletion::fail(
             task.run_id,
-            UserCodeFailure {
+            Failure {
                 message: query_err.to_string(),
                 ..Default::default()
             },

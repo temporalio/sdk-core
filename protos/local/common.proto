@@ -39,23 +39,21 @@ message RetryPolicy {
     repeated string non_retryable_error_types = 5;
 }
 
-// Represents a failure in user code, workflow or activity, which could've been triggered by
-// an exception or similar error mechanism like the error half of a Result type.
-//
-// This eventually needs to be converted into an upstream `Failure` which needs to handle a lot
-// more cases that the lang sdk does not care about. By default any lang sdk failure is an upstream
-// `ApplicationFailureInfo`.
-message UserCodeFailure {
-    // Human-specified or otherwise most-human-readable representation of the error.
-    string message = 1;
-    // A type identifier for the error, if the error is well-typed.
-    string type = 2;
-    // If known, the location the error was issued at.
-    string source = 3;
-    // If collected, a stack trace for the error.
-    string stack_trace = 4;
-    // Explicitly thrown user errors are able to indicate that retries should be prevented
-    bool non_retryable = 5;
+enum RetryState {
+    RETRY_STATE_UNSPECIFIED = 0;
+    RETRY_STATE_IN_PROGRESS = 1;
+    RETRY_STATE_NON_RETRYABLE_FAILURE = 2;
+    RETRY_STATE_TIMEOUT = 3;
+    RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED = 4;
+    RETRY_STATE_RETRY_POLICY_NOT_SET = 5;
+    RETRY_STATE_INTERNAL_SERVER_ERROR = 6;
+    RETRY_STATE_CANCEL_REQUESTED = 7;
+}
 
-    UserCodeFailure cause = 6;
+enum TimeoutType {
+    TIMEOUT_TYPE_UNSPECIFIED = 0;
+    TIMEOUT_TYPE_START_TO_CLOSE = 1;
+    TIMEOUT_TYPE_SCHEDULE_TO_START = 2;
+    TIMEOUT_TYPE_SCHEDULE_TO_CLOSE = 3;
+    TIMEOUT_TYPE_HEARTBEAT = 4;
 }

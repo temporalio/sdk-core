@@ -11,8 +11,8 @@ pub mod coresdk {
     tonic::include_proto!("coresdk");
 
     use crate::protos::temporal::api::{
-        common::v1::{Payloads, WorkflowExecution},
-        failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
+        common::v1::{ActivityType, Payloads, WorkflowExecution, WorkflowType},
+        failure::v1::{self as upstream_failure, failure::FailureInfo, Failure},
         workflowservice::v1::PollActivityTaskQueueResponse,
     };
     use activity_result::ActivityResult;
@@ -109,6 +109,11 @@ pub mod coresdk {
             Some((name.to_string(), deprecated))
         }
     }
+
+    pub mod failure {
+        tonic::include_proto!("coresdk.failure");
+    }
+
     pub mod workflow_activation {
         use crate::{
             core_tracing::VecDisplayer,
@@ -386,7 +391,7 @@ pub mod coresdk {
             }
         }
 
-        pub fn fail(run_id: String, failure: UserCodeFailure) -> Self {
+        pub fn fail(run_id: String, failure: CoreFailure) -> Self {
             Self {
                 run_id,
                 status: Some(wf_activation_completion::Status::Failed(
@@ -563,39 +568,230 @@ pub mod coresdk {
         }
     }
 
-    impl From<UserCodeFailure> for Failure {
-        fn from(f: UserCodeFailure) -> Self {
-            Self {
-                message: f.message,
-                source: f.source,
-                stack_trace: f.stack_trace,
-                cause: f.cause.map(|b| Box::new((*b).into())),
-                failure_info: Some(FailureInfo::ApplicationFailureInfo(
-                    ApplicationFailureInfo {
-                        r#type: f.r#type,
-                        non_retryable: f.non_retryable,
-                        details: None,
-                    },
-                )),
+    impl From<String> for ActivityType {
+        fn from(name: String) -> Self {
+            Self { name }
+        }
+    }
+
+    impl From<ActivityType> for String {
+        fn from(at: ActivityType) -> Self {
+            at.name
+        }
+    }
+
+    impl From<common::WorkflowExecution> for WorkflowExecution {
+        fn from(exc: common::WorkflowExecution) -> Self {
+            WorkflowExecution {
+                workflow_id: exc.workflow_id,
+                run_id: exc.run_id,
             }
         }
     }
 
-    impl From<Failure> for UserCodeFailure {
-        fn from(f: Failure) -> Self {
-            let mut r#type = "".to_string();
-            let mut non_retryable = false;
-            if let Some(FailureInfo::ApplicationFailureInfo(fi)) = f.failure_info {
-                r#type = fi.r#type;
-                non_retryable = fi.non_retryable;
+    impl From<CoreFailureInfo> for FailureInfo {
+        fn from(f: CoreFailureInfo) -> Self {
+            match f {
+                CoreFailureInfo::ActivityFailureInfo(core_failure::ActivityFailureInfo {
+                    scheduled_event_id,
+                    started_event_id,
+                    identity,
+                    activity_type,
+                    activity_id,
+                    retry_state,
+                }) => FailureInfo::ActivityFailureInfo(upstream_failure::ActivityFailureInfo {
+                    scheduled_event_id,
+                    started_event_id,
+                    identity,
+                    activity_type: Some(activity_type.into()),
+                    activity_id,
+                    retry_state,
+                }),
+                CoreFailureInfo::ApplicationFailureInfo(core_failure::ApplicationFailureInfo {
+                    r#type,
+                    non_retryable,
+                    details,
+                }) => {
+                    FailureInfo::ApplicationFailureInfo(upstream_failure::ApplicationFailureInfo {
+                        r#type,
+                        non_retryable,
+                        details: details.into_payloads(),
+                    })
+                }
+                CoreFailureInfo::CancelledFailureInfo(core_failure::CancelledFailureInfo {
+                    details,
+                }) => FailureInfo::CanceledFailureInfo(upstream_failure::CanceledFailureInfo {
+                    details: details.into_payloads(),
+                }),
+                CoreFailureInfo::ChildWorkflowExecutionFailureInfo(
+                    core_failure::ChildWorkflowExecutionFailureInfo {
+                        namespace,
+                        workflow_execution,
+                        workflow_type,
+                        initiated_event_id,
+                        started_event_id,
+                        retry_state,
+                    },
+                ) => FailureInfo::ChildWorkflowExecutionFailureInfo(
+                    upstream_failure::ChildWorkflowExecutionFailureInfo {
+                        namespace,
+                        workflow_execution: workflow_execution.map(Into::into),
+                        workflow_type: Some(WorkflowType {
+                            name: workflow_type,
+                        }),
+                        initiated_event_id,
+                        started_event_id,
+                        retry_state,
+                    },
+                ),
+                CoreFailureInfo::ResetWorkflowFailureInfo(
+                    core_failure::ResetWorkflowFailureInfo {
+                        last_heartbeat_details,
+                    },
+                ) => FailureInfo::ResetWorkflowFailureInfo(
+                    upstream_failure::ResetWorkflowFailureInfo {
+                        last_heartbeat_details: last_heartbeat_details.into_payloads(),
+                    },
+                ),
+                CoreFailureInfo::TerminatedFailureInfo(core_failure::TerminatedFailureInfo {}) => {
+                    FailureInfo::TerminatedFailureInfo(upstream_failure::TerminatedFailureInfo {})
+                }
+                CoreFailureInfo::TimeoutFailureInfo(core_failure::TimeoutFailureInfo {
+                    timeout_type,
+                    last_heartbeat_details,
+                }) => FailureInfo::TimeoutFailureInfo(upstream_failure::TimeoutFailureInfo {
+                    timeout_type,
+                    last_heartbeat_details: last_heartbeat_details.into_payloads(),
+                }),
+                CoreFailureInfo::ServerFailureInfo(core_failure::ServerFailureInfo {
+                    non_retryable,
+                }) => FailureInfo::ServerFailureInfo(upstream_failure::ServerFailureInfo {
+                    non_retryable,
+                }),
             }
+        }
+    }
+
+    impl CoreFailure {
+        pub fn application_failure(message: String, non_retryable: bool) -> Self {
+            Self {
+                message,
+                info: Some(CoreFailureInfo::ApplicationFailureInfo(
+                    core_failure::ApplicationFailureInfo {
+                        non_retryable,
+                        ..Default::default()
+                    },
+                )),
+                ..Default::default()
+            }
+        }
+    }
+
+    impl From<CoreFailure> for Failure {
+        fn from(f: CoreFailure) -> Self {
             Self {
                 message: f.message,
-                r#type,
                 source: f.source,
                 stack_trace: f.stack_trace,
-                non_retryable,
                 cause: f.cause.map(|b| Box::new((*b).into())),
+                failure_info: f.info.map(|i| i.into()),
+            }
+        }
+    }
+
+    impl From<FailureInfo> for CoreFailureInfo {
+        fn from(f: FailureInfo) -> Self {
+            match f {
+                FailureInfo::ActivityFailureInfo(upstream_failure::ActivityFailureInfo {
+                    scheduled_event_id,
+                    started_event_id,
+                    identity,
+                    activity_type,
+                    activity_id,
+                    retry_state,
+                }) => CoreFailureInfo::ActivityFailureInfo(core_failure::ActivityFailureInfo {
+                    scheduled_event_id,
+                    started_event_id,
+                    identity,
+                    activity_type: activity_type
+                        .unwrap_or(ActivityType {
+                            name: "".to_owned(),
+                        })
+                        .into(),
+                    activity_id,
+                    retry_state,
+                }),
+                FailureInfo::ApplicationFailureInfo(upstream_failure::ApplicationFailureInfo {
+                    r#type,
+                    non_retryable,
+                    details,
+                }) => {
+                    CoreFailureInfo::ApplicationFailureInfo(core_failure::ApplicationFailureInfo {
+                        r#type,
+                        non_retryable,
+                        details: Vec::from_payloads(details),
+                    })
+                }
+                FailureInfo::CanceledFailureInfo(upstream_failure::CanceledFailureInfo {
+                    details,
+                }) => CoreFailureInfo::CancelledFailureInfo(core_failure::CancelledFailureInfo {
+                    details: Vec::from_payloads(details),
+                }),
+                FailureInfo::ChildWorkflowExecutionFailureInfo(
+                    upstream_failure::ChildWorkflowExecutionFailureInfo {
+                        namespace,
+                        workflow_execution,
+                        workflow_type,
+                        initiated_event_id,
+                        started_event_id,
+                        retry_state,
+                    },
+                ) => CoreFailureInfo::ChildWorkflowExecutionFailureInfo(
+                    core_failure::ChildWorkflowExecutionFailureInfo {
+                        namespace,
+                        workflow_execution: workflow_execution.map(|exc| exc.into()),
+                        workflow_type: workflow_type.map(|wt| wt.name).unwrap_or("".to_owned()),
+                        initiated_event_id,
+                        started_event_id,
+                        retry_state,
+                    },
+                ),
+                FailureInfo::ResetWorkflowFailureInfo(
+                    upstream_failure::ResetWorkflowFailureInfo {
+                        last_heartbeat_details,
+                    },
+                ) => CoreFailureInfo::ResetWorkflowFailureInfo(
+                    core_failure::ResetWorkflowFailureInfo {
+                        last_heartbeat_details: Vec::from_payloads(last_heartbeat_details),
+                    },
+                ),
+                FailureInfo::TerminatedFailureInfo(upstream_failure::TerminatedFailureInfo {}) => {
+                    CoreFailureInfo::TerminatedFailureInfo(core_failure::TerminatedFailureInfo {})
+                }
+                FailureInfo::TimeoutFailureInfo(upstream_failure::TimeoutFailureInfo {
+                    timeout_type,
+                    last_heartbeat_details,
+                }) => CoreFailureInfo::TimeoutFailureInfo(core_failure::TimeoutFailureInfo {
+                    timeout_type,
+                    last_heartbeat_details: Vec::from_payloads(last_heartbeat_details),
+                }),
+                FailureInfo::ServerFailureInfo(upstream_failure::ServerFailureInfo {
+                    non_retryable,
+                }) => CoreFailureInfo::ServerFailureInfo(core_failure::ServerFailureInfo {
+                    non_retryable,
+                }),
+            }
+        }
+    }
+
+    impl From<Failure> for CoreFailure {
+        fn from(f: Failure) -> Self {
+            Self {
+                message: f.message,
+                source: f.source,
+                stack_trace: f.stack_trace,
+                cause: f.cause.map(|b| Box::new((*b).into())),
+                info: f.failure_info.map(|i| i.into()),
             }
         }
     }

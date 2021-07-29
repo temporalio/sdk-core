@@ -5,7 +5,7 @@ use crate::{
     protos::{
         coresdk::{
             activity_result::{self as ar, activity_result, ActivityResult},
-            common::UserCodeFailure,
+            failure::Failure,
             workflow_activation::{
                 wf_activation_job, FireTimer, ResolveActivity, StartWorkflow, UpdateRandomSeed,
                 WfActivationJob,
@@ -758,7 +758,7 @@ async fn simple_timer_fail_wf_execution(hist_batches: &'static [usize]) {
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::FireTimer(_)),
                 vec![FailWorkflowExecution {
-                    failure: Some(UserCodeFailure {
+                    failure: Some(Failure {
                         message: "I'm ded".to_string(),
                         ..Default::default()
                     }),
