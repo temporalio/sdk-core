@@ -1,7 +1,7 @@
 #![allow(clippy::enum_variant_names)]
 
 use crate::machines::workflow_machines::MachineResponse;
-use crate::machines::Cancellable;
+use crate::machines::{Cancellable, EventInfo};
 use crate::protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes;
 use crate::{
     machines::{workflow_machines::WFMachinesError, WFMachinesAdapter},
@@ -56,15 +56,24 @@ pub(super) enum WFTaskMachineCommand {
 impl WFMachinesAdapter for WorkflowTaskMachine {
     fn adapt_response(
         &self,
-        event: &HistoryEvent,
-        has_next_event: bool,
         my_command: WFTaskMachineCommand,
+        event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         match my_command {
             WFTaskMachineCommand::WFTaskStartedTrigger {
                 task_started_event_id,
                 time,
             } => {
+                let (event, has_next_event) = if let Some(ei) = event_info {
+                    (ei.event, ei.has_next_event)
+                } else {
+                    // TODO: Maybe shouldn't be panic?
+                    panic!(
+                        "WF Task machine should never issue a task started trigger \
+                        command in response to non-history events"
+                    );
+                };
+
                 let event_type = EventType::from_i32(event.event_type).ok_or_else(|| {
                     WFMachinesError::UnexpectedEvent(
                         event.clone(),

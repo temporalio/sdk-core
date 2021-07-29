@@ -2,11 +2,12 @@ use crate::{
     protos::coresdk::{
         common::{Payload, UserCodeFailure},
         workflow_activation::{
-            wf_activation_job::Variant, FireTimer, ResolveActivity, WfActivation, WfActivationJob,
+            wf_activation_job::Variant, FireTimer, ResolveActivity, ResolveHasChange, WfActivation,
+            WfActivationJob,
         },
         workflow_commands::{
             workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
-            FailWorkflowExecution, RequestCancelActivity, ScheduleActivity, StartTimer,
+            FailWorkflowExecution, HasChange, RequestCancelActivity, ScheduleActivity, StartTimer,
         },
         workflow_completion::WfActivationCompletion,
     },
@@ -79,6 +80,7 @@ impl WorkflowFuture {
         let cmd_id = match &event {
             UnblockEvent::Timer(t) => CommandID::Timer(t.clone()),
             UnblockEvent::Activity { id, .. } => CommandID::Activity(id.clone()),
+            UnblockEvent::Change { id, .. } => CommandID::HasChange(id.clone()),
         };
         let unblocker = self.command_status.remove(&cmd_id);
         unblocker
@@ -121,14 +123,25 @@ impl Future for WorkflowFuture {
                             result: result.expect("Activity must have result"),
                         }),
                         Variant::UpdateRandomSeed(_) => {}
-                        Variant::QueryWorkflow(_) => {}
+                        Variant::QueryWorkflow(_) => {
+                            todo!()
+                        }
                         Variant::CancelWorkflow(_) => {
                             // TODO: Cancel pending futures, etc
                             self.cancel_sender
                                 .send(true)
                                 .expect("Cancel rx not dropped");
                         }
-                        Variant::SignalWorkflow(_) => {}
+                        Variant::SignalWorkflow(_) => {
+                            todo!()
+                        }
+                        Variant::ResolveHasChange(ResolveHasChange {
+                            change_id,
+                            is_present,
+                        }) => self.unblock(UnblockEvent::Change {
+                            id: change_id,
+                            present: is_present,
+                        }),
                         Variant::RemoveFromCache(_) => {
                             die_of_eviction_when_done = true;
                         }
@@ -178,6 +191,9 @@ impl Future for WorkflowFuture {
                                 activity_id,
                                 ..
                             }) => CommandID::Activity(activity_id),
+                            workflow_command::Variant::HasChange(HasChange {
+                                change_id, ..
+                            }) => CommandID::HasChange(change_id),
                             _ => unimplemented!("Command type not implemented"),
                         };
                         self.command_status.insert(

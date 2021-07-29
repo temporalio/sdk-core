@@ -163,6 +163,7 @@ impl TestRustWorker {
 enum UnblockEvent {
     Timer(String),
     Activity { id: String, result: ActivityResult },
+    Change { id: String, present: bool },
 }
 
 #[derive(derive_more::From)]

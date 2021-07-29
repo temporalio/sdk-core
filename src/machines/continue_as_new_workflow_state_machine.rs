@@ -1,3 +1,4 @@
+use crate::machines::EventInfo;
 use crate::{
     machines::{
         Cancellable, HistoryEvent, MachineResponse, NewMachineWithCommand, OnEventWrapper,
@@ -100,9 +101,8 @@ impl TryFrom<CommandType> for ContinueAsNewWorkflowMachineEvents {
 impl WFMachinesAdapter for ContinueAsNewWorkflowMachine {
     fn adapt_response(
         &self,
-        _event: &HistoryEvent,
-        _has_next_event: bool,
         _my_command: Self::Command,
+        _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(vec![])
     }

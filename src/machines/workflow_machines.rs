@@ -294,9 +294,6 @@ impl WorkflowMachines {
         //     }
 
         let consumed_cmd = loop {
-            // handleVersionMarker can skip a marker event if the getVersion call was removed.
-            // In this case we don't want to consume a command. -- we will need to replace it back
-            // to the front when implementing, or something better
             let maybe_command = self.commands.pop_front();
             let command = if let Some(c) = maybe_command {
                 c
@@ -305,24 +302,12 @@ impl WorkflowMachines {
             };
 
             // Feed the machine the event
-            let mut break_later = false;
             let canceled_before_sent = self
                 .machine(command.machine)
                 .was_cancelled_before_sent_to_server();
 
             if !canceled_before_sent {
                 self.submachine_handle_event(command.machine, event, true)?;
-            }
-
-            // TODO:
-            //  * More special handling for version machine - see java
-            //  * Commands cancelled this iteration are allowed to not match the event?
-
-            if !canceled_before_sent {
-                break_later = true;
-            }
-
-            if break_later {
                 break command;
             }
         };
@@ -536,14 +521,49 @@ impl WorkflowMachines {
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
-        let sm = self.all_machines.get_mut(sm).expect("Machine must exist");
-        let machine_responses = sm.handle_event(event, has_next_event).map_err(|e| {
-            if let WFMachinesError::MalformedEventDetail(s) = e {
-                WFMachinesError::MalformedEvent(event.clone(), s)
-            } else {
-                e
+        let machine_responses = self
+            .machine_mut(sm)
+            .handle_event(event, has_next_event)
+            .map_err(|e| {
+                if let WFMachinesError::MalformedEventDetail(s) = e {
+                    WFMachinesError::MalformedEvent(event.clone(), s)
+                } else {
+                    e
+                }
+            })?;
+        self.process_machine_responses(sm, machine_responses)?;
+        Ok(())
+    }
+
+    /// Transfer commands from `current_wf_task_commands` to `commands`, so they may be sent off
+    /// to the server. While doing so, [TemporalStateMachine::handle_command] is called on the
+    /// machine associated with the command.
+    #[instrument(level = "debug", skip(self))]
+    fn prepare_commands(&mut self) -> Result<()> {
+        while let Some(c) = self.current_wf_task_commands.pop_front() {
+            let cmd_type = CommandType::from_i32(c.command.command_type)
+                .ok_or(WFMachinesError::UnknownCommandType(c.command.command_type))?;
+            if !self
+                .machine(c.machine)
+                .was_cancelled_before_sent_to_server()
+            {
+                let machine_responses = self.machine_mut(c.machine).handle_command(cmd_type)?;
+                self.process_machine_responses(c.machine, machine_responses)?;
             }
-        })?;
+            self.commands.push_back(c);
+        }
+        debug!(commands = %self.commands.display(), "prepared commands");
+        Ok(())
+    }
+
+    /// After a machine handles either an event or a command, it produces [MachineResponses] which
+    /// this function uses to drive sending jobs to lang, trigging new workflow tasks, etc.
+    fn process_machine_responses(
+        &mut self,
+        sm: MachineKey,
+        machine_responses: Vec<MachineResponse>,
+    ) -> Result<()> {
+        let sm = self.machine_mut(sm);
         if !machine_responses.is_empty() {
             debug!(responses = %machine_responses.display(), machine_name = %sm.name(),
                    "Machine produced responses");
@@ -629,12 +649,15 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(cancm);
                 }
                 WFCommand::HasChange(attrs) => {
-                    let verm_key = self.all_machines.insert(Box::new(has_change(
+                    // TODO: probably still need some global version mapping to be able to resolve
+                    //  calls to has_version w/ same change ID (IE: later calls should be resolved
+                    //  with information from earlier marker)
+                    let verm = self.add_new_command_machine(has_change(
                         attrs.change_id.clone(),
                         self.replaying,
-                    )));
-                    self.id_to_machine
-                        .insert(CommandID::HasChange(attrs.change_id), verm_key);
+                        attrs.deprecated,
+                    ));
+                    self.current_wf_task_commands.push_back(verm);
                 }
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level
@@ -679,26 +702,6 @@ impl WorkflowMachines {
                 id
             ))
         })?)
-    }
-
-    /// Transfer commands from `current_wf_task_commands` to `commands`, so they may be sent off
-    /// to the server. While doing so, [TemporalStateMachine::handle_command] is called on the
-    /// machine associated with the command.
-    #[instrument(level = "debug", skip(self))]
-    fn prepare_commands(&mut self) -> Result<()> {
-        while let Some(c) = self.current_wf_task_commands.pop_front() {
-            let cmd_type = CommandType::from_i32(c.command.command_type)
-                .ok_or(WFMachinesError::UnknownCommandType(c.command.command_type))?;
-            if !self
-                .machine(c.machine)
-                .was_cancelled_before_sent_to_server()
-            {
-                self.machine_mut(c.machine).handle_command(cmd_type)?;
-            }
-            self.commands.push_back(c);
-        }
-        debug!(commands = %self.commands.display(), "prepared commands");
-        Ok(())
     }
 
     fn add_new_command_machine<T: TemporalStateMachine + 'static>(

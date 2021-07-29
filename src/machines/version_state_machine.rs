@@ -17,13 +17,22 @@
 
 use crate::{
     machines::{
-        workflow_machines::MachineResponse, Cancellable, OnEventWrapper, WFMachinesAdapter,
-        WFMachinesError,
+        workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
+        OnEventWrapper, WFMachinesAdapter, WFMachinesError,
     },
-    protos::temporal::api::{enums::v1::CommandType, history::v1::HistoryEvent},
+    protos::coresdk::{
+        common::build_has_change_marker_details, workflow_activation::ResolveHasChange,
+    },
+    protos::temporal::api::{
+        command::v1::{Command, RecordMarkerCommandAttributes},
+        enums::v1::CommandType,
+        history::v1::HistoryEvent,
+    },
 };
 use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
+
+pub const HAS_CHANGE_MARKER_NAME: &str = "core_has_change";
 
 fsm! {
     pub(super) name VersionMachine;
@@ -32,21 +41,19 @@ fsm! {
     shared_state SharedState;
 
     Executing --(Schedule, on_schedule) --> MarkerCommandCreated;
-    Executing --(Schedule, on_schedule) --> Skipped;
-
     Replaying --(Schedule, on_schedule) --> MarkerCommandCreatedReplaying;
+    // TODO: Already seen marker before this command "known" path
 
-    MarkerCommandCreated --(CommandRecordMarker, on_command_record_marker) --> ResultNotified;
+    // Executing path =======================================================================
+    MarkerCommandCreated --(CommandRecordMarker, shared on_command_record_marker) --> Notified;
 
-    MarkerCommandCreatedReplaying --(CommandRecordMarker) --> ResultNotifiedReplaying;
+    Notified --(MarkerRecorded, on_marker_recorded) --> MarkerCommandRecorded;
 
-    ResultNotified --(MarkerRecorded, on_marker_recorded) --> MarkerCommandRecorded;
+    // Replaying path =======================================================================
+    MarkerCommandCreatedReplaying --(CommandRecordMarker) --> AwaitingEvent;
 
-    ResultNotifiedReplaying --(NonMatchingEvent, on_non_matching_event) --> SkippedNotified;
-    ResultNotifiedReplaying --(MarkerRecorded, on_marker_recorded) --> MarkerCommandRecorded;
-    ResultNotifiedReplaying --(MarkerRecorded, on_marker_recorded) --> SkippedNotified;
-
-    Skipped --(CommandRecordMarker, on_command_record_marker) --> SkippedNotified;
+    AwaitingEvent --(MarkerRecorded, on_marker_recorded) --> MarkerCommandRecorded;
+    AwaitingEvent --(NonMatchingEvent) --> NotifiedError;
 }
 
 #[derive(Clone)]
@@ -57,7 +64,7 @@ pub(super) struct SharedState {
 #[derive(Debug, derive_more::Display)]
 pub(super) enum VersionCommand {
     /// Issued when the version machine finds resolves the `has_change` call for the indicated
-    /// change id, with the bool flag being true if the marker is present in history.
+    /// change id, with the bool flag being true if the change should be considered present
     #[display(fmt = "ChangeStatus({}, {})", _0, _1)]
     ChangeStatus(String, bool),
 }
@@ -69,16 +76,41 @@ pub(super) enum VersionCommand {
 /// are guaranteed to return the same value.
 /// `replaying_when_invoked`: If the workflow is replaying when this invocation occurs, this needs
 /// to be set to true.
-pub(super) fn has_change(change_id: String, replaying_when_invoked: bool) -> VersionMachine {
-    VersionMachine::new_scheduled(SharedState { change_id }, replaying_when_invoked)
+pub(super) fn has_change(
+    change_id: String,
+    replaying_when_invoked: bool,
+    deprecated: bool,
+) -> NewMachineWithCommand<VersionMachine> {
+    let (machine, command) = VersionMachine::new_scheduled(
+        SharedState { change_id },
+        replaying_when_invoked,
+        deprecated,
+    );
+    NewMachineWithCommand { command, machine }
 }
 
 impl VersionMachine {
-    fn new_scheduled(state: SharedState, replaying_when_invoked: bool) -> Self {
+    fn new_scheduled(
+        state: SharedState,
+        replaying_when_invoked: bool,
+        deprecated: bool,
+    ) -> (Self, Command) {
         let initial_state = if replaying_when_invoked {
             Replaying {}.into()
         } else {
             Executing {}.into()
+        };
+        let cmd = Command {
+            command_type: CommandType::RecordMarker as i32,
+            attributes: Some(
+                RecordMarkerCommandAttributes {
+                    marker_name: HAS_CHANGE_MARKER_NAME.to_string(),
+                    details: build_has_change_marker_details(&state.change_id, deprecated),
+                    header: None,
+                    failure: None,
+                }
+                .into(),
+            ),
         };
         let mut machine = VersionMachine {
             state: initial_state,
@@ -86,7 +118,8 @@ impl VersionMachine {
         };
         OnEventWrapper::on_event_mut(&mut machine, VersionMachineEvents::Schedule)
             .expect("Version machine scheduling doesn't fail");
-        machine
+
+        (machine, cmd)
     }
 }
 
@@ -94,8 +127,8 @@ impl VersionMachine {
 pub(super) struct Executing {}
 
 impl Executing {
-    pub(super) fn on_schedule(self) -> VersionMachineTransition<MarkerCommandCreatedOrSkipped> {
-        unimplemented!()
+    pub(super) fn on_schedule(self) -> VersionMachineTransition<MarkerCommandCreated> {
+        TransitionResult::default()
     }
 }
 
@@ -103,8 +136,12 @@ impl Executing {
 pub(super) struct MarkerCommandCreated {}
 
 impl MarkerCommandCreated {
-    pub(super) fn on_command_record_marker(self) -> VersionMachineTransition<ResultNotified> {
-        unimplemented!()
+    pub(super) fn on_command_record_marker(
+        self,
+        dat: SharedState,
+    ) -> VersionMachineTransition<Notified> {
+        // We are *not* replaying, so immediately unblock the workflow with true for the result
+        TransitionResult::commands(vec![VersionCommand::ChangeStatus(dat.change_id, true)])
     }
 }
 
@@ -124,54 +161,50 @@ impl Replaying {
 }
 
 #[derive(Default, Clone)]
-pub(super) struct ResultNotified {}
+pub(super) struct Notified {}
 
-impl ResultNotified {
+impl Notified {
     pub(super) fn on_marker_recorded(self) -> VersionMachineTransition<MarkerCommandRecorded> {
         unimplemented!()
     }
 }
 
 #[derive(Default, Clone)]
-pub(super) struct ResultNotifiedReplaying {}
-
-impl ResultNotifiedReplaying {
-    pub(super) fn on_non_matching_event(self) -> VersionMachineTransition<SkippedNotified> {
-        unimplemented!()
-    }
-    pub(super) fn on_marker_recorded(
-        self,
-    ) -> VersionMachineTransition<MarkerCommandRecordedOrSkippedNotified> {
-        unimplemented!()
-    }
-}
-
-impl From<MarkerCommandCreatedReplaying> for ResultNotifiedReplaying {
+pub(super) struct AwaitingEvent {}
+impl From<MarkerCommandCreatedReplaying> for AwaitingEvent {
     fn from(_: MarkerCommandCreatedReplaying) -> Self {
         Self::default()
     }
 }
-
-#[derive(Default, Clone)]
-pub(super) struct Skipped {}
-
-impl Skipped {
-    pub(super) fn on_command_record_marker(self) -> VersionMachineTransition<SkippedNotified> {
-        unimplemented!()
+impl AwaitingEvent {
+    pub(super) fn on_marker_recorded(self) -> VersionMachineTransition<MarkerCommandRecorded> {
+        todo!()
     }
 }
 
 #[derive(Default, Clone)]
-pub(super) struct SkippedNotified {}
+pub(super) struct NotifiedError {}
+impl From<AwaitingEvent> for NotifiedError {
+    fn from(_: AwaitingEvent) -> Self {
+        Self::default()
+    }
+}
 
 impl WFMachinesAdapter for VersionMachine {
     fn adapt_response(
         &self,
-        event: &HistoryEvent,
-        has_next_event: bool,
         my_command: Self::Command,
+        _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        todo!()
+        Ok(match my_command {
+            VersionCommand::ChangeStatus(change_id, is_present) => {
+                vec![ResolveHasChange {
+                    change_id,
+                    is_present,
+                }
+                .into()]
+            }
+        })
     }
 }
 
@@ -181,7 +214,10 @@ impl TryFrom<CommandType> for VersionMachineEvents {
     type Error = ();
 
     fn try_from(c: CommandType) -> Result<Self, Self::Error> {
-        todo!()
+        Ok(match c {
+            CommandType::RecordMarker => Self::CommandRecordMarker,
+            _ => return Err(()),
+        })
     }
 }
 
@@ -190,5 +226,74 @@ impl TryFrom<HistoryEvent> for VersionMachineEvents {
 
     fn try_from(value: HistoryEvent) -> Result<Self, Self::Error> {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        protos::coresdk::{
+            workflow_activation::{wf_activation_job, ResolveHasChange, WfActivationJob},
+            workflow_commands::StartTimer,
+        },
+        protos::temporal::api::enums::v1::CommandType,
+        prototype_rust_sdk::{WfContext, WorkflowFunction},
+        test_help::canned_histories,
+        tracing_init,
+        workflow::managed_wf::ManagedWFFunc,
+    };
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn version_machine_with_call() {
+        tracing_init();
+
+        let my_change_id = "change_name";
+        let wfn = WorkflowFunction::new(move |mut ctx: WfContext| async move {
+            if ctx.has_version(my_change_id).await {
+                ctx.timer(StartTimer {
+                    timer_id: "had_change".to_string(),
+                    start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+                })
+                .await;
+            } else {
+                ctx.timer(StartTimer {
+                    timer_id: "no_change".to_string(),
+                    start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+                })
+                .await;
+            }
+            Ok(().into())
+        });
+
+        let t = canned_histories::has_change_different_timers(Some(my_change_id), false);
+        // Not-replaying mode TODO: Fixtureize
+        let mut wfm =
+            ManagedWFFunc::new_from_update(t.get_history_info(1).unwrap().into(), wfn, vec![]);
+        // Start workflow activation
+        let act = wfm.get_next_activation().await.unwrap();
+        assert!(!act.is_replaying);
+        // There should immediately be another activation unblocking the has version call
+        let act = wfm.get_next_activation().await.unwrap();
+        assert_matches!(
+            act.jobs.as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveHasChange(
+                    ResolveHasChange {
+                        change_id,
+                        is_present
+                    }
+                ))
+            }] => change_id == my_change_id && *is_present == true
+        );
+        let commands = wfm.get_server_commands().await.commands;
+        // Should have record marker and start timer
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
+        assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
+
+        dbg!(wfm.get_next_activation().await.unwrap());
+
+        wfm.shutdown().await.unwrap();
     }
 }

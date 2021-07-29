@@ -2,7 +2,7 @@ use crate::{
     protos::coresdk::{
         activity_result::ActivityResult,
         common::Payload,
-        workflow_commands::{ScheduleActivity, StartTimer},
+        workflow_commands::{workflow_command, HasChange, ScheduleActivity, StartTimer},
     },
     prototype_rust_sdk::{CommandCreateRequest, RustWfCmd, UnblockEvent},
 };
@@ -98,6 +98,28 @@ impl WfContext {
     /// Cancel activity
     pub fn cancel_activity(&self, activity_id: &str) {
         self.send(RustWfCmd::CancelActivity(activity_id.to_string()))
+    }
+
+    /// Check (or record) that this workflow history was created with the provided change id
+    pub fn has_version(&self, change_id: &str) -> impl Future<Output = bool> {
+        let (cmd, unblocker) = WFCommandFut::new();
+        self.send(
+            CommandCreateRequest {
+                cmd: workflow_command::Variant::HasChange(HasChange {
+                    change_id: change_id.to_string(),
+                    deprecated: false,
+                }),
+                unblocker,
+            }
+            .into(),
+        );
+        cmd.map(|ue| {
+            if let UnblockEvent::Change { present, .. } = ue {
+                present
+            } else {
+                panic!("Wrong unblock event")
+            }
+        })
     }
 
     /// Force a workflow task timeout by waiting too long and gumming up the entire runtime

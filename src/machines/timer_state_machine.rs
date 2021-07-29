@@ -1,5 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
+use crate::machines::EventInfo;
 use crate::{
     machines::{
         workflow_machines::{MachineResponse, WFMachinesError},
@@ -230,9 +231,8 @@ impl StartCommandRecorded {
 impl WFMachinesAdapter for TimerMachine {
     fn adapt_response(
         &self,
-        _event: &HistoryEvent,
-        _has_next_event: bool,
         my_command: TimerMachineCommand,
+        _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
             // Fire the completion

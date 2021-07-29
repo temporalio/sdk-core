@@ -65,6 +65,8 @@ pub mod coresdk {
     }
     pub mod common {
         tonic::include_proto!("coresdk.common");
+        use crate::protos::temporal::api::common::v1::Payloads;
+        use std::collections::HashMap;
 
         impl<T> From<T> for Payload
         where
@@ -83,6 +85,17 @@ pub mod coresdk {
             pub fn as_slice(&self) -> &[u8] {
                 self.data.as_slice()
             }
+        }
+
+        pub(crate) fn build_has_change_marker_details(
+            change_id: &str,
+            deprecated: bool,
+        ) -> HashMap<String, Payloads> {
+            let mut hm = HashMap::new();
+            hm.insert("change_id".to_string(), change_id.as_bytes().into());
+            let deprecated = deprecated as u8;
+            hm.insert("deprecated".to_string(), (&[deprecated]).into());
+            hm
         }
     }
     pub mod workflow_activation {
@@ -179,6 +192,9 @@ pub mod coresdk {
                         }
                         wf_activation_job::Variant::ResolveActivity(_) => {
                             write!(f, "ResolveActivity")
+                        }
+                        wf_activation_job::Variant::ResolveHasChange(_) => {
+                            write!(f, "ResolveHasChange")
                         }
                         wf_activation_job::Variant::RemoveFromCache(_) => {
                             write!(f, "RemoveFromCache")

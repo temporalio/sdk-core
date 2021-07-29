@@ -1,5 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
+use crate::machines::EventInfo;
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, OnEventWrapper,
@@ -215,9 +216,8 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
 impl WFMachinesAdapter for ActivityMachine {
     fn adapt_response(
         &self,
-        event: &HistoryEvent,
-        _has_next_event: bool,
         my_command: ActivityMachineCommand,
+        event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
             ActivityMachineCommand::Complete(result) => {
@@ -225,7 +225,7 @@ impl WFMachinesAdapter for ActivityMachine {
                     activity_id: self.shared_state.attrs.activity_id.clone(),
                     result: Some(ActivityResult {
                         status: Some(activity_result::Status::Completed(ar::Success {
-                            result: convert_payloads(event.clone(), result)?,
+                            result: convert_payloads(event_info, result)?,
                         })),
                     }),
                 }
@@ -247,7 +247,7 @@ impl WFMachinesAdapter for ActivityMachine {
             }
             ActivityMachineCommand::Cancel(details) => {
                 vec![self
-                    .create_cancelation_resolve(convert_payloads(event.clone(), details)?)
+                    .create_cancelation_resolve(convert_payloads(event_info, details)?)
                     .into()]
             }
         })
@@ -654,13 +654,15 @@ fn new_timeout_failure(dat: &SharedState, attrs: ActivityTaskTimedOutEventAttrib
 }
 
 fn convert_payloads(
-    event: HistoryEvent,
+    event_info: Option<EventInfo>,
     result: Option<Payloads>,
 ) -> Result<Option<Payload>, WFMachinesError> {
-    result
-        .map(TryInto::try_into)
-        .transpose()
-        .map_err(|pe| WFMachinesError::NotExactlyOnePayload(pe, event))
+    result.map(TryInto::try_into).transpose().map_err(|pe| {
+        WFMachinesError::NotExactlyOnePayload(
+            pe,
+            event_info.map(|e| e.event.clone()).unwrap_or_default(),
+        )
+    })
 }
 
 #[cfg(test)]

@@ -41,6 +41,8 @@ message WFActivationJob {
         SignalWorkflow signal_workflow = 7;
         /// An activity was resolved with, result could be completed, failed or cancelled
         ResolveActivity resolve_activity = 8;
+        /// An activity was resolved with, result could be completed, failed or cancelled
+        ResolveHasChange resolve_has_change = 9;
 
         /// Remove the workflow identified by the [WFActivation] containing this job from the cache
         /// after performing the activation.
@@ -110,3 +112,8 @@ message SignalWorkflow {
     string identity = 3;
 }
 
+// Resolve a call to `has_change` or similar API
+message ResolveHasChange {
+    string change_id = 1;
+    bool is_present = 2;
+}
