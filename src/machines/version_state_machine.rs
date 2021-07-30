@@ -20,13 +20,13 @@ use crate::{
         workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
         OnEventWrapper, WFMachinesAdapter, WFMachinesError,
     },
-    protos::coresdk::{
-        common::build_has_change_marker_details, workflow_activation::ResolveHasChange,
-    },
-    protos::temporal::api::{
-        command::v1::{Command, RecordMarkerCommandAttributes},
-        enums::v1::CommandType,
-        history::v1::HistoryEvent,
+    protos::{
+        coresdk::common::build_has_change_marker_details,
+        temporal::api::{
+            command::v1::{Command, RecordMarkerCommandAttributes},
+            enums::v1::{CommandType, EventType},
+            history::v1::HistoryEvent,
+        },
     },
 };
 use rustfsm::{fsm, TransitionResult};
@@ -45,7 +45,7 @@ fsm! {
     // TODO: Already seen marker before this command "known" path
 
     // Executing path =======================================================================
-    MarkerCommandCreated --(CommandRecordMarker, shared on_command_record_marker) --> Notified;
+    MarkerCommandCreated --(CommandRecordMarker, on_command_record_marker) --> Notified;
 
     Notified --(MarkerRecorded, on_marker_recorded) --> MarkerCommandRecorded;
 
@@ -62,12 +62,7 @@ pub(super) struct SharedState {
 }
 
 #[derive(Debug, derive_more::Display)]
-pub(super) enum VersionCommand {
-    /// Issued when the version machine finds resolves the `has_change` call for the indicated
-    /// change id, with the bool flag being true if the change should be considered present
-    #[display(fmt = "ChangeStatus({}, {})", _0, _1)]
-    ChangeStatus(String, bool),
-}
+pub(super) enum VersionCommand {}
 
 /// Version machines are created when the user invokes `has_change` (or whatever it may be named
 /// in that lang).
@@ -136,12 +131,8 @@ impl Executing {
 pub(super) struct MarkerCommandCreated {}
 
 impl MarkerCommandCreated {
-    pub(super) fn on_command_record_marker(
-        self,
-        dat: SharedState,
-    ) -> VersionMachineTransition<Notified> {
-        // We are *not* replaying, so immediately unblock the workflow with true for the result
-        TransitionResult::commands(vec![VersionCommand::ChangeStatus(dat.change_id, true)])
+    pub(super) fn on_command_record_marker(self) -> VersionMachineTransition<Notified> {
+        TransitionResult::commands(vec![])
     }
 }
 
@@ -165,7 +156,8 @@ pub(super) struct Notified {}
 
 impl Notified {
     pub(super) fn on_marker_recorded(self) -> VersionMachineTransition<MarkerCommandRecorded> {
-        unimplemented!()
+        // TODO: Validate correct event here?
+        TransitionResult::default()
     }
 }
 
@@ -178,7 +170,8 @@ impl From<MarkerCommandCreatedReplaying> for AwaitingEvent {
 }
 impl AwaitingEvent {
     pub(super) fn on_marker_recorded(self) -> VersionMachineTransition<MarkerCommandRecorded> {
-        todo!()
+        // TODO: Validate correct event here?
+        TransitionResult::default()
     }
 }
 
@@ -193,18 +186,10 @@ impl From<AwaitingEvent> for NotifiedError {
 impl WFMachinesAdapter for VersionMachine {
     fn adapt_response(
         &self,
-        my_command: Self::Command,
+        _my_command: Self::Command,
         _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        Ok(match my_command {
-            VersionCommand::ChangeStatus(change_id, is_present) => {
-                vec![ResolveHasChange {
-                    change_id,
-                    is_present,
-                }
-                .into()]
-            }
-        })
+        panic!("Version machine does not produce commands")
     }
 }
 
@@ -224,8 +209,17 @@ impl TryFrom<CommandType> for VersionMachineEvents {
 impl TryFrom<HistoryEvent> for VersionMachineEvents {
     type Error = WFMachinesError;
 
-    fn try_from(value: HistoryEvent) -> Result<Self, Self::Error> {
-        todo!()
+    fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
+        match e.event_type() {
+            EventType::MarkerRecorded => {
+                // TODO: validate
+                Ok(VersionMachineEvents::MarkerRecorded)
+            }
+            _ => Err(WFMachinesError::UnexpectedEvent(
+                e,
+                "Change machine does not handle this event",
+            )),
+        }
     }
 }
 
@@ -250,7 +244,7 @@ mod tests {
     #[fixture(replaying = false)]
     fn version_hist(replaying: bool) -> ManagedWFFunc {
         let wfn = WorkflowFunction::new(move |mut ctx: WfContext| async move {
-            if ctx.has_version(MY_CHANGE_ID).await {
+            if ctx.has_version(MY_CHANGE_ID) {
                 ctx.timer(StartTimer {
                     timer_id: "had_change".to_string(),
                     start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -263,6 +257,7 @@ mod tests {
                 })
                 .await;
             }
+            dbg!("I'm done!");
             Ok(().into())
         });
 
@@ -280,23 +275,11 @@ mod tests {
     #[tokio::test]
     async fn version_machine_with_call_not_replay(#[case] mut wfm: ManagedWFFunc) {
         tracing_init();
-
         // Start workflow activation
         let act = wfm.get_next_activation().await.unwrap();
         assert!(!act.is_replaying);
-        // There should immediately be another activation unblocking the has version call
-        let act = wfm.get_next_activation().await.unwrap();
-        assert_matches!(
-            act.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveHasChange(
-                    ResolveHasChange {
-                        change_id,
-                        is_present
-                    }
-                ))
-            }] => change_id == MY_CHANGE_ID && *is_present == true
-        );
+        // There is no activation for the change command, as we know that we are not replaying and
+        // the workflow unblocks itself
         let commands = wfm.get_server_commands().await.commands;
         // Should have record marker and start timer
         assert_eq!(commands.len(), 2);

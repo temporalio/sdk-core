@@ -1,4 +1,3 @@
-use crate::machines::version_state_machine::has_change;
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
@@ -6,15 +5,15 @@ use crate::{
         complete_workflow_state_machine::complete_workflow,
         continue_as_new_workflow_state_machine::continue_as_new,
         fail_workflow_state_machine::fail_workflow, timer_state_machine::new_timer,
-        workflow_task_state_machine::WorkflowTaskMachine, NewMachineWithCommand, ProtoCommand,
-        TemporalStateMachine, WFCommand,
+        version_state_machine::has_change, workflow_task_state_machine::WorkflowTaskMachine,
+        NewMachineWithCommand, ProtoCommand, TemporalStateMachine, WFCommand,
     },
     protos::{
         coresdk::{
             common::Payload,
             workflow_activation::{
                 wf_activation_job::{self, Variant},
-                StartWorkflow, UpdateRandomSeed, WfActivation,
+                ResolveHasChange, StartWorkflow, UpdateRandomSeed, WfActivation,
             },
             PayloadsExt, PayloadsToPayloadError,
         },
@@ -456,9 +455,6 @@ impl WorkflowMachines {
             .await
             .map_err(WFMachinesError::HistoryFetchingError)?;
 
-        // Scan through to the next WFT, searching for any version markers, so that we can
-        // pre-resolve them.
-
         // We're caught up on reply if there are no new events to process
         // TODO: Probably this is unneeded if we evict whenever history is from non-sticky queue
         if events.is_empty() {
@@ -489,10 +485,25 @@ impl WorkflowMachines {
 
             if event.event_type == EventType::WorkflowTaskStarted as i32 && next_event.is_none() {
                 self.handle_event(event, false)?;
-                return Ok(());
+                break;
             }
 
             self.handle_event(event, next_event.is_some())?;
+        }
+
+        // Scan through to the next WFT, searching for any change markers, so that we can
+        // pre-resolve them.
+        for e in self.last_history_from_server.peek_next_wft_sequence() {
+            if let Some((change_id, _deprecated)) = e.get_changed_marker_details() {
+                // Found a change marker
+                self.drive_me
+                    .send_job(wf_activation_job::Variant::ResolveHasChange(
+                        ResolveHasChange {
+                            change_id,
+                            is_present: true,
+                        },
+                    ));
+            }
         }
 
         Ok(())
@@ -679,8 +690,6 @@ impl WorkflowMachines {
         }
         Ok(())
     }
-
-    fn scan_for_version_markers(&self, wft_events: &[HistoryEvent]) {}
 
     fn get_machine_key(&self, id: &CommandID) -> Result<MachineKey> {
         Ok(*self.id_to_machine.get(id).ok_or_else(|| {

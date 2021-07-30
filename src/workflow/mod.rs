@@ -48,7 +48,6 @@ pub enum WorkflowError {
 pub(crate) enum CommandID {
     Timer(String),
     Activity(String),
-    HasChange(String),
 }
 
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data

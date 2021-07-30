@@ -125,6 +125,8 @@ impl HistoryUpdate {
     /// the function may call out to server to fetch more pages if they are known to exist and
     /// needed to complete the WFT sequence.
     ///
+    /// Always buffers the WFT sequence *after* the returned one as well, if it is available.
+    ///
     /// Can return a tonic error in the event that fetching additional history was needed and failed
     pub async fn take_next_wft_sequence(
         &mut self,
@@ -148,6 +150,14 @@ impl HistoryUpdate {
         }
 
         Ok(next_wft_events)
+    }
+
+    /// Lets the caller peek ahead at the next WFT sequence that will be returned by
+    /// [take_next_wft_sequence]. Will always return an empty iterator if that has not been called
+    /// first. May also return an empty iterator or incomplete sequence if we are at the end of
+    /// history.
+    pub fn peek_next_wft_sequence(&self) -> impl Iterator<Item = &HistoryEvent> {
+        self.buffered.iter()
     }
 
     async fn take_next_wft_sequence_impl(

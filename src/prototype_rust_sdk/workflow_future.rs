@@ -7,7 +7,7 @@ use crate::{
         },
         workflow_commands::{
             workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
-            FailWorkflowExecution, HasChange, RequestCancelActivity, ScheduleActivity, StartTimer,
+            FailWorkflowExecution, RequestCancelActivity, ScheduleActivity, StartTimer,
         },
         workflow_completion::WfActivationCompletion,
     },
@@ -19,10 +19,12 @@ use crate::{
 use anyhow::anyhow;
 use crossbeam::channel::Receiver;
 use futures::{future::BoxFuture, FutureExt};
+use parking_lot::RwLock;
 use std::{
     collections::HashMap,
     future::Future,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 use tokio::sync::{
@@ -44,6 +46,7 @@ impl WorkflowFunction {
         let (tx, incoming_activations) = unbounded_channel();
         (
             WorkflowFuture {
+                changes: wf_context.get_changes_map(),
                 inner: (self.wf_func)(wf_context).boxed(),
                 incoming_commands: cmd_receiver,
                 outgoing_completions,
@@ -73,6 +76,8 @@ pub struct WorkflowFuture {
     command_status: HashMap<CommandID, WFCommandFutInfo>,
     /// Use to notify workflow code of cancellation
     cancel_sender: watch::Sender<bool>,
+    /// Maps change ids -> resolved status
+    changes: Arc<RwLock<HashMap<String, bool>>>,
 }
 
 impl WorkflowFuture {
@@ -80,7 +85,6 @@ impl WorkflowFuture {
         let cmd_id = match &event {
             UnblockEvent::Timer(t) => CommandID::Timer(t.clone()),
             UnblockEvent::Activity { id, .. } => CommandID::Activity(id.clone()),
-            UnblockEvent::Change { id, .. } => CommandID::HasChange(id.clone()),
         };
         let unblocker = self.command_status.remove(&cmd_id);
         unblocker
@@ -101,6 +105,7 @@ impl Future for WorkflowFuture {
                 Poll::Ready(a) => a.expect("activation channel not dropped"),
                 Poll::Pending => return Poll::Pending,
             };
+            dbg!(&activation);
 
             let is_only_eviction = activation.is_only_eviction();
             let run_id = activation.run_id;
@@ -138,10 +143,9 @@ impl Future for WorkflowFuture {
                         Variant::ResolveHasChange(ResolveHasChange {
                             change_id,
                             is_present,
-                        }) => self.unblock(UnblockEvent::Change {
-                            id: change_id,
-                            present: is_present,
-                        }),
+                        }) => {
+                            self.changes.write().insert(change_id, is_present);
+                        }
                         Variant::RemoveFromCache(_) => {
                             die_of_eviction_when_done = true;
                         }
@@ -191,9 +195,9 @@ impl Future for WorkflowFuture {
                                 activity_id,
                                 ..
                             }) => CommandID::Activity(activity_id),
-                            workflow_command::Variant::HasChange(HasChange {
-                                change_id, ..
-                            }) => CommandID::HasChange(change_id),
+                            workflow_command::Variant::HasChange(_) => {
+                                panic!("Has change should be a nonblocking command")
+                            }
                             _ => unimplemented!("Command type not implemented"),
                         };
                         self.command_status.insert(
@@ -202,6 +206,9 @@ impl Future for WorkflowFuture {
                                 unblocker: cmd.unblocker,
                             },
                         );
+                    }
+                    RustWfCmd::NewNonblockingCmd(cmd) => {
+                        activation_cmds.push(cmd);
                     }
                     RustWfCmd::ForceTimeout(dur) => {
                         // This is nasty
@@ -246,6 +253,7 @@ impl Future for WorkflowFuture {
                     }
                 }
             }
+
             if activation_cmds.is_empty() {
                 panic!(
                     "Workflow did not produce any commands or exit, but awaited. This \

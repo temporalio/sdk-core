@@ -8,7 +8,8 @@ use crate::{
 };
 use crossbeam::channel::{Receiver, Sender};
 use futures::{task::Context, FutureExt};
-use std::{future::Future, pin::Pin, task::Poll, time::Duration};
+use parking_lot::RwLock;
+use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, task::Poll, time::Duration};
 use tokio::sync::{oneshot, watch};
 
 /// Used within workflows to issue commands, get info, etc.
@@ -16,6 +17,8 @@ pub struct WfContext {
     chan: Sender<RustWfCmd>,
     args: Vec<Payload>,
     am_cancelled: watch::Receiver<bool>,
+    /// Maps change ids -> resolved status
+    changes: Arc<RwLock<HashMap<String, bool>>>,
 }
 
 impl WfContext {
@@ -32,6 +35,7 @@ impl WfContext {
                 chan,
                 args,
                 am_cancelled,
+                changes: Arc::new(RwLock::new(Default::default())),
             },
             rx,
         )
@@ -40,6 +44,10 @@ impl WfContext {
     /// Get the arguments provided to the workflow upon execution start
     pub fn get_args(&self) -> &[Payload] {
         self.args.as_slice()
+    }
+
+    pub(crate) fn get_changes_map(&self) -> Arc<RwLock<HashMap<String, bool>>> {
+        self.changes.clone()
     }
 
     /// A future that resolves if/when the workflow is cancelled
@@ -101,25 +109,24 @@ impl WfContext {
     }
 
     /// Check (or record) that this workflow history was created with the provided change id
-    pub fn has_version(&self, change_id: &str) -> impl Future<Output = bool> {
-        let (cmd, unblocker) = WFCommandFut::new();
+    pub fn has_version(&self, change_id: &str) -> bool {
         self.send(
-            CommandCreateRequest {
-                cmd: workflow_command::Variant::HasChange(HasChange {
-                    change_id: change_id.to_string(),
-                    deprecated: false,
-                }),
-                unblocker,
-            }
+            workflow_command::Variant::HasChange(HasChange {
+                change_id: change_id.to_string(),
+                deprecated: false,
+            })
             .into(),
         );
-        cmd.map(|ue| {
-            if let UnblockEvent::Change { present, .. } = ue {
-                present
-            } else {
-                panic!("Wrong unblock event")
-            }
-        })
+        // See if we already know about the status of this change. If we don't, then it always
+        // resolves true.
+        if let Some(present) = self.get_changes_map().read().get(change_id) {
+            return *present;
+        }
+        // TODO: Check replaying flag here. Should blow up if replaying.
+        self.get_changes_map()
+            .write()
+            .insert(change_id.to_string(), true);
+        true
     }
 
     /// Force a workflow task timeout by waiting too long and gumming up the entire runtime
