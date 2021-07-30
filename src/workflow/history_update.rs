@@ -4,7 +4,7 @@ use crate::{
     protos::temporal::api::workflowservice::v1::GetWorkflowExecutionHistoryResponse,
     ServerGatewayApis,
 };
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
+use futures::{future::BoxFuture, stream, stream::BoxStream, FutureExt, Stream, StreamExt};
 use std::{
     collections::VecDeque,
     future::Future,
@@ -18,9 +18,11 @@ use std::{
 /// state machines.
 pub struct HistoryUpdate {
     events: BoxStream<'static, Result<HistoryEvent, tonic::Status>>,
-    /// Sometimes we consume an event from the stream but do not return it in the last wft sequence.
-    /// It must be kept here and returned in the next call.
-    buffered: Option<HistoryEvent>,
+    /// It is useful to be able to look ahead up to one workflow task beyond the currently
+    /// requested one. The initial (possibly only) motivation for this being to be able to
+    /// pre-emptively notify lang about change markers so that calls to `changed` do not need to
+    /// be async.
+    buffered: VecDeque<HistoryEvent>,
     pub previous_started_event_id: i64,
 }
 
@@ -101,18 +103,16 @@ impl HistoryUpdate {
     pub fn new(history_iterator: HistoryPaginator, previous_wft_started_id: i64) -> Self {
         Self {
             events: history_iterator.fuse().boxed(),
-            buffered: None,
+            buffered: VecDeque::new(),
             previous_started_event_id: previous_wft_started_id,
         }
     }
 
     #[cfg(test)]
     pub fn new_from_events(events: Vec<HistoryEvent>, previous_wft_started_id: i64) -> Self {
-        use futures::stream;
-
         Self {
             events: stream::iter(events.into_iter().map(Ok)).boxed(),
-            buffered: None,
+            buffered: VecDeque::new(),
             previous_started_event_id: previous_wft_started_id,
         }
     }
@@ -130,7 +130,31 @@ impl HistoryUpdate {
         &mut self,
         from_wft_started_id: i64,
     ) -> Result<Vec<HistoryEvent>, tonic::Status> {
-        let mut events_to_next_wft_started = vec![];
+        let (next_wft_events, maybe_bonus_event) = self
+            .take_next_wft_sequence_impl(from_wft_started_id)
+            .await?;
+        if let Some(be) = maybe_bonus_event {
+            self.buffered.push_back(be);
+        }
+
+        if let Some(last_event_id) = next_wft_events.last().map(|he| he.event_id) {
+            // Always attempt to fetch the *next* WFT sequence as well, to buffer it for lookahead
+            let (buffer_these_events, maybe_bonus_event) =
+                self.take_next_wft_sequence_impl(last_event_id).await?;
+            self.buffered.extend(buffer_these_events);
+            if let Some(be) = maybe_bonus_event {
+                self.buffered.push_back(be);
+            }
+        }
+
+        Ok(next_wft_events)
+    }
+
+    async fn take_next_wft_sequence_impl(
+        &mut self,
+        from_event_id: i64,
+    ) -> Result<(Vec<HistoryEvent>, Option<HistoryEvent>), tonic::Status> {
+        let mut events_to_next_wft_started: Vec<HistoryEvent> = vec![];
 
         // This flag tracks if, while determining events to be returned, we have seen the next
         // logically significant WFT started event which follows the one that was passed in as a
@@ -139,7 +163,7 @@ impl HistoryUpdate {
         // failed or timed out.
         let mut saw_next_wft = false;
         let mut should_pop = |e: &HistoryEvent| {
-            if e.event_id <= from_wft_started_id {
+            if e.event_id <= from_event_id {
                 return true;
             } else if e.event_type == EventType::WorkflowTaskStarted as i32 {
                 saw_next_wft = true;
@@ -160,28 +184,36 @@ impl HistoryUpdate {
             true
         };
 
-        if let Some(e) = self.buffered.take() {
-            if e.event_id > from_wft_started_id {
-                events_to_next_wft_started.push(e);
-            }
-        }
+        // Fetch events from the buffer first, then from the network
+        let mut event_q = stream::iter(self.buffered.drain(..).map(Ok)).chain(&mut self.events);
 
-        while let Some(e) = self.events.next().await {
+        let mut extra_e = None;
+        let mut last_seen_id = None;
+        while let Some(e) = event_q.next().await {
             let e = e?;
+
+            // This little block prevents us from infinitely fetching work from the server in the
+            // event that, for whatever reason, it keeps returning stuff we've already seen.
+            if let Some(last_id) = last_seen_id {
+                if e.event_id <= last_id {
+                    error!("Server returned history event IDs that went backwards!");
+                    break;
+                }
+            }
+            last_seen_id = Some(e.event_id);
+
             // It's possible to have gotten a new history update without eviction (ex: unhandled
             // command on completion), where we may need to skip events we already handled.
-            if e.event_id > from_wft_started_id {
-                // This check that we don't re-buffer the same ID is only necessary if we get duplicate
-                // events from the stream, but that should never happen in real life, only test.
+            if e.event_id > from_event_id {
                 if !should_pop(&e) {
-                    self.buffered.insert(e);
+                    extra_e = Some(e);
                     break;
                 }
                 events_to_next_wft_started.push(e);
             }
         }
 
-        Ok(events_to_next_wft_started)
+        Ok((events_to_next_wft_started, extra_e))
     }
 }
 
@@ -239,13 +271,15 @@ mod tests {
 
     #[tokio::test]
     async fn paginator_fetches_new_pages() {
+        // Note that this test triggers the "event ids that went backwards" error, acceptably.
+        // Can be fixed by having mock not return earlier events.
         let wft_count = 500;
         let long_hist = canned_histories::long_sequential_timers(wft_count);
         let initial_hist = long_hist.get_history_info(10).unwrap();
         let prev_started = initial_hist.previous_started_event_id;
         let mut mock_gateway = MockServerGatewayApis::new();
 
-        let mut npt = 2u8;
+        let mut npt = 2;
         mock_gateway
             .expect_get_workflow_execution_history()
             .returning(move |_, _, passed_npt| {
