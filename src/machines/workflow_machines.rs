@@ -15,11 +15,11 @@ use crate::{
                 wf_activation_job::{self, Variant},
                 ResolveHasChange, StartWorkflow, UpdateRandomSeed, WfActivation,
             },
-            PayloadsExt, PayloadsToPayloadError,
+            PayloadsExt,
         },
         temporal::api::{
             common::v1::Header,
-            enums::v1::{CommandType, EventType},
+            enums::v1::EventType,
             history::v1::{history_event, HistoryEvent},
         },
     },
@@ -111,41 +111,18 @@ pub enum MachineResponse {
 }
 
 #[derive(thiserror::Error, Debug)]
-// TODO: Some of these are redundant with MachineError -- we should try to dedupe / simplify
-//  This also probably doesn't need to be public. The only important thing is if the error is a
-//  nondeterminism error.
-pub enum WFMachinesError {
-    #[error("Event {0:?} was not expected: {1}")]
-    UnexpectedEvent(HistoryEvent, &'static str),
-    #[error("Event {0:?} was not expected: {1}")]
-    InvalidTransitionDuringEvent(HistoryEvent, String),
-    #[error("Event {0:?} was malformed: {1}")]
-    MalformedEvent(HistoryEvent, String),
-    // Expected to be transformed into a `MalformedEvent` with the full event by workflow machines,
-    // when emitted by a sub-machine
-    // TODO: This is really an unexpected, rather than malformed event.
-    #[error("{0}")]
-    MalformedEventDetail(String),
-    #[error("Command type {0:?} was not expected")]
-    UnexpectedCommand(CommandType),
-    #[error("Command type {0} is not known")]
-    UnknownCommandType(i32),
-    #[error("No command was scheduled for event {0:?}")]
-    NoCommandScheduledForEvent(HistoryEvent),
-    #[error("Machine response {0:?} was not expected: {1}")]
-    UnexpectedMachineResponse(MachineResponse, String),
-    #[error("Command was missing its associated machine: {0}")]
-    MissingAssociatedMachine(String),
-    #[error("There was {0} when we expected exactly one payload while applying event: {1:?}")]
-    NotExactlyOnePayload(PayloadsToPayloadError, HistoryEvent),
-    #[error("Machine encountered an invalid transition: {0}")]
-    InvalidTransition(String),
+pub(crate) enum WFMachinesError {
+    #[error("Nondeterminism error: {0}")]
+    Nondeterminism(String),
+    #[error("Fatal error in workflow machines: {0}")]
+    Fatal(String),
+
     #[error("Unrecoverable network error while fetching history: {0}")]
     HistoryFetchingError(tonic::Status),
+
+    /// Should always be caught internally and turned into a workflow task failure
     #[error("Unable to process partial event history because workflow is no longer cached.")]
     CacheMiss,
-    #[error("Lang sent us an invalid command {0:?}: {1}")]
-    BadWfCommand(WFCommand, String),
 }
 
 impl WorkflowMachines {
@@ -197,14 +174,10 @@ impl WorkflowMachines {
             self.handle_command_event(event)?;
             return Ok(());
         }
-        let event_type = EventType::from_i32(event.event_type).ok_or_else(|| {
-            WFMachinesError::UnexpectedEvent(event.clone(), "The event type is unknown")
-        })?;
-
         if self.replaying
             && self.current_started_event_id
                 >= self.last_history_from_server.previous_started_event_id
-            && event_type != EventType::WorkflowTaskCompleted
+            && event.event_type() != EventType::WorkflowTaskCompleted
         {
             // Replay is finished
             self.replaying = false;
@@ -302,7 +275,10 @@ impl WorkflowMachines {
             let command = if let Some(c) = maybe_command {
                 c
             } else {
-                return Err(WFMachinesError::NoCommandScheduledForEvent(event.clone()));
+                return Err(WFMachinesError::Nondeterminism(format!(
+                    "No command scheduled for event {}",
+                    event
+                )));
             };
 
             // Feed the machine the event
@@ -367,11 +343,10 @@ impl WorkflowMachines {
                     );
                     self.drive_me.start(attrs.clone());
                 } else {
-                    return Err(WFMachinesError::MalformedEvent(
-                        event.clone(),
-                        "WorkflowExecutionStarted event did not have appropriate attributes"
-                            .to_string(),
-                    ));
+                    return Err(WFMachinesError::Fatal(format!(
+                        "WorkflowExecutionStarted event did not have appropriate attributes: {}",
+                        event
+                    )));
                 }
             }
             Some(EventType::WorkflowTaskScheduled) => {
@@ -403,10 +378,10 @@ impl WorkflowMachines {
                 }
             }
             _ => {
-                return Err(WFMachinesError::UnexpectedEvent(
-                    event.clone(),
-                    "The event is non a non-stateful event, but we tried to handle it as one",
-                ));
+                return Err(WFMachinesError::Fatal(format!(
+                    "The event is non a non-stateful event, but we tried to handle it as one: {}",
+                    event
+                )));
             }
         }
         Ok(())
@@ -540,16 +515,7 @@ impl WorkflowMachines {
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
-        let machine_responses = self
-            .machine_mut(sm)
-            .handle_event(event, has_next_event)
-            .map_err(|e| {
-                if let WFMachinesError::MalformedEventDetail(s) = e {
-                    WFMachinesError::MalformedEvent(event.clone(), s)
-                } else {
-                    e
-                }
-            })?;
+        let machine_responses = self.machine_mut(sm).handle_event(event, has_next_event)?;
         self.process_machine_responses(sm, machine_responses)?;
         Ok(())
     }
@@ -560,13 +526,13 @@ impl WorkflowMachines {
     #[instrument(level = "debug", skip(self))]
     fn prepare_commands(&mut self) -> Result<()> {
         while let Some(c) = self.current_wf_task_commands.pop_front() {
-            let cmd_type = CommandType::from_i32(c.command.command_type)
-                .ok_or(WFMachinesError::UnknownCommandType(c.command.command_type))?;
             if !self
                 .machine(c.machine)
                 .was_cancelled_before_sent_to_server()
             {
-                let machine_responses = self.machine_mut(c.machine).handle_command(cmd_type)?;
+                let machine_responses = self
+                    .machine_mut(c.machine)
+                    .handle_command(c.command.command_type())?;
                 self.process_machine_responses(c.machine, machine_responses)?;
             }
             self.commands.push_back(c);
@@ -704,10 +670,10 @@ impl WorkflowMachines {
                     jobs.push(j);
                 }
                 v => {
-                    return Err(WFMachinesError::UnexpectedMachineResponse(
-                        v,
-                        format!("When cancelling {:?}", id),
-                    ));
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Unexpected machine response {:?} when cancelling {:?}",
+                        v, id
+                    )));
                 }
             }
         }
@@ -716,10 +682,7 @@ impl WorkflowMachines {
 
     fn get_machine_key(&self, id: &CommandID) -> Result<MachineKey> {
         Ok(*self.id_to_machine.get(id).ok_or_else(|| {
-            WFMachinesError::MissingAssociatedMachine(format!(
-                "Missing associated machine for {:?}",
-                id
-            ))
+            WFMachinesError::Fatal(format!("Missing associated machine for {:?}", id))
         })?)
     }
 

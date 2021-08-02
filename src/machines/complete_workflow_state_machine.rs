@@ -73,10 +73,10 @@ impl TryFrom<HistoryEvent> for CompleteWorkflowMachineEvents {
         Ok(match e.event_type() {
             EventType::WorkflowExecutionCompleted => Self::WorkflowExecutionCompleted,
             _ => {
-                return Err(WFMachinesError::UnexpectedEvent(
-                    e,
-                    "Complete workflow machine does not handle this event",
-                ))
+                return Err(WFMachinesError::Nondeterminism(format!(
+                    "Complete workflow machine does not handle this event: {}",
+                    e
+                )))
             }
         })
     }

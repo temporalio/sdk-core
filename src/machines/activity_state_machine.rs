@@ -1,10 +1,9 @@
 #![allow(clippy::large_enum_variant)]
 
-use crate::machines::EventInfo;
 use crate::{
     machines::{
-        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, OnEventWrapper,
-        WFMachinesAdapter, WFMachinesError,
+        workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
+        OnEventWrapper, WFMachinesAdapter, WFMachinesError,
     },
     protos::{
         coresdk::{
@@ -160,10 +159,10 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskCompleted(attrs)
                 } else {
-                    return Err(WFMachinesError::MalformedEvent(
-                        e,
-                        "Activity completion attributes were unset".to_string(),
-                    ));
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Activity completion attributes were unset: {}",
+                        e
+                    )));
                 }
             }
             EventType::ActivityTaskFailed => {
@@ -172,10 +171,10 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskFailed(attrs)
                 } else {
-                    return Err(WFMachinesError::MalformedEvent(
-                        e,
-                        "Activity failure attributes were unset".to_string(),
-                    ));
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Activity failure attributes were unset: {}",
+                        e
+                    )));
                 }
             }
             EventType::ActivityTaskTimedOut => {
@@ -184,10 +183,10 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskTimedOut(attrs)
                 } else {
-                    return Err(WFMachinesError::MalformedEvent(
-                        e,
-                        "Activity timeout attributes were unset".to_string(),
-                    ));
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Activity timeout attributes were unset: {}",
+                        e
+                    )));
                 }
             }
             EventType::ActivityTaskCancelRequested => Self::ActivityTaskCancelRequested,
@@ -197,17 +196,17 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskCanceled(attrs)
                 } else {
-                    return Err(WFMachinesError::MalformedEvent(
-                        e,
-                        "Activity cancellation attributes were unset".to_string(),
-                    ));
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Activity cancellation attributes were unset: {}",
+                        e
+                    )));
                 }
             }
             _ => {
-                return Err(WFMachinesError::UnexpectedEvent(
-                    e,
-                    "Activity machine does not handle this event",
-                ))
+                return Err(WFMachinesError::Nondeterminism(format!(
+                    "Activity machine does not handle this event: {}",
+                    e
+                )))
             }
         })
     }
@@ -671,10 +670,11 @@ fn convert_payloads(
     result: Option<Payloads>,
 ) -> Result<Option<Payload>, WFMachinesError> {
     result.map(TryInto::try_into).transpose().map_err(|pe| {
-        WFMachinesError::NotExactlyOnePayload(
+        WFMachinesError::Fatal(format!(
+            "Not exactly one payload in activity result ({}) for event: {}",
             pe,
-            event_info.map(|e| e.event.clone()).unwrap_or_default(),
-        )
+            event_info.map(|e| e.event.clone()).unwrap_or_default()
+        ))
     })
 }
 

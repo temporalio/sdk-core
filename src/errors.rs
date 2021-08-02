@@ -1,15 +1,16 @@
+//! Error types exposed by public APIs
+
 use crate::{
-    protos::coresdk::activity_result::ActivityResult,
+    machines::WFMachinesError, protos::coresdk::activity_result::ActivityResult,
     protos::coresdk::workflow_completion::WfActivationCompletion,
     protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
-    workflow::WorkflowError,
 };
 use tonic::codegen::http::uri::InvalidUri;
 
 pub(crate) struct ShutdownErr;
 pub(crate) struct WorkflowUpdateError {
     /// Underlying workflow error
-    pub source: WorkflowError,
+    pub source: WFMachinesError,
     /// The run id of the erring workflow
     pub run_id: String,
 }
@@ -33,7 +34,7 @@ pub enum PollWfError {
     #[error("There was an error with the workflow instance with run id ({run_id}): {source:?}")]
     WorkflowUpdateError {
         /// Underlying workflow error
-        source: WorkflowError,
+        source: anyhow::Error,
         /// The run id of the erring workflow
         run_id: String,
     },
@@ -63,7 +64,7 @@ pub enum PollWfError {
 impl From<WorkflowUpdateError> for PollWfError {
     fn from(e: WorkflowUpdateError) -> Self {
         Self::WorkflowUpdateError {
-            source: e.source,
+            source: e.source.into(),
             run_id: e.run_id,
         }
     }
@@ -114,7 +115,7 @@ pub enum CompleteWfError {
     #[error("There was an error with the workflow instance with run id ({run_id}): {source:?}")]
     WorkflowUpdateError {
         /// Underlying workflow error
-        source: WorkflowError,
+        source: anyhow::Error,
         /// The run id of the erring workflow
         run_id: String,
     },
@@ -130,7 +131,7 @@ pub enum CompleteWfError {
 impl From<WorkflowUpdateError> for CompleteWfError {
     fn from(e: WorkflowUpdateError) -> Self {
         Self::WorkflowUpdateError {
-            source: e.source,
+            source: e.source.into(),
             run_id: e.run_id,
         }
     }

@@ -1,5 +1,5 @@
-use crate::machines::EventInfo;
 use crate::{
+    machines::EventInfo,
     machines::{
         Cancellable, HistoryEvent, MachineResponse, NewMachineWithCommand, OnEventWrapper,
         WFMachinesAdapter, WFMachinesError,
@@ -77,10 +77,10 @@ impl TryFrom<HistoryEvent> for CancelWorkflowMachineEvents {
         Ok(match EventType::from_i32(e.event_type) {
             Some(EventType::WorkflowExecutionCanceled) => Self::WorkflowExecutionCanceled,
             _ => {
-                return Err(WFMachinesError::UnexpectedEvent(
-                    e,
-                    "Cancel workflow machine does not handle this event",
-                ))
+                return Err(WFMachinesError::Nondeterminism(format!(
+                    "Cancel workflow machine does not handle this event: {}",
+                    e
+                )))
             }
         })
     }

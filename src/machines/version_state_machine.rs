@@ -224,16 +224,17 @@ impl TryFrom<HistoryEvent> for VersionMachineEvents {
                 // TODO: validate
                 Ok(VersionMachineEvents::MarkerRecorded)
             }
-            _ => Err(WFMachinesError::UnexpectedEvent(
-                e,
-                "Change machine does not handle this event",
-            )),
+            _ => Err(WFMachinesError::Nondeterminism(format!(
+                "Change machine does not handle this event: {}",
+                e
+            ))),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::machines::WFMachinesError;
     use crate::{
         protos::coresdk::{
             workflow_activation::{wf_activation_job, ResolveHasChange, WfActivationJob},
@@ -243,7 +244,7 @@ mod tests {
         prototype_rust_sdk::{WfContext, WorkflowFunction},
         test_help::canned_histories,
         tracing_init,
-        workflow::{managed_wf::ManagedWFFunc, WorkflowError},
+        workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::{fixture, rstest};
     use std::time::Duration;
@@ -388,8 +389,7 @@ mod tests {
             // Should error out because we didn't send the record marker command
             let err = act.err().unwrap();
             dbg!(&err);
-            // TODO: Better error types. Will be pretty big changes, different PR from implementing ver.
-            assert_matches!(err, WorkflowError::UnderlyingMachinesError(_));
+            assert_matches!(err, WFMachinesError::Nondeterminism(_));
         }
 
         wfm.shutdown().await.unwrap();

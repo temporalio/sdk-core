@@ -74,10 +74,10 @@ impl TryFrom<HistoryEvent> for ContinueAsNewWorkflowMachineEvents {
         Ok(match e.event_type() {
             EventType::WorkflowExecutionContinuedAsNew => Self::WorkflowExecutionContinuedAsNew,
             _ => {
-                return Err(WFMachinesError::UnexpectedEvent(
-                    e,
-                    "Continue as new workflow machine does not handle this event",
-                ))
+                return Err(WFMachinesError::Nondeterminism(format!(
+                    "Continue as new workflow machine does not handle this event: {}",
+                    e
+                )))
             }
         })
     }

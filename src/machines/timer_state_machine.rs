@@ -105,17 +105,17 @@ impl TryFrom<HistoryEvent> for TimerMachineEvents {
                 {
                     Self::TimerFired(attrs)
                 } else {
-                    return Err(WFMachinesError::MalformedEvent(
-                        e,
-                        "Timer fired attribs were unset".to_string(),
-                    ));
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Timer fired attribs were unset: {}",
+                        e
+                    )));
                 }
             }
             _ => {
-                return Err(WFMachinesError::UnexpectedEvent(
-                    e,
-                    "Timer machine does not handle this event",
-                ))
+                return Err(WFMachinesError::Nondeterminism(format!(
+                    "Timer machine does not handle this event: {}",
+                    e
+                )))
             }
         })
     }
@@ -199,7 +199,7 @@ impl StartCommandRecorded {
         attrs: TimerFiredEventAttributes,
     ) -> TimerMachineTransition<Fired> {
         if dat.attrs.timer_id != attrs.timer_id {
-            TransitionResult::Err(WFMachinesError::MalformedEventDetail(format!(
+            TransitionResult::Err(WFMachinesError::Fatal(format!(
                 "Timer fired event did not have expected timer id {}!",
                 dat.attrs.timer_id
             )))

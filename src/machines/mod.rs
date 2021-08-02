@@ -169,13 +169,16 @@ where
         if let Ok(converted_command) = command_type.try_into() {
             match OnEventWrapper::on_event_mut(self, converted_command) {
                 Ok(c) => process_machine_commands(self, c, None),
-                Err(MachineError::InvalidTransition) => {
-                    Err(WFMachinesError::UnexpectedCommand(command_type))
-                }
+                Err(MachineError::InvalidTransition) => Err(WFMachinesError::Nondeterminism(
+                    format!("Unexpected command {:?}", command_type),
+                )),
                 Err(MachineError::Underlying(e)) => Err(e.into()),
             }
         } else {
-            Err(WFMachinesError::UnexpectedCommand(command_type))
+            Err(WFMachinesError::Nondeterminism(format!(
+                "Unexpected command {:?}",
+                command_type
+            )))
         }
     }
 
@@ -205,16 +208,12 @@ where
                     has_next_event,
                 }),
             ),
-            Err(MachineError::InvalidTransition) => {
-                Err(WFMachinesError::InvalidTransitionDuringEvent(
-                    event.clone(),
-                    format!(
-                        "{} in state {} says the transition is invalid",
-                        self.name(),
-                        self.state()
-                    ),
-                ))
-            }
+            Err(MachineError::InvalidTransition) => Err(WFMachinesError::Fatal(format!(
+                "{} in state {} says the transition is invalid during event {}",
+                self.name(),
+                self.state(),
+                event
+            ))),
             Err(MachineError::Underlying(e)) => Err(e.into()),
         }
     }
@@ -222,8 +221,8 @@ where
     fn cancel(&mut self) -> Result<Vec<MachineResponse>, WFMachinesError> {
         let res = self.cancel();
         res.map_err(|e| match e {
-            MachineError::InvalidTransition => WFMachinesError::InvalidTransition(format!(
-                "while attempting to cancel in {}",
+            MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
+                "Invalid transition while attempting to cancel in {}",
                 self.state(),
             )),
             MachineError::Underlying(e) => e.into(),

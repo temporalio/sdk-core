@@ -74,14 +74,8 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
                     );
                 };
 
-                let event_type = EventType::from_i32(event.event_type).ok_or_else(|| {
-                    WFMachinesError::UnexpectedEvent(
-                        event.clone(),
-                        "WfTask machine could not interpret event type",
-                    )
-                })?;
                 let cur_event_past_or_at_start = event.event_id >= task_started_event_id;
-                if event_type == EventType::WorkflowTaskStarted
+                if event.event_type() == EventType::WorkflowTaskStarted
                     && (!cur_event_past_or_at_start || has_next_event)
                 {
                     return Ok(vec![]);
@@ -120,18 +114,17 @@ impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
                     match time.try_into() {
                         Ok(t) => t,
                         Err(_) => {
-                            return Err(WFMachinesError::MalformedEvent(
-                                e,
+                            return Err(WFMachinesError::Fatal(
                                 "Workflow task started event timestamp was inconvertible"
                                     .to_string(),
                             ))
                         }
                     }
                 } else {
-                    return Err(WFMachinesError::MalformedEvent(
-                        e,
-                        "Workflow task started event must contain timestamp".to_string(),
-                    ));
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Workflow task started event must contain timestamp: {}",
+                        e
+                    )));
                 };
                 WFTStartedDat {
                     started_event_id: e.event_id,
@@ -157,17 +150,17 @@ impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
                         },
                     })
                 } else {
-                    return Err(WFMachinesError::MalformedEvent(
-                        e,
-                        "Workflow task failed is missing attributes".to_string(),
-                    ));
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Workflow task failed is missing attributes: {}",
+                        e
+                    )));
                 }
             }
             _ => {
-                return Err(WFMachinesError::UnexpectedEvent(
-                    e,
-                    "Event does not apply to a wf task machine",
-                ))
+                return Err(WFMachinesError::Nondeterminism(format!(
+                    "Event does not apply to a wf task machine: {}",
+                    e
+                )))
             }
         })
     }

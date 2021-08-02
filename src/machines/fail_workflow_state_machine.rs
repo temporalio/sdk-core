@@ -93,10 +93,10 @@ impl TryFrom<HistoryEvent> for FailWorkflowMachineEvents {
         Ok(match e.event_type() {
             EventType::WorkflowExecutionFailed => Self::WorkflowExecutionFailed,
             _ => {
-                return Err(WFMachinesError::UnexpectedEvent(
-                    e,
-                    "Fail workflow machine does not handle this event",
-                ))
+                return Err(WFMachinesError::Nondeterminism(format!(
+                    "Fail workflow machine does not handle this event: {}",
+                    e
+                )))
             }
         })
     }

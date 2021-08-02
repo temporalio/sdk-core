@@ -15,6 +15,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk_core::{
+    errors::PollWfError,
     protos::coresdk::{
         activity_result::ActivityResult,
         common::UserCodeFailure,
@@ -24,7 +25,7 @@ use temporal_sdk_core::{
         ActivityTaskCompletion,
     },
     prototype_rust_sdk::{WfContext, WorkflowResult},
-    Core, IntoCompletion, PollWfError,
+    Core, IntoCompletion,
 };
 use test_utils::{
     init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreTestHelpers, CoreWfStarter, GwApi,
