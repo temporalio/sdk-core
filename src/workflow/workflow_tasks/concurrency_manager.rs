@@ -133,13 +133,13 @@ impl WorkflowConcurrencyManager {
         run_id: &str,
         task: OutstandingTask,
     ) -> Result<(), WorkflowUpdateError> {
-        let mut dereffer = self.get_task_mut(&run_id)?;
+        let mut dereffer = self.get_task_mut(run_id)?;
         *dereffer = Some(task);
         Ok(())
     }
 
     pub fn delete_wft(&self, run_id: &str) -> Option<OutstandingTask> {
-        if let Ok(ot) = self.get_task_mut(&run_id).as_deref_mut() {
+        if let Ok(ot) = self.get_task_mut(run_id).as_deref_mut() {
             ot.take()
         } else {
             None
@@ -225,9 +225,9 @@ impl WorkflowConcurrencyManager {
         Fout: Send + Debug,
     {
         let readlock = self.runs.read();
-        let m = readlock.get(run_id).ok_or(WFMachinesError::Fatal(
-            "Missing workflow machines".to_string(),
-        ))?;
+        let m = readlock
+            .get(run_id)
+            .ok_or_else(|| WFMachinesError::Fatal("Missing workflow machines".to_string()))?;
         let mut wfm_mutex = m.wfm.lock().await;
         let mut wfm = wfm_mutex
             .take()

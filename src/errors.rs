@@ -41,7 +41,7 @@ pub enum PollWfError {
     /// The server returned a malformed polling response. Either we aren't handling a valid form,
     /// or the server is bugging out. Likely fatal.
     #[error("Poll workflow response from server was malformed: {0:?}")]
-    BadPollResponseFromServer(PollWorkflowTaskQueueResponse),
+    BadPollResponseFromServer(Box<PollWorkflowTaskQueueResponse>),
     /// [crate::Core::shutdown] was called, and there are no more replay tasks to be handled. Lang
     /// must call [crate::Core::complete_workflow_task] for any remaining tasks, and then may
     /// exit.

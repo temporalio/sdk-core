@@ -194,11 +194,7 @@ impl WFMachinesAdapter for VersionMachine {
     }
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
-        if let Some(_) = event.get_changed_marker_details() {
-            true
-        } else {
-            false
-        }
+        event.get_changed_marker_details().is_some()
     }
 }
 
@@ -323,7 +319,7 @@ mod tests {
                         is_present
                     }
                 ))
-            }] => change_id == MY_CHANGE_ID && *is_present == true
+            }] => change_id == MY_CHANGE_ID && *is_present
         );
         let commands = wfm.get_server_commands().await.commands;
         // Should have record marker and start timer
@@ -375,7 +371,7 @@ mod tests {
                         is_present
                     }
                 ))
-            }] => change_id == MY_CHANGE_ID && *is_present == true
+            }] => change_id == MY_CHANGE_ID && *is_present
         );
         let commands = wfm.get_server_commands().await.commands;
         assert_eq!(commands.len(), 1);

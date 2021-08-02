@@ -92,14 +92,14 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
     }
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
-        match event.event_type() {
+        matches!(
+            event.event_type(),
             EventType::WorkflowTaskScheduled
-            | EventType::WorkflowTaskStarted
-            | EventType::WorkflowTaskTimedOut
-            | EventType::WorkflowTaskCompleted
-            | EventType::WorkflowTaskFailed => true,
-            _ => false,
-        }
+                | EventType::WorkflowTaskStarted
+                | EventType::WorkflowTaskTimedOut
+                | EventType::WorkflowTaskCompleted
+                | EventType::WorkflowTaskFailed
+        )
     }
 }
 

@@ -175,7 +175,7 @@ impl Worker {
 
         let work: ValidPollWFTQResponse = res
             .try_into()
-            .map_err(PollWfError::BadPollResponseFromServer)?;
+            .map_err(|resp| PollWfError::BadPollResponseFromServer(Box::new(resp)))?;
 
         // Only permanently take a permit in the event the poll finished completely
         sem.forget();

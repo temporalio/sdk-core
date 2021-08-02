@@ -253,16 +253,16 @@ impl WFMachinesAdapter for ActivityMachine {
     }
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
-        match event.event_type() {
+        matches!(
+            event.event_type(),
             EventType::ActivityTaskScheduled
-            | EventType::ActivityTaskStarted
-            | EventType::ActivityTaskCompleted
-            | EventType::ActivityTaskFailed
-            | EventType::ActivityTaskTimedOut
-            | EventType::ActivityTaskCancelRequested
-            | EventType::ActivityTaskCanceled => true,
-            _ => false,
-        }
+                | EventType::ActivityTaskStarted
+                | EventType::ActivityTaskCompleted
+                | EventType::ActivityTaskFailed
+                | EventType::ActivityTaskTimedOut
+                | EventType::ActivityTaskCancelRequested
+                | EventType::ActivityTaskCanceled
+        )
     }
 }
 

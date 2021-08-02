@@ -245,10 +245,10 @@ impl WFMachinesAdapter for TimerMachine {
     }
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
-        match event.event_type() {
-            EventType::TimerStarted | EventType::TimerCanceled | EventType::TimerFired => true,
-            _ => false,
-        }
+        matches!(
+            event.event_type(),
+            EventType::TimerStarted | EventType::TimerCanceled | EventType::TimerFired
+        )
     }
 }
 

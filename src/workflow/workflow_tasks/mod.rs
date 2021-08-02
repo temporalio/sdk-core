@@ -172,7 +172,7 @@ impl WorkflowTaskManager {
                 self.workflow_machines.get_activation(rid).is_none()
             });
         if let Some(act) = maybe_act.as_ref() {
-            self.insert_outstanding_activation(&act)?;
+            self.insert_outstanding_activation(act)?;
             self.cache_manager.lock().touch(&act.run_id);
         }
         Ok(maybe_act)

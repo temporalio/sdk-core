@@ -204,12 +204,12 @@ async fn repros_query_dropped_on_floor() {
     let task_q = wf_starter.get_task_queue();
     wf_starter.start_wf().await;
 
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     core.complete_timer(&task.run_id, "timer-1", Duration::from_millis(500))
         .await;
 
     // Poll for a task we will time out
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_task(task_q).await.unwrap();
     tokio::time::sleep(Duration::from_secs(2)).await;
     // Complete now-timed-out task (add a new timer)
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
@@ -253,7 +253,7 @@ async fn repros_query_dropped_on_floor() {
         let mut seen_q1 = false;
         let mut seen_q2 = false;
         while !seen_q1 || !seen_q2 {
-            let task = core.poll_workflow_task(&task_q).await.unwrap();
+            let task = core.poll_workflow_task(task_q).await.unwrap();
 
             if matches!(
                 task.jobs[0],
@@ -261,7 +261,7 @@ async fn repros_query_dropped_on_floor() {
                     variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
                 }
             ) {
-                let task = core.poll_workflow_task(&task_q).await.unwrap();
+                let task = core.poll_workflow_task(task_q).await.unwrap();
                 core.complete_timer(&task.run_id, "timer-1", Duration::from_millis(500))
                     .await;
                 continue;

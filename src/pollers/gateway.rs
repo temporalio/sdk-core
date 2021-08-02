@@ -97,7 +97,7 @@ impl ServerGatewayOptions {
         let channel = Channel::from_shared(self.target_url.to_string())?;
         let channel = self.add_tls_to_channel(channel).await?;
         let channel = channel.connect().await?;
-        let interceptor = intercept(&self);
+        let interceptor = intercept(self);
         let service = WorkflowServiceClient::with_interceptor(channel, interceptor);
         Ok(ServerGateway {
             service,
