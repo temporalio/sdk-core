@@ -114,6 +114,11 @@ trait TemporalStateMachine: CheckStateMachineInFinal + Send {
         command_type: CommandType,
     ) -> Result<Vec<MachineResponse>, WFMachinesError>;
 
+    /// Returns true if this machine is compatible with the provided event. Provides a way to know
+    /// ahead of time if it's worth trying to call [TemporalStateMachine::handle_event] without
+    /// requiring mutable access.
+    fn matches_event(&self, event: &HistoryEvent) -> bool;
+
     /// Tell the state machine to handle some event. Returns a list of responses that can be used
     /// to update the overall state of the workflow. EX: To issue outgoing WF activations.
     fn handle_event(
@@ -172,6 +177,10 @@ where
         } else {
             Err(WFMachinesError::UnexpectedCommand(command_type))
         }
+    }
+
+    fn matches_event(&self, event: &HistoryEvent) -> bool {
+        self.matches_event(event)
     }
 
     fn handle_event(
@@ -275,6 +284,11 @@ trait WFMachinesAdapter: StateMachine {
         my_command: Self::Command,
         event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError>;
+
+    /// Returns true if this machine is compatible with the provided event. Provides a way to know
+    /// ahead of time if it's worth trying to call [TemporalStateMachine::handle_event] without
+    /// requiring mutable access.
+    fn matches_event(&self, event: &HistoryEvent) -> bool;
 }
 
 #[derive(Debug, Copy, Clone)]

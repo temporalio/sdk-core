@@ -53,6 +53,7 @@ fsm! {
     MarkerCommandCreatedReplaying --(CommandRecordMarker) --> AwaitingEvent;
 
     AwaitingEvent --(MarkerRecorded, on_marker_recorded) --> MarkerCommandRecorded;
+    // TODO: Probably goes away
     AwaitingEvent --(NonMatchingEvent) --> NotifiedError;
 }
 
@@ -191,6 +192,14 @@ impl WFMachinesAdapter for VersionMachine {
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         panic!("Version machine does not produce commands")
     }
+
+    fn matches_event(&self, event: &HistoryEvent) -> bool {
+        if let Some(_) = event.get_changed_marker_details() {
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl Cancellable for VersionMachine {}
@@ -234,15 +243,15 @@ mod tests {
         prototype_rust_sdk::{WfContext, WorkflowFunction},
         test_help::canned_histories,
         tracing_init,
-        workflow::managed_wf::ManagedWFFunc,
+        workflow::{managed_wf::ManagedWFFunc, WorkflowError},
     };
     use rstest::{fixture, rstest};
     use std::time::Duration;
 
     const MY_CHANGE_ID: &str = "change_name";
 
-    #[fixture(replaying = false)]
-    fn version_hist(replaying: bool) -> ManagedWFFunc {
+    #[fixture(replaying = false, deprecated = false)]
+    fn version_hist(replaying: bool, deprecated: bool) -> ManagedWFFunc {
         let wfn = WorkflowFunction::new(move |mut ctx: WfContext| async move {
             if ctx.has_version(MY_CHANGE_ID) {
                 ctx.timer(StartTimer {
@@ -261,7 +270,7 @@ mod tests {
             Ok(().into())
         });
 
-        let t = canned_histories::has_change_different_timers(Some(MY_CHANGE_ID), false);
+        let t = canned_histories::has_change_different_timers(Some(MY_CHANGE_ID), deprecated);
         let histinfo = if replaying {
             t.get_full_history_info()
         } else {
@@ -271,9 +280,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case(version_hist(false))]
+    #[case(version_hist(false, false))]
     #[tokio::test]
     async fn version_machine_with_call_not_replay(#[case] mut wfm: ManagedWFFunc) {
+        // Deprecated or not irrelevant for this test since we don't replay the event
         tracing_init();
         // Start workflow activation
         let act = wfm.get_next_activation().await.unwrap();
@@ -292,7 +302,8 @@ mod tests {
     }
 
     #[rstest]
-    #[case(version_hist(true))]
+    #[case(version_hist(true, false))]
+    #[case::deprecated(version_hist(true, true))]
     #[tokio::test]
     async fn version_machine_with_call_replay(#[case] mut wfm: ManagedWFFunc) {
         tracing_init();
@@ -320,6 +331,66 @@ mod tests {
         assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
 
         dbg!(wfm.get_next_activation().await.unwrap());
+
+        wfm.shutdown().await.unwrap();
+    }
+
+    #[fixture(deprecated = false)]
+    fn version_no_call(deprecated: bool) -> ManagedWFFunc {
+        let wfn = WorkflowFunction::new(move |mut ctx: WfContext| async move {
+            ctx.timer(StartTimer {
+                timer_id: "had_change".to_string(),
+                start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+            })
+            .await;
+            Ok(().into())
+        });
+
+        let t = canned_histories::has_change_different_timers(Some(MY_CHANGE_ID), deprecated);
+        ManagedWFFunc::new_from_update(t.get_full_history_info().unwrap().into(), wfn, vec![])
+    }
+
+    #[rstest]
+    #[case(version_no_call(false), false)]
+    #[case::deprecated(version_no_call(true), true)]
+    #[tokio::test]
+    async fn version_machine_no_call_replay(
+        #[case] mut wfm: ManagedWFFunc,
+        #[case] deprecated: bool,
+    ) {
+        tracing_init();
+
+        // Start workflow activation and resolve change should come right away
+        let act = wfm.get_next_activation().await.unwrap();
+        assert_matches!(
+            act.jobs.as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::StartWorkflow(_))
+             },
+             WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveHasChange(
+                    ResolveHasChange {
+                        change_id,
+                        is_present
+                    }
+                ))
+            }] => change_id == MY_CHANGE_ID && *is_present == true
+        );
+        let commands = wfm.get_server_commands().await.commands;
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+
+        let act = wfm.get_next_activation().await;
+        if deprecated {
+            // Should be fine, deprecated marker is ignored even if we didn't make change call
+            act.unwrap();
+        } else {
+            // Should error out because we didn't send the record marker command
+            let err = act.err().unwrap();
+            dbg!(&err);
+            // TODO: Better error types. Will be pretty big changes, different PR from implementing ver.
+            assert_matches!(err, WorkflowError::UnderlyingMachinesError(_));
+        }
 
         wfm.shutdown().await.unwrap();
     }

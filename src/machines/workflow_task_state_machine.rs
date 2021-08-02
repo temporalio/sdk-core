@@ -96,15 +96,26 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
             }
         }
     }
+
+    fn matches_event(&self, event: &HistoryEvent) -> bool {
+        match event.event_type() {
+            EventType::WorkflowTaskScheduled
+            | EventType::WorkflowTaskStarted
+            | EventType::WorkflowTaskTimedOut
+            | EventType::WorkflowTaskCompleted
+            | EventType::WorkflowTaskFailed => true,
+            _ => false,
+        }
+    }
 }
 
 impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
-        Ok(match EventType::from_i32(e.event_type) {
-            Some(EventType::WorkflowTaskScheduled) => Self::WorkflowTaskScheduled,
-            Some(EventType::WorkflowTaskStarted) => Self::WorkflowTaskStarted({
+        Ok(match e.event_type() {
+            EventType::WorkflowTaskScheduled => Self::WorkflowTaskScheduled,
+            EventType::WorkflowTaskStarted => Self::WorkflowTaskStarted({
                 let time = if let Some(time) = e.event_time.clone() {
                     match time.try_into() {
                         Ok(t) => t,
@@ -127,9 +138,9 @@ impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
                     current_time_millis: time,
                 }
             }),
-            Some(EventType::WorkflowTaskTimedOut) => Self::WorkflowTaskTimedOut,
-            Some(EventType::WorkflowTaskCompleted) => Self::WorkflowTaskCompleted,
-            Some(EventType::WorkflowTaskFailed) => {
+            EventType::WorkflowTaskTimedOut => Self::WorkflowTaskTimedOut,
+            EventType::WorkflowTaskCompleted => Self::WorkflowTaskCompleted,
+            EventType::WorkflowTaskFailed => {
                 if let Some(attributes) = e.attributes {
                     Self::WorkflowTaskFailed(WFTFailedDat {
                         new_run_id: match attributes {

@@ -275,6 +275,29 @@ impl WorkflowMachines {
         //     }
 
         let consumed_cmd = loop {
+            if let Some(peek_machine) = self.commands.front() {
+                if !self.machine(peek_machine.machine).matches_event(event) {
+                    // Version markers can be skipped in the event they are deprecated
+                    if let Some(changed_info) = event.get_changed_marker_details() {
+                        // Is deprecated. We can simply ignore this event, as deprecated change
+                        // markers are allowed without matching changed calls.
+                        if changed_info.1 {
+                            // TODO: This needs to actually peek the command to avoid consuming it.
+                            debug!(
+                                "Deprecated change marker tried against wrong machine, skipping."
+                            );
+                            return Ok(());
+                        }
+                        // TODO: No match error
+                        panic!(
+                            "PANIK {:?} {}",
+                            event,
+                            self.machine(peek_machine.machine).name()
+                        );
+                    }
+                }
+            }
+
             let maybe_command = self.commands.pop_front();
             let command = if let Some(c) = maybe_command {
                 c

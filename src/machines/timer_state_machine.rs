@@ -96,10 +96,10 @@ impl TryFrom<HistoryEvent> for TimerMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
-        Ok(match EventType::from_i32(e.event_type) {
-            Some(EventType::TimerStarted) => Self::TimerStarted(e.event_id),
-            Some(EventType::TimerCanceled) => Self::TimerCanceled,
-            Some(EventType::TimerFired) => {
+        Ok(match e.event_type() {
+            EventType::TimerStarted => Self::TimerStarted(e.event_id),
+            EventType::TimerCanceled => Self::TimerCanceled,
+            EventType::TimerFired => {
                 if let Some(history_event::Attributes::TimerFiredEventAttributes(attrs)) =
                     e.attributes
                 {
@@ -242,6 +242,13 @@ impl WFMachinesAdapter for TimerMachine {
             .into()],
             TimerMachineCommand::IssueCancelCmd(c) => vec![MachineResponse::IssueNewCommand(c)],
         })
+    }
+
+    fn matches_event(&self, event: &HistoryEvent) -> bool {
+        match event.event_type() {
+            EventType::TimerStarted | EventType::TimerCanceled | EventType::TimerFired => true,
+            _ => false,
+        }
     }
 }
 

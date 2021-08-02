@@ -150,10 +150,10 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
-        Ok(match EventType::from_i32(e.event_type) {
-            Some(EventType::ActivityTaskScheduled) => Self::ActivityTaskScheduled(e.event_id),
-            Some(EventType::ActivityTaskStarted) => Self::ActivityTaskStarted(e.event_id),
-            Some(EventType::ActivityTaskCompleted) => {
+        Ok(match e.event_type() {
+            EventType::ActivityTaskScheduled => Self::ActivityTaskScheduled(e.event_id),
+            EventType::ActivityTaskStarted => Self::ActivityTaskStarted(e.event_id),
+            EventType::ActivityTaskCompleted => {
                 if let Some(history_event::Attributes::ActivityTaskCompletedEventAttributes(
                     attrs,
                 )) = e.attributes
@@ -166,7 +166,7 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                     ));
                 }
             }
-            Some(EventType::ActivityTaskFailed) => {
+            EventType::ActivityTaskFailed => {
                 if let Some(history_event::Attributes::ActivityTaskFailedEventAttributes(attrs)) =
                     e.attributes
                 {
@@ -178,7 +178,7 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                     ));
                 }
             }
-            Some(EventType::ActivityTaskTimedOut) => {
+            EventType::ActivityTaskTimedOut => {
                 if let Some(history_event::Attributes::ActivityTaskTimedOutEventAttributes(attrs)) =
                     e.attributes
                 {
@@ -190,8 +190,8 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                     ));
                 }
             }
-            Some(EventType::ActivityTaskCancelRequested) => Self::ActivityTaskCancelRequested,
-            Some(EventType::ActivityTaskCanceled) => {
+            EventType::ActivityTaskCancelRequested => Self::ActivityTaskCancelRequested,
+            EventType::ActivityTaskCanceled => {
                 if let Some(history_event::Attributes::ActivityTaskCanceledEventAttributes(attrs)) =
                     e.attributes
                 {
@@ -251,6 +251,19 @@ impl WFMachinesAdapter for ActivityMachine {
                     .into()]
             }
         })
+    }
+
+    fn matches_event(&self, event: &HistoryEvent) -> bool {
+        match event.event_type() {
+            EventType::ActivityTaskScheduled
+            | EventType::ActivityTaskStarted
+            | EventType::ActivityTaskCompleted
+            | EventType::ActivityTaskFailed
+            | EventType::ActivityTaskTimedOut
+            | EventType::ActivityTaskCancelRequested
+            | EventType::ActivityTaskCanceled => true,
+            _ => false,
+        }
     }
 }
 

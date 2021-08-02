@@ -105,6 +105,10 @@ impl WFMachinesAdapter for CancelWorkflowMachine {
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(vec![])
     }
+
+    fn matches_event(&self, event: &HistoryEvent) -> bool {
+        event.event_type() == EventType::WorkflowExecutionCanceled
+    }
 }
 
 impl Cancellable for CancelWorkflowMachine {}

@@ -90,8 +90,8 @@ impl TryFrom<HistoryEvent> for FailWorkflowMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
-        Ok(match EventType::from_i32(e.event_type) {
-            Some(EventType::WorkflowExecutionFailed) => Self::WorkflowExecutionFailed,
+        Ok(match e.event_type() {
+            EventType::WorkflowExecutionFailed => Self::WorkflowExecutionFailed,
             _ => {
                 return Err(WFMachinesError::UnexpectedEvent(
                     e,
@@ -120,6 +120,10 @@ impl WFMachinesAdapter for FailWorkflowMachine {
         _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(vec![])
+    }
+
+    fn matches_event(&self, event: &HistoryEvent) -> bool {
+        event.event_type() == EventType::WorkflowExecutionFailed
     }
 }
 
