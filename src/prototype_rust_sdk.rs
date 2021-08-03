@@ -162,7 +162,7 @@ impl TestRustWorker {
 #[derive(Debug)]
 enum UnblockEvent {
     Timer(String),
-    Activity { id: String, result: ActivityResult },
+    Activity(String, Box<ActivityResult>),
 }
 
 #[derive(derive_more::From)]

@@ -4,7 +4,7 @@ use crate::{
     pollers::MockServerGatewayApis,
     protos::{
         coresdk::{
-            failure::Failure,
+            failures::Failure,
             workflow_activation::{wf_activation_job, WfActivationJob},
             workflow_commands::{CompleteWorkflowExecution, QueryResult, QuerySuccess, StartTimer},
             workflow_completion::WfActivationCompletion,

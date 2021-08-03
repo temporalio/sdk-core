@@ -1,44 +1,45 @@
 syntax = "proto3";
 
-package coresdk.failure;
+package coresdk.failures;
 
 import "google/protobuf/duration.proto";
 import "common.proto";
 
-/// Represents a failure in user code, workflow or activity, which could've been triggered by
-/// an exception or similar error mechanism like the error half of a Result type.
+/**
+ * Represents a failure in user code, workflow or activity, which could've been triggered by
+ * an exception or similar error mechanism like the error half of a Result type.
+ */
 message ApplicationFailureInfo {
     string type = 1;
     bool non_retryable = 2;
     repeated common.Payload details = 3;
 }
 
-/// Represents a timeout, for example of a child workflow or activity.
+/** Represents a timeout, for example of a child workflow or activity */
 message TimeoutFailureInfo {
     common.TimeoutType timeout_type = 1;
     repeated common.Payload last_heartbeat_details = 2;
 }
 
-/// Represents a cancellation, for example of a child workflow or activity.
+/** Represents a cancellation, for example of a child workflow or activity */
 message CancelledFailureInfo {
     repeated common.Payload details = 1;
 }
 
-/// Represents workflow termination.
+/** Represents workflow termination */
 message TerminatedFailureInfo {
 }
 
-/// Represents failure on the server side
+/** Represents failure on the server side */
 message ServerFailureInfo {
     bool non_retryable = 1;
 }
 
-/// TODO: when does this happen?
 message ResetWorkflowFailureInfo {
     repeated common.Payload last_heartbeat_details = 1;
 }
 
-/// An activity has failed, TODO: how is this generated?
+/** An activity has failed */
 message ActivityFailureInfo {
     int64 scheduled_event_id = 1;
     int64 started_event_id = 2;
@@ -48,7 +49,7 @@ message ActivityFailureInfo {
     common.RetryState retry_state = 6;
 }
 
-/// Child workflow execution has failed.
+/** Child workflow execution has failed */
 message ChildWorkflowExecutionFailureInfo {
     string namespace = 1;
     common.WorkflowExecution workflow_execution = 2;
@@ -58,7 +59,7 @@ message ChildWorkflowExecutionFailureInfo {
     common.RetryState retry_state = 6;
 }
 
-/// Structured failure which can be mapped to upstream proto Failure
+/** Structured failure which can be mapped to upstream proto Failure */
 message Failure {
     string message = 1;
     string source = 2;

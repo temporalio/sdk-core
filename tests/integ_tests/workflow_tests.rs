@@ -19,7 +19,7 @@ use temporal_sdk_core::{
     errors::PollWfError,
     protos::coresdk::{
         activity_result::ActivityResult,
-        failure::Failure,
+        failures::Failure,
         workflow_activation::{wf_activation_job, WfActivation, WfActivationJob},
         workflow_commands::{ActivityCancellationType, FailWorkflowExecution, StartTimer},
         workflow_completion::WfActivationCompletion,

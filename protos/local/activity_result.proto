@@ -3,7 +3,7 @@ syntax = "proto3";
 package coresdk.activity_result;
 
 import "common.proto";
-import "failure.proto";
+import "failures.proto";
 
 /// Used to report activity completion to core and to resolve the activity in a workflow activation
 message ActivityResult {
@@ -26,6 +26,6 @@ message Success {
 
 /// Used in ActivityResult to report failure
 message Failure {
-    failure.Failure failure = 1;
+    failures.Failure failure = 1;
 }
 

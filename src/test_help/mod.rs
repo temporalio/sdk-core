@@ -12,8 +12,8 @@ use crate::{
     },
     protos::{
         coresdk::{
-            failure::Failure,
-            workflow_activation::{wf_activation_job, WfActivation, WfActivationJob},
+            failures::Failure,
+            workflow_activation::WfActivation,
             workflow_commands::workflow_command,
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
         },

@@ -8,7 +8,7 @@ syntax = "proto3";
 package coresdk.workflow_commands;
 
 import "common.proto";
-import "failure.proto";
+import "failures.proto";
 
 import "google/protobuf/duration.proto";
 
@@ -96,7 +96,7 @@ message QueryResult {
     string query_id = 1;
     oneof variant {
         QuerySuccess succeeded = 2;
-        failure.Failure failed = 3;
+        failures.Failure failed = 3;
     }
 }
 
@@ -111,7 +111,7 @@ message CompleteWorkflowExecution {
 
 /// Issued when the workflow errors out
 message FailWorkflowExecution {
-    failure.Failure failure = 1;
+    failures.Failure failure = 1;
 }
 
 // TODO: Maybe combine all execution resolves into one message

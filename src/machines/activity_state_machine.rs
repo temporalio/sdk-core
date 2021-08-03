@@ -234,12 +234,6 @@ impl WFMachinesAdapter for ActivityMachine {
                     result: Some(ActivityResult {
                         status: Some(activity_result::Status::Failed(ar::Failure {
                             failure: Some(failure.into()),
-                            ..Default::default()
-                            // TODO
-                            // identity: ev.identity,
-                            // retry_state: ev.retry_state,
-                            // scheduled_event_id: ev.scheduled_event_id,
-                            // started_event_id: ev.started_event_id,
                         })),
                     }),
                 }
@@ -656,23 +650,23 @@ fn notify_lang_activity_cancelled(
 }
 
 fn new_failure(dat: SharedState, attrs: ActivityTaskFailedEventAttributes) -> Failure {
-    return Failure {
+    Failure {
         message: "Activity task failed".to_owned(),
         cause: attrs.failure.map(Box::new),
         failure_info: Some(FailureInfo::ActivityFailureInfo(
             failure::ActivityFailureInfo {
                 identity: attrs.identity,
                 activity_type: Some(ActivityType {
-                    name: dat.attrs.activity_type.to_string(),
+                    name: dat.attrs.activity_type,
                 }),
-                activity_id: dat.attrs.activity_id.to_string(),
+                activity_id: dat.attrs.activity_id,
                 retry_state: attrs.retry_state,
                 started_event_id: attrs.started_event_id,
                 scheduled_event_id: attrs.scheduled_event_id,
             },
         )),
         ..Default::default()
-    };
+    }
 }
 
 fn new_timeout_failure(dat: &SharedState, attrs: ActivityTaskTimedOutEventAttributes) -> Failure {

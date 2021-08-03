@@ -2,7 +2,7 @@ use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_sdk_core::protos::{
     coresdk::{
-        failure::Failure,
+        failures::Failure,
         workflow_activation::{wf_activation_job, WfActivationJob},
         workflow_commands::{QueryResult, QuerySuccess, StartTimer},
         workflow_completion::WfActivationCompletion,

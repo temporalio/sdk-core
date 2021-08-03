@@ -5,7 +5,7 @@ use temporal_sdk_core::{
         activity_result::{self, activity_result as act_res, ActivityResult},
         activity_task::activity_task as act_task,
         common::{Payload, RetryState},
-        failure::{failure::Info as FailureInfo, ActivityFailureInfo, Failure},
+        failures::{failure::Info as FailureInfo, ActivityFailureInfo, Failure},
         workflow_activation::{wf_activation_job, FireTimer, ResolveActivity, WfActivationJob},
         workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
         workflow_completion::WfActivationCompletion,
@@ -109,7 +109,6 @@ async fn activity_non_retryable_failure() {
             status: Some(activity_result::activity_result::Status::Failed(
                 activity_result::Failure {
                     failure: Some(failure.clone()),
-                    ..Default::default()
                 },
             )),
         }),
@@ -423,13 +422,17 @@ async fn started_activity_timeout() {
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
-                    ResolveActivity {activity_id: a_id, result: Some(ActivityResult{
-                    status: Some(act_res::Status::Failed(
-                        activity_result::Failure{
-                        failure: Some(_),
+                    ResolveActivity {
+                        activity_id: a_id,
+                        result: Some(ActivityResult{
+                            status: Some(
+                                act_res::Status::Failed(
+                                    activity_result::Failure{failure: Some(_)}
+                                )
+                            ),
+                            ..
+                        })
                     }
-                    )),
-                     ..})}
                 )),
             },
         ] => {

@@ -19,6 +19,9 @@ pub mod coresdk {
     use activity_task::ActivityTask;
     use anyhow::Error;
     use common::{Payload, UserCodeFailure};
+    use failures::{
+        self as core_failure, failure::Info as CoreFailureInfo, Failure as CoreFailure,
+    };
     use std::collections::HashMap;
     use std::{
         convert::TryFrom,
@@ -110,8 +113,8 @@ pub mod coresdk {
         }
     }
 
-    pub mod failure {
-        tonic::include_proto!("coresdk.failure");
+    pub mod failures {
+        tonic::include_proto!("coresdk.failures");
     }
 
     pub mod workflow_activation {
@@ -750,7 +753,9 @@ pub mod coresdk {
                     core_failure::ChildWorkflowExecutionFailureInfo {
                         namespace,
                         workflow_execution: workflow_execution.map(|exc| exc.into()),
-                        workflow_type: workflow_type.map(|wt| wt.name).unwrap_or("".to_owned()),
+                        workflow_type: workflow_type
+                            .map(|wt| wt.name)
+                            .unwrap_or_else(|| "".to_owned()),
                         initiated_event_id,
                         started_event_id,
                         retry_state,

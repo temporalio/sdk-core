@@ -5,7 +5,7 @@ use crate::{
     protos::{
         coresdk::{
             activity_result::{self as ar, activity_result, ActivityResult},
-            failure::Failure,
+            failures::Failure,
             workflow_activation::{
                 wf_activation_job, FireTimer, ResolveActivity, StartWorkflow, UpdateRandomSeed,
                 WfActivationJob,
