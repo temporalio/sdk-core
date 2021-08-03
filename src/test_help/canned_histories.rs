@@ -1397,6 +1397,7 @@ pub fn has_change_different_timers(
             timer_id: timer_id.to_string(),
         }),
     );
-    t.add_workflow_task_scheduled_and_started();
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
     t
 }

@@ -17,8 +17,14 @@ pub struct WfContext {
     chan: Sender<RustWfCmd>,
     args: Vec<Payload>,
     am_cancelled: watch::Receiver<bool>,
+    shared: Arc<RwLock<WfContextSharedData>>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct WfContextSharedData {
     /// Maps change ids -> resolved status
-    changes: Arc<RwLock<HashMap<String, bool>>>,
+    pub changes: HashMap<String, bool>,
+    pub is_replaying: bool,
 }
 
 impl WfContext {
@@ -35,7 +41,7 @@ impl WfContext {
                 chan,
                 args,
                 am_cancelled,
-                changes: Arc::new(RwLock::new(Default::default())),
+                shared: Arc::new(RwLock::new(Default::default())),
             },
             rx,
         )
@@ -46,8 +52,8 @@ impl WfContext {
         self.args.as_slice()
     }
 
-    pub(crate) fn get_changes_map(&self) -> Arc<RwLock<HashMap<String, bool>>> {
-        self.changes.clone()
+    pub(crate) fn get_shared_data(&self) -> Arc<RwLock<WfContextSharedData>> {
+        self.shared.clone()
     }
 
     /// A future that resolves if/when the workflow is cancelled
@@ -109,23 +115,32 @@ impl WfContext {
     }
 
     /// Check (or record) that this workflow history was created with the provided change id
-    pub fn has_version(&self, change_id: &str) -> bool {
+    pub fn has_version(&self, change_id: &str, deprecated: bool) -> bool {
         self.send(
             workflow_command::Variant::HasChange(HasChange {
                 change_id: change_id.to_string(),
-                deprecated: false,
+                deprecated,
             })
             .into(),
         );
-        // See if we already know about the status of this change. If we don't, then it always
-        // resolves true.
-        if let Some(present) = self.get_changes_map().read().get(change_id) {
+        // See if we already know about the status of this change
+        if let Some(present) = self.shared.read().changes.get(change_id) {
             return *present;
         }
+
+        // If we don't already know about the change, and we are replaying, that means there is no
+        // marker in history, and we should choose the has-change branch only if the deprecated flag
+        // is set.
+        if self.shared.read().is_replaying {
+            return deprecated;
+        }
+
         // TODO: Check replaying flag here. Should blow up if replaying.
-        self.get_changes_map()
+        self.shared
             .write()
+            .changes
             .insert(change_id.to_string(), true);
+
         true
     }
 

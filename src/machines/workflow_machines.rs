@@ -36,6 +36,7 @@ use tracing::Level;
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
+slotmap::new_key_type! { struct MachineKey; }
 /// Handles all the logic for driving a workflow. It orchestrates many state machines that together
 /// comprise the logic of an executing workflow. One instance will exist per currently executing
 /// (or cached) workflow on the worker.
@@ -77,17 +78,24 @@ pub(crate) struct WorkflowMachines {
     /// Old note: It is a queue as commands can be added (due to marker based commands) while
     /// iterating over already added commands.
     current_wf_task_commands: VecDeque<CommandAndMachine>,
+    /// Information about change markers we have already seen while replaying history
+    encountered_change_markers: HashMap<String, ChangeInfo>,
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: DrivenWorkflow,
 }
 
-slotmap::new_key_type! { struct MachineKey; }
 #[derive(Debug, derive_more::Display)]
 #[display(fmt = "Cmd&Machine({})", "command")]
 struct CommandAndMachine {
     command: ProtoCommand,
     machine: MachineKey,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ChangeInfo {
+    deprecated: bool,
+    created_command: bool,
 }
 
 /// Returned by [TemporalStateMachine]s when handling events
@@ -138,18 +146,17 @@ impl WorkflowMachines {
             workflow_id,
             run_id,
             drive_me: driven_wf,
+            replaying,
             // In an ideal world one could say ..Default::default() here and it'd still work.
             current_started_event_id: 0,
             next_started_event_id: 0,
-            // Default to true since application of events will appropriately set false if needed
-            // replaying: true,
-            replaying,
             current_wf_time: None,
             all_machines: Default::default(),
             machines_by_event_id: Default::default(),
             id_to_machine: Default::default(),
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
+            encountered_change_markers: Default::default(),
         }
     }
 
@@ -255,18 +262,16 @@ impl WorkflowMachines {
                         // Is deprecated. We can simply ignore this event, as deprecated change
                         // markers are allowed without matching changed calls.
                         if changed_info.1 {
-                            // TODO: This needs to actually peek the command to avoid consuming it.
                             debug!(
                                 "Deprecated change marker tried against wrong machine, skipping."
                             );
                             return Ok(());
                         }
-                        // TODO: No match error
-                        panic!(
-                            "PANIK {:?} {}",
-                            event,
-                            self.machine(peek_machine.machine).name()
-                        );
+                        return Err(WFMachinesError::Nondeterminism(format!(
+                            "Non-deprecated change marker encountered for change {}, \
+                            but there is no corresponding change command!",
+                            changed_info.0
+                        )));
                     }
                 }
             }
@@ -492,7 +497,14 @@ impl WorkflowMachines {
         // Scan through to the next WFT, searching for any change markers, so that we can
         // pre-resolve them.
         for e in self.last_history_from_server.peek_next_wft_sequence() {
-            if let Some((change_id, _deprecated)) = e.get_changed_marker_details() {
+            if let Some((change_id, deprecated)) = e.get_changed_marker_details() {
+                self.encountered_change_markers.insert(
+                    change_id.clone(),
+                    ChangeInfo {
+                        deprecated,
+                        created_command: false,
+                    },
+                );
                 // Found a change marker
                 self.drive_me
                     .send_job(wf_activation_job::Variant::ResolveHasChange(
@@ -634,15 +646,56 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(cancm);
                 }
                 WFCommand::HasChange(attrs) => {
-                    // TODO: probably still need some global version mapping to be able to resolve
-                    //  calls to has_version w/ same change ID (IE: later calls should be resolved
-                    //  with information from earlier marker)
-                    let verm = self.add_new_command_machine(has_change(
-                        attrs.change_id.clone(),
-                        self.replaying,
-                        attrs.deprecated,
-                    ));
-                    self.current_wf_task_commands.push_back(verm);
+                    // If we have *not* seen a change marker for this change, but we *are* replaying
+                    // we make a decision about what to do based on if the call is deprecated or not
+                    if self.replaying
+                        && !self
+                            .encountered_change_markers
+                            .contains_key(&attrs.change_id)
+                    {
+                        // If deprecated flag is not set, the lang side should return false and
+                        // we can ignore this command if they happen to send it
+                        if !attrs.deprecated {
+                            continue;
+                        } else {
+                            return Err(WFMachinesError::Nondeterminism(format!(
+                                "Workflow history does not have a change marker for change {}, \
+                                but the deprecated flag was set when checking for the change. \
+                                The workflow history is either too old (produced by a worker \
+                                before the change was introduced), or too new (produced by a \
+                                worker after the change check was removed).",
+                                attrs.change_id
+                            )));
+                        }
+                    }
+
+                    // Do not create commands for change IDs that we have already created commands
+                    // for.
+                    if !matches!(self
+                        .encountered_change_markers
+                        .get(&attrs.change_id), Some(ChangeInfo {created_command, ..})
+                        if *created_command == true)
+                    {
+                        let verm = self.add_new_command_machine(has_change(
+                            attrs.change_id.clone(),
+                            self.replaying,
+                            attrs.deprecated,
+                        ));
+                        self.current_wf_task_commands.push_back(verm);
+
+                        if let Some(ci) = self.encountered_change_markers.get_mut(&attrs.change_id)
+                        {
+                            ci.created_command = true;
+                        } else {
+                            self.encountered_change_markers.insert(
+                                attrs.change_id,
+                                ChangeInfo {
+                                    deprecated: attrs.deprecated,
+                                    created_command: true,
+                                },
+                            );
+                        }
+                    }
                 }
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level

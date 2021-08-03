@@ -1,3 +1,4 @@
+use crate::prototype_rust_sdk::workflow_context::WfContextSharedData;
 use crate::{
     protos::coresdk::{
         common::{Payload, UserCodeFailure},
@@ -46,7 +47,7 @@ impl WorkflowFunction {
         let (tx, incoming_activations) = unbounded_channel();
         (
             WorkflowFuture {
-                changes: wf_context.get_changes_map(),
+                ctx_shared: wf_context.get_shared_data(),
                 inner: (self.wf_func)(wf_context).boxed(),
                 incoming_commands: cmd_receiver,
                 outgoing_completions,
@@ -76,8 +77,8 @@ pub struct WorkflowFuture {
     command_status: HashMap<CommandID, WFCommandFutInfo>,
     /// Use to notify workflow code of cancellation
     cancel_sender: watch::Sender<bool>,
-    /// Maps change ids -> resolved status
-    changes: Arc<RwLock<HashMap<String, bool>>>,
+    /// Data shared with the context
+    ctx_shared: Arc<RwLock<WfContextSharedData>>,
 }
 
 impl WorkflowFuture {
@@ -105,11 +106,11 @@ impl Future for WorkflowFuture {
                 Poll::Ready(a) => a.expect("activation channel not dropped"),
                 Poll::Pending => return Poll::Pending,
             };
-            dbg!(&activation);
 
             let is_only_eviction = activation.is_only_eviction();
             let run_id = activation.run_id;
             let mut die_of_eviction_when_done = false;
+            self.ctx_shared.write().is_replaying = activation.is_replaying;
 
             for WfActivationJob { variant } in activation.jobs {
                 if let Some(v) = variant {
@@ -144,7 +145,10 @@ impl Future for WorkflowFuture {
                             change_id,
                             is_present,
                         }) => {
-                            self.changes.write().insert(change_id, is_present);
+                            self.ctx_shared
+                                .write()
+                                .changes
+                                .insert(change_id, is_present);
                         }
                         Variant::RemoveFromCache(_) => {
                             die_of_eviction_when_done = true;

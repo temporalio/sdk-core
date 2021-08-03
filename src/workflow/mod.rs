@@ -220,21 +220,25 @@ pub mod managed_wf {
 
         pub(crate) async fn get_next_activation(&mut self) -> Result<WfActivation> {
             let res = self.mgr.get_next_activation().await?;
+            debug!("Managed wf next activation: {}", &res);
             if res.jobs.is_empty() {
                 // Nothing to do here
                 return Ok(res);
             }
-            // Feed it back in to the workflow code and iterate machines
-            self.activation_tx
-                .send(res.clone())
-                .expect("Workflow should not be dropped if we are still sending activations");
-            self.mgr.machines.iterate_machines().await?;
+            self.push_activation_to_wf(res.clone()).await?;
             Ok(res)
         }
 
         /// Return outgoing server commands as of the last iteration
-        pub async fn get_server_commands(&mut self) -> OutgoingServerCommands {
+        pub(crate) async fn get_server_commands(&mut self) -> OutgoingServerCommands {
             self.mgr.get_server_commands()
+        }
+
+        /// Feed new history, as if received a new poll result. Returns new activation
+        pub(crate) async fn new_history(&mut self, update: HistoryUpdate) -> Result<WfActivation> {
+            let res = self.mgr.feed_history_from_server(update).await?;
+            self.push_activation_to_wf(res.clone()).await?;
+            Ok(res)
         }
 
         /// During testing it can be useful to run through all activations to simulate replay
@@ -257,6 +261,14 @@ pub mod managed_wf {
                 "not actually important".to_string(),
             ));
             self.future_handle.take().unwrap().await.unwrap()
+        }
+
+        async fn push_activation_to_wf(&mut self, res: WfActivation) -> Result<()> {
+            self.activation_tx
+                .send(res)
+                .expect("Workflow should not be dropped if we are still sending activations");
+            self.mgr.machines.iterate_machines().await?;
+            Ok(())
         }
     }
 

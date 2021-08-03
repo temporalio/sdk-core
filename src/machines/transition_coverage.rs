@@ -73,7 +73,7 @@ mod machine_coverage_report {
         complete_workflow_state_machine::CompleteWorkflowMachine,
         continue_as_new_workflow_state_machine::ContinueAsNewWorkflowMachine,
         fail_workflow_state_machine::FailWorkflowMachine, timer_state_machine::TimerMachine,
-        workflow_task_state_machine::WorkflowTaskMachine,
+        version_state_machine::VersionMachine, workflow_task_state_machine::WorkflowTaskMachine,
     };
     use rustfsm::StateMachine;
     use std::{fs::File, io::Write};
@@ -107,6 +107,7 @@ mod machine_coverage_report {
         let mut fail_wf = FailWorkflowMachine::visualizer().to_owned();
         let mut cont_as_new = ContinueAsNewWorkflowMachine::visualizer().to_owned();
         let mut cancel_wf = CancelWorkflowMachine::visualizer().to_owned();
+        let mut version = VersionMachine::visualizer().to_owned();
 
         // This isn't at all efficient but doesn't need to be.
         // Replace transitions in the vizzes with green color if they are covered.
@@ -122,6 +123,7 @@ mod machine_coverage_report {
                     cover_transitions(m, &mut cont_as_new, coverage)
                 }
                 m @ "CancelWorkflowMachine" => cover_transitions(m, &mut cancel_wf, coverage),
+                m @ "VersionMachine" => cover_transitions(m, &mut version, coverage),
                 m => panic!("Unknown machine {}", m),
             }
         }
