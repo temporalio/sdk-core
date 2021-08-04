@@ -230,10 +230,7 @@ impl WorkflowTaskManager {
             // it is now ready to be produced by the next poll. (Not immediate next, since, ignoring
             // other workflows, the next poll will be the eviction we just produced. Buffered polls
             // always are popped after pending activations)
-            self.ready_buffered_wft
-                .entry(buffered.task_queue.clone())
-                .or_default()
-                .push_back(buffered);
+            self.make_buffered_poll_ready(buffered);
         }
     }
 
@@ -248,18 +245,18 @@ impl WorkflowTaskManager {
         work: ValidPollWFTQResponse,
         gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
     ) -> Result<NewWfTaskOutcome, WorkflowUpdateError> {
-        debug!(
-            task_token = %&work.task_token,
-            history_length = %work.history.events.len(),
-            "Applying new workflow task from server"
-        );
-
         let mut work = if let Some(w) = self.workflow_machines.buffer_resp_if_outstanding_work(work)
         {
             w
         } else {
             return Ok(NewWfTaskOutcome::RestartPollLoop);
         };
+
+        debug!(
+            task_token = %&work.task_token,
+            history_length = %work.history.events.len(),
+            "Applying new workflow task from server"
+        );
 
         // Check if there is a legacy query we either need to immediately issue an activation for
         // (if there is no more replay work to do) or we need to store for later answering.
@@ -560,11 +557,16 @@ impl WorkflowTaskManager {
                 if let Some(evicted_run_id) = maybe_evicted {
                     self.request_eviction(&evicted_run_id);
                 }
+
+                // If there was a buffered poll response from the server, it is now ready to
+                // be handled.
+                if let Some(buffd) = self.workflow_machines.take_buffered_poll(run_id) {
+                    self.make_buffered_poll_ready(buffd);
+                }
             }
 
             // The evict may or may not have already done this, but even when we aren't evicting
-            // we want to remove from the run id mapping if we completed the wft, since the task
-            // token will not be reused.
+            // we want to clear the outstanding workflow task since it's now complete.
             if let Some(ot) = self.workflow_machines.delete_wft(run_id) {
                 let _ = self.workflow_activations_update.send(
                     WfActivationUpdate::WorkflowTaskComplete {
@@ -588,6 +590,13 @@ impl WorkflowTaskManager {
                 .send(WfActivationUpdate::NewPendingActivation);
         }
         // It's possible the activation is already removed due to completing an eviction
+    }
+
+    fn make_buffered_poll_ready(&self, buffd: ValidPollWFTQResponse) {
+        self.ready_buffered_wft
+            .entry(buffd.task_queue.clone())
+            .or_default()
+            .push_back(buffd);
     }
 
     fn insert_outstanding_activation(&self, act: &WfActivation) -> Result<(), WorkflowUpdateError> {

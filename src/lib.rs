@@ -268,10 +268,6 @@ where
                 return Ok(pa);
             }
 
-            if self.shutdown_requested.load(Ordering::Relaxed) {
-                return Err(PollWfError::ShutDown);
-            }
-
             // Apply any buffered poll responses from the server. Must come after pending
             // activations, since there may be an eviction etc for whatever run is popped here.
             if let Some(buff_wft) = self.wft_manager.next_buffered_poll(task_queue) {
@@ -279,6 +275,10 @@ where
                     Some(a) => return Ok(a),
                     None => continue,
                 }
+            }
+
+            if self.shutdown_requested.load(Ordering::Relaxed) {
+                return Err(PollWfError::ShutDown);
             }
 
             // Optimization avoiding worker access if we know we need to handle update immediately

@@ -10,13 +10,12 @@ use crate::{
     },
 };
 use futures::future::{BoxFuture, FutureExt};
-use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{
     collections::HashMap,
     fmt::Debug,
     ops::{Deref, DerefMut},
 };
-use tokio::sync::Mutex;
 
 /// Provides a thread-safe way to access workflow machines for specific workflow runs
 pub(crate) struct WorkflowConcurrencyManager {
@@ -115,9 +114,10 @@ impl WorkflowConcurrencyManager {
         work: ValidPollWFTQResponse,
     ) -> Option<ValidPollWFTQResponse> {
         let mut writelock = self.runs.write();
-        if let Some(mut run) = writelock.get_mut(&work.workflow_execution.run_id) {
+        let run_id = &work.workflow_execution.run_id;
+        if let Some(mut run) = writelock.get_mut(run_id) {
             if run.wft.is_some() || run.activation.is_some() {
-                debug!("Got new WFT for a run with outstanding work");
+                debug!(run_id = %run_id, "Got new WFT for a run with outstanding work");
                 run.buffered_resp = Some(work);
                 None
             } else {
@@ -226,7 +226,11 @@ impl WorkflowConcurrencyManager {
     {
         let readlock = self.runs.read();
         let m = readlock.get(run_id).ok_or(WorkflowError::MissingMachine)?;
-        let mut wfm_mutex = m.wfm.lock().await;
+        // This holds a non-async mutex across an await point which is technically a no-no, but
+        // we never access the machines for the same run simultaneously anyway, and using an async
+        // mutex here *can* deadlock the runs map. This should all get fixed with a generally
+        // different approach which moves the runs inside workers.
+        let mut wfm_mutex = m.wfm.lock();
         let mut wfm = wfm_mutex
             .take()
             .expect("Machine cannot possibly be accessed simultaneously");
@@ -241,6 +245,13 @@ impl WorkflowConcurrencyManager {
     pub fn evict(&self, run_id: &str) -> Option<ValidPollWFTQResponse> {
         let val = self.runs.write().remove(run_id);
         val.map(|v| v.buffered_resp).flatten()
+    }
+
+    /// Clear and return any buffered polling response for this run ID
+    pub fn take_buffered_poll(&self, run_id: &str) -> Option<ValidPollWFTQResponse> {
+        let mut writelock = self.runs.write();
+        let val = writelock.get_mut(run_id);
+        val.map(|v| v.buffered_resp.take()).flatten()
     }
 
     #[cfg(test)]
