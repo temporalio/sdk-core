@@ -1,5 +1,6 @@
 mod activities;
 mod cancel_wf;
+mod changes;
 mod continue_as_new;
 mod stickyness;
 mod timers;

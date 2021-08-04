@@ -17,7 +17,9 @@ pub mod coresdk {
     };
     use activity_result::ActivityResult;
     use activity_task::ActivityTask;
+    use anyhow::Error;
     use common::{Payload, UserCodeFailure};
+    use std::collections::HashMap;
     use std::{
         convert::TryFrom,
         fmt::{Display, Formatter},
@@ -598,6 +600,15 @@ pub mod coresdk {
         }
     }
 
+    impl From<anyhow::Error> for UserCodeFailure {
+        fn from(e: Error) -> Self {
+            Self {
+                message: e.to_string(),
+                ..Default::default()
+            }
+        }
+    }
+
     impl From<common::Payload> for super::temporal::api::common::v1::Payload {
         fn from(p: Payload) -> Self {
             Self {
@@ -653,8 +664,12 @@ pub mod coresdk {
         T: AsRef<[u8]>,
     {
         fn from(v: T) -> Self {
+            // TODO: Set better encodings, whole data converter deal. Setting anything for now
+            //  at least makes it show up in the web UI.
+            let mut metadata = HashMap::new();
+            metadata.insert("encoding".to_string(), b"binary/plain".to_vec());
             Self {
-                metadata: Default::default(),
+                metadata,
                 data: v.as_ref().to_vec(),
             }
         }

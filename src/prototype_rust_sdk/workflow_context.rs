@@ -9,7 +9,7 @@ use crate::{
 use crossbeam::channel::{Receiver, Sender};
 use futures::{task::Context, FutureExt};
 use parking_lot::RwLock;
-use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, task::Poll, time::Duration};
+use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, task::Poll};
 use tokio::sync::{oneshot, watch};
 
 /// Used within workflows to issue commands, get info, etc.
@@ -135,18 +135,16 @@ impl WfContext {
             return deprecated;
         }
 
-        // TODO: Check replaying flag here. Should blow up if replaying.
         self.shared
             .write()
             .changes
             .insert(change_id.to_string(), true);
-
         true
     }
 
-    /// Force a workflow task timeout by waiting too long and gumming up the entire runtime
-    pub fn force_timeout(&self, by_waiting_for: Duration) {
-        self.send(RustWfCmd::ForceTimeout(by_waiting_for))
+    /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
+    pub fn force_task_fail(&self, with: anyhow::Error) {
+        self.send(with.into())
     }
 
     fn send(&self, c: RustWfCmd) {

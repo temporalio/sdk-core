@@ -100,7 +100,7 @@ impl Future for WorkflowFuture {
     type Output = WorkflowResult<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        loop {
+        'activations: loop {
             // WF must always receive an activation first before responding with commands
             let activation = match self.incoming_activations.poll_recv(cx) {
                 Poll::Ready(a) => a.expect("activation channel not dropped"),
@@ -214,9 +214,11 @@ impl Future for WorkflowFuture {
                     RustWfCmd::NewNonblockingCmd(cmd) => {
                         activation_cmds.push(cmd);
                     }
-                    RustWfCmd::ForceTimeout(dur) => {
-                        // This is nasty
-                        std::thread::sleep(dur);
+                    RustWfCmd::ForceWFTFailure(err) => {
+                        self.outgoing_completions
+                            .send(WfActivationCompletion::fail(run_id, err.into()))
+                            .expect("Completion channel intact");
+                        continue 'activations;
                     }
                 }
             }

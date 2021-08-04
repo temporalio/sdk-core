@@ -671,10 +671,9 @@ impl WorkflowMachines {
 
                     // Do not create commands for change IDs that we have already created commands
                     // for.
-                    if !matches!(self
-                        .encountered_change_markers
-                        .get(&attrs.change_id), Some(ChangeInfo {created_command, ..})
-                        if *created_command == true)
+                    if !matches!(self.encountered_change_markers.get(&attrs.change_id),
+                                Some(ChangeInfo {created_command, ..})
+                                    if *created_command)
                     {
                         let verm = self.add_new_command_machine(has_change(
                             attrs.change_id.clone(),
