@@ -1,5 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
+use crate::machines::MachineKind;
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
@@ -263,6 +264,10 @@ impl WFMachinesAdapter for ActivityMachine {
                 | EventType::ActivityTaskCancelRequested
                 | EventType::ActivityTaskCanceled
         )
+    }
+
+    fn kind(&self) -> MachineKind {
+        MachineKind::Activity
     }
 }
 

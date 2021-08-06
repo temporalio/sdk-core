@@ -1,3 +1,4 @@
+use crate::machines::MachineKind;
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
@@ -13,7 +14,7 @@ use crate::{
             common::Payload,
             workflow_activation::{
                 wf_activation_job::{self, Variant},
-                ResolveHasChange, StartWorkflow, UpdateRandomSeed, WfActivation,
+                NotifyHasChange, StartWorkflow, UpdateRandomSeed, WfActivation,
             },
             PayloadsExt,
         },
@@ -257,31 +258,13 @@ impl WorkflowMachines {
         let consumed_cmd = loop {
             if let Some(peek_machine) = self.commands.front() {
                 let mach = self.machine(peek_machine.machine);
-                if !mach.matches_event(event) {
-                    // Version markers can be skipped in the event they are deprecated
-                    if let Some(changed_info) = event.get_changed_marker_details() {
-                        // Is deprecated. We can simply ignore this event, as deprecated change
-                        // markers are allowed without matching changed calls.
-                        if changed_info.1 {
-                            debug!(
-                                "Deprecated change marker tried against wrong machine, skipping."
-                            );
-                            return Ok(());
-                        }
-                        return Err(WFMachinesError::Nondeterminism(format!(
-                            "Non-deprecated change marker encountered for change {}, \
-                            but there is no corresponding change command!",
-                            changed_info.0
-                        )));
-                    }
-                    // Version machines themselves may also not *have* matching markers in some
-                    // circumstances
-                    // TODO: Better typed, elaborate docs
-                    if mach.name() == "VersionMachine" {
-                        debug!("Skipping non-matching event against version machine");
+                match change_marker_handling(event, mach)? {
+                    ChangeMarkerOutcome::SkipEvent => return Ok(()),
+                    ChangeMarkerOutcome::SkipCommand => {
                         self.commands.pop_front();
                         continue;
                     }
+                    ChangeMarkerOutcome::Normal => {}
                 }
             }
 
@@ -516,8 +499,8 @@ impl WorkflowMachines {
                 );
                 // Found a change marker
                 self.drive_me
-                    .send_job(wf_activation_job::Variant::ResolveHasChange(
-                        ResolveHasChange { change_id },
+                    .send_job(wf_activation_job::Variant::NotifyHasChange(
+                        NotifyHasChange { change_id },
                     ));
             }
         }
@@ -568,7 +551,7 @@ impl WorkflowMachines {
     ) -> Result<()> {
         let sm = self.machine_mut(sm);
         if !machine_responses.is_empty() {
-            debug!(responses = %machine_responses.display(), machine_name = %sm.name(),
+            debug!(responses = %machine_responses.display(), machine_name = %sm.kind(),
                    "Machine produced responses");
         }
         for response in machine_responses {
@@ -751,4 +734,42 @@ fn str_to_randomness_seed(run_id: &str) -> u64 {
     let mut s = DefaultHasher::new();
     run_id.hash(&mut s);
     s.finish()
+}
+
+enum ChangeMarkerOutcome {
+    SkipEvent,
+    SkipCommand,
+    Normal,
+}
+
+/// Special handling for change markers, when handling command events as in
+/// [WorkflowMachines::handle_command_event]
+fn change_marker_handling(
+    event: &HistoryEvent,
+    mach: &dyn TemporalStateMachine,
+) -> Result<ChangeMarkerOutcome> {
+    if !mach.matches_event(event) {
+        // Version markers can be skipped in the event they are deprecated
+        if let Some(changed_info) = event.get_changed_marker_details() {
+            // Is deprecated. We can simply ignore this event, as deprecated change
+            // markers are allowed without matching changed calls.
+            if changed_info.1 {
+                debug!("Deprecated change marker tried against wrong machine, skipping.");
+                return Ok(ChangeMarkerOutcome::SkipEvent);
+            }
+            return Err(WFMachinesError::Nondeterminism(format!(
+                "Non-deprecated change marker encountered for change {}, \
+                            but there is no corresponding change command!",
+                changed_info.0
+            )));
+        }
+        // Version machines themselves may also not *have* matching markers, where non-deprecated
+        // calls take the old path, and deprecated calls assume history is produced by a new-code
+        // worker.
+        if mach.kind() == MachineKind::Version {
+            debug!("Skipping non-matching event against version machine");
+            return Ok(ChangeMarkerOutcome::SkipCommand);
+        }
+    }
+    Ok(ChangeMarkerOutcome::Normal)
 }

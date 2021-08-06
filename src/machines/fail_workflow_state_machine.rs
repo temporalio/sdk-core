@@ -1,4 +1,4 @@
-use crate::machines::EventInfo;
+use crate::machines::{EventInfo, MachineKind};
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, OnEventWrapper,
@@ -124,6 +124,10 @@ impl WFMachinesAdapter for FailWorkflowMachine {
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
         event.event_type() == EventType::WorkflowExecutionFailed
+    }
+
+    fn kind(&self) -> MachineKind {
+        MachineKind::FailWorkflow
     }
 }
 

@@ -204,8 +204,8 @@ pub mod coresdk {
                         wf_activation_job::Variant::ResolveActivity(_) => {
                             write!(f, "ResolveActivity")
                         }
-                        wf_activation_job::Variant::ResolveHasChange(_) => {
-                            write!(f, "ResolveHasChange")
+                        wf_activation_job::Variant::NotifyHasChange(_) => {
+                            write!(f, "NotifyHasChange")
                         }
                         wf_activation_job::Variant::RemoveFromCache(_) => {
                             write!(f, "RemoveFromCache")

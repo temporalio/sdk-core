@@ -17,6 +17,7 @@
 //! | deprecated marker for change | has_change deprecated | Call allowed                                                                       |
 //! | replaying, no marker         | has_change deprecated | Call allowed                                                                       |
 
+use crate::machines::MachineKind;
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
@@ -42,12 +43,19 @@ fsm! {
     error WFMachinesError;
     shared_state SharedState;
 
+    // Machine is created in either executing or replaying, and then immediately scheduled and
+    // transitions to the command created state (creating the command in the process)
     Executing --(Schedule, on_schedule) --> MarkerCommandCreated;
     Replaying --(Schedule, on_schedule) --> MarkerCommandCreatedReplaying;
 
+    // Pretty much nothing happens here - once we issue the command it is the responsibility of
+    // machinery above us to notify lang SDK about the change. This is in order to allow the
+    // change call to be sync and not have to wait for the command to resolve.
     MarkerCommandCreated --(CommandRecordMarker, on_command_record_marker) --> Notified;
     MarkerCommandCreatedReplaying --(CommandRecordMarker) --> Notified;
 
+    // Once we've played back the marker recorded event, all we need to do is double-check that
+    // it matched what we expected
     Notified --(MarkerRecorded(String), shared on_marker_recorded) --> MarkerCommandRecorded;
 }
 
@@ -181,6 +189,10 @@ impl WFMachinesAdapter for VersionMachine {
     fn matches_event(&self, event: &HistoryEvent) -> bool {
         event.get_changed_marker_details().is_some()
     }
+
+    fn kind(&self) -> MachineKind {
+        MachineKind::Version
+    }
 }
 
 impl Cancellable for VersionMachine {}
@@ -217,7 +229,7 @@ mod tests {
         protos::{
             coresdk::{
                 common::decode_change_marker_details,
-                workflow_activation::{wf_activation_job, ResolveHasChange, WfActivationJob},
+                workflow_activation::{wf_activation_job, NotifyHasChange, WfActivationJob},
                 workflow_commands::StartTimer,
             },
             temporal::api::command::v1::{
@@ -454,8 +466,8 @@ mod tests {
             assert_matches!(
                 &act.jobs[1],
                  WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::ResolveHasChange(
-                        ResolveHasChange {
+                    variant: Some(wf_activation_job::Variant::NotifyHasChange(
+                        NotifyHasChange {
                             change_id,
                         }
                     ))
@@ -466,7 +478,7 @@ mod tests {
         }
         let commands = wfm.get_server_commands().await.commands;
         assert_eq!(commands.len(), 2);
-        let dep_flag_expected = if wf_version == 2 { false } else { true };
+        let dep_flag_expected = wf_version != 2;
         assert_matches!(
             commands[0].attributes.as_ref().unwrap(),
             Attributes::RecordMarkerCommandAttributes(

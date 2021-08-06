@@ -1,4 +1,4 @@
-use crate::machines::EventInfo;
+use crate::machines::{EventInfo, MachineKind};
 use crate::{
     machines::{
         Cancellable, HistoryEvent, MachineResponse, NewMachineWithCommand, OnEventWrapper,
@@ -107,6 +107,10 @@ impl WFMachinesAdapter for ContinueAsNewWorkflowMachine {
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
         event.event_type() == EventType::WorkflowExecutionContinuedAsNew
+    }
+
+    fn kind(&self) -> MachineKind {
+        MachineKind::ContinueAsNewWorkflow
     }
 }
 

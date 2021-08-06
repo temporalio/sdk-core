@@ -1,6 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
-use crate::machines::EventInfo;
+use crate::machines::{EventInfo, MachineKind};
 use crate::{
     machines::{
         workflow_machines::{MachineResponse, WFMachinesError},
@@ -250,6 +250,10 @@ impl WFMachinesAdapter for TimerMachine {
             EventType::TimerStarted | EventType::TimerCanceled | EventType::TimerFired
         )
     }
+
+    fn kind(&self) -> MachineKind {
+        MachineKind::Timer
+    }
 }
 
 impl Cancellable for TimerMachine {
@@ -358,7 +362,7 @@ mod test {
         assert!(act
             .unwrap_err()
             .to_string()
-            .contains("Timer fired event did not have expected timer id realid!"));
+            .contains("Timer fired event did not have expected timer id realid"));
         wfm.shutdown().await.unwrap();
     }
 

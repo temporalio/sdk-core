@@ -1,3 +1,4 @@
+use crate::machines::MachineKind;
 use crate::{
     machines::EventInfo,
     machines::{
@@ -108,6 +109,10 @@ impl WFMachinesAdapter for CancelWorkflowMachine {
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
         event.event_type() == EventType::WorkflowExecutionCanceled
+    }
+
+    fn kind(&self) -> MachineKind {
+        MachineKind::CancelWorkflow
     }
 }
 

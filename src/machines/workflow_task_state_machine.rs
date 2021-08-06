@@ -1,7 +1,7 @@
 #![allow(clippy::enum_variant_names)]
 
 use crate::machines::workflow_machines::MachineResponse;
-use crate::machines::{Cancellable, EventInfo};
+use crate::machines::{Cancellable, EventInfo, MachineKind};
 use crate::protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes;
 use crate::{
     machines::{workflow_machines::WFMachinesError, WFMachinesAdapter},
@@ -100,6 +100,10 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
                 | EventType::WorkflowTaskCompleted
                 | EventType::WorkflowTaskFailed
         )
+    }
+
+    fn kind(&self) -> MachineKind {
+        MachineKind::WorkflowTask
     }
 }
 

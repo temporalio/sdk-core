@@ -1,9 +1,8 @@
-use crate::prototype_rust_sdk::workflow_context::WfContextSharedData;
 use crate::{
     protos::coresdk::{
         common::{Payload, UserCodeFailure},
         workflow_activation::{
-            wf_activation_job::Variant, FireTimer, ResolveActivity, ResolveHasChange, WfActivation,
+            wf_activation_job::Variant, FireTimer, NotifyHasChange, ResolveActivity, WfActivation,
             WfActivationJob,
         },
         workflow_commands::{
@@ -13,7 +12,8 @@ use crate::{
         workflow_completion::WfActivationCompletion,
     },
     prototype_rust_sdk::{
-        RustWfCmd, UnblockEvent, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
+        workflow_context::WfContextSharedData, RustWfCmd, UnblockEvent, WfContext, WfExitValue,
+        WorkflowFunction, WorkflowResult,
     },
     workflow::CommandID,
 };
@@ -141,7 +141,7 @@ impl Future for WorkflowFuture {
                         Variant::SignalWorkflow(_) => {
                             todo!()
                         }
-                        Variant::ResolveHasChange(ResolveHasChange { change_id }) => {
+                        Variant::NotifyHasChange(NotifyHasChange { change_id }) => {
                             self.ctx_shared.write().changes.insert(change_id, true);
                         }
                         Variant::RemoveFromCache(_) => {

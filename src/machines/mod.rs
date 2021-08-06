@@ -104,11 +104,23 @@ impl TryFrom<WorkflowCommand> for WFCommand {
     }
 }
 
+#[derive(Copy, Clone, Debug, derive_more::Display, Eq, PartialEq)]
+enum MachineKind {
+    Activity,
+    CancelWorkflow,
+    CompleteWorkflow,
+    ContinueAsNewWorkflow,
+    FailWorkflow,
+    Timer,
+    Version,
+    WorkflowTask,
+}
+
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
 ///
 /// Formerly known as `EntityStateMachine` in Java.
 trait TemporalStateMachine: CheckStateMachineInFinal + Send {
-    fn name(&self) -> &str;
+    fn kind(&self) -> MachineKind;
     fn handle_command(
         &mut self,
         command_type: CommandType,
@@ -152,8 +164,8 @@ where
     <SM as StateMachine>::State: Display,
     <SM as StateMachine>::Error: Into<WFMachinesError> + 'static + Send + Sync,
 {
-    fn name(&self) -> &str {
-        <Self as StateMachine>::name(self)
+    fn kind(&self) -> MachineKind {
+        self.kind()
     }
 
     fn handle_command(
@@ -288,6 +300,9 @@ trait WFMachinesAdapter: StateMachine {
     /// ahead of time if it's worth trying to call [TemporalStateMachine::handle_event] without
     /// requiring mutable access.
     fn matches_event(&self, event: &HistoryEvent) -> bool;
+
+    /// Allows robust identification of the type of machine
+    fn kind(&self) -> MachineKind;
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -362,6 +377,6 @@ struct NewMachineWithCommand<T: TemporalStateMachine> {
 
 impl Debug for dyn TemporalStateMachine {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.name())
+        std::fmt::Display::fmt(&self.kind(), f)
     }
 }
