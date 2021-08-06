@@ -1,18 +1,21 @@
 #![allow(clippy::enum_variant_names)]
 
-use crate::machines::workflow_machines::MachineResponse;
-use crate::machines::{Cancellable, EventInfo, MachineKind};
-use crate::protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes;
 use crate::{
-    machines::{workflow_machines::WFMachinesError, WFMachinesAdapter},
+    machines::{
+        workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, WFMachinesAdapter,
+        WFMachinesError,
+    },
+    protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
     protos::temporal::api::{
         enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
         history::v1::HistoryEvent,
     },
 };
 use rustfsm::{fsm, TransitionResult};
-use std::convert::TryInto;
-use std::{convert::TryFrom, time::SystemTime};
+use std::{
+    convert::{TryFrom, TryInto},
+    time::SystemTime,
+};
 
 fsm! {
     pub(super) name WorkflowTaskMachine;
@@ -67,11 +70,11 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
                 let (event, has_next_event) = if let Some(ei) = event_info {
                     (ei.event, ei.has_next_event)
                 } else {
-                    // TODO: Maybe shouldn't be panic?
-                    panic!(
+                    return Err(WFMachinesError::Fatal(
                         "WF Task machine should never issue a task started trigger \
                         command in response to non-history events"
-                    );
+                            .to_string(),
+                    ));
                 };
 
                 let cur_event_past_or_at_start = event.event_id >= task_started_event_id;

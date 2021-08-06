@@ -7,7 +7,7 @@ use test_utils::CoreWfStarter;
 const MY_CHANGE_ID: &str = "integ_test_change_name";
 
 pub async fn changes_wf(mut ctx: WfContext) -> WorkflowResult<()> {
-    if ctx.has_version(MY_CHANGE_ID) {
+    if ctx.has_change(MY_CHANGE_ID) {
         ctx.timer(StartTimer {
             timer_id: "had_change_1".to_string(),
             start_to_fire_timeout: Some(Duration::from_millis(200).into()),
@@ -25,7 +25,7 @@ pub async fn changes_wf(mut ctx: WfContext) -> WorkflowResult<()> {
         start_to_fire_timeout: Some(Duration::from_millis(200).into()),
     })
     .await;
-    if ctx.has_version(MY_CHANGE_ID) {
+    if ctx.has_change(MY_CHANGE_ID) {
         ctx.timer(StartTimer {
             timer_id: "had_change_2".to_string(),
             start_to_fire_timeout: Some(Duration::from_millis(200).into()),
@@ -60,7 +60,7 @@ async fn writes_change_markers() {
 static DID_DIE: AtomicBool = AtomicBool::new(false);
 pub async fn no_change_then_change_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     if DID_DIE.load(Ordering::Acquire) {
-        assert!(!ctx.has_version(MY_CHANGE_ID));
+        assert!(!ctx.has_change(MY_CHANGE_ID));
     }
     ctx.timer(StartTimer {
         timer_id: "no_change_1".to_string(),
@@ -73,7 +73,7 @@ pub async fn no_change_then_change_wf(mut ctx: WfContext) -> WorkflowResult<()> 
     })
     .await;
     if DID_DIE.load(Ordering::Acquire) {
-        assert!(!ctx.has_version(MY_CHANGE_ID));
+        assert!(!ctx.has_change(MY_CHANGE_ID));
     }
     ctx.timer(StartTimer {
         timer_id: "no_change_2".to_string(),

@@ -22,7 +22,7 @@ message WorkflowCommand {
         FailWorkflowExecution fail_workflow_execution = 7;
         ContinueAsNewWorkflowExecution continue_as_new_workflow_execution = 8;
         CancelWorkflowExecution cancel_workflow_execution = 9;
-        HasChange has_change = 10;
+        SetChangeMarker set_change_marker = 10;
 
         // To be added as/if needed:
         //  RequestCancelActivityTask request_cancel_activity_task_command_attributes = 6;
@@ -141,8 +141,7 @@ message ContinueAsNewWorkflowExecution {
 message CancelWorkflowExecution {}
 
 /// A request to set/check version information for a certain change.
-/// TODO: Add table of outcomes
-message HasChange {
+message SetChangeMarker {
     // A user-chosen identifier for this version check. If the same identifier is used in multiple
     // places in the code, those places are considered to be versioned as one unit. IE: The check
     // call will return the same result for all of them

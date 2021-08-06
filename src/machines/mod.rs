@@ -36,8 +36,8 @@ use crate::{
     protos::{
         coresdk::workflow_commands::{
             workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
-            ContinueAsNewWorkflowExecution, FailWorkflowExecution, HasChange, QueryResult,
-            RequestCancelActivity, ScheduleActivity, StartTimer, WorkflowCommand,
+            ContinueAsNewWorkflowExecution, FailWorkflowExecution, QueryResult,
+            RequestCancelActivity, ScheduleActivity, SetChangeMarker, StartTimer, WorkflowCommand,
         },
         temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
     },
@@ -70,7 +70,7 @@ pub enum WFCommand {
     QueryResponse(QueryResult),
     ContinueAsNew(ContinueAsNewWorkflowExecution),
     CancelWorkflow(CancelWorkflowExecution),
-    HasChange(HasChange),
+    SetChangeMarker(SetChangeMarker),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
@@ -99,7 +99,7 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::CancelWorkflowExecution(s) => {
                 Ok(WFCommand::CancelWorkflow(s))
             }
-            workflow_command::Variant::HasChange(s) => Ok(WFCommand::HasChange(s)),
+            workflow_command::Variant::SetChangeMarker(s) => Ok(WFCommand::SetChangeMarker(s)),
         }
     }
 }

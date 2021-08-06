@@ -193,8 +193,8 @@ impl Future for WorkflowFuture {
                                 activity_id,
                                 ..
                             }) => CommandID::Activity(activity_id),
-                            workflow_command::Variant::HasChange(_) => {
-                                panic!("Has change should be a nonblocking command")
+                            workflow_command::Variant::SetChangeMarker(_) => {
+                                panic!("Set change marker should be a nonblocking command")
                             }
                             _ => unimplemented!("Command type not implemented"),
                         };

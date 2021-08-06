@@ -634,7 +634,7 @@ impl WorkflowMachines {
                     let cancm = self.add_new_command_machine(cancel_workflow(attrs));
                     self.current_wf_task_commands.push_back(cancm);
                 }
-                WFCommand::HasChange(attrs) => {
+                WFCommand::SetChangeMarker(attrs) => {
                     // Do not create commands for change IDs that we have already created commands
                     // for.
                     if !matches!(self.encountered_change_markers.get(&attrs.change_id),

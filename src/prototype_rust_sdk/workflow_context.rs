@@ -2,7 +2,7 @@ use crate::{
     protos::coresdk::{
         activity_result::ActivityResult,
         common::Payload,
-        workflow_commands::{workflow_command, HasChange, ScheduleActivity, StartTimer},
+        workflow_commands::{workflow_command, ScheduleActivity, SetChangeMarker, StartTimer},
     },
     prototype_rust_sdk::{CommandCreateRequest, RustWfCmd, UnblockEvent},
 };
@@ -115,19 +115,19 @@ impl WfContext {
     }
 
     /// Check (or record) that this workflow history was created with the provided change id
-    pub fn has_version(&self, change_id: &str) -> bool {
-        self.has_version_impl(change_id, false)
+    pub fn has_change(&self, change_id: &str) -> bool {
+        self.has_change_impl(change_id, false)
     }
 
     /// Record that this workflow history was created with the provided change id, and it is being
     /// phased out.
-    pub fn has_version_deprecated(&self, change_id: &str) {
-        self.has_version_impl(change_id, true);
+    pub fn has_change_deprecated(&self, change_id: &str) {
+        self.has_change_impl(change_id, true);
     }
 
-    fn has_version_impl(&self, change_id: &str, deprecated: bool) -> bool {
+    fn has_change_impl(&self, change_id: &str, deprecated: bool) -> bool {
         self.send(
-            workflow_command::Variant::HasChange(HasChange {
+            workflow_command::Variant::SetChangeMarker(SetChangeMarker {
                 change_id: change_id.to_string(),
                 deprecated,
             })

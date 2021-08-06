@@ -280,8 +280,8 @@ pub mod coresdk {
                         workflow_command::Variant::CancelWorkflowExecution(_) => {
                             write!(f, "CancelWorkflowExecution")
                         }
-                        workflow_command::Variant::HasChange(_) => {
-                            write!(f, "HasChange")
+                        workflow_command::Variant::SetChangeMarker(_) => {
+                            write!(f, "SetChangeMarker")
                         }
                     },
                 }
