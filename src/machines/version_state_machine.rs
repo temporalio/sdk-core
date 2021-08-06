@@ -284,7 +284,7 @@ mod tests {
     }
 
     async fn v2(ctx: &mut WfContext) -> bool {
-        if ctx.has_version(MY_CHANGE_ID, false) {
+        if ctx.has_version(MY_CHANGE_ID) {
             ctx.timer(StartTimer {
                 timer_id: "had_change".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -302,7 +302,7 @@ mod tests {
     }
 
     async fn v3(ctx: &mut WfContext) {
-        ctx.has_version(MY_CHANGE_ID, true);
+        ctx.has_version_deprecated(MY_CHANGE_ID);
         ctx.timer(StartTimer {
             timer_id: "had_change".to_string(),
             start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -527,7 +527,7 @@ mod tests {
         tracing_init();
 
         let wfn = WorkflowFunction::new(move |mut ctx: WfContext| async move {
-            if ctx.has_version(MY_CHANGE_ID, false) {
+            if ctx.has_version(MY_CHANGE_ID) {
                 ctx.timer(StartTimer {
                     timer_id: "had_change_1".to_string(),
                     start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -545,7 +545,7 @@ mod tests {
                 start_to_fire_timeout: Some(Duration::from_secs(1).into()),
             })
             .await;
-            if ctx.has_version(MY_CHANGE_ID, false) {
+            if ctx.has_version(MY_CHANGE_ID) {
                 ctx.timer(StartTimer {
                     timer_id: "had_change_2".to_string(),
                     start_to_fire_timeout: Some(Duration::from_secs(1).into()),

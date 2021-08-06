@@ -115,7 +115,17 @@ impl WfContext {
     }
 
     /// Check (or record) that this workflow history was created with the provided change id
-    pub fn has_version(&self, change_id: &str, deprecated: bool) -> bool {
+    pub fn has_version(&self, change_id: &str) -> bool {
+        self.has_version_impl(change_id, false)
+    }
+
+    /// Record that this workflow history was created with the provided change id, and it is being
+    /// phased out.
+    pub fn has_version_deprecated(&self, change_id: &str) {
+        self.has_version_impl(change_id, true);
+    }
+
+    fn has_version_impl(&self, change_id: &str, deprecated: bool) -> bool {
         self.send(
             workflow_command::Variant::HasChange(HasChange {
                 change_id: change_id.to_string(),
@@ -128,14 +138,9 @@ impl WfContext {
             return *present;
         }
 
-        // TODO: Deprecated api shouldn't return anything.
         // If we don't already know about the change, that means there is no marker in history,
         // and we should return false if we are replaying
-        let res = if self.shared.read().is_replaying {
-            false
-        } else {
-            true
-        };
+        let res = !self.shared.read().is_replaying;
 
         self.shared
             .write()
