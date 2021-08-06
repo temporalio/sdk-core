@@ -112,8 +112,8 @@ message SignalWorkflow {
     string identity = 3;
 }
 
-// Resolve a call to `has_change` or similar API
+// Resolve a call to `has_change` or similar API -- this is always sent pre-emptively, so any time
+// it is sent the change is present
 message ResolveHasChange {
     string change_id = 1;
-    bool is_present = 2;
 }

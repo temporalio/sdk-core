@@ -200,8 +200,8 @@ impl StartCommandRecorded {
     ) -> TimerMachineTransition<Fired> {
         if dat.attrs.timer_id != attrs.timer_id {
             TransitionResult::Err(WFMachinesError::Fatal(format!(
-                "Timer fired event did not have expected timer id {}!",
-                dat.attrs.timer_id
+                "Timer fired event did not have expected timer id {}, it was {}!",
+                dat.attrs.timer_id, attrs.timer_id
             )))
         } else {
             TransitionResult::ok(vec![TimerMachineCommand::Complete], Fired::default())

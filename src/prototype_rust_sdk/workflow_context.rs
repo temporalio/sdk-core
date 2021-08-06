@@ -128,18 +128,21 @@ impl WfContext {
             return *present;
         }
 
-        // If we don't already know about the change, and we are replaying, that means there is no
-        // marker in history, and we should choose the has-change branch only if the deprecated flag
-        // is set.
-        if self.shared.read().is_replaying {
-            return deprecated;
-        }
+        // TODO: Deprecated api shouldn't return anything.
+        // If we don't already know about the change, that means there is no marker in history,
+        // and we should return false if we are replaying
+        let res = if self.shared.read().is_replaying {
+            false
+        } else {
+            true
+        };
 
         self.shared
             .write()
             .changes
-            .insert(change_id.to_string(), true);
-        true
+            .insert(change_id.to_string(), res);
+
+        res
     }
 
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)

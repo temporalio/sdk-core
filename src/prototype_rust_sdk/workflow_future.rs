@@ -141,14 +141,8 @@ impl Future for WorkflowFuture {
                         Variant::SignalWorkflow(_) => {
                             todo!()
                         }
-                        Variant::ResolveHasChange(ResolveHasChange {
-                            change_id,
-                            is_present,
-                        }) => {
-                            self.ctx_shared
-                                .write()
-                                .changes
-                                .insert(change_id, is_present);
+                        Variant::ResolveHasChange(ResolveHasChange { change_id }) => {
+                            self.ctx_shared.write().changes.insert(change_id, true);
                         }
                         Variant::RemoveFromCache(_) => {
                             die_of_eviction_when_done = true;

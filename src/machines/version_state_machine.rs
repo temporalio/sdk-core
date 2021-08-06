@@ -1,4 +1,6 @@
-//! The version machine can be difficult to follow. Refer to this table for behavior:
+//! The version machine can be difficult to follow. Refer to below table for behavior. The
+//! deprecated calls simply say "allowed" because if they returned a value, it's always true. Old
+//! code cannot exist in workflows which use the deprecated call.
 //!
 //! | History Has                  | Workflow Has          | Outcome                                                                            |
 //! |------------------------------|-----------------------|------------------------------------------------------------------------------------|
@@ -10,10 +12,10 @@
 //! | marker for change            | has_change            | Call returns true upon replay                                                      |
 //! | deprecated marker for change | has_change            | Call returns true upon replay                                                      |
 //! | replaying, no marker         | has_change            | Call returns false upon replay                                                     |
-//! | not replaying                | has_change deprecated | Marker command sent to server and recorded with deprecated flag. Call returns true |
-//! | marker for change            | has_change deprecated | Call returns true upon replay                                                      |
-//! | deprecated marker for change | has_change deprecated | Call returns true upon replay                                                      |
-//! | replaying, no marker         | has_change deprecated | No matching event / history too old or too new                                     |
+//! | not replaying                | has_change deprecated | Marker command sent to server and recorded with deprecated flag. Call allowed      |
+//! | marker for change            | has_change deprecated | Call allowed                                                                       |
+//! | deprecated marker for change | has_change deprecated | Call allowed                                                                       |
+//! | replaying, no marker         | has_change deprecated | Call allowed                                                                       |
 
 use crate::{
     machines::{
@@ -211,61 +213,153 @@ impl TryFrom<HistoryEvent> for VersionMachineEvents {
 #[cfg(test)]
 mod tests {
     use crate::{
-        machines::WFMachinesError,
-        protos::coresdk::{
-            workflow_activation::{wf_activation_job, ResolveHasChange, WfActivationJob},
-            workflow_commands::StartTimer,
+        machines::{WFMachinesError, HAS_CHANGE_MARKER_NAME},
+        protos::{
+            coresdk::{
+                common::decode_change_marker_details,
+                workflow_activation::{wf_activation_job, ResolveHasChange, WfActivationJob},
+                workflow_commands::StartTimer,
+            },
+            temporal::api::command::v1::{
+                command::Attributes, RecordMarkerCommandAttributes, StartTimerCommandAttributes,
+            },
+            temporal::api::enums::v1::{CommandType, EventType},
+            temporal::api::history::v1::{history_event, TimerFiredEventAttributes},
         },
-        protos::temporal::api::enums::v1::{CommandType, EventType},
-        protos::temporal::api::history::v1::{history_event, TimerFiredEventAttributes},
         prototype_rust_sdk::{WfContext, WorkflowFunction},
-        test_help::canned_histories,
+        test_help::TestHistoryBuilder,
         tracing_init,
         workflow::managed_wf::ManagedWFFunc,
     };
-    use rstest::{fixture, rstest};
+    use rstest::rstest;
     use std::time::Duration;
 
-    const MY_CHANGE_ID: &str = "change_name";
+    const MY_CHANGE_ID: &str = "test_change_name";
+    #[derive(Eq, PartialEq, Copy, Clone)]
+    enum MarkerType {
+        Deprecated,
+        NotDeprecated,
+        NoMarker,
+    }
 
-    #[fixture(
-        replaying = false,
-        deprecated = false,
-        call_deprecated = false,
-        marker = false
-    )]
-    fn version_hist(
+    /// EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+    /// EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+    /// EVENT_TYPE_WORKFLOW_TASK_STARTED
+    /// EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+    /// EVENT_TYPE_MARKER_RECORDED (depending on marker_type)
+    /// EVENT_TYPE_TIMER_STARTED
+    /// EVENT_TYPE_TIMER_FIRED
+    /// EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+    /// EVENT_TYPE_WORKFLOW_TASK_STARTED
+    /// EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+    /// EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+    fn change_marker_single_timer(marker_type: MarkerType, timer_id: &str) -> TestHistoryBuilder {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        match marker_type {
+            MarkerType::Deprecated => t.add_has_change_marker(MY_CHANGE_ID, true),
+            MarkerType::NotDeprecated => t.add_has_change_marker(MY_CHANGE_ID, false),
+            MarkerType::NoMarker => {}
+        };
+        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        t.add(
+            EventType::TimerFired,
+            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                started_event_id: timer_started_event_id,
+                timer_id: timer_id.to_string(),
+            }),
+        );
+        t.add_full_wf_task();
+        t.add_workflow_execution_completed();
+        t
+    }
+
+    async fn v1(ctx: &mut WfContext) {
+        ctx.timer(StartTimer {
+            timer_id: "no_change".to_string(),
+            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+        })
+        .await;
+    }
+
+    async fn v2(ctx: &mut WfContext) -> bool {
+        if ctx.has_version(MY_CHANGE_ID, false) {
+            ctx.timer(StartTimer {
+                timer_id: "had_change".to_string(),
+                start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+            })
+            .await;
+            true
+        } else {
+            ctx.timer(StartTimer {
+                timer_id: "no_change".to_string(),
+                start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+            })
+            .await;
+            false
+        }
+    }
+
+    async fn v3(ctx: &mut WfContext) {
+        ctx.has_version(MY_CHANGE_ID, true);
+        ctx.timer(StartTimer {
+            timer_id: "had_change".to_string(),
+            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+        })
+        .await;
+    }
+
+    async fn v4(ctx: &mut WfContext) {
+        ctx.timer(StartTimer {
+            timer_id: "had_change".to_string(),
+            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+        })
+        .await;
+    }
+
+    fn change_setup(
         replaying: bool,
-        deprecated: bool,
-        call_deprecated: bool,
-        marker: bool,
+        marker_type: MarkerType,
+        workflow_version: usize,
     ) -> ManagedWFFunc {
         let wfn = WorkflowFunction::new(move |mut ctx: WfContext| async move {
-            if ctx.has_version(MY_CHANGE_ID, call_deprecated) {
-                ctx.timer(StartTimer {
-                    timer_id: "had_change".to_string(),
-                    start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-                })
-                .await;
-                if !marker {
-                    panic!("False branch should be taken if there is no marker in history");
+            match workflow_version {
+                1 => {
+                    v1(&mut ctx).await;
                 }
-            } else if marker {
-                panic!("True branch should be taken unless there is no marker in history");
-            } else {
-                ctx.timer(StartTimer {
-                    timer_id: "no_change".to_string(),
-                    start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-                })
-                .await;
+                2 => {
+                    v2(&mut ctx).await;
+                }
+                3 => {
+                    v3(&mut ctx).await;
+                }
+                4 => {
+                    v4(&mut ctx).await;
+                }
+                _ => panic!("Invalid workflow version for test setup"),
             }
             Ok(().into())
         });
 
-        let t = if marker {
-            canned_histories::has_change_different_timers(Some(MY_CHANGE_ID), deprecated)
-        } else {
-            canned_histories::has_change_different_timers(None, deprecated)
+        let t = match marker_type {
+            MarkerType::NotDeprecated => change_marker_single_timer(marker_type, "had_change"),
+            MarkerType::Deprecated => {
+                let timer_id = if workflow_version == 1 {
+                    "no_change"
+                } else {
+                    "had_change"
+                };
+                change_marker_single_timer(marker_type, timer_id)
+            }
+            MarkerType::NoMarker => {
+                let timer_id = if workflow_version <= 2 {
+                    "no_change"
+                } else {
+                    "had_change"
+                };
+                change_marker_single_timer(marker_type, timer_id)
+            }
         };
         let histinfo = if replaying {
             t.get_full_history_info()
@@ -275,158 +369,148 @@ mod tests {
         ManagedWFFunc::new_from_update(histinfo.unwrap().into(), wfn, vec![])
     }
 
-    // Deprecated or not in history irrelevant for this test since we don't replay the event
     #[rstest]
-    #[case::call_not_dep(version_hist(false, false, false, true))]
-    #[case::call_has_dep(version_hist(false, false, true, true))]
+    #[case::v1_breaks_on_normal_marker(false, MarkerType::NotDeprecated, 1)]
+    #[case::v1_accepts_dep_marker(false, MarkerType::Deprecated, 1)]
+    #[case::v1_replay_breaks_on_normal_marker(true, MarkerType::NotDeprecated, 1)]
+    #[case::v1_replay_accepts_dep_marker(true, MarkerType::Deprecated, 1)]
+    #[case::v4_breaks_on_normal_marker(false, MarkerType::NotDeprecated, 4)]
+    #[case::v4_accepts_dep_marker(false, MarkerType::Deprecated, 4)]
+    #[case::v4_replay_breaks_on_normal_marker(true, MarkerType::NotDeprecated, 4)]
+    #[case::v4_replay_accepts_dep_marker(true, MarkerType::Deprecated, 4)]
     #[tokio::test]
-    async fn version_machine_with_call_not_replay(#[case] mut wfm: ManagedWFFunc) {
-        // Start workflow activation
-        let act = wfm.get_next_activation().await.unwrap();
-        assert!(!act.is_replaying);
-        // There is no activation for the change command, as we know that we are not replaying and
-        // the workflow unblocks itself
-        let commands = wfm.get_server_commands().await.commands;
-        // Should have record marker and start timer
-        assert_eq!(commands.len(), 2);
-        assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
-        assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
-
-        // Feed more history, to verify correct branch is chosen (by seeing the right timer fire)
-        wfm.new_history(
-            canned_histories::has_change_different_timers(Some(MY_CHANGE_ID), false)
-                .get_full_history_info()
-                .unwrap()
-                .into(),
-        )
-        .await
-        .unwrap();
-
-        wfm.shutdown().await.unwrap();
-    }
-
-    #[derive(Eq, PartialEq)]
-    enum CallOutcome {
-        HasChange,
-        NoChange,
-        MarkerMissing,
-    }
-    use crate::test_help::TestHistoryBuilder;
-    use CallOutcome::*;
-
-    #[rstest]
-    #[case::call_not_dep_marker_not(version_hist(true, false, false, true), HasChange)]
-    #[case::call_not_dep_marker_is(version_hist(true, true, false, true), HasChange)]
-    #[case::call_dep_marker_not(version_hist(true, false, true, true), HasChange)]
-    #[case::call_dep_marker_is(version_hist(true, true, true, true), HasChange)]
-    #[case::call_not_dep_no_marker(version_hist(true, false, false, false), NoChange)]
-    #[case::call_dep_no_marker(version_hist(true, false, true, false), MarkerMissing)]
-    #[tokio::test]
-    async fn version_machine_with_call_replay(
-        #[case] mut wfm: ManagedWFFunc,
-        #[case] call_outcome: CallOutcome,
+    async fn v1_and_v4_changes(
+        #[case] replaying: bool,
+        #[case] marker_type: MarkerType,
+        #[case] wf_version: usize,
     ) {
-        let act = wfm.get_next_activation().await;
+        let mut wfm = change_setup(replaying, marker_type, wf_version);
+        // Start workflow activation
+        wfm.get_next_activation().await.unwrap();
+        // Just starts timer
+        let commands = wfm.get_server_commands().await.commands;
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
 
-        if call_outcome == MarkerMissing {
-            assert_matches!(act.unwrap_err(), WFMachinesError::Nondeterminism(_));
-        } else {
-            let act = act.unwrap();
-
-            assert_matches!(
-                act.jobs[0],
-                WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::StartWorkflow(_))
-                }
-            );
-            // If we have the change marker in the history, we should always expect to see the
-            // change get pre-emptively resolved in the first workflow task
-            if call_outcome == HasChange {
-                assert_matches!(
-                    &act.jobs[1],
-                     WfActivationJob {
-                        variant: Some(wf_activation_job::Variant::ResolveHasChange(
-                            ResolveHasChange {
-                                change_id,
-                                is_present
-                            }
-                        ))
-                    } => change_id == MY_CHANGE_ID && *is_present
-                );
-            } else if call_outcome == NoChange {
-                // If there's no change marker, and we do not set the deprecated flag, the call
-                // should resolve as false, but it will not happen pre-emptively.
-                assert_eq!(act.jobs.len(), 1);
+        let act = if !replaying {
+            // Feed more history
+            let expected_timer_id = if wf_version == 1 {
+                "no_change"
             } else {
-                panic!("Test should've exited already, failing the activation")
+                "had_change"
             };
+            wfm.new_history(
+                change_marker_single_timer(marker_type, expected_timer_id)
+                    .get_full_history_info()
+                    .unwrap()
+                    .into(),
+            )
+            .await
+        } else {
+            wfm.get_next_activation().await
+        };
 
-            // Timer should get fired
-            let act = wfm.get_next_activation().await.unwrap();
+        if marker_type == MarkerType::Deprecated {
+            let act = act.unwrap();
+            // Timer is fired
             assert_matches!(
                 act.jobs.as_slice(),
                 [WfActivationJob {
                     variant: Some(wf_activation_job::Variant::FireTimer(_))
                 }]
             );
-        };
+        } else {
+            // should explode b/c non-dep marker is present
+            assert_matches!(act.unwrap_err(), WFMachinesError::Nondeterminism(_));
+        }
 
         wfm.shutdown().await.unwrap();
     }
 
-    #[fixture(deprecated = false)]
-    fn version_no_call(deprecated: bool) -> ManagedWFFunc {
-        let wfn = WorkflowFunction::new(move |mut ctx: WfContext| async move {
-            ctx.timer(StartTimer {
-                timer_id: "had_change".to_string(),
-                start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-            })
-            .await;
-            Ok(().into())
-        });
-
-        let t = canned_histories::has_change_different_timers(Some(MY_CHANGE_ID), deprecated);
-        ManagedWFFunc::new_from_update(t.get_full_history_info().unwrap().into(), wfn, vec![])
-    }
-
-    // The no-marker-no-call case isn't interesting. Nothing in here is involved.
     #[rstest]
-    #[case(version_no_call(false), false)]
-    #[case::deprecated(version_no_call(true), true)]
+    #[case::v2_no_marker_old_path(false, MarkerType::NoMarker, 2)]
+    #[case::v2_marker_new_path(false, MarkerType::NotDeprecated, 2)]
+    #[case::v2_dep_marker_new_path(false, MarkerType::Deprecated, 2)]
+    #[case::v2_replay_no_marker_old_path(true, MarkerType::NoMarker, 2)]
+    #[case::v2_replay_marker_new_path(true, MarkerType::NotDeprecated, 2)]
+    #[case::v2_replay_dep_marker_new_path(true, MarkerType::Deprecated, 2)]
+    #[case::v3_no_marker_old_path(false, MarkerType::NoMarker, 3)]
+    #[case::v3_marker_new_path(false, MarkerType::NotDeprecated, 3)]
+    #[case::v3_dep_marker_new_path(false, MarkerType::Deprecated, 3)]
+    #[case::v3_replay_no_marker_old_path(true, MarkerType::NoMarker, 3)]
+    #[case::v3_replay_marker_new_path(true, MarkerType::NotDeprecated, 3)]
+    #[case::v3_replay_dep_marker_new_path(true, MarkerType::Deprecated, 3)]
     #[tokio::test]
-    async fn version_machine_no_call_replay(
-        #[case] mut wfm: ManagedWFFunc,
-        #[case] deprecated: bool,
+    async fn v2_and_v3_changes(
+        #[case] replaying: bool,
+        #[case] marker_type: MarkerType,
+        #[case] wf_version: usize,
     ) {
-        // Start workflow activation and resolve change should come right away
+        tracing_init();
+        let mut wfm = change_setup(replaying, marker_type, wf_version);
         let act = wfm.get_next_activation().await.unwrap();
+        // replaying cases should immediately get a resolve change activation when marker is present
+        if replaying && marker_type != MarkerType::NoMarker {
+            assert_matches!(
+                &act.jobs[1],
+                 WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::ResolveHasChange(
+                        ResolveHasChange {
+                            change_id,
+                        }
+                    ))
+                } => change_id == MY_CHANGE_ID
+            );
+        } else {
+            assert_eq!(act.jobs.len(), 1);
+        }
+        let commands = wfm.get_server_commands().await.commands;
+        assert_eq!(commands.len(), 2);
+        let dep_flag_expected = if wf_version == 2 { false } else { true };
+        assert_matches!(
+            commands[0].attributes.as_ref().unwrap(),
+            Attributes::RecordMarkerCommandAttributes(
+                RecordMarkerCommandAttributes { marker_name, details,.. })
+
+            if marker_name == HAS_CHANGE_MARKER_NAME
+              && decode_change_marker_details(details).unwrap().1 == dep_flag_expected
+        );
+        // The only time the "old" timer should fire is in v2, replaying, without a marker.
+        let expected_timer_id =
+            if replaying && marker_type == MarkerType::NoMarker && wf_version == 2 {
+                "no_change"
+            } else {
+                "had_change"
+            };
+        assert_matches!(
+            commands[1].attributes.as_ref().unwrap(),
+            Attributes::StartTimerCommandAttributes(StartTimerCommandAttributes { timer_id, .. })
+            if timer_id == expected_timer_id
+        );
+
+        let act = if !replaying {
+            // Feed more history. Since we are *not* replaying, we *always* "have" the change
+            // and the history should have the has-change timer. v3 of course always has the change
+            // regardless.
+            wfm.new_history(
+                change_marker_single_timer(marker_type, "had_change")
+                    .get_full_history_info()
+                    .unwrap()
+                    .into(),
+            )
+            .await
+        } else {
+            wfm.get_next_activation().await
+        };
+
+        let act = act.unwrap();
+        // Timer is fired
         assert_matches!(
             act.jobs.as_slice(),
             [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::StartWorkflow(_))
-             },
-             WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveHasChange(
-                    ResolveHasChange {
-                        change_id,
-                        is_present
-                    }
-                ))
-            }] => change_id == MY_CHANGE_ID && *is_present
+                variant: Some(wf_activation_job::Variant::FireTimer(_))
+            }]
         );
-        let commands = wfm.get_server_commands().await.commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
-
-        let act = wfm.get_next_activation().await;
-        if deprecated {
-            // Should be fine, deprecated marker is ignored even if we didn't make change call
-            act.unwrap();
-        } else {
-            // Should error out because we didn't send the record marker command
-            let err = act.err().unwrap();
-            assert_matches!(err, WFMachinesError::Nondeterminism(_));
-        }
 
         wfm.shutdown().await.unwrap();
     }
@@ -477,7 +561,6 @@ mod tests {
             Ok(().into())
         });
 
-        // Just build the history directly in here since it's very specific to this test
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();

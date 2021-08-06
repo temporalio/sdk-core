@@ -198,11 +198,11 @@ impl WorkflowMachines {
                 if let Some(sm) = maybe_machine {
                     self.submachine_handle_event(sm, event, has_next_event)?;
                 } else {
-                    error!(
-                        event=?event,
+                    return Err(WFMachinesError::Nondeterminism(format!(
                         "During event handling, this event had an initial command ID but we could \
-                        not find a matching state machine!"
-                    );
+                        not find a matching command for it: {:?}",
+                        event
+                    )));
                 }
 
                 // Restore machine if not in it's final state
@@ -256,7 +256,8 @@ impl WorkflowMachines {
 
         let consumed_cmd = loop {
             if let Some(peek_machine) = self.commands.front() {
-                if !self.machine(peek_machine.machine).matches_event(event) {
+                let mach = self.machine(peek_machine.machine);
+                if !mach.matches_event(event) {
                     // Version markers can be skipped in the event they are deprecated
                     if let Some(changed_info) = event.get_changed_marker_details() {
                         // Is deprecated. We can simply ignore this event, as deprecated change
@@ -272,6 +273,14 @@ impl WorkflowMachines {
                             but there is no corresponding change command!",
                             changed_info.0
                         )));
+                    }
+                    // Version machines themselves may also not *have* matching markers in some
+                    // circumstances
+                    // TODO: Better typed, elaborate docs
+                    if mach.name() == "VersionMachine" {
+                        debug!("Skipping non-matching event against version machine");
+                        self.commands.pop_front();
+                        continue;
                     }
                 }
             }
@@ -508,10 +517,7 @@ impl WorkflowMachines {
                 // Found a change marker
                 self.drive_me
                     .send_job(wf_activation_job::Variant::ResolveHasChange(
-                        ResolveHasChange {
-                            change_id,
-                            is_present: true,
-                        },
+                        ResolveHasChange { change_id },
                     ));
             }
         }
@@ -646,29 +652,6 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(cancm);
                 }
                 WFCommand::HasChange(attrs) => {
-                    // If we have *not* seen a change marker for this change, but we *are* replaying
-                    // we make a decision about what to do based on if the call is deprecated or not
-                    if self.replaying
-                        && !self
-                            .encountered_change_markers
-                            .contains_key(&attrs.change_id)
-                    {
-                        // If deprecated flag is not set, the lang side should return false and
-                        // we can ignore this command if they happen to send it
-                        if !attrs.deprecated {
-                            continue;
-                        } else {
-                            return Err(WFMachinesError::Nondeterminism(format!(
-                                "Workflow history does not have a change marker for change {}, \
-                                but the deprecated flag was set when checking for the change. \
-                                The workflow history is either too old (produced by a worker \
-                                before the change was introduced), or too new (produced by a \
-                                worker after the change check was removed).",
-                                attrs.change_id
-                            )));
-                        }
-                    }
-
                     // Do not create commands for change IDs that we have already created commands
                     // for.
                     if !matches!(self.encountered_change_markers.get(&attrs.change_id),
