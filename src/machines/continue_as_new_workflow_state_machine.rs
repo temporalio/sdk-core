@@ -1,3 +1,4 @@
+use crate::machines::{EventInfo, MachineKind};
 use crate::{
     machines::{
         Cancellable, HistoryEvent, MachineResponse, NewMachineWithCommand, OnEventWrapper,
@@ -70,15 +71,13 @@ impl TryFrom<HistoryEvent> for ContinueAsNewWorkflowMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
-        Ok(match EventType::from_i32(e.event_type) {
-            Some(EventType::WorkflowExecutionContinuedAsNew) => {
-                Self::WorkflowExecutionContinuedAsNew
-            }
+        Ok(match e.event_type() {
+            EventType::WorkflowExecutionContinuedAsNew => Self::WorkflowExecutionContinuedAsNew,
             _ => {
-                return Err(WFMachinesError::UnexpectedEvent(
-                    e,
-                    "Continue as new workflow machine does not handle this event",
-                ))
+                return Err(WFMachinesError::Nondeterminism(format!(
+                    "Continue as new workflow machine does not handle this event: {}",
+                    e
+                )))
             }
         })
     }
@@ -100,11 +99,18 @@ impl TryFrom<CommandType> for ContinueAsNewWorkflowMachineEvents {
 impl WFMachinesAdapter for ContinueAsNewWorkflowMachine {
     fn adapt_response(
         &self,
-        _event: &HistoryEvent,
-        _has_next_event: bool,
         _my_command: Self::Command,
+        _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(vec![])
+    }
+
+    fn matches_event(&self, event: &HistoryEvent) -> bool {
+        event.event_type() == EventType::WorkflowExecutionContinuedAsNew
+    }
+
+    fn kind(&self) -> MachineKind {
+        MachineKind::ContinueAsNewWorkflow
     }
 }
 

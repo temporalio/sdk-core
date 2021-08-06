@@ -482,7 +482,7 @@ async fn verify_activity_cancellation(
     cancel_type: ActivityCancellationType,
 ) {
     poll_and_reply(
-        &core,
+        core,
         NonSticky,
         &[
             gen_assert_and_reply(
@@ -555,7 +555,7 @@ async fn verify_activity_cancellation_wait_for_cancellation(
     core: &CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
 ) {
     poll_and_reply(
-        &core,
+        core,
         NonSticky,
         &[
             gen_assert_and_reply(

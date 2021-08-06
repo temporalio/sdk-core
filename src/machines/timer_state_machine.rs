@@ -1,5 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
+use crate::machines::{EventInfo, MachineKind};
 use crate::{
     machines::{
         workflow_machines::{MachineResponse, WFMachinesError},
@@ -46,8 +47,10 @@ fsm! {
 #[derive(Debug, derive_more::Display)]
 pub(super) enum TimerMachineCommand {
     Complete,
-    Canceled,
     IssueCancelCmd(Command),
+    // We don't issue activations for timer cancellations. Lang SDK is expected to cancel
+    // it's own timers when user calls cancel, and they cannot be cancelled by any other
+    // means.
 }
 
 #[derive(Default, Clone)]
@@ -93,26 +96,26 @@ impl TryFrom<HistoryEvent> for TimerMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
-        Ok(match EventType::from_i32(e.event_type) {
-            Some(EventType::TimerStarted) => Self::TimerStarted(e.event_id),
-            Some(EventType::TimerCanceled) => Self::TimerCanceled,
-            Some(EventType::TimerFired) => {
+        Ok(match e.event_type() {
+            EventType::TimerStarted => Self::TimerStarted(e.event_id),
+            EventType::TimerCanceled => Self::TimerCanceled,
+            EventType::TimerFired => {
                 if let Some(history_event::Attributes::TimerFiredEventAttributes(attrs)) =
                     e.attributes
                 {
                     Self::TimerFired(attrs)
                 } else {
-                    return Err(WFMachinesError::MalformedEvent(
-                        e,
-                        "Timer fired attribs were unset".to_string(),
-                    ));
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Timer fired attribs were unset: {}",
+                        e
+                    )));
                 }
             }
             _ => {
-                return Err(WFMachinesError::UnexpectedEvent(
-                    e,
-                    "Timer machine does not handle this event",
-                ))
+                return Err(WFMachinesError::Nondeterminism(format!(
+                    "Timer machine does not handle this event: {}",
+                    e
+                )))
             }
         })
     }
@@ -144,10 +147,7 @@ pub(super) struct CancelTimerCommandCreated {}
 
 impl CancelTimerCommandCreated {
     pub(super) fn on_command_cancel_timer(self) -> TimerMachineTransition<CancelTimerCommandSent> {
-        TransitionResult::ok(
-            vec![TimerMachineCommand::Canceled],
-            CancelTimerCommandSent::default(),
-        )
+        TransitionResult::ok(vec![], CancelTimerCommandSent::default())
     }
 }
 
@@ -176,9 +176,10 @@ impl StartCommandCreated {
     ) -> TimerMachineTransition<StartCommandRecorded> {
         TransitionResult::default()
     }
+
     pub(super) fn on_cancel(self, dat: SharedState) -> TimerMachineTransition<Canceled> {
         TransitionResult::ok_shared(
-            vec![TimerMachineCommand::Canceled],
+            vec![],
             Canceled::default(),
             SharedState {
                 cancelled_before_sent: true,
@@ -198,9 +199,9 @@ impl StartCommandRecorded {
         attrs: TimerFiredEventAttributes,
     ) -> TimerMachineTransition<Fired> {
         if dat.attrs.timer_id != attrs.timer_id {
-            TransitionResult::Err(WFMachinesError::MalformedEventDetail(format!(
-                "Timer fired event did not have expected timer id {}!",
-                dat.attrs.timer_id
+            TransitionResult::Err(WFMachinesError::Fatal(format!(
+                "Timer fired event did not have expected timer id {}, it was {}!",
+                dat.attrs.timer_id, attrs.timer_id
             )))
         } else {
             TransitionResult::ok(vec![TimerMachineCommand::Complete], Fired::default())
@@ -230,9 +231,8 @@ impl StartCommandRecorded {
 impl WFMachinesAdapter for TimerMachine {
     fn adapt_response(
         &self,
-        _event: &HistoryEvent,
-        _has_next_event: bool,
         my_command: TimerMachineCommand,
+        _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
             // Fire the completion
@@ -240,12 +240,19 @@ impl WFMachinesAdapter for TimerMachine {
                 timer_id: self.shared_state.attrs.timer_id.clone(),
             }
             .into()],
-            // We don't issue activations for timer cancellations. Lang SDK is expected to cancel
-            // it's own timers when user calls cancel, and they cannot be cancelled by any other
-            // means.
-            TimerMachineCommand::Canceled => vec![],
             TimerMachineCommand::IssueCancelCmd(c) => vec![MachineResponse::IssueNewCommand(c)],
         })
+    }
+
+    fn matches_event(&self, event: &HistoryEvent) -> bool {
+        matches!(
+            event.event_type(),
+            EventType::TimerStarted | EventType::TimerCanceled | EventType::TimerFired
+        )
+    }
+
+    fn kind(&self) -> MachineKind {
+        MachineKind::Timer
     }
 }
 
@@ -256,7 +263,7 @@ impl Cancellable for TimerMachine {
                 Some(TimerMachineCommand::IssueCancelCmd(cmd)) => {
                     vec![MachineResponse::IssueNewCommand(cmd)]
                 }
-                Some(TimerMachineCommand::Canceled) => vec![],
+                None => vec![],
                 x => panic!("Invalid cancel event response {:?}", x),
             },
         )
@@ -355,7 +362,7 @@ mod test {
         assert!(act
             .unwrap_err()
             .to_string()
-            .contains("Timer fired event did not have expected timer id realid!"));
+            .contains("Timer fired event did not have expected timer id realid"));
         wfm.shutdown().await.unwrap();
     }
 

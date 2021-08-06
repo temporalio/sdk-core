@@ -1,4 +1,3 @@
-use crate::test_help::ResponseType;
 use crate::{
     errors::PollWfError::TonicError,
     pollers::{BoxedWFPoller, MockManualGateway, MockManualPoller, MockServerGatewayApis},
@@ -13,7 +12,7 @@ use crate::{
     test_help::{
         build_fake_core, build_multihist_mock_sg, canned_histories, hist_to_poll_resp, mock_core,
         mock_core_with_opts_no_workers, register_mock_workers, single_hist_mock_sg,
-        FakeWfResponses, MocksHolder, TEST_Q,
+        FakeWfResponses, MocksHolder, ResponseType, TEST_Q,
     },
     Core, CoreInitOptionsBuilder, CoreSDK, PollWfError, ServerGatewayApis, WorkerConfigBuilder,
 };
@@ -57,7 +56,7 @@ async fn no_worker_for_queue_error_returned_properly() {
     let core = build_fake_core("fake_wf_id", t, Vec::<ResponseType>::new());
 
     let fake_q = "not a registered queue";
-    let res = core.poll_workflow_task(&fake_q).await.unwrap_err();
+    let res = core.poll_workflow_task(fake_q).await.unwrap_err();
     assert_matches!(res, PollWfError::NoWorkerForQueue(err_q) => err_q == fake_q);
     core.shutdown().await;
 }

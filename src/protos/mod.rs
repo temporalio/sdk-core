@@ -17,7 +17,9 @@ pub mod coresdk {
     };
     use activity_result::ActivityResult;
     use activity_task::ActivityTask;
+    use anyhow::Error;
     use common::{Payload, UserCodeFailure};
+    use std::collections::HashMap;
     use std::{
         convert::TryFrom,
         fmt::{Display, Formatter},
@@ -65,6 +67,8 @@ pub mod coresdk {
     }
     pub mod common {
         tonic::include_proto!("coresdk.common");
+        use crate::protos::temporal::api::common::v1::Payloads;
+        use std::collections::HashMap;
 
         impl<T> From<T> for Payload
         where
@@ -83,6 +87,26 @@ pub mod coresdk {
             pub fn as_slice(&self) -> &[u8] {
                 self.data.as_slice()
             }
+        }
+
+        pub(crate) fn build_has_change_marker_details(
+            change_id: &str,
+            deprecated: bool,
+        ) -> HashMap<String, Payloads> {
+            let mut hm = HashMap::new();
+            hm.insert("change_id".to_string(), change_id.as_bytes().into());
+            let deprecated = deprecated as u8;
+            hm.insert("deprecated".to_string(), (&[deprecated]).into());
+            hm
+        }
+
+        pub(crate) fn decode_change_marker_details(
+            details: &HashMap<String, Payloads>,
+        ) -> Option<(String, bool)> {
+            let name =
+                std::str::from_utf8(&details.get("change_id")?.payloads.get(0)?.data).ok()?;
+            let deprecated = *details.get("deprecated")?.payloads.get(0)?.data.get(0)? != 0;
+            Some((name.to_string(), deprecated))
         }
     }
     pub mod workflow_activation {
@@ -180,6 +204,9 @@ pub mod coresdk {
                         wf_activation_job::Variant::ResolveActivity(_) => {
                             write!(f, "ResolveActivity")
                         }
+                        wf_activation_job::Variant::NotifyHasChange(_) => {
+                            write!(f, "NotifyHasChange")
+                        }
                         wf_activation_job::Variant::RemoveFromCache(_) => {
                             write!(f, "RemoveFromCache")
                         }
@@ -252,6 +279,9 @@ pub mod coresdk {
                         }
                         workflow_command::Variant::CancelWorkflowExecution(_) => {
                             write!(f, "CancelWorkflowExecution")
+                        }
+                        workflow_command::Variant::SetChangeMarker(_) => {
+                            write!(f, "SetChangeMarker")
                         }
                     },
                 }
@@ -570,6 +600,15 @@ pub mod coresdk {
         }
     }
 
+    impl From<anyhow::Error> for UserCodeFailure {
+        fn from(e: Error) -> Self {
+            Self {
+                message: e.to_string(),
+                ..Default::default()
+            }
+        }
+    }
+
     impl From<common::Payload> for super::temporal::api::common::v1::Payload {
         fn from(p: Payload) -> Self {
             Self {
@@ -625,8 +664,12 @@ pub mod coresdk {
         T: AsRef<[u8]>,
     {
         fn from(v: T) -> Self {
+            // TODO: Set better encodings, whole data converter deal. Setting anything for now
+            //  at least makes it show up in the web UI.
+            let mut metadata = HashMap::new();
+            metadata.insert("encoding".to_string(), b"binary/plain".to_vec());
             Self {
-                metadata: Default::default(),
+                metadata,
                 data: v.as_ref().to_vec(),
             }
         }
@@ -909,6 +952,8 @@ pub mod temporal {
         }
         pub mod history {
             pub mod v1 {
+                use crate::machines::HAS_CHANGE_MARKER_NAME;
+                use crate::protos::coresdk::common::decode_change_marker_details;
                 use crate::protos::temporal::api::{
                     enums::v1::EventType, history::v1::history_event::Attributes,
                 };
@@ -986,13 +1031,13 @@ pub mod temporal {
 
                     /// Returns true if the event is one which would end a workflow
                     pub fn is_final_wf_execution_event(&self) -> bool {
-                        match EventType::from_i32(self.event_type) {
-                            Some(EventType::WorkflowExecutionCompleted) => true,
-                            Some(EventType::WorkflowExecutionCanceled) => true,
-                            Some(EventType::WorkflowExecutionFailed) => true,
-                            Some(EventType::WorkflowExecutionTimedOut) => true,
-                            Some(EventType::WorkflowExecutionContinuedAsNew) => true,
-                            Some(EventType::WorkflowExecutionTerminated) => true,
+                        match self.event_type() {
+                            EventType::WorkflowExecutionCompleted => true,
+                            EventType::WorkflowExecutionCanceled => true,
+                            EventType::WorkflowExecutionFailed => true,
+                            EventType::WorkflowExecutionTimedOut => true,
+                            EventType::WorkflowExecutionContinuedAsNew => true,
+                            EventType::WorkflowExecutionTerminated => true,
                             _ => false,
                         }
                     }
@@ -1006,6 +1051,29 @@ pub mod temporal {
                             self.event_id,
                             EventType::from_i32(self.event_type)
                         )
+                    }
+                }
+
+                impl HistoryEvent {
+                    /// If this history event represents a `changed` marker, return the info about
+                    /// it. Returns `None` if it is any other kind of event or marker.
+                    pub fn get_changed_marker_details(&self) -> Option<(String, bool)> {
+                        if self.event_type() == EventType::MarkerRecorded {
+                            match &self.attributes {
+                                Some(Attributes::MarkerRecordedEventAttributes(
+                                    MarkerRecordedEventAttributes {
+                                        marker_name,
+                                        details,
+                                        ..
+                                    },
+                                )) if marker_name == HAS_CHANGE_MARKER_NAME => {
+                                    decode_change_marker_details(details)
+                                }
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        }
                     }
                 }
             }
