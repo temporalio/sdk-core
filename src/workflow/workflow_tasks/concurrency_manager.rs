@@ -30,8 +30,8 @@ struct ManagedRun {
     activation: Option<OutstandingActivation>,
     /// If set, it indicates there is a buffered poll response from the server that applies to this
     /// run. This can happen when lang takes too long to complete a task and the task times out, for
-    /// example. Upon next completion, the buffered response will be removed and pushed into
-    /// [ready_buffered_wft].
+    /// example. Upon next completion, the buffered response will be removed and can be made ready
+    /// to be returned from polling
     buffered_resp: Option<ValidPollWFTQResponse>,
 }
 
@@ -91,8 +91,6 @@ impl WorkflowConcurrencyManager {
         &self,
         run_id: &str,
     ) -> Result<impl DerefMut<Target = Option<OutstandingTask>> + '_, WorkflowUpdateError> {
-        // TODO: Lock could probably just be around whole managed run and then we only ever need
-        //   read lock for entire machines map
         let writelock = self.runs.write();
         if writelock.contains_key(run_id) {
             Ok(RwLockWriteGuard::map(writelock, |hm| {
@@ -229,9 +227,8 @@ impl WorkflowConcurrencyManager {
             .get(run_id)
             .ok_or_else(|| WFMachinesError::Fatal("Missing workflow machines".to_string()))?;
         // This holds a non-async mutex across an await point which is technically a no-no, but
-        // we never access the machines for the same run simultaneously anyway, and using an async
-        // mutex here *can* deadlock the runs map. This should all get fixed with a generally
-        // different approach which moves the runs inside workers.
+        // we never access the machines for the same run simultaneously anyway. This should all
+        // get fixed with a generally different approach which moves the runs inside workers.
         let mut wfm_mutex = m.wfm.lock();
         let mut wfm = wfm_mutex
             .take()

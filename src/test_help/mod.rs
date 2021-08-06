@@ -29,7 +29,7 @@ use crate::{
     task_token::TaskToken,
     workflow::WorkflowCachingPolicy,
     Core, CoreInitOptionsBuilder, CoreSDK, ServerGatewayApis, ServerGatewayOptions, Url,
-    WorkerConfigBuilder,
+    WorkerConfig, WorkerConfigBuilder,
 };
 use bimap::BiMap;
 use futures::FutureExt;
@@ -45,9 +45,6 @@ use std::{
 
 pub type Result<T, E = anyhow::Error> = std::result::Result<T, E>;
 pub const TEST_Q: &str = "q";
-
-/// run id -> task token
-pub type OutstandingWfTaskMap = Arc<RwLock<BiMap<String, TaskToken>>>;
 
 /// When constructing responses for mocks, indicates how a given response should be built
 #[derive(derive_more::From, Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -108,23 +105,18 @@ where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
     let mut core = mock_core_with_opts_no_workers(mocks.sg, opts);
-    register_mock_workers(&mut core, mocks.mock_pollers);
+    register_mock_workers(&mut core, mocks.mock_pollers.into_values());
     core
 }
 
-pub(crate) fn register_mock_workers<SG>(core: &mut CoreSDK<SG>, mocks: MockPollers)
-where
+pub(crate) fn register_mock_workers<SG>(
+    core: &mut CoreSDK<SG>,
+    mocks: impl IntoIterator<Item = MockWorker>,
+) where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
-    for (tq, mockpoll) in mocks {
-        core.reg_worker_sync(
-            WorkerConfigBuilder::default()
-                .task_queue(tq)
-                .build()
-                .unwrap(),
-            mockpoll.0,
-            mockpoll.1,
-        );
+    for worker in mocks {
+        core.reg_worker_sync(worker);
     }
 }
 
@@ -147,24 +139,56 @@ pub struct FakeWfResponses {
 
 // TODO: turn this into a builder or make a new one? to make all these different build fns simpler
 pub struct MocksHolder<SG: ServerGatewayApis + Send + Sync + 'static> {
-    pub sg: SG,
-    pub task_map: OutstandingWfTaskMap,
-    /// Maps task queue name -> mock pollers for that task queue
-    pub mock_pollers: MockPollers,
+    sg: SG,
+    pub mock_pollers: HashMap<String, MockWorker>,
 }
 
-pub type MockPollers = HashMap<String, (BoxedWFPoller, Option<BoxedActPoller>)>;
+pub struct MockWorker {
+    pub wf_poller: BoxedWFPoller,
+    pub act_poller: Option<BoxedActPoller>,
+    pub config: WorkerConfig,
+}
+
+impl Default for MockWorker {
+    fn default() -> Self {
+        MockWorker {
+            wf_poller: Box::from(mock_poller()),
+            act_poller: None,
+            config: WorkerConfig::default_test_q(),
+        }
+    }
+}
+
+impl MockWorker {
+    pub fn new(q: &str, wf_poller: BoxedWFPoller) -> Self {
+        MockWorker {
+            wf_poller,
+            act_poller: None,
+            config: WorkerConfig::default(q),
+        }
+    }
+    pub fn for_queue(q: &str) -> Self {
+        MockWorker {
+            wf_poller: Box::from(mock_poller()),
+            act_poller: None,
+            config: WorkerConfig::default(q),
+        }
+    }
+}
 
 impl<SG> MocksHolder<SG>
 where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
-    pub fn from_mock_pollers(sg: SG, mock_pollers: MockPollers) -> MocksHolder<SG> {
-        MocksHolder {
-            sg,
-            task_map: Default::default(),
-            mock_pollers,
-        }
+    pub fn from_mock_workers(
+        sg: SG,
+        mock_workers: impl IntoIterator<Item = MockWorker>,
+    ) -> MocksHolder<SG> {
+        let mock_pollers = mock_workers
+            .into_iter()
+            .map(|w| (w.config.task_queue.clone(), w))
+            .collect();
+        MocksHolder { sg, mock_pollers }
     }
 
     /// Uses the provided list of tasks to create a mock poller for the `TEST_Q`
@@ -176,12 +200,18 @@ where
         let mut mock_pollers = HashMap::new();
         let mock_poller = mock_poller_from_resps(wf_tasks);
         let mock_act_poller = mock_poller_from_resps(act_tasks);
-        mock_pollers.insert(TEST_Q.to_string(), (mock_poller, Some(mock_act_poller)));
-        MocksHolder {
-            sg,
-            task_map: Default::default(),
-            mock_pollers,
-        }
+        mock_pollers.insert(
+            TEST_Q.to_string(),
+            MockWorker {
+                wf_poller: mock_poller,
+                act_poller: Some(mock_act_poller),
+                config: WorkerConfigBuilder::default()
+                    .task_queue(TEST_Q)
+                    .build()
+                    .unwrap(),
+            },
+        );
+        MocksHolder { sg, mock_pollers }
     }
 }
 
@@ -190,9 +220,15 @@ where
     T: Send + Sync + 'static,
 {
     let mut mock_poller = mock_poller();
-    mock_poller
-        .expect_poll()
-        .returning(move || Some(Ok(tasks.pop_front().unwrap())));
+    mock_poller.expect_poll().returning(move || {
+        if let Some(t) = tasks.pop_front() {
+            Some(Ok(t))
+        } else {
+            Some(Err(tonic::Status::out_of_range(
+                "Ran out of mock responses!",
+            )))
+        }
+    });
     Box::new(mock_poller) as BoxedPoller<T>
 }
 
@@ -362,7 +398,8 @@ pub fn build_mock_pollers(
                 }
                 Some(Err(tonic::Status::cancelled("No more work to do")))
             });
-        mock_pollers.insert(task_q, (Box::new(mock_poller) as BoxedWFPoller, None));
+        let mw = MockWorker::new(&task_q, Box::from(mock_poller));
+        mock_pollers.insert(task_q, mw);
     }
 
     let outstanding = outstanding_wf_task_tokens.clone();
@@ -390,7 +427,6 @@ pub fn build_mock_pollers(
 
     MocksHolder {
         sg: mock_gateway,
-        task_map: outstanding_wf_task_tokens,
         mock_pollers,
     }
 }

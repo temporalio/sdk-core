@@ -1,6 +1,6 @@
 use crate::{
     errors::PollWfError::TonicError,
-    pollers::{BoxedWFPoller, MockManualGateway, MockManualPoller, MockServerGatewayApis},
+    pollers::{MockManualGateway, MockManualPoller, MockServerGatewayApis},
     protos::coresdk::{
         workflow_activation::wf_activation_job,
         workflow_commands::{
@@ -12,13 +12,12 @@ use crate::{
     test_help::{
         build_fake_core, build_multihist_mock_sg, canned_histories, hist_to_poll_resp, mock_core,
         mock_core_with_opts_no_workers, register_mock_workers, single_hist_mock_sg,
-        FakeWfResponses, MocksHolder, ResponseType, TEST_Q,
+        FakeWfResponses, MockWorker, MocksHolder, ResponseType, TEST_Q,
     },
     Core, CoreInitOptionsBuilder, CoreSDK, PollWfError, ServerGatewayApis, WorkerConfigBuilder,
 };
 use futures::FutureExt;
 use rstest::{fixture, rstest};
-use std::collections::HashMap;
 use tokio::sync::watch;
 
 #[tokio::test]
@@ -156,10 +155,10 @@ async fn after_shutdown_of_worker_can_be_reregistered() {
     let mut core = build_fake_core("fake_wf_id", t.clone(), &[1]);
     let res = core.poll_workflow_task(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
+    core.shutdown_worker(TEST_Q).await;
     // Need to recreate mock to re-register worker
     let mocks = single_hist_mock_sg("fake_wf_id", t, &[1, 2], MockServerGatewayApis::new(), true);
-    core.shutdown_worker(TEST_Q).await;
-    register_mock_workers(&mut core, mocks.mock_pollers);
+    register_mock_workers(&mut core, mocks.mock_pollers.into_values());
     // The mock doesn't understand about shutdowns, but all we need to do is make sure the poller
     // gets hit (the mock) -- it will return no work here since there is still an outstanding WFT,
     // which is persistent across the recreated worker.
@@ -210,7 +209,7 @@ async fn shutdown_worker_can_complete_pending_activation() {
 fn worker_shutdown() -> (CoreSDK<MockServerGatewayApis>, watch::Sender<bool>) {
     let (tx, rx) = watch::channel(false);
 
-    let mut mock_pollers = HashMap::new();
+    let mut mock_pollers = vec![];
     for i in 1..=2 {
         let tq = format!("q{}", i);
         let mut mock_poller = MockManualPoller::new();
@@ -236,10 +235,10 @@ fn worker_shutdown() -> (CoreSDK<MockServerGatewayApis>, watch::Sender<bool>) {
             }
             .boxed()
         });
-        mock_pollers.insert(tq, (Box::new(mock_poller) as BoxedWFPoller, None));
+        mock_pollers.push(MockWorker::new(&tq, Box::from(mock_poller)));
     }
     (
-        mock_core(MocksHolder::from_mock_pollers(
+        mock_core(MocksHolder::from_mock_workers(
             MockServerGatewayApis::new(),
             mock_pollers,
         )),

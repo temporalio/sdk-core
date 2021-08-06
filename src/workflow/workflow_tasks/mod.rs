@@ -97,7 +97,7 @@ pub enum NewWfTaskOutcome {
     /// A new activation for the workflow should be issued to lang
     IssueActivation(WfActivation),
     /// The poll loop should be restarted, there is nothing to do
-    RestartPollLoop,
+    TaskBuffered,
     /// The workflow task should be auto-completed with an empty command list, as it must be replied
     /// to but there is no meaningful work for lang to do.
     Autocomplete,
@@ -248,7 +248,7 @@ impl WorkflowTaskManager {
         {
             w
         } else {
-            return Ok(NewWfTaskOutcome::RestartPollLoop);
+            return Ok(NewWfTaskOutcome::TaskBuffered);
         };
 
         debug!(
