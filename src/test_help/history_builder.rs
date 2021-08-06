@@ -1,3 +1,5 @@
+use crate::machines::HAS_CHANGE_MARKER_NAME;
+use crate::protos::coresdk::common::build_has_change_marker_details;
 use crate::{
     protos::temporal::api::common::v1::{Payload, Payloads},
     protos::temporal::api::failure::v1::Failure,
@@ -176,6 +178,16 @@ impl TestHistoryBuilder {
             ..Default::default()
         };
         self.build_and_push_event(EventType::WorkflowExecutionSignaled, attrs.into());
+    }
+
+    pub(crate) fn add_has_change_marker(&mut self, change_id: &str, deprecated: bool) {
+        let attrs = MarkerRecordedEventAttributes {
+            marker_name: HAS_CHANGE_MARKER_NAME.to_string(),
+            details: build_has_change_marker_details(change_id, deprecated),
+            workflow_task_completed_event_id: self.previous_task_completed_id,
+            ..Default::default()
+        };
+        self.build_and_push_event(EventType::MarkerRecorded, attrs.into());
     }
 
     pub(crate) fn as_history_update(&self) -> HistoryUpdate {

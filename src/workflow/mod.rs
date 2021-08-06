@@ -13,36 +13,10 @@ use crate::{
         coresdk::workflow_activation::WfActivation, temporal::api::common::v1::WorkflowExecution,
     },
 };
-use std::sync::mpsc::{SendError, Sender};
+use std::sync::mpsc::Sender;
 
 pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
-type Result<T, E = WorkflowError> = std::result::Result<T, E>;
-
-/// Errors relating to workflow management and machine logic. These are going to be passed up and
-/// out to the lang SDK where it will need to handle them. Generally that will usually mean
-/// showing an error to the user and/or invalidating the workflow cache.
-#[derive(thiserror::Error, Debug)]
-#[allow(clippy::large_enum_variant)]
-pub enum WorkflowError {
-    /// The workflow machines associated with the requested workflow were not found in memory
-    #[error("Workflow machines not found")]
-    MissingMachine,
-    /// Underlying error in state machines
-    #[error("Underlying error in state machines: {0:?}")]
-    UnderlyingMachinesError(#[from] WFMachinesError),
-    /// Error buffering commands coming in from the lang side. This shouldn't happen unless we've
-    /// run out of memory or there is a logic bug. Considered fatal.
-    #[error("Internal error buffering workflow commands")]
-    CommandBufferingError(#[from] SendError<Vec<WFCommand>>),
-    /// We tried to instantiate a workflow instance, but the provided history resulted in nothing
-    /// for lang to do.
-    #[error("Machine created with no activations for run_id {run_id}")]
-    MachineWasCreatedWithNoJobs { run_id: String },
-    /// Lang responded with other commands in addition to a legacy query response, which is not
-    /// allowed.
-    #[error("Lang responded with other commands in addition to legacy query response")]
-    LegacyQueryResponseIncludedOtherCommands,
-}
+type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub(crate) enum CommandID {
@@ -133,7 +107,9 @@ impl WorkflowManager {
     /// the machines.
     pub async fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<()> {
         if let Some(cs) = self.command_sink.as_mut() {
-            cs.send(cmds)?;
+            cs.send(cmds).map_err(|_| {
+                WFMachinesError::Fatal("Internal error buffering workflow commands".to_string())
+            })?;
         }
         self.machines.iterate_machines().await?;
         Ok(())
@@ -242,29 +218,33 @@ pub mod managed_wf {
             }
         }
 
-        pub async fn get_next_activation(&mut self) -> Result<WfActivation> {
+        pub(crate) async fn get_next_activation(&mut self) -> Result<WfActivation> {
             let res = self.mgr.get_next_activation().await?;
+            debug!("Managed wf next activation: {}", &res);
             if res.jobs.is_empty() {
                 // Nothing to do here
                 return Ok(res);
             }
-            // Feed it back in to the workflow code and iterate machines
-            self.activation_tx
-                .send(res.clone())
-                .expect("Workflow should not be dropped if we are still sending activations");
-            self.mgr.machines.iterate_machines().await?;
+            self.push_activation_to_wf(res.clone()).await?;
             Ok(res)
         }
 
         /// Return outgoing server commands as of the last iteration
-        pub async fn get_server_commands(&mut self) -> OutgoingServerCommands {
+        pub(crate) async fn get_server_commands(&mut self) -> OutgoingServerCommands {
             self.mgr.get_server_commands()
+        }
+
+        /// Feed new history, as if received a new poll result. Returns new activation
+        pub(crate) async fn new_history(&mut self, update: HistoryUpdate) -> Result<WfActivation> {
+            let res = self.mgr.feed_history_from_server(update).await?;
+            self.push_activation_to_wf(res.clone()).await?;
+            Ok(res)
         }
 
         /// During testing it can be useful to run through all activations to simulate replay
         /// easily. Returns the last produced activation with jobs in it, or an activation with no
         /// jobs if the first call had no jobs.
-        pub async fn process_all_activations(&mut self) -> Result<WfActivation> {
+        pub(crate) async fn process_all_activations(&mut self) -> Result<WfActivation> {
             let mut last_act = self.get_next_activation().await?;
             let mut next_act = self.get_next_activation().await?;
             while !next_act.jobs.is_empty() {
@@ -281,6 +261,14 @@ pub mod managed_wf {
                 "not actually important".to_string(),
             ));
             self.future_handle.take().unwrap().await.unwrap()
+        }
+
+        async fn push_activation_to_wf(&mut self, res: WfActivation) -> Result<()> {
+            self.activation_tx
+                .send(res)
+                .expect("Workflow should not be dropped if we are still sending activations");
+            self.mgr.machines.iterate_machines().await?;
+            Ok(())
         }
     }
 

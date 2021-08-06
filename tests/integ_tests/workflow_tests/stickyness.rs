@@ -34,7 +34,7 @@ async fn timer_timeout_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     };
     let t = ctx.timer(timer);
     if !TIMED_OUT_ONCE.load(Ordering::SeqCst) {
-        ctx.force_timeout(Duration::from_secs(3));
+        ctx.force_task_fail(anyhow::anyhow!("I AM SLAIN!"));
         TIMED_OUT_ONCE.store(true, Ordering::SeqCst);
     }
     t.await;

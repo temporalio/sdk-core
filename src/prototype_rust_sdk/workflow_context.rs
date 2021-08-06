@@ -2,13 +2,14 @@ use crate::{
     protos::coresdk::{
         activity_result::ActivityResult,
         common::Payload,
-        workflow_commands::{ScheduleActivity, StartTimer},
+        workflow_commands::{workflow_command, ScheduleActivity, SetChangeMarker, StartTimer},
     },
     prototype_rust_sdk::{CommandCreateRequest, RustWfCmd, UnblockEvent},
 };
 use crossbeam::channel::{Receiver, Sender};
 use futures::{task::Context, FutureExt};
-use std::{future::Future, pin::Pin, task::Poll, time::Duration};
+use parking_lot::RwLock;
+use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, task::Poll};
 use tokio::sync::{oneshot, watch};
 
 /// Used within workflows to issue commands, get info, etc.
@@ -16,6 +17,14 @@ pub struct WfContext {
     chan: Sender<RustWfCmd>,
     args: Vec<Payload>,
     am_cancelled: watch::Receiver<bool>,
+    shared: Arc<RwLock<WfContextSharedData>>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct WfContextSharedData {
+    /// Maps change ids -> resolved status
+    pub changes: HashMap<String, bool>,
+    pub is_replaying: bool,
 }
 
 impl WfContext {
@@ -32,6 +41,7 @@ impl WfContext {
                 chan,
                 args,
                 am_cancelled,
+                shared: Arc::new(RwLock::new(Default::default())),
             },
             rx,
         )
@@ -40,6 +50,10 @@ impl WfContext {
     /// Get the arguments provided to the workflow upon execution start
     pub fn get_args(&self) -> &[Payload] {
         self.args.as_slice()
+    }
+
+    pub(crate) fn get_shared_data(&self) -> Arc<RwLock<WfContextSharedData>> {
+        self.shared.clone()
     }
 
     /// A future that resolves if/when the workflow is cancelled
@@ -100,9 +114,45 @@ impl WfContext {
         self.send(RustWfCmd::CancelActivity(activity_id.to_string()))
     }
 
-    /// Force a workflow task timeout by waiting too long and gumming up the entire runtime
-    pub fn force_timeout(&self, by_waiting_for: Duration) {
-        self.send(RustWfCmd::ForceTimeout(by_waiting_for))
+    /// Check (or record) that this workflow history was created with the provided change id
+    pub fn has_change(&self, change_id: &str) -> bool {
+        self.has_change_impl(change_id, false)
+    }
+
+    /// Record that this workflow history was created with the provided change id, and it is being
+    /// phased out.
+    pub fn has_change_deprecated(&self, change_id: &str) {
+        self.has_change_impl(change_id, true);
+    }
+
+    fn has_change_impl(&self, change_id: &str, deprecated: bool) -> bool {
+        self.send(
+            workflow_command::Variant::SetChangeMarker(SetChangeMarker {
+                change_id: change_id.to_string(),
+                deprecated,
+            })
+            .into(),
+        );
+        // See if we already know about the status of this change
+        if let Some(present) = self.shared.read().changes.get(change_id) {
+            return *present;
+        }
+
+        // If we don't already know about the change, that means there is no marker in history,
+        // and we should return false if we are replaying
+        let res = !self.shared.read().is_replaying;
+
+        self.shared
+            .write()
+            .changes
+            .insert(change_id.to_string(), res);
+
+        res
+    }
+
+    /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
+    pub fn force_task_fail(&self, with: anyhow::Error) {
+        self.send(with.into())
     }
 
     fn send(&self, c: RustWfCmd) {

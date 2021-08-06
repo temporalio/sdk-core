@@ -10,11 +10,11 @@ pub extern crate assert_matches;
 #[macro_use]
 extern crate tracing;
 
+pub mod errors;
 pub mod protos;
 pub mod prototype_rust_sdk;
 
 pub(crate) mod core_tracing;
-mod errors;
 mod machines;
 mod pending_activations;
 mod pollers;
@@ -29,10 +29,6 @@ mod core_tests;
 #[macro_use]
 mod test_help;
 
-pub use crate::errors::{
-    ActivityHeartbeatError, CompleteActivityError, CompleteWfError, CoreInitError,
-    PollActivityError, PollWfError, WorkerRegistrationError,
-};
 pub use core_tracing::tracing_init;
 pub use pollers::{
     ClientTlsConfig, ServerGateway, ServerGatewayApis, ServerGatewayOptions, TlsConfig,
@@ -42,6 +38,10 @@ pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
 use crate::{
+    errors::{
+        ActivityHeartbeatError, CompleteActivityError, CompleteWfError, CoreInitError,
+        PollActivityError, PollWfError, WorkerRegistrationError,
+    },
     machines::EmptyWorkflowCommandErr,
     protos::{
         coresdk::{

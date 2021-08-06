@@ -1,4 +1,6 @@
+use crate::machines::MachineKind;
 use crate::{
+    machines::EventInfo,
     machines::{
         Cancellable, HistoryEvent, MachineResponse, NewMachineWithCommand, OnEventWrapper,
         WFMachinesAdapter, WFMachinesError,
@@ -76,10 +78,10 @@ impl TryFrom<HistoryEvent> for CancelWorkflowMachineEvents {
         Ok(match EventType::from_i32(e.event_type) {
             Some(EventType::WorkflowExecutionCanceled) => Self::WorkflowExecutionCanceled,
             _ => {
-                return Err(WFMachinesError::UnexpectedEvent(
-                    e,
-                    "Cancel workflow machine does not handle this event",
-                ))
+                return Err(WFMachinesError::Nondeterminism(format!(
+                    "Cancel workflow machine does not handle this event: {}",
+                    e
+                )))
             }
         })
     }
@@ -99,11 +101,18 @@ impl TryFrom<CommandType> for CancelWorkflowMachineEvents {
 impl WFMachinesAdapter for CancelWorkflowMachine {
     fn adapt_response(
         &self,
-        _event: &HistoryEvent,
-        _has_next_event: bool,
         _my_command: Self::Command,
+        _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(vec![])
+    }
+
+    fn matches_event(&self, event: &HistoryEvent) -> bool {
+        event.event_type() == EventType::WorkflowExecutionCanceled
+    }
+
+    fn kind(&self) -> MachineKind {
+        MachineKind::CancelWorkflow
     }
 }
 

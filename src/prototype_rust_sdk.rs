@@ -172,9 +172,9 @@ enum RustWfCmd {
     CancelTimer(String),
     #[from(ignore)]
     CancelActivity(String),
-    #[from(ignore)]
-    ForceTimeout(Duration),
+    ForceWFTFailure(anyhow::Error),
     NewCmd(CommandCreateRequest),
+    NewNonblockingCmd(workflow_command::Variant),
 }
 
 struct CommandCreateRequest {

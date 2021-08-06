@@ -1,5 +1,6 @@
 mod activities;
 mod cancel_wf;
+mod changes;
 mod continue_as_new;
 mod stickyness;
 mod timers;
@@ -15,6 +16,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk_core::{
+    errors::PollWfError,
     protos::coresdk::{
         activity_result::ActivityResult,
         common::UserCodeFailure,
@@ -24,7 +26,7 @@ use temporal_sdk_core::{
         ActivityTaskCompletion,
     },
     prototype_rust_sdk::{WfContext, WorkflowResult},
-    Core, IntoCompletion, PollWfError,
+    Core, IntoCompletion,
 };
 use test_utils::{
     init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreTestHelpers, CoreWfStarter, GwApi,
@@ -72,7 +74,7 @@ async fn parallel_workflows_same_queue() {
         .collect();
 
     for _ in 0..num_workflows * 2 {
-        let task = core.poll_workflow_task(&task_q).await.unwrap();
+        let task = core.poll_workflow_task(task_q).await.unwrap();
         send_chans
             .get(&task.run_id)
             .unwrap()
@@ -137,14 +139,14 @@ async fn shutdown_aborts_actively_blocked_poll() {
         tcore.shutdown().await;
     });
     assert_matches!(
-        core.poll_workflow_task(&task_q).await.unwrap_err(),
+        core.poll_workflow_task(task_q).await.unwrap_err(),
         PollWfError::ShutDown
     );
     handle.await.unwrap();
     // Ensure double-shutdown doesn't explode
     core.shutdown().await;
     assert_matches!(
-        core.poll_workflow_task(&task_q).await.unwrap_err(),
+        core.poll_workflow_task(task_q).await.unwrap_err(),
         PollWfError::ShutDown
     );
 }
@@ -366,10 +368,10 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
 
     // Set up some helpers for polling and completing
     let poll_sched_act = || async {
-        let wf_task = core.poll_workflow_task(&task_q).await.unwrap();
+        let wf_task = core.poll_workflow_task(task_q).await.unwrap();
         core.complete_workflow_task(
             schedule_activity_cmd(
-                &task_q,
+                task_q,
                 activity_id,
                 ActivityCancellationType::TryCancel,
                 Duration::from_secs(60),
@@ -383,7 +385,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     };
     let poll_sched_act_poll = || async {
         poll_sched_act().await;
-        let wf_task = core.poll_workflow_task(&task_q).await.unwrap();
+        let wf_task = core.poll_workflow_task(task_q).await.unwrap();
         assert_matches!(
             wf_task.jobs.as_slice(),
             [
@@ -407,7 +409,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     let wf_task = poll_sched_act().await;
     // Before polling for a task again, we start and complete the activity and send the
     // corresponding signals.
-    let ac_task = core.poll_activity_task(&task_q).await.unwrap();
+    let ac_task = core.poll_activity_task(task_q).await.unwrap();
     let rid = wf_task.run_id.clone();
     // Send the signals to the server & resolve activity -- sometimes this happens too fast
     sleep(Duration::from_millis(200)).await;
@@ -433,7 +435,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     })
     .await;
     // Now poll again, it will be an eviction b/c non-sticky mode.
-    let wf_task = core.poll_workflow_task(&task_q).await.unwrap();
+    let wf_task = core.poll_workflow_task(task_q).await.unwrap();
     assert_matches!(
         wf_task.jobs.as_slice(),
         [WfActivationJob {
@@ -450,7 +452,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     // Poll again, which should not have any work to do and spin, until the complete goes through.
     // Which will be rejected with not found, producing an eviction.
     let (wf_task, _) = tokio::join!(
-        async { core.poll_workflow_task(&task_q).await.unwrap() },
+        async { core.poll_workflow_task(task_q).await.unwrap() },
         async {
             sleep(Duration::from_millis(500)).await;
             // Reply to the first one, finally

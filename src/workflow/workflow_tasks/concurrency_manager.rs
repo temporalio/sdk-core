@@ -6,7 +6,7 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     workflow::{
         workflow_tasks::{OutstandingActivation, OutstandingTask},
-        HistoryUpdate, Result, WorkflowError, WorkflowManager,
+        HistoryUpdate, Result, WFMachinesError, WorkflowManager,
     },
 };
 use futures::future::{BoxFuture, FutureExt};
@@ -102,7 +102,7 @@ impl WorkflowConcurrencyManager {
             }))
         } else {
             Err(WorkflowUpdateError {
-                source: WorkflowError::MissingMachine,
+                source: WFMachinesError::Fatal("Workflow machines not found".to_string()),
                 run_id: run_id.to_owned(),
             })
         }
@@ -133,13 +133,13 @@ impl WorkflowConcurrencyManager {
         run_id: &str,
         task: OutstandingTask,
     ) -> Result<(), WorkflowUpdateError> {
-        let mut dereffer = self.get_task_mut(&run_id)?;
+        let mut dereffer = self.get_task_mut(run_id)?;
         *dereffer = Some(task);
         Ok(())
     }
 
     pub fn delete_wft(&self, run_id: &str) -> Option<OutstandingTask> {
-        if let Ok(ot) = self.get_task_mut(&run_id).as_deref_mut() {
+        if let Ok(ot) = self.get_task_mut(run_id).as_deref_mut() {
             ot.take()
         } else {
             None
@@ -157,7 +157,7 @@ impl WorkflowConcurrencyManager {
             Ok(run.activation.replace(activation))
         } else {
             Err(WorkflowUpdateError {
-                source: WorkflowError::MissingMachine,
+                source: WFMachinesError::Fatal("Workflow machines not found".to_string()),
                 run_id: run_id.to_owned(),
             })
         }
@@ -204,9 +204,9 @@ impl WorkflowConcurrencyManager {
             match wfm.get_next_activation().await {
                 Ok(activation) => {
                     if activation.jobs.is_empty() {
-                        Err(WorkflowError::MachineWasCreatedWithNoJobs {
-                            run_id: wfm.machines.run_id,
-                        })
+                        Err(WFMachinesError::Fatal(
+                            "Machines created with no jobs".to_string(),
+                        ))
                     } else {
                         self.runs
                             .write()
@@ -225,7 +225,9 @@ impl WorkflowConcurrencyManager {
         Fout: Send + Debug,
     {
         let readlock = self.runs.read();
-        let m = readlock.get(run_id).ok_or(WorkflowError::MissingMachine)?;
+        let m = readlock
+            .get(run_id)
+            .ok_or_else(|| WFMachinesError::Fatal("Missing workflow machines".to_string()))?;
         let mut wfm_mutex = m.wfm.lock().await;
         let mut wfm = wfm_mutex
             .take()
@@ -273,9 +275,6 @@ mod tests {
             )
             .await;
         // Should whine that the machines have nothing to do (history empty)
-        assert_matches!(
-            res.unwrap_err(),
-            WorkflowError::MachineWasCreatedWithNoJobs { .. }
-        )
+        assert_matches!(res.unwrap_err(), WFMachinesError::Fatal { .. })
     }
 }

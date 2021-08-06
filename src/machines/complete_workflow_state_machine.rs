@@ -1,3 +1,4 @@
+use crate::machines::{EventInfo, MachineKind};
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, OnEventWrapper,
@@ -69,13 +70,13 @@ impl TryFrom<HistoryEvent> for CompleteWorkflowMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
-        Ok(match EventType::from_i32(e.event_type) {
-            Some(EventType::WorkflowExecutionCompleted) => Self::WorkflowExecutionCompleted,
+        Ok(match e.event_type() {
+            EventType::WorkflowExecutionCompleted => Self::WorkflowExecutionCompleted,
             _ => {
-                return Err(WFMachinesError::UnexpectedEvent(
-                    e,
-                    "Complete workflow machine does not handle this event",
-                ))
+                return Err(WFMachinesError::Nondeterminism(format!(
+                    "Complete workflow machine does not handle this event: {}",
+                    e
+                )))
             }
         })
     }
@@ -126,11 +127,18 @@ impl From<CompleteWorkflowCommandCreated> for CompleteWorkflowCommandRecorded {
 impl WFMachinesAdapter for CompleteWorkflowMachine {
     fn adapt_response(
         &self,
-        _event: &HistoryEvent,
-        _has_next_event: bool,
-        _my_command: CompleteWFCommand,
+        _my_command: Self::Command,
+        _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(vec![])
+    }
+
+    fn matches_event(&self, event: &HistoryEvent) -> bool {
+        event.event_type() == EventType::WorkflowExecutionCompleted
+    }
+
+    fn kind(&self) -> MachineKind {
+        MachineKind::CompleteWorkflow
     }
 }
 

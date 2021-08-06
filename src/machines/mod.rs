@@ -21,13 +21,13 @@ mod signal_external_state_machine;
 mod timer_state_machine;
 #[allow(unused)]
 mod upsert_search_attributes_state_machine;
-#[allow(unused)]
 mod version_state_machine;
 mod workflow_task_state_machine;
 
 #[cfg(test)]
 mod transition_coverage;
 
+pub use version_state_machine::HAS_CHANGE_MARKER_NAME;
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
 use crate::{
@@ -37,7 +37,7 @@ use crate::{
         coresdk::workflow_commands::{
             workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
             ContinueAsNewWorkflowExecution, FailWorkflowExecution, QueryResult,
-            RequestCancelActivity, ScheduleActivity, StartTimer, WorkflowCommand,
+            RequestCancelActivity, ScheduleActivity, SetChangeMarker, StartTimer, WorkflowCommand,
         },
         temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
     },
@@ -70,6 +70,7 @@ pub enum WFCommand {
     QueryResponse(QueryResult),
     ContinueAsNew(ContinueAsNewWorkflowExecution),
     CancelWorkflow(CancelWorkflowExecution),
+    SetChangeMarker(SetChangeMarker),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
@@ -98,16 +99,37 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::CancelWorkflowExecution(s) => {
                 Ok(WFCommand::CancelWorkflow(s))
             }
+            workflow_command::Variant::SetChangeMarker(s) => Ok(WFCommand::SetChangeMarker(s)),
         }
     }
+}
+
+#[derive(Copy, Clone, Debug, derive_more::Display, Eq, PartialEq)]
+enum MachineKind {
+    Activity,
+    CancelWorkflow,
+    CompleteWorkflow,
+    ContinueAsNewWorkflow,
+    FailWorkflow,
+    Timer,
+    Version,
+    WorkflowTask,
 }
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
 ///
 /// Formerly known as `EntityStateMachine` in Java.
 trait TemporalStateMachine: CheckStateMachineInFinal + Send {
-    fn name(&self) -> &str;
-    fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError>;
+    fn kind(&self) -> MachineKind;
+    fn handle_command(
+        &mut self,
+        command_type: CommandType,
+    ) -> Result<Vec<MachineResponse>, WFMachinesError>;
+
+    /// Returns true if this machine is compatible with the provided event. Provides a way to know
+    /// ahead of time if it's worth trying to call [TemporalStateMachine::handle_event] without
+    /// requiring mutable access.
+    fn matches_event(&self, event: &HistoryEvent) -> bool;
 
     /// Tell the state machine to handle some event. Returns a list of responses that can be used
     /// to update the overall state of the workflow. EX: To issue outgoing WF activations.
@@ -142,11 +164,14 @@ where
     <SM as StateMachine>::State: Display,
     <SM as StateMachine>::Error: Into<WFMachinesError> + 'static + Send + Sync,
 {
-    fn name(&self) -> &str {
-        <Self as StateMachine>::name(self)
+    fn kind(&self) -> MachineKind {
+        self.kind()
     }
 
-    fn handle_command(&mut self, command_type: CommandType) -> Result<(), WFMachinesError> {
+    fn handle_command(
+        &mut self,
+        command_type: CommandType,
+    ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         debug!(
             command_type = ?command_type,
             machine_name = %self.name(),
@@ -155,15 +180,22 @@ where
         );
         if let Ok(converted_command) = command_type.try_into() {
             match OnEventWrapper::on_event_mut(self, converted_command) {
-                Ok(_c) => Ok(()),
-                Err(MachineError::InvalidTransition) => {
-                    Err(WFMachinesError::UnexpectedCommand(command_type))
-                }
+                Ok(c) => process_machine_commands(self, c, None),
+                Err(MachineError::InvalidTransition) => Err(WFMachinesError::Nondeterminism(
+                    format!("Unexpected command {:?}", command_type),
+                )),
                 Err(MachineError::Underlying(e)) => Err(e.into()),
             }
         } else {
-            Err(WFMachinesError::UnexpectedCommand(command_type))
+            Err(WFMachinesError::Nondeterminism(format!(
+                "Unexpected command {:?}",
+                command_type
+            )))
         }
+    }
+
+    fn matches_event(&self, event: &HistoryEvent) -> bool {
+        self.matches_event(event)
     }
 
     fn handle_event(
@@ -180,27 +212,20 @@ where
         let converted_event: <Self as StateMachine>::Event = event.clone().try_into()?;
 
         match OnEventWrapper::on_event_mut(self, converted_event) {
-            Ok(c) => {
-                if !c.is_empty() {
-                    debug!(commands=%c.display(), state=%self.state(), machine_name=%self.name(),
-                           "Machine produced commands");
-                }
-                let mut machine_responses = vec![];
-                for cmd in c {
-                    machine_responses.extend(self.adapt_response(event, has_next_event, cmd)?);
-                }
-                Ok(machine_responses)
-            }
-            Err(MachineError::InvalidTransition) => {
-                Err(WFMachinesError::InvalidTransitionDuringEvent(
-                    event.clone(),
-                    format!(
-                        "{} in state {} says the transition is invalid",
-                        self.name(),
-                        self.state()
-                    ),
-                ))
-            }
+            Ok(c) => process_machine_commands(
+                self,
+                c,
+                Some(EventInfo {
+                    event,
+                    has_next_event,
+                }),
+            ),
+            Err(MachineError::InvalidTransition) => Err(WFMachinesError::Fatal(format!(
+                "{} in state {} says the transition is invalid during event {}",
+                self.name(),
+                self.state(),
+                event
+            ))),
             Err(MachineError::Underlying(e)) => Err(e.into()),
         }
     }
@@ -208,8 +233,8 @@ where
     fn cancel(&mut self) -> Result<Vec<MachineResponse>, WFMachinesError> {
         let res = self.cancel();
         res.map_err(|e| match e {
-            MachineError::InvalidTransition => WFMachinesError::InvalidTransition(format!(
-                "while attempting to cancel in {}",
+            MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
+                "Invalid transition while attempting to cancel in {}",
                 self.state(),
             )),
             MachineError::Underlying(e) => e.into(),
@@ -219,6 +244,28 @@ where
     fn was_cancelled_before_sent_to_server(&self) -> bool {
         self.was_cancelled_before_sent_to_server()
     }
+}
+
+fn process_machine_commands<SM>(
+    machine: &mut SM,
+    commands: Vec<SM::Command>,
+    event_info: Option<EventInfo>,
+) -> Result<Vec<MachineResponse>, WFMachinesError>
+where
+    SM: TemporalStateMachine + StateMachine + WFMachinesAdapter,
+    <SM as StateMachine>::Event: Display,
+    <SM as StateMachine>::Command: Debug + Display,
+    <SM as StateMachine>::State: Display,
+{
+    if !commands.is_empty() {
+        debug!(commands=%commands.display(), state=%machine.state(),
+               machine_name=%StateMachine::name(machine), "Machine produced commands");
+    }
+    let mut machine_responses = vec![];
+    for cmd in commands {
+        machine_responses.extend(machine.adapt_response(cmd, event_info)?);
+    }
+    Ok(machine_responses)
 }
 
 /// Exists purely to allow generic implementation of `is_final_state` for all [StateMachine]
@@ -240,15 +287,28 @@ where
 /// This trait exists to bridge [StateMachine]s and the [WorkflowMachines] instance. It has access
 /// to the machine's concrete types while hiding those details from [WorkflowMachines]
 trait WFMachinesAdapter: StateMachine {
-    /// Given a the event being processed, and a command that this [StateMachine] instance just
-    /// produced, perform any handling that needs inform the [WorkflowMachines] instance of some
+    /// A command that this [StateMachine] instance just produced, and maybe the event being
+    /// processed, perform any handling that needs inform the [WorkflowMachines] instance of some
     /// action to be taken in response to that command.
     fn adapt_response(
         &self,
-        event: &HistoryEvent,
-        has_next_event: bool,
         my_command: Self::Command,
+        event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError>;
+
+    /// Returns true if this machine is compatible with the provided event. Provides a way to know
+    /// ahead of time if it's worth trying to call [TemporalStateMachine::handle_event] without
+    /// requiring mutable access.
+    fn matches_event(&self, event: &HistoryEvent) -> bool;
+
+    /// Allows robust identification of the type of machine
+    fn kind(&self) -> MachineKind;
+}
+
+#[derive(Debug, Copy, Clone)]
+struct EventInfo<'a> {
+    event: &'a HistoryEvent,
+    has_next_event: bool,
 }
 
 trait Cancellable: StateMachine {
@@ -317,6 +377,6 @@ struct NewMachineWithCommand<T: TemporalStateMachine> {
 
 impl Debug for dyn TemporalStateMachine {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.name())
+        std::fmt::Display::fmt(&self.kind(), f)
     }
 }

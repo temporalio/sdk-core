@@ -2,7 +2,8 @@ use crate::{
     protos::coresdk::{
         common::{Payload, UserCodeFailure},
         workflow_activation::{
-            wf_activation_job::Variant, FireTimer, ResolveActivity, WfActivation, WfActivationJob,
+            wf_activation_job::Variant, FireTimer, NotifyHasChange, ResolveActivity, WfActivation,
+            WfActivationJob,
         },
         workflow_commands::{
             workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
@@ -11,17 +12,20 @@ use crate::{
         workflow_completion::WfActivationCompletion,
     },
     prototype_rust_sdk::{
-        RustWfCmd, UnblockEvent, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
+        workflow_context::WfContextSharedData, RustWfCmd, UnblockEvent, WfContext, WfExitValue,
+        WorkflowFunction, WorkflowResult,
     },
     workflow::CommandID,
 };
 use anyhow::anyhow;
 use crossbeam::channel::Receiver;
 use futures::{future::BoxFuture, FutureExt};
+use parking_lot::RwLock;
 use std::{
     collections::HashMap,
     future::Future,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 use tokio::sync::{
@@ -43,6 +47,7 @@ impl WorkflowFunction {
         let (tx, incoming_activations) = unbounded_channel();
         (
             WorkflowFuture {
+                ctx_shared: wf_context.get_shared_data(),
                 inner: (self.wf_func)(wf_context).boxed(),
                 incoming_commands: cmd_receiver,
                 outgoing_completions,
@@ -72,6 +77,8 @@ pub struct WorkflowFuture {
     command_status: HashMap<CommandID, WFCommandFutInfo>,
     /// Use to notify workflow code of cancellation
     cancel_sender: watch::Sender<bool>,
+    /// Data shared with the context
+    ctx_shared: Arc<RwLock<WfContextSharedData>>,
 }
 
 impl WorkflowFuture {
@@ -93,7 +100,7 @@ impl Future for WorkflowFuture {
     type Output = WorkflowResult<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        loop {
+        'activations: loop {
             // WF must always receive an activation first before responding with commands
             let activation = match self.incoming_activations.poll_recv(cx) {
                 Poll::Ready(a) => a.expect("activation channel not dropped"),
@@ -103,6 +110,7 @@ impl Future for WorkflowFuture {
             let is_only_eviction = activation.is_only_eviction();
             let run_id = activation.run_id;
             let mut die_of_eviction_when_done = false;
+            self.ctx_shared.write().is_replaying = activation.is_replaying;
 
             for WfActivationJob { variant } in activation.jobs {
                 if let Some(v) = variant {
@@ -121,14 +129,21 @@ impl Future for WorkflowFuture {
                             result: result.expect("Activity must have result"),
                         }),
                         Variant::UpdateRandomSeed(_) => {}
-                        Variant::QueryWorkflow(_) => {}
+                        Variant::QueryWorkflow(_) => {
+                            todo!()
+                        }
                         Variant::CancelWorkflow(_) => {
                             // TODO: Cancel pending futures, etc
                             self.cancel_sender
                                 .send(true)
                                 .expect("Cancel rx not dropped");
                         }
-                        Variant::SignalWorkflow(_) => {}
+                        Variant::SignalWorkflow(_) => {
+                            todo!()
+                        }
+                        Variant::NotifyHasChange(NotifyHasChange { change_id }) => {
+                            self.ctx_shared.write().changes.insert(change_id, true);
+                        }
                         Variant::RemoveFromCache(_) => {
                             die_of_eviction_when_done = true;
                         }
@@ -178,6 +193,9 @@ impl Future for WorkflowFuture {
                                 activity_id,
                                 ..
                             }) => CommandID::Activity(activity_id),
+                            workflow_command::Variant::SetChangeMarker(_) => {
+                                panic!("Set change marker should be a nonblocking command")
+                            }
                             _ => unimplemented!("Command type not implemented"),
                         };
                         self.command_status.insert(
@@ -187,9 +205,14 @@ impl Future for WorkflowFuture {
                             },
                         );
                     }
-                    RustWfCmd::ForceTimeout(dur) => {
-                        // This is nasty
-                        std::thread::sleep(dur);
+                    RustWfCmd::NewNonblockingCmd(cmd) => {
+                        activation_cmds.push(cmd);
+                    }
+                    RustWfCmd::ForceWFTFailure(err) => {
+                        self.outgoing_completions
+                            .send(WfActivationCompletion::fail(run_id, err.into()))
+                            .expect("Completion channel intact");
+                        continue 'activations;
                     }
                 }
             }
@@ -230,6 +253,7 @@ impl Future for WorkflowFuture {
                     }
                 }
             }
+
             if activation_cmds.is_empty() {
                 panic!(
                     "Workflow did not produce any commands or exit, but awaited. This \

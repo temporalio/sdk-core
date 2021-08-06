@@ -21,8 +21,7 @@ use crate::{
         workflow_tasks::{
             cache_manager::WorkflowCacheManager, concurrency_manager::WorkflowConcurrencyManager,
         },
-        HistoryPaginator, HistoryUpdate, WorkflowCachingPolicy, WorkflowError, WorkflowManager,
-        LEGACY_QUERY_ID,
+        HistoryPaginator, HistoryUpdate, WorkflowCachingPolicy, WorkflowManager, LEGACY_QUERY_ID,
     },
     ServerGatewayApis, WfActivationUpdate,
 };
@@ -173,7 +172,7 @@ impl WorkflowTaskManager {
                 self.workflow_machines.get_activation(rid).is_none()
             });
         if let Some(act) = maybe_act.as_ref() {
-            self.insert_outstanding_activation(&act)?;
+            self.insert_outstanding_activation(act)?;
             self.cache_manager.lock().touch(&act.run_id);
         }
         Ok(maybe_act)
@@ -273,9 +272,7 @@ impl WorkflowTaskManager {
             match self.instantiate_or_update_workflow(work, gateway).await {
                 Ok((info, next_activation)) => (info, next_activation),
                 Err(e) => {
-                    if let WorkflowError::UnderlyingMachinesError(WFMachinesError::CacheMiss) =
-                        e.source
-                    {
+                    if let WFMachinesError::CacheMiss = e.source {
                         return Ok(NewWfTaskOutcome::CacheMiss);
                     }
                     return Err(e);
@@ -358,7 +355,7 @@ impl WorkflowTaskManager {
                     if let WFCommand::QueryResponse(qr) = commands.remove(i) {
                         if qr.query_id == LEGACY_QUERY_ID {
                             return Err(WorkflowUpdateError {
-                                source: WorkflowError::LegacyQueryResponseIncludedOtherCommands,
+                                source: WFMachinesError::Fatal("Legacy query activation response included other commands, this is not allowed and constitutes an error in the lang SDK".to_string()),
                                 run_id: run_id.to_string(),
                             });
                         }

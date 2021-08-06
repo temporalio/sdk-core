@@ -1,18 +1,21 @@
 #![allow(clippy::enum_variant_names)]
 
-use crate::machines::workflow_machines::MachineResponse;
-use crate::machines::Cancellable;
-use crate::protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes;
 use crate::{
-    machines::{workflow_machines::WFMachinesError, WFMachinesAdapter},
+    machines::{
+        workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, WFMachinesAdapter,
+        WFMachinesError,
+    },
+    protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
     protos::temporal::api::{
         enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
         history::v1::HistoryEvent,
     },
 };
 use rustfsm::{fsm, TransitionResult};
-use std::convert::TryInto;
-use std::{convert::TryFrom, time::SystemTime};
+use std::{
+    convert::{TryFrom, TryInto},
+    time::SystemTime,
+};
 
 fsm! {
     pub(super) name WorkflowTaskMachine;
@@ -56,23 +59,26 @@ pub(super) enum WFTaskMachineCommand {
 impl WFMachinesAdapter for WorkflowTaskMachine {
     fn adapt_response(
         &self,
-        event: &HistoryEvent,
-        has_next_event: bool,
         my_command: WFTaskMachineCommand,
+        event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         match my_command {
             WFTaskMachineCommand::WFTaskStartedTrigger {
                 task_started_event_id,
                 time,
             } => {
-                let event_type = EventType::from_i32(event.event_type).ok_or_else(|| {
-                    WFMachinesError::UnexpectedEvent(
-                        event.clone(),
-                        "WfTask machine could not interpret event type",
-                    )
-                })?;
+                let (event, has_next_event) = if let Some(ei) = event_info {
+                    (ei.event, ei.has_next_event)
+                } else {
+                    return Err(WFMachinesError::Fatal(
+                        "WF Task machine should never issue a task started trigger \
+                        command in response to non-history events"
+                            .to_string(),
+                    ));
+                };
+
                 let cur_event_past_or_at_start = event.event_id >= task_started_event_id;
-                if event_type == EventType::WorkflowTaskStarted
+                if event.event_type() == EventType::WorkflowTaskStarted
                     && (!cur_event_past_or_at_start || has_next_event)
                 {
                     return Ok(vec![]);
@@ -87,40 +93,54 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
             }
         }
     }
+
+    fn matches_event(&self, event: &HistoryEvent) -> bool {
+        matches!(
+            event.event_type(),
+            EventType::WorkflowTaskScheduled
+                | EventType::WorkflowTaskStarted
+                | EventType::WorkflowTaskTimedOut
+                | EventType::WorkflowTaskCompleted
+                | EventType::WorkflowTaskFailed
+        )
+    }
+
+    fn kind(&self) -> MachineKind {
+        MachineKind::WorkflowTask
+    }
 }
 
 impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
-        Ok(match EventType::from_i32(e.event_type) {
-            Some(EventType::WorkflowTaskScheduled) => Self::WorkflowTaskScheduled,
-            Some(EventType::WorkflowTaskStarted) => Self::WorkflowTaskStarted({
+        Ok(match e.event_type() {
+            EventType::WorkflowTaskScheduled => Self::WorkflowTaskScheduled,
+            EventType::WorkflowTaskStarted => Self::WorkflowTaskStarted({
                 let time = if let Some(time) = e.event_time.clone() {
                     match time.try_into() {
                         Ok(t) => t,
                         Err(_) => {
-                            return Err(WFMachinesError::MalformedEvent(
-                                e,
+                            return Err(WFMachinesError::Fatal(
                                 "Workflow task started event timestamp was inconvertible"
                                     .to_string(),
                             ))
                         }
                     }
                 } else {
-                    return Err(WFMachinesError::MalformedEvent(
-                        e,
-                        "Workflow task started event must contain timestamp".to_string(),
-                    ));
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Workflow task started event must contain timestamp: {}",
+                        e
+                    )));
                 };
                 WFTStartedDat {
                     started_event_id: e.event_id,
                     current_time_millis: time,
                 }
             }),
-            Some(EventType::WorkflowTaskTimedOut) => Self::WorkflowTaskTimedOut,
-            Some(EventType::WorkflowTaskCompleted) => Self::WorkflowTaskCompleted,
-            Some(EventType::WorkflowTaskFailed) => {
+            EventType::WorkflowTaskTimedOut => Self::WorkflowTaskTimedOut,
+            EventType::WorkflowTaskCompleted => Self::WorkflowTaskCompleted,
+            EventType::WorkflowTaskFailed => {
                 if let Some(attributes) = e.attributes {
                     Self::WorkflowTaskFailed(WFTFailedDat {
                         new_run_id: match attributes {
@@ -137,17 +157,17 @@ impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
                         },
                     })
                 } else {
-                    return Err(WFMachinesError::MalformedEvent(
-                        e,
-                        "Workflow task failed is missing attributes".to_string(),
-                    ));
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Workflow task failed is missing attributes: {}",
+                        e
+                    )));
                 }
             }
             _ => {
-                return Err(WFMachinesError::UnexpectedEvent(
-                    e,
-                    "Event does not apply to a wf task machine",
-                ))
+                return Err(WFMachinesError::Nondeterminism(format!(
+                    "Event does not apply to a wf task machine: {}",
+                    e
+                )))
             }
         })
     }
