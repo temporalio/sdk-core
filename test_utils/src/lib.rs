@@ -34,11 +34,11 @@ impl CoreWfStarter {
             test_name: test_name.to_owned(),
             core_options: CoreInitOptionsBuilder::default()
                 .gateway_opts(get_integ_server_options())
-                .max_cached_workflows(1000usize)
                 .build()
                 .unwrap(),
             worker_config: WorkerConfigBuilder::default()
                 .task_queue(task_queue)
+                .max_cached_workflows(1000usize)
                 .build()
                 .unwrap(),
             wft_timeout: None,
@@ -101,7 +101,7 @@ impl CoreWfStarter {
     }
 
     pub fn max_cached_workflows(&mut self, num: usize) -> &mut Self {
-        self.core_options.max_cached_workflows = num;
+        self.worker_config.max_cached_workflows = num;
         self
     }
 
@@ -214,8 +214,8 @@ where
 
 #[async_trait::async_trait]
 pub trait CoreTestHelpers {
-    async fn complete_execution(&self, run_id: &str);
-    async fn complete_timer(&self, run_id: &str, timer_id: &str, duration: Duration);
+    async fn complete_execution(&self, task_q: &str, run_id: &str);
+    async fn complete_timer(&self, task_q: &str, run_id: &str, timer_id: &str, duration: Duration);
 }
 
 #[async_trait::async_trait]
@@ -223,23 +223,25 @@ impl<T> CoreTestHelpers for T
 where
     T: Core + ?Sized,
 {
-    async fn complete_execution(&self, run_id: &str) {
+    async fn complete_execution(&self, task_q: &str, run_id: &str) {
         self.complete_workflow_task(WfActivationCompletion::from_cmds(
-            vec![CompleteWorkflowExecution { result: None }.into()],
+            task_q.to_string(),
             run_id.to_string(),
+            vec![CompleteWorkflowExecution { result: None }.into()],
         ))
         .await
         .unwrap();
     }
 
-    async fn complete_timer(&self, run_id: &str, timer_id: &str, duration: Duration) {
+    async fn complete_timer(&self, task_q: &str, run_id: &str, timer_id: &str, duration: Duration) {
         self.complete_workflow_task(WfActivationCompletion::from_cmds(
+            task_q.to_string(),
+            run_id.to_string(),
             vec![StartTimer {
                 timer_id: timer_id.to_string(),
                 start_to_fire_timeout: Some(duration.into()),
             }
             .into()],
-            run_id.to_string(),
         ))
         .await
         .unwrap();

@@ -94,12 +94,12 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
 /// Makes converting outgoing lang commands into [WfActivationCompletion]s easier
 pub trait IntoCompletion {
     /// The conversion function
-    fn into_completion(self, run_id: String) -> WfActivationCompletion;
+    fn into_completion(self, task_queue: String, run_id: String) -> WfActivationCompletion;
 }
 
 impl IntoCompletion for workflow_command::Variant {
-    fn into_completion(self, run_id: String) -> WfActivationCompletion {
-        WfActivationCompletion::from_cmd(self, run_id)
+    fn into_completion(self, task_queue: String, run_id: String) -> WfActivationCompletion {
+        WfActivationCompletion::from_cmd(task_queue, run_id, self)
     }
 }
 
@@ -108,10 +108,11 @@ where
     I: IntoIterator<Item = V>,
     V: Into<WorkflowCommand>,
 {
-    fn into_completion(self, run_id: String) -> WfActivationCompletion {
+    fn into_completion(self, task_queue: String, run_id: String) -> WfActivationCompletion {
         let success = self.into_iter().map(Into::into).collect::<Vec<_>>().into();
         WfActivationCompletion {
             run_id,
+            task_queue,
             status: Some(wf_activation_completion::Status::Successful(success)),
         }
     }

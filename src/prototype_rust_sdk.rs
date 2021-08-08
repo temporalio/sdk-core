@@ -114,9 +114,12 @@ impl TestRustWorker {
                         .get(&sw.workflow_id)
                         .ok_or_else(|| anyhow!("Workflow id not found"))?;
 
-                    // NOTE: Don't clone args if this gets ported to be a non-test rust worker
-                    let (wff, activations) =
-                        wf_function.start_workflow(sw.arguments.clone(), completions_tx.clone());
+                    let (wff, activations) = wf_function.start_workflow(
+                        self.task_queue.clone(),
+                        // NOTE: Don't clone args if this gets ported to be a non-test rust worker
+                        sw.arguments.clone(),
+                        completions_tx.clone(),
+                    );
                     let mut shutdown_rx = shutdown_rx.clone();
                     let jh = tokio::spawn(async move {
                         tokio::select! {

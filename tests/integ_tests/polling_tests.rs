@@ -40,7 +40,7 @@ async fn out_of_order_completion_doesnt_hang() {
             }
             .into(),
         ]
-        .into_completion(task.run_id),
+        .into_completion(task_q.clone(), task.run_id),
     )
     .await
     .unwrap();
@@ -70,9 +70,10 @@ async fn out_of_order_completion_doesnt_hang() {
 
     // Start polling again *before* we complete the WFT
     let cc = core.clone();
+    let tq = task_q.clone();
     let jh = tokio::spawn(async move {
         // We want to fail the test if this takes too long -- we should not hit long poll timeout
-        let task = timeout(Duration::from_secs(1), cc.poll_workflow_task(&task_q))
+        let task = timeout(Duration::from_secs(1), cc.poll_workflow_task(&tq))
             .await
             .expect("Poll should come back right away")
             .unwrap();
@@ -82,18 +83,19 @@ async fn out_of_order_completion_doesnt_hang() {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(_)),
             }]
         );
-        cc.complete_execution(&task.run_id).await;
+        cc.complete_execution(&tq, &task.run_id).await;
     });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
     // Then complete the (last) WFT with a request to cancel the AT, which should produce a
     // pending activation, unblocking the (already started) poll
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
+        &task_q,
+        task.run_id,
         vec![RequestCancelActivity {
             activity_id: activity_id.to_string(),
         }
         .into()],
-        task.run_id,
     ))
     .await
     .unwrap();

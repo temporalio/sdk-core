@@ -1,27 +1,12 @@
 use crate::{worker::Worker, ServerGatewayApis, WorkerConfig, WorkerRegistrationError};
-use std::{collections::HashMap, ops::Deref, sync::Arc};
-use tokio::sync::{Notify, RwLock, RwLockReadGuard};
-
-pub enum WorkerStatus {
-    Live(Worker),
-    Shutdown,
-}
-
-impl WorkerStatus {
-    #[cfg(test)]
-    pub fn unwrap(&self) -> &Worker {
-        match self {
-            WorkerStatus::Live(w) => w,
-            WorkerStatus::Shutdown => panic!("Worker not present"),
-        }
-    }
-}
+use arc_swap::ArcSwap;
+use std::{collections::HashMap, sync::Arc};
 
 /// Allows access to workers by task queue name
 #[derive(Default)]
 pub struct WorkerDispatcher {
     /// Maps task queue names to workers
-    workers: RwLock<HashMap<String, WorkerStatus>>,
+    workers: ArcSwap<HashMap<String, Arc<Worker>>>,
 }
 
 impl WorkerDispatcher {
@@ -31,56 +16,50 @@ impl WorkerDispatcher {
         sticky_queue: Option<String>,
         gateway: Arc<impl ServerGatewayApis + Send + Sync + 'static>,
     ) -> Result<(), WorkerRegistrationError> {
-        if let Some(WorkerStatus::Live(_)) = self.workers.read().await.get(&config.task_queue) {
+        if let Some(_) = self.workers.load().get(&config.task_queue) {
             return Err(WorkerRegistrationError::WorkerAlreadyRegisteredForQueue(
                 config.task_queue,
             ));
         }
-        let tq = config.task_queue.clone();
-        let worker = Worker::new(config, sticky_queue, gateway);
-        self.workers
-            .write()
-            .await
-            .insert(tq, WorkerStatus::Live(worker));
+        let tq = &config.task_queue.clone();
+        let worker = Arc::new(Worker::new(config, sticky_queue, gateway));
+        self.workers.rcu(move |map| {
+            let mut map = HashMap::clone(map);
+            map.insert(tq.clone(), worker.clone());
+            map
+        });
         Ok(())
     }
 
     #[cfg(test)]
     pub fn store_worker_mut(&mut self, tq: String, worker: Worker) {
-        self.workers
-            .get_mut()
-            .insert(tq, WorkerStatus::Live(worker));
+        // TODO: This is silly now
+        let tq = &tq.clone();
+        let worker = Arc::new(worker);
+        self.workers.rcu(|map| {
+            let mut map = HashMap::clone(map);
+            map.insert(tq.clone(), worker.clone());
+            map
+        });
     }
 
-    pub async fn get(&self, task_queue: &str) -> Option<impl Deref<Target = WorkerStatus> + '_> {
-        let guard = self.workers.read().await;
-        RwLockReadGuard::try_map(guard, move |map| map.get(task_queue)).ok()
+    pub fn get(&self, task_queue: &str) -> Option<Arc<Worker>> {
+        self.workers.load().get(task_queue).cloned()
     }
 
-    pub async fn shutdown_one(&self, task_queue: &str, notify_lock_unavailable: &Notify) {
+    pub async fn shutdown_one(&self, task_queue: &str) {
         info!("Shutting down worker on queue {}", task_queue);
-        if let Some(WorkerStatus::Live(w)) = self.workers.read().await.get(task_queue) {
+        if let Some(w) = self.workers.load().get(task_queue) {
             w.notify_shutdown();
         }
-        let mut workers = match self.workers.try_write() {
-            Ok(wg) => wg,
-            Err(_) => {
-                notify_lock_unavailable.notify_waiters();
-                self.workers.write().await
-            }
-        };
-        if let Some(WorkerStatus::Live(w)) = workers.remove(task_queue) {
-            workers.insert(task_queue.to_owned(), WorkerStatus::Shutdown);
-            drop(workers);
-            w.shutdown_complete().await;
-        }
+        // TODO: Figure out how to wait on no outstanding arcs and consume, also allows us to
+        //   make sure all outstanding tasks are completed. Probably spawn off a task.
     }
 
     pub async fn shutdown_all(&self) {
-        for (_, w) in self.workers.write().await.drain() {
-            if let WorkerStatus::Live(w) = w {
-                w.shutdown_complete().await;
-            }
+        // todo: Do in one pass
+        for (tq, _) in self.workers.load().iter() {
+            self.shutdown_one(tq).await;
         }
     }
 }

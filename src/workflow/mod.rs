@@ -138,15 +138,16 @@ pub(crate) enum WorkflowCachingPolicy {
 #[cfg(test)]
 pub mod managed_wf {
     use super::*;
-    use crate::protos::coresdk::workflow_activation::create_evict_activation;
     use crate::{
         machines::WFCommand,
         protos::coresdk::{
             common::Payload,
+            workflow_activation::create_evict_activation,
             workflow_completion::{wf_activation_completion::Status, WfActivationCompletion},
         },
         prototype_rust_sdk::{WorkflowFunction, WorkflowResult},
         test_help::TestHistoryBuilder,
+        test_help::TEST_Q,
         workflow::WorkflowFetcher,
     };
     use std::convert::TryInto;
@@ -200,7 +201,7 @@ pub mod managed_wf {
             args: Vec<Payload>,
         ) -> Self {
             let (completions_tx, completions_rx) = unbounded_channel();
-            let (wff, activations) = func.start_workflow(args, completions_tx);
+            let (wff, activations) = func.start_workflow(TEST_Q.to_string(), args, completions_tx);
             let spawned = tokio::spawn(wff);
             let driver = WFFutureDriver { completions_rx };
             let state_machines = WorkflowMachines::new(

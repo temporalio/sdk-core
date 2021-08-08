@@ -5,12 +5,13 @@ mod workers;
 mod workflow_cancels;
 mod workflow_tasks;
 
-use crate::test_help::ResponseType;
 use crate::{
     errors::{PollActivityError, PollWfError},
     pollers::MockManualGateway,
     protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
-    test_help::{build_fake_core, canned_histories, fake_sg_opts, hist_to_poll_resp, TEST_Q},
+    test_help::{
+        build_fake_core, canned_histories, fake_sg_opts, hist_to_poll_resp, ResponseType, TEST_Q,
+    },
     Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
 };
 use futures::FutureExt;
@@ -53,8 +54,8 @@ async fn shutdown_interrupts_both_polls() {
         .times(1)
         .returning(move |_| {
             async move {
-                let t = canned_histories::single_timer("hi");
                 sleep(Duration::from_secs(1)).await;
+                let t = canned_histories::single_timer("hi");
                 Ok(hist_to_poll_resp(
                     &t,
                     "wf".to_string(),
@@ -94,6 +95,7 @@ async fn shutdown_interrupts_both_polls() {
         },
         async {
             // Give polling a bit to get stuck, then shutdown
+            // TODO: Barrier?
             sleep(Duration::from_millis(200)).await;
             core.shutdown().await;
         }

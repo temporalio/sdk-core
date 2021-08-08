@@ -23,12 +23,12 @@ use crate::{
         },
         HistoryPaginator, HistoryUpdate, WorkflowCachingPolicy, WorkflowManager, LEGACY_QUERY_ID,
     },
-    ServerGatewayApis, WfActivationUpdate,
+    ServerGatewayApis,
 };
-use dashmap::DashMap;
+use crossbeam::queue::SegQueue;
 use futures::FutureExt;
 use parking_lot::Mutex;
-use std::{collections::VecDeque, fmt::Debug, ops::DerefMut, sync::Arc};
+use std::{fmt::Debug, ops::DerefMut, sync::Arc};
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Centralizes concerns related to applying new workflow tasks and reporting the activations they
@@ -36,6 +36,8 @@ use tokio::sync::mpsc::UnboundedSender;
 ///
 /// It is intentionally free of any interactions with the server client to promote testability
 pub struct WorkflowTaskManager {
+    /// What task queue this task manager is responsible for
+    task_queue: String,
     /// Manages threadsafe access to workflow machine instances
     workflow_machines: WorkflowConcurrencyManager,
     /// Workflows may generate new activations immediately upon completion (ex: while replaying, or
@@ -43,7 +45,7 @@ pub struct WorkflowTaskManager {
     /// requested eviction. They queue here.
     pending_activations: PendingActivations,
     /// Holds (by task queue) poll wft responses from the server that need to be applied
-    ready_buffered_wft: DashMap<String, VecDeque<ValidPollWFTQResponse>>,
+    ready_buffered_wft: SegQueue<ValidPollWFTQResponse>,
     /// Used to wake blocked workflow task polling
     workflow_activations_update: UnboundedSender<WfActivationUpdate>,
     /// Lock guarded cache manager, which is the authority for limit-based workflow machine eviction
@@ -115,7 +117,6 @@ pub enum FailedActivationOutcome {
 #[derive(Debug)]
 pub struct ServerCommandsWithWorkflowInfo {
     pub task_token: TaskToken,
-    pub task_queue: String,
     pub action: ActivationAction,
 }
 
@@ -145,10 +146,12 @@ macro_rules! machine_mut {
 
 impl WorkflowTaskManager {
     pub(crate) fn new(
+        task_queue: String,
         workflow_activations_update: UnboundedSender<WfActivationUpdate>,
         eviction_policy: WorkflowCachingPolicy,
     ) -> Self {
         Self {
+            task_queue,
             workflow_machines: WorkflowConcurrencyManager::new(),
             pending_activations: Default::default(),
             ready_buffered_wft: Default::default(),
@@ -159,7 +162,6 @@ impl WorkflowTaskManager {
 
     pub(crate) fn next_pending_activation(
         &self,
-        task_queue: &str,
     ) -> Result<Option<WfActivation>, WorkflowUpdateError> {
         // It is important that we do not issue pending activations for any workflows which already
         // have an outstanding activation. If we did, it can result in races where an in-progress
@@ -168,7 +170,7 @@ impl WorkflowTaskManager {
         // NOTE: This all goes away with the handles-per-workflow poll approach.
         let maybe_act = self
             .pending_activations
-            .pop_first_matching(task_queue, |rid| {
+            .pop_first_matching(&self.task_queue, |rid| {
                 self.workflow_machines.get_activation(rid).is_none()
             });
         if let Some(act) = maybe_act.as_ref() {
@@ -178,11 +180,8 @@ impl WorkflowTaskManager {
         Ok(maybe_act)
     }
 
-    pub fn next_buffered_poll(&self, task_queue: &str) -> Option<ValidPollWFTQResponse> {
-        self.ready_buffered_wft
-            .get_mut(task_queue)
-            .map(|mut dq| dq.pop_front())
-            .flatten()
+    pub fn next_buffered_poll(&self) -> Option<ValidPollWFTQResponse> {
+        self.ready_buffered_wft.pop()
     }
 
     #[cfg(test)]
@@ -308,9 +307,8 @@ impl WorkflowTaskManager {
         run_id: &str,
         mut commands: Vec<WFCommand>,
     ) -> Result<Option<ServerCommandsWithWorkflowInfo>, WorkflowUpdateError> {
-        let (task_token, task_queue) = if let Some(entry) = self.workflow_machines.get_task(run_id)
-        {
-            (entry.info.task_token.clone(), entry.info.task_queue.clone())
+        let task_token = if let Some(entry) = self.workflow_machines.get_task(run_id) {
+            entry.info.task_token.clone()
         } else {
             if !self
                 .workflow_machines
@@ -339,7 +337,6 @@ impl WorkflowTaskManager {
             };
             Some(ServerCommandsWithWorkflowInfo {
                 task_token,
-                task_queue,
                 action: ActivationAction::RespondLegacyQuery { result: qr },
             })
         } else {
@@ -378,7 +375,6 @@ impl WorkflowTaskManager {
             if !self.pending_activations.has_pending(run_id) && !server_cmds.replaying {
                 Some(ServerCommandsWithWorkflowInfo {
                     task_token,
-                    task_queue,
                     action: ActivationAction::WftComplete {
                         commands: server_cmds.commands,
                         query_responses,
@@ -387,7 +383,6 @@ impl WorkflowTaskManager {
             } else if !query_responses.is_empty() {
                 Some(ServerCommandsWithWorkflowInfo {
                     task_token,
-                    task_queue,
                     action: ActivationAction::WftComplete {
                         commands: vec![],
                         query_responses,
@@ -564,12 +559,10 @@ impl WorkflowTaskManager {
 
             // The evict may or may not have already done this, but even when we aren't evicting
             // we want to clear the outstanding workflow task since it's now complete.
-            if let Some(ot) = self.workflow_machines.delete_wft(run_id) {
-                let _ = self.workflow_activations_update.send(
-                    WfActivationUpdate::WorkflowTaskComplete {
-                        task_queue: ot.info.task_queue,
-                    },
-                );
+            if self.workflow_machines.delete_wft(run_id).is_some() {
+                let _ = self
+                    .workflow_activations_update
+                    .send(WfActivationUpdate::WorkflowTaskComplete);
             }
         }
         Ok(())
@@ -590,10 +583,7 @@ impl WorkflowTaskManager {
     }
 
     fn make_buffered_poll_ready(&self, buffd: ValidPollWFTQResponse) {
-        self.ready_buffered_wft
-            .entry(buffd.task_queue.clone())
-            .or_default()
-            .push_back(buffd);
+        self.ready_buffered_wft.push(buffd);
     }
 
     fn insert_outstanding_activation(&self, act: &WfActivation) -> Result<(), WorkflowUpdateError> {
@@ -618,4 +608,9 @@ impl WorkflowTaskManager {
         }
         Ok(())
     }
+}
+
+pub enum WfActivationUpdate {
+    NewPendingActivation,
+    WorkflowTaskComplete,
 }

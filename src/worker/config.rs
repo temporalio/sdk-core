@@ -11,6 +11,13 @@ pub struct WorkerConfig {
     /// What task queue will this worker poll from? This task queue name will be used for both
     /// workflow and activity polling.
     pub task_queue: String,
+    /// If set nonzero, workflows will be cached and sticky task queues will be used, meaning that
+    /// history updates are applied incrementally to suspended instances of workflow execution.
+    /// Workflows are evicted according to a least-recently-used policy one the cache maximum is
+    /// reached. Workflows may also be explicitly evicted at any time, or as a result of errors
+    /// or failures.
+    #[builder(default = "0")]
+    pub max_cached_workflows: usize,
     /// The maximum allowed number of workflow tasks that will ever be given to this worker at one
     /// time. Note that one workflow task may require multiple activations - so the WFT counts as
     /// "outstanding" until all activations it requires have been completed.
