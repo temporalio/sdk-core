@@ -4,11 +4,11 @@ use crate::{
     pollers::MockServerGatewayApis,
     protos::{
         coresdk::{
-            failures::Failure,
             workflow_activation::{wf_activation_job, WfActivationJob},
             workflow_commands::{CompleteWorkflowExecution, QueryResult, QuerySuccess, StartTimer},
             workflow_completion::WfActivationCompletion,
         },
+        temporal::api::failure::v1::Failure,
         temporal::api::history::v1::History,
         temporal::api::query::v1::WorkflowQuery,
         temporal::api::workflowservice::v1::{

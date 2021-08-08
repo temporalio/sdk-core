@@ -1,7 +1,6 @@
 use crate::{
     protos::coresdk::{
         common::Payload,
-        failures::Failure,
         workflow_activation::{
             wf_activation_job::Variant, FireTimer, NotifyHasChange, ResolveActivity, WfActivation,
             WfActivationJob,
@@ -12,6 +11,7 @@ use crate::{
         },
         workflow_completion::WfActivationCompletion,
     },
+    protos::temporal::api::failure::v1::Failure,
     prototype_rust_sdk::{
         workflow_context::WfContextSharedData, RustWfCmd, UnblockEvent, WfContext, WfExitValue,
         WorkflowFunction, WorkflowResult,

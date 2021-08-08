@@ -38,22 +38,3 @@ message RetryPolicy {
     // If a stringified error matches something in this list, retries will cease.
     repeated string non_retryable_error_types = 5;
 }
-
-enum RetryState {
-    RETRY_STATE_UNSPECIFIED = 0;
-    RETRY_STATE_IN_PROGRESS = 1;
-    RETRY_STATE_NON_RETRYABLE_FAILURE = 2;
-    RETRY_STATE_TIMEOUT = 3;
-    RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED = 4;
-    RETRY_STATE_RETRY_POLICY_NOT_SET = 5;
-    RETRY_STATE_INTERNAL_SERVER_ERROR = 6;
-    RETRY_STATE_CANCEL_REQUESTED = 7;
-}
-
-enum TimeoutType {
-    TIMEOUT_TYPE_UNSPECIFIED = 0;
-    TIMEOUT_TYPE_START_TO_CLOSE = 1;
-    TIMEOUT_TYPE_SCHEDULE_TO_START = 2;
-    TIMEOUT_TYPE_SCHEDULE_TO_CLOSE = 3;
-    TIMEOUT_TYPE_HEARTBEAT = 4;
-}

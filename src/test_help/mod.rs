@@ -12,13 +12,13 @@ use crate::{
     },
     protos::{
         coresdk::{
-            failures::Failure,
             workflow_activation::WfActivation,
             workflow_commands::workflow_command,
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
         },
         temporal::api::common::v1::WorkflowExecution,
         temporal::api::enums::v1::TaskQueueKind,
+        temporal::api::failure::v1::Failure,
         temporal::api::history::v1::History,
         temporal::api::taskqueue::v1::TaskQueue,
         temporal::api::workflowservice::v1::{

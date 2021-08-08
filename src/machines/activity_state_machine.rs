@@ -233,7 +233,7 @@ impl WFMachinesAdapter for ActivityMachine {
                     activity_id: self.shared_state.attrs.activity_id.clone(),
                     result: Some(ActivityResult {
                         status: Some(activity_result::Status::Failed(ar::Failure {
-                            failure: Some(failure.into()),
+                            failure: Some(failure),
                         })),
                     }),
                 }

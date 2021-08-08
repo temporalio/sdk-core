@@ -4,13 +4,15 @@ use temporal_sdk_core::{
     protos::coresdk::{
         activity_result::{self, activity_result as act_res, ActivityResult},
         activity_task::activity_task as act_task,
-        common::{Payload, RetryState},
-        failures::{failure::Info as FailureInfo, ActivityFailureInfo, Failure},
+        common::Payload,
         workflow_activation::{wf_activation_job, FireTimer, ResolveActivity, WfActivationJob},
         workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
+    protos::temporal::api::common::v1::ActivityType,
+    protos::temporal::api::enums::v1::RetryState,
+    protos::temporal::api::failure::v1::{failure::FailureInfo, ActivityFailureInfo, Failure},
     IntoCompletion,
 };
 use test_utils::{init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers};
@@ -133,9 +135,11 @@ async fn activity_non_retryable_failure() {
             assert_eq!(f, &Failure{
                 message: "Activity task failed".to_owned(),
                 cause: Some(Box::new(failure)),
-                info: Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo{
+                failure_info: Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo{
                     activity_id: "act-1".to_owned(),
-                    activity_type: "test_activity".to_owned(),
+                    activity_type: Some(ActivityType {
+                        name: "test_activity".to_owned(),
+                    }),
                     scheduled_event_id: 5,
                     started_event_id: 6,
                     identity: "integ_tester".to_owned(),

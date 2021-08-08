@@ -5,7 +5,6 @@ use crate::{
     protos::{
         coresdk::{
             activity_result::{self as ar, activity_result, ActivityResult},
-            failures::Failure,
             workflow_activation::{
                 wf_activation_job, FireTimer, ResolveActivity, StartWorkflow, UpdateRandomSeed,
                 WfActivationJob,
@@ -18,6 +17,7 @@ use crate::{
         },
         temporal::api::{
             enums::v1::EventType,
+            failure::v1::Failure,
             history::v1::{history_event, TimerFiredEventAttributes},
             workflowservice::v1::RespondWorkflowTaskCompletedResponse,
         },
