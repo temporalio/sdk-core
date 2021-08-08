@@ -4,11 +4,11 @@ use crate::{
     pollers::MockServerGatewayApis,
     protos::{
         coresdk::{
-            common::UserCodeFailure,
             workflow_activation::{wf_activation_job, WfActivationJob},
             workflow_commands::{CompleteWorkflowExecution, QueryResult, QuerySuccess, StartTimer},
             workflow_completion::WfActivationCompletion,
         },
+        temporal::api::failure::v1::Failure,
         temporal::api::history::v1::History,
         temporal::api::query::v1::WorkflowQuery,
         temporal::api::workflowservice::v1::{
@@ -275,7 +275,7 @@ async fn legacy_query_failure_on_wft_failure() {
     // Fail wft which should result in query being failed
     core.complete_workflow_task(WfActivationCompletion::fail(
         task.run_id,
-        UserCodeFailure {
+        Failure {
             message: "Ahh i broke".to_string(),
             ..Default::default()
         },

@@ -4,12 +4,15 @@ use temporal_sdk_core::{
     protos::coresdk::{
         activity_result::{self, activity_result as act_res, ActivityResult},
         activity_task::activity_task as act_task,
-        common::{Payload, UserCodeFailure},
+        common::Payload,
         workflow_activation::{wf_activation_job, FireTimer, ResolveActivity, WfActivationJob},
         workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
+    protos::temporal::api::common::v1::ActivityType,
+    protos::temporal::api::enums::v1::RetryState,
+    protos::temporal::api::failure::v1::{failure::FailureInfo, ActivityFailureInfo, Failure},
     IntoCompletion,
 };
 use test_utils::{init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers};
@@ -100,11 +103,7 @@ async fn activity_non_retryable_failure() {
         }
     );
     // Fail activity with non-retryable error
-    let failure = UserCodeFailure {
-        message: "activity failed".to_string(),
-        non_retryable: true,
-        ..Default::default()
-    };
+    let failure = Failure::application_failure("activity failed".to_string(), true);
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
         task_queue: task_q.to_string(),
@@ -126,12 +125,28 @@ async fn activity_non_retryable_failure() {
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {activity_id: a_id, result: Some(ActivityResult{
-                    status: Some(act_res::Status::Failed(activity_result::Failure{failure: Some(f)}))})}
+                    status: Some(act_res::Status::Failed(activity_result::Failure{
+                        failure: Some(f),
+                    }))})}
                 )),
             },
         ] => {
             assert_eq!(a_id, activity_id);
-            assert_eq!(f, &failure);
+            assert_eq!(f, &Failure{
+                message: "Activity task failed".to_owned(),
+                cause: Some(Box::new(failure)),
+                failure_info: Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo{
+                    activity_id: "act-1".to_owned(),
+                    activity_type: Some(ActivityType {
+                        name: "test_activity".to_owned(),
+                    }),
+                    scheduled_event_id: 5,
+                    started_event_id: 6,
+                    identity: "integ_tester".to_owned(),
+                    retry_state: RetryState::NonRetryableFailure as i32,
+                })),
+                ..Default::default()
+            });
         }
     );
     core.complete_execution(&task.run_id).await;
@@ -164,11 +179,7 @@ async fn activity_retry() {
         }
     );
     // Fail activity with retryable error
-    let failure = UserCodeFailure {
-        message: "activity failed".to_string(),
-        non_retryable: false,
-        ..Default::default()
-    };
+    let failure = Failure::application_failure("activity failed".to_string(), false);
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
         task_queue: task_q.to_string(),
@@ -415,9 +426,17 @@ async fn started_activity_timeout() {
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
-                    ResolveActivity {activity_id: a_id, result: Some(ActivityResult{
-                    status: Some(act_res::Status::Failed(activity_result::Failure{failure: Some(_)})),
-                     ..})}
+                    ResolveActivity {
+                        activity_id: a_id,
+                        result: Some(ActivityResult{
+                            status: Some(
+                                act_res::Status::Failed(
+                                    activity_result::Failure{failure: Some(_)}
+                                )
+                            ),
+                            ..
+                        })
+                    }
                 )),
             },
         ] => {

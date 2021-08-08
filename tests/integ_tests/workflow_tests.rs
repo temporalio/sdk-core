@@ -19,12 +19,12 @@ use temporal_sdk_core::{
     errors::PollWfError,
     protos::coresdk::{
         activity_result::ActivityResult,
-        common::UserCodeFailure,
         workflow_activation::{wf_activation_job, WfActivation, WfActivationJob},
         workflow_commands::{ActivityCancellationType, FailWorkflowExecution, StartTimer},
         workflow_completion::WfActivationCompletion,
         ActivityTaskCompletion,
     },
+    protos::temporal::api::failure::v1::Failure,
     prototype_rust_sdk::{WfContext, WorkflowResult},
     Core, IntoCompletion,
 };
@@ -163,10 +163,7 @@ async fn fail_wf_task() {
     let task = core.poll_workflow_task(&task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::fail(
         task.run_id,
-        UserCodeFailure {
-            message: "I did an oopsie".to_string(),
-            ..Default::default()
-        },
+        Failure::application_failure("I did an oopsie".to_string(), false),
     ))
     .await
     .unwrap();
@@ -210,10 +207,7 @@ async fn fail_workflow_execution() {
     let task = core.poll_workflow_task(&task_q).await.unwrap();
     core.complete_workflow_task(WfActivationCompletion::from_cmds(
         vec![FailWorkflowExecution {
-            failure: Some(UserCodeFailure {
-                message: "I'm ded".to_string(),
-                ..Default::default()
-            }),
+            failure: Some(Failure::application_failure("I'm ded".to_string(), false)),
         }
         .into()],
         task.run_id,

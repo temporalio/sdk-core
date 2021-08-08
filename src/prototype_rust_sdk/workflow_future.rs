@@ -1,6 +1,6 @@
 use crate::{
     protos::coresdk::{
-        common::{Payload, UserCodeFailure},
+        common::Payload,
         workflow_activation::{
             wf_activation_job::Variant, FireTimer, NotifyHasChange, ResolveActivity, WfActivation,
             WfActivationJob,
@@ -11,6 +11,7 @@ use crate::{
         },
         workflow_completion::WfActivationCompletion,
     },
+    protos::temporal::api::failure::v1::Failure,
     prototype_rust_sdk::{
         workflow_context::WfContextSharedData, RustWfCmd, UnblockEvent, WfContext, WfExitValue,
         WorkflowFunction, WorkflowResult,
@@ -85,7 +86,7 @@ impl WorkflowFuture {
     fn unblock(&mut self, event: UnblockEvent) {
         let cmd_id = match &event {
             UnblockEvent::Timer(t) => CommandID::Timer(t.clone()),
-            UnblockEvent::Activity { id, .. } => CommandID::Activity(id.clone()),
+            UnblockEvent::Activity(id, _) => CommandID::Activity(id.clone()),
         };
         let unblocker = self.command_status.remove(&cmd_id);
         unblocker
@@ -124,10 +125,10 @@ impl Future for WorkflowFuture {
                         Variant::ResolveActivity(ResolveActivity {
                             activity_id,
                             result,
-                        }) => self.unblock(UnblockEvent::Activity {
-                            id: activity_id,
-                            result: result.expect("Activity must have result"),
-                        }),
+                        }) => self.unblock(UnblockEvent::Activity(
+                            activity_id,
+                            Box::new(result.expect("Activity must have result")),
+                        )),
                         Variant::UpdateRandomSeed(_) => {}
                         Variant::QueryWorkflow(_) => {
                             todo!()
@@ -244,7 +245,7 @@ impl Future for WorkflowFuture {
                     Err(e) => {
                         activation_cmds.push(workflow_command::Variant::FailWorkflowExecution(
                             FailWorkflowExecution {
-                                failure: Some(UserCodeFailure {
+                                failure: Some(Failure {
                                     message: e.to_string(),
                                     ..Default::default()
                                 }),

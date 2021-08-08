@@ -11,14 +11,14 @@ pub mod coresdk {
     tonic::include_proto!("coresdk");
 
     use crate::protos::temporal::api::{
-        common::v1::{Payloads, WorkflowExecution},
+        common::v1::{ActivityType, Payloads, WorkflowExecution},
         failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
         workflowservice::v1::PollActivityTaskQueueResponse,
     };
     use activity_result::ActivityResult;
     use activity_task::ActivityTask;
     use anyhow::Error;
-    use common::{Payload, UserCodeFailure};
+    use common::Payload;
     use std::collections::HashMap;
     use std::{
         convert::TryFrom,
@@ -109,6 +109,7 @@ pub mod coresdk {
             Some((name.to_string(), deprecated))
         }
     }
+
     pub mod workflow_activation {
         use crate::{
             core_tracing::VecDisplayer,
@@ -386,7 +387,7 @@ pub mod coresdk {
             }
         }
 
-        pub fn fail(run_id: String, failure: UserCodeFailure) -> Self {
+        pub fn fail(run_id: String, failure: Failure) -> Self {
             Self {
                 run_id,
                 status: Some(wf_activation_completion::Status::Failed(
@@ -563,44 +564,43 @@ pub mod coresdk {
         }
     }
 
-    impl From<UserCodeFailure> for Failure {
-        fn from(f: UserCodeFailure) -> Self {
+    impl From<String> for ActivityType {
+        fn from(name: String) -> Self {
+            Self { name }
+        }
+    }
+
+    impl From<ActivityType> for String {
+        fn from(at: ActivityType) -> Self {
+            at.name
+        }
+    }
+
+    impl From<common::WorkflowExecution> for WorkflowExecution {
+        fn from(exc: common::WorkflowExecution) -> Self {
+            WorkflowExecution {
+                workflow_id: exc.workflow_id,
+                run_id: exc.run_id,
+            }
+        }
+    }
+
+    impl Failure {
+        pub fn application_failure(message: String, non_retryable: bool) -> Self {
             Self {
-                message: f.message,
-                source: f.source,
-                stack_trace: f.stack_trace,
-                cause: f.cause.map(|b| Box::new((*b).into())),
+                message,
                 failure_info: Some(FailureInfo::ApplicationFailureInfo(
                     ApplicationFailureInfo {
-                        r#type: f.r#type,
-                        non_retryable: f.non_retryable,
-                        details: None,
+                        non_retryable,
+                        ..Default::default()
                     },
                 )),
+                ..Default::default()
             }
         }
     }
 
-    impl From<Failure> for UserCodeFailure {
-        fn from(f: Failure) -> Self {
-            let mut r#type = "".to_string();
-            let mut non_retryable = false;
-            if let Some(FailureInfo::ApplicationFailureInfo(fi)) = f.failure_info {
-                r#type = fi.r#type;
-                non_retryable = fi.non_retryable;
-            }
-            Self {
-                message: f.message,
-                r#type,
-                source: f.source,
-                stack_trace: f.stack_trace,
-                non_retryable,
-                cause: f.cause.map(|b| Box::new((*b).into())),
-            }
-        }
-    }
-
-    impl From<anyhow::Error> for UserCodeFailure {
+    impl From<anyhow::Error> for Failure {
         fn from(e: Error) -> Self {
             Self {
                 message: e.to_string(),

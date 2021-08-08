@@ -141,7 +141,7 @@ impl WorkerActivityTasks {
                         .complete_activity_task(task_token.clone(), result.map(Into::into))
                         .await
                         .err(),
-                    activity_result::Status::Failed(ar::Failure { failure }) => gateway
+                    activity_result::Status::Failed(ar::Failure { failure, .. }) => gateway
                         .fail_activity_task(task_token.clone(), failure.map(Into::into))
                         .await
                         .err(),

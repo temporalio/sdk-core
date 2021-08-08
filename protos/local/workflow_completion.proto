@@ -4,6 +4,7 @@ package coresdk.workflow_completion;
 
 import "common.proto";
 import "workflow_commands.proto";
+import "temporal/api/failure/v1/message.proto";
 
 /// Result of a single workflow activation, reported from lang to core
 message WFActivationCompletion {
@@ -23,6 +24,6 @@ message Success {
 
 /// Failure to activate or execute a workflow
 message Failure {
-    common.UserCodeFailure failure = 1;
+    temporal.api.failure.v1.Failure failure = 1;
 }
 

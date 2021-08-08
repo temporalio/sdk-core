@@ -96,8 +96,8 @@ impl WfContext {
             .into(),
         );
         cmd.map(|ue| {
-            if let UnblockEvent::Activity { result, .. } = ue {
-                result
+            if let UnblockEvent::Activity(_, result) = ue {
+                *result
             } else {
                 panic!("Wrong unblock event")
             }

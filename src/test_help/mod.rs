@@ -12,13 +12,13 @@ use crate::{
     },
     protos::{
         coresdk::{
-            common::UserCodeFailure,
             workflow_activation::WfActivation,
             workflow_commands::workflow_command,
             workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
         },
         temporal::api::common::v1::WorkflowExecution,
         temporal::api::enums::v1::TaskQueueKind,
+        temporal::api::failure::v1::Failure,
         temporal::api::history::v1::History,
         temporal::api::taskqueue::v1::TaskQueue,
         temporal::api::workflowservice::v1::{
@@ -576,7 +576,7 @@ pub(crate) fn gen_assert_and_fail(asserter: &dyn Fn(&WfActivation)) -> AsserterW
     (
         asserter,
         workflow_completion::Failure {
-            failure: Some(UserCodeFailure {
+            failure: Some(Failure {
                 message: "Intentional test failure".to_string(),
                 ..Default::default()
             }),

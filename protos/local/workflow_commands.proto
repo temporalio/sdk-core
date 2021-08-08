@@ -8,8 +8,8 @@ syntax = "proto3";
 package coresdk.workflow_commands;
 
 import "common.proto";
-
 import "google/protobuf/duration.proto";
+import "temporal/api/failure/v1/message.proto";
 
 message WorkflowCommand {
     oneof variant {
@@ -95,7 +95,7 @@ message QueryResult {
     string query_id = 1;
     oneof variant {
         QuerySuccess succeeded = 2;
-        common.UserCodeFailure failed = 3;
+        temporal.api.failure.v1.Failure failed = 3;
     }
 }
 
@@ -110,7 +110,7 @@ message CompleteWorkflowExecution {
 
 /// Issued when the workflow errors out
 message FailWorkflowExecution {
-    common.UserCodeFailure failure = 1;
+    temporal.api.failure.v1.Failure failure = 1;
 }
 
 // TODO: Maybe combine all execution resolves into one message
