@@ -115,7 +115,7 @@ impl Worker {
         }
     }
 
-    /// Tell the worker to begin the shutdown process. Can be used before [await_shutdown] if
+    /// Tell the worker to begin the shutdown process. Can be used before [shutdown_complete] if
     /// polling should be ceased before it is possible to consume the worker instance.
     pub(crate) fn notify_shutdown(&self) {
         self.wf_task_poll_buffer.notify_shutdown();
@@ -226,7 +226,7 @@ impl Worker {
     }
 
     /// Tell the worker a workflow task has completed, for tracking max outstanding WFTs
-    pub(crate) fn workflow_task_done(&self) {
+    pub(crate) fn return_workflow_task_permit(&self) {
         self.workflows_semaphore.add_permits(1)
     }
 }

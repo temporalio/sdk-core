@@ -1,7 +1,7 @@
 use crate::{
     errors::PollActivityError,
     job_assert,
-    pollers::{BoxedActPoller, BoxedWFPoller, MockManualGateway, MockServerGatewayApis},
+    pollers::{MockManualGateway, MockServerGatewayApis},
     protos::{
         coresdk::{
             activity_result::{activity_result, ActivityResult},
@@ -21,7 +21,7 @@ use crate::{
     test_help::{
         build_fake_core, canned_histories, fake_sg_opts, gen_assert_and_reply, mock_core,
         mock_core_with_opts_no_workers, mock_manual_poller, mock_poller, mock_poller_from_resps,
-        poll_and_reply, MocksHolder, TEST_Q,
+        poll_and_reply, MockWorker, MocksHolder, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::NonSticky,
     ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
@@ -236,16 +236,13 @@ async fn activity_cancel_interrupts_poll() {
             }
             .boxed()
         });
-    let mut pollers = HashMap::new();
-    pollers.insert(
-        TEST_Q.to_string(),
-        (
-            Box::new(mock_manual_poller()) as BoxedWFPoller,
-            Some(Box::new(mock_poller) as BoxedActPoller),
-        ),
-    );
 
-    let core = mock_core(MocksHolder::from_mock_pollers(mock_gateway, pollers));
+    let mock_worker = MockWorker {
+        act_poller: Some(Box::from(mock_poller)),
+        ..Default::default()
+    };
+
+    let core = mock_core(MocksHolder::from_mock_workers(mock_gateway, [mock_worker]));
     let last_finisher = AtomicUsize::new(0);
     // Perform first poll to get the activity registered
     let act = core.poll_activity_task(TEST_Q).await.unwrap();
@@ -282,15 +279,11 @@ async fn activity_poll_timeout_retries() {
             Some(Err(tonic::Status::unknown("Test done")))
         }
     });
-    let mut pollers = HashMap::new();
-    pollers.insert(
-        TEST_Q.to_string(),
-        (
-            Box::new(mock_poller()) as BoxedWFPoller,
-            Some(Box::new(mock_act_poller) as BoxedActPoller),
-        ),
-    );
-    let core = mock_core(MocksHolder::from_mock_pollers(mock_gateway, pollers));
+    let mock_worker = MockWorker {
+        act_poller: Some(Box::from(mock_act_poller)),
+        ..Default::default()
+    };
+    let core = mock_core(MocksHolder::from_mock_workers(mock_gateway, [mock_worker]));
     let r = core.poll_activity_task(TEST_Q).await;
     assert_matches!(r.unwrap_err(), PollActivityError::TonicError(_));
 }
@@ -486,35 +479,24 @@ async fn only_returns_cancels_for_desired_queue() {
             })
         });
 
-    let mut pollers = HashMap::new();
-    pollers.insert(
-        "q1".to_string(),
-        (
-            mock_poller_from_resps(Default::default()),
-            Some(mock_poller_from_resps(
-                vec![PollActivityTaskQueueResponse {
-                    task_token: vec![1],
-                    activity_id: "act1".to_string(),
-                    heartbeat_timeout: Some(Duration::from_millis(1).into()),
-                    ..Default::default()
-                }]
-                .into(),
-            )),
-        ),
-    );
+    let mut w1 = MockWorker::for_queue("q1");
+    w1.act_poller = Some(mock_poller_from_resps(
+        vec![PollActivityTaskQueueResponse {
+            task_token: vec![1],
+            activity_id: "act1".to_string(),
+            heartbeat_timeout: Some(Duration::from_millis(1).into()),
+            ..Default::default()
+        }]
+        .into(),
+    ));
     let mut mock_act_poller = mock_poller();
     mock_act_poller
         .expect_poll()
         .returning(|| Some(Ok(Default::default())));
-    pollers.insert(
-        "q2".to_string(),
-        (
-            mock_poller_from_resps(Default::default()),
-            Some(Box::from(mock_act_poller)),
-        ),
-    );
+    let mut w2 = MockWorker::for_queue("q2");
+    w2.act_poller = Some(Box::from(mock_act_poller));
 
-    let core = mock_core(MocksHolder::from_mock_pollers(mock_gateway, pollers));
+    let core = mock_core(MocksHolder::from_mock_workers(mock_gateway, [w1, w2]));
     // First poll should get the activity
     core.poll_activity_task("q1").await.unwrap();
     // Now record a heartbeat which will get the cancel response and mark the act as cancelled

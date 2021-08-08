@@ -10,13 +10,12 @@ use crate::{
     },
 };
 use futures::future::{BoxFuture, FutureExt};
-use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{
     collections::HashMap,
     fmt::Debug,
     ops::{Deref, DerefMut},
 };
-use tokio::sync::Mutex;
 
 /// Provides a thread-safe way to access workflow machines for specific workflow runs
 pub(crate) struct WorkflowConcurrencyManager {
@@ -31,8 +30,8 @@ struct ManagedRun {
     activation: Option<OutstandingActivation>,
     /// If set, it indicates there is a buffered poll response from the server that applies to this
     /// run. This can happen when lang takes too long to complete a task and the task times out, for
-    /// example. Upon next completion, the buffered response will be removed and pushed into
-    /// [ready_buffered_wft].
+    /// example. Upon next completion, the buffered response will be removed and can be made ready
+    /// to be returned from polling
     buffered_resp: Option<ValidPollWFTQResponse>,
 }
 
@@ -92,8 +91,6 @@ impl WorkflowConcurrencyManager {
         &self,
         run_id: &str,
     ) -> Result<impl DerefMut<Target = Option<OutstandingTask>> + '_, WorkflowUpdateError> {
-        // TODO: Lock could probably just be around whole managed run and then we only ever need
-        //   read lock for entire machines map
         let writelock = self.runs.write();
         if writelock.contains_key(run_id) {
             Ok(RwLockWriteGuard::map(writelock, |hm| {
@@ -115,9 +112,10 @@ impl WorkflowConcurrencyManager {
         work: ValidPollWFTQResponse,
     ) -> Option<ValidPollWFTQResponse> {
         let mut writelock = self.runs.write();
-        if let Some(mut run) = writelock.get_mut(&work.workflow_execution.run_id) {
+        let run_id = &work.workflow_execution.run_id;
+        if let Some(mut run) = writelock.get_mut(run_id) {
             if run.wft.is_some() || run.activation.is_some() {
-                debug!("Got new WFT for a run with outstanding work");
+                debug!(run_id = %run_id, "Got new WFT for a run with outstanding work");
                 run.buffered_resp = Some(work);
                 None
             } else {
@@ -228,7 +226,10 @@ impl WorkflowConcurrencyManager {
         let m = readlock
             .get(run_id)
             .ok_or_else(|| WFMachinesError::Fatal("Missing workflow machines".to_string()))?;
-        let mut wfm_mutex = m.wfm.lock().await;
+        // This holds a non-async mutex across an await point which is technically a no-no, but
+        // we never access the machines for the same run simultaneously anyway. This should all
+        // get fixed with a generally different approach which moves the runs inside workers.
+        let mut wfm_mutex = m.wfm.lock();
         let mut wfm = wfm_mutex
             .take()
             .expect("Machine cannot possibly be accessed simultaneously");
@@ -243,6 +244,13 @@ impl WorkflowConcurrencyManager {
     pub fn evict(&self, run_id: &str) -> Option<ValidPollWFTQResponse> {
         let val = self.runs.write().remove(run_id);
         val.map(|v| v.buffered_resp).flatten()
+    }
+
+    /// Clear and return any buffered polling response for this run ID
+    pub fn take_buffered_poll(&self, run_id: &str) -> Option<ValidPollWFTQResponse> {
+        let mut writelock = self.runs.write();
+        let val = writelock.get_mut(run_id);
+        val.map(|v| v.buffered_resp.take()).flatten()
     }
 
     #[cfg(test)]

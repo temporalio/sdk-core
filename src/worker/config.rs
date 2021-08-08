@@ -1,5 +1,8 @@
 use std::time::Duration;
 
+#[cfg(test)]
+use crate::test_help::TEST_Q;
+
 /// Defines per-worker configuration options
 #[derive(Debug, Clone, derive_builder::Builder)]
 #[builder(setter(into), build_fn(validate = "Self::validate"))]
@@ -49,5 +52,23 @@ impl WorkerConfigBuilder {
             return Err("`max_concurrent_wft_polls` must be at least 1".to_owned());
         }
         Ok(())
+    }
+}
+
+impl WorkerConfig {
+    #[cfg(test)]
+    pub fn default_test_q() -> Self {
+        WorkerConfigBuilder::default()
+            .task_queue(TEST_Q)
+            .build()
+            .unwrap()
+    }
+
+    #[cfg(test)]
+    pub fn default(queue: &str) -> Self {
+        WorkerConfigBuilder::default()
+            .task_queue(queue)
+            .build()
+            .unwrap()
     }
 }

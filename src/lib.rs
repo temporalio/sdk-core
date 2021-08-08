@@ -80,7 +80,7 @@ use tokio::sync::{
 };
 
 #[cfg(test)]
-use crate::pollers::{BoxedActPoller, BoxedWFPoller};
+use crate::test_help::MockWorker;
 
 lazy_static::lazy_static! {
     /// A process-wide unique string, which will be different on every startup
@@ -268,17 +268,17 @@ where
                 return Ok(pa);
             }
 
-            if self.shutdown_requested.load(Ordering::Relaxed) {
-                return Err(PollWfError::ShutDown);
-            }
-
             // Apply any buffered poll responses from the server. Must come after pending
             // activations, since there may be an eviction etc for whatever run is popped here.
             if let Some(buff_wft) = self.wft_manager.next_buffered_poll(task_queue) {
                 match self.apply_server_work(buff_wft).await? {
-                    Some(a) => return Ok(a),
-                    None => continue,
+                    NewWfTaskOutcome::IssueActivation(a) => return Ok(a),
+                    _ => continue,
                 }
+            }
+
+            if self.shutdown_requested.load(Ordering::Relaxed) {
+                return Err(PollWfError::ShutDown);
             }
 
             // Optimization avoiding worker access if we know we need to handle update immediately
@@ -329,20 +329,26 @@ where
             };
 
             match selected_f {
+                Ok(Some(work)) => match self.apply_server_work(work).await? {
+                    NewWfTaskOutcome::IssueActivation(a) => return Ok(a),
+                    NewWfTaskOutcome::TaskBuffered => {
+                        // If the task was buffered, it's not actually outstanding, so we can
+                        // immediately return a permit.
+                        worker.return_workflow_task_permit();
+                    }
+                    _ => {}
+                },
                 Ok(None) => {
                     debug!("Poll wft timeout");
-                    continue;
                 }
-                Ok(Some(work)) => match self.apply_server_work(work).await? {
-                    Some(a) => return Ok(a),
-                    None => {
-                        continue;
-                    }
-                },
                 // Drain pending activations in case of shutdown.
-                Err(PollWfError::ShutDown) => continue,
+                Err(PollWfError::ShutDown) => {}
                 Err(e) => return Err(e),
             }
+
+            // Make sure that polling looping doesn't hog up the whole scheduler. Realistically
+            // this probably only happens when mock responses return at full speed.
+            tokio::task::yield_now().await;
         }
     }
 
@@ -492,22 +498,17 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
 
     /// Allow construction of workers with mocked poll responses during testing
     #[cfg(test)]
-    pub(crate) fn reg_worker_sync(
-        &mut self,
-        config: WorkerConfig,
-        wft_poller: BoxedWFPoller,
-        act_poller: Option<BoxedActPoller>,
-    ) {
+    pub(crate) fn reg_worker_sync(&mut self, worker: MockWorker) {
         use crate::worker::Worker;
 
-        let sticky_q = self.get_sticky_q_name_for_worker(&config);
-        let tq = config.task_queue.clone();
+        let sticky_q = self.get_sticky_q_name_for_worker(&worker.config);
+        let tq = worker.config.task_queue.clone();
         let worker = Worker::new_with_pollers(
-            config,
+            worker.config,
             sticky_q,
             self.server_gateway.clone(),
-            wft_poller,
-            act_poller,
+            worker.wf_poller,
+            worker.act_poller,
         );
         Arc::get_mut(&mut self.workers)
             .expect("No other worker dispatch yet")
@@ -532,19 +533,18 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     async fn apply_server_work(
         &self,
         work: ValidPollWFTQResponse,
-    ) -> Result<Option<WfActivation>, PollWfError> {
+    ) -> Result<NewWfTaskOutcome, PollWfError> {
         let we = work.workflow_execution.clone();
         let tt = work.task_token.clone();
-        match self
+        let res = self
             .wft_manager
             .apply_new_poll_resp(work, self.server_gateway.clone())
-            .await?
-        {
+            .await?;
+        match &res {
             NewWfTaskOutcome::IssueActivation(a) => {
                 debug!(activation=%a, "Sending activation to lang");
-                Ok(Some(a))
             }
-            NewWfTaskOutcome::RestartPollLoop => Ok(None),
+            NewWfTaskOutcome::TaskBuffered => {}
             NewWfTaskOutcome::Autocomplete => {
                 debug!(workflow_execution=?we,
                        "No work for lang to perform after polling server. Sending autocomplete.");
@@ -553,7 +553,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                     status: Some(workflow_completion::Success::from_variants(vec![]).into()),
                 })
                 .await?;
-                Ok(None)
             }
             NewWfTaskOutcome::CacheMiss => {
                 debug!(workflow_execution=?we, "Unable to process workflow task with partial \
@@ -570,9 +569,9 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
                         }),
                     )
                     .await?;
-                Ok(None)
             }
-        }
+        };
+        Ok(res)
     }
 
     /// Handle a successful workflow completion
@@ -731,7 +730,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         // If the update indicates a task completed, free a slot in the worker
         if let Some(WfActivationUpdate::WorkflowTaskComplete { task_queue }) = update {
             if let Some(WorkerStatus::Live(w)) = self.workers.get(&task_queue).await.as_deref() {
-                w.workflow_task_done();
+                w.return_workflow_task_permit();
             }
         }
     }

@@ -240,7 +240,6 @@ mod tests {
         },
         prototype_rust_sdk::{WfContext, WorkflowFunction},
         test_help::TestHistoryBuilder,
-        tracing_init,
         workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::rstest;
@@ -458,7 +457,6 @@ mod tests {
         #[case] marker_type: MarkerType,
         #[case] wf_version: usize,
     ) {
-        tracing_init();
         let mut wfm = change_setup(replaying, marker_type, wf_version);
         let act = wfm.get_next_activation().await.unwrap();
         // replaying cases should immediately get a resolve change activation when marker is present
@@ -536,8 +534,6 @@ mod tests {
     // history that then suddenly doesn't have the marker.
     #[tokio::test]
     async fn same_change_multiple_spots(#[case] have_marker_in_hist: bool, #[case] replay: bool) {
-        tracing_init();
-
         let wfn = WorkflowFunction::new(move |mut ctx: WfContext| async move {
             if ctx.has_change(MY_CHANGE_ID) {
                 ctx.timer(StartTimer {

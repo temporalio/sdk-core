@@ -1,4 +1,5 @@
 use crate::{
+    errors::PollWfError,
     job_assert,
     pollers::MockServerGatewayApis,
     protos::{
@@ -16,14 +17,16 @@ use crate::{
             workflow_completion,
         },
         temporal::api::{
-            enums::v1::EventType, workflowservice::v1::RespondWorkflowTaskCompletedResponse,
+            enums::v1::EventType,
+            history::v1::{history_event, TimerFiredEventAttributes},
+            workflowservice::v1::RespondWorkflowTaskCompletedResponse,
         },
     },
     test_help::{
         build_fake_core, build_multihist_mock_sg, canned_histories, gen_assert_and_fail,
         gen_assert_and_reply, hist_to_poll_resp, mock_core, mock_core_with_opts,
         mock_core_with_opts_no_workers, poll_and_reply, single_hist_mock_sg, FakeWfResponses,
-        ResponseType, TestHistoryBuilder, TEST_Q,
+        MocksHolder, ResponseType, TestHistoryBuilder, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
     Core, CoreInitOptionsBuilder, CoreSDK, ServerGatewayApis, WfActivationCompletion,
@@ -33,6 +36,7 @@ use rstest::{fixture, rstest};
 use std::{
     collections::VecDeque,
     sync::atomic::{AtomicU64, AtomicUsize, Ordering},
+    time::Duration,
 };
 use test_utils::fanout_tasks;
 
@@ -1255,4 +1259,115 @@ async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation(
     // the timer. IE: We will panic here because the mock has no more responses.
     core.poll_workflow_task(TEST_Q).await.unwrap();
     core.shutdown().await;
+}
+
+#[tokio::test]
+async fn buffered_work_drained_on_shutdown() {
+    let wfid = "fake_wf_id";
+    // Build a one-timer history where first task times out
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_workflow_task_scheduled_and_started();
+    // Need to build the first response before adding the timeout events b/c otherwise the history
+    // builder will include them in the first task
+    let resp_1 = hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string());
+    t.add_workflow_task_timed_out();
+    t.add_full_wf_task();
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add(
+        EventType::TimerFired,
+        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+            started_event_id: timer_started_event_id,
+            timer_id: "timer".to_string(),
+        }),
+    );
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let mut tasks = VecDeque::from(vec![resp_1]);
+    // Extend the task list with the now timeout-included version of the task. We add a bunch of
+    // them because the poll loop will spin while new tasks are available and it is buffering them
+    tasks.extend(
+        std::iter::repeat(hist_to_poll_resp(
+            &t,
+            wfid.to_owned(),
+            2.into(),
+            TEST_Q.to_string(),
+        ))
+        .take(50),
+    );
+    let mut mock = MockServerGatewayApis::new();
+    mock.expect_complete_workflow_task()
+        .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
+    let mock = MocksHolder::from_gateway_with_responses(mock, tasks, vec![].into());
+    // Cache on to avoid being super repetitive
+    let mut opts = CoreInitOptionsBuilder::default();
+    opts.max_cached_workflows(10_usize);
+    let core = &mock_core_with_opts(mock, opts);
+
+    // Poll for first WFT
+    let act1 = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let poll_fut = async move {
+        // Now poll again, which will start spinning, and buffer the next WFT with timer fired in it
+        // - it won't stop spinning until the first task is complete
+        let t = core.poll_workflow_task(TEST_Q).await.unwrap();
+        core.complete_workflow_task(WfActivationCompletion::from_cmds(
+            vec![CompleteWorkflowExecution { result: None }.into()],
+            t.run_id,
+        ))
+        .await
+        .unwrap();
+    };
+    let complete_first = async move {
+        core.complete_workflow_task(WfActivationCompletion::from_cmd(
+            StartTimer {
+                timer_id: "timer".to_string(),
+                ..Default::default()
+            }
+            .into(),
+            act1.run_id,
+        ))
+        .await
+        .unwrap();
+    };
+    tokio::join!(poll_fut, complete_first, async {
+        // If the shutdown is sent too too fast, we might not have got a chance to even buffer work
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        core.shutdown().await;
+    });
+}
+
+#[tokio::test]
+async fn buffering_tasks_doesnt_count_toward_outstanding_max() {
+    let wfid = "fake_wf_id";
+    let t = canned_histories::single_timer("fake_timer");
+    let mock = MockServerGatewayApis::new();
+    let mut tasks = VecDeque::new();
+    // A way bigger task list than allowed outstanding tasks
+    tasks.extend(
+        std::iter::repeat(hist_to_poll_resp(
+            &t,
+            wfid.to_owned(),
+            2.into(),
+            TEST_Q.to_string(),
+        ))
+        .take(20),
+    );
+    let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, vec![].into());
+    mock.mock_pollers
+        .get_mut(TEST_Q)
+        .unwrap()
+        .config
+        .max_outstanding_workflow_tasks = 5;
+    let mut opts = CoreInitOptionsBuilder::default();
+    opts.max_cached_workflows(10_usize);
+    let core = mock_core_with_opts(mock, opts);
+    // Poll for first WFT
+    core.poll_workflow_task(TEST_Q).await.unwrap();
+    // This will error out when the mock runs out of responses. Otherwise it would hang when we
+    // hit the max
+    assert_matches!(
+        core.poll_workflow_task(TEST_Q).await.unwrap_err(),
+        PollWfError::TonicError(_)
+    );
 }
