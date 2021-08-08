@@ -237,8 +237,10 @@ async fn activity_cancel_interrupts_poll() {
             .boxed()
         });
 
-    let mut mock_worker = MockWorker::default();
-    mock_worker.act_poller = Some(Box::from(mock_poller));
+    let mock_worker = MockWorker {
+        act_poller: Some(Box::from(mock_poller)),
+        ..Default::default()
+    };
 
     let core = mock_core(MocksHolder::from_mock_workers(mock_gateway, [mock_worker]));
     let last_finisher = AtomicUsize::new(0);
@@ -277,8 +279,10 @@ async fn activity_poll_timeout_retries() {
             Some(Err(tonic::Status::unknown("Test done")))
         }
     });
-    let mut mock_worker = MockWorker::default();
-    mock_worker.act_poller = Some(Box::from(mock_act_poller));
+    let mock_worker = MockWorker {
+        act_poller: Some(Box::from(mock_act_poller)),
+        ..Default::default()
+    };
     let core = mock_core(MocksHolder::from_mock_workers(mock_gateway, [mock_worker]));
     let r = core.poll_activity_task(TEST_Q).await;
     assert_matches!(r.unwrap_err(), PollActivityError::TonicError(_));

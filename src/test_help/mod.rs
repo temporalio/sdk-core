@@ -409,7 +409,6 @@ pub fn build_mock_pollers(
             outstanding.write().remove_by_right(&comp.task_token);
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
-    let outstanding = outstanding_wf_task_tokens.clone();
     mock_gateway
         .expect_fail_workflow_task()
         .times(
@@ -418,7 +417,7 @@ pub fn build_mock_pollers(
                 .unwrap_or_else(|| RangeFull.into()),
         )
         .returning(move |tt, _, _| {
-            outstanding.write().remove_by_right(&tt);
+            outstanding_wf_task_tokens.write().remove_by_right(&tt);
             Ok(Default::default())
         });
     mock_gateway
