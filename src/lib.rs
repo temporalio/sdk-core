@@ -196,7 +196,7 @@ struct CoreSDK<WP> {
     /// Provides work in the form of responses the server would send from polling task Qs
     server_gateway: Arc<WP>,
     /// Controls access to workers
-    workers: Arc<WorkerDispatcher>,
+    workers: WorkerDispatcher,
     /// Has shutdown been called?
     shutdown_requested: AtomicBool,
 }
@@ -293,7 +293,7 @@ where
 impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     pub(crate) fn new(server_gateway: SG, init_options: CoreInitOptions) -> Self {
         let sg = Arc::new(server_gateway);
-        let workers = Arc::new(WorkerDispatcher::default());
+        let workers = WorkerDispatcher::default();
         Self {
             server_gateway: sg,
             workers,
@@ -314,10 +314,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             worker.wf_poller,
             worker.act_poller,
         );
-        Arc::get_mut(&mut self.workers)
-            .expect("No other worker dispatch yet")
-            .store_prebuilt_worker(tq, worker)
-            .unwrap();
+        self.workers.store_prebuilt_worker(tq, worker).unwrap();
     }
 
     fn get_sticky_q_name_for_worker(&self, config: &WorkerConfig) -> Option<String> {
