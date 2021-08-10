@@ -193,11 +193,11 @@ pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
     Ok(CoreSDK::new(work_provider, opts))
 }
 
-struct CoreSDK<WP> {
+struct CoreSDK<SG> {
     /// Options provided at initialization time
     init_options: CoreInitOptions,
     /// Provides work in the form of responses the server would send from polling task Qs
-    server_gateway: Arc<WP>,
+    server_gateway: Arc<SG>,
     /// Controls access to workers
     workers: WorkerDispatcher,
     /// Has shutdown been called?

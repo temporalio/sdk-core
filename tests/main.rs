@@ -3,10 +3,7 @@
 #[cfg(test)]
 mod integ_tests {
     use std::{str::FromStr, time::Duration};
-    use temporal_sdk_core::{
-        protos::temporal::api::workflowservice::v1::ListNamespacesRequest, ClientTlsConfig,
-        ServerGatewayOptions, TlsConfig,
-    };
+    use temporal_sdk_core::{ClientTlsConfig, ServerGatewayApis, ServerGatewayOptions, TlsConfig};
     use test_utils::NAMESPACE;
     use url::Url;
 
@@ -52,10 +49,7 @@ mod integ_tests {
                 }),
             }),
         };
-        let mut con = sgo.connect().await.unwrap();
-        con.service
-            .list_namespaces(ListNamespacesRequest::default())
-            .await
-            .unwrap();
+        let con = sgo.connect().await.unwrap();
+        con.list_namespaces().await.unwrap();
     }
 }
