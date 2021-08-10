@@ -99,7 +99,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
                     task_queue.clone(),
                     workflow_id.clone(),
                     workflow_type.clone(),
-                    task_timeout.clone(),
+                    task_timeout,
                 )
             },
             self.error_handler.clone(),
@@ -242,7 +242,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         Ok(FutureRetry::new(
             move || {
                 self.gateway
-                    .fail_workflow_task(task_token.clone(), cause.clone(), failure.clone())
+                    .fail_workflow_task(task_token.clone(), cause, failure.clone())
             },
             self.error_handler.clone(),
         )
