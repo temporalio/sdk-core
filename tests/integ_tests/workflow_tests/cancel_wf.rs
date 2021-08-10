@@ -30,9 +30,10 @@ async fn cancel_during_timer() {
     let mut starter = CoreWfStarter::new(wf_name);
     let core = starter.get_core().await;
     let worker = starter.worker().await;
+    worker.register_wf(wf_name.to_string(), cancelled_wf);
 
     worker
-        .submit_wf(vec![], wf_name.to_owned(), cancelled_wf)
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
         .await
         .unwrap();
 

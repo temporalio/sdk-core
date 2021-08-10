@@ -8,6 +8,7 @@ syntax = "proto3";
 package coresdk.workflow_commands;
 
 import "common.proto";
+import "child_workflow.proto";
 import "google/protobuf/duration.proto";
 import "temporal/api/failure/v1/message.proto";
 
@@ -23,14 +24,11 @@ message WorkflowCommand {
         ContinueAsNewWorkflowExecution continue_as_new_workflow_execution = 8;
         CancelWorkflowExecution cancel_workflow_execution = 9;
         SetChangeMarker set_change_marker = 10;
+        StartChildWorkflowExecution start_child_workflow_execution = 11;
+        RequestCancelExternalWorkflowExecution request_cancel_external_workflow_execution = 12;
+        SignalExternalWorkflowExecution signal_external_workflow_execution = 13;
 
         // To be added as/if needed:
-        //  RequestCancelActivityTask request_cancel_activity_task_command_attributes = 6;
-        //  RequestCancelExternalWorkflowExecution request_cancel_external_workflow_execution_command_attributes = 9;
-        //  RecordMarker record_marker_command_attributes = 10;
-        //  ContinueAsNewWorkflowExecution continue_as_new_workflow_execution_command_attributes = 11;
-        //  StartChildWorkflowExecution start_child_workflow_execution_command_attributes = 12;
-        //  SignalExternalWorkflowExecution signal_external_workflow_execution_command_attributes = 13;
         //  UpsertWorkflowSearchAttributes upsert_workflow_search_attributes_command_attributes = 14;
     }
 }
@@ -149,4 +147,54 @@ message SetChangeMarker {
     // Can be set to true to indicate that branches using this change are being removed, and all
     // future worker deployments will only have the "with change" code in them.
     bool deprecated = 2;
+}
+
+/// Start a child workflow execution
+message StartChildWorkflowExecution {
+    string namespace = 1;
+    string workflow_id = 2;
+    string workflow_type = 3;
+    string task_queue = 4;
+    repeated common.Payload input = 5;
+    /// Total workflow execution timeout including retries and continue as new.
+    google.protobuf.Duration workflow_execution_timeout = 6;
+    /// Timeout of a single workflow run.
+    google.protobuf.Duration workflow_run_timeout = 7;
+    /// Timeout of a single workflow task.
+    google.protobuf.Duration workflow_task_timeout = 8;
+    /// Default: PARENT_CLOSE_POLICY_TERMINATE.
+    child_workflow.ParentClosePolicy parent_close_policy = 9;
+    // string control = 10; (unused from StartChildWorkflowExecutionCommandAttributes)
+    // Default: WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE.
+    common.WorkflowIdReusePolicy workflow_id_reuse_policy = 11;
+    common.RetryPolicy retry_policy = 12;
+    string cron_schedule = 13;
+    /// Header fields
+    map<string, common.Payload> header = 14;
+    /// Memo fields
+    map<string, common.Payload> memo = 15;
+    /// Search attributes
+    map<string, common.Payload> search_attributes = 16;
+    /// Defines behaviour of the underlying workflow when child workflow cancellation has been requested.
+    child_workflow.ChildWorkflowCancellationType cancellation_type = 17;
+}
+
+/// Request cancellation of an external workflow execution, can be used for child workflows
+message RequestCancelExternalWorkflowExecution {
+    string namespace = 1;
+    /// Required workflow_id of the Workflow to cancel
+    string workflow_id = 2;
+    /// Optional run_id of the Workflow to cancel
+    string run_id = 3;
+}
+
+/// Send a signal to an external workflow, can be used for child workflows
+message SignalExternalWorkflowExecution {
+    string namespace = 1;
+    /// workflow_id and optional run_id
+    common.WorkflowExecution workflow_execution = 2;
+    /// Name of the signal handler
+    string signal_name = 3;
+    /// Arguments for the handler
+    repeated common.Payload args = 4;
 }

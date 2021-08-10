@@ -1,7 +1,7 @@
 use crate::machines::HAS_CHANGE_MARKER_NAME;
 use crate::protos::coresdk::common::build_has_change_marker_details;
 use crate::{
-    protos::temporal::api::common::v1::{Payload, Payloads},
+    protos::temporal::api::common::v1::{Payload, Payloads, WorkflowType},
     protos::temporal::api::failure::v1::Failure,
     protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes,
     protos::temporal::api::{
@@ -235,10 +235,15 @@ impl TestHistoryBuilder {
     }
 }
 
+pub static DEFAULT_WORKFLOW_TYPE: &str = "not_specified";
+
 fn default_attribs(et: EventType) -> Result<Attributes> {
     Ok(match et {
         EventType::WorkflowExecutionStarted => WorkflowExecutionStartedEventAttributes {
             original_execution_run_id: Uuid::new_v4().to_string(),
+            workflow_type: Some(WorkflowType {
+                name: DEFAULT_WORKFLOW_TYPE.to_owned(),
+            }),
             ..Default::default()
         }
         .into(),

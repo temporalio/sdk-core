@@ -38,3 +38,26 @@ message RetryPolicy {
     // If a stringified error matches something in this list, retries will cease.
     repeated string non_retryable_error_types = 5;
 }
+
+enum WorkflowIdReusePolicy {
+    WORKFLOW_ID_REUSE_POLICY_UNSPECIFIED = 0;
+    // Allow start a workflow execution using the same workflow Id, when workflow not running.
+    WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE = 1;
+    // Allow start a workflow execution using the same workflow Id, when workflow not running, and the last execution close state is in
+    // [terminated, cancelled, timed out, failed].
+    WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY = 2;
+    // Do not allow start a workflow execution using the same workflow Id at all.
+    WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE = 3;
+}
+
+/** Possible causes of failure to cancel an external workflow */
+enum CancelExternalWorkflowExecutionFailedCause {
+    CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED_CAUSE_UNSPECIFIED = 0;
+    CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED_CAUSE_EXTERNAL_WORKFLOW_EXECUTION_NOT_FOUND = 1;
+}
+
+/** Possible causes of failure to signal an external workflow */
+enum SignalExternalWorkflowExecutionFailedCause {
+    SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED_CAUSE_UNSPECIFIED = 0;
+    SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED_CAUSE_EXTERNAL_WORKFLOW_EXECUTION_NOT_FOUND = 1;
+}
