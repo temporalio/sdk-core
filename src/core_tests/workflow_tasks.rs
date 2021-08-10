@@ -1,3 +1,4 @@
+use crate::test_help::poll_and_reply_clears_outstanding_evicts;
 use crate::{
     errors::PollWfError,
     job_assert,
@@ -822,10 +823,12 @@ async fn workflow_failures_only_reported_once() {
         // We should only call the server to say we failed twice (once after each success)
         Some(2),
     );
+    let omap = mocks.outstanding_task_map.clone();
     let core = mock_core(mocks);
 
-    poll_and_reply(
+    poll_and_reply_clears_outstanding_evicts(
         &core,
+        omap,
         NonSticky,
         &[
             gen_assert_and_reply(
@@ -895,6 +898,7 @@ async fn max_concurrent_wft_respected() {
     core.register_worker(
         WorkerConfigBuilder::default()
             .task_queue(TEST_Q)
+            .max_cached_workflows(2_usize)
             .max_outstanding_workflow_tasks(2_usize)
             .build()
             .unwrap(),
@@ -905,7 +909,7 @@ async fn max_concurrent_wft_respected() {
     // Poll twice in a row before completing -- we should be at limit
     let r1 = core.poll_workflow_task(TEST_Q).await.unwrap();
     let r1_run_id = r1.run_id.clone();
-    let _r2 = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let r2 = core.poll_workflow_task(TEST_Q).await.unwrap();
     // Now we immediately poll for new work, and complete one of the existing activations. The
     // poll must not unblock until the completion goes through.
     let last_finisher = AtomicUsize::new(0);
@@ -932,7 +936,7 @@ async fn max_concurrent_wft_respected() {
     assert_eq!(last_finisher.load(Ordering::Acquire), 2);
 
     // Since we never did anything with r2, all subsequent activations should be for wf1
-    for i in 2..19 {
+    for i in 2..20 {
         core.complete_workflow_task(WfActivationCompletion::from_cmd(
             TEST_Q,
             r1.run_id,
@@ -947,6 +951,24 @@ async fn max_concurrent_wft_respected() {
         r1 = core.poll_workflow_task(TEST_Q).await.unwrap();
         assert_eq!(r1.run_id, r1_run_id);
     }
+    // Finish the tasks so we can shut down
+    core.complete_workflow_task(WfActivationCompletion::from_cmd(
+        TEST_Q,
+        r1.run_id,
+        CompleteWorkflowExecution { result: None }.into(),
+    ))
+    .await
+    .unwrap();
+    // Just evict r2, we don't care about completing it properly
+    core.request_workflow_eviction(TEST_Q, &r2.run_id);
+    let _ = core
+        .complete_workflow_task(WfActivationCompletion::empty(TEST_Q, r2.run_id))
+        .await;
+    let r2 = core.poll_workflow_task(TEST_Q).await.unwrap();
+    dbg!(&r2);
+    let _ = core
+        .complete_workflow_task(WfActivationCompletion::empty(TEST_Q, r2.run_id))
+        .await;
     core.shutdown().await;
 }
 

@@ -8,6 +8,7 @@ use crate::{
         },
         workflow_completion::WfActivationCompletion,
     },
+    protos::temporal::api::workflowservice::v1::RespondWorkflowTaskCompletedResponse,
     test_help::{
         build_fake_core, build_multihist_mock_sg, canned_histories, hist_to_poll_resp, mock_core,
         mock_core_with_opts_no_workers, register_mock_workers, single_hist_mock_sg,
@@ -43,6 +44,9 @@ async fn multi_workers() {
             res.jobs[0].variant,
             Some(wf_activation_job::Variant::StartWorkflow(_))
         );
+        core.complete_workflow_task(WfActivationCompletion::empty(tq, res.run_id))
+            .await
+            .unwrap();
     }
     core.shutdown().await;
 }
@@ -143,11 +147,15 @@ async fn after_shutdown_of_worker_get_shutdown_err() {
     let core = build_fake_core("fake_wf_id", t, &[1]);
     let res = core.poll_workflow_task(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
-    core.shutdown_worker(TEST_Q).await;
-    assert_matches!(
-        core.poll_workflow_task(TEST_Q).await.unwrap_err(),
-        PollWfError::ShutDown
-    );
+    tokio::join!(core.shutdown_worker(TEST_Q), async {
+        assert_matches!(
+            core.poll_workflow_task(TEST_Q).await.unwrap_err(),
+            PollWfError::ShutDown
+        );
+        core.complete_workflow_task(WfActivationCompletion::empty(TEST_Q, res.run_id))
+            .await
+            .unwrap();
+    });
 }
 
 #[tokio::test]
@@ -155,6 +163,9 @@ async fn after_shutdown_of_worker_can_be_reregistered() {
     let t = canned_histories::single_timer("fake_timer");
     let mut core = build_fake_core("fake_wf_id", t.clone(), &[1]);
     let res = core.poll_workflow_task(TEST_Q).await.unwrap();
+    core.complete_workflow_task(WfActivationCompletion::empty(TEST_Q, res.run_id))
+        .await
+        .unwrap();
     assert_eq!(res.jobs.len(), 1);
     core.shutdown_worker(TEST_Q).await;
     // Need to recreate mock to re-register worker
@@ -183,24 +194,25 @@ async fn shutdown_worker_can_complete_pending_activation() {
     .await
     .unwrap();
 
-    core.shutdown_worker(TEST_Q).await;
-    let res = core.poll_workflow_task(TEST_Q).await.unwrap();
-    // The timer fires
-    assert_eq!(res.jobs.len(), 1);
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        TEST_Q,
-        res.run_id,
-        vec![CompleteWorkflowExecution::default().into()],
-    ))
-    .await
-    .unwrap();
-    // Since non-sticky, one more activation for eviction
-    core.poll_workflow_task(TEST_Q).await.unwrap();
-    // Now it's shut down
-    assert_matches!(
-        core.poll_workflow_task(TEST_Q).await.unwrap_err(),
-        PollWfError::ShutDown
-    );
+    tokio::join!(core.shutdown_worker(TEST_Q), async {
+        let res = core.poll_workflow_task(TEST_Q).await.unwrap();
+        // The timer fires
+        assert_eq!(res.jobs.len(), 1);
+        core.complete_workflow_task(WfActivationCompletion::from_cmds(
+            TEST_Q,
+            res.run_id,
+            vec![CompleteWorkflowExecution::default().into()],
+        ))
+        .await
+        .unwrap();
+        // Since non-sticky, one more activation for eviction
+        core.poll_workflow_task(TEST_Q).await.unwrap();
+        // Now it's shut down
+        assert_matches!(
+            core.poll_workflow_task(TEST_Q).await.unwrap_err(),
+            PollWfError::ShutDown
+        );
+    });
 }
 
 #[fixture]
@@ -227,7 +239,7 @@ fn worker_shutdown() -> (CoreSDK<MockServerGatewayApis>, watch::Sender<bool>) {
                 Some(Ok(hist_to_poll_resp(
                     &t,
                     "wf".to_string(),
-                    ResponseType::AllHistory,
+                    ResponseType::ToTaskNum(1),
                     tqc,
                 )))
             }
@@ -235,11 +247,12 @@ fn worker_shutdown() -> (CoreSDK<MockServerGatewayApis>, watch::Sender<bool>) {
         });
         mock_pollers.push(MockWorker::new(&tq, Box::from(mock_poller)));
     }
+    let mut mock_gateway = MockServerGatewayApis::new();
+    mock_gateway
+        .expect_complete_workflow_task()
+        .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
     (
-        mock_core(MocksHolder::from_mock_workers(
-            MockServerGatewayApis::new(),
-            mock_pollers,
-        )),
+        mock_core(MocksHolder::from_mock_workers(mock_gateway, mock_pollers)),
         tx,
     )
 }
@@ -275,16 +288,23 @@ async fn worker_shutdown_during_multiple_poll_doesnt_deadlock(
 ) {
     let (core, tx) = worker_shutdown;
 
-    let pollfut = core.poll_workflow_task("q1");
-    let poll2fut = core.poll_workflow_task("q2");
+    let pollfut = async {
+        assert_matches!(
+            core.poll_workflow_task("q1").await.unwrap_err(),
+            PollWfError::ShutDown
+        );
+    };
+    let poll2fut = async {
+        let res = core.poll_workflow_task("q2").await.unwrap();
+        core.complete_workflow_task(WfActivationCompletion::empty("q2", res.run_id))
+            .await
+            .unwrap();
+    };
     let shutdownfut = async {
         core.shutdown_worker("q1").await;
         // Will allow both workers to proceed
         let _ = tx.send(true);
     };
-    let (pollres, poll2res, _) = tokio::join!(pollfut, poll2fut, shutdownfut);
-    assert_matches!(pollres.unwrap_err(), PollWfError::ShutDown);
-    // Worker 2 poll should not be an error
-    poll2res.unwrap();
+    tokio::join!(pollfut, poll2fut, shutdownfut);
     core.shutdown().await;
 }

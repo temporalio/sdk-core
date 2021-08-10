@@ -158,11 +158,20 @@ impl Worker {
 
     /// Tell the worker to begin the shutdown process. Can be used before [shutdown_complete] if
     /// polling should be ceased before it is possible to consume the worker instance.
-    pub(crate) fn notify_shutdown(&self) {
+    pub(crate) async fn notify_shutdown(&self) {
         let _ = self.shutdown_sender.send(true);
         self.wf_task_poll_buffer.notify_shutdown();
         if let Some(b) = self.at_task_mgr.as_ref() {
             b.notify_shutdown();
+        }
+        loop {
+            // Wait until all outstanding workflow tasks have been completed before shutting down
+            if self.outstanding_workflow_tasks() != 0 {
+                let mut waulock = self.workflow_activations_update.lock().await;
+                let _ = waulock.recv().await;
+                continue;
+            }
+            break;
         }
     }
 
@@ -332,7 +341,6 @@ impl Worker {
         self.workflows_semaphore.add_permits(1)
     }
 
-    // TODO: mut
     pub(crate) fn request_wf_eviction(&self, run_id: &str) {
         self.wft_manager.request_eviction(run_id);
     }

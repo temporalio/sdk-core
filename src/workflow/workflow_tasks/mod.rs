@@ -194,13 +194,15 @@ impl WorkflowTaskManager {
     /// Returns, if found, the number of attempts on the current workflow task
     pub fn request_eviction(&self, run_id: &str) -> Option<u32> {
         if let Some(tq) = self.workflow_machines.task_queue_for(run_id) {
-            debug!(%run_id, "Eviction requested for");
-            // Queue up an eviction activation
-            self.pending_activations
-                .push(create_evict_activation(run_id.to_string()), tq);
-            let _ = self
-                .workflow_activations_update
-                .send(WfActivationUpdate::NewPendingActivation);
+            if !self.activation_has_eviction(run_id) {
+                debug!(%run_id, "Eviction requested for");
+                // Queue up an eviction activation
+                self.pending_activations
+                    .push(create_evict_activation(run_id.to_string()), tq);
+                let _ = self
+                    .workflow_activations_update
+                    .send(WfActivationUpdate::NewPendingActivation);
+            }
             self.workflow_machines
                 .get_task(run_id)
                 .map(|wt| wt.info.attempt)
@@ -306,15 +308,15 @@ impl WorkflowTaskManager {
         run_id: &str,
         mut commands: Vec<WFCommand>,
     ) -> Result<Option<ServerCommandsWithWorkflowInfo>, WorkflowUpdateError> {
+        // No-command replies to evictions can simply skip everything
+        if commands.is_empty() && self.activation_has_eviction(run_id) {
+            return Ok(None);
+        }
+
         let task_token = if let Some(entry) = self.workflow_machines.get_task(run_id) {
             entry.info.task_token.clone()
         } else {
-            if !self
-                .workflow_machines
-                .get_activation(run_id)
-                .map(|oa| oa.has_eviction())
-                .unwrap_or_default()
-            {
+            if !self.activation_has_eviction(run_id) {
                 // Don't bother warning if this was an eviction, since it's normal to issue
                 // eviction activations without an associated workflow task in that case.
                 warn!(
@@ -394,8 +396,8 @@ impl WorkflowTaskManager {
         Ok(ret)
     }
 
-    /// Record that an activation failed, returns enum that indicates if failure should be reported to the
-    /// server
+    /// Record that an activation failed, returns enum that indicates if failure should be reported
+    /// to the server
     pub(crate) fn failed_activation(
         &self,
         run_id: &str,
@@ -606,6 +608,13 @@ impl WorkflowTaskManager {
             );
         }
         Ok(())
+    }
+
+    fn activation_has_eviction(&self, run_id: &str) -> bool {
+        self.workflow_machines
+            .get_activation(run_id)
+            .map(|oa| oa.has_eviction())
+            .unwrap_or_default()
     }
 }
 

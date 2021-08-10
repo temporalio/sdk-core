@@ -8,6 +8,7 @@ mod workflow_tasks;
 use crate::{
     errors::{PollActivityError, PollWfError},
     pollers::MockManualGateway,
+    protos::coresdk::workflow_completion::WfActivationCompletion,
     protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
     test_help::{
         build_fake_core, canned_histories, fake_sg_opts, hist_to_poll_resp, ResponseType, TEST_Q,
@@ -24,7 +25,9 @@ async fn after_shutdown_server_is_not_polled() {
     let core = build_fake_core("fake_wf_id", t, &[1]);
     let res = core.poll_workflow_task(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
-
+    core.complete_workflow_task(WfActivationCompletion::empty(TEST_Q, res.run_id))
+        .await
+        .unwrap();
     core.shutdown().await;
     assert_matches!(
         core.poll_workflow_task(TEST_Q).await.unwrap_err(),

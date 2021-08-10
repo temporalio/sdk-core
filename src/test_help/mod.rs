@@ -141,6 +141,7 @@ pub struct FakeWfResponses {
 pub struct MocksHolder<SG> {
     sg: SG,
     mock_pollers: HashMap<String, MockWorker>,
+    pub outstanding_task_map: Option<Arc<RwLock<BiMap<String, TaskToken>>>>,
 }
 
 impl<SG> MocksHolder<SG> {
@@ -200,7 +201,11 @@ where
             .into_iter()
             .map(|w| (w.config.task_queue.clone(), w))
             .collect();
-        MocksHolder { sg, mock_pollers }
+        MocksHolder {
+            sg,
+            mock_pollers,
+            outstanding_task_map: None,
+        }
     }
 
     /// Uses the provided list of tasks to create a mock poller for the `TEST_Q`
@@ -223,7 +228,11 @@ where
                     .unwrap(),
             },
         );
-        MocksHolder { sg, mock_pollers }
+        MocksHolder {
+            sg,
+            mock_pollers,
+            outstanding_task_map: None,
+        }
     }
 }
 
@@ -421,6 +430,7 @@ pub fn build_mock_pollers(
             outstanding.write().remove_by_right(&comp.task_token);
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
+    let outstanding = outstanding_wf_task_tokens.clone();
     mock_gateway
         .expect_fail_workflow_task()
         .times(
@@ -429,7 +439,7 @@ pub fn build_mock_pollers(
                 .unwrap_or_else(|| RangeFull.into()),
         )
         .returning(move |tt, _, _| {
-            outstanding_wf_task_tokens.write().remove_by_right(&tt);
+            outstanding.write().remove_by_right(&tt);
             Ok(Default::default())
         });
     mock_gateway
@@ -439,6 +449,7 @@ pub fn build_mock_pollers(
     MocksHolder {
         sg: mock_gateway,
         mock_pollers,
+        outstanding_task_map: Some(outstanding_wf_task_tokens),
     }
 }
 
@@ -498,6 +509,15 @@ pub(crate) async fn poll_and_reply<'a>(
     eviction_mode: WorkflowCachingPolicy,
     expect_and_reply: &'a [AsserterWithReply<'a>],
 ) {
+    poll_and_reply_clears_outstanding_evicts(core, None, eviction_mode, expect_and_reply).await
+}
+
+pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
+    core: &'a CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
+    outstanding_map: Option<Arc<RwLock<BiMap<String, TaskToken>>>>,
+    eviction_mode: WorkflowCachingPolicy,
+    expect_and_reply: &'a [AsserterWithReply<'a>],
+) {
     let mut evictions = 0;
     let expected_evictions = expect_and_reply.len() - 1;
     let mut executed_failures = HashSet::new();
@@ -529,6 +549,9 @@ pub(crate) async fn poll_and_reply<'a>(
                     "Eviction job was not last job in job list"
                 );
                 res.jobs.remove(eviction_job_ix);
+                if let Some(omap) = outstanding_map.as_ref() {
+                    omap.write().remove_by_left(&res.run_id);
+                }
             }
 
             // TODO: Can remove this if?
