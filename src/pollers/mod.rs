@@ -1,5 +1,6 @@
 mod gateway;
 mod poll_buffer;
+mod retry;
 
 #[cfg(test)]
 pub use gateway::{MockManualGateway, MockServerGatewayApis};
