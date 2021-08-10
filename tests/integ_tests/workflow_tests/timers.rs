@@ -20,9 +20,10 @@ async fn timer_workflow_workflow_driver() {
     let wf_name = "timer_wf_new";
     let mut starter = CoreWfStarter::new(wf_name);
     let worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), timer_wf);
 
     worker
-        .submit_wf(vec![], wf_name.to_owned(), timer_wf)
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -132,9 +133,10 @@ async fn parallel_timers() {
     let wf_name = "parallel_timers";
     let mut starter = CoreWfStarter::new(wf_name);
     let worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), parallel_timer_wf);
 
     worker
-        .submit_wf(vec![], wf_name.to_owned(), parallel_timer_wf)
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

@@ -1,6 +1,7 @@
 mod activities;
 mod cancel_wf;
 mod changes;
+mod child_workflows;
 mod continue_as_new;
 mod stickyness;
 mod timers;
@@ -105,18 +106,19 @@ pub async fn cache_evictions_wf(mut command_sink: WfContext) -> WorkflowResult<(
 
 #[tokio::test]
 async fn workflow_lru_cache_evictions() {
-    let wf_name = "workflow_lru_cache_evictions";
-    let mut starter = CoreWfStarter::new(wf_name);
+    let wf_type = "workflow_lru_cache_evictions";
+    let mut starter = CoreWfStarter::new(wf_type);
     starter.max_cached_workflows(1);
     let worker = starter.worker().await;
+    worker.register_wf(wf_type.to_string(), cache_evictions_wf);
 
     let n_workflows = 3;
     for _ in 0..n_workflows {
         worker
             .submit_wf(
-                vec![],
                 format!("wce-{}", Uuid::new_v4()),
-                cache_evictions_wf,
+                wf_type.to_string(),
+                vec![],
             )
             .await
             .unwrap();

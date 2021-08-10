@@ -12,8 +12,12 @@ pub use workflow_context::WfContext;
 use crate::{
     protos::coresdk::{
         activity_result::ActivityResult,
+        child_workflow::ChildWorkflowResult,
         common::Payload,
-        workflow_activation::{wf_activation_job::Variant, WfActivation, WfActivationJob},
+        workflow_activation::{
+            resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
+            wf_activation_job::Variant, WfActivation, WfActivationJob,
+        },
         workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution},
     },
     Core,
@@ -72,26 +76,38 @@ impl TestRustWorker {
 
     /// Create a workflow, asking the server to start it with the provided workflow ID and using the
     /// provided workflow function.
-    pub async fn submit_wf<F: Into<WorkflowFunction>>(
+    /// Increments the expected Workflow run count.
+    pub async fn submit_wf(
         &self,
-        input: Vec<Payload>,
         workflow_id: String,
-        wf_function: F,
+        workflow_type: String,
+        input: Vec<Payload>,
     ) -> Result<(), tonic::Status> {
         self.core
             .server_gateway()
             .start_workflow(
                 input,
                 self.task_queue.clone(),
-                workflow_id.clone(),
-                workflow_id.clone(),
+                workflow_id,
+                workflow_type,
                 self.task_timeout,
             )
             .await?;
 
-        self.workflow_fns.insert(workflow_id, wf_function.into());
-        self.incomplete_workflows.fetch_add(1, Ordering::SeqCst);
+        self.incr_expected_run_count(1);
         Ok(())
+    }
+
+    /// Register a Workflow function to invoke when Worker is requested to run `workflow_type`
+    pub fn register_wf<F: Into<WorkflowFunction>>(&self, workflow_type: String, wf_function: F) {
+        self.workflow_fns.insert(workflow_type, wf_function.into());
+    }
+
+    /// Increment the expected Workflow run count on this Worker. The Worker tracks the run count
+    /// and will resolve `run_until_done` when it goes down to 0.
+    /// You do not have to increment if scheduled a Workflow with `submit_wf`.
+    pub fn incr_expected_run_count(&self, count: usize) {
+        self.incomplete_workflows.fetch_add(count, Ordering::SeqCst);
     }
 
     /// Drives all workflows until they have all finished, repeatedly polls server to fetch work
@@ -111,8 +127,8 @@ impl TestRustWorker {
                 {
                     let wf_function = self
                         .workflow_fns
-                        .get(&sw.workflow_id)
-                        .ok_or_else(|| anyhow!("Workflow id not found"))?;
+                        .get(&sw.workflow_type)
+                        .ok_or_else(|| anyhow!("Workflow type not found"))?;
 
                     let (wff, activations) = wf_function.start_workflow(
                         self.task_queue.clone(),
@@ -166,6 +182,8 @@ impl TestRustWorker {
 enum UnblockEvent {
     Timer(String),
     Activity(String, Box<ActivityResult>),
+    WorkflowStart(String, Box<ChildWorkflowStartStatus>),
+    WorkflowComplete(String, Box<ChildWorkflowResult>),
 }
 
 #[derive(derive_more::From)]
@@ -175,13 +193,21 @@ enum RustWfCmd {
     CancelTimer(String),
     #[from(ignore)]
     CancelActivity(String),
+    #[from(ignore)]
+    CancelChildWorkflow(String),
     ForceWFTFailure(anyhow::Error),
     NewCmd(CommandCreateRequest),
     NewNonblockingCmd(workflow_command::Variant),
+    SubscribeChildWorkflowCompletion(CommandSubscribeChildWorkflowCompletion),
 }
 
 struct CommandCreateRequest {
     cmd: workflow_command::Variant,
+    unblocker: oneshot::Sender<UnblockEvent>,
+}
+
+struct CommandSubscribeChildWorkflowCompletion {
+    workflow_id: String,
     unblocker: oneshot::Sender<UnblockEvent>,
 }
 
@@ -237,7 +263,7 @@ mod tests {
     use super::*;
     use crate::{
         protos::coresdk::workflow_commands::StartTimer,
-        test_help::{build_fake_core, canned_histories, TEST_Q},
+        test_help::{build_fake_core, canned_histories, DEFAULT_WORKFLOW_TYPE, TEST_Q},
     };
 
     pub async fn timer_wf(mut ctx: WfContext) -> WorkflowResult<()> {
@@ -252,12 +278,14 @@ mod tests {
     #[tokio::test]
     async fn new_test_wf_core() {
         let wf_id = "fakeid";
+        let wf_type = DEFAULT_WORKFLOW_TYPE;
         let t = canned_histories::single_timer("fake_timer");
         let core = build_fake_core(wf_id, t, [2]);
         let worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
+        worker.register_wf(wf_type.to_owned(), timer_wf);
         worker
-            .submit_wf(vec![], wf_id.to_string(), WorkflowFunction::new(timer_wf))
+            .submit_wf(wf_id.to_owned(), wf_type.to_owned(), vec![])
             .await
             .unwrap();
         worker.run_until_done().await.unwrap();

@@ -152,8 +152,9 @@ async fn can_paginate_long_history() {
     starter.max_cached_workflows(0);
 
     let worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), many_parallel_timers_longhist);
     worker
-        .submit_wf(vec![], wf_name.to_owned(), many_parallel_timers_longhist)
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

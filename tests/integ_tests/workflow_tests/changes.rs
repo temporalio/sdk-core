@@ -46,9 +46,10 @@ async fn writes_change_markers() {
     let wf_name = "writes_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
     let worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), changes_wf);
 
     worker
-        .submit_wf(vec![], wf_name.to_owned(), changes_wf)
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -93,9 +94,10 @@ async fn can_add_change_markers() {
     let wf_name = "can_add_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
     let worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), no_change_then_change_wf);
 
     worker
-        .submit_wf(vec![], wf_name.to_owned(), no_change_then_change_wf)
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

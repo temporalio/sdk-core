@@ -1,10 +1,17 @@
 use crate::{
     protos::coresdk::{
         activity_result::ActivityResult,
+        child_workflow::ChildWorkflowResult,
         common::Payload,
-        workflow_commands::{workflow_command, ScheduleActivity, SetChangeMarker, StartTimer},
+        workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
+        workflow_commands::{
+            workflow_command, ScheduleActivity, SetChangeMarker, StartChildWorkflowExecution,
+            StartTimer,
+        },
     },
-    prototype_rust_sdk::{CommandCreateRequest, RustWfCmd, UnblockEvent},
+    prototype_rust_sdk::{
+        CommandCreateRequest, CommandSubscribeChildWorkflowCompletion, RustWfCmd, UnblockEvent,
+    },
 };
 use crossbeam::channel::{Receiver, Sender};
 use futures::{task::Context, FutureExt};
@@ -104,6 +111,50 @@ impl WfContext {
         })
     }
 
+    /// Request to start a child workflow, Returned future resolves when the child has been started.
+    pub fn start_child_workflow(
+        &mut self,
+        a: StartChildWorkflowExecution,
+    ) -> impl Future<Output = ChildWorkflowStartStatus> {
+        let (cmd, unblocker) = WFCommandFut::new();
+        self.send(
+            CommandCreateRequest {
+                cmd: a.into(),
+                unblocker,
+            }
+            .into(),
+        );
+        cmd.map(|ue| {
+            if let UnblockEvent::WorkflowStart(_, result) = ue {
+                *result
+            } else {
+                panic!("Wrong unblock event")
+            }
+        })
+    }
+
+    /// Wait on completion of a child workflow execution started with `start_child_workflow`
+    pub fn child_workflow_result(
+        &mut self,
+        workflow_id: String,
+    ) -> impl Future<Output = ChildWorkflowResult> {
+        let (cmd, unblocker) = WFCommandFut::new();
+        self.send(
+            CommandSubscribeChildWorkflowCompletion {
+                workflow_id,
+                unblocker,
+            }
+            .into(),
+        );
+        cmd.map(|ue| {
+            if let UnblockEvent::WorkflowComplete(_, result) = ue {
+                *result
+            } else {
+                panic!("Wrong unblock event")
+            }
+        })
+    }
+
     /// Cancel a timer
     pub fn cancel_timer(&self, timer_id: &str) {
         self.send(RustWfCmd::CancelTimer(timer_id.to_string()))
@@ -112,6 +163,13 @@ impl WfContext {
     /// Cancel activity
     pub fn cancel_activity(&self, activity_id: &str) {
         self.send(RustWfCmd::CancelActivity(activity_id.to_string()))
+    }
+
+    /// Cancel child workflow
+    pub fn cancel_child_workflow(&self, child_workflow_id: &str) {
+        self.send(RustWfCmd::CancelChildWorkflow(
+            child_workflow_id.to_string(),
+        ))
     }
 
     /// Check (or record) that this workflow history was created with the provided change id

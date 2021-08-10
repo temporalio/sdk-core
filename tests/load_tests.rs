@@ -54,12 +54,14 @@ async fn activity_load() {
     };
 
     let starting = Instant::now();
+    let wf_type = "activity_load";
+    worker.register_wf(wf_type.to_owned(), wf_fn);
     join_all((0..CONCURRENCY).map(|i| {
         let worker = &worker;
-        let wf_fn = wf_fn.clone();
+        let wf_id = format!("activity_load_{}", i);
         async move {
             worker
-                .submit_wf(vec![], format!("activity_load_{}", i), wf_fn)
+                .submit_wf(wf_id, wf_type.to_owned(), vec![])
                 .await
                 .unwrap();
         }

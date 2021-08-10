@@ -1,13 +1,19 @@
 use crate::{
-    protos::temporal::api::common::v1::Payload,
-    protos::temporal::api::enums::v1::{EventType, WorkflowTaskFailedCause},
+    protos::temporal::api::common::v1::{Payload, WorkflowExecution},
+    protos::temporal::api::enums::v1::{
+        EventType, StartChildWorkflowExecutionFailedCause, WorkflowTaskFailedCause,
+    },
     protos::temporal::api::failure::v1::Failure,
     protos::temporal::api::history::v1::{
         history_event, ActivityTaskCancelRequestedEventAttributes,
         ActivityTaskCanceledEventAttributes, ActivityTaskCompletedEventAttributes,
         ActivityTaskFailedEventAttributes, ActivityTaskScheduledEventAttributes,
         ActivityTaskStartedEventAttributes, ActivityTaskTimedOutEventAttributes,
-        TimerCanceledEventAttributes, TimerFiredEventAttributes,
+        ChildWorkflowExecutionCompletedEventAttributes,
+        ChildWorkflowExecutionFailedEventAttributes, ChildWorkflowExecutionStartedEventAttributes,
+        StartChildWorkflowExecutionFailedEventAttributes,
+        StartChildWorkflowExecutionInitiatedEventAttributes, TimerCanceledEventAttributes,
+        TimerFiredEventAttributes,
     },
     test_help::TestHistoryBuilder,
 };
@@ -1360,5 +1366,169 @@ pub fn activity_double_resolve_repro() -> TestHistoryBuilder {
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
+///  6: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED
+///  7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 10: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED
+/// 11: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 12: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 13: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 14: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+pub fn single_child_workflow(child_wf_id: &str) -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let initiated_event_id = t.add_get_event_id(
+        EventType::StartChildWorkflowExecutionInitiated,
+        Some(
+            history_event::Attributes::StartChildWorkflowExecutionInitiatedEventAttributes(
+                StartChildWorkflowExecutionInitiatedEventAttributes {
+                    workflow_id: child_wf_id.to_owned(),
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    let started_event_id = t.add_get_event_id(
+        EventType::ChildWorkflowExecutionStarted,
+        Some(
+            history_event::Attributes::ChildWorkflowExecutionStartedEventAttributes(
+                ChildWorkflowExecutionStartedEventAttributes {
+                    initiated_event_id,
+                    workflow_execution: Some(WorkflowExecution {
+                        workflow_id: child_wf_id.to_owned(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    t.add_full_wf_task();
+    t.add(
+        EventType::ChildWorkflowExecutionCompleted,
+        history_event::Attributes::ChildWorkflowExecutionCompletedEventAttributes(
+            ChildWorkflowExecutionCompletedEventAttributes {
+                initiated_event_id,
+                started_event_id,
+                // todo add the result payload
+                ..Default::default()
+            },
+        ),
+    );
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
+///  6: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED
+///  7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 10: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED
+/// 11: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 12: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 13: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 14: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+pub fn single_child_workflow_fail(child_wf_id: &str) -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let initiated_event_id = t.add_get_event_id(
+        EventType::StartChildWorkflowExecutionInitiated,
+        Some(
+            history_event::Attributes::StartChildWorkflowExecutionInitiatedEventAttributes(
+                StartChildWorkflowExecutionInitiatedEventAttributes {
+                    workflow_id: child_wf_id.to_owned(),
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    let started_event_id = t.add_get_event_id(
+        EventType::ChildWorkflowExecutionStarted,
+        Some(
+            history_event::Attributes::ChildWorkflowExecutionStartedEventAttributes(
+                ChildWorkflowExecutionStartedEventAttributes {
+                    initiated_event_id,
+                    workflow_execution: Some(WorkflowExecution {
+                        workflow_id: child_wf_id.to_owned(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    t.add_full_wf_task();
+    t.add(
+        EventType::ChildWorkflowExecutionFailed,
+        history_event::Attributes::ChildWorkflowExecutionFailedEventAttributes(
+            ChildWorkflowExecutionFailedEventAttributes {
+                initiated_event_id,
+                started_event_id,
+                ..Default::default()
+            },
+        ),
+    );
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
+///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED
+///  6: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  7: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  8: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  9: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+pub fn single_child_workflow_start_fail(child_wf_id: &str) -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let initiated_event_id = t.add_get_event_id(
+        EventType::StartChildWorkflowExecutionInitiated,
+        Some(
+            history_event::Attributes::StartChildWorkflowExecutionInitiatedEventAttributes(
+                StartChildWorkflowExecutionInitiatedEventAttributes {
+                    workflow_id: child_wf_id.to_owned(),
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    t.add_get_event_id(
+        EventType::StartChildWorkflowExecutionFailed,
+        Some(
+            history_event::Attributes::StartChildWorkflowExecutionFailedEventAttributes(
+                StartChildWorkflowExecutionFailedEventAttributes {
+                    workflow_id: child_wf_id.to_owned(),
+                    initiated_event_id,
+                    cause: StartChildWorkflowExecutionFailedCause::WorkflowAlreadyExists as i32,
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
     t
 }

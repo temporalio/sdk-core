@@ -70,6 +70,7 @@ mod machine_coverage_report {
     use crate::machines::{
         activity_state_machine::ActivityMachine,
         cancel_workflow_state_machine::CancelWorkflowMachine,
+        child_workflow_state_machine::ChildWorkflowMachine,
         complete_workflow_state_machine::CompleteWorkflowMachine,
         continue_as_new_workflow_state_machine::ContinueAsNewWorkflowMachine,
         fail_workflow_state_machine::FailWorkflowMachine, timer_state_machine::TimerMachine,
@@ -102,6 +103,7 @@ mod machine_coverage_report {
         // Gather visualizations for all machines
         let mut activity = ActivityMachine::visualizer().to_owned();
         let mut timer = TimerMachine::visualizer().to_owned();
+        let mut child_wf = ChildWorkflowMachine::visualizer().to_owned();
         let mut complete_wf = CompleteWorkflowMachine::visualizer().to_owned();
         let mut wf_task = WorkflowTaskMachine::visualizer().to_owned();
         let mut fail_wf = FailWorkflowMachine::visualizer().to_owned();
@@ -116,6 +118,7 @@ mod machine_coverage_report {
             match machine.as_ref() {
                 m @ "ActivityMachine" => cover_transitions(m, &mut activity, coverage),
                 m @ "TimerMachine" => cover_transitions(m, &mut timer, coverage),
+                m @ "ChildWorkflowMachine" => cover_transitions(m, &mut child_wf, coverage),
                 m @ "CompleteWorkflowMachine" => cover_transitions(m, &mut complete_wf, coverage),
                 m @ "WorkflowTaskMachine" => cover_transitions(m, &mut wf_task, coverage),
                 m @ "FailWorkflowMachine" => cover_transitions(m, &mut fail_wf, coverage),
