@@ -53,13 +53,25 @@ pub mod coresdk {
     #[allow(clippy::module_inception)]
     pub mod activity_result {
         tonic::include_proto!("coresdk.activity_result");
+        use super::super::temporal::api::failure::v1::{
+            failure, CanceledFailureInfo, Failure as APIFailure,
+        };
         use super::common::Payload;
 
         impl ActivityResult {
             pub fn cancel_from_details(payload: Option<Payload>) -> Self {
                 Self {
-                    status: Some(activity_result::Status::Canceled(Cancelation {
-                        details: payload,
+                    status: Some(activity_result::Status::Cancelled(Cancellation {
+                        failure: Some(APIFailure {
+                            // CanceledFailure
+                            message: "Activity cancelled".to_string(),
+                            failure_info: Some(failure::FailureInfo::CanceledFailureInfo(
+                                CanceledFailureInfo {
+                                    details: payload.map(Into::into),
+                                },
+                            )),
+                            ..Default::default()
+                        }),
                     })),
                 }
             }

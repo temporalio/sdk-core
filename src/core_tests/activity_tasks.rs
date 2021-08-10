@@ -442,7 +442,7 @@ async fn activity_timeout_no_double_resolve() {
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Canceled(..)),
+                            status: Some(activity_result::Status::Cancelled(..)),
                         }),
                         ..
                     }
