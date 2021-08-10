@@ -21,7 +21,8 @@ use std::{
     time::Duration,
 };
 use tonic::{
-    transport::{Certificate, Channel, Endpoint, Identity}, Request, Status,
+    transport::{Certificate, Channel, Endpoint, Identity},
+    Request, Status,
 };
 use url::Url;
 use uuid::Uuid;
