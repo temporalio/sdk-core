@@ -146,9 +146,9 @@ pub struct MocksHolder<SG> {
 
 impl<SG> MocksHolder<SG> {
     pub fn worker_cfg(&mut self, task_q: &str, mutator: impl FnOnce(&mut WorkerConfig)) {
-        self.mock_pollers
-            .get_mut(task_q)
-            .map(|w| mutator(&mut w.config));
+        if let Some(w) = self.mock_pollers.get_mut(task_q) {
+            mutator(&mut w.config);
+        }
     }
 
     pub fn take_pollers(self) -> HashMap<String, MockWorker> {

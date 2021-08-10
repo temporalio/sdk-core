@@ -36,8 +36,6 @@ use tokio::sync::mpsc::UnboundedSender;
 ///
 /// It is intentionally free of any interactions with the server client to promote testability
 pub struct WorkflowTaskManager {
-    /// What task queue this task manager is responsible for
-    task_queue: String,
     /// Manages threadsafe access to workflow machine instances
     workflow_machines: WorkflowConcurrencyManager,
     /// Workflows may generate new activations immediately upon completion (ex: while replaying, or
@@ -146,12 +144,10 @@ macro_rules! machine_mut {
 
 impl WorkflowTaskManager {
     pub(crate) fn new(
-        task_queue: String,
         workflow_activations_update: UnboundedSender<WfActivationUpdate>,
         eviction_policy: WorkflowCachingPolicy,
     ) -> Self {
         Self {
-            task_queue,
             workflow_machines: WorkflowConcurrencyManager::new(),
             pending_activations: Default::default(),
             ready_buffered_wft: Default::default(),
@@ -170,9 +166,7 @@ impl WorkflowTaskManager {
         // NOTE: This all goes away with the handles-per-workflow poll approach.
         let maybe_act = self
             .pending_activations
-            .pop_first_matching(&self.task_queue, |rid| {
-                self.workflow_machines.get_activation(rid).is_none()
-            });
+            .pop_first_matching(|rid| self.workflow_machines.get_activation(rid).is_none());
         if let Some(act) = maybe_act.as_ref() {
             self.insert_outstanding_activation(act)?;
             self.cache_manager.lock().touch(&act.run_id);
@@ -193,12 +187,12 @@ impl WorkflowTaskManager {
     ///
     /// Returns, if found, the number of attempts on the current workflow task
     pub fn request_eviction(&self, run_id: &str) -> Option<u32> {
-        if let Some(tq) = self.workflow_machines.task_queue_for(run_id) {
+        if self.workflow_machines.exists(run_id) {
             if !self.activation_has_eviction(run_id) {
                 debug!(%run_id, "Eviction requested for");
                 // Queue up an eviction activation
                 self.pending_activations
-                    .push(create_evict_activation(run_id.to_string()), tq);
+                    .push(create_evict_activation(run_id.to_string()));
                 let _ = self
                     .workflow_activations_update
                     .send(WfActivationUpdate::NewPendingActivation);
@@ -460,7 +454,6 @@ impl WorkflowTaskManager {
             .workflow_machines
             .create_or_update(
                 &run_id,
-                wft_info.task_queue.clone(),
                 HistoryUpdate::new(
                     HistoryPaginator::new(
                         poll_wf_resp.history,
@@ -501,11 +494,7 @@ impl WorkflowTaskManager {
             .get_next_activation()
             .boxed())?;
         if !next_activation.jobs.is_empty() {
-            let task_q = self
-                .workflow_machines
-                .task_queue_for(run_id)
-                .expect("Workflow run is present in cache if there is a new pending activation");
-            self.pending_activations.push(next_activation, task_q);
+            self.pending_activations.push(next_activation);
             let _ = self
                 .workflow_activations_update
                 .send(WfActivationUpdate::NewPendingActivation);
@@ -536,8 +525,7 @@ impl WorkflowTaskManager {
                 if let Some(ref mut ot) = self.workflow_machines.get_task_mut(run_id)?.deref_mut() {
                     if let Some(query) = ot.legacy_query.take() {
                         let na = create_query_activation(run_id.to_string(), [query]);
-                        self.pending_activations
-                            .push(na, ot.info.task_queue.clone());
+                        self.pending_activations.push(na);
                         let _ = self
                             .workflow_activations_update
                             .send(WfActivationUpdate::NewPendingActivation);

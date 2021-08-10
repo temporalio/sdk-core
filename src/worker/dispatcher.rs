@@ -28,10 +28,10 @@ impl WorkerDispatcher {
         tq: String,
         worker: Worker,
     ) -> Result<(), WorkerRegistrationError> {
-        if let Some(_) = self.workers.load().get(&tq) {
+        if self.workers.load().get(&tq).is_some() {
             return Err(WorkerRegistrationError::WorkerAlreadyRegisteredForQueue(tq));
         }
-        let tq = &tq.clone();
+        let tq = &tq;
         let worker = WorkerRefCt::new(worker);
         self.workers.rcu(|map| {
             let mut map = HashMap::clone(map);
@@ -127,7 +127,7 @@ impl Drop for WorkerRefCt {
     fn drop(&mut self) {
         if let Some(arc) = &self.inner {
             // We wait until 2 rather than 1 because we ourselves still have an Arc
-            if Arc::strong_count(&arc) == 2 {
+            if Arc::strong_count(arc) == 2 {
                 self.notify.notify_one()
             }
         }

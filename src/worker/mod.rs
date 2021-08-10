@@ -145,7 +145,7 @@ impl Worker {
             server_gateway: sg.clone(),
             sticky_name: sticky_queue_name,
             wf_task_poll_buffer: wft_poller,
-            wft_manager: WorkflowTaskManager::new(config.task_queue.clone(), wau_tx, cache_policy),
+            wft_manager: WorkflowTaskManager::new(wau_tx, cache_policy),
             at_task_mgr: act_poller
                 .map(|ap| WorkerActivityTasks::new(config.max_outstanding_activities, ap, sg)),
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),

@@ -25,7 +25,6 @@ pub(crate) struct WorkflowConcurrencyManager {
 
 struct ManagedRun {
     wfm: Mutex<Option<WorkflowManager>>,
-    task_queue: String,
     wft: Option<OutstandingTask>,
     activation: Option<OutstandingActivation>,
     /// If set, it indicates there is a buffered poll response from the server that applies to this
@@ -36,10 +35,9 @@ struct ManagedRun {
 }
 
 impl ManagedRun {
-    fn new(wfm: WorkflowManager, task_queue: String) -> Self {
+    fn new(wfm: WorkflowManager) -> Self {
         Self {
             wfm: Mutex::new(Some(wfm)),
-            task_queue,
             wft: None,
             activation: None,
             buffered_resp: None,
@@ -171,14 +169,13 @@ impl WorkflowConcurrencyManager {
         }
     }
 
-    pub fn task_queue_for(&self, run_id: &str) -> Option<String> {
-        self.runs.read().get(run_id).map(|mr| mr.task_queue.clone())
+    pub fn exists(&self, run_id: &str) -> bool {
+        self.runs.read().get(run_id).is_some()
     }
 
     pub async fn create_or_update(
         &self,
         run_id: &str,
-        task_queue: String,
         history: HistoryUpdate,
         workflow_execution: WorkflowExecution,
     ) -> Result<WfActivation> {
@@ -208,7 +205,7 @@ impl WorkflowConcurrencyManager {
                     } else {
                         self.runs
                             .write()
-                            .insert(run_id.to_string(), ManagedRun::new(wfm, task_queue));
+                            .insert(run_id.to_string(), ManagedRun::new(wfm));
                         Ok(activation)
                     }
                 }
@@ -276,7 +273,6 @@ mod tests {
         let res = mgr
             .create_or_update(
                 "some_run_id",
-                "some_tq".to_string(),
                 HistoryUpdate::new_from_events(vec![], 0),
                 Default::default(),
             )

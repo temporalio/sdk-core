@@ -465,7 +465,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         async {
             sleep(Duration::from_millis(500)).await;
             // Reply to the first one, finally
-            core.complete_execution(&task_q, &wf_task.run_id).await;
+            core.complete_execution(task_q, &wf_task.run_id).await;
         }
     );
     assert_matches!(
@@ -479,5 +479,5 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         .unwrap();
     // Do it all over again, without timing out this time
     let wf_task = poll_sched_act_poll().await;
-    core.complete_execution(&task_q, &wf_task.run_id).await;
+    core.complete_execution(task_q, &wf_task.run_id).await;
 }

@@ -215,10 +215,8 @@ where
     async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError> {
         // TODO: Dedupe worker access stuff
         let worker = self.workers.get(task_queue);
-        if worker.is_none() {
-            if self.shutdown_requested.load(Ordering::Relaxed) {
-                return Err(PollWfError::ShutDown);
-            }
+        if worker.is_none() && self.shutdown_requested.load(Ordering::Relaxed) {
+            return Err(PollWfError::ShutDown);
         }
         let worker = worker
             .as_deref()
@@ -256,7 +254,7 @@ where
         if let Some(worker) = worker.as_deref() {
             worker.complete_workflow_activation(completion).await
         } else {
-            return Err(CompleteWfError::NoWorkerForQueue(completion.task_queue))?;
+            Err(CompleteWfError::NoWorkerForQueue(completion.task_queue))
         }
     }
 

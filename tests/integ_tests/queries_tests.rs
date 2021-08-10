@@ -282,7 +282,7 @@ async fn repros_query_dropped_on_floor() {
                 }
             ) {
                 // If we get the timer firing after replay, be done.
-                core.complete_execution(&task_q, &task.run_id).await;
+                core.complete_execution(task_q, &task.run_id).await;
             }
 
             // There should be a query job (really, there should be both... server only sends one?)
