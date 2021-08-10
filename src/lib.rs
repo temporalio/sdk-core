@@ -56,6 +56,8 @@ use std::sync::{
 
 #[cfg(test)]
 use crate::test_help::MockWorker;
+use crate::worker::Worker;
+use std::ops::Deref;
 
 lazy_static::lazy_static! {
     /// A process-wide unique string, which will be different on every startup
@@ -213,14 +215,7 @@ where
 
     #[instrument(skip(self))]
     async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError> {
-        // TODO: Dedupe worker access stuff
-        let worker = self.workers.get(task_queue);
-        if worker.is_none() && self.shutdown_requested.load(Ordering::Relaxed) {
-            return Err(PollWfError::ShutDown);
-        }
-        let worker = worker
-            .as_deref()
-            .ok_or_else(|| PollWfError::NoWorkerForQueue(task_queue.to_owned()))?;
+        let worker = self.worker(task_queue)?;
         worker.next_workflow_task().await
     }
 
@@ -233,11 +228,7 @@ where
             if self.shutdown_requested.load(Ordering::Relaxed) {
                 return Err(PollActivityError::ShutDown);
             }
-            let worker = self.workers.get(task_queue);
-            let worker = worker
-                .as_deref()
-                .ok_or_else(|| PollActivityError::NoWorkerForQueue(task_queue.to_owned()))?;
-
+            let worker = self.worker(task_queue)?;
             match worker.activity_poll().await.transpose() {
                 Some(r) => break r,
                 None => continue,
@@ -250,12 +241,8 @@ where
         &self,
         completion: WfActivationCompletion,
     ) -> Result<(), CompleteWfError> {
-        let worker = self.workers.get(&completion.task_queue);
-        if let Some(worker) = worker.as_deref() {
-            worker.complete_workflow_activation(completion).await
-        } else {
-            Err(CompleteWfError::NoWorkerForQueue(completion.task_queue))
-        }
+        let worker = self.worker(&completion.task_queue)?;
+        worker.complete_workflow_activation(completion).await
     }
 
     #[instrument(skip(self))]
@@ -273,31 +260,19 @@ where
             });
         };
 
-        let worker = self.workers.get(&completion.task_queue);
-        let worker = if let Some(w) = worker.as_deref() {
-            w
-        } else {
-            return Err(CompleteActivityError::NoWorkerForQueue(
-                completion.task_queue,
-            ));
-        };
-
+        let worker = self.worker(&completion.task_queue)?;
         worker.complete_activity(task_token, status).await
     }
 
     fn record_activity_heartbeat(&self, details: ActivityHeartbeat) {
-        let workers = self.workers.clone();
-        if let Some(w) = workers.get(&details.task_queue) {
+        if let Ok(w) = self.worker(&details.task_queue) {
             w.record_heartbeat(details);
         }
     }
 
     fn request_workflow_eviction(&self, task_queue: &str, run_id: &str) {
-        let workers = self.workers.clone();
-        let task_queue = task_queue.to_owned();
-        let run_id = run_id.to_owned();
-        if let Some(w) = workers.get(&task_queue) {
-            w.request_wf_eviction(&run_id);
+        if let Ok(w) = self.worker(task_queue) {
+            w.request_wf_eviction(run_id);
         }
     }
 
@@ -330,8 +305,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
     /// Allow construction of workers with mocked poll responses during testing
     #[cfg(test)]
     pub(crate) fn reg_worker_sync(&mut self, worker: MockWorker) {
-        use crate::worker::Worker;
-
         let sticky_q = self.get_sticky_q_name_for_worker(&worker.config);
         let tq = worker.config.task_queue.clone();
         let worker = Worker::new_with_pollers(
@@ -357,4 +330,18 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             None
         }
     }
+
+    fn worker(&self, tq: &str) -> Result<impl Deref<Target = Worker>, WorkerLookupErr> {
+        let worker = self.workers.get(tq);
+        if worker.is_none() && self.shutdown_requested.load(Ordering::Relaxed) {
+            return Err(WorkerLookupErr::Shutdown(tq.to_owned()));
+        }
+        let worker = worker.ok_or_else(|| WorkerLookupErr::NoWorker(tq.to_owned()))?;
+        Ok(worker)
+    }
+}
+
+enum WorkerLookupErr {
+    Shutdown(String),
+    NoWorker(String),
 }
