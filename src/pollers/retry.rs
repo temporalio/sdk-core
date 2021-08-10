@@ -66,7 +66,7 @@ where
             | Code::OutOfRange
             | Code::Unimplemented
             | Code::Unavailable
-            | Code::Unauthenticated => RetryPolicy::WaitRetry(Duration::from_secs(5)),
+            | Code::Unauthenticated => RetryPolicy::WaitRetry(Duration::from_millis(200)),
             _ => RetryPolicy::ForwardError(e),
         }
     }
