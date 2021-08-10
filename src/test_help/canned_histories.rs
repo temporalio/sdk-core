@@ -1381,6 +1381,8 @@ pub fn activity_double_resolve_repro() -> TestHistoryBuilder {
 /// 10: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED
 /// 11: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
 /// 12: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 13: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 14: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
 pub fn single_child_workflow(child_wf_id: &str) -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -1423,7 +1425,8 @@ pub fn single_child_workflow(child_wf_id: &str) -> TestHistoryBuilder {
             },
         ),
     );
-    t.add_workflow_task_scheduled_and_started();
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
     t
 }
 
@@ -1439,6 +1442,8 @@ pub fn single_child_workflow(child_wf_id: &str) -> TestHistoryBuilder {
 /// 10: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED
 /// 11: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
 /// 12: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 13: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 14: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
 pub fn single_child_workflow_fail(child_wf_id: &str) -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -1480,7 +1485,8 @@ pub fn single_child_workflow_fail(child_wf_id: &str) -> TestHistoryBuilder {
             },
         ),
     );
-    t.add_workflow_task_scheduled_and_started();
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
     t
 }
 
@@ -1492,6 +1498,8 @@ pub fn single_child_workflow_fail(child_wf_id: &str) -> TestHistoryBuilder {
 ///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED
 ///  6: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
 ///  7: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  8: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  9: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
 pub fn single_child_workflow_start_fail(child_wf_id: &str) -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -1520,6 +1528,7 @@ pub fn single_child_workflow_start_fail(child_wf_id: &str) -> TestHistoryBuilder
             ),
         ),
     );
-    t.add_workflow_task_scheduled_and_started();
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
     t
 }

@@ -296,6 +296,12 @@ impl Future for WorkflowFuture {
                 }
             }
 
+            // TODO: deadlock detector
+            // Check if there's nothing to unblock and workflow has not completed.
+            // This is different from the assertion that was here before that checked that WF did
+            // not produce any commands which is completely viable in the case WF is waiting on
+            // multiple completions.
+
             self.outgoing_completions
                 .send(WfActivationCompletion::from_cmds(activation_cmds, run_id))
                 .expect("Completion channel intact");

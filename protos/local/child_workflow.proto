@@ -38,6 +38,7 @@ message Failure {
  * in case its parent is closed.
  */
 enum ParentClosePolicy {
+    /** Let's the server set the default. */
     PARENT_CLOSE_POLICY_UNSPECIFIED = 0;
     /** Terminate means terminating the child workflow. */
     PARENT_CLOSE_POLICY_TERMINATE = 1;
@@ -57,13 +58,13 @@ enum StartChildWorkflowExecutionFailedCause {
  * Controls at which point to report back to lang when it cancels a child workflow
  */
 enum ChildWorkflowCancellationType {
-    /// Do not request cancellation of the child workflow
+    /** Do not request cancellation of the child workflow if already scheduled */
     ABANDON = 0;
-    /// Initiate a cancellation request and immediately report cancellation to the parent.
+    /** Initiate a cancellation request and immediately report cancellation to the parent. */
     TRY_CANCEL = 1;
-    /// Wait for child cancellation completion.
+    /** Wait for child cancellation completion. */
     WAIT_CANCELLATION_COMPLETED = 2;
-    /// Request cancellation of the child and wait for confirmation that the request was received.
+    /** Request cancellation of the child and wait for confirmation that the request was received. */
     WAIT_CANCELLATION_REQUESTED = 3;
 }
 
