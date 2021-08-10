@@ -1,27 +1,19 @@
-use crate::pollers::gateway::{ServerGateway, ServerGatewayApis};
+use crate::pollers::gateway::ServerGatewayApis;
 use crate::{
     pollers::Result,
     protos::{
         coresdk::common::Payload,
         coresdk::workflow_commands::QueryResult,
         temporal::api::{
-            common::v1::{Payloads, WorkflowExecution, WorkflowType},
-            enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
-            failure::v1::Failure,
-            query::v1::{WorkflowQuery, WorkflowQueryResult},
-            taskqueue::v1::TaskQueue,
-            workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
+            common::v1::Payloads, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
+            query::v1::WorkflowQuery, workflowservice::v1::*,
         },
     },
     protosext::WorkflowTaskCompletion,
     task_token::TaskToken,
-    CoreInitError,
 };
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
-use std::{
-    fmt::{Debug, Formatter},
-    time::Duration,
-};
+use std::{fmt::Debug, time::Duration};
 use tonic::Code;
 
 #[derive(Debug)]

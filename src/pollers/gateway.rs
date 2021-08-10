@@ -21,8 +21,7 @@ use std::{
     time::Duration,
 };
 use tonic::{
-    transport::{Certificate, Channel, Endpoint, Identity},
-    Code, Request, Status,
+    transport::{Certificate, Channel, Endpoint, Identity}, Request, Status,
 };
 use url::Url;
 use uuid::Uuid;
@@ -31,7 +30,7 @@ use crate::pollers::retry::{RetryGateway, TonicErrorHandler};
 use crate::protos::coresdk::PayloadsExt;
 #[cfg(test)]
 use futures::Future;
-use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
+
 use tonic::codegen::InterceptedService;
 
 /// Options for the connection to the temporal server
