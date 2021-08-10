@@ -17,7 +17,7 @@ use crate::{
 };
 use futures::FutureExt;
 use std::time::Duration;
-use tokio::time::sleep;
+use tokio::{sync::Barrier, time::sleep};
 
 #[tokio::test]
 async fn after_shutdown_server_is_not_polled() {
@@ -35,6 +35,10 @@ async fn after_shutdown_server_is_not_polled() {
     );
 }
 
+// Better than cloning a billion arcs...
+lazy_static::lazy_static! {
+    static ref BARR: Barrier = Barrier::new(3);
+}
 #[tokio::test]
 async fn shutdown_interrupts_both_polls() {
     let mut mock_gateway = MockManualGateway::new();
@@ -43,6 +47,7 @@ async fn shutdown_interrupts_both_polls() {
         .times(1)
         .returning(move |_| {
             async move {
+                BARR.wait().await;
                 sleep(Duration::from_secs(1)).await;
                 Ok(PollActivityTaskQueueResponse {
                     task_token: vec![1],
@@ -57,6 +62,7 @@ async fn shutdown_interrupts_both_polls() {
         .times(1)
         .returning(move |_| {
             async move {
+                BARR.wait().await;
                 sleep(Duration::from_secs(1)).await;
                 let t = canned_histories::single_timer("hi");
                 Ok(hist_to_poll_resp(
@@ -98,8 +104,7 @@ async fn shutdown_interrupts_both_polls() {
         },
         async {
             // Give polling a bit to get stuck, then shutdown
-            // TODO: Barrier?
-            sleep(Duration::from_millis(200)).await;
+            BARR.wait().await;
             core.shutdown().await;
         }
     };
