@@ -261,13 +261,7 @@ async fn worker_shutdown_during_poll_doesnt_deadlock(
         let _ = tx.send(true);
     };
     let (pollres, _) = tokio::join!(pollfut, shutdownfut);
-    // Polls initiated before shutdown completed work
-    assert!(pollres.is_ok());
-    // Polls initiated after shutdown completed do not
-    assert_matches!(
-        core.poll_workflow_task("q1").await.unwrap_err(),
-        PollWfError::ShutDown
-    );
+    assert_matches!(pollres.unwrap_err(), PollWfError::ShutDown);
     core.shutdown().await;
 }
 
@@ -289,13 +283,7 @@ async fn worker_shutdown_during_multiple_poll_doesnt_deadlock(
         let _ = tx.send(true);
     };
     let (pollres, poll2res, _) = tokio::join!(pollfut, poll2fut, shutdownfut);
-    // Polls initiated before shutdown completed work
-    assert!(pollres.is_ok());
-    // Polls initiated after shutdown completed do not
-    assert_matches!(
-        core.poll_workflow_task("q1").await.unwrap_err(),
-        PollWfError::ShutDown
-    );
+    assert_matches!(pollres.unwrap_err(), PollWfError::ShutDown);
     // Worker 2 poll should not be an error
     poll2res.unwrap();
     core.shutdown().await;

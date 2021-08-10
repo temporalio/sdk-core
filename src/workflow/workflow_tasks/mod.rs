@@ -184,7 +184,6 @@ impl WorkflowTaskManager {
         self.ready_buffered_wft.pop()
     }
 
-    #[cfg(test)]
     pub fn outstanding_wft(&self) -> usize {
         self.workflow_machines.outstanding_wft()
     }

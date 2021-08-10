@@ -253,7 +253,6 @@ impl WorkflowConcurrencyManager {
         val.map(|v| v.buffered_resp.take()).flatten()
     }
 
-    #[cfg(test)]
     pub fn outstanding_wft(&self) -> usize {
         self.runs
             .read()

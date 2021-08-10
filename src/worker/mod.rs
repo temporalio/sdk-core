@@ -174,9 +174,8 @@ impl Worker {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn outstanding_workflow_tasks(&self) -> usize {
-        self.config.max_outstanding_workflow_tasks - self.workflows_semaphore.available_permits()
+        self.wft_manager.outstanding_wft()
     }
 
     /// Wait until not at the outstanding activity limit, and then poll this worker's task queue for

@@ -345,7 +345,8 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
         );
         Arc::get_mut(&mut self.workers)
             .expect("No other worker dispatch yet")
-            .store_worker_mut(tq, worker);
+            .store_prebuilt_worker(tq, worker)
+            .unwrap();
     }
 
     fn get_sticky_q_name_for_worker(&self, config: &WorkerConfig) -> Option<String> {
