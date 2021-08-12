@@ -102,11 +102,11 @@ pub mod coresdk {
         }
 
         pub(crate) fn build_has_change_marker_details(
-            change_id: &str,
+            patch_id: &str,
             deprecated: bool,
         ) -> HashMap<String, Payloads> {
             let mut hm = HashMap::new();
-            hm.insert("change_id".to_string(), change_id.as_bytes().into());
+            hm.insert("patch_id".to_string(), patch_id.as_bytes().into());
             let deprecated = deprecated as u8;
             hm.insert("deprecated".to_string(), (&[deprecated]).into());
             hm
@@ -115,8 +115,7 @@ pub mod coresdk {
         pub(crate) fn decode_change_marker_details(
             details: &HashMap<String, Payloads>,
         ) -> Option<(String, bool)> {
-            let name =
-                std::str::from_utf8(&details.get("change_id")?.payloads.get(0)?.data).ok()?;
+            let name = std::str::from_utf8(&details.get("patch_id")?.payloads.get(0)?.data).ok()?;
             let deprecated = *details.get("deprecated")?.payloads.get(0)?.data.get(0)? != 0;
             Some((name.to_string(), deprecated))
         }
@@ -217,8 +216,8 @@ pub mod coresdk {
                         wf_activation_job::Variant::ResolveActivity(_) => {
                             write!(f, "ResolveActivity")
                         }
-                        wf_activation_job::Variant::NotifyHasChange(_) => {
-                            write!(f, "NotifyHasChange")
+                        wf_activation_job::Variant::NotifyHasPatch(_) => {
+                            write!(f, "NotifyHasPatch")
                         }
                         wf_activation_job::Variant::ResolveChildWorkflowExecutionStart(_) => {
                             write!(f, "ResolveChildWorkflowExecutionStart")
@@ -303,8 +302,8 @@ pub mod coresdk {
                         workflow_command::Variant::CancelWorkflowExecution(_) => {
                             write!(f, "CancelWorkflowExecution")
                         }
-                        workflow_command::Variant::SetChangeMarker(_) => {
-                            write!(f, "SetChangeMarker")
+                        workflow_command::Variant::SetPatchMarker(_) => {
+                            write!(f, "SetPatchMarker")
                         }
                         workflow_command::Variant::StartChildWorkflowExecution(_) => {
                             write!(f, "StartChildWorkflowExecution")

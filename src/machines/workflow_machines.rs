@@ -6,8 +6,8 @@ use crate::{
         child_workflow_state_machine::new_child_workflow,
         complete_workflow_state_machine::complete_workflow,
         continue_as_new_workflow_state_machine::continue_as_new,
-        fail_workflow_state_machine::fail_workflow, timer_state_machine::new_timer,
-        version_state_machine::has_change, workflow_task_state_machine::WorkflowTaskMachine,
+        fail_workflow_state_machine::fail_workflow, patch_state_machine::has_change,
+        timer_state_machine::new_timer, workflow_task_state_machine::WorkflowTaskMachine,
         NewMachineWithCommand, ProtoCommand, TemporalStateMachine, WFCommand,
     },
     protos::{
@@ -15,7 +15,7 @@ use crate::{
             common::Payload,
             workflow_activation::{
                 wf_activation_job::{self, Variant},
-                NotifyHasChange, StartWorkflow, UpdateRandomSeed, WfActivation,
+                NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WfActivation,
             },
             PayloadsExt,
         },
@@ -80,7 +80,7 @@ pub(crate) struct WorkflowMachines {
     /// Old note: It is a queue as commands can be added (due to marker based commands) while
     /// iterating over already added commands.
     current_wf_task_commands: VecDeque<CommandAndMachine>,
-    /// Information about change markers we have already seen while replaying history
+    /// Information about patch markers we have already seen while replaying history
     encountered_change_markers: HashMap<String, ChangeInfo>,
 
     /// The workflow that is being driven by this instance of the machines
@@ -487,22 +487,22 @@ impl WorkflowMachines {
             self.handle_event(event, next_event.is_some())?;
         }
 
-        // Scan through to the next WFT, searching for any change markers, so that we can
+        // Scan through to the next WFT, searching for any patch markers, so that we can
         // pre-resolve them.
         for e in self.last_history_from_server.peek_next_wft_sequence() {
-            if let Some((change_id, deprecated)) = e.get_changed_marker_details() {
+            if let Some((patch_id, deprecated)) = e.get_changed_marker_details() {
                 self.encountered_change_markers.insert(
-                    change_id.clone(),
+                    patch_id.clone(),
                     ChangeInfo {
                         deprecated,
                         created_command: false,
                     },
                 );
-                // Found a change marker
+                // Found a patch marker
                 self.drive_me
-                    .send_job(wf_activation_job::Variant::NotifyHasChange(
-                        NotifyHasChange { change_id },
-                    ));
+                    .send_job(wf_activation_job::Variant::NotifyHasPatch(NotifyHasPatch {
+                        patch_id,
+                    }));
             }
         }
 
@@ -635,26 +635,25 @@ impl WorkflowMachines {
                     let cancm = self.add_new_command_machine(cancel_workflow(attrs));
                     self.current_wf_task_commands.push_back(cancm);
                 }
-                WFCommand::SetChangeMarker(attrs) => {
+                WFCommand::SetPatchMarker(attrs) => {
                     // Do not create commands for change IDs that we have already created commands
                     // for.
-                    if !matches!(self.encountered_change_markers.get(&attrs.change_id),
+                    if !matches!(self.encountered_change_markers.get(&attrs.patch_id),
                                 Some(ChangeInfo {created_command, ..})
                                     if *created_command)
                     {
                         let verm = self.add_new_command_machine(has_change(
-                            attrs.change_id.clone(),
+                            attrs.patch_id.clone(),
                             self.replaying,
                             attrs.deprecated,
                         ));
                         self.current_wf_task_commands.push_back(verm);
 
-                        if let Some(ci) = self.encountered_change_markers.get_mut(&attrs.change_id)
-                        {
+                        if let Some(ci) = self.encountered_change_markers.get_mut(&attrs.patch_id) {
                             ci.created_command = true;
                         } else {
                             self.encountered_change_markers.insert(
-                                attrs.change_id,
+                                attrs.patch_id,
                                 ChangeInfo {
                                     deprecated: attrs.deprecated,
                                     created_command: true,
@@ -755,7 +754,7 @@ enum ChangeMarkerOutcome {
     Normal,
 }
 
-/// Special handling for change markers, when handling command events as in
+/// Special handling for patch markers, when handling command events as in
 /// [WorkflowMachines::handle_command_event]
 fn change_marker_handling(
     event: &HistoryEvent,
@@ -767,11 +766,11 @@ fn change_marker_handling(
             // Is deprecated. We can simply ignore this event, as deprecated change
             // markers are allowed without matching changed calls.
             if changed_info.1 {
-                debug!("Deprecated change marker tried against wrong machine, skipping.");
+                debug!("Deprecated patch marker tried against wrong machine, skipping.");
                 return Ok(ChangeMarkerOutcome::SkipEvent);
             }
             return Err(WFMachinesError::Nondeterminism(format!(
-                "Non-deprecated change marker encountered for change {}, \
+                "Non-deprecated patch marker encountered for change {}, \
                             but there is no corresponding change command!",
                 changed_info.0
             )));

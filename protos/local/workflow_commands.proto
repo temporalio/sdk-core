@@ -23,7 +23,7 @@ message WorkflowCommand {
         FailWorkflowExecution fail_workflow_execution = 7;
         ContinueAsNewWorkflowExecution continue_as_new_workflow_execution = 8;
         CancelWorkflowExecution cancel_workflow_execution = 9;
-        SetChangeMarker set_change_marker = 10;
+        SetPatchMarker set_patch_marker = 10;
         StartChildWorkflowExecution start_child_workflow_execution = 11;
         RequestCancelExternalWorkflowExecution request_cancel_external_workflow_execution = 12;
         SignalExternalWorkflowExecution signal_external_workflow_execution = 13;
@@ -138,12 +138,12 @@ message ContinueAsNewWorkflowExecution {
 /// containing a cancellation job.
 message CancelWorkflowExecution {}
 
-/// A request to set/check version information for a certain change.
-message SetChangeMarker {
-    // A user-chosen identifier for this version check. If the same identifier is used in multiple
-    // places in the code, those places are considered to be versioned as one unit. IE: The check
-    // call will return the same result for all of them
-    string change_id = 1;
+/// A request to set/check if a certain patch is present or not
+message SetPatchMarker {
+    // A user-chosen identifier for this patch. If the same identifier is used in multiple places in
+    // the code, those places are considered to be versioned as one unit. IE: The check call will
+    // return the same result for all of them
+    string patch_id = 1;
     // Can be set to true to indicate that branches using this change are being removed, and all
     // future worker deployments will only have the "with change" code in them.
     bool deprecated = 2;

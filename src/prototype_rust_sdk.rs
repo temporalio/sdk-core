@@ -121,9 +121,9 @@ impl TestRustWorker {
 
                 // If the activation is to start a workflow, create a new workflow driver for it,
                 // using the function associated with that workflow id
-                if let [WfActivationJob {
+                if let Some(WfActivationJob {
                     variant: Some(Variant::StartWorkflow(sw)),
-                }] = activation.jobs.as_slice()
+                }) = activation.jobs.get(0)
                 {
                     let wf_function = self
                         .workflow_fns
@@ -151,7 +151,8 @@ impl TestRustWorker {
                 // The activation is expected to apply to some workflow we know about. Use it to
                 // unblock things and advance the workflow.
                 if let Some(tx) = self.workflows.get_mut(&activation.run_id) {
-                    tx.send(activation).unwrap();
+                    tx.send(activation)
+                        .expect("Workflow should exist if we're sending it an activation");
                 } else {
                     bail!("Got activation for unknown workflow");
                 };
