@@ -73,6 +73,8 @@ pub(super) enum ChildWorkflowCommand {
     Complete(Option<Payloads>),
     #[display(fmt = "Fail")]
     Fail(Failure),
+    #[display(fmt = "Cancel")]
+    Cancel(Failure),
     #[display(fmt = "StartFail")]
     StartFail(StartChildWorkflowExecutionFailedCause),
     #[display(fmt = "StartCancel")]
@@ -244,7 +246,7 @@ impl Started {
                 ChildWorkflowMachineTransition::ok(vec![], Cancelled::default())
             }
             _ => ChildWorkflowMachineTransition::ok(
-                vec![ChildWorkflowCommand::Fail(Failure {
+                vec![ChildWorkflowCommand::Cancel(Failure {
                     message: "Child Workflow execution cancelled before scheduled".to_owned(),
                     cause: Some(Box::new(Failure {
                         failure_info: Some(FailureInfo::CanceledFailureInfo(
@@ -509,6 +511,17 @@ impl WFMachinesAdapter for ChildWorkflowMachine {
                     workflow_id: self.shared_state.workflow_id.clone(),
                     result: Some(ChildWorkflowResult {
                         status: Some(ChildWorkflowStatus::Failed(wfr::Failure {
+                            failure: Some(failure),
+                        })),
+                    }),
+                }
+                .into()]
+            }
+            ChildWorkflowCommand::Cancel(failure) => {
+                vec![ResolveChildWorkflowExecution {
+                    workflow_id: self.shared_state.workflow_id.clone(),
+                    result: Some(ChildWorkflowResult {
+                        status: Some(ChildWorkflowStatus::Cancelled(wfr::Cancellation {
                             failure: Some(failure),
                         })),
                     }),

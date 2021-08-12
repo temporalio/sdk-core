@@ -346,7 +346,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
             variant: Some(wf_activation_job::Variant::ResolveActivity(
                 ResolveActivity {
                     result: Some(ActivityResult {
-                        status: Some(activity_result::activity_result::Status::Canceled(_))
+                        status: Some(activity_result::activity_result::Status::Cancelled(_))
                     }),
                     ..
                 }
@@ -508,11 +508,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: activity_task.task_token,
         task_queue: task_q.to_string(),
-        result: Some(ActivityResult {
-            status: Some(activity_result::activity_result::Status::Canceled(
-                activity_result::Cancelation { details: None },
-            )),
-        }),
+        result: Some(ActivityResult::cancel_from_details(None)),
     })
     .await
     .unwrap();
