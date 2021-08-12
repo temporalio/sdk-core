@@ -5,7 +5,7 @@ use crate::{
         common::Payload,
         workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
         workflow_commands::{
-            workflow_command, ScheduleActivity, SetChangeMarker, StartChildWorkflowExecution,
+            workflow_command, ScheduleActivity, SetPatchMarker, StartChildWorkflowExecution,
             StartTimer,
         },
     },
@@ -172,27 +172,27 @@ impl WfContext {
         ))
     }
 
-    /// Check (or record) that this workflow history was created with the provided change id
-    pub fn has_change(&self, change_id: &str) -> bool {
-        self.has_change_impl(change_id, false)
+    /// Check (or record) that this workflow history was created with the provided patch
+    pub fn patched(&self, patch_id: &str) -> bool {
+        self.patch_impl(patch_id, false)
     }
 
-    /// Record that this workflow history was created with the provided change id, and it is being
+    /// Record that this workflow history was created with the provided patch, and it is being
     /// phased out.
-    pub fn has_change_deprecated(&self, change_id: &str) {
-        self.has_change_impl(change_id, true);
+    pub fn deprecate_patch(&self, patch_id: &str) {
+        self.patch_impl(patch_id, true);
     }
 
-    fn has_change_impl(&self, change_id: &str, deprecated: bool) -> bool {
+    fn patch_impl(&self, patch_id: &str, deprecated: bool) -> bool {
         self.send(
-            workflow_command::Variant::SetChangeMarker(SetChangeMarker {
-                change_id: change_id.to_string(),
+            workflow_command::Variant::SetPatchMarker(SetPatchMarker {
+                patch_id: patch_id.to_string(),
                 deprecated,
             })
             .into(),
         );
         // See if we already know about the status of this change
-        if let Some(present) = self.shared.read().changes.get(change_id) {
+        if let Some(present) = self.shared.read().changes.get(patch_id) {
             return *present;
         }
 
@@ -203,7 +203,7 @@ impl WfContext {
         self.shared
             .write()
             .changes
-            .insert(change_id.to_string(), res);
+            .insert(patch_id.to_string(), res);
 
         res
     }
