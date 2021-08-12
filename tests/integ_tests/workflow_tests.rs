@@ -1,8 +1,8 @@
 mod activities;
 mod cancel_wf;
-mod changes;
 mod child_workflows;
 mod continue_as_new;
+mod patches;
 mod stickyness;
 mod timers;
 

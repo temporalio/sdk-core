@@ -103,3 +103,33 @@ async fn can_add_change_markers() {
     worker.run_until_done().await.unwrap();
     starter.shutdown().await;
 }
+
+static DID_DIE_2: AtomicBool = AtomicBool::new(false);
+pub async fn replay_with_change_marker_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+    assert!(ctx.patched(MY_PATCH_ID));
+    ctx.timer(StartTimer {
+        timer_id: "always_timer".to_string(),
+        start_to_fire_timeout: Some(Duration::from_millis(200).into()),
+    })
+    .await;
+    if !DID_DIE_2.load(Ordering::Acquire) {
+        DID_DIE_2.store(true, Ordering::Release);
+        ctx.force_task_fail(anyhow::anyhow!("i'm ded"));
+    }
+    Ok(().into())
+}
+
+#[tokio::test]
+async fn replaying_with_patch_marker() {
+    let wf_name = "replaying_with_patch_marker";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), replay_with_change_marker_wf);
+
+    worker
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    starter.shutdown().await;
+}
