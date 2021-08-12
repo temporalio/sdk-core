@@ -8,7 +8,7 @@ use crate::{
     },
     protos::{
         coresdk::{
-            activity_result::{self as ar, activity_result, ActivityResult},
+            activity_result::{self as ar, activity_result, ActivityResult, Cancellation},
             common::Payload,
             workflow_activation::ResolveActivity,
             workflow_commands::{ActivityCancellationType, ScheduleActivity},
@@ -16,8 +16,11 @@ use crate::{
         temporal::api::{
             command::v1::{command, Command, RequestCancelActivityTaskCommandAttributes},
             common::v1::{ActivityType, Payloads},
-            enums::v1::{CommandType, EventType},
-            failure::v1::{self as failure, failure::FailureInfo, ActivityFailureInfo, Failure},
+            enums::v1::{CommandType, EventType, RetryState},
+            failure::v1::{
+                self as failure, failure::FailureInfo, ActivityFailureInfo, CanceledFailureInfo,
+                Failure,
+            },
             history::v1::{
                 history_event, ActivityTaskCanceledEventAttributes,
                 ActivityTaskCompletedEventAttributes, ActivityTaskFailedEventAttributes,
@@ -135,8 +138,29 @@ impl ActivityMachine {
         ResolveActivity {
             activity_id: self.shared_state.attrs.activity_id.clone(),
             result: Some(ActivityResult {
-                status: Some(activity_result::Status::Canceled(ar::Cancelation {
-                    details,
+                status: Some(activity_result::Status::Cancelled(Cancellation {
+                    failure: Some(Failure {
+                        message: "Activity cancelled".to_string(),
+                        cause: Some(Box::from(Failure {
+                            failure_info: Some(FailureInfo::CanceledFailureInfo(
+                                CanceledFailureInfo {
+                                    details: details.map(Into::into),
+                                },
+                            )),
+                            ..Default::default()
+                        })),
+                        failure_info: Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo {
+                            scheduled_event_id: self.shared_state.scheduled_event_id,
+                            started_event_id: self.shared_state.started_event_id,
+                            activity_type: Some(ActivityType {
+                                name: self.shared_state.attrs.activity_type.clone(),
+                            }),
+                            activity_id: self.shared_state.attrs.activity_id.clone(),
+                            retry_state: RetryState::CancelRequested as i32,
+                            ..Default::default()
+                        })),
+                        ..Default::default()
+                    }),
                 })),
             }),
         }
@@ -806,7 +830,7 @@ mod test {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Canceled(_))
+                            status: Some(activity_result::Status::Cancelled(_))
                         }),
                         ..
                     }

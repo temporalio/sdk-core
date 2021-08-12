@@ -8,6 +8,7 @@ use crate::{
             activity_task::{ActivityCancelReason, ActivityTask},
             ActivityHeartbeat,
         },
+        temporal::api::failure::v1::{failure::FailureInfo, CanceledFailureInfo, Failure},
         temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
     },
     task_token::TaskToken,
@@ -145,10 +146,26 @@ impl WorkerActivityTasks {
                         .fail_activity_task(task_token.clone(), failure.map(Into::into))
                         .await
                         .err(),
-                    activity_result::Status::Canceled(ar::Cancelation { details }) => gateway
-                        .cancel_activity_task(task_token.clone(), details.map(Into::into))
-                        .await
-                        .err(),
+                    activity_result::Status::Cancelled(ar::Cancellation { failure }) => {
+                        let details = match failure {
+                            Some(Failure {
+                                failure_info:
+                                    Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
+                                        details,
+                                    })),
+                                ..
+                            }) => details,
+                            _ => {
+                                warn!(task_token = ? task_token,
+                                    "Expected activity cancelled status with CanceledFailureInfo");
+                                None
+                            }
+                        };
+                        gateway
+                            .cancel_activity_task(task_token.clone(), details.map(Into::into))
+                            .await
+                            .err()
+                    }
                 };
                 match maybe_net_err {
                     Some(e) if e.code() == tonic::Code::NotFound => {

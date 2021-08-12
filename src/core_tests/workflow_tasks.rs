@@ -409,7 +409,7 @@ async fn cancelled_activity_timeout(hist_batches: &'static [usize]) {
                     ResolveActivity {
                         activity_id: _,
                         result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Canceled(..)),
+                            status: Some(activity_result::Status::Cancelled(..)),
                         })
                     }
                 )),
@@ -508,7 +508,7 @@ async fn verify_activity_cancellation(
                     ResolveActivity {
                         activity_id: _,
                         result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Canceled(..)),
+                            status: Some(activity_result::Status::Cancelled(..)),
                         })
                     }
                 )),
@@ -586,7 +586,7 @@ async fn verify_activity_cancellation_wait_for_cancellation(
                     ResolveActivity {
                         activity_id: _,
                         result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Canceled(..)),
+                            status: Some(activity_result::Status::Cancelled(..)),
                         })
                     }
                 )),
@@ -1012,7 +1012,7 @@ async fn activity_not_canceled_on_replay_repro(hist_batches: &'static [usize]) {
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Canceled(..)),
+                            status: Some(activity_result::Status::Cancelled(..)),
                         }),
                         ..
                     }
@@ -1067,7 +1067,7 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static 
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Canceled(..)),
+                            status: Some(activity_result::Status::Cancelled(..)),
                         }),
                         ..
                     }
