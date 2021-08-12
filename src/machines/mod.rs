@@ -13,6 +13,7 @@ mod fail_workflow_state_machine;
 mod local_activity_state_machine;
 #[allow(unused)]
 mod mutable_side_effect_state_machine;
+mod patch_state_machine;
 #[allow(unused)]
 mod side_effect_state_machine;
 #[allow(unused)]
@@ -20,13 +21,12 @@ mod signal_external_state_machine;
 mod timer_state_machine;
 #[allow(unused)]
 mod upsert_search_attributes_state_machine;
-mod version_state_machine;
 mod workflow_task_state_machine;
 
 #[cfg(test)]
 mod transition_coverage;
 
-pub use version_state_machine::HAS_CHANGE_MARKER_NAME;
+pub use patch_state_machine::HAS_CHANGE_MARKER_NAME;
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
 use crate::{
@@ -37,7 +37,7 @@ use crate::{
             workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
             ContinueAsNewWorkflowExecution, FailWorkflowExecution, QueryResult,
             RequestCancelActivity, RequestCancelExternalWorkflowExecution, ScheduleActivity,
-            SetChangeMarker, StartChildWorkflowExecution, StartTimer, WorkflowCommand,
+            SetPatchMarker, StartChildWorkflowExecution, StartTimer, WorkflowCommand,
         },
         temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
     },
@@ -70,7 +70,7 @@ pub enum WFCommand {
     QueryResponse(QueryResult),
     ContinueAsNew(ContinueAsNewWorkflowExecution),
     CancelWorkflow(CancelWorkflowExecution),
-    SetChangeMarker(SetChangeMarker),
+    SetPatchMarker(SetPatchMarker),
     AddChildWorkflow(StartChildWorkflowExecution),
     RequestCancelChildWorkflow(RequestCancelExternalWorkflowExecution),
 }
@@ -101,7 +101,7 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::CancelWorkflowExecution(s) => {
                 Ok(WFCommand::CancelWorkflow(s))
             }
-            workflow_command::Variant::SetChangeMarker(s) => Ok(WFCommand::SetChangeMarker(s)),
+            workflow_command::Variant::SetPatchMarker(s) => Ok(WFCommand::SetPatchMarker(s)),
             workflow_command::Variant::StartChildWorkflowExecution(s) => {
                 Ok(WFCommand::AddChildWorkflow(s))
             }

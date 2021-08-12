@@ -2,7 +2,7 @@ use crate::{
     protos::coresdk::{
         common::Payload,
         workflow_activation::{
-            wf_activation_job::Variant, FireTimer, NotifyHasChange, ResolveActivity,
+            wf_activation_job::Variant, FireTimer, NotifyHasPatch, ResolveActivity,
             ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart, WfActivation,
             WfActivationJob,
         },
@@ -162,8 +162,8 @@ impl Future for WorkflowFuture {
                         Variant::SignalWorkflow(_) => {
                             todo!()
                         }
-                        Variant::NotifyHasChange(NotifyHasChange { change_id }) => {
-                            self.ctx_shared.write().changes.insert(change_id, true);
+                        Variant::NotifyHasPatch(NotifyHasPatch { patch_id }) => {
+                            self.ctx_shared.write().changes.insert(patch_id, true);
                         }
                         Variant::RemoveFromCache(_) => {
                             die_of_eviction_when_done = true;
@@ -224,8 +224,8 @@ impl Future for WorkflowFuture {
                                 activity_id,
                                 ..
                             }) => CommandID::Activity(activity_id),
-                            workflow_command::Variant::SetChangeMarker(_) => {
-                                panic!("Set change marker should be a nonblocking command")
+                            workflow_command::Variant::SetPatchMarker(_) => {
+                                panic!("Set patch marker should be a nonblocking command")
                             }
                             workflow_command::Variant::StartChildWorkflowExecution(
                                 StartChildWorkflowExecution { workflow_id, .. },

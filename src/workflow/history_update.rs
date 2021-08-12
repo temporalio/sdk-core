@@ -20,7 +20,7 @@ pub struct HistoryUpdate {
     events: BoxStream<'static, Result<HistoryEvent, tonic::Status>>,
     /// It is useful to be able to look ahead up to one workflow task beyond the currently
     /// requested one. The initial (possibly only) motivation for this being to be able to
-    /// pre-emptively notify lang about change markers so that calls to `changed` do not need to
+    /// pre-emptively notify lang about patch markers so that calls to `changed` do not need to
     /// be async.
     buffered: VecDeque<HistoryEvent>,
     pub previous_started_event_id: i64,

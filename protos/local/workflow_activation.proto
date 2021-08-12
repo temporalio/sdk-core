@@ -43,10 +43,10 @@ message WFActivationJob {
         SignalWorkflow signal_workflow = 7;
         /// An activity was resolved, result could be completed, failed or cancelled
         ResolveActivity resolve_activity = 8;
-        /// A change marker has been detected and lang is being told that change exists. This
+        /// A patch marker has been detected and lang is being told that change exists. This
         /// job is strange in that it is sent pre-emptively to lang without any corresponding
         /// command being sent first.
-        NotifyHasChange notify_has_change = 9;
+        NotifyHasPatch notify_has_patch = 9;
         /// A child workflow execution has started or failed to start
         ResolveChildWorkflowExecutionStart resolve_child_workflow_execution_start = 10;
         /// A child workflow was resolved, result could be completed or failed
@@ -154,8 +154,8 @@ message SignalWorkflow {
     string identity = 3;
 }
 
-// Resolve a call to `has_change` or similar API -- this is always sent pre-emptively, so any time
-// it is sent the change is present
-message NotifyHasChange {
-    string change_id = 1;
+// Inform lang what the result of a call to `patched` or similar API should be -- this is always
+// sent pre-emptively, so any time it is sent the change is present
+message NotifyHasPatch {
+    string patch_id = 1;
 }
