@@ -27,7 +27,7 @@ use tonic::{
 use url::Url;
 use uuid::Uuid;
 
-use crate::pollers::retry::{RetryGateway, TonicErrorHandler};
+use crate::pollers::retry::RetryGateway;
 use crate::protos::coresdk::PayloadsExt;
 #[cfg(test)]
 use futures::Future;
@@ -109,8 +109,7 @@ impl ServerGatewayOptions {
             service,
             opts: self.clone(),
         };
-        let retry_gateway =
-            RetryGateway::new(gateway, TonicErrorHandler::new(3, "Tonic retry".to_owned()));
+        let retry_gateway = RetryGateway::new(gateway);
         Ok(retry_gateway)
     }
 

@@ -1,3 +1,11 @@
+use std::future::Future;
+use std::{fmt::Debug, time::Duration};
+
+use backoff::backoff::Backoff;
+use backoff::ExponentialBackoff;
+use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
+use tonic::Code;
+
 use crate::pollers::gateway::ServerGatewayApis;
 use crate::{
     pollers::Result,
@@ -12,50 +20,34 @@ use crate::{
     protosext::WorkflowTaskCompletion,
     task_token::TaskToken,
 };
-use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
-use std::future::Future;
-use std::{fmt::Debug, time::Duration};
-use tonic::Code;
 
 #[derive(Debug)]
 pub struct RetryGateway<SG> {
     gateway: SG,
-    error_handler: TonicErrorHandler<String>,
 }
 
-#[derive(Clone, Debug)]
-pub struct TonicErrorHandler<D> {
+#[derive(Debug)]
+pub struct TonicErrorHandler {
+    backoff: ExponentialBackoff,
     max_attempts: usize,
-    display_name: D,
 }
 
-impl<D> TonicErrorHandler<D> {
-    pub fn new(max_attempts: usize, display_name: D) -> Self {
+impl TonicErrorHandler {
+    pub fn new(backoff: ExponentialBackoff, max_attempts: usize) -> Self {
         TonicErrorHandler {
+            backoff,
             max_attempts,
-            display_name,
         }
     }
 }
 
-impl<D> ErrorHandler<tonic::Status> for TonicErrorHandler<D>
-where
-    D: ::std::fmt::Display,
-{
+impl ErrorHandler<tonic::Status> for TonicErrorHandler {
     type OutError = tonic::Status;
 
     fn handle(&mut self, current_attempt: usize, e: tonic::Status) -> RetryPolicy<tonic::Status> {
         if current_attempt >= self.max_attempts {
-            eprintln!(
-                "[{}] All attempts ({}) have been used",
-                self.display_name, self.max_attempts
-            );
             return RetryPolicy::ForwardError(e);
         }
-        eprintln!(
-            "[{}] Attempt {}/{} has failed",
-            self.display_name, current_attempt, self.max_attempts
-        );
         match e.code() {
             Code::Cancelled
             | Code::DataLoss
@@ -67,18 +59,20 @@ where
             | Code::OutOfRange
             | Code::Unimplemented
             | Code::Unavailable
-            | Code::Unauthenticated => RetryPolicy::WaitRetry(Duration::from_millis(200)),
+            | Code::Unauthenticated => {
+                match self.backoff.next_backoff() {
+                    None => RetryPolicy::ForwardError(e), // None is returned when we've ran out of time.
+                    Some(backoff) => RetryPolicy::WaitRetry(backoff),
+                }
+            }
             _ => RetryPolicy::ForwardError(e),
         }
     }
 }
 
 impl<SG> RetryGateway<SG> {
-    pub fn new(gateway: SG, error_handler: TonicErrorHandler<String>) -> Self {
-        Self {
-            gateway,
-            error_handler,
-        }
+    pub fn new(gateway: SG) -> Self {
+        Self { gateway }
     }
 }
 
@@ -93,47 +87,32 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         task_timeout: Option<Duration>,
     ) -> Result<StartWorkflowExecutionResponse> {
         let input = &input;
-        Ok(FutureRetry::new(
-            move || {
-                self.gateway.start_workflow(
-                    input.to_vec(),
-                    task_queue.clone(),
-                    workflow_id.clone(),
-                    workflow_type.clone(),
-                    task_timeout,
-                )
-            },
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || {
+            self.gateway.start_workflow(
+                input.to_vec(),
+                task_queue.clone(),
+                workflow_id.clone(),
+                workflow_type.clone(),
+                task_timeout,
+            )
+        };
+        self.call_with_retry(factory).await
     }
 
     async fn poll_workflow_task(
         &self,
         task_queue: String,
     ) -> Result<PollWorkflowTaskQueueResponse> {
-        Ok(FutureRetry::new(
-            move || self.gateway.poll_workflow_task(task_queue.clone()),
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || self.gateway.poll_workflow_task(task_queue.clone());
+        self.call_with_retry(factory).await
     }
 
     async fn poll_activity_task(
         &self,
         task_queue: String,
     ) -> Result<PollActivityTaskQueueResponse> {
-        Ok(FutureRetry::new(
-            move || self.gateway.poll_activity_task(task_queue.clone()),
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || self.gateway.poll_activity_task(task_queue.clone());
+        self.call_with_retry(factory).await
     }
 
     async fn reset_sticky_task_queue(
@@ -327,9 +306,12 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
         F: Fn() -> Fut + Unpin,
         Fut: Future<Output = Result<R>>,
     {
-        Ok(FutureRetry::new(factory, self.error_handler.clone())
-            .await
-            .map_err(|(e, _attempt)| e)?
-            .0)
+        Ok(FutureRetry::new(
+            factory,
+            TonicErrorHandler::new(ExponentialBackoff::default(), 10),
+        )
+        .await
+        .map_err(|(e, _attempt)| e)?
+        .0)
     }
 }
