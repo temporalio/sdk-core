@@ -13,6 +13,7 @@ use crate::{
     task_token::TaskToken,
 };
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
+use std::future::Future;
 use std::{fmt::Debug, time::Duration};
 use tonic::Code;
 
@@ -140,29 +141,19 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         workflow_id: String,
         run_id: String,
     ) -> Result<ResetStickyTaskQueueResponse> {
-        Ok(FutureRetry::new(
-            move || {
-                self.gateway
-                    .reset_sticky_task_queue(workflow_id.clone(), run_id.clone())
-            },
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || {
+            self.gateway
+                .reset_sticky_task_queue(workflow_id.clone(), run_id.clone())
+        };
+        self.call_with_retry(factory).await
     }
 
     async fn complete_workflow_task(
         &self,
         request: WorkflowTaskCompletion,
     ) -> Result<RespondWorkflowTaskCompletedResponse> {
-        Ok(FutureRetry::new(
-            move || self.gateway.complete_workflow_task(request.clone()),
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || self.gateway.complete_workflow_task(request.clone());
+        self.call_with_retry(factory).await
     }
 
     async fn complete_activity_task(
@@ -170,16 +161,11 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         task_token: TaskToken,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse> {
-        Ok(FutureRetry::new(
-            move || {
-                self.gateway
-                    .complete_activity_task(task_token.clone(), result.clone())
-            },
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || {
+            self.gateway
+                .complete_activity_task(task_token.clone(), result.clone())
+        };
+        self.call_with_retry(factory).await
     }
 
     async fn record_activity_heartbeat(
@@ -187,16 +173,11 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RecordActivityTaskHeartbeatResponse> {
-        Ok(FutureRetry::new(
-            move || {
-                self.gateway
-                    .record_activity_heartbeat(task_token.clone(), details.clone())
-            },
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || {
+            self.gateway
+                .record_activity_heartbeat(task_token.clone(), details.clone())
+        };
+        self.call_with_retry(factory).await
     }
 
     async fn cancel_activity_task(
@@ -204,16 +185,11 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse> {
-        Ok(FutureRetry::new(
-            move || {
-                self.gateway
-                    .cancel_activity_task(task_token.clone(), details.clone())
-            },
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || {
+            self.gateway
+                .cancel_activity_task(task_token.clone(), details.clone())
+        };
+        self.call_with_retry(factory).await
     }
 
     async fn fail_activity_task(
@@ -221,16 +197,11 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         task_token: TaskToken,
         failure: Option<Failure>,
     ) -> Result<RespondActivityTaskFailedResponse> {
-        Ok(FutureRetry::new(
-            move || {
-                self.gateway
-                    .fail_activity_task(task_token.clone(), failure.clone())
-            },
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || {
+            self.gateway
+                .fail_activity_task(task_token.clone(), failure.clone())
+        };
+        self.call_with_retry(factory).await
     }
 
     async fn fail_workflow_task(
@@ -239,16 +210,11 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         cause: WorkflowTaskFailedCause,
         failure: Option<Failure>,
     ) -> Result<RespondWorkflowTaskFailedResponse> {
-        Ok(FutureRetry::new(
-            move || {
-                self.gateway
-                    .fail_workflow_task(task_token.clone(), cause, failure.clone())
-            },
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || {
+            self.gateway
+                .fail_workflow_task(task_token.clone(), cause, failure.clone())
+        };
+        self.call_with_retry(factory).await
     }
 
     async fn signal_workflow_execution(
@@ -258,20 +224,15 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         signal_name: String,
         payloads: Option<Payloads>,
     ) -> Result<SignalWorkflowExecutionResponse> {
-        Ok(FutureRetry::new(
-            move || {
-                self.gateway.signal_workflow_execution(
-                    workflow_id.clone(),
-                    run_id.clone(),
-                    signal_name.clone(),
-                    payloads.clone(),
-                )
-            },
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || {
+            self.gateway.signal_workflow_execution(
+                workflow_id.clone(),
+                run_id.clone(),
+                signal_name.clone(),
+                payloads.clone(),
+            )
+        };
+        self.call_with_retry(factory).await
     }
 
     async fn query_workflow_execution(
@@ -280,19 +241,14 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         run_id: String,
         query: WorkflowQuery,
     ) -> Result<QueryWorkflowResponse> {
-        Ok(FutureRetry::new(
-            move || {
-                self.gateway.query_workflow_execution(
-                    workflow_id.clone(),
-                    run_id.clone(),
-                    query.clone(),
-                )
-            },
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || {
+            self.gateway.query_workflow_execution(
+                workflow_id.clone(),
+                run_id.clone(),
+                query.clone(),
+            )
+        };
+        self.call_with_retry(factory).await
     }
 
     async fn describe_workflow_execution(
@@ -300,16 +256,11 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         workflow_id: String,
         run_id: Option<String>,
     ) -> Result<DescribeWorkflowExecutionResponse> {
-        Ok(FutureRetry::new(
-            move || {
-                self.gateway
-                    .describe_workflow_execution(workflow_id.clone(), run_id.clone())
-            },
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || {
+            self.gateway
+                .describe_workflow_execution(workflow_id.clone(), run_id.clone())
+        };
+        self.call_with_retry(factory).await
     }
 
     async fn get_workflow_execution_history(
@@ -318,19 +269,14 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         run_id: Option<String>,
         page_token: Vec<u8>,
     ) -> Result<GetWorkflowExecutionHistoryResponse> {
-        Ok(FutureRetry::new(
-            move || {
-                self.gateway.get_workflow_execution_history(
-                    workflow_id.clone(),
-                    run_id.clone(),
-                    page_token.clone(),
-                )
-            },
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || {
+            self.gateway.get_workflow_execution_history(
+                workflow_id.clone(),
+                run_id.clone(),
+                page_token.clone(),
+            )
+        };
+        self.call_with_retry(factory).await
     }
 
     async fn respond_legacy_query(
@@ -338,16 +284,11 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         task_token: TaskToken,
         query_result: QueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse> {
-        Ok(FutureRetry::new(
-            move || {
-                self.gateway
-                    .respond_legacy_query(task_token.clone(), query_result.clone())
-            },
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || {
+            self.gateway
+                .respond_legacy_query(task_token.clone(), query_result.clone())
+        };
+        self.call_with_retry(factory).await
     }
 
     async fn cancel_workflow_execution(
@@ -355,16 +296,11 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         workflow_id: String,
         run_id: Option<String>,
     ) -> Result<RequestCancelWorkflowExecutionResponse> {
-        Ok(FutureRetry::new(
-            move || {
-                self.gateway
-                    .cancel_workflow_execution(workflow_id.clone(), run_id.clone())
-            },
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || {
+            self.gateway
+                .cancel_workflow_execution(workflow_id.clone(), run_id.clone())
+        };
+        self.call_with_retry(factory).await
     }
 
     async fn terminate_workflow_execution(
@@ -372,25 +308,28 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         workflow_id: String,
         run_id: Option<String>,
     ) -> Result<TerminateWorkflowExecutionResponse> {
-        Ok(FutureRetry::new(
-            move || {
-                self.gateway
-                    .terminate_workflow_execution(workflow_id.clone(), run_id.clone())
-            },
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || {
+            self.gateway
+                .terminate_workflow_execution(workflow_id.clone(), run_id.clone())
+        };
+        self.call_with_retry(factory).await
     }
 
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse> {
-        Ok(FutureRetry::new(
-            move || self.gateway.list_namespaces(),
-            self.error_handler.clone(),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let factory = move || self.gateway.list_namespaces();
+        self.call_with_retry(factory).await
+    }
+}
+
+impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
+    async fn call_with_retry<R, F, Fut>(&self, factory: F) -> Result<R>
+    where
+        F: Fn() -> Fut + Unpin,
+        Fut: Future<Output = Result<R>>,
+    {
+        Ok(FutureRetry::new(factory, self.error_handler.clone())
+            .await
+            .map_err(|(e, _attempt)| e)?
+            .0)
     }
 }
