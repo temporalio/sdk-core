@@ -1,3 +1,4 @@
+use crate::prototype_rust_sdk::CancellableID;
 use crate::{
     protos::coresdk::{
         common::Payload,
@@ -59,6 +60,7 @@ impl WorkflowFunction {
                 incoming_activations,
                 command_status: Default::default(),
                 cancel_sender: cancel_tx,
+                child_workflow_starts: Default::default(),
             },
             tx,
         )
@@ -86,15 +88,17 @@ pub struct WorkflowFuture {
     cancel_sender: watch::Sender<bool>,
     /// Data shared with the context
     ctx_shared: Arc<RwLock<WfContextSharedData>>,
+    /// Mapping of sequence number to a StartChildWorkflowExecution request
+    child_workflow_starts: HashMap<u32, StartChildWorkflowExecution>,
 }
 
 impl WorkflowFuture {
     fn unblock(&mut self, event: UnblockEvent) {
-        let cmd_id = match &event {
-            UnblockEvent::Timer(t) => CommandID::Timer(t.clone()),
-            UnblockEvent::Activity(id, _) => CommandID::Activity(id.clone()),
-            UnblockEvent::WorkflowStart(id, _) => CommandID::ChildWorkflowStart(id.clone()),
-            UnblockEvent::WorkflowComplete(id, _) => CommandID::ChildWorkflowComplete(id.clone()),
+        let cmd_id = match event {
+            UnblockEvent::Timer(seq) => CommandID::Timer(seq),
+            UnblockEvent::Activity(seq, _) => CommandID::Activity(seq),
+            UnblockEvent::WorkflowStart(seq, _) => CommandID::ChildWorkflowStart(seq),
+            UnblockEvent::WorkflowComplete(seq, _) => CommandID::ChildWorkflowComplete(seq),
         };
         let unblocker = self.command_status.remove(&cmd_id);
         unblocker
@@ -127,30 +131,26 @@ impl Future for WorkflowFuture {
                         Variant::StartWorkflow(_) => {
                             // TODO: Can assign randomness seed whenever needed
                         }
-                        Variant::FireTimer(FireTimer { timer_id }) => {
-                            self.unblock(UnblockEvent::Timer(timer_id))
+                        Variant::FireTimer(FireTimer { seq }) => {
+                            self.unblock(UnblockEvent::Timer(seq))
                         }
-                        Variant::ResolveActivity(ResolveActivity {
-                            activity_id,
-                            result,
-                        }) => self.unblock(UnblockEvent::Activity(
-                            activity_id,
-                            Box::new(result.expect("Activity must have result")),
-                        )),
+                        Variant::ResolveActivity(ResolveActivity { seq, result }) => {
+                            self.unblock(UnblockEvent::Activity(
+                                seq,
+                                Box::new(result.expect("Activity must have result")),
+                            ))
+                        }
                         Variant::ResolveChildWorkflowExecutionStart(
-                            ResolveChildWorkflowExecutionStart {
-                                workflow_id,
-                                status,
-                            },
+                            ResolveChildWorkflowExecutionStart { seq, status },
                         ) => self.unblock(UnblockEvent::WorkflowStart(
-                            workflow_id,
+                            seq,
                             Box::new(status.expect("Workflow start must have status")),
                         )),
                         Variant::ResolveChildWorkflowExecution(ResolveChildWorkflowExecution {
-                            workflow_id,
+                            seq,
                             result,
                         }) => self.unblock(UnblockEvent::WorkflowComplete(
-                            workflow_id,
+                            seq,
                             Box::new(result.expect("Child Workflow execution must have a result")),
                         )),
                         Variant::UpdateRandomSeed(_) => {}
@@ -196,48 +196,62 @@ impl Future for WorkflowFuture {
             let mut activation_cmds = vec![];
             while let Ok(cmd) = self.incoming_commands.try_recv() {
                 match cmd {
-                    RustWfCmd::CancelTimer(tid) => {
-                        activation_cmds.push(workflow_command::Variant::CancelTimer(CancelTimer {
-                            timer_id: tid.clone(),
-                        }));
-                        self.unblock(UnblockEvent::Timer(tid));
-                        // Re-poll wf future since a timer is now unblocked
-                        res = self.inner.poll_unpin(cx);
-                    }
-                    RustWfCmd::CancelActivity(aid) => {
-                        activation_cmds.push(workflow_command::Variant::RequestCancelActivity(
-                            RequestCancelActivity {
-                                activity_id: aid.clone(),
-                            },
-                        ));
-                    }
-                    RustWfCmd::CancelChildWorkflow(wfid) => {
-                        activation_cmds.push(
-                            workflow_command::Variant::RequestCancelExternalWorkflowExecution(
-                                RequestCancelExternalWorkflowExecution {
-                                    workflow_id: wfid.clone(),
-                                    ..Default::default()
-                                },
-                            ),
-                        );
+                    RustWfCmd::Cancel(cancellable_id) => {
+                        match cancellable_id {
+                            CancellableID::Timer(seq) => {
+                                activation_cmds.push(workflow_command::Variant::CancelTimer(
+                                    CancelTimer { seq },
+                                ));
+                                // TODO: cancelled timer should not simply be unblocked, in the other SDKs this returns an error
+                                self.unblock(UnblockEvent::Timer(seq));
+                                // Re-poll wf future since a timer is now unblocked
+                                res = self.inner.poll_unpin(cx);
+                            }
+                            CancellableID::Activity(seq) => {
+                                activation_cmds.push(
+                                    workflow_command::Variant::RequestCancelActivity(
+                                        RequestCancelActivity { seq },
+                                    ),
+                                );
+                            }
+                            CancellableID::ChildWorkflow(seq) => {
+                                let start_request = self
+                                    .child_workflow_starts
+                                    .get(&seq)
+                                    .expect("Tried to cancel unknown child");
+                                activation_cmds.push(
+                                    workflow_command::Variant::RequestCancelExternalWorkflowExecution(
+                                        RequestCancelExternalWorkflowExecution {
+                                            seq: Some(seq),
+                                            namespace: start_request.namespace.clone(),
+                                            workflow_id: start_request.workflow_id.clone(),
+                                            ..Default::default()
+                                        },
+                                    ),
+                                );
+                            }
+                        }
                     }
                     RustWfCmd::NewCmd(cmd) => {
                         activation_cmds.push(cmd.cmd.clone());
 
                         let command_id = match cmd.cmd {
-                            workflow_command::Variant::StartTimer(StartTimer {
-                                timer_id, ..
-                            }) => CommandID::Timer(timer_id),
+                            workflow_command::Variant::StartTimer(StartTimer { seq, .. }) => {
+                                CommandID::Timer(seq)
+                            }
                             workflow_command::Variant::ScheduleActivity(ScheduleActivity {
-                                activity_id,
+                                seq,
                                 ..
-                            }) => CommandID::Activity(activity_id),
+                            }) => CommandID::Activity(seq),
                             workflow_command::Variant::SetPatchMarker(_) => {
                                 panic!("Set patch marker should be a nonblocking command")
                             }
-                            workflow_command::Variant::StartChildWorkflowExecution(
-                                StartChildWorkflowExecution { workflow_id, .. },
-                            ) => CommandID::ChildWorkflowStart(workflow_id),
+                            workflow_command::Variant::StartChildWorkflowExecution(req) => {
+                                let seq = req.seq;
+                                // Save the start request to support cancellation later
+                                self.child_workflow_starts.insert(seq, req);
+                                CommandID::ChildWorkflowStart(seq)
+                            }
                             _ => unimplemented!("Command type not implemented"),
                         };
                         self.command_status.insert(
@@ -252,7 +266,7 @@ impl Future for WorkflowFuture {
                     }
                     RustWfCmd::SubscribeChildWorkflowCompletion(sub) => {
                         self.command_status.insert(
-                            CommandID::ChildWorkflowComplete(sub.workflow_id),
+                            CommandID::ChildWorkflowComplete(sub.seq),
                             WFCommandFutInfo {
                                 unblocker: sub.unblocker,
                             },

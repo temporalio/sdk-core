@@ -7,7 +7,9 @@
 mod workflow_context;
 mod workflow_future;
 
-pub use workflow_context::WfContext;
+pub use workflow_context::{
+    ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, WfContext,
+};
 
 use crate::{
     protos::coresdk::{
@@ -184,21 +186,66 @@ impl TestRustWorker {
 
 #[derive(Debug)]
 enum UnblockEvent {
-    Timer(String),
-    Activity(String, Box<ActivityResult>),
-    WorkflowStart(String, Box<ChildWorkflowStartStatus>),
-    WorkflowComplete(String, Box<ChildWorkflowResult>),
+    Timer(u32),
+    Activity(u32, Box<ActivityResult>),
+    WorkflowStart(u32, Box<ChildWorkflowStartStatus>),
+    WorkflowComplete(u32, Box<ChildWorkflowResult>),
+}
+
+type TimerResult = ();
+
+impl From<UnblockEvent> for TimerResult {
+    fn from(ue: UnblockEvent) -> Self {
+        match ue {
+            UnblockEvent::Timer(_) => (),
+            _ => panic!("Invalid unblock event for timer"),
+        }
+    }
+}
+
+impl From<UnblockEvent> for ActivityResult {
+    fn from(ue: UnblockEvent) -> Self {
+        match ue {
+            UnblockEvent::Activity(_, result) => *result,
+            _ => panic!("Invalid unblock event for activity"),
+        }
+    }
+}
+
+impl From<UnblockEvent> for ChildWorkflowStartStatus {
+    fn from(ue: UnblockEvent) -> Self {
+        match ue {
+            UnblockEvent::WorkflowStart(_, result) => *result,
+            _ => panic!("Invalid unblock event for child workflow start"),
+        }
+    }
+}
+
+impl From<UnblockEvent> for ChildWorkflowResult {
+    fn from(ue: UnblockEvent) -> Self {
+        match ue {
+            UnblockEvent::WorkflowComplete(_, result) => *result,
+            _ => panic!("Invalid unblock event for child workflow complete"),
+        }
+    }
+}
+
+/// Identifier for cancellable operations
+#[derive(Debug, Copy, Clone)]
+pub enum CancellableID {
+    /// Timer sequence number
+    Timer(u32),
+    /// Activity sequence number
+    Activity(u32),
+    /// Child Workflow sequence number
+    ChildWorkflow(u32),
 }
 
 #[derive(derive_more::From)]
 #[allow(clippy::large_enum_variant)]
 enum RustWfCmd {
     #[from(ignore)]
-    CancelTimer(String),
-    #[from(ignore)]
-    CancelActivity(String),
-    #[from(ignore)]
-    CancelChildWorkflow(String),
+    Cancel(CancellableID),
     ForceWFTFailure(anyhow::Error),
     NewCmd(CommandCreateRequest),
     NewNonblockingCmd(workflow_command::Variant),
@@ -211,7 +258,7 @@ struct CommandCreateRequest {
 }
 
 struct CommandSubscribeChildWorkflowCompletion {
-    workflow_id: String,
+    seq: u32,
     unblocker: oneshot::Sender<UnblockEvent>,
 }
 
@@ -265,17 +312,10 @@ pub enum WfExitValue<T: Debug> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        protos::coresdk::workflow_commands::StartTimer,
-        test_help::{build_fake_core, canned_histories, DEFAULT_WORKFLOW_TYPE, TEST_Q},
-    };
+    use crate::test_help::{build_fake_core, canned_histories, DEFAULT_WORKFLOW_TYPE, TEST_Q};
 
     pub async fn timer_wf(mut ctx: WfContext) -> WorkflowResult<()> {
-        let timer = StartTimer {
-            timer_id: "fake_timer".to_string(),
-            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-        };
-        ctx.timer(timer).await;
+        ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())
     }
 
@@ -283,7 +323,7 @@ mod tests {
     async fn new_test_wf_core() {
         let wf_id = "fakeid";
         let wf_type = DEFAULT_WORKFLOW_TYPE;
-        let t = canned_histories::single_timer("fake_timer");
+        let t = canned_histories::single_timer("1");
         let core = build_fake_core(wf_id, t, [2]);
         let worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 

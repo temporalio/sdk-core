@@ -20,10 +20,10 @@ type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub(crate) enum CommandID {
-    Timer(String),
-    Activity(String),
-    ChildWorkflowStart(String),
-    ChildWorkflowComplete(String),
+    Timer(u32),
+    Activity(u32),
+    ChildWorkflowStart(u32),
+    ChildWorkflowComplete(u32),
 }
 
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data

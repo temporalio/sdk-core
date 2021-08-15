@@ -81,18 +81,21 @@ message StartWorkflow {
 
 /// Notify a workflow that a timer has fired
 message FireTimer {
-    string timer_id = 1;
+    /// Sequence number as provided by lang in the corresponding StartTimer command
+    uint32 seq = 1;
 }
 
 /// Notify a workflow that an activity has been resolved
 message ResolveActivity {
-    string activity_id = 1;
+    /// Sequence number as provided by lang in the corresponding ScheduleActivity command
+    uint32 seq = 1;
     activity_result.ActivityResult result = 2;
 }
 
 /// Notify a workflow that a start child workflow execution request has succeeded, failed or was cancelled.
 message ResolveChildWorkflowExecutionStart {
-    string workflow_id = 1;
+    /// Sequence number as provided by lang in the corresponding StartChildWorkflowExecution command
+    uint32 seq = 1;
     oneof status {
         ResolveChildWorkflowExecutionStartSuccess succeeded = 2;
         ResolveChildWorkflowExecutionStartFailure failed = 3;
@@ -109,8 +112,9 @@ message ResolveChildWorkflowExecutionStartSuccess {
 message ResolveChildWorkflowExecutionStartFailure {
     /// Lang should have this information but it's more convenient to pass it back
     /// for error construction on the lang side.
-    string workflow_type = 1;
-    child_workflow.StartChildWorkflowExecutionFailedCause cause = 2;
+    string workflow_id = 1;
+    string workflow_type = 2;
+    child_workflow.StartChildWorkflowExecutionFailedCause cause = 3;
 }
 
 /// `failure` should be ChildWorkflowFailure with cause set to CancelledFailure.
@@ -121,7 +125,8 @@ message ResolveChildWorkflowExecutionStartCancelled {
 
 /// Notify a workflow that a child workflow execution has been resolved
 message ResolveChildWorkflowExecution {
-    string workflow_id = 1;
+    /// Sequence number as provided by lang in the corresponding StartChildWorkflowExecution command
+    uint32 seq = 1;
     child_workflow.ChildWorkflowResult result = 2;
 }
 

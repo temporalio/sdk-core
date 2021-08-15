@@ -3,8 +3,7 @@ use temporal_sdk_core::{
     protos::coresdk::child_workflow::{child_workflow_result, Success},
     protos::coresdk::workflow_activation,
     protos::coresdk::workflow_activation::resolve_child_workflow_execution_start::Status as StartStatus,
-    protos::coresdk::workflow_commands::StartChildWorkflowExecution,
-    prototype_rust_sdk::{WfContext, WorkflowResult},
+    prototype_rust_sdk::{ChildWorkflowOptions, WfContext, WorkflowResult},
 };
 use test_utils::CoreWfStarter;
 
@@ -16,19 +15,19 @@ async fn child_wf(_ctx: WfContext) -> WorkflowResult<()> {
 }
 
 async fn parent_wf(mut ctx: WfContext) -> WorkflowResult<()> {
-    let req = StartChildWorkflowExecution {
-        workflow_id: "id1".to_string(),
-        workflow_type: CHILD_WF_TYPE.to_string(),
-        input: vec![],
+    let mut child = ctx.child_workflow(ChildWorkflowOptions {
+        workflow_id: "child-1".to_owned(),
+        workflow_type: CHILD_WF_TYPE.to_owned(),
         ..Default::default()
-    };
-    let _run_id = match ctx.start_child_workflow(req).await {
+    });
+
+    let _run_id = match child.start(&mut ctx).await {
         StartStatus::Succeeded(
             workflow_activation::ResolveChildWorkflowExecutionStartSuccess { run_id },
         ) => run_id,
         _ => return Err(anyhow!("Unexpected start status")),
     };
-    match ctx.child_workflow_result("id1".to_string()).await.status {
+    match child.result(&ctx).await.status {
         Some(child_workflow_result::Status::Completed(Success { .. })) => Ok(().into()),
         _ => Err(anyhow!("Unexpected child WF status")),
     }

@@ -301,6 +301,7 @@ pub(super) struct TimedOut {}
 pub(super) struct SharedState {
     initiated_event_id: i64,
     started_event_id: i64,
+    lang_sequence_number: u32,
     namespace: String,
     workflow_id: String,
     run_id: String,
@@ -327,6 +328,7 @@ impl ChildWorkflowMachine {
         let mut s = Self {
             state: Created {}.into(),
             shared_state: SharedState {
+                lang_sequence_number: attribs.seq,
                 workflow_id: attribs.workflow_id.clone(),
                 workflow_type: attribs.workflow_type.clone(),
                 namespace: attribs.namespace.clone(),
@@ -465,7 +467,7 @@ impl WFMachinesAdapter for ChildWorkflowMachine {
         Ok(match my_command {
             ChildWorkflowCommand::Start(we) => {
                 vec![ResolveChildWorkflowExecutionStart {
-                    workflow_id: we.workflow_id.clone(),
+                    seq: self.shared_state.lang_sequence_number,
                     status: Some(resolve_child_workflow_execution_start::Status::Succeeded(
                         ResolveChildWorkflowExecutionStartSuccess { run_id: we.run_id },
                     )),
@@ -474,9 +476,10 @@ impl WFMachinesAdapter for ChildWorkflowMachine {
             }
             ChildWorkflowCommand::StartFail(cause) => {
                 vec![ResolveChildWorkflowExecutionStart {
-                    workflow_id: self.shared_state.workflow_id.clone(),
+                    seq: self.shared_state.lang_sequence_number,
                     status: Some(resolve_child_workflow_execution_start::Status::Failed(
                         ResolveChildWorkflowExecutionStartFailure {
+                            workflow_id: self.shared_state.workflow_id.clone(),
                             workflow_type: self.shared_state.workflow_type.clone(),
                             cause: cause as i32,
                         },
@@ -486,7 +489,7 @@ impl WFMachinesAdapter for ChildWorkflowMachine {
             }
             ChildWorkflowCommand::StartCancel(failure) => {
                 vec![ResolveChildWorkflowExecutionStart {
-                    workflow_id: self.shared_state.workflow_id.clone(),
+                    seq: self.shared_state.lang_sequence_number,
                     status: Some(resolve_child_workflow_execution_start::Status::Cancelled(
                         ResolveChildWorkflowExecutionStartCancelled {
                             failure: Some(failure),
@@ -497,7 +500,7 @@ impl WFMachinesAdapter for ChildWorkflowMachine {
             }
             ChildWorkflowCommand::Complete(result) => {
                 vec![ResolveChildWorkflowExecution {
-                    workflow_id: self.shared_state.workflow_id.clone(),
+                    seq: self.shared_state.lang_sequence_number,
                     result: Some(ChildWorkflowResult {
                         status: Some(ChildWorkflowStatus::Completed(wfr::Success {
                             result: convert_payloads(event_info, result)?,
@@ -508,7 +511,7 @@ impl WFMachinesAdapter for ChildWorkflowMachine {
             }
             ChildWorkflowCommand::Fail(failure) => {
                 vec![ResolveChildWorkflowExecution {
-                    workflow_id: self.shared_state.workflow_id.clone(),
+                    seq: self.shared_state.lang_sequence_number,
                     result: Some(ChildWorkflowResult {
                         status: Some(ChildWorkflowStatus::Failed(wfr::Failure {
                             failure: Some(failure),
@@ -519,7 +522,7 @@ impl WFMachinesAdapter for ChildWorkflowMachine {
             }
             ChildWorkflowCommand::Cancel(failure) => {
                 vec![ResolveChildWorkflowExecution {
-                    workflow_id: self.shared_state.workflow_id.clone(),
+                    seq: self.shared_state.lang_sequence_number,
                     result: Some(ChildWorkflowResult {
                         status: Some(ChildWorkflowStatus::Cancelled(wfr::Cancellation {
                             failure: Some(failure),
@@ -573,7 +576,7 @@ impl Cancellable for ChildWorkflowMachine {
             .flat_map(|mc| match mc {
                 ChildWorkflowCommand::StartCancel(failure) => {
                     vec![ResolveChildWorkflowExecutionStart {
-                        workflow_id: self.shared_state.workflow_id.to_owned(),
+                        seq: self.shared_state.lang_sequence_number,
                         status: Some(resolve_child_workflow_execution_start::Status::Cancelled(
                             ResolveChildWorkflowExecutionStartCancelled {
                                 failure: Some(failure),
@@ -584,7 +587,7 @@ impl Cancellable for ChildWorkflowMachine {
                 }
                 ChildWorkflowCommand::Fail(failure) => {
                     vec![ResolveChildWorkflowExecution {
-                        workflow_id: self.shared_state.workflow_id.to_owned(),
+                        seq: self.shared_state.lang_sequence_number,
                         result: Some(ChildWorkflowResult {
                             status: Some(ChildWorkflowStatus::Failed(wfr::Failure {
                                 failure: Some(failure),
@@ -640,10 +643,13 @@ mod test {
     extern crate derive_more;
 
     use super::*;
+
     use crate::{
         protos::coresdk::child_workflow::child_workflow_result,
         protos::coresdk::workflow_activation::resolve_child_workflow_execution_start::Status as StartStatus,
-        prototype_rust_sdk::{WfContext, WorkflowFunction, WorkflowResult},
+        prototype_rust_sdk::{
+            CancellableFuture, ChildWorkflowOptions, WfContext, WorkflowFunction, WorkflowResult,
+        },
         test_help::{canned_histories, TestHistoryBuilder},
         workflow::managed_wf::ManagedWFFunc,
     };
@@ -694,23 +700,18 @@ mod test {
 
     async fn parent_wf(mut ctx: WfContext) -> WorkflowResult<()> {
         let expectation = Expectation::try_from_u8(ctx.get_args()[0].data[0]).unwrap();
-        let req = StartChildWorkflowExecution {
+        let mut child = ctx.child_workflow(ChildWorkflowOptions {
             workflow_id: "child-id-1".to_string(),
             workflow_type: "child".to_string(),
             input: vec![],
-            ..Default::default()
-        };
-        match (expectation.clone(), ctx.start_child_workflow(req).await) {
+        });
+
+        match (expectation.clone(), child.start(&mut ctx).await) {
             (Expectation::Success | Expectation::Failure, StartStatus::Succeeded(_)) => {}
             (Expectation::StartFailure, StartStatus::Failed(_)) => return Ok(().into()),
             _ => return Err(anyhow!("Unexpected start status")),
         };
-        match (
-            expectation,
-            ctx.child_workflow_result("child-id-1".to_string())
-                .await
-                .status,
-        ) {
+        match (expectation, child.result(&ctx).await.status) {
             (Expectation::Success, Some(child_workflow_result::Status::Completed(_))) => {
                 Ok(().into())
             }
@@ -773,13 +774,13 @@ mod test {
 
     async fn cancel_before_send_wf(mut ctx: WfContext) -> WorkflowResult<()> {
         let workflow_id = "child-id-1";
-        let start = ctx.start_child_workflow(StartChildWorkflowExecution {
+        let mut child = ctx.child_workflow(ChildWorkflowOptions {
             workflow_id: workflow_id.to_string(),
             workflow_type: "child".to_string(),
             input: vec![],
-            ..Default::default()
         });
-        ctx.cancel_child_workflow(workflow_id);
+        let start = child.start(&mut ctx);
+        start.cancel(&ctx);
         match start.await {
             StartStatus::Cancelled(_) => Ok(().into()),
             _ => Err(anyhow!("Unexpected start status")),

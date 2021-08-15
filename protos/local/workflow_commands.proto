@@ -34,42 +34,46 @@ message WorkflowCommand {
 }
 
 message StartTimer {
-    string timer_id = 1;
+    /// Lang's incremental sequence number, used as the operation identifier
+    uint32 seq = 1;
     google.protobuf.Duration start_to_fire_timeout = 2;
 }
 
 message CancelTimer {
-    string timer_id = 1;
+    /// Lang's incremental sequence number as passed to `StartTimer`
+    uint32 seq = 1;
 }
 
 message ScheduleActivity {
-    string activity_id = 1;
-    string activity_type = 2;
-    string namespace = 3;
+    /// Lang's incremental sequence number, used as the operation identifier
+    uint32 seq = 1;
+    string activity_id = 2;
+    string activity_type = 3;
+    string namespace = 4;
     // The name of the task queue to place this activity request in
-    string task_queue = 4;
-    map<string, common.Payload> header_fields = 5;
+    string task_queue = 5;
+    map<string, common.Payload> header_fields = 6;
     /// Arguments/input to the activity. Called "input" upstream.
-    repeated common.Payload arguments = 6;
+    repeated common.Payload arguments = 7;
     /// Indicates how long the caller is willing to wait for an activity completion. Limits how long
     /// retries will be attempted. Either this or start_to_close_timeout_seconds must be specified.
     /// When not specified defaults to the workflow execution timeout.
-    google.protobuf.Duration schedule_to_close_timeout = 7;
+    google.protobuf.Duration schedule_to_close_timeout = 8;
     /// Limits time an activity task can stay in a task queue before a worker picks it up. This
     /// timeout is always non retryable as all a retry would achieve is to put it back into the same
     /// queue. Defaults to schedule_to_close_timeout or workflow execution timeout if not specified.
-    google.protobuf.Duration schedule_to_start_timeout = 8;
+    google.protobuf.Duration schedule_to_start_timeout = 9;
     /// Maximum time an activity is allowed to execute after a pick up by a worker. This timeout is
     /// always retryable. Either this or schedule_to_close_timeout must be specified.
-    google.protobuf.Duration start_to_close_timeout = 9;
+    google.protobuf.Duration start_to_close_timeout = 10;
     /// Maximum time allowed between successful worker heartbeats.
-    google.protobuf.Duration heartbeat_timeout = 10;
+    google.protobuf.Duration heartbeat_timeout = 11;
     /// Activities are provided by a default retry policy controlled through the service dynamic
     /// configuration. Retries are happening up to schedule_to_close_timeout. To disable retries set
-    /// retry_policy.maximum_attempts to 1.
-    common.RetryPolicy retry_policy = 11;
+    /// retry_policy.maximum_attempts to 2.
+    common.RetryPolicy retry_policy = 12;
     /// Defines behaviour of the underlying workflow when activity cancellation has been requested.
-    ActivityCancellationType cancellation_type = 12;
+    ActivityCancellationType cancellation_type = 13;
 }
 
 enum ActivityCancellationType {
@@ -85,7 +89,8 @@ enum ActivityCancellationType {
 }
 
 message RequestCancelActivity {
-    string activity_id = 1;
+    /// Lang's incremental sequence number as passed to `ScheduleActivity`
+    uint32 seq = 1;
 }
 
 message QueryResult {
@@ -151,41 +156,46 @@ message SetPatchMarker {
 
 /// Start a child workflow execution
 message StartChildWorkflowExecution {
-    string namespace = 1;
-    string workflow_id = 2;
-    string workflow_type = 3;
-    string task_queue = 4;
-    repeated common.Payload input = 5;
+    /// Lang's incremental sequence number, used as the operation identifier
+    uint32 seq = 1;
+    string namespace = 2;
+    string workflow_id = 3;
+    string workflow_type = 4;
+    string task_queue = 5;
+    repeated common.Payload input = 6;
     /// Total workflow execution timeout including retries and continue as new.
-    google.protobuf.Duration workflow_execution_timeout = 6;
+    google.protobuf.Duration workflow_execution_timeout = 7;
     /// Timeout of a single workflow run.
-    google.protobuf.Duration workflow_run_timeout = 7;
+    google.protobuf.Duration workflow_run_timeout = 8;
     /// Timeout of a single workflow task.
-    google.protobuf.Duration workflow_task_timeout = 8;
+    google.protobuf.Duration workflow_task_timeout = 9;
     /// Default: PARENT_CLOSE_POLICY_TERMINATE.
-    child_workflow.ParentClosePolicy parent_close_policy = 9;
-    // string control = 10; (unused from StartChildWorkflowExecutionCommandAttributes)
+    child_workflow.ParentClosePolicy parent_close_policy = 10;
+    // string control = 11; (unused from StartChildWorkflowExecutionCommandAttributes)
     // Default: WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE.
-    common.WorkflowIdReusePolicy workflow_id_reuse_policy = 11;
-    common.RetryPolicy retry_policy = 12;
-    string cron_schedule = 13;
+    common.WorkflowIdReusePolicy workflow_id_reuse_policy = 12;
+    common.RetryPolicy retry_policy = 13;
+    string cron_schedule = 14;
     /// Header fields
-    map<string, common.Payload> header = 14;
+    map<string, common.Payload> header = 15;
     /// Memo fields
-    map<string, common.Payload> memo = 15;
+    map<string, common.Payload> memo = 16;
     /// Search attributes
-    map<string, common.Payload> search_attributes = 16;
+    map<string, common.Payload> search_attributes = 17;
     /// Defines behaviour of the underlying workflow when child workflow cancellation has been requested.
-    child_workflow.ChildWorkflowCancellationType cancellation_type = 17;
+    child_workflow.ChildWorkflowCancellationType cancellation_type = 18;
 }
 
 /// Request cancellation of an external workflow execution, can be used for child workflows
 message RequestCancelExternalWorkflowExecution {
-    string namespace = 1;
+    /// Lang's incremental sequence number as provided to StartChildWorkflowExecution.
+    /// Omit this if requesting to cancel a non-child external workflow.
+    optional uint32 seq = 1;
+    string namespace = 2;
     /// Required workflow_id of the Workflow to cancel
-    string workflow_id = 2;
+    string workflow_id = 3;
     /// Optional run_id of the Workflow to cancel
-    string run_id = 3;
+    string run_id = 4;
 }
 
 /// Send a signal to an external workflow, can be used for child workflows

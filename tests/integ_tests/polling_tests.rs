@@ -22,12 +22,12 @@ use tokio::time::timeout;
 async fn out_of_order_completion_doesnt_hang() {
     let (core, task_q) = init_core_and_create_wf("out_of_order_completion_doesnt_hang").await;
     let activity_id = "act-1";
-    let timer_id = "timer-1";
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
     core.complete_workflow_activation(
         vec![
             schedule_activity_cmd(
+                0,
                 &task_q,
                 activity_id,
                 ActivityCancellationType::TryCancel,
@@ -35,7 +35,7 @@ async fn out_of_order_completion_doesnt_hang() {
                 Duration::from_secs(60),
             ),
             StartTimer {
-                timer_id: timer_id.to_owned(),
+                seq: 1,
                 start_to_fire_timeout: Some(Duration::from_millis(50).into()),
             }
             .into(),
@@ -60,11 +60,11 @@ async fn out_of_order_completion_doesnt_hang() {
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::FireTimer(
-                    FireTimer { timer_id: t_id }
+                    FireTimer { seq: t_seq }
                 )),
             },
         ] => {
-            assert_eq!(t_id, timer_id);
+            assert_eq!(*t_seq, 1);
         }
     );
 
@@ -92,10 +92,7 @@ async fn out_of_order_completion_doesnt_hang() {
     core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
-        vec![RequestCancelActivity {
-            activity_id: activity_id.to_string(),
-        }
-        .into()],
+        vec![RequestCancelActivity { seq: 0 }.into()],
     ))
     .await
     .unwrap();
@@ -129,14 +126,10 @@ async fn long_poll_timeout_is_retried() {
 }
 
 pub async fn many_parallel_timers_longhist(mut ctx: WfContext) -> WorkflowResult<()> {
-    for timer_set in 0..100 {
+    for _ in 0..100 {
         let mut futs = vec![];
-        for i in 0..1000 {
-            let timer = StartTimer {
-                timer_id: format!("t-{}-{}", timer_set, i),
-                start_to_fire_timeout: Some(Duration::from_millis(100).into()),
-            };
-            futs.push(ctx.timer(timer));
+        for _ in 0..1000 {
+            futs.push(ctx.timer(Duration::from_millis(100)));
         }
         join_all(futs).await;
     }

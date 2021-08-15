@@ -25,7 +25,7 @@ async fn multi_workers() {
     // Make histories for 5 different workflows on 5 different task queues
     let hists = (0..5).into_iter().map(|i| {
         let wf_id = format!("fake-wf-{}", i);
-        let hist = canned_histories::single_timer("fake_timer");
+        let hist = canned_histories::single_timer("1");
         FakeWfResponses {
             wf_id,
             hist,
@@ -53,7 +53,7 @@ async fn multi_workers() {
 
 #[tokio::test]
 async fn no_worker_for_queue_error_returned_properly() {
-    let t = canned_histories::single_timer("fake_timer");
+    let t = canned_histories::single_timer("1");
     // Empty batches to specify 0 calls to poll expectation
     let core = build_fake_core("fake_wf_id", t, Vec::<ResponseType>::new());
 
@@ -65,7 +65,7 @@ async fn no_worker_for_queue_error_returned_properly() {
 
 #[tokio::test]
 async fn worker_double_register_is_err() {
-    let t = canned_histories::single_timer("fake_timer");
+    let t = canned_histories::single_timer("1");
     let core = build_fake_core("fake_wf_id", t, Vec::<ResponseType>::new());
     assert!(core
         .register_worker(
@@ -83,9 +83,10 @@ async fn worker_double_register_is_err() {
 // queue that it doesn't "leak" over and get returned when lang polls for a different task queue
 #[tokio::test]
 async fn pending_activities_only_returned_for_their_queue() {
-    let act_id = "act-1";
+    let act_id = 1;
     let histmaker = |qname: String| {
-        let hist = canned_histories::cancel_scheduled_activity(act_id, "sig-1");
+        let hist =
+            canned_histories::cancel_scheduled_activity(act_id.to_string().as_str(), "sig-1");
         FakeWfResponses {
             wf_id: "wf1".to_string(),
             hist,
@@ -104,6 +105,7 @@ async fn pending_activities_only_returned_for_their_queue() {
         "q-1",
         res.run_id,
         vec![ScheduleActivity {
+            seq: act_id,
             activity_id: act_id.to_string(),
             cancellation_type: ActivityCancellationType::TryCancel as i32,
             ..Default::default()
@@ -116,10 +118,7 @@ async fn pending_activities_only_returned_for_their_queue() {
     core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         "q-1",
         res.run_id,
-        vec![RequestCancelActivity {
-            activity_id: act_id.to_string(),
-        }
-        .into()],
+        vec![RequestCancelActivity { seq: act_id }.into()],
     ))
     .await
     .unwrap();
@@ -143,7 +142,7 @@ async fn nonexistent_worker_poll_returns_not_registered() {
 
 #[tokio::test]
 async fn after_shutdown_of_worker_get_shutdown_err() {
-    let t = canned_histories::single_timer("fake_timer");
+    let t = canned_histories::single_timer("1");
     let core = build_fake_core("fake_wf_id", t, &[1]);
     let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
@@ -161,7 +160,7 @@ async fn after_shutdown_of_worker_get_shutdown_err() {
 
 #[tokio::test]
 async fn after_shutdown_of_worker_can_be_reregistered() {
-    let t = canned_histories::single_timer("fake_timer");
+    let t = canned_histories::single_timer("1");
     let mut core = build_fake_core("fake_wf_id", t.clone(), &[1]);
     let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
     core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, res.run_id))
@@ -178,7 +177,7 @@ async fn after_shutdown_of_worker_can_be_reregistered() {
 
 #[tokio::test]
 async fn shutdown_worker_can_complete_pending_activation() {
-    let t = canned_histories::single_timer("fake_timer");
+    let t = canned_histories::single_timer("1");
     let core = build_fake_core("fake_wf_id", t, &[2]);
     let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
@@ -187,7 +186,7 @@ async fn shutdown_worker_can_complete_pending_activation() {
         TEST_Q,
         res.run_id,
         vec![StartTimer {
-            timer_id: "fake_timer".to_string(),
+            seq: 1,
             ..Default::default()
         }
         .into()],
@@ -234,7 +233,7 @@ fn worker_shutdown() -> (CoreSDK<MockServerGatewayApis>, watch::Sender<bool>) {
             let mut rx = rx.clone();
             let tqc = tqc.clone();
             async move {
-                let t = canned_histories::single_timer("fake_timer");
+                let t = canned_histories::single_timer("1");
                 // Don't resolve polls until worker shuts down
                 rx.changed().await.unwrap();
                 Some(Ok(hist_to_poll_resp(

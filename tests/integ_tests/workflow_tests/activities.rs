@@ -26,6 +26,7 @@ async fn activity_workflow() {
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
+            0,
             &task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
@@ -63,13 +64,13 @@ async fn activity_workflow() {
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
-                    ResolveActivity {activity_id: a_id, result: Some(ActivityResult{
+                    ResolveActivity {seq, result: Some(ActivityResult{
                     status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)})),
                      ..})}
                 )),
             },
         ] => {
-            assert_eq!(a_id, activity_id);
+            assert_eq!(*seq, 0);
             assert_eq!(r, &response_payload);
         }
     );
@@ -84,6 +85,7 @@ async fn activity_non_retryable_failure() {
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
+            0,
             &task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
@@ -124,14 +126,14 @@ async fn activity_non_retryable_failure() {
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
-                    ResolveActivity {activity_id: a_id, result: Some(ActivityResult{
+                    ResolveActivity {seq, result: Some(ActivityResult{
                     status: Some(act_res::Status::Failed(activity_result::Failure{
                         failure: Some(f),
                     }))})}
                 )),
             },
         ] => {
-            assert_eq!(a_id, activity_id);
+            assert_eq!(*seq, 0);
             assert_eq!(f, &Failure{
                 message: "Activity task failed".to_owned(),
                 cause: Some(Box::new(failure)),
@@ -160,6 +162,7 @@ async fn activity_retry() {
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
+            0,
             &task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
@@ -220,12 +223,12 @@ async fn activity_retry() {
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
-                    ResolveActivity {activity_id: a_id, result: Some(ActivityResult{
+                    ResolveActivity {seq, result: Some(ActivityResult{
                     status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)}))})}
                 )),
             },
         ] => {
-            assert_eq!(a_id, activity_id);
+            assert_eq!(*seq, 0);
             assert_eq!(r, &response_payload);
         }
     );
@@ -236,12 +239,12 @@ async fn activity_retry() {
 async fn activity_cancellation_try_cancel() {
     let (core, task_q) = init_core_and_create_wf("activity_cancellation_try_cancel").await;
     let activity_id = "act-1";
-    let timer_id = "timer-1";
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
     core.complete_workflow_activation(
         vec![
             schedule_activity_cmd(
+                0,
                 &task_q,
                 activity_id,
                 ActivityCancellationType::TryCancel,
@@ -249,7 +252,7 @@ async fn activity_cancellation_try_cancel() {
                 Duration::from_secs(60),
             ),
             StartTimer {
-                timer_id: timer_id.to_owned(),
+                seq: 1,
                 start_to_fire_timeout: Some(Duration::from_millis(50).into()),
             }
             .into(),
@@ -274,20 +277,17 @@ async fn activity_cancellation_try_cancel() {
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::FireTimer(
-                    FireTimer { timer_id: t_id }
+                    FireTimer { seq }
                 )),
             },
         ] => {
-            assert_eq!(t_id, timer_id);
+            assert_eq!(*seq, 1);
         }
     );
     core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
-        vec![RequestCancelActivity {
-            activity_id: activity_id.to_owned(),
-        }
-        .into()],
+        vec![RequestCancelActivity { seq: 0 }.into()],
     ))
     .await
     .unwrap();
@@ -305,6 +305,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     core.complete_workflow_activation(
         vec![
             schedule_activity_cmd(
+                0,
                 &task_q,
                 activity_id,
                 ActivityCancellationType::TryCancel,
@@ -312,7 +313,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
                 Duration::from_secs(60),
             ),
             StartTimer {
-                timer_id: "timer1".to_owned(),
+                seq: 1,
                 start_to_fire_timeout: Some(Duration::from_millis(50).into()),
             }
             .into(),
@@ -333,10 +334,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
-        vec![RequestCancelActivity {
-            activity_id: activity_id.to_owned(),
-        }
-        .into()],
+        vec![RequestCancelActivity { seq: 0 }.into()],
     ))
     .await
     .unwrap();
@@ -361,7 +359,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
         &task_q,
         task.run_id,
         vec![StartTimer {
-            timer_id: "timer2".to_string(),
+            seq: 2,
             start_to_fire_timeout: Some(Duration::from_millis(100).into()),
         }
         .into()],
@@ -404,6 +402,7 @@ async fn started_activity_timeout() {
     // Complete workflow task and schedule activity that times out in 1 second.
     core.complete_workflow_activation(
         schedule_activity_cmd(
+            0,
             &task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
@@ -430,7 +429,7 @@ async fn started_activity_timeout() {
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
-                        activity_id: a_id,
+                        seq,
                         result: Some(ActivityResult{
                             status: Some(
                                 act_res::Status::Failed(
@@ -443,7 +442,7 @@ async fn started_activity_timeout() {
                 )),
             },
         ] => {
-            assert_eq!(a_id, activity_id);
+            assert_eq!(*seq, 0);
         }
     );
     core.complete_execution(&task_q, &task.run_id).await;
@@ -454,12 +453,12 @@ async fn activity_cancellation_wait_cancellation_completed() {
     let (core, task_q) =
         init_core_and_create_wf("activity_cancellation_wait_cancellation_completed").await;
     let activity_id = "act-1";
-    let timer_id = "timer-1";
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
     core.complete_workflow_activation(
         vec![
             schedule_activity_cmd(
+                0,
                 &task_q,
                 activity_id,
                 ActivityCancellationType::WaitCancellationCompleted,
@@ -467,7 +466,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
                 Duration::from_secs(60),
             ),
             StartTimer {
-                timer_id: timer_id.to_owned(),
+                seq: 1,
                 start_to_fire_timeout: Some(Duration::from_millis(50).into()),
             }
             .into(),
@@ -492,20 +491,17 @@ async fn activity_cancellation_wait_cancellation_completed() {
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::FireTimer(
-                    FireTimer { timer_id: t_id }
+                    FireTimer { seq }
                 )),
             },
         ] => {
-            assert_eq!(t_id, timer_id);
+            assert_eq!(*seq, 1);
         }
     );
     core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
-        vec![RequestCancelActivity {
-            activity_id: activity_id.to_owned(),
-        }
-        .into()],
+        vec![RequestCancelActivity { seq: 0 }.into()],
     ))
     .await
     .unwrap();
@@ -524,12 +520,12 @@ async fn activity_cancellation_wait_cancellation_completed() {
 async fn activity_cancellation_abandon() {
     let (core, task_q) = init_core_and_create_wf("activity_cancellation_abandon").await;
     let activity_id = "act-1";
-    let timer_id = "timer-1";
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
     core.complete_workflow_activation(
         vec![
             schedule_activity_cmd(
+                0,
                 &task_q,
                 activity_id,
                 ActivityCancellationType::Abandon,
@@ -537,7 +533,7 @@ async fn activity_cancellation_abandon() {
                 Duration::from_secs(60),
             ),
             StartTimer {
-                timer_id: timer_id.to_owned(),
+                seq: 1,
                 start_to_fire_timeout: Some(Duration::from_millis(50).into()),
             }
             .into(),
@@ -562,20 +558,17 @@ async fn activity_cancellation_abandon() {
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::FireTimer(
-                    FireTimer { timer_id: t_id }
+                    FireTimer { seq }
                 )),
             },
         ] => {
-            assert_eq!(t_id, timer_id);
+            assert_eq!(*seq, 1);
         }
     );
     core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
-        vec![RequestCancelActivity {
-            activity_id: activity_id.to_owned(),
-        }
-        .into()],
+        vec![RequestCancelActivity { seq: 0 }.into()],
     ))
     .await
     .unwrap();

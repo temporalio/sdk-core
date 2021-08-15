@@ -409,7 +409,7 @@ async fn many_concurrent_heartbeat_cancels() {
 async fn activity_timeout_no_double_resolve() {
     let t = canned_histories::activity_double_resolve_repro();
     let core = build_fake_core("fake_wf_id", t, &[3]);
-    let activity_id = "act";
+    let activity_id = 1;
 
     poll_and_reply(
         &core,
@@ -418,6 +418,7 @@ async fn activity_timeout_no_double_resolve() {
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
+                    seq: activity_id,
                     activity_id: activity_id.to_string(),
                     cancellation_type: ActivityCancellationType::TryCancel as i32,
                     ..Default::default()
@@ -427,12 +428,9 @@ async fn activity_timeout_no_double_resolve() {
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
                 vec![
-                    RequestCancelActivity {
-                        activity_id: activity_id.to_string(),
-                    }
-                    .into(),
+                    RequestCancelActivity { seq: activity_id }.into(),
                     StartTimer {
-                        timer_id: "timer".to_owned(),
+                        seq: 2,
                         ..Default::default()
                     }
                     .into(),

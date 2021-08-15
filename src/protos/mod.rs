@@ -830,7 +830,7 @@ pub mod temporal {
                 impl From<workflow_commands::StartTimer> for command::Attributes {
                     fn from(s: workflow_commands::StartTimer) -> Self {
                         Self::StartTimerCommandAttributes(StartTimerCommandAttributes {
-                            timer_id: s.timer_id,
+                            timer_id: s.seq.to_string(),
                             start_to_fire_timeout: s.start_to_fire_timeout,
                         })
                     }
@@ -839,7 +839,7 @@ pub mod temporal {
                 impl From<workflow_commands::CancelTimer> for command::Attributes {
                     fn from(s: workflow_commands::CancelTimer) -> Self {
                         Self::CancelTimerCommandAttributes(CancelTimerCommandAttributes {
-                            timer_id: s.timer_id,
+                            timer_id: s.seq.to_string(),
                         })
                     }
                 }

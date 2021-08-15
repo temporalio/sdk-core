@@ -22,12 +22,12 @@ async fn simple_query_legacy() {
         task.run_id.clone(),
         vec![
             StartTimer {
-                timer_id: "timer-1".to_string(),
+                seq: 0,
                 start_to_fire_timeout: Some(Duration::from_millis(500).into()),
             }
             .into(),
             StartTimer {
-                timer_id: "timer-2".to_string(),
+                seq: 1,
                 start_to_fire_timeout: Some(Duration::from_secs(3).into()),
             }
             .into(),
@@ -135,7 +135,7 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
                 }]
             );
             let run_id = task.run_id.clone();
-            core.complete_timer(&task_q, &task.run_id, "timer-1", Duration::from_millis(500))
+            core.complete_timer(&task_q, &task.run_id, 1, Duration::from_millis(500))
                 .await;
             let task = core.poll_workflow_activation(&task_q).await.unwrap();
             core.complete_execution(&task_q, &task.run_id).await;
@@ -215,7 +215,7 @@ async fn repros_query_dropped_on_floor() {
     wf_starter.start_wf().await;
 
     let task = core.poll_workflow_activation(task_q).await.unwrap();
-    core.complete_timer(task_q, &task.run_id, "timer-1", Duration::from_millis(500))
+    core.complete_timer(task_q, &task.run_id, 1, Duration::from_millis(500))
         .await;
 
     // Poll for a task we will time out
@@ -273,7 +273,7 @@ async fn repros_query_dropped_on_floor() {
                 }
             ) {
                 let task = core.poll_workflow_activation(task_q).await.unwrap();
-                core.complete_timer(task_q, &task.run_id, "timer-1", Duration::from_millis(500))
+                core.complete_timer(task_q, &task.run_id, 1, Duration::from_millis(500))
                     .await;
                 continue;
             }
@@ -338,12 +338,12 @@ async fn fail_legacy_query() {
         task.run_id.clone(),
         vec![
             StartTimer {
-                timer_id: "timer-1".to_string(),
+                seq: 1,
                 start_to_fire_timeout: Some(Duration::from_millis(500).into()),
             }
             .into(),
             StartTimer {
-                timer_id: "timer-2".to_string(),
+                seq: 2,
                 start_to_fire_timeout: Some(Duration::from_secs(3).into()),
             }
             .into(),

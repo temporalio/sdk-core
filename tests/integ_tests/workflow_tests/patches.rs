@@ -1,6 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use temporal_sdk_core::protos::coresdk::workflow_commands::StartTimer;
 use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
 use test_utils::CoreWfStarter;
 
@@ -8,35 +7,15 @@ const MY_PATCH_ID: &str = "integ_test_change_name";
 
 pub async fn changes_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     if ctx.patched(MY_PATCH_ID) {
-        ctx.timer(StartTimer {
-            timer_id: "had_change_1".to_string(),
-            start_to_fire_timeout: Some(Duration::from_millis(200).into()),
-        })
-        .await;
+        ctx.timer(Duration::from_millis(100)).await;
     } else {
-        ctx.timer(StartTimer {
-            timer_id: "no_change_1".to_string(),
-            start_to_fire_timeout: Some(Duration::from_millis(200).into()),
-        })
-        .await;
+        ctx.timer(Duration::from_millis(200)).await;
     }
-    ctx.timer(StartTimer {
-        timer_id: "always_timer".to_string(),
-        start_to_fire_timeout: Some(Duration::from_millis(200).into()),
-    })
-    .await;
+    ctx.timer(Duration::from_millis(200)).await;
     if ctx.patched(MY_PATCH_ID) {
-        ctx.timer(StartTimer {
-            timer_id: "had_change_2".to_string(),
-            start_to_fire_timeout: Some(Duration::from_millis(200).into()),
-        })
-        .await;
+        ctx.timer(Duration::from_millis(100)).await;
     } else {
-        ctx.timer(StartTimer {
-            timer_id: "no_change_2".to_string(),
-            start_to_fire_timeout: Some(Duration::from_millis(200).into()),
-        })
-        .await;
+        ctx.timer(Duration::from_millis(200)).await;
     }
     Ok(().into())
 }
@@ -63,24 +42,12 @@ pub async fn no_change_then_change_wf(mut ctx: WfContext) -> WorkflowResult<()> 
     if DID_DIE.load(Ordering::Acquire) {
         assert!(!ctx.patched(MY_PATCH_ID));
     }
-    ctx.timer(StartTimer {
-        timer_id: "no_change_1".to_string(),
-        start_to_fire_timeout: Some(Duration::from_millis(200).into()),
-    })
-    .await;
-    ctx.timer(StartTimer {
-        timer_id: "always_timer".to_string(),
-        start_to_fire_timeout: Some(Duration::from_millis(200).into()),
-    })
-    .await;
+    ctx.timer(Duration::from_millis(200)).await;
+    ctx.timer(Duration::from_millis(200)).await;
     if DID_DIE.load(Ordering::Acquire) {
         assert!(!ctx.patched(MY_PATCH_ID));
     }
-    ctx.timer(StartTimer {
-        timer_id: "no_change_2".to_string(),
-        start_to_fire_timeout: Some(Duration::from_millis(200).into()),
-    })
-    .await;
+    ctx.timer(Duration::from_millis(200)).await;
 
     if !DID_DIE.load(Ordering::Acquire) {
         DID_DIE.store(true, Ordering::Release);
@@ -107,11 +74,7 @@ async fn can_add_change_markers() {
 static DID_DIE_2: AtomicBool = AtomicBool::new(false);
 pub async fn replay_with_change_marker_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     assert!(ctx.patched(MY_PATCH_ID));
-    ctx.timer(StartTimer {
-        timer_id: "always_timer".to_string(),
-        start_to_fire_timeout: Some(Duration::from_millis(200).into()),
-    })
-    .await;
+    ctx.timer(Duration::from_millis(200)).await;
     if !DID_DIE_2.load(Ordering::Acquire) {
         DID_DIE_2.store(true, Ordering::Release);
         ctx.force_task_fail(anyhow::anyhow!("i'm ded"));

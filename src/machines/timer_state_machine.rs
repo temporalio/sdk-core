@@ -198,10 +198,10 @@ impl StartCommandRecorded {
         dat: SharedState,
         attrs: TimerFiredEventAttributes,
     ) -> TimerMachineTransition<Fired> {
-        if dat.attrs.timer_id != attrs.timer_id {
+        if dat.attrs.seq.to_string() != attrs.timer_id {
             TransitionResult::Err(WFMachinesError::Fatal(format!(
                 "Timer fired event did not have expected timer id {}, it was {}!",
-                dat.attrs.timer_id, attrs.timer_id
+                dat.attrs.seq, attrs.timer_id
             )))
         } else {
             TransitionResult::ok(vec![TimerMachineCommand::Complete], Fired::default())
@@ -214,12 +214,7 @@ impl StartCommandRecorded {
     ) -> TimerMachineTransition<CancelTimerCommandCreated> {
         let cmd = Command {
             command_type: CommandType::CancelTimer as i32,
-            attributes: Some(
-                CancelTimer {
-                    timer_id: dat.attrs.timer_id,
-                }
-                .into(),
-            ),
+            attributes: Some(CancelTimer { seq: dat.attrs.seq }.into()),
         };
         TransitionResult::ok(
             vec![TimerMachineCommand::IssueCancelCmd(cmd)],
@@ -237,7 +232,7 @@ impl WFMachinesAdapter for TimerMachine {
         Ok(match my_command {
             // Fire the completion
             TimerMachineCommand::Complete => vec![FireTimer {
-                timer_id: self.shared_state.attrs.timer_id.clone(),
+                seq: self.shared_state.attrs.seq,
             }
             .into()],
             TimerMachineCommand::IssueCancelCmd(c) => vec![MachineResponse::IssueNewCommand(c)],
@@ -277,6 +272,7 @@ impl Cancellable for TimerMachine {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::prototype_rust_sdk::CancellableFuture;
     use crate::prototype_rust_sdk::WorkflowFunction;
     use crate::workflow::managed_wf::ManagedWFFunc;
     use crate::{
@@ -300,15 +296,11 @@ mod test {
             task, hence no extra loop.
         */
         let func = WorkflowFunction::new(|mut command_sink: WfContext| async move {
-            let timer = StartTimer {
-                timer_id: "timer1".to_string(),
-                start_to_fire_timeout: Some(Duration::from_secs(5).into()),
-            };
-            command_sink.timer(timer).await;
+            command_sink.timer(Duration::from_secs(5)).await;
             Ok(().into())
         });
 
-        let t = canned_histories::single_timer("timer1");
+        let t = canned_histories::single_timer("1");
         assert_eq!(2, t.get_full_history_info().unwrap().wf_task_count());
         ManagedWFFunc::new(t, func, vec![])
     }
@@ -348,11 +340,7 @@ mod test {
     #[tokio::test(flavor = "multi_thread")]
     async fn mismatched_timer_ids_errors() {
         let func = WorkflowFunction::new(|mut command_sink: WfContext| async move {
-            let timer = StartTimer {
-                timer_id: "realid".to_string(),
-                start_to_fire_timeout: Some(Duration::from_secs(5).into()),
-            };
-            command_sink.timer(timer).await;
+            command_sink.timer(Duration::from_secs(5)).await;
             Ok(().into())
         });
 
@@ -362,30 +350,22 @@ mod test {
         assert!(act
             .unwrap_err()
             .to_string()
-            .contains("Timer fired event did not have expected timer id realid"));
+            .contains("Timer fired event did not have expected timer id 1"));
         wfm.shutdown().await.unwrap();
     }
 
     #[fixture]
     fn cancellation_setup() -> ManagedWFFunc {
-        let func = WorkflowFunction::new(|mut cmd_sink: WfContext| async move {
-            let cancel_timer_fut = cmd_sink.timer(StartTimer {
-                timer_id: "cancel_timer".to_string(),
-                start_to_fire_timeout: Some(Duration::from_secs(500).into()),
-            });
-            cmd_sink
-                .timer(StartTimer {
-                    timer_id: "wait_timer".to_string(),
-                    start_to_fire_timeout: Some(Duration::from_secs(5).into()),
-                })
-                .await;
+        let func = WorkflowFunction::new(|mut ctx: WfContext| async move {
+            let cancel_timer_fut = ctx.timer(Duration::from_secs(500));
+            ctx.timer(Duration::from_secs(5)).await;
             // Cancel the first timer after having waited on the second
-            cmd_sink.cancel_timer("cancel_timer");
+            cancel_timer_fut.cancel(&ctx);
             cancel_timer_fut.await;
             Ok(().into())
         });
 
-        let t = canned_histories::cancel_timer("wait_timer", "cancel_timer");
+        let t = canned_histories::cancel_timer("2", "1");
         ManagedWFFunc::new(t, func, vec![])
     }
 
@@ -426,13 +406,10 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn cancel_before_sent_to_server() {
-        let func = WorkflowFunction::new(|mut cmd_sink: WfContext| async move {
-            let cancel_timer_fut = cmd_sink.timer(StartTimer {
-                timer_id: "cancel_timer".to_string(),
-                start_to_fire_timeout: Some(Duration::from_secs(500).into()),
-            });
+        let func = WorkflowFunction::new(|mut ctx: WfContext| async move {
+            let cancel_timer_fut = ctx.timer(Duration::from_secs(500));
             // Immediately cancel the timer
-            cmd_sink.cancel_timer("cancel_timer");
+            cancel_timer_fut.cancel(&ctx);
             cancel_timer_fut.await;
             Ok(().into())
         });
