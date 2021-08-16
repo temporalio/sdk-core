@@ -117,7 +117,7 @@ impl TestRustWorker {
         let poller = async move {
             let (completions_tx, mut completions_rx) = unbounded_channel();
             loop {
-                let activation = self.core.poll_workflow_task(&self.task_queue).await?;
+                let activation = self.core.poll_workflow_activation(&self.task_queue).await?;
 
                 // If the activation is to start a workflow, create a new workflow driver for it,
                 // using the function associated with that workflow id
@@ -130,9 +130,12 @@ impl TestRustWorker {
                         .get(&sw.workflow_type)
                         .ok_or_else(|| anyhow!("Workflow type not found"))?;
 
-                    // NOTE: Don't clone args if this gets ported to be a non-test rust worker
-                    let (wff, activations) =
-                        wf_function.start_workflow(sw.arguments.clone(), completions_tx.clone());
+                    let (wff, activations) = wf_function.start_workflow(
+                        self.task_queue.clone(),
+                        // NOTE: Don't clone args if this gets ported to be a non-test rust worker
+                        sw.arguments.clone(),
+                        completions_tx.clone(),
+                    );
                     let mut shutdown_rx = shutdown_rx.clone();
                     let jh = tokio::spawn(async move {
                         tokio::select! {
@@ -158,7 +161,10 @@ impl TestRustWorker {
                 if completion.has_execution_ending() {
                     self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
                 }
-                self.core.complete_workflow_task(completion).await.unwrap();
+                self.core
+                    .complete_workflow_activation(completion)
+                    .await
+                    .unwrap();
                 if self.incomplete_workflows.load(Ordering::SeqCst) == 0 {
                     break Ok(self);
                 }

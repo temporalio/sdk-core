@@ -33,19 +33,20 @@ async fn timer_workflow_workflow_driver() {
 #[tokio::test]
 async fn timer_workflow_manual() {
     let (core, task_q) = init_core_and_create_wf("timer_workflow").await;
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        &task_q,
+        task.run_id,
         vec![StartTimer {
             timer_id: "timer-1".to_string(),
             start_to_fire_timeout: Some(Duration::from_secs(1).into()),
         }
         .into()],
-        task.run_id,
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
-    core.complete_execution(&task.run_id).await;
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    core.complete_execution(&task_q, &task.run_id).await;
     core.shutdown().await;
 }
 
@@ -54,8 +55,10 @@ async fn timer_cancel_workflow() {
     let (core, task_q) = init_core_and_create_wf("timer_cancel_workflow").await;
     let timer_id = "wait_timer";
     let cancel_timer_id = "cancel_timer";
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        &task_q,
+        task.run_id,
         vec![
             StartTimer {
                 timer_id: timer_id.to_string(),
@@ -68,12 +71,13 @@ async fn timer_cancel_workflow() {
             }
             .into(),
         ],
-        task.run_id,
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        &task_q,
+        task.run_id,
         vec![
             CancelTimer {
                 timer_id: cancel_timer_id.to_string(),
@@ -81,7 +85,6 @@ async fn timer_cancel_workflow() {
             .into(),
             CompleteWorkflowExecution { result: None }.into(),
         ],
-        task.run_id,
     ))
     .await
     .unwrap();
@@ -91,8 +94,10 @@ async fn timer_cancel_workflow() {
 async fn timer_immediate_cancel_workflow() {
     let (core, task_q) = init_core_and_create_wf("timer_immediate_cancel_workflow").await;
     let cancel_timer_id = "cancel_timer";
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        &task_q,
+        task.run_id,
         vec![
             StartTimer {
                 timer_id: cancel_timer_id.to_string(),
@@ -105,7 +110,6 @@ async fn timer_immediate_cancel_workflow() {
             .into(),
             CompleteWorkflowExecution { result: None }.into(),
         ],
-        task.run_id,
     ))
     .await
     .unwrap();

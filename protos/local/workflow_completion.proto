@@ -8,11 +8,13 @@ import "temporal/api/failure/v1/message.proto";
 
 /// Result of a single workflow activation, reported from lang to core
 message WFActivationCompletion {
+    // The task queue the workflow activation you are completing originated from
+    string task_queue = 1;
     // The run id from the workflow activation you are completing
-    string run_id = 1;
+    string run_id = 2;
     oneof status {
-        Success successful = 2;
-        Failure failed = 3;
+        Success successful = 3;
+        Failure failed = 4;
     }
 }
 

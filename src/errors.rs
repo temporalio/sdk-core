@@ -3,11 +3,10 @@
 use crate::{
     machines::WFMachinesError, protos::coresdk::activity_result::ActivityResult,
     protos::coresdk::workflow_completion::WfActivationCompletion,
-    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
+    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse, WorkerLookupErr,
 };
 use tonic::codegen::http::uri::InvalidUri;
 
-pub(crate) struct ShutdownErr;
 pub(crate) struct WorkflowUpdateError {
     /// Underlying workflow error
     pub source: WFMachinesError,
@@ -26,7 +25,7 @@ pub enum CoreInitError {
     TonicTransportError(#[from] tonic::transport::Error),
 }
 
-/// Errors thrown by [crate::Core::poll_workflow_task]
+/// Errors thrown by [crate::Core::poll_workflow_activation]
 #[derive(thiserror::Error, Debug)]
 pub enum PollWfError {
     /// There was an error specific to a workflow instance. The cached workflow should be deleted
@@ -43,7 +42,7 @@ pub enum PollWfError {
     #[error("Poll workflow response from server was malformed: {0:?}")]
     BadPollResponseFromServer(Box<PollWorkflowTaskQueueResponse>),
     /// [crate::Core::shutdown] was called, and there are no more replay tasks to be handled. Lang
-    /// must call [crate::Core::complete_workflow_task] for any remaining tasks, and then may
+    /// must call [crate::Core::complete_workflow_activation] for any remaining tasks, and then may
     /// exit.
     #[error("Core is shut down and there are no more workflow replay tasks")]
     ShutDown,
@@ -70,9 +69,12 @@ impl From<WorkflowUpdateError> for PollWfError {
     }
 }
 
-impl From<ShutdownErr> for PollWfError {
-    fn from(_: ShutdownErr) -> Self {
-        Self::ShutDown
+impl From<WorkerLookupErr> for PollWfError {
+    fn from(e: WorkerLookupErr) -> Self {
+        match e {
+            WorkerLookupErr::Shutdown(_) => PollWfError::ShutDown,
+            WorkerLookupErr::NoWorker(s) => PollWfError::NoWorkerForQueue(s),
+        }
     }
 }
 
@@ -92,13 +94,16 @@ pub enum PollActivityError {
     NoWorkerForQueue(String),
 }
 
-impl From<ShutdownErr> for PollActivityError {
-    fn from(_: ShutdownErr) -> Self {
-        Self::ShutDown
+impl From<WorkerLookupErr> for PollActivityError {
+    fn from(e: WorkerLookupErr) -> Self {
+        match e {
+            WorkerLookupErr::Shutdown(_) => PollActivityError::ShutDown,
+            WorkerLookupErr::NoWorker(s) => PollActivityError::NoWorkerForQueue(s),
+        }
     }
 }
 
-/// Errors thrown by [crate::Core::complete_workflow_task]
+/// Errors thrown by [crate::Core::complete_workflow_activation]
 #[derive(thiserror::Error, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum CompleteWfError {
@@ -137,6 +142,15 @@ impl From<WorkflowUpdateError> for CompleteWfError {
     }
 }
 
+impl From<WorkerLookupErr> for CompleteWfError {
+    fn from(e: WorkerLookupErr) -> Self {
+        match e {
+            WorkerLookupErr::Shutdown(s) => CompleteWfError::NoWorkerForQueue(s),
+            WorkerLookupErr::NoWorker(s) => CompleteWfError::NoWorkerForQueue(s),
+        }
+    }
+}
+
 /// Errors thrown by [crate::Core::complete_activity_task]
 #[derive(thiserror::Error, Debug)]
 pub enum CompleteActivityError {
@@ -155,6 +169,15 @@ pub enum CompleteActivityError {
     /// There is no worker registered or alive for the activity being completed
     #[error("No worker registered or alive for queue: {0}")]
     NoWorkerForQueue(String),
+}
+
+impl From<WorkerLookupErr> for CompleteActivityError {
+    fn from(e: WorkerLookupErr) -> Self {
+        match e {
+            WorkerLookupErr::Shutdown(s) => CompleteActivityError::NoWorkerForQueue(s),
+            WorkerLookupErr::NoWorker(s) => CompleteActivityError::NoWorkerForQueue(s),
+        }
+    }
 }
 
 /// Errors thrown by [crate::Core::record_activity_heartbeat]

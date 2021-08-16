@@ -138,9 +138,22 @@ pub struct FakeWfResponses {
 }
 
 // TODO: turn this into a builder or make a new one? to make all these different build fns simpler
-pub struct MocksHolder<SG: ServerGatewayApis + Send + Sync + 'static> {
+pub struct MocksHolder<SG> {
     sg: SG,
-    pub mock_pollers: HashMap<String, MockWorker>,
+    mock_pollers: HashMap<String, MockWorker>,
+    pub outstanding_task_map: Option<Arc<RwLock<BiMap<String, TaskToken>>>>,
+}
+
+impl<SG> MocksHolder<SG> {
+    pub fn worker_cfg(&mut self, task_q: &str, mutator: impl FnOnce(&mut WorkerConfig)) {
+        if let Some(w) = self.mock_pollers.get_mut(task_q) {
+            mutator(&mut w.config);
+        }
+    }
+
+    pub fn take_pollers(self) -> HashMap<String, MockWorker> {
+        self.mock_pollers
+    }
 }
 
 pub struct MockWorker {
@@ -188,7 +201,11 @@ where
             .into_iter()
             .map(|w| (w.config.task_queue.clone(), w))
             .collect();
-        MocksHolder { sg, mock_pollers }
+        MocksHolder {
+            sg,
+            mock_pollers,
+            outstanding_task_map: None,
+        }
     }
 
     /// Uses the provided list of tasks to create a mock poller for the `TEST_Q`
@@ -211,7 +228,11 @@ where
                     .unwrap(),
             },
         );
-        MocksHolder { sg, mock_pollers }
+        MocksHolder {
+            sg,
+            mock_pollers,
+            outstanding_task_map: None,
+        }
     }
 }
 
@@ -409,6 +430,7 @@ pub fn build_mock_pollers(
             outstanding.write().remove_by_right(&comp.task_token);
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
+    let outstanding = outstanding_wf_task_tokens.clone();
     mock_gateway
         .expect_fail_workflow_task()
         .times(
@@ -417,7 +439,7 @@ pub fn build_mock_pollers(
                 .unwrap_or_else(|| RangeFull.into()),
         )
         .returning(move |tt, _, _| {
-            outstanding_wf_task_tokens.write().remove_by_right(&tt);
+            outstanding.write().remove_by_right(&tt);
             Ok(Default::default())
         });
     mock_gateway
@@ -427,6 +449,7 @@ pub fn build_mock_pollers(
     MocksHolder {
         sg: mock_gateway,
         mock_pollers,
+        outstanding_task_map: Some(outstanding_wf_task_tokens),
     }
 }
 
@@ -489,6 +512,15 @@ pub(crate) async fn poll_and_reply<'a>(
     eviction_mode: WorkflowCachingPolicy,
     expect_and_reply: &'a [AsserterWithReply<'a>],
 ) {
+    poll_and_reply_clears_outstanding_evicts(core, None, eviction_mode, expect_and_reply).await
+}
+
+pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
+    core: &'a CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
+    outstanding_map: Option<Arc<RwLock<BiMap<String, TaskToken>>>>,
+    eviction_mode: WorkflowCachingPolicy,
+    expect_and_reply: &'a [AsserterWithReply<'a>],
+) {
     let mut evictions = 0;
     let expected_evictions = expect_and_reply.len() - 1;
     let mut executed_failures = HashSet::new();
@@ -508,7 +540,7 @@ pub(crate) async fn poll_and_reply<'a>(
                 continue;
             }
 
-            let mut res = core.poll_workflow_task(TEST_Q).await.unwrap();
+            let mut res = core.poll_workflow_activation(TEST_Q).await.unwrap();
             let contains_eviction = res.eviction_index();
 
             if let Some(eviction_job_ix) = contains_eviction {
@@ -520,6 +552,9 @@ pub(crate) async fn poll_and_reply<'a>(
                     "Eviction job was not last job in job list"
                 );
                 res.jobs.remove(eviction_job_ix);
+                if let Some(omap) = outstanding_map.as_ref() {
+                    omap.write().remove_by_left(&res.run_id);
+                }
             }
 
             // TODO: Can remove this if?
@@ -529,13 +564,17 @@ pub(crate) async fn poll_and_reply<'a>(
 
             let reply = if res.jobs.is_empty() {
                 // Just an eviction
-                WfActivationCompletion::empty(res.run_id.clone())
+                WfActivationCompletion::empty(TEST_Q, res.run_id.clone())
             } else {
                 // Eviction plus some work, we still want to issue the reply
-                WfActivationCompletion::from_status(res.run_id.clone(), reply.clone())
+                WfActivationCompletion {
+                    task_queue: TEST_Q.to_string(),
+                    run_id: res.run_id.clone(),
+                    status: Some(reply.clone()),
+                }
             };
 
-            core.complete_workflow_task(reply).await.unwrap();
+            core.complete_workflow_activation(reply).await.unwrap();
 
             // Restart assertions from the beginning if it was an eviction
             if contains_eviction.is_some() {
@@ -551,7 +590,7 @@ pub(crate) async fn poll_and_reply<'a>(
                 WorkflowCachingPolicy::NonSticky => (),
                 WorkflowCachingPolicy::AfterEveryReply => {
                     if evictions < expected_evictions {
-                        core.request_workflow_eviction(&res.run_id);
+                        core.request_workflow_eviction(TEST_Q, &res.run_id);
                         evictions += 1;
                     }
                 }
@@ -562,7 +601,8 @@ pub(crate) async fn poll_and_reply<'a>(
     }
 
     assert_eq!(expected_fail_count, executed_failures.len());
-    assert_eq!(core.wft_manager.outstanding_wft(), 0);
+    // TODO: Really need a worker abstraction for testing
+    // assert_eq!(core.wft_manager.outstanding_wft(), 0);
 }
 
 pub(crate) fn gen_assert_and_reply(

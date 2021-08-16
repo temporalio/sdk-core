@@ -39,6 +39,7 @@ use tokio::sync::{
 impl WorkflowFunction {
     pub(crate) fn start_workflow(
         &self,
+        task_queue: String,
         args: Vec<Payload>,
         outgoing_completions: UnboundedSender<WfActivationCompletion>,
     ) -> (
@@ -50,6 +51,7 @@ impl WorkflowFunction {
         let (tx, incoming_activations) = unbounded_channel();
         (
             WorkflowFuture {
+                task_queue,
                 ctx_shared: wf_context.get_shared_data(),
                 inner: (self.wf_func)(wf_context).boxed(),
                 incoming_commands: cmd_receiver,
@@ -68,6 +70,8 @@ struct WFCommandFutInfo {
 }
 
 pub struct WorkflowFuture {
+    /// What task queue this workflow belongs to
+    task_queue: String,
     /// Future produced by calling the workflow function
     inner: BoxFuture<'static, WorkflowResult<()>>,
     /// Commands produced inside user's wf code
@@ -177,7 +181,11 @@ impl Future for WorkflowFuture {
             if is_only_eviction {
                 // No need to do anything with the workflow code in this case
                 self.outgoing_completions
-                    .send(WfActivationCompletion::from_cmds(vec![], run_id))
+                    .send(WfActivationCompletion::from_cmds(
+                        &self.task_queue,
+                        run_id,
+                        vec![],
+                    ))
                     .expect("Completion channel intact");
                 return Ok(WfExitValue::Evicted).into();
             }
@@ -252,7 +260,11 @@ impl Future for WorkflowFuture {
                     }
                     RustWfCmd::ForceWFTFailure(err) => {
                         self.outgoing_completions
-                            .send(WfActivationCompletion::fail(run_id, err.into()))
+                            .send(WfActivationCompletion::fail(
+                                &self.task_queue,
+                                run_id,
+                                err.into(),
+                            ))
                             .expect("Completion channel intact");
                         continue 'activations;
                     }
@@ -303,7 +315,11 @@ impl Future for WorkflowFuture {
             // multiple completions.
 
             self.outgoing_completions
-                .send(WfActivationCompletion::from_cmds(activation_cmds, run_id))
+                .send(WfActivationCompletion::from_cmds(
+                    &self.task_queue,
+                    run_id,
+                    activation_cmds,
+                ))
                 .expect("Completion channel intact");
 
             if die_of_eviction_when_done {

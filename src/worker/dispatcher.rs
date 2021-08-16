@@ -1,85 +1,132 @@
 use crate::{worker::Worker, ServerGatewayApis, WorkerConfig, WorkerRegistrationError};
+use arc_swap::ArcSwap;
+use futures::future::join_all;
 use std::{collections::HashMap, ops::Deref, sync::Arc};
-use tokio::sync::{Notify, RwLock, RwLockReadGuard};
-
-pub enum WorkerStatus {
-    Live(Worker),
-    Shutdown,
-}
-
-impl WorkerStatus {
-    #[cfg(test)]
-    pub fn unwrap(&self) -> &Worker {
-        match self {
-            WorkerStatus::Live(w) => w,
-            WorkerStatus::Shutdown => panic!("Worker not present"),
-        }
-    }
-}
+use tokio::sync::Notify;
 
 /// Allows access to workers by task queue name
 #[derive(Default)]
 pub struct WorkerDispatcher {
     /// Maps task queue names to workers
-    workers: RwLock<HashMap<String, WorkerStatus>>,
+    workers: ArcSwap<HashMap<String, WorkerRefCt>>,
 }
 
 impl WorkerDispatcher {
-    pub async fn store_worker(
+    pub async fn new_worker(
         &self,
         config: WorkerConfig,
         sticky_queue: Option<String>,
         gateway: Arc<impl ServerGatewayApis + Send + Sync + 'static>,
     ) -> Result<(), WorkerRegistrationError> {
-        if let Some(WorkerStatus::Live(_)) = self.workers.read().await.get(&config.task_queue) {
-            return Err(WorkerRegistrationError::WorkerAlreadyRegisteredForQueue(
-                config.task_queue,
-            ));
-        }
         let tq = config.task_queue.clone();
         let worker = Worker::new(config, sticky_queue, gateway);
-        self.workers
-            .write()
-            .await
-            .insert(tq, WorkerStatus::Live(worker));
+        self.set_worker_for_task_queue(tq, worker)
+    }
+
+    pub fn set_worker_for_task_queue(
+        &self,
+        tq: String,
+        worker: Worker,
+    ) -> Result<(), WorkerRegistrationError> {
+        if self.workers.load().get(&tq).is_some() {
+            return Err(WorkerRegistrationError::WorkerAlreadyRegisteredForQueue(tq));
+        }
+        let tq = &tq;
+        let worker = WorkerRefCt::new(worker);
+        self.workers.rcu(|map| {
+            let mut map = HashMap::clone(map);
+            map.insert(tq.clone(), worker.clone());
+            map
+        });
         Ok(())
     }
 
-    #[cfg(test)]
-    pub fn store_worker_mut(&mut self, tq: String, worker: Worker) {
-        self.workers
-            .get_mut()
-            .insert(tq, WorkerStatus::Live(worker));
+    pub fn get(&self, task_queue: &str) -> Option<impl Deref<Target = Worker>> {
+        self.workers.load().get(task_queue).cloned()
     }
 
-    pub async fn get(&self, task_queue: &str) -> Option<impl Deref<Target = WorkerStatus> + '_> {
-        let guard = self.workers.read().await;
-        RwLockReadGuard::try_map(guard, move |map| map.get(task_queue)).ok()
-    }
-
-    pub async fn shutdown_one(&self, task_queue: &str, notify_lock_unavailable: &Notify) {
+    pub async fn shutdown_one(&self, task_queue: &str) {
         info!("Shutting down worker on queue {}", task_queue);
-        if let Some(WorkerStatus::Live(w)) = self.workers.read().await.get(task_queue) {
-            w.notify_shutdown();
+        let mut maybe_worker = None;
+        if let Some(w) = self.workers.load().get(task_queue) {
+            w.notify_shutdown().await;
+            self.workers.rcu(|map| {
+                let mut map = HashMap::clone(map);
+                if maybe_worker.is_none() {
+                    maybe_worker = map.remove(task_queue);
+                }
+                map
+            });
         }
-        let mut workers = match self.workers.try_write() {
-            Ok(wg) => wg,
-            Err(_) => {
-                notify_lock_unavailable.notify_waiters();
-                self.workers.write().await
-            }
-        };
-        if let Some(WorkerStatus::Live(w)) = workers.remove(task_queue) {
-            workers.insert(task_queue.to_owned(), WorkerStatus::Shutdown);
-            drop(workers);
-            w.shutdown_complete().await;
+        if let Some(w) = maybe_worker {
+            w.destroy().await;
         }
     }
 
     pub async fn shutdown_all(&self) {
-        for (_, w) in self.workers.write().await.drain() {
-            if let WorkerStatus::Live(w) = w {
-                w.shutdown_complete().await;
+        // First notify all workers and allow tasks to drain
+        for w in self.workers.load().values() {
+            w.notify_shutdown().await;
+        }
+
+        let mut all_workers = HashMap::new();
+        self.workers.rcu(|map| {
+            let mut map = HashMap::clone(map);
+            all_workers.extend(map.drain());
+            map
+        });
+        join_all(all_workers.into_values().map(|w| w.destroy())).await;
+    }
+}
+
+/// Fun little struct that allows us to efficiently `await` for outstanding references to workers
+/// to reach 0 before we consume it forever.
+#[derive(Clone)]
+struct WorkerRefCt {
+    inner: Option<Arc<Worker>>,
+    notify: Arc<Notify>,
+}
+
+impl WorkerRefCt {
+    fn new(worker: Worker) -> Self {
+        Self {
+            inner: Some(Arc::new(worker)),
+            notify: Arc::new(Notify::new()),
+        }
+    }
+
+    async fn destroy(mut self) {
+        let mut arc = self.inner.take().unwrap();
+        loop {
+            self.notify.notified().await;
+            match Arc::try_unwrap(arc) {
+                Ok(w) => {
+                    w.shutdown_complete().await;
+                    return;
+                }
+                Err(a) => {
+                    arc = a;
+                    continue;
+                }
+            }
+        }
+    }
+}
+
+impl Deref for WorkerRefCt {
+    type Target = Worker;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner.as_ref().expect("Must exist").deref()
+    }
+}
+
+impl Drop for WorkerRefCt {
+    fn drop(&mut self) {
+        if let Some(arc) = &self.inner {
+            // We wait until 2 rather than 1 because we ourselves still have an Arc
+            if Arc::strong_count(arc) == 2 {
+                self.notify.notify_one()
             }
         }
     }

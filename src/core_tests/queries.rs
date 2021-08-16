@@ -15,8 +15,8 @@ use crate::{
             RespondQueryTaskCompletedResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
-    test_help::{canned_histories, hist_to_poll_resp, mock_core_with_opts, MocksHolder, TEST_Q},
-    Core, CoreInitOptionsBuilder,
+    test_help::{canned_histories, hist_to_poll_resp, mock_core, MocksHolder, TEST_Q},
+    Core,
 };
 
 #[rstest::rstest]
@@ -51,31 +51,29 @@ async fn legacy_query(#[case] include_history: bool) {
         .times(1)
         .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
 
-    let mut opts = CoreInitOptionsBuilder::default();
+    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![].into());
     if !include_history {
-        opts.max_cached_workflows(10_usize);
+        mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
     }
-    let core = mock_core_with_opts(
-        MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![].into()),
-        opts,
-    );
+    let core = mock_core(mock);
 
     let first_wft = || async {
-        let task = core.poll_workflow_task(TEST_Q).await.unwrap();
-        core.complete_workflow_task(WfActivationCompletion::from_cmd(
+        let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+            TEST_Q,
+            task.run_id,
             StartTimer {
                 timer_id: "fake_timer".to_string(),
                 ..Default::default()
             }
             .into(),
-            task.run_id,
         ))
         .await
         .unwrap();
     };
     let clear_eviction = || async {
-        let t = core.poll_workflow_task(TEST_Q).await.unwrap();
-        core.complete_workflow_task(WfActivationCompletion::empty(t.run_id))
+        let t = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, t.run_id))
             .await
             .unwrap();
     };
@@ -87,7 +85,7 @@ async fn legacy_query(#[case] include_history: bool) {
         first_wft().await;
     }
 
-    let task = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
     // Poll again, and we end up getting a `query` field query response
     let query = assert_matches!(
         task.jobs.as_slice(),
@@ -96,7 +94,9 @@ async fn legacy_query(#[case] include_history: bool) {
         }] => q
     );
     // Complete the query
-    core.complete_workflow_task(WfActivationCompletion::from_cmd(
+    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+        TEST_Q,
+        task.run_id,
         QueryResult {
             query_id: query.query_id.clone(),
             variant: Some(
@@ -107,7 +107,6 @@ async fn legacy_query(#[case] include_history: bool) {
             ),
         }
         .into(),
-        task.run_id,
     ))
     .await
     .unwrap();
@@ -117,16 +116,17 @@ async fn legacy_query(#[case] include_history: bool) {
         first_wft().await;
     }
 
-    let task = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [WfActivationJob {
             variant: Some(wf_activation_job::Variant::FireTimer(_)),
         }]
     );
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
-        vec![CompleteWorkflowExecution { result: None }.into()],
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        TEST_Q,
         task.run_id,
+        vec![CompleteWorkflowExecution { result: None }.into()],
     ))
     .await
     .unwrap();
@@ -164,26 +164,24 @@ async fn new_queries(#[case] num_queries: usize) {
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
     mock_gateway.expect_respond_legacy_query().times(0);
 
-    let mut opts = CoreInitOptionsBuilder::default();
-    opts.max_cached_workflows(10_usize);
-    let core = mock_core_with_opts(
-        MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![].into()),
-        opts,
-    );
+    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![].into());
+    mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
+    let core = mock_core(mock);
 
-    let task = core.poll_workflow_task(TEST_Q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmd(
+    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+        TEST_Q,
+        task.run_id,
         StartTimer {
             timer_id: "fake_timer".to_string(),
             ..Default::default()
         }
         .into(),
-        task.run_id,
     ))
     .await
     .unwrap();
 
-    let task = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_matches!(
         task.jobs[0],
         WfActivationJob {
@@ -213,9 +211,13 @@ async fn new_queries(#[case] num_queries: usize) {
         })
         .collect();
     qresults.push(CompleteWorkflowExecution { result: None }.into());
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(qresults, task.run_id))
-        .await
-        .unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        TEST_Q,
+        task.run_id,
+        qresults,
+    ))
+    .await
+    .unwrap();
     core.shutdown().await;
 }
 
@@ -245,26 +247,24 @@ async fn legacy_query_failure_on_wft_failure() {
         .times(1)
         .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
 
-    let mut opts = CoreInitOptionsBuilder::default();
-    opts.max_cached_workflows(10_usize);
-    let core = mock_core_with_opts(
-        MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![].into()),
-        opts,
-    );
+    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![].into());
+    mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
+    let core = mock_core(mock);
 
-    let task = core.poll_workflow_task(TEST_Q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmd(
+    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+        TEST_Q,
+        task.run_id,
         StartTimer {
             timer_id: "fake_timer".to_string(),
             ..Default::default()
         }
         .into(),
-        task.run_id,
     ))
     .await
     .unwrap();
 
-    let task = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
     // Poll again, and we end up getting a `query` field query response
     assert_matches!(
         task.jobs.as_slice(),
@@ -273,7 +273,8 @@ async fn legacy_query_failure_on_wft_failure() {
         }] => q
     );
     // Fail wft which should result in query being failed
-    core.complete_workflow_task(WfActivationCompletion::fail(
+    core.complete_workflow_activation(WfActivationCompletion::fail(
+        TEST_Q,
         task.run_id,
         Failure {
             message: "Ahh i broke".to_string(),
