@@ -152,6 +152,7 @@ async fn after_shutdown_of_worker_get_shutdown_err() {
             core.poll_workflow_task(TEST_Q).await.unwrap_err(),
             PollWfError::ShutDown
         );
+        // Need to complete task for shutdown to finish
         core.complete_workflow_task(WfActivationCompletion::empty(TEST_Q, res.run_id))
             .await
             .unwrap();

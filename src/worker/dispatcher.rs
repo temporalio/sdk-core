@@ -1,7 +1,7 @@
 use crate::{worker::Worker, ServerGatewayApis, WorkerConfig, WorkerRegistrationError};
 use arc_swap::ArcSwap;
-use std::ops::Deref;
-use std::{collections::HashMap, sync::Arc};
+use futures::future::join_all;
+use std::{collections::HashMap, ops::Deref, sync::Arc};
 use tokio::sync::Notify;
 
 /// Allows access to workers by task queue name
@@ -12,7 +12,7 @@ pub struct WorkerDispatcher {
 }
 
 impl WorkerDispatcher {
-    pub async fn store_worker(
+    pub async fn new_worker(
         &self,
         config: WorkerConfig,
         sticky_queue: Option<String>,
@@ -20,10 +20,10 @@ impl WorkerDispatcher {
     ) -> Result<(), WorkerRegistrationError> {
         let tq = config.task_queue.clone();
         let worker = Worker::new(config, sticky_queue, gateway);
-        self.store_prebuilt_worker(tq, worker)
+        self.set_worker_for_task_queue(tq, worker)
     }
 
-    pub fn store_prebuilt_worker(
+    pub fn set_worker_for_task_queue(
         &self,
         tq: String,
         worker: Worker,
@@ -75,9 +75,7 @@ impl WorkerDispatcher {
             all_workers.extend(map.drain());
             map
         });
-        for worker in all_workers.into_values() {
-            worker.destroy().await;
-        }
+        join_all(all_workers.into_values().map(|w| w.destroy())).await;
     }
 }
 

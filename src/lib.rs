@@ -209,14 +209,14 @@ where
     async fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError> {
         let sticky_q = self.get_sticky_q_name_for_worker(&config);
         self.workers
-            .store_worker(config, sticky_q, self.server_gateway.clone())
+            .new_worker(config, sticky_q, self.server_gateway.clone())
             .await
     }
 
     #[instrument(skip(self))]
     async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError> {
         let worker = self.worker(task_queue)?;
-        worker.next_workflow_task().await
+        worker.next_workflow_activation().await
     }
 
     #[instrument(skip(self))]
@@ -314,7 +314,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
             worker.wf_poller,
             worker.act_poller,
         );
-        self.workers.store_prebuilt_worker(tq, worker).unwrap();
+        self.workers.set_worker_for_task_queue(tq, worker).unwrap();
     }
 
     fn get_sticky_q_name_for_worker(&self, config: &WorkerConfig) -> Option<String> {

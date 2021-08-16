@@ -203,12 +203,8 @@ impl Worker {
             biased;
 
             r = act_mgr.poll() => r,
-            shutdown = self.shutdown_or_continue_notifier() => {
-                if shutdown {
-                    Err(PollActivityError::ShutDown)
-                } else {
-                    Ok(None)
-                }
+            _ = self.shutdown_notifier() => {
+                Err(PollActivityError::ShutDown)
             }
         }
     }
@@ -240,7 +236,7 @@ impl Worker {
         }
     }
 
-    pub(crate) async fn next_workflow_task(&self) -> Result<WfActivation, PollWfError> {
+    pub(crate) async fn next_workflow_activation(&self) -> Result<WfActivation, PollWfError> {
         // The poll needs to be in a loop because we can't guarantee tail call optimization in Rust
         // (simply) and we really, really need that for long-poll retries.
         loop {
@@ -273,19 +269,15 @@ impl Worker {
             let selected_f = tokio::select! {
                 biased;
 
-                // If a task is completed while we are waiting on polling, we need to restart the
-                // loop right away to provide any potential new pending activation
+                // If an activation is completed while we are waiting on polling, we need to restart
+                // the loop right away to provide any potential new pending activation
                 update = activation_update_fut => {
                     self.maybe_mark_task_done(update);
                     continue;
                 }
                 r = poll_result_future => r,
-                shutdown = self.shutdown_or_continue_notifier() => {
-                    if shutdown {
-                        return Err(PollWfError::ShutDown);
-                    } else {
-                        continue;
-                    }
+                _ = self.shutdown_notifier() => {
+                    return Err(PollWfError::ShutDown);
                 }
             };
 
@@ -573,14 +565,11 @@ impl Worker {
 
     /// A future that resolves to true the shutdown flag has been set to true, false is simply
     /// a signal that a poll loop should be restarted. Only meant to be called from polling funcs.
-    async fn shutdown_or_continue_notifier(&self) -> bool {
+    async fn shutdown_notifier(&self) {
         if *self.shutdown_requested.borrow() {
-            return true;
+            return;
         }
-        if self.shutdown_requested.clone().changed().await.is_err() {
-            return true;
-        }
-        *self.shutdown_requested.borrow()
+        let _ = self.shutdown_requested.clone().changed().await;
     }
 }
 
