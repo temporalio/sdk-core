@@ -22,9 +22,9 @@ use tokio::time::sleep;
 async fn activity_workflow() {
     let (core, task_q) = init_core_and_create_wf("activity_workflow").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Complete workflow task and schedule activity
-    core.complete_workflow_task(
+    core.complete_workflow_activation(
         schedule_activity_cmd(
             &task_q,
             activity_id,
@@ -57,7 +57,7 @@ async fn activity_workflow() {
     .await
     .unwrap();
     // Poll workflow task and verify that activity has succeeded.
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -80,9 +80,9 @@ async fn activity_workflow() {
 async fn activity_non_retryable_failure() {
     let (core, task_q) = init_core_and_create_wf("activity_non_retryable_failure").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Complete workflow task and schedule activity
-    core.complete_workflow_task(
+    core.complete_workflow_activation(
         schedule_activity_cmd(
             &task_q,
             activity_id,
@@ -118,7 +118,7 @@ async fn activity_non_retryable_failure() {
     .await
     .unwrap();
     // Poll workflow task and verify that activity has failed.
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -156,9 +156,9 @@ async fn activity_non_retryable_failure() {
 async fn activity_retry() {
     let (core, task_q) = init_core_and_create_wf("activity_retry").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Complete workflow task and schedule activity
-    core.complete_workflow_task(
+    core.complete_workflow_activation(
         schedule_activity_cmd(
             &task_q,
             activity_id,
@@ -214,7 +214,7 @@ async fn activity_retry() {
     .await
     .unwrap();
     // Poll workflow task and verify activity has succeeded.
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -237,9 +237,9 @@ async fn activity_cancellation_try_cancel() {
     let (core, task_q) = init_core_and_create_wf("activity_cancellation_try_cancel").await;
     let activity_id = "act-1";
     let timer_id = "timer-1";
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
-    core.complete_workflow_task(
+    core.complete_workflow_activation(
         vec![
             schedule_activity_cmd(
                 &task_q,
@@ -268,7 +268,7 @@ async fn activity_cancellation_try_cancel() {
         }
     );
     // Poll workflow task and verify that activity has failed.
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -281,7 +281,7 @@ async fn activity_cancellation_try_cancel() {
             assert_eq!(t_id, timer_id);
         }
     );
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
         vec![RequestCancelActivity {
@@ -291,7 +291,7 @@ async fn activity_cancellation_try_cancel() {
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     core.complete_execution(&task_q, &task.run_id).await;
 }
 
@@ -300,9 +300,9 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     let (core, task_q) =
         init_core_and_create_wf("activity_cancellation_plus_complete_doesnt_double_resolve").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
-    core.complete_workflow_task(
+    core.complete_workflow_activation(
         vec![
             schedule_activity_cmd(
                 &task_q,
@@ -323,14 +323,14 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     .unwrap();
     let activity_task = core.poll_activity_task(&task_q).await.unwrap();
     assert_matches!(activity_task.variant, Some(act_task::Variant::Start(_)));
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [WfActivationJob {
             variant: Some(wf_activation_job::Variant::FireTimer(_)),
         }]
     );
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
         vec![RequestCancelActivity {
@@ -340,7 +340,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Should get cancel task
     assert_matches!(
         task.jobs.as_slice(),
@@ -357,7 +357,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     );
     // We need to complete the wf task to send the activity cancel command to the server, so start
     // another short timer
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
         vec![StartTimer {
@@ -386,7 +386,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     // Ensure we do not get a wakeup with the activity being resolved completed, and instead get
     // the timer fired event (also wait for timer to fire)
     sleep(Duration::from_secs(1)).await;
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [WfActivationJob {
@@ -400,9 +400,9 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
 async fn started_activity_timeout() {
     let (core, task_q) = init_core_and_create_wf("started_activity_timeout").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Complete workflow task and schedule activity that times out in 1 second.
-    core.complete_workflow_task(
+    core.complete_workflow_activation(
         schedule_activity_cmd(
             &task_q,
             activity_id,
@@ -423,7 +423,7 @@ async fn started_activity_timeout() {
             assert_eq!(start_activity.activity_type, "test_activity".to_string())
         }
     );
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -455,9 +455,9 @@ async fn activity_cancellation_wait_cancellation_completed() {
         init_core_and_create_wf("activity_cancellation_wait_cancellation_completed").await;
     let activity_id = "act-1";
     let timer_id = "timer-1";
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
-    core.complete_workflow_task(
+    core.complete_workflow_activation(
         vec![
             schedule_activity_cmd(
                 &task_q,
@@ -486,7 +486,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
         }
     );
     // Poll workflow task and verify that activity has failed.
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -499,7 +499,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
             assert_eq!(t_id, timer_id);
         }
     );
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
         vec![RequestCancelActivity {
@@ -516,7 +516,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
     })
     .await
     .unwrap();
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     core.complete_execution(&task_q, &task.run_id).await;
 }
 
@@ -525,9 +525,9 @@ async fn activity_cancellation_abandon() {
     let (core, task_q) = init_core_and_create_wf("activity_cancellation_abandon").await;
     let activity_id = "act-1";
     let timer_id = "timer-1";
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
-    core.complete_workflow_task(
+    core.complete_workflow_activation(
         vec![
             schedule_activity_cmd(
                 &task_q,
@@ -556,7 +556,7 @@ async fn activity_cancellation_abandon() {
         }
     );
     // Poll workflow task and verify that activity has failed.
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -569,7 +569,7 @@ async fn activity_cancellation_abandon() {
             assert_eq!(t_id, timer_id);
         }
     );
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
         vec![RequestCancelActivity {
@@ -581,6 +581,6 @@ async fn activity_cancellation_abandon() {
     .unwrap();
     // Poll workflow task expecting that activation has been created by the state machine
     // immediately after the cancellation request.
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     core.complete_execution(&task_q, &task.run_id).await;
 }

@@ -907,15 +907,15 @@ async fn max_concurrent_wft_respected() {
     .unwrap();
 
     // Poll twice in a row before completing -- we should be at limit
-    let r1 = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let r1 = core.poll_workflow_activation(TEST_Q).await.unwrap();
     let r1_run_id = r1.run_id.clone();
-    let r2 = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let r2 = core.poll_workflow_activation(TEST_Q).await.unwrap();
     // Now we immediately poll for new work, and complete one of the existing activations. The
     // poll must not unblock until the completion goes through.
     let last_finisher = AtomicUsize::new(0);
     let (_, mut r1) = tokio::join! {
         async {
-            core.complete_workflow_task(WfActivationCompletion::from_cmd(
+            core.complete_workflow_activation(WfActivationCompletion::from_cmd(
                 TEST_Q,
                 r1.run_id,
                 StartTimer {
@@ -927,7 +927,7 @@ async fn max_concurrent_wft_respected() {
             last_finisher.store(1, Ordering::SeqCst);
         },
         async {
-            let r = core.poll_workflow_task(TEST_Q).await.unwrap();
+            let r = core.poll_workflow_activation(TEST_Q).await.unwrap();
             last_finisher.store(2, Ordering::SeqCst);
             r
         }
@@ -937,7 +937,7 @@ async fn max_concurrent_wft_respected() {
 
     // Since we never did anything with r2, all subsequent activations should be for wf1
     for i in 2..20 {
-        core.complete_workflow_task(WfActivationCompletion::from_cmd(
+        core.complete_workflow_activation(WfActivationCompletion::from_cmd(
             TEST_Q,
             r1.run_id,
             StartTimer {
@@ -948,11 +948,11 @@ async fn max_concurrent_wft_respected() {
         ))
         .await
         .unwrap();
-        r1 = core.poll_workflow_task(TEST_Q).await.unwrap();
+        r1 = core.poll_workflow_activation(TEST_Q).await.unwrap();
         assert_eq!(r1.run_id, r1_run_id);
     }
     // Finish the tasks so we can shut down
-    core.complete_workflow_task(WfActivationCompletion::from_cmd(
+    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
         TEST_Q,
         r1.run_id,
         CompleteWorkflowExecution { result: None }.into(),
@@ -962,12 +962,12 @@ async fn max_concurrent_wft_respected() {
     // Just evict r2, we don't care about completing it properly
     core.request_workflow_eviction(TEST_Q, &r2.run_id);
     let _ = core
-        .complete_workflow_task(WfActivationCompletion::empty(TEST_Q, r2.run_id))
+        .complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, r2.run_id))
         .await;
-    let r2 = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let r2 = core.poll_workflow_activation(TEST_Q).await.unwrap();
     dbg!(&r2);
     let _ = core
-        .complete_workflow_task(WfActivationCompletion::empty(TEST_Q, r2.run_id))
+        .complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, r2.run_id))
         .await;
     core.shutdown().await;
 }
@@ -1096,7 +1096,7 @@ async fn lots_of_workflows() {
     let core = &mock_core(mock);
 
     fanout_tasks(5, |_| async move {
-        while let Ok(wft) = core.poll_workflow_task(TEST_Q).await {
+        while let Ok(wft) = core.poll_workflow_activation(TEST_Q).await {
             let job = &wft.jobs[0];
             let reply = match job.variant {
                 Some(wf_activation_job::Variant::StartWorkflow(_)) => StartTimer {
@@ -1105,14 +1105,16 @@ async fn lots_of_workflows() {
                 }
                 .into(),
                 Some(wf_activation_job::Variant::RemoveFromCache(_)) => {
-                    core.complete_workflow_task(WfActivationCompletion::empty(TEST_Q, wft.run_id))
-                        .await
-                        .unwrap();
+                    core.complete_workflow_activation(WfActivationCompletion::empty(
+                        TEST_Q, wft.run_id,
+                    ))
+                    .await
+                    .unwrap();
                     continue;
                 }
                 _ => CompleteWorkflowExecution { result: None }.into(),
             };
-            core.complete_workflow_task(WfActivationCompletion::from_cmd(
+            core.complete_workflow_activation(WfActivationCompletion::from_cmd(
                 TEST_Q, wft.run_id, reply,
             ))
             .await
@@ -1178,11 +1180,11 @@ async fn complete_after_eviction() {
     let mock = single_hist_mock_sg(wfid, t, &[2], mock, true);
     let core = mock_core(mock);
 
-    let activation = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
     // We just got start workflow, immediately evict
     core.request_workflow_eviction(TEST_Q, &activation.run_id);
     // Original task must be completed before we get the eviction
-    core.complete_workflow_task(WfActivationCompletion::from_cmd(
+    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
         TEST_Q,
         activation.run_id,
         StartTimer {
@@ -1193,7 +1195,7 @@ async fn complete_after_eviction() {
     ))
     .await
     .unwrap();
-    let eviction_activation = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let eviction_activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_matches!(
         eviction_activation.jobs.as_slice(),
         [
@@ -1206,7 +1208,7 @@ async fn complete_after_eviction() {
         ]
     );
     // Complete the activation containing the eviction, the way we normally would have
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         TEST_Q,
         eviction_activation.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
@@ -1232,8 +1234,8 @@ async fn sends_appropriate_sticky_task_queue_responses() {
     mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
     let core = mock_core(mock);
 
-    let activation = core.poll_workflow_task(TEST_Q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmd(
+    let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
         TEST_Q,
         activation.run_id,
         StartTimer {
@@ -1257,8 +1259,8 @@ async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation(
     let core = mock_core(mock);
 
     // Poll for and complete first workflow task
-    let activation = core.poll_workflow_task(TEST_Q).await.unwrap();
-    core.complete_workflow_task(WfActivationCompletion::from_cmd(
+    let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
         TEST_Q,
         activation.run_id,
         StartTimer {
@@ -1269,7 +1271,7 @@ async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation(
     ))
     .await
     .unwrap();
-    let eviction_activation = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let eviction_activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_matches!(
         eviction_activation.jobs.as_slice(),
         [WfActivationJob {
@@ -1278,7 +1280,7 @@ async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation(
     );
     // Poll again. We should not overwrite the eviction with the new work from the server to fire
     // the timer. IE: We will panic here because the mock has no more responses.
-    core.poll_workflow_task(TEST_Q).await.unwrap();
+    core.poll_workflow_activation(TEST_Q).await.unwrap();
     core.shutdown().await;
 }
 
@@ -1326,12 +1328,12 @@ async fn buffered_work_drained_on_shutdown() {
     let core = &mock_core(mock);
 
     // Poll for first WFT
-    let act1 = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let act1 = core.poll_workflow_activation(TEST_Q).await.unwrap();
     let poll_fut = async move {
         // Now poll again, which will start spinning, and buffer the next WFT with timer fired in it
         // - it won't stop spinning until the first task is complete
-        let t = core.poll_workflow_task(TEST_Q).await.unwrap();
-        core.complete_workflow_task(WfActivationCompletion::from_cmds(
+        let t = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        core.complete_workflow_activation(WfActivationCompletion::from_cmds(
             TEST_Q,
             t.run_id,
             vec![CompleteWorkflowExecution { result: None }.into()],
@@ -1340,7 +1342,7 @@ async fn buffered_work_drained_on_shutdown() {
         .unwrap();
     };
     let complete_first = async move {
-        core.complete_workflow_task(WfActivationCompletion::from_cmd(
+        core.complete_workflow_activation(WfActivationCompletion::from_cmd(
             TEST_Q,
             act1.run_id,
             StartTimer {
@@ -1382,11 +1384,11 @@ async fn buffering_tasks_doesnt_count_toward_outstanding_max() {
     });
     let core = mock_core(mock);
     // Poll for first WFT
-    core.poll_workflow_task(TEST_Q).await.unwrap();
+    core.poll_workflow_activation(TEST_Q).await.unwrap();
     // This will error out when the mock runs out of responses. Otherwise it would hang when we
     // hit the max
     assert_matches!(
-        core.poll_workflow_task(TEST_Q).await.unwrap_err(),
+        core.poll_workflow_activation(TEST_Q).await.unwrap_err(),
         PollWfError::TonicError(_)
     );
 }

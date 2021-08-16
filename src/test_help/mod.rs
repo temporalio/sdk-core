@@ -540,7 +540,7 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
                 continue;
             }
 
-            let mut res = core.poll_workflow_task(TEST_Q).await.unwrap();
+            let mut res = core.poll_workflow_activation(TEST_Q).await.unwrap();
             let contains_eviction = res.eviction_index();
 
             if let Some(eviction_job_ix) = contains_eviction {
@@ -574,7 +574,7 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
                 }
             };
 
-            core.complete_workflow_task(reply).await.unwrap();
+            core.complete_workflow_activation(reply).await.unwrap();
 
             // Restart assertions from the beginning if it was an eviction
             if contains_eviction.is_some() {

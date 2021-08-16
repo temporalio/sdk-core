@@ -25,7 +25,7 @@ pub enum CoreInitError {
     TonicTransportError(#[from] tonic::transport::Error),
 }
 
-/// Errors thrown by [crate::Core::poll_workflow_task]
+/// Errors thrown by [crate::Core::poll_workflow_activation]
 #[derive(thiserror::Error, Debug)]
 pub enum PollWfError {
     /// There was an error specific to a workflow instance. The cached workflow should be deleted
@@ -42,7 +42,7 @@ pub enum PollWfError {
     #[error("Poll workflow response from server was malformed: {0:?}")]
     BadPollResponseFromServer(Box<PollWorkflowTaskQueueResponse>),
     /// [crate::Core::shutdown] was called, and there are no more replay tasks to be handled. Lang
-    /// must call [crate::Core::complete_workflow_task] for any remaining tasks, and then may
+    /// must call [crate::Core::complete_workflow_activation] for any remaining tasks, and then may
     /// exit.
     #[error("Core is shut down and there are no more workflow replay tasks")]
     ShutDown,
@@ -103,7 +103,7 @@ impl From<WorkerLookupErr> for PollActivityError {
     }
 }
 
-/// Errors thrown by [crate::Core::complete_workflow_task]
+/// Errors thrown by [crate::Core::complete_workflow_activation]
 #[derive(thiserror::Error, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum CompleteWfError {

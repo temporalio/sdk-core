@@ -23,9 +23,9 @@ async fn out_of_order_completion_doesnt_hang() {
     let (core, task_q) = init_core_and_create_wf("out_of_order_completion_doesnt_hang").await;
     let activity_id = "act-1";
     let timer_id = "timer-1";
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
-    core.complete_workflow_task(
+    core.complete_workflow_activation(
         vec![
             schedule_activity_cmd(
                 &task_q,
@@ -54,7 +54,7 @@ async fn out_of_order_completion_doesnt_hang() {
         }
     );
     // Poll workflow task and verify that activity has failed.
-    let task = core.poll_workflow_task(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -73,7 +73,7 @@ async fn out_of_order_completion_doesnt_hang() {
     let tq = task_q.clone();
     let jh = tokio::spawn(async move {
         // We want to fail the test if this takes too long -- we should not hit long poll timeout
-        let task = timeout(Duration::from_secs(1), cc.poll_workflow_task(&tq))
+        let task = timeout(Duration::from_secs(1), cc.poll_workflow_activation(&tq))
             .await
             .expect("Poll should come back right away")
             .unwrap();
@@ -89,7 +89,7 @@ async fn out_of_order_completion_doesnt_hang() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     // Then complete the (last) WFT with a request to cancel the AT, which should produce a
     // pending activation, unblocking the (already started) poll
-    core.complete_workflow_task(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
         vec![RequestCancelActivity {
@@ -119,7 +119,9 @@ async fn long_poll_timeout_is_retried() {
     // Should block for more than 3 seconds, since we internally retry long poll
     let (tx, rx) = unbounded();
     tokio::spawn(async move {
-        core.poll_workflow_task("doesnt_matter").await.unwrap();
+        core.poll_workflow_activation("doesnt_matter")
+            .await
+            .unwrap();
         tx.send(())
     });
     let err = rx.recv_timeout(Duration::from_secs(4)).unwrap_err();

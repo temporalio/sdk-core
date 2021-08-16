@@ -23,14 +23,14 @@ use tokio::{sync::Barrier, time::sleep};
 async fn after_shutdown_server_is_not_polled() {
     let t = canned_histories::single_timer("fake_timer");
     let core = build_fake_core("fake_wf_id", t, &[1]);
-    let res = core.poll_workflow_task(TEST_Q).await.unwrap();
+    let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
-    core.complete_workflow_task(WfActivationCompletion::empty(TEST_Q, res.run_id))
+    core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, res.run_id))
         .await
         .unwrap();
     core.shutdown().await;
     assert_matches!(
-        core.poll_workflow_task(TEST_Q).await.unwrap_err(),
+        core.poll_workflow_activation(TEST_Q).await.unwrap_err(),
         PollWfError::ShutDown
     );
 }
@@ -99,7 +99,7 @@ async fn shutdown_interrupts_both_polls() {
                             PollActivityError::ShutDown);
         },
         async {
-            assert_matches!(core.poll_workflow_task(TEST_Q).await.unwrap_err(),
+            assert_matches!(core.poll_workflow_activation(TEST_Q).await.unwrap_err(),
                             PollWfError::ShutDown);
         },
         async {

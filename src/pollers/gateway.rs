@@ -234,7 +234,7 @@ pub trait ServerGatewayApis {
     ) -> Result<RespondActivityTaskFailedResponse>;
 
     /// Fail task by sending the failure to the server. `task_token` is the task token that would've
-    /// been received from [crate::Core::poll_workflow_task].
+    /// been received from [crate::Core::poll_workflow_activation].
     async fn fail_workflow_task(
         &self,
         task_token: TaskToken,

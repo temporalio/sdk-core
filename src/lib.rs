@@ -97,7 +97,8 @@ pub trait Core: Send + Sync {
     /// concurrently internally.
     ///
     /// TODO: Examples
-    async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError>;
+    async fn poll_workflow_activation(&self, task_queue: &str)
+        -> Result<WfActivation, PollWfError>;
 
     /// Ask the core for some work, returning an [ActivityTask]. It is then the language SDK's
     /// responsibility to call the appropriate activity code with the provided inputs. Blocks
@@ -114,7 +115,7 @@ pub trait Core: Send + Sync {
         -> Result<ActivityTask, PollActivityError>;
 
     /// Tell the core that a workflow activation has completed. May be freely called concurrently.
-    async fn complete_workflow_task(
+    async fn complete_workflow_activation(
         &self,
         completion: WfActivationCompletion,
     ) -> Result<(), CompleteWfError>;
@@ -147,20 +148,22 @@ pub trait Core: Send + Sync {
     fn record_activity_heartbeat(&self, details: ActivityHeartbeat);
 
     /// Request that a workflow be evicted by its run id. This will generate a workflow activation
-    /// with the eviction job inside it to be eventually returned by [Core::poll_workflow_task]. If
-    /// the workflow had any existing outstanding activations, such activations are invalidated and
-    /// subsequent completions of them will do nothing and log a warning.
+    /// with the eviction job inside it to be eventually returned by
+    /// [Core::poll_workflow_activation]. If the workflow had any existing outstanding activations,
+    /// such activations are invalidated and subsequent completions of them will do nothing and log
+    /// a warning.
     fn request_workflow_eviction(&self, task_queue: &str, run_id: &str);
 
     /// Returns core's instance of the [ServerGatewayApis] implementor it is using.
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis>;
 
     /// Initiates async shutdown procedure, eventually ceases all polling of the server and shuts
-    /// down all registered workers. [Core::poll_workflow_task] should be called until it returns
-    /// [PollWfError::ShutDown] to ensure that any workflows which are still undergoing replay have
-    /// an opportunity to finish. This means that the lang sdk will need to call
-    /// [Core::complete_workflow_task] for those workflows until they are done. At that point, the
-    /// lang SDK can end the process, or drop the [Core] instance, which will close the connection.
+    /// down all registered workers. [Core::poll_workflow_activation] should be called until it
+    /// returns [PollWfError::ShutDown] to ensure that any workflows which are still undergoing
+    /// replay have an opportunity to finish. This means that the lang sdk will need to call
+    /// [Core::complete_workflow_activation] for those workflows until they are done. At that point,
+    /// the lang SDK can end the process, or drop the [Core] instance, which will close the
+    /// connection.
     async fn shutdown(&self);
 
     /// Shut down a specific worker. Will cease all polling on the task queue and future attempts
@@ -214,7 +217,10 @@ where
     }
 
     #[instrument(skip(self))]
-    async fn poll_workflow_task(&self, task_queue: &str) -> Result<WfActivation, PollWfError> {
+    async fn poll_workflow_activation(
+        &self,
+        task_queue: &str,
+    ) -> Result<WfActivation, PollWfError> {
         let worker = self.worker(task_queue)?;
         worker.next_workflow_activation().await
     }
@@ -237,7 +243,7 @@ where
     }
 
     #[instrument(skip(self, completion), fields(completion=%&completion))]
-    async fn complete_workflow_task(
+    async fn complete_workflow_activation(
         &self,
         completion: WfActivationCompletion,
     ) -> Result<(), CompleteWfError> {

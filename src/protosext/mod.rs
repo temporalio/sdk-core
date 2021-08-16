@@ -122,7 +122,7 @@ where
 /// server client
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkflowTaskCompletion {
-    /// The task token that would've been received from [crate::Core::poll_workflow_task] API.
+    /// The task token that would've been received from [crate::Core::poll_workflow_activation] API.
     pub task_token: TaskToken,
     /// A list of new commands to send to the server, such as starting a timer.
     pub commands: Vec<ProtoCommand>,
