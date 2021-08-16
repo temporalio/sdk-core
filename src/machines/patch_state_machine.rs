@@ -1,27 +1,26 @@
-//! The version machine can be difficult to follow. Refer to below table for behavior. The
+//! The patch machine can be difficult to follow. Refer to below table for behavior. The
 //! deprecated calls simply say "allowed" because if they returned a value, it's always true. Old
 //! code cannot exist in workflows which use the deprecated call.
 //!
-//! | History Has                  | Workflow Has          | Outcome                                                                            |
-//! |------------------------------|-----------------------|------------------------------------------------------------------------------------|
-//! | not replaying                | no has_change         | Nothing interesting. Versioning not involved.                                      |
-//! | marker for change            | no has_change         | No matching command / workflow does not support this version                       |
-//! | deprecated marker for change | no has_change         | Marker ignored, workflow continues as if it didn't exist                           |
-//! | replaying, no marker         | no has_change         | Nothing interesting. Versioning not involved.                                      |
-//! | not replaying                | has_change            | Marker command sent to server and recorded. Call returns true                      |
-//! | marker for change            | has_change            | Call returns true upon replay                                                      |
-//! | deprecated marker for change | has_change            | Call returns true upon replay                                                      |
-//! | replaying, no marker         | has_change            | Call returns false upon replay                                                     |
-//! | not replaying                | has_change deprecated | Marker command sent to server and recorded with deprecated flag. Call allowed      |
-//! | marker for change            | has_change deprecated | Call allowed                                                                       |
-//! | deprecated marker for change | has_change deprecated | Call allowed                                                                       |
-//! | replaying, no marker         | has_change deprecated | Call allowed                                                                       |
+//! | History Has                  | Workflow Has    | Outcome                                                                            |
+//! |------------------------------|-----------------|------------------------------------------------------------------------------------|
+//! | not replaying                | no patched      | Nothing interesting. Versioning not involved.                                      |
+//! | marker for change            | no patched      | No matching command / workflow does not support this version                       |
+//! | deprecated marker for change | no patched      | Marker ignored, workflow continues as if it didn't exist                           |
+//! | replaying, no marker         | no patched      | Nothing interesting. Versioning not involved.                                      |
+//! | not replaying                | patched         | Marker command sent to server and recorded. Call returns true                      |
+//! | marker for change            | patched         | Call returns true upon replay                                                      |
+//! | deprecated marker for change | patched         | Call returns true upon replay                                                      |
+//! | replaying, no marker         | patched         | Call returns false upon replay                                                     |
+//! | not replaying                | deprecate_patch | Marker command sent to server and recorded with deprecated flag. Call allowed      |
+//! | marker for change            | deprecate_patch | Call allowed                                                                       |
+//! | deprecated marker for change | deprecate_patch | Call allowed                                                                       |
+//! | replaying, no marker         | deprecate_patch | Call allowed                                                                       |
 
-use crate::machines::MachineKind;
 use crate::{
     machines::{
-        workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
-        OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+        workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind,
+        NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
     },
     protos::{
         coresdk::common::build_has_change_marker_details,
@@ -35,10 +34,10 @@ use crate::{
 use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
 
-pub const HAS_CHANGE_MARKER_NAME: &str = "core_has_change";
+pub const HAS_CHANGE_MARKER_NAME: &str = "core_patch";
 
 fsm! {
-    pub(super) name VersionMachine;
+    pub(super) name PatchMachine;
     command VersionCommand;
     error WFMachinesError;
     shared_state SharedState;
@@ -61,33 +60,30 @@ fsm! {
 
 #[derive(Clone)]
 pub(super) struct SharedState {
-    change_id: String,
+    patch_id: String,
 }
 
 #[derive(Debug, derive_more::Display)]
 pub(super) enum VersionCommand {}
 
-/// Version machines are created when the user invokes `has_change` (or whatever it may be named
+/// Patch machines are created when the user invokes `has_change` (or whatever it may be named
 /// in that lang).
 ///
-/// `change_id`: identifier of a particular change. All calls to get_version that share a change id
+/// `patch_id`: identifier of a particular change. All calls to get_version that share a change id
 /// are guaranteed to return the same value.
 /// `replaying_when_invoked`: If the workflow is replaying when this invocation occurs, this needs
 /// to be set to true.
 pub(super) fn has_change(
-    change_id: String,
+    patch_id: String,
     replaying_when_invoked: bool,
     deprecated: bool,
-) -> NewMachineWithCommand<VersionMachine> {
-    let (machine, command) = VersionMachine::new_scheduled(
-        SharedState { change_id },
-        replaying_when_invoked,
-        deprecated,
-    );
+) -> NewMachineWithCommand<PatchMachine> {
+    let (machine, command) =
+        PatchMachine::new_scheduled(SharedState { patch_id }, replaying_when_invoked, deprecated);
     NewMachineWithCommand { command, machine }
 }
 
-impl VersionMachine {
+impl PatchMachine {
     fn new_scheduled(
         state: SharedState,
         replaying_when_invoked: bool,
@@ -103,19 +99,19 @@ impl VersionMachine {
             attributes: Some(
                 RecordMarkerCommandAttributes {
                     marker_name: HAS_CHANGE_MARKER_NAME.to_string(),
-                    details: build_has_change_marker_details(&state.change_id, deprecated),
+                    details: build_has_change_marker_details(&state.patch_id, deprecated),
                     header: None,
                     failure: None,
                 }
                 .into(),
             ),
         };
-        let mut machine = VersionMachine {
+        let mut machine = PatchMachine {
             state: initial_state,
             shared_state: state,
         };
-        OnEventWrapper::on_event_mut(&mut machine, VersionMachineEvents::Schedule)
-            .expect("Version machine scheduling doesn't fail");
+        OnEventWrapper::on_event_mut(&mut machine, PatchMachineEvents::Schedule)
+            .expect("Patch machine scheduling doesn't fail");
 
         (machine, cmd)
     }
@@ -125,7 +121,7 @@ impl VersionMachine {
 pub(super) struct Executing {}
 
 impl Executing {
-    pub(super) fn on_schedule(self) -> VersionMachineTransition<MarkerCommandCreated> {
+    pub(super) fn on_schedule(self) -> PatchMachineTransition<MarkerCommandCreated> {
         TransitionResult::default()
     }
 }
@@ -134,7 +130,7 @@ impl Executing {
 pub(super) struct MarkerCommandCreated {}
 
 impl MarkerCommandCreated {
-    pub(super) fn on_command_record_marker(self) -> VersionMachineTransition<Notified> {
+    pub(super) fn on_command_record_marker(self) -> PatchMachineTransition<Notified> {
         TransitionResult::commands(vec![])
     }
 }
@@ -149,7 +145,7 @@ pub(super) struct MarkerCommandRecorded {}
 pub(super) struct Replaying {}
 
 impl Replaying {
-    pub(super) fn on_schedule(self) -> VersionMachineTransition<MarkerCommandCreatedReplaying> {
+    pub(super) fn on_schedule(self) -> PatchMachineTransition<MarkerCommandCreatedReplaying> {
         TransitionResult::default()
     }
 }
@@ -166,24 +162,24 @@ impl Notified {
         self,
         dat: SharedState,
         id: String,
-    ) -> VersionMachineTransition<MarkerCommandRecorded> {
-        if id != dat.change_id {
+    ) -> PatchMachineTransition<MarkerCommandRecorded> {
+        if id != dat.patch_id {
             return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
                 "Change id {} does not match expected id {}",
-                id, dat.change_id
+                id, dat.patch_id
             )));
         }
         TransitionResult::default()
     }
 }
 
-impl WFMachinesAdapter for VersionMachine {
+impl WFMachinesAdapter for PatchMachine {
     fn adapt_response(
         &self,
         _my_command: Self::Command,
         _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        panic!("Version machine does not produce commands")
+        panic!("Patch machine does not produce commands")
     }
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
@@ -195,9 +191,9 @@ impl WFMachinesAdapter for VersionMachine {
     }
 }
 
-impl Cancellable for VersionMachine {}
+impl Cancellable for PatchMachine {}
 
-impl TryFrom<CommandType> for VersionMachineEvents {
+impl TryFrom<CommandType> for PatchMachineEvents {
     type Error = ();
 
     fn try_from(c: CommandType) -> Result<Self, Self::Error> {
@@ -208,12 +204,12 @@ impl TryFrom<CommandType> for VersionMachineEvents {
     }
 }
 
-impl TryFrom<HistoryEvent> for VersionMachineEvents {
+impl TryFrom<HistoryEvent> for PatchMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
         match e.get_changed_marker_details() {
-            Some((id, _)) => Ok(VersionMachineEvents::MarkerRecorded(id)),
+            Some((id, _)) => Ok(PatchMachineEvents::MarkerRecorded(id)),
             _ => Err(WFMachinesError::Nondeterminism(format!(
                 "Change machine cannot handle this event: {}",
                 e
@@ -229,7 +225,7 @@ mod tests {
         protos::{
             coresdk::{
                 common::decode_change_marker_details,
-                workflow_activation::{wf_activation_job, NotifyHasChange, WfActivationJob},
+                workflow_activation::{wf_activation_job, NotifyHasPatch, WfActivationJob},
                 workflow_commands::StartTimer,
             },
             temporal::api::command::v1::{
@@ -245,7 +241,7 @@ mod tests {
     use rstest::rstest;
     use std::time::Duration;
 
-    const MY_CHANGE_ID: &str = "test_change_name";
+    const MY_PATCH_ID: &str = "test_patch_id";
     #[derive(Eq, PartialEq, Copy, Clone)]
     enum MarkerType {
         Deprecated,
@@ -269,8 +265,8 @@ mod tests {
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
         match marker_type {
-            MarkerType::Deprecated => t.add_has_change_marker(MY_CHANGE_ID, true),
-            MarkerType::NotDeprecated => t.add_has_change_marker(MY_CHANGE_ID, false),
+            MarkerType::Deprecated => t.add_has_change_marker(MY_PATCH_ID, true),
+            MarkerType::NotDeprecated => t.add_has_change_marker(MY_PATCH_ID, false),
             MarkerType::NoMarker => {}
         };
         let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
@@ -295,7 +291,7 @@ mod tests {
     }
 
     async fn v2(ctx: &mut WfContext) -> bool {
-        if ctx.has_change(MY_CHANGE_ID) {
+        if ctx.patched(MY_PATCH_ID) {
             ctx.timer(StartTimer {
                 timer_id: "had_change".to_string(),
                 start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -313,7 +309,7 @@ mod tests {
     }
 
     async fn v3(ctx: &mut WfContext) {
-        ctx.has_change_deprecated(MY_CHANGE_ID);
+        ctx.deprecate_patch(MY_PATCH_ID);
         ctx.timer(StartTimer {
             timer_id: "had_change".to_string(),
             start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -464,12 +460,12 @@ mod tests {
             assert_matches!(
                 &act.jobs[1],
                  WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::NotifyHasChange(
-                        NotifyHasChange {
-                            change_id,
+                    variant: Some(wf_activation_job::Variant::NotifyHasPatch(
+                        NotifyHasPatch {
+                            patch_id,
                         }
                     ))
-                } => change_id == MY_CHANGE_ID
+                } => patch_id == MY_PATCH_ID
             );
         } else {
             assert_eq!(act.jobs.len(), 1);
@@ -535,7 +531,7 @@ mod tests {
     #[tokio::test]
     async fn same_change_multiple_spots(#[case] have_marker_in_hist: bool, #[case] replay: bool) {
         let wfn = WorkflowFunction::new(move |mut ctx: WfContext| async move {
-            if ctx.has_change(MY_CHANGE_ID) {
+            if ctx.patched(MY_PATCH_ID) {
                 ctx.timer(StartTimer {
                     timer_id: "had_change_1".to_string(),
                     start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -553,7 +549,7 @@ mod tests {
                 start_to_fire_timeout: Some(Duration::from_secs(1).into()),
             })
             .await;
-            if ctx.has_change(MY_CHANGE_ID) {
+            if ctx.patched(MY_PATCH_ID) {
                 ctx.timer(StartTimer {
                     timer_id: "had_change_2".to_string(),
                     start_to_fire_timeout: Some(Duration::from_secs(1).into()),
@@ -573,7 +569,7 @@ mod tests {
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
         if have_marker_in_hist {
-            t.add_has_change_marker(MY_CHANGE_ID, false);
+            t.add_has_change_marker(MY_PATCH_ID, false);
         }
         let timer_id = if have_marker_in_hist {
             "had_change_1"
