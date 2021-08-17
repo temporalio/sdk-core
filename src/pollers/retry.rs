@@ -325,7 +325,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
     {
         Ok(FutureRetry::new(
             factory,
-            TonicErrorHandler::new(ExponentialBackoff::default(), default::MAX_RETRIES),
+            TonicErrorHandler::new(retry_backoff(), default::MAX_RETRIES),
         )
         .await
         .map_err(|(e, _attempt)| e)?
