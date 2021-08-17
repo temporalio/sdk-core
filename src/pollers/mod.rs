@@ -13,6 +13,7 @@ pub use poll_buffer::{
     new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
     PollWorkflowTaskBuffer, WorkflowTaskPoller,
 };
+pub use retry::RetryGateway;
 
 use crate::protos::temporal::api::workflowservice::v1::{
     PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
