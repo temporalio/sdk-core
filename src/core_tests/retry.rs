@@ -23,7 +23,7 @@ async fn non_retryable_errors() {
             .cancel_activity_task(vec![1].into(), None)
             .await;
         // Expecting an error after a single attempt, since there was a non-retryable error.
-        assert_eq!(result.is_err(), true);
+        assert!(result.is_err());
     }
 }
 
@@ -59,6 +59,6 @@ async fn retryable_errors() {
             .cancel_activity_task(vec![1].into(), None)
             .await;
         // Expecting successful response after one retry.
-        assert_eq!(result.is_ok(), true);
+        assert!(result.is_ok());
     }
 }
