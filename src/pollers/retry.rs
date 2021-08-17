@@ -2,10 +2,11 @@ use std::future::Future;
 use std::{fmt::Debug, time::Duration};
 
 use backoff::backoff::Backoff;
-use backoff::ExponentialBackoff;
+use backoff::{ExponentialBackoff, SystemClock};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use tonic::Code;
 
+use crate::pollers::default;
 use crate::pollers::gateway::ServerGatewayApis;
 use crate::{
     pollers::Result,
@@ -20,6 +21,7 @@ use crate::{
     protosext::WorkflowTaskCompletion,
     task_token::TaskToken,
 };
+use std::time::Instant;
 
 #[derive(Debug)]
 pub struct RetryGateway<SG> {
@@ -300,6 +302,21 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     }
 }
 
+fn retry_backoff() -> ExponentialBackoff {
+    let mut eb = ExponentialBackoff {
+        current_interval: Duration::from_millis(default::INITIAL_INTERVAL_MILLIS),
+        initial_interval: Duration::from_millis(default::INITIAL_INTERVAL_MILLIS),
+        randomization_factor: default::RANDOMIZATION_FACTOR,
+        multiplier: default::MULTIPLIER,
+        max_interval: Duration::from_millis(default::MAX_INTERVAL_MILLIS),
+        max_elapsed_time: Some(Duration::from_millis(default::MAX_ELAPSED_TIME_MILLIS)),
+        clock: SystemClock::default(),
+        start_time: Instant::now(),
+    };
+    eb.reset();
+    eb
+}
+
 impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
     async fn call_with_retry<R, F, Fut>(&self, factory: F) -> Result<R>
     where
@@ -308,7 +325,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
     {
         Ok(FutureRetry::new(
             factory,
-            TonicErrorHandler::new(ExponentialBackoff::default(), 10),
+            TonicErrorHandler::new(ExponentialBackoff::default(), default::MAX_RETRIES),
         )
         .await
         .map_err(|(e, _attempt)| e)?
