@@ -16,7 +16,6 @@ mod mutable_side_effect_state_machine;
 mod patch_state_machine;
 #[allow(unused)]
 mod side_effect_state_machine;
-#[allow(unused)]
 mod signal_external_state_machine;
 mod timer_state_machine;
 #[allow(unused)]
@@ -37,7 +36,8 @@ use crate::{
             workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
             ContinueAsNewWorkflowExecution, FailWorkflowExecution, QueryResult,
             RequestCancelActivity, RequestCancelChildWorkflowExecution, ScheduleActivity,
-            SetPatchMarker, StartChildWorkflowExecution, StartTimer, WorkflowCommand,
+            SetPatchMarker, SignalExternalWorkflowExecution, StartChildWorkflowExecution,
+            StartTimer, WorkflowCommand,
         },
         temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
     },
@@ -73,6 +73,7 @@ pub enum WFCommand {
     SetPatchMarker(SetPatchMarker),
     AddChildWorkflow(StartChildWorkflowExecution),
     RequestCancelChildWorkflow(RequestCancelChildWorkflowExecution),
+    SignalExternalWorkflow(SignalExternalWorkflowExecution),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
@@ -129,6 +130,7 @@ enum MachineKind {
     Timer,
     Version,
     WorkflowTask,
+    SignalExternalWorkflow,
 }
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.

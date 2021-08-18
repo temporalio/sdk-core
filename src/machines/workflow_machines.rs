@@ -1,4 +1,4 @@
-use crate::machines::MachineKind;
+use crate::machines::signal_external_state_machine::new_external_signal;
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
@@ -8,7 +8,7 @@ use crate::{
         continue_as_new_workflow_state_machine::continue_as_new,
         fail_workflow_state_machine::fail_workflow, patch_state_machine::has_change,
         timer_state_machine::new_timer, workflow_task_state_machine::WorkflowTaskMachine,
-        NewMachineWithCommand, ProtoCommand, TemporalStateMachine, WFCommand,
+        MachineKind, NewMachineWithCommand, ProtoCommand, TemporalStateMachine, WFCommand,
     },
     protos::{
         coresdk::{
@@ -17,7 +17,9 @@ use crate::{
                 wf_activation_job::{self, Variant},
                 NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WfActivation,
             },
-            workflow_commands::RequestCancelChildWorkflowExecution,
+            workflow_commands::{
+                signal_external_workflow_execution as sig_we, RequestCancelChildWorkflowExecution,
+            },
             FromPayloadsExt,
         },
         temporal::api::{
@@ -674,6 +676,28 @@ impl WorkflowMachines {
                     &CommandID::ChildWorkflowStart(child_workflow_seq),
                     &mut jobs,
                 )?,
+                WFCommand::SignalExternalWorkflow(attrs) => {
+                    let (we, only_child) = match attrs.target {
+                        None => {
+                            return Err(WFMachinesError::Fatal(
+                                "Signal external workflow command had empty target field"
+                                    .to_string(),
+                            ))
+                        }
+                        Some(sig_we::Target::ChildWorkflowSeq(_)) => {
+                            todo!("Look up deets from child wf machine if present")
+                        }
+                        Some(sig_we::Target::WorkflowExecution(we)) => (we, false),
+                    };
+
+                    let sigm = self.add_new_command_machine(new_external_signal(
+                        we,
+                        attrs.signal_name,
+                        attrs.args,
+                        only_child,
+                    ));
+                    self.current_wf_task_commands.push_back(sigm);
+                }
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level
                     unimplemented!("Query responses should not make it down into the machines")
