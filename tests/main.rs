@@ -48,6 +48,7 @@ mod integ_tests {
                     client_private_key,
                 }),
             }),
+            retry_config: None,
         };
         let con = sgo.connect().await.unwrap();
         con.list_namespaces().await.unwrap();

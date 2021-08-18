@@ -105,14 +105,14 @@ pub struct RetryConfig {
 
 impl Default for RetryConfig {
     fn default() -> Self {
-        return Self {
+        Self {
             initial_interval: Duration::from_millis(100), // 100 ms wait by default.
             randomization_factor: 0.2,                    // +-20% jitter.
             multiplier: 1.5, // each next retry delay will increase by 50%
             max_interval: Duration::from_secs(5), // until it reaches 5 seconds.
             max_elapsed_time: Some(Duration::from_secs(10)), // 10 seconds total allocated time for all retries.
             max_retries: 10,
-        };
+        }
     }
 }
 

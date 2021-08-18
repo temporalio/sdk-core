@@ -64,7 +64,7 @@ impl<SG> RetryGateway<SG> {
     pub fn new(gateway: SG, retry_config: Option<RetryConfig>) -> Self {
         Self {
             gateway,
-            retry_config: retry_config.unwrap_or(RetryConfig::default()),
+            retry_config: retry_config.unwrap_or_default(),
         }
     }
 }
