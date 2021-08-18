@@ -2,11 +2,11 @@ use std::future::Future;
 use std::{fmt::Debug, time::Duration};
 
 use backoff::backoff::Backoff;
-use backoff::{ExponentialBackoff, SystemClock};
+use backoff::ExponentialBackoff;
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 
-use crate::pollers::gateway::ServerGatewayApis;
-use crate::pollers::{default, RETRYABLE_ERROR_CODES};
+use crate::pollers::gateway::{RetryConfig, ServerGatewayApis};
+use crate::pollers::RETRYABLE_ERROR_CODES;
 use crate::{
     pollers::Result,
     protos::{
@@ -20,11 +20,11 @@ use crate::{
     protosext::WorkflowTaskCompletion,
     task_token::TaskToken,
 };
-use std::time::Instant;
 
 #[derive(Debug)]
 pub struct RetryGateway<SG> {
     gateway: SG,
+    retry_config: RetryConfig,
 }
 
 #[derive(Debug)]
@@ -61,8 +61,11 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
 }
 
 impl<SG> RetryGateway<SG> {
-    pub fn new(gateway: SG) -> Self {
-        Self { gateway }
+    pub fn new(gateway: SG, retry_config: Option<RetryConfig>) -> Self {
+        Self {
+            gateway,
+            retry_config: retry_config.unwrap_or(RetryConfig::default()),
+        }
     }
 }
 
@@ -290,21 +293,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     }
 }
 
-fn retry_backoff() -> ExponentialBackoff {
-    let mut eb = ExponentialBackoff {
-        current_interval: Duration::from_millis(default::INITIAL_INTERVAL_MILLIS),
-        initial_interval: Duration::from_millis(default::INITIAL_INTERVAL_MILLIS),
-        randomization_factor: default::RANDOMIZATION_FACTOR,
-        multiplier: default::MULTIPLIER,
-        max_interval: Duration::from_millis(default::MAX_INTERVAL_MILLIS),
-        max_elapsed_time: Some(Duration::from_millis(default::MAX_ELAPSED_TIME_MILLIS)),
-        clock: SystemClock::default(),
-        start_time: Instant::now(),
-    };
-    eb.reset();
-    eb
-}
-
 impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
     async fn call_with_retry<R, F, Fut>(&self, factory: F) -> Result<R>
     where
@@ -313,7 +301,10 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
     {
         Ok(FutureRetry::new(
             factory,
-            TonicErrorHandler::new(retry_backoff(), default::MAX_RETRIES),
+            TonicErrorHandler::new(
+                self.retry_config.clone().into(),
+                self.retry_config.max_retries,
+            ),
         )
         .await
         .map_err(|(e, _attempt)| e)?

@@ -32,6 +32,8 @@ use crate::protos::coresdk::PayloadsExt;
 #[cfg(test)]
 use futures::Future;
 
+use backoff::{ExponentialBackoff, SystemClock};
+use std::time::Instant;
 use tonic::codegen::InterceptedService;
 use tonic::service::Interceptor;
 
@@ -57,6 +59,9 @@ pub struct ServerGatewayOptions {
     /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
     /// certs or keys as bytes, loading them from disk itself if needed.
     pub tls_cfg: Option<TlsConfig>,
+
+    /// Optional retry configuration for the server gateway. If not supplied defaults will be used.
+    pub retry_config: Option<RetryConfig>,
 }
 
 /// Configuration options for TLS
@@ -82,6 +87,50 @@ pub struct ClientTlsConfig {
     pub client_private_key: Vec<u8>,
 }
 
+#[derive(Clone, Debug)]
+pub struct RetryConfig {
+    /// initial wait time before the first retry.
+    pub initial_interval: Duration,
+    /// randomization jitter that is added or subtracted from the interval length.
+    pub randomization_factor: f64,
+    /// rate at which retry time should be increased, until it reaches max_interval.
+    pub multiplier: f64,
+    /// maximum amount of time to wait between retries.
+    pub max_interval: Duration,
+    /// maximum total amount of time requests should be retried for.
+    pub max_elapsed_time: Option<Duration>,
+    /// maximum number of retry attempts.
+    pub max_retries: usize,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        return Self {
+            initial_interval: Duration::from_millis(100), // 100 ms wait by default.
+            randomization_factor: 0.2,                    // +-20% jitter.
+            multiplier: 1.5, // each next retry delay will increase by 50%
+            max_interval: Duration::from_secs(5), // until it reaches 5 seconds.
+            max_elapsed_time: Some(Duration::from_secs(10)), // 10 seconds total allocated time for all retries.
+            max_retries: 10,
+        };
+    }
+}
+
+impl From<RetryConfig> for ExponentialBackoff {
+    fn from(c: RetryConfig) -> Self {
+        ExponentialBackoff {
+            current_interval: c.initial_interval,
+            initial_interval: c.initial_interval,
+            randomization_factor: c.randomization_factor,
+            multiplier: c.multiplier,
+            max_interval: c.max_interval,
+            max_elapsed_time: c.max_elapsed_time,
+            clock: SystemClock::default(),
+            start_time: Instant::now(),
+        }
+    }
+}
+
 impl Debug for ClientTlsConfig {
     // Intentionally omit details here since they could leak a key if ever printed
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -101,7 +150,7 @@ impl ServerGatewayOptions {
             service,
             opts: self.clone(),
         };
-        let retry_gateway = RetryGateway::new(gateway);
+        let retry_gateway = RetryGateway::new(gateway, self.retry_config.clone());
         Ok(retry_gateway)
     }
 

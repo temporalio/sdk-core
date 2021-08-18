@@ -16,7 +16,7 @@ async fn non_retryable_errors() {
             .expect_cancel_activity_task()
             .returning(move |_, _| Err(Status::new(code, "non-retryable failure")))
             .times(1);
-        let retry_gateway = RetryGateway::new(mock_gateway);
+        let retry_gateway = RetryGateway::new(mock_gateway, None);
         let result = retry_gateway
             .cancel_activity_task(vec![1].into(), None)
             .await;
@@ -38,7 +38,7 @@ async fn retryable_errors() {
             .returning(|_, _| Ok(Default::default()))
             .times(1);
 
-        let retry_gateway = RetryGateway::new(mock_gateway);
+        let retry_gateway = RetryGateway::new(mock_gateway, None);
         let result = retry_gateway
             .cancel_activity_task(vec![1].into(), None)
             .await;
