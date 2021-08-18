@@ -19,10 +19,11 @@ pub mod coresdk {
     use activity_task::ActivityTask;
     use anyhow::Error;
     use common::Payload;
-    use std::collections::HashMap;
     use std::{
+        collections::HashMap,
         convert::TryFrom,
         fmt::{Display, Formatter},
+        iter::FromIterator,
     };
     use workflow_activation::{wf_activation_job, WfActivationJob};
     use workflow_commands::{workflow_command, workflow_command::Variant, WorkflowCommand};
@@ -124,7 +125,7 @@ pub mod coresdk {
     pub mod workflow_activation {
         use crate::{
             core_tracing::VecDisplayer,
-            protos::coresdk::PayloadsExt,
+            protos::coresdk::FromPayloadsExt,
             protos::temporal::api::history::v1::{
                 WorkflowExecutionCancelRequestedEventAttributes,
                 WorkflowExecutionSignaledEventAttributes,
@@ -313,6 +314,9 @@ pub mod coresdk {
                         }
                         workflow_command::Variant::SignalExternalWorkflowExecution(_) => {
                             write!(f, "SignalExternalWorkflowExecution")
+                        }
+                        workflow_command::Variant::RequestCancelChildWorkflowExecution(_) => {
+                            write!(f, "RequestCancelChildWorkflowExecution")
                         }
                     },
                 }
@@ -571,17 +575,24 @@ pub mod coresdk {
 
     impl ActivityTask {
         pub fn start_from_poll_resp(r: PollActivityTaskQueueResponse) -> Self {
+            let (workflow_id, run_id) = r
+                .workflow_execution
+                .map(|we| (we.workflow_id, we.run_id))
+                .unwrap_or_default();
             ActivityTask {
                 task_token: r.task_token,
                 activity_id: r.activity_id,
                 variant: Some(activity_task::activity_task::Variant::Start(
                     activity_task::Start {
-                        workflow_namespace: r.workflow_namespace,
                         workflow_type: r
                             .workflow_type
                             .map(|wt| wt.name)
                             .unwrap_or_else(|| "".to_string()),
-                        workflow_execution: r.workflow_execution.map(Into::into),
+                        workflow_execution: Some(common::WorkflowExecution {
+                            namespace: r.workflow_namespace,
+                            workflow_id,
+                            run_id,
+                        }),
                         activity_type: r
                             .activity_type
                             .map(|at| at.name)
@@ -666,26 +677,36 @@ pub mod coresdk {
         }
     }
 
-    pub trait PayloadsExt {
-        fn into_payloads(self) -> Option<Payloads>;
+    pub trait FromPayloadsExt {
         fn from_payloads(p: Option<Payloads>) -> Self;
     }
+    impl<T> FromPayloadsExt for T
+    where
+        T: FromIterator<common::Payload>,
+    {
+        fn from_payloads(p: Option<Payloads>) -> Self {
+            match p {
+                None => std::iter::empty().collect(),
+                Some(p) => p.payloads.into_iter().map(Into::into).collect(),
+            }
+        }
+    }
 
-    impl PayloadsExt for Vec<common::Payload> {
+    pub trait IntoPayloadsExt {
+        fn into_payloads(self) -> Option<Payloads>;
+    }
+    impl<T> IntoPayloadsExt for T
+    where
+        T: IntoIterator<Item = common::Payload>,
+    {
         fn into_payloads(self) -> Option<Payloads> {
-            if self.is_empty() {
+            let mut iterd = self.into_iter().peekable();
+            if iterd.peek().is_none() {
                 None
             } else {
                 Some(Payloads {
-                    payloads: self.into_iter().map(Into::into).collect(),
+                    payloads: iterd.map(Into::into).collect(),
                 })
-            }
-        }
-
-        fn from_payloads(p: Option<Payloads>) -> Self {
-            match p {
-                None => vec![],
-                Some(p) => p.payloads.into_iter().map(Into::into).collect(),
             }
         }
     }
@@ -747,15 +768,6 @@ pub mod coresdk {
             }
         }
     }
-
-    impl From<WorkflowExecution> for common::WorkflowExecution {
-        fn from(w: WorkflowExecution) -> Self {
-            Self {
-                workflow_id: w.workflow_id,
-                run_id: w.run_id,
-            }
-        }
-    }
 }
 
 // No need to lint these
@@ -769,7 +781,7 @@ pub mod temporal {
                 tonic::include_proto!("temporal.api.command.v1");
 
                 use crate::protos::{
-                    coresdk::{workflow_commands, PayloadsExt},
+                    coresdk::{workflow_commands, IntoPayloadsExt},
                     temporal::api::common::v1::{ActivityType, WorkflowType},
                     temporal::api::enums::v1::CommandType,
                 };

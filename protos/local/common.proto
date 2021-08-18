@@ -17,8 +17,12 @@ message Payload {
 
 // Identifying information about a particular workflow execution
 message WorkflowExecution {
-    string workflow_id = 1;
-    string run_id = 2;
+    // The namespace the workflow resides in
+    string namespace = 1;
+    // Can never be empty
+    string workflow_id = 2;
+    // May be empty if the most recent run of the workflow with the given ID is being targeted
+    string run_id = 3;
 }
 
 // Defines how an activity or workflow should be retried in the event of failure, timeout, etc.

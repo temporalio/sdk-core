@@ -25,8 +25,9 @@ message WorkflowCommand {
         CancelWorkflowExecution cancel_workflow_execution = 9;
         SetPatchMarker set_patch_marker = 10;
         StartChildWorkflowExecution start_child_workflow_execution = 11;
-        RequestCancelExternalWorkflowExecution request_cancel_external_workflow_execution = 12;
-        SignalExternalWorkflowExecution signal_external_workflow_execution = 13;
+        RequestCancelChildWorkflowExecution request_cancel_child_workflow_execution = 12;
+        RequestCancelExternalWorkflowExecution request_cancel_external_workflow_execution = 13;
+        SignalExternalWorkflowExecution signal_external_workflow_execution = 14;
 
         // To be added as/if needed:
         //  UpsertWorkflowSearchAttributes upsert_workflow_search_attributes_command_attributes = 14;
@@ -186,23 +187,26 @@ message StartChildWorkflowExecution {
     child_workflow.ChildWorkflowCancellationType cancellation_type = 18;
 }
 
-/// Request cancellation of an external workflow execution, can be used for child workflows
+/// Request cancellation of an external workflow execution
 message RequestCancelExternalWorkflowExecution {
-    /// Lang's incremental sequence number as provided to StartChildWorkflowExecution.
-    /// Omit this if requesting to cancel a non-child external workflow.
-    optional uint32 seq = 1;
-    string namespace = 2;
-    /// Required workflow_id of the Workflow to cancel
-    string workflow_id = 3;
-    /// Optional run_id of the Workflow to cancel
-    string run_id = 4;
+    common.WorkflowExecution workflow_execution = 1;
+}
+
+/// Request cancellation of a child workflow execution
+message RequestCancelChildWorkflowExecution {
+    // The desired target must be a child of the issuing workflow, and this is its command id
+    uint32 child_workflow_seq = 1;
 }
 
 /// Send a signal to an external workflow, can be used for child workflows
 message SignalExternalWorkflowExecution {
-    string namespace = 1;
-    /// workflow_id and optional run_id
-    common.WorkflowExecution workflow_execution = 2;
+    // What workflow is being targeted
+    oneof target {
+        // A specific workflow instance
+        common.WorkflowExecution workflow_execution = 1;
+        // The desired target must be a child of the issuing workflow, and this is its command id
+        uint32 child_workflow_seq = 2;
+    }
     /// Name of the signal handler
     string signal_name = 3;
     /// Arguments for the handler

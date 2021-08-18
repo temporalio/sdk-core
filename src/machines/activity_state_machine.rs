@@ -105,7 +105,7 @@ pub(super) fn new_activity(attribs: ScheduleActivity) -> NewMachineWithCommand<A
 
 impl ActivityMachine {
     /// Create a new activity and immediately schedule it.
-    pub(crate) fn new_scheduled(attribs: ScheduleActivity) -> (Self, Command) {
+    fn new_scheduled(attribs: ScheduleActivity) -> (Self, Command) {
         let mut s = Self {
             state: Created {}.into(),
             shared_state: SharedState {

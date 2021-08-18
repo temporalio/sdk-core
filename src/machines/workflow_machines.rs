@@ -17,8 +17,8 @@ use crate::{
                 wf_activation_job::{self, Variant},
                 NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WfActivation,
             },
-            workflow_commands::RequestCancelExternalWorkflowExecution,
-            PayloadsExt,
+            workflow_commands::RequestCancelChildWorkflowExecution,
+            FromPayloadsExt,
         },
         temporal::api::{
             common::v1::Header,
@@ -668,14 +668,12 @@ impl WorkflowMachines {
                         .insert(CommandID::ChildWorkflowStart(seq), child_workflow.machine);
                     self.current_wf_task_commands.push_back(child_workflow);
                 }
-                WFCommand::RequestCancelChildWorkflow(RequestCancelExternalWorkflowExecution {
-                    seq: Some(seq),
-                    ..
-                }) => self.process_cancellation(&CommandID::ChildWorkflowStart(seq), &mut jobs)?,
-                WFCommand::RequestCancelChildWorkflow(RequestCancelExternalWorkflowExecution {
-                    seq: None,
-                    ..
-                }) => {}
+                WFCommand::RequestCancelChildWorkflow(RequestCancelChildWorkflowExecution {
+                    child_workflow_seq,
+                }) => self.process_cancellation(
+                    &CommandID::ChildWorkflowStart(child_workflow_seq),
+                    &mut jobs,
+                )?,
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level
                     unimplemented!("Query responses should not make it down into the machines")

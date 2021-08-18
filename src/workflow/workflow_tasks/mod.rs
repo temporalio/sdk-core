@@ -13,7 +13,7 @@ use crate::{
             WfActivation,
         },
         workflow_commands::QueryResult,
-        PayloadsExt,
+        FromPayloadsExt,
     },
     protosext::ValidPollWFTQResponse,
     task_token::TaskToken,

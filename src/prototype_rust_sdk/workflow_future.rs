@@ -9,7 +9,7 @@ use crate::{
         },
         workflow_commands::{
             workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
-            FailWorkflowExecution, RequestCancelActivity, RequestCancelExternalWorkflowExecution,
+            FailWorkflowExecution, RequestCancelActivity, RequestCancelChildWorkflowExecution,
             ScheduleActivity, StartChildWorkflowExecution, StartTimer,
         },
         workflow_completion::WfActivationCompletion,
@@ -202,7 +202,8 @@ impl Future for WorkflowFuture {
                                 activation_cmds.push(workflow_command::Variant::CancelTimer(
                                     CancelTimer { seq },
                                 ));
-                                // TODO: cancelled timer should not simply be unblocked, in the other SDKs this returns an error
+                                // TODO: cancelled timer should not simply be unblocked, in the
+                                //   other SDKs this returns an error
                                 self.unblock(UnblockEvent::Timer(seq));
                                 // Re-poll wf future since a timer is now unblocked
                                 res = self.inner.poll_unpin(cx);
@@ -215,17 +216,10 @@ impl Future for WorkflowFuture {
                                 );
                             }
                             CancellableID::ChildWorkflow(seq) => {
-                                let start_request = self
-                                    .child_workflow_starts
-                                    .get(&seq)
-                                    .expect("Tried to cancel unknown child");
                                 activation_cmds.push(
-                                    workflow_command::Variant::RequestCancelExternalWorkflowExecution(
-                                        RequestCancelExternalWorkflowExecution {
-                                            seq: Some(seq),
-                                            namespace: start_request.namespace.clone(),
-                                            workflow_id: start_request.workflow_id.clone(),
-                                            ..Default::default()
+                                    workflow_command::Variant::RequestCancelChildWorkflowExecution(
+                                        RequestCancelChildWorkflowExecution {
+                                            child_workflow_seq: seq,
                                         },
                                     ),
                                 );

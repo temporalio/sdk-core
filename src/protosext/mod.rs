@@ -5,7 +5,7 @@ use crate::{
             workflow_activation::QueryWorkflow,
             workflow_commands::{workflow_command, QueryResult, WorkflowCommand},
             workflow_completion::{wf_activation_completion, WfActivationCompletion},
-            PayloadsExt,
+            FromPayloadsExt,
         },
         temporal::api::common::v1::WorkflowExecution,
         temporal::api::history::v1::History,

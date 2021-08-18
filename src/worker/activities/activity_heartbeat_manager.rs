@@ -2,7 +2,9 @@ use crate::{
     errors::ActivityHeartbeatError,
     pollers::ServerGatewayApis,
     protos::{
-        coresdk::{activity_task::ActivityCancelReason, common, ActivityHeartbeat, PayloadsExt},
+        coresdk::{
+            activity_task::ActivityCancelReason, common, ActivityHeartbeat, IntoPayloadsExt,
+        },
         temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
     },
     task_token::TaskToken,

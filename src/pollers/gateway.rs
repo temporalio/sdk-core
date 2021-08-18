@@ -1,8 +1,7 @@
 use crate::{
     pollers::Result,
     protos::{
-        coresdk::common::Payload,
-        coresdk::workflow_commands::QueryResult,
+        coresdk::{common::Payload, workflow_commands::QueryResult, IntoPayloadsExt},
         temporal::api::{
             common::v1::{Payloads, WorkflowExecution, WorkflowType},
             enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
@@ -21,16 +20,15 @@ use std::{
     time::Duration,
 };
 use tonic::{
+    codegen::InterceptedService,
     transport::{Certificate, Channel, Endpoint, Identity},
     Request, Status,
 };
 use url::Url;
 use uuid::Uuid;
 
-use crate::protos::coresdk::PayloadsExt;
 #[cfg(test)]
 use futures::Future;
-use tonic::codegen::InterceptedService;
 
 /// Options for the connection to the temporal server
 #[derive(Clone, Debug)]
