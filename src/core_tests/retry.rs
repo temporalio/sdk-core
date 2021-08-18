@@ -1,18 +1,16 @@
-use crate::pollers::{MockServerGatewayApis, RetryGateway};
+use crate::pollers::{MockServerGatewayApis, RetryGateway, RETRYABLE_ERROR_CODES};
 use crate::ServerGatewayApis;
 use tonic::{Code, Status};
 
 #[tokio::test]
 async fn non_retryable_errors() {
-    let non_retryable_codes = vec![
+    for code in [
         Code::InvalidArgument,
         Code::NotFound,
         Code::AlreadyExists,
         Code::PermissionDenied,
         Code::FailedPrecondition,
-    ];
-
-    for code in non_retryable_codes {
+    ] {
         let mut mock_gateway = MockServerGatewayApis::new();
         mock_gateway
             .expect_cancel_activity_task()
@@ -29,21 +27,7 @@ async fn non_retryable_errors() {
 
 #[tokio::test]
 async fn retryable_errors() {
-    let retryable_codes = vec![
-        Code::Cancelled,
-        Code::DataLoss,
-        Code::DeadlineExceeded,
-        Code::Internal,
-        Code::Unknown,
-        Code::ResourceExhausted,
-        Code::Aborted,
-        Code::OutOfRange,
-        Code::Unimplemented,
-        Code::Unavailable,
-        Code::Unauthenticated,
-    ];
-
-    for code in retryable_codes {
+    for code in RETRYABLE_ERROR_CODES {
         let mut mock_gateway = MockServerGatewayApis::new();
         mock_gateway
             .expect_cancel_activity_task()

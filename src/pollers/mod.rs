@@ -21,8 +21,24 @@ use crate::protos::temporal::api::workflowservice::v1::{
 
 #[cfg(test)]
 use futures::Future;
+use tonic::Code;
 
 pub type Result<T, E = tonic::Status> = std::result::Result<T, E>;
+
+/// List of gRPC error codes that client will retry.
+pub const RETRYABLE_ERROR_CODES: [Code; 11] = [
+    Code::Cancelled,
+    Code::DataLoss,
+    Code::DeadlineExceeded,
+    Code::Internal,
+    Code::Unknown,
+    Code::ResourceExhausted,
+    Code::Aborted,
+    Code::OutOfRange,
+    Code::Unimplemented,
+    Code::Unavailable,
+    Code::Unauthenticated,
+];
 
 /// A trait for things that poll the server. Hides complexity of concurrent polling or polling
 /// on sticky/nonsticky queues simultaneously.

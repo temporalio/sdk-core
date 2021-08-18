@@ -4,10 +4,9 @@ use std::{fmt::Debug, time::Duration};
 use backoff::backoff::Backoff;
 use backoff::{ExponentialBackoff, SystemClock};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
-use tonic::Code;
 
-use crate::pollers::default;
 use crate::pollers::gateway::ServerGatewayApis;
+use crate::pollers::{default, RETRYABLE_ERROR_CODES};
 use crate::{
     pollers::Result,
     protos::{
@@ -22,21 +21,6 @@ use crate::{
     task_token::TaskToken,
 };
 use std::time::Instant;
-
-/// List of gRPC error codes that client will retry.
-const RETRYABLE_ERROR_CODES: [Code; 11] = [
-    Code::Cancelled,
-    Code::DataLoss,
-    Code::DeadlineExceeded,
-    Code::Internal,
-    Code::Unknown,
-    Code::ResourceExhausted,
-    Code::Aborted,
-    Code::OutOfRange,
-    Code::Unimplemented,
-    Code::Unavailable,
-    Code::Unauthenticated,
-];
 
 #[derive(Debug)]
 pub struct RetryGateway<SG> {
