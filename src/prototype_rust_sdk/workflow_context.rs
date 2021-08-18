@@ -197,8 +197,7 @@ struct WFCommandFut<T>
 where
     T: From<UnblockEvent>,
 {
-    /// We need a field that references the template type T, this works
-    unused: PhantomData<T>,
+    _unused: PhantomData<T>,
     cancellable_id: CancellableID,
     result_rx: oneshot::Receiver<UnblockEvent>,
 }
@@ -213,7 +212,7 @@ where
             Self {
                 cancellable_id,
                 result_rx: rx,
-                unused: PhantomData,
+                _unused: PhantomData,
             },
             tx,
         )
