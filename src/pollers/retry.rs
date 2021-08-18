@@ -23,6 +23,21 @@ use crate::{
 };
 use std::time::Instant;
 
+/// List of gRPC error codes that client will retry.
+const RETRYABLE_ERROR_CODES: [Code; 11] = [
+    Code::Cancelled,
+    Code::DataLoss,
+    Code::DeadlineExceeded,
+    Code::Internal,
+    Code::Unknown,
+    Code::ResourceExhausted,
+    Code::Aborted,
+    Code::OutOfRange,
+    Code::Unimplemented,
+    Code::Unavailable,
+    Code::Unauthenticated,
+];
+
 #[derive(Debug)]
 pub struct RetryGateway<SG> {
     gateway: SG,
@@ -50,24 +65,13 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
         if current_attempt >= self.max_attempts {
             return RetryPolicy::ForwardError(e);
         }
-        match e.code() {
-            Code::Cancelled
-            | Code::DataLoss
-            | Code::DeadlineExceeded
-            | Code::Internal
-            | Code::Unknown
-            | Code::ResourceExhausted
-            | Code::Aborted
-            | Code::OutOfRange
-            | Code::Unimplemented
-            | Code::Unavailable
-            | Code::Unauthenticated => {
-                match self.backoff.next_backoff() {
-                    None => RetryPolicy::ForwardError(e), // None is returned when we've ran out of time.
-                    Some(backoff) => RetryPolicy::WaitRetry(backoff),
-                }
+        if RETRYABLE_ERROR_CODES.contains(&e.code()) {
+            match self.backoff.next_backoff() {
+                None => RetryPolicy::ForwardError(e), // None is returned when we've ran out of time.
+                Some(backoff) => RetryPolicy::WaitRetry(backoff),
             }
-            _ => RetryPolicy::ForwardError(e),
+        } else {
+            RetryPolicy::ForwardError(e)
         }
     }
 }
