@@ -171,6 +171,7 @@ pub fn get_integ_server_options() -> ServerGatewayOptions {
 }
 
 pub fn schedule_activity_cmd(
+    seq: u32,
     task_q: &str,
     activity_id: &str,
     cancellation_type: ActivityCancellationType,
@@ -178,6 +179,7 @@ pub fn schedule_activity_cmd(
     heartbeat_timeout: Duration,
 ) -> workflow_command::Variant {
     ScheduleActivity {
+        seq,
         activity_id: activity_id.to_string(),
         activity_type: "test_activity".to_string(),
         namespace: NAMESPACE.to_owned(),
@@ -215,7 +217,7 @@ where
 #[async_trait::async_trait]
 pub trait CoreTestHelpers {
     async fn complete_execution(&self, task_q: &str, run_id: &str);
-    async fn complete_timer(&self, task_q: &str, run_id: &str, timer_id: &str, duration: Duration);
+    async fn complete_timer(&self, task_q: &str, run_id: &str, seq: u32, duration: Duration);
 }
 
 #[async_trait::async_trait]
@@ -233,12 +235,12 @@ where
         .unwrap();
     }
 
-    async fn complete_timer(&self, task_q: &str, run_id: &str, timer_id: &str, duration: Duration) {
+    async fn complete_timer(&self, task_q: &str, run_id: &str, seq: u32, duration: Duration) {
         self.complete_workflow_activation(WfActivationCompletion::from_cmds(
             task_q.to_string(),
             run_id.to_string(),
             vec![StartTimer {
-                timer_id: timer_id.to_string(),
+                seq,
                 start_to_fire_timeout: Some(duration.into()),
             }
             .into()],

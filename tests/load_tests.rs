@@ -1,12 +1,11 @@
 use assert_matches::assert_matches;
 use futures::future::join_all;
 use std::time::{Duration, Instant};
+use temporal_sdk_core::prototype_rust_sdk::ActivityOptions;
 use temporal_sdk_core::{
     protos::coresdk::{
-        activity_result::ActivityResult,
-        activity_task::activity_task as act_task,
-        workflow_commands::{ActivityCancellationType, ScheduleActivity},
-        ActivityTaskCompletion,
+        activity_result::ActivityResult, activity_task::activity_task as act_task,
+        workflow_commands::ActivityCancellationType, ActivityTaskCompletion,
     },
     prototype_rust_sdk::WfContext,
 };
@@ -36,16 +35,15 @@ async fn activity_load() {
         let payload_dat = pd.clone();
 
         async move {
-            let activity = ScheduleActivity {
-                activity_id: activity_id.to_string(),
+            let activity = ActivityOptions {
+                activity_id: Some(activity_id.to_string()),
                 activity_type: "test_activity".to_string(),
                 task_queue,
-                schedule_to_start_timeout: Some(activity_timeout.into()),
-                start_to_close_timeout: Some(activity_timeout.into()),
-                schedule_to_close_timeout: Some(activity_timeout.into()),
-                heartbeat_timeout: Some(activity_timeout.into()),
-                cancellation_type: ActivityCancellationType::TryCancel as i32,
-                ..Default::default()
+                schedule_to_start_timeout: Some(activity_timeout),
+                start_to_close_timeout: Some(activity_timeout),
+                schedule_to_close_timeout: Some(activity_timeout),
+                heartbeat_timeout: Some(activity_timeout),
+                cancellation_type: ActivityCancellationType::TryCancel,
             };
             let res = ctx.activity(activity).await.unwrap_ok_payload();
             assert_eq!(res.data, payload_dat);

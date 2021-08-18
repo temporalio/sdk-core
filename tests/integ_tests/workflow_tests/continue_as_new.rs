@@ -1,17 +1,13 @@
 use std::time::Duration;
 use temporal_sdk_core::{
-    protos::coresdk::workflow_commands::{ContinueAsNewWorkflowExecution, StartTimer},
+    protos::coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
     prototype_rust_sdk::{WfContext, WfExitValue, WorkflowResult},
 };
 use test_utils::CoreWfStarter;
 
 async fn continue_as_new_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     let run_ct = ctx.get_args()[0].data[0];
-    let timer = StartTimer {
-        timer_id: "sometimer".to_string(),
-        start_to_fire_timeout: Some(Duration::from_millis(500).into()),
-    };
-    ctx.timer(timer).await;
+    ctx.timer(Duration::from_millis(500)).await;
     Ok(if run_ct < 5 {
         WfExitValue::ContinueAsNew(ContinueAsNewWorkflowExecution {
             arguments: vec![[run_ct + 1].into()],

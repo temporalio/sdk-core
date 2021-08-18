@@ -3,10 +3,7 @@ use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_sdk_core::{
-    protos::coresdk::workflow_commands::StartTimer,
-    prototype_rust_sdk::{WfContext, WorkflowResult},
-};
+use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
 use test_utils::CoreWfStarter;
 
 #[tokio::test]
@@ -29,11 +26,7 @@ static TIMED_OUT_ONCE: AtomicBool = AtomicBool::new(false);
 static RUN_CT: AtomicUsize = AtomicUsize::new(0);
 async fn timer_timeout_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     RUN_CT.fetch_add(1, Ordering::SeqCst);
-    let timer = StartTimer {
-        timer_id: "super_timer_id".to_string(),
-        start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-    };
-    let t = ctx.timer(timer);
+    let t = ctx.timer(Duration::from_secs(1));
     if !TIMED_OUT_ONCE.load(Ordering::SeqCst) {
         ctx.force_task_fail(anyhow::anyhow!("I AM SLAIN!"));
         TIMED_OUT_ONCE.store(true, Ordering::SeqCst);

@@ -20,6 +20,7 @@ async fn activity_heartbeat() {
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
+            0,
             &task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
@@ -69,13 +70,13 @@ async fn activity_heartbeat() {
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
-                    ResolveActivity {activity_id: a_id, result: Some(ActivityResult{
+                    ResolveActivity {seq, result: Some(ActivityResult{
                     status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)})),
                      ..})}
                 )),
             },
         ] => {
-            assert_eq!(a_id, activity_id);
+            assert_eq!(*seq, 0);
             assert_eq!(r, &response_payload);
         }
     );

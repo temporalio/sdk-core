@@ -26,7 +26,7 @@ use crate::{
 async fn legacy_query(#[case] include_history: bool) {
     let wfid = "fake_wf_id";
     let query_resp = "response";
-    let t = canned_histories::single_timer("fake_timer");
+    let t = canned_histories::single_timer("1");
     let tasks = VecDeque::from(vec![
         hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
         {
@@ -63,7 +63,7 @@ async fn legacy_query(#[case] include_history: bool) {
             TEST_Q,
             task.run_id,
             StartTimer {
-                timer_id: "fake_timer".to_string(),
+                seq: 1,
                 ..Default::default()
             }
             .into(),
@@ -140,7 +140,7 @@ async fn legacy_query(#[case] include_history: bool) {
 async fn new_queries(#[case] num_queries: usize) {
     let wfid = "fake_wf_id";
     let query_resp = "response";
-    let t = canned_histories::single_timer("fake_timer");
+    let t = canned_histories::single_timer("1");
     let tasks = VecDeque::from(vec![
         hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
         {
@@ -173,7 +173,7 @@ async fn new_queries(#[case] num_queries: usize) {
         TEST_Q,
         task.run_id,
         StartTimer {
-            timer_id: "fake_timer".to_string(),
+            seq: 1,
             ..Default::default()
         }
         .into(),
@@ -224,7 +224,7 @@ async fn new_queries(#[case] num_queries: usize) {
 #[tokio::test]
 async fn legacy_query_failure_on_wft_failure() {
     let wfid = "fake_wf_id";
-    let t = canned_histories::single_timer("fake_timer");
+    let t = canned_histories::single_timer("1");
     let tasks = VecDeque::from(vec![
         hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
         {
@@ -256,7 +256,7 @@ async fn legacy_query_failure_on_wft_failure() {
         TEST_Q,
         task.run_id,
         StartTimer {
-            timer_id: "fake_timer".to_string(),
+            seq: 1,
             ..Default::default()
         }
         .into(),

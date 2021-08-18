@@ -7,11 +7,7 @@ use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
 use test_utils::{init_core_and_create_wf, CoreTestHelpers, CoreWfStarter};
 
 pub async fn timer_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
-    let timer = StartTimer {
-        timer_id: "super_timer_id".to_string(),
-        start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-    };
-    command_sink.timer(timer).await;
+    command_sink.timer(Duration::from_secs(1)).await;
     Ok(().into())
 }
 
@@ -38,7 +34,7 @@ async fn timer_workflow_manual() {
         &task_q,
         task.run_id,
         vec![StartTimer {
-            timer_id: "timer-1".to_string(),
+            seq: 0,
             start_to_fire_timeout: Some(Duration::from_secs(1).into()),
         }
         .into()],
@@ -53,20 +49,18 @@ async fn timer_workflow_manual() {
 #[tokio::test]
 async fn timer_cancel_workflow() {
     let (core, task_q) = init_core_and_create_wf("timer_cancel_workflow").await;
-    let timer_id = "wait_timer";
-    let cancel_timer_id = "cancel_timer";
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
         vec![
             StartTimer {
-                timer_id: timer_id.to_string(),
+                seq: 0,
                 start_to_fire_timeout: Some(Duration::from_millis(50).into()),
             }
             .into(),
             StartTimer {
-                timer_id: cancel_timer_id.to_string(),
+                seq: 1,
                 start_to_fire_timeout: Some(Duration::from_secs(10).into()),
             }
             .into(),
@@ -79,10 +73,7 @@ async fn timer_cancel_workflow() {
         &task_q,
         task.run_id,
         vec![
-            CancelTimer {
-                timer_id: cancel_timer_id.to_string(),
-            }
-            .into(),
+            CancelTimer { seq: 1 }.into(),
             CompleteWorkflowExecution { result: None }.into(),
         ],
     ))
@@ -93,21 +84,17 @@ async fn timer_cancel_workflow() {
 #[tokio::test]
 async fn timer_immediate_cancel_workflow() {
     let (core, task_q) = init_core_and_create_wf("timer_immediate_cancel_workflow").await;
-    let cancel_timer_id = "cancel_timer";
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
         vec![
             StartTimer {
-                timer_id: cancel_timer_id.to_string(),
+                seq: 0,
                 ..Default::default()
             }
             .into(),
-            CancelTimer {
-                timer_id: cancel_timer_id.to_string(),
-            }
-            .into(),
+            CancelTimer { seq: 0 }.into(),
             CompleteWorkflowExecution { result: None }.into(),
         ],
     ))
@@ -116,14 +103,8 @@ async fn timer_immediate_cancel_workflow() {
 }
 
 async fn parallel_timer_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
-    let t1 = command_sink.timer(StartTimer {
-        timer_id: "timer_1".to_string(),
-        start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-    });
-    let t2 = command_sink.timer(StartTimer {
-        timer_id: "timer_2".to_string(),
-        start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-    });
+    let t1 = command_sink.timer(Duration::from_secs(1));
+    let t2 = command_sink.timer(Duration::from_secs(1));
     let _ = tokio::join!(t1, t2);
     Ok(().into())
 }

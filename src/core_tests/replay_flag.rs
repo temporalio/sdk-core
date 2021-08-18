@@ -1,6 +1,5 @@
 use crate::workflow::managed_wf::ManagedWFFunc;
 use crate::{
-    protos::coresdk::workflow_commands::StartTimer,
     protos::temporal::api::enums::v1::CommandType,
     prototype_rust_sdk::{WfContext, WorkflowFunction},
     test_help::canned_histories,
@@ -8,24 +7,20 @@ use crate::{
 use rstest::{fixture, rstest};
 use std::time::Duration;
 
-fn timers_wf(num_timers: usize) -> WorkflowFunction {
+fn timers_wf(num_timers: u32) -> WorkflowFunction {
     WorkflowFunction::new(move |mut command_sink: WfContext| async move {
-        for tnum in 1..=num_timers {
-            let timer = StartTimer {
-                timer_id: format!("timer-{}", tnum),
-                start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-            };
-            command_sink.timer(timer).await;
+        for _ in 1..=num_timers {
+            command_sink.timer(Duration::from_secs(1)).await;
         }
         Ok(().into())
     })
 }
 
 #[fixture(num_timers = 1)]
-fn fire_happy_hist(num_timers: usize) -> ManagedWFFunc {
+fn fire_happy_hist(num_timers: u32) -> ManagedWFFunc {
     let func = timers_wf(num_timers);
     // Add 1 b/c history takes # wf tasks, not timers
-    let t = canned_histories::long_sequential_timers(num_timers + 1);
+    let t = canned_histories::long_sequential_timers(num_timers as usize);
     ManagedWFFunc::new(t, func, vec![])
 }
 

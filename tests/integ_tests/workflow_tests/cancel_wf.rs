@@ -1,19 +1,13 @@
 use std::time::Duration;
 use temporal_sdk_core::{
-    protos::coresdk::workflow_commands::StartTimer,
     protos::temporal::api::enums::v1::WorkflowExecutionStatus,
     prototype_rust_sdk::{WfContext, WfExitValue, WorkflowResult},
 };
 use test_utils::CoreWfStarter;
 
 async fn cancelled_wf(mut ctx: WfContext) -> WorkflowResult<()> {
-    let timer = StartTimer {
-        timer_id: "longtimer".to_string(),
-        start_to_fire_timeout: Some(Duration::from_secs(500).into()),
-    };
-
     let cancelled = tokio::select! {
-        _ = ctx.timer(timer) => false,
+        _ = ctx.timer(Duration::from_secs(500)) => false,
         _ = ctx.cancelled() => true
     };
 

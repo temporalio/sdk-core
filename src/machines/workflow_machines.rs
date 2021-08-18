@@ -17,6 +17,7 @@ use crate::{
                 wf_activation_job::{self, Variant},
                 NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WfActivation,
             },
+            workflow_commands::RequestCancelExternalWorkflowExecution,
             PayloadsExt,
         },
         temporal::api::{
@@ -598,27 +599,25 @@ impl WorkflowMachines {
         for cmd in results {
             match cmd {
                 WFCommand::AddTimer(attrs) => {
-                    let tid = attrs.timer_id.clone();
+                    let seq = attrs.seq;
                     let timer = self.add_new_command_machine(new_timer(attrs));
                     self.id_to_machine
-                        .insert(CommandID::Timer(tid), timer.machine);
+                        .insert(CommandID::Timer(seq), timer.machine);
                     self.current_wf_task_commands.push_back(timer);
                 }
-                WFCommand::CancelTimer(attrs) => self.process_cancellation(
-                    &CommandID::Timer(attrs.timer_id.to_owned()),
-                    &mut jobs,
-                )?,
+                WFCommand::CancelTimer(attrs) => {
+                    self.process_cancellation(&CommandID::Timer(attrs.seq), &mut jobs)?
+                }
                 WFCommand::AddActivity(attrs) => {
-                    let aid = attrs.activity_id.clone();
+                    let seq = attrs.seq;
                     let activity = self.add_new_command_machine(new_activity(attrs));
                     self.id_to_machine
-                        .insert(CommandID::Activity(aid), activity.machine);
+                        .insert(CommandID::Activity(seq), activity.machine);
                     self.current_wf_task_commands.push_back(activity);
                 }
-                WFCommand::RequestCancelActivity(attrs) => self.process_cancellation(
-                    &CommandID::Activity(attrs.activity_id.to_owned()),
-                    &mut jobs,
-                )?,
+                WFCommand::RequestCancelActivity(attrs) => {
+                    self.process_cancellation(&CommandID::Activity(attrs.seq), &mut jobs)?
+                }
                 WFCommand::CompleteWorkflow(attrs) => {
                     let cwfm = self.add_new_command_machine(complete_workflow(attrs));
                     self.current_wf_task_commands.push_back(cwfm);
@@ -663,17 +662,20 @@ impl WorkflowMachines {
                     }
                 }
                 WFCommand::AddChildWorkflow(attrs) => {
-                    let wfid = attrs.workflow_id.clone();
+                    let seq = attrs.seq;
                     let child_workflow = self.add_new_command_machine(new_child_workflow(attrs));
-                    // TODO: workflow_id is not a good identifier, it is not guaranteed to be unique.
                     self.id_to_machine
-                        .insert(CommandID::ChildWorkflowStart(wfid), child_workflow.machine);
+                        .insert(CommandID::ChildWorkflowStart(seq), child_workflow.machine);
                     self.current_wf_task_commands.push_back(child_workflow);
                 }
-                WFCommand::RequestCancelChildWorkflow(attrs) => self.process_cancellation(
-                    &CommandID::ChildWorkflowStart(attrs.workflow_id.to_owned()),
-                    &mut jobs,
-                )?,
+                WFCommand::RequestCancelChildWorkflow(RequestCancelExternalWorkflowExecution {
+                    seq: Some(seq),
+                    ..
+                }) => self.process_cancellation(&CommandID::ChildWorkflowStart(seq), &mut jobs)?,
+                WFCommand::RequestCancelChildWorkflow(RequestCancelExternalWorkflowExecution {
+                    seq: None,
+                    ..
+                }) => {}
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level
                     unimplemented!("Query responses should not make it down into the machines")

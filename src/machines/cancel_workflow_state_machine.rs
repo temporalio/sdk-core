@@ -123,7 +123,6 @@ mod tests {
     use super::*;
     use crate::prototype_rust_sdk::WfExitValue;
     use crate::{
-        machines::StartTimer,
         protos::coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
         prototype_rust_sdk::{WfContext, WorkflowFunction, WorkflowResult},
         test_help::canned_histories,
@@ -132,18 +131,14 @@ mod tests {
     use std::time::Duration;
 
     async fn wf_with_timer(mut ctx: WfContext) -> WorkflowResult<()> {
-        ctx.timer(StartTimer {
-            timer_id: "timer1".to_string(),
-            start_to_fire_timeout: Some(Duration::from_millis(500).into()),
-        })
-        .await;
+        ctx.timer(Duration::from_millis(500)).await;
         Ok(WfExitValue::Cancelled)
     }
 
     #[tokio::test]
     async fn wf_completing_with_cancelled() {
         let func = WorkflowFunction::new(wf_with_timer);
-        let t = canned_histories::timer_wf_cancel_req_cancelled("timer1");
+        let t = canned_histories::timer_wf_cancel_req_cancelled("1");
         let mut wfm = ManagedWFFunc::new(t, func, vec![]);
         wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().await.commands;

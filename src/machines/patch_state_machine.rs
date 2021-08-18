@@ -226,15 +226,20 @@ mod tests {
             coresdk::{
                 common::decode_change_marker_details,
                 workflow_activation::{wf_activation_job, NotifyHasPatch, WfActivationJob},
-                workflow_commands::StartTimer,
             },
             temporal::api::command::v1::{
-                command::Attributes, RecordMarkerCommandAttributes, StartTimerCommandAttributes,
+                command::Attributes, RecordMarkerCommandAttributes,
+                ScheduleActivityTaskCommandAttributes,
             },
+            temporal::api::common::v1::ActivityType,
             temporal::api::enums::v1::{CommandType, EventType},
-            temporal::api::history::v1::{history_event, TimerFiredEventAttributes},
+            temporal::api::history::v1::{
+                history_event, ActivityTaskCompletedEventAttributes,
+                ActivityTaskScheduledEventAttributes, ActivityTaskStartedEventAttributes,
+                TimerFiredEventAttributes,
+            },
         },
-        prototype_rust_sdk::{WfContext, WorkflowFunction},
+        prototype_rust_sdk::{ActivityOptions, WfContext, WorkflowFunction},
         test_help::TestHistoryBuilder,
         workflow::managed_wf::ManagedWFFunc,
     };
@@ -249,18 +254,21 @@ mod tests {
         NoMarker,
     }
 
+    const ONE_SECOND: Duration = Duration::from_secs(1);
+
     /// EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
     /// EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
     /// EVENT_TYPE_WORKFLOW_TASK_STARTED
     /// EVENT_TYPE_WORKFLOW_TASK_COMPLETED
     /// EVENT_TYPE_MARKER_RECORDED (depending on marker_type)
-    /// EVENT_TYPE_TIMER_STARTED
-    /// EVENT_TYPE_TIMER_FIRED
+    /// EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+    /// EVENT_TYPE_ACTIVITY_TASK_STARTED
+    /// EVENT_TYPE_ACTIVITY_TASK_COMPLETED
     /// EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
     /// EVENT_TYPE_WORKFLOW_TASK_STARTED
     /// EVENT_TYPE_WORKFLOW_TASK_COMPLETED
     /// EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
-    fn change_marker_single_timer(marker_type: MarkerType, timer_id: &str) -> TestHistoryBuilder {
+    fn patch_marker_single_activity(marker_type: MarkerType) -> TestHistoryBuilder {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
@@ -269,13 +277,41 @@ mod tests {
             MarkerType::NotDeprecated => t.add_has_change_marker(MY_PATCH_ID, false),
             MarkerType::NoMarker => {}
         };
-        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+
+        let scheduled_event_id = t.add_get_event_id(
+            EventType::ActivityTaskScheduled,
+            Some(
+                history_event::Attributes::ActivityTaskScheduledEventAttributes(
+                    ActivityTaskScheduledEventAttributes {
+                        activity_id: "0".to_string(),
+                        activity_type: Some(ActivityType {
+                            name: "".to_string(),
+                        }),
+                        ..Default::default()
+                    },
+                ),
+            ),
+        );
+        let started_event_id = t.add_get_event_id(
+            EventType::ActivityTaskStarted,
+            Some(
+                history_event::Attributes::ActivityTaskStartedEventAttributes(
+                    ActivityTaskStartedEventAttributes {
+                        scheduled_event_id,
+                        ..Default::default()
+                    },
+                ),
+            ),
+        );
         t.add(
-            EventType::TimerFired,
-            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: timer_started_event_id,
-                timer_id: timer_id.to_string(),
-            }),
+            EventType::ActivityTaskCompleted,
+            history_event::Attributes::ActivityTaskCompletedEventAttributes(
+                ActivityTaskCompletedEventAttributes {
+                    scheduled_event_id,
+                    started_event_id,
+                    ..Default::default()
+                },
+            ),
         );
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
@@ -283,25 +319,25 @@ mod tests {
     }
 
     async fn v1(ctx: &mut WfContext) {
-        ctx.timer(StartTimer {
-            timer_id: "no_change".to_string(),
-            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+        ctx.activity(ActivityOptions {
+            activity_id: Some("no_change".to_owned()),
+            ..Default::default()
         })
         .await;
     }
 
     async fn v2(ctx: &mut WfContext) -> bool {
         if ctx.patched(MY_PATCH_ID) {
-            ctx.timer(StartTimer {
-                timer_id: "had_change".to_string(),
-                start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+            ctx.activity(ActivityOptions {
+                activity_id: Some("had_change".to_owned()),
+                ..Default::default()
             })
             .await;
             true
         } else {
-            ctx.timer(StartTimer {
-                timer_id: "no_change".to_string(),
-                start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+            ctx.activity(ActivityOptions {
+                activity_id: Some("no_change".to_owned()),
+                ..Default::default()
             })
             .await;
             false
@@ -310,22 +346,22 @@ mod tests {
 
     async fn v3(ctx: &mut WfContext) {
         ctx.deprecate_patch(MY_PATCH_ID);
-        ctx.timer(StartTimer {
-            timer_id: "had_change".to_string(),
-            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+        ctx.activity(ActivityOptions {
+            activity_id: Some("had_change".to_owned()),
+            ..Default::default()
         })
         .await;
     }
 
     async fn v4(ctx: &mut WfContext) {
-        ctx.timer(StartTimer {
-            timer_id: "had_change".to_string(),
-            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+        ctx.activity(ActivityOptions {
+            activity_id: Some("had_change".to_owned()),
+            ..Default::default()
         })
         .await;
     }
 
-    fn change_setup(
+    fn patch_setup(
         replaying: bool,
         marker_type: MarkerType,
         workflow_version: usize,
@@ -349,25 +385,7 @@ mod tests {
             Ok(().into())
         });
 
-        let t = match marker_type {
-            MarkerType::NotDeprecated => change_marker_single_timer(marker_type, "had_change"),
-            MarkerType::Deprecated => {
-                let timer_id = if workflow_version == 1 {
-                    "no_change"
-                } else {
-                    "had_change"
-                };
-                change_marker_single_timer(marker_type, timer_id)
-            }
-            MarkerType::NoMarker => {
-                let timer_id = if workflow_version <= 2 {
-                    "no_change"
-                } else {
-                    "had_change"
-                };
-                change_marker_single_timer(marker_type, timer_id)
-            }
-        };
+        let t = patch_marker_single_activity(marker_type);
         let histinfo = if replaying {
             t.get_full_history_info()
         } else {
@@ -391,23 +409,20 @@ mod tests {
         #[case] marker_type: MarkerType,
         #[case] wf_version: usize,
     ) {
-        let mut wfm = change_setup(replaying, marker_type, wf_version);
+        let mut wfm = patch_setup(replaying, marker_type, wf_version);
         // Start workflow activation
         wfm.get_next_activation().await.unwrap();
         // Just starts timer
         let commands = wfm.get_server_commands().await.commands;
         assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
-
+        assert_eq!(
+            commands[0].command_type,
+            CommandType::ScheduleActivityTask as i32
+        );
         let act = if !replaying {
             // Feed more history
-            let expected_timer_id = if wf_version == 1 {
-                "no_change"
-            } else {
-                "had_change"
-            };
             wfm.new_history(
-                change_marker_single_timer(marker_type, expected_timer_id)
+                patch_marker_single_activity(marker_type)
                     .get_full_history_info()
                     .unwrap()
                     .into(),
@@ -419,11 +434,11 @@ mod tests {
 
         if marker_type == MarkerType::Deprecated {
             let act = act.unwrap();
-            // Timer is fired
+            // Activity is resolved
             assert_matches!(
                 act.jobs.as_slice(),
                 [WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::FireTimer(_))
+                    variant: Some(wf_activation_job::Variant::ResolveActivity(_))
                 }]
             );
         } else {
@@ -453,7 +468,7 @@ mod tests {
         #[case] marker_type: MarkerType,
         #[case] wf_version: usize,
     ) {
-        let mut wfm = change_setup(replaying, marker_type, wf_version);
+        let mut wfm = patch_setup(replaying, marker_type, wf_version);
         let act = wfm.get_next_activation().await.unwrap();
         // replaying cases should immediately get a resolve change activation when marker is present
         if replaying && marker_type != MarkerType::NoMarker {
@@ -482,7 +497,7 @@ mod tests {
               && decode_change_marker_details(details).unwrap().1 == dep_flag_expected
         );
         // The only time the "old" timer should fire is in v2, replaying, without a marker.
-        let expected_timer_id =
+        let expected_activity_id =
             if replaying && marker_type == MarkerType::NoMarker && wf_version == 2 {
                 "no_change"
             } else {
@@ -490,8 +505,10 @@ mod tests {
             };
         assert_matches!(
             commands[1].attributes.as_ref().unwrap(),
-            Attributes::StartTimerCommandAttributes(StartTimerCommandAttributes { timer_id, .. })
-            if timer_id == expected_timer_id
+            Attributes::ScheduleActivityTaskCommandAttributes(
+                ScheduleActivityTaskCommandAttributes { activity_id, .. }
+            )
+            if activity_id == expected_activity_id
         );
 
         let act = if !replaying {
@@ -499,7 +516,7 @@ mod tests {
             // and the history should have the has-change timer. v3 of course always has the change
             // regardless.
             wfm.new_history(
-                change_marker_single_timer(marker_type, "had_change")
+                patch_marker_single_activity(marker_type)
                     .get_full_history_info()
                     .unwrap()
                     .into(),
@@ -510,11 +527,11 @@ mod tests {
         };
 
         let act = act.unwrap();
-        // Timer is fired
+        // Activity is resolved
         assert_matches!(
             act.jobs.as_slice(),
             [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::FireTimer(_))
+                variant: Some(wf_activation_job::Variant::ResolveActivity(_))
             }]
         );
 
@@ -532,35 +549,15 @@ mod tests {
     async fn same_change_multiple_spots(#[case] have_marker_in_hist: bool, #[case] replay: bool) {
         let wfn = WorkflowFunction::new(move |mut ctx: WfContext| async move {
             if ctx.patched(MY_PATCH_ID) {
-                ctx.timer(StartTimer {
-                    timer_id: "had_change_1".to_string(),
-                    start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-                })
-                .await;
+                ctx.activity(ActivityOptions::default()).await;
             } else {
-                ctx.timer(StartTimer {
-                    timer_id: "no_change_1".to_string(),
-                    start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-                })
-                .await;
+                ctx.timer(ONE_SECOND).await;
             }
-            ctx.timer(StartTimer {
-                timer_id: "always_timer".to_string(),
-                start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-            })
-            .await;
+            ctx.timer(ONE_SECOND).await;
             if ctx.patched(MY_PATCH_ID) {
-                ctx.timer(StartTimer {
-                    timer_id: "had_change_2".to_string(),
-                    start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-                })
-                .await;
+                ctx.activity(ActivityOptions::default()).await;
             } else {
-                ctx.timer(StartTimer {
-                    timer_id: "no_change_2".to_string(),
-                    start_to_fire_timeout: Some(Duration::from_secs(1).into()),
-                })
-                .await;
+                ctx.timer(ONE_SECOND).await;
             }
             Ok(().into())
         });
@@ -570,43 +567,119 @@ mod tests {
         t.add_full_wf_task();
         if have_marker_in_hist {
             t.add_has_change_marker(MY_PATCH_ID, false);
+            let scheduled_event_id = t.add_get_event_id(
+                EventType::ActivityTaskScheduled,
+                Some(
+                    history_event::Attributes::ActivityTaskScheduledEventAttributes(
+                        ActivityTaskScheduledEventAttributes {
+                            activity_id: "1".to_owned(),
+                            activity_type: Some(ActivityType {
+                                name: "".to_string(),
+                            }),
+                            ..Default::default()
+                        },
+                    ),
+                ),
+            );
+            let started_event_id = t.add_get_event_id(
+                EventType::ActivityTaskStarted,
+                Some(
+                    history_event::Attributes::ActivityTaskStartedEventAttributes(
+                        ActivityTaskStartedEventAttributes {
+                            scheduled_event_id,
+                            ..Default::default()
+                        },
+                    ),
+                ),
+            );
+            t.add(
+                EventType::ActivityTaskCompleted,
+                history_event::Attributes::ActivityTaskCompletedEventAttributes(
+                    ActivityTaskCompletedEventAttributes {
+                        scheduled_event_id,
+                        started_event_id,
+                        // TODO result: Some(Payloads { payloads: vec![Payload{ metadata: Default::default(), data: vec![] }] }),
+                        ..Default::default()
+                    },
+                ),
+            );
+            t.add_full_wf_task();
+            let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+            t.add(
+                EventType::TimerFired,
+                history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                    started_event_id: timer_started_event_id,
+                    timer_id: "1".to_owned(),
+                }),
+            );
+        } else {
+            let started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+            t.add(
+                EventType::TimerFired,
+                history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                    started_event_id,
+                    timer_id: "1".to_owned(),
+                }),
+            );
+            t.add_full_wf_task();
+            let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+            t.add(
+                EventType::TimerFired,
+                history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                    started_event_id: timer_started_event_id,
+                    timer_id: "2".to_owned(),
+                }),
+            );
         }
-        let timer_id = if have_marker_in_hist {
-            "had_change_1"
-        } else {
-            "no_change_1"
-        };
-        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-        t.add(
-            EventType::TimerFired,
-            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: timer_started_event_id,
-                timer_id: timer_id.to_string(),
-            }),
-        );
         t.add_full_wf_task();
-        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-        t.add(
-            EventType::TimerFired,
-            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: timer_started_event_id,
-                timer_id: "always_timer".to_string(),
-            }),
-        );
-        t.add_full_wf_task();
-        let timer_id = if have_marker_in_hist {
-            "had_change_2"
+
+        if have_marker_in_hist {
+            let scheduled_event_id = t.add_get_event_id(
+                EventType::ActivityTaskScheduled,
+                Some(
+                    history_event::Attributes::ActivityTaskScheduledEventAttributes(
+                        ActivityTaskScheduledEventAttributes {
+                            activity_id: "2".to_string(),
+                            activity_type: Some(ActivityType {
+                                name: "".to_string(),
+                            }),
+                            ..Default::default()
+                        },
+                    ),
+                ),
+            );
+            let started_event_id = t.add_get_event_id(
+                EventType::ActivityTaskStarted,
+                Some(
+                    history_event::Attributes::ActivityTaskStartedEventAttributes(
+                        ActivityTaskStartedEventAttributes {
+                            scheduled_event_id,
+                            ..Default::default()
+                        },
+                    ),
+                ),
+            );
+            t.add(
+                EventType::ActivityTaskCompleted,
+                history_event::Attributes::ActivityTaskCompletedEventAttributes(
+                    ActivityTaskCompletedEventAttributes {
+                        scheduled_event_id,
+                        started_event_id,
+                        // TODO result: Some(Payloads { payloads: vec![Payload{ metadata: Default::default(), data: vec![] }] }),
+                        ..Default::default()
+                    },
+                ),
+            );
         } else {
-            "no_change_2"
-        };
-        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-        t.add(
-            EventType::TimerFired,
-            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: timer_started_event_id,
-                timer_id: timer_id.to_string(),
-            }),
-        );
+            let started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+            t.add(
+                EventType::TimerFired,
+                history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                    started_event_id,
+                    timer_id: "3".to_owned(),
+                }),
+            );
+        }
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
 

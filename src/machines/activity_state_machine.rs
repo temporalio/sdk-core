@@ -136,7 +136,7 @@ impl ActivityMachine {
 
     fn create_cancelation_resolve(&self, details: Option<Payload>) -> ResolveActivity {
         ResolveActivity {
-            activity_id: self.shared_state.attrs.activity_id.clone(),
+            seq: self.shared_state.attrs.seq,
             result: Some(ActivityResult {
                 status: Some(activity_result::Status::Cancelled(Cancellation {
                     failure: Some(Failure {
@@ -243,7 +243,7 @@ impl WFMachinesAdapter for ActivityMachine {
         Ok(match my_command {
             ActivityMachineCommand::Complete(result) => {
                 vec![ResolveActivity {
-                    activity_id: self.shared_state.attrs.activity_id.clone(),
+                    seq: self.shared_state.attrs.seq,
                     result: Some(ActivityResult {
                         status: Some(activity_result::Status::Completed(ar::Success {
                             result: convert_payloads(event_info, result)?,
@@ -254,7 +254,7 @@ impl WFMachinesAdapter for ActivityMachine {
             }
             ActivityMachineCommand::Fail(failure) => {
                 vec![ResolveActivity {
-                    activity_id: self.shared_state.attrs.activity_id.clone(),
+                    seq: self.shared_state.attrs.seq,
                     result: Some(ActivityResult {
                         status: Some(activity_result::Status::Failed(ar::Failure {
                             failure: Some(failure),
@@ -728,9 +728,10 @@ fn convert_payloads(
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::prototype_rust_sdk::CancellableFuture;
     use crate::{
         protos::coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
-        prototype_rust_sdk::{WfContext, WorkflowFunction, WorkflowResult},
+        prototype_rust_sdk::{ActivityOptions, WfContext, WorkflowFunction, WorkflowResult},
         test_help::{canned_histories, TestHistoryBuilder},
         workflow::managed_wf::ManagedWFFunc,
     };
@@ -753,11 +754,7 @@ mod test {
     }
 
     async fn activity_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
-        let activity = ScheduleActivity {
-            activity_id: "activity-id-1".to_string(),
-            ..Default::default()
-        };
-        command_sink.activity(activity).await;
+        command_sink.activity(ActivityOptions::default()).await;
         Ok(().into())
     }
 
@@ -805,13 +802,10 @@ mod test {
 
     #[tokio::test]
     async fn immediate_activity_cancelation() {
-        let func = WorkflowFunction::new(|mut cmd_sink: WfContext| async move {
-            let cancel_activity_future = cmd_sink.activity(ScheduleActivity {
-                activity_id: "activity-id-1".to_string(),
-                ..Default::default()
-            });
+        let func = WorkflowFunction::new(|mut ctx: WfContext| async move {
+            let cancel_activity_future = ctx.activity(ActivityOptions::default());
             // Immediately cancel the activity
-            cmd_sink.cancel_activity("activity-id-1");
+            cancel_activity_future.cancel(&ctx);
             cancel_activity_future.await;
             Ok(().into())
         });

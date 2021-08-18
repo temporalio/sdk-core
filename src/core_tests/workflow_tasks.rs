@@ -46,7 +46,7 @@ fn single_timer_setup(
 ) -> CoreSDK<impl ServerGatewayApis + Send + Sync + 'static> {
     let wfid = "fake_wf_id";
 
-    let t = canned_histories::single_timer("fake_timer");
+    let t = canned_histories::single_timer("1");
     build_fake_core(wfid, t, hist_batches)
 }
 
@@ -87,7 +87,7 @@ async fn single_timer(
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![StartTimer {
-                    timer_id: "fake_timer".to_string(),
+                    seq: 1,
                     ..Default::default()
                 }
                 .into()],
@@ -134,10 +134,13 @@ async fn single_activity_completion(core: CoreSDK<impl ServerGatewayApis + Send 
 #[tokio::test]
 async fn parallel_timer_test_across_wf_bridge(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
-    let timer_1_id = "timer1";
-    let timer_2_id = "timer2";
+    let timer_1_id = 1;
+    let timer_2_id = 2;
 
-    let t = canned_histories::parallel_timer(timer_1_id, timer_2_id);
+    let t = canned_histories::parallel_timer(
+        timer_1_id.to_string().as_str(),
+        timer_2_id.to_string().as_str(),
+    );
     let core = build_fake_core(wfid, t, hist_batches);
 
     poll_and_reply(
@@ -148,12 +151,12 @@ async fn parallel_timer_test_across_wf_bridge(hist_batches: &'static [usize]) {
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![
                     StartTimer {
-                        timer_id: timer_1_id.to_string(),
+                        seq: timer_1_id,
                         ..Default::default()
                     }
                     .into(),
                     StartTimer {
-                        timer_id: timer_2_id.to_string(),
+                        seq: timer_2_id,
                         ..Default::default()
                     }
                     .into(),
@@ -166,12 +169,12 @@ async fn parallel_timer_test_across_wf_bridge(hist_batches: &'static [usize]) {
                         [
                             WfActivationJob {
                                 variant: Some(wf_activation_job::Variant::FireTimer(
-                                    FireTimer { timer_id: t1_id }
+                                    FireTimer { seq: t1_id }
                                 )),
                             },
                             WfActivationJob {
                                 variant: Some(wf_activation_job::Variant::FireTimer(
-                                    FireTimer { timer_id: t2_id }
+                                    FireTimer { seq: t2_id }
                                 )),
                             }
                         ] => {
@@ -191,10 +194,13 @@ async fn parallel_timer_test_across_wf_bridge(hist_batches: &'static [usize]) {
 #[tokio::test]
 async fn timer_cancel(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
-    let timer_id = "wait_timer";
-    let cancel_timer_id = "cancel_timer";
+    let timer_id = 1;
+    let cancel_timer_id = 2;
 
-    let t = canned_histories::cancel_timer(timer_id, cancel_timer_id);
+    let t = canned_histories::cancel_timer(
+        timer_id.to_string().as_str(),
+        cancel_timer_id.to_string().as_str(),
+    );
     let core = build_fake_core(wfid, t, hist_batches);
 
     poll_and_reply(
@@ -205,12 +211,12 @@ async fn timer_cancel(hist_batches: &'static [usize]) {
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![
                     StartTimer {
-                        timer_id: cancel_timer_id.to_string(),
+                        seq: cancel_timer_id,
                         ..Default::default()
                     }
                     .into(),
                     StartTimer {
-                        timer_id: timer_id.to_string(),
+                        seq: timer_id,
                         ..Default::default()
                     }
                     .into(),
@@ -220,7 +226,7 @@ async fn timer_cancel(hist_batches: &'static [usize]) {
                 &job_assert!(wf_activation_job::Variant::FireTimer(_)),
                 vec![
                     CancelTimer {
-                        timer_id: cancel_timer_id.to_string(),
+                        seq: cancel_timer_id,
                     }
                     .into(),
                     CompleteWorkflowExecution { result: None }.into(),
@@ -235,6 +241,7 @@ async fn timer_cancel(hist_batches: &'static [usize]) {
 #[tokio::test]
 async fn scheduled_activity_cancellation_try_cancel(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
+    let activity_seq = 1;
     let activity_id = "fake_activity";
     let signal_id = "signal";
 
@@ -248,6 +255,7 @@ async fn scheduled_activity_cancellation_try_cancel(hist_batches: &'static [usiz
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
+                    seq: activity_seq,
                     activity_id: activity_id.to_string(),
                     cancellation_type: ActivityCancellationType::TryCancel as i32,
                     ..Default::default()
@@ -256,10 +264,7 @@ async fn scheduled_activity_cancellation_try_cancel(hist_batches: &'static [usiz
             ),
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
-                vec![RequestCancelActivity {
-                    activity_id: activity_id.to_string(),
-                }
-                .into()],
+                vec![RequestCancelActivity { seq: activity_seq }.into()],
             ),
             // Activity is getting resolved right away as we are in the TryCancel mode.
             gen_assert_and_reply(
@@ -275,6 +280,7 @@ async fn scheduled_activity_cancellation_try_cancel(hist_batches: &'static [usiz
 #[tokio::test]
 async fn scheduled_activity_timeout(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
+    let activity_seq = 1;
     let activity_id = "fake_activity";
 
     let t = canned_histories::scheduled_activity_timeout(activity_id);
@@ -286,6 +292,7 @@ async fn scheduled_activity_timeout(hist_batches: &'static [usize]) {
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
+                    seq: activity_seq,
                     activity_id: activity_id.to_string(),
                     ..Default::default()
                 }
@@ -300,7 +307,7 @@ async fn scheduled_activity_timeout(hist_batches: &'static [usize]) {
                         WfActivationJob {
                             variant: Some(wf_activation_job::Variant::ResolveActivity(
                                 ResolveActivity {
-                                    activity_id: aid,
+                                    seq,
                                     result: Some(ActivityResult {
                                         status: Some(activity_result::Status::Failed(ar::Failure {
                                             failure: Some(failure)
@@ -311,7 +318,7 @@ async fn scheduled_activity_timeout(hist_batches: &'static [usize]) {
                         }
                     ] => {
                         assert_eq!(failure.message, "Activity task timed out".to_string());
-                        assert_eq!(aid, &activity_id.to_string());
+                        assert_eq!(*seq, activity_seq);
                     }
                 );
                 },
@@ -326,9 +333,9 @@ async fn scheduled_activity_timeout(hist_batches: &'static [usize]) {
 #[tokio::test]
 async fn started_activity_timeout(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
-    let activity_id = "fake_activity";
+    let activity_seq = 1;
 
-    let t = canned_histories::started_activity_timeout(activity_id);
+    let t = canned_histories::started_activity_timeout(activity_seq.to_string().as_str());
     let core = build_fake_core(wfid, t, hist_batches);
 
     poll_and_reply(
@@ -338,7 +345,8 @@ async fn started_activity_timeout(hist_batches: &'static [usize]) {
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
-                    activity_id: activity_id.to_string(),
+                    seq: activity_seq,
+                    activity_id: activity_seq.to_string(),
                     ..Default::default()
                 }
                     .into()],
@@ -352,7 +360,7 @@ async fn started_activity_timeout(hist_batches: &'static [usize]) {
                                     WfActivationJob {
                                         variant: Some(wf_activation_job::Variant::ResolveActivity(
                                             ResolveActivity {
-                                                activity_id: aid,
+                                                seq,
                                                 result: Some(ActivityResult {
                                                     status: Some(activity_result::Status::Failed(ar::Failure {
                                                         failure: Some(failure)
@@ -363,7 +371,7 @@ async fn started_activity_timeout(hist_batches: &'static [usize]) {
                                     }
                                 ] => {
                                     assert_eq!(failure.message, "Activity task timed out".to_string());
-                                    assert_eq!(aid, &activity_id.to_string());
+                                    assert_eq!(*seq, activity_seq);
                                 }
                             );
                 },
@@ -378,6 +386,7 @@ async fn started_activity_timeout(hist_batches: &'static [usize]) {
 #[tokio::test]
 async fn cancelled_activity_timeout(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
+    let activity_seq = 0;
     let activity_id = "fake_activity";
     let signal_id = "signal";
 
@@ -391,6 +400,7 @@ async fn cancelled_activity_timeout(hist_batches: &'static [usize]) {
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
+                    seq: activity_seq,
                     activity_id: activity_id.to_string(),
                     ..Default::default()
                 }
@@ -398,16 +408,13 @@ async fn cancelled_activity_timeout(hist_batches: &'static [usize]) {
             ),
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
-                vec![RequestCancelActivity {
-                    activity_id: activity_id.to_string(),
-                }
-                .into()],
+                vec![RequestCancelActivity { seq: activity_seq }.into()],
             ),
             // Activity is resolved right away as it has timed out.
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
-                        activity_id: _,
+                        seq: _,
                         result: Some(ActivityResult {
                             status: Some(activity_result::Status::Cancelled(..)),
                         })
@@ -424,10 +431,13 @@ async fn cancelled_activity_timeout(hist_batches: &'static [usize]) {
 #[tokio::test]
 async fn scheduled_activity_cancellation_abandon(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
-    let activity_id = "fake_activity";
+    let activity_id = 1;
     let signal_id = "signal";
 
-    let t = canned_histories::cancel_scheduled_activity_abandon(activity_id, signal_id);
+    let t = canned_histories::cancel_scheduled_activity_abandon(
+        activity_id.to_string().as_str(),
+        signal_id,
+    );
     let core = build_fake_core(wfid, t, hist_batches);
 
     verify_activity_cancellation(&core, activity_id, ActivityCancellationType::Abandon).await;
@@ -437,10 +447,13 @@ async fn scheduled_activity_cancellation_abandon(hist_batches: &'static [usize])
 #[tokio::test]
 async fn started_activity_cancellation_abandon(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
-    let activity_id = "fake_activity";
+    let activity_id = 1;
     let signal_id = "signal";
 
-    let t = canned_histories::cancel_started_activity_abandon(activity_id, signal_id);
+    let t = canned_histories::cancel_started_activity_abandon(
+        activity_id.to_string().as_str(),
+        signal_id,
+    );
     let core = build_fake_core(wfid, t, hist_batches);
 
     verify_activity_cancellation(&core, activity_id, ActivityCancellationType::Abandon).await;
@@ -450,11 +463,11 @@ async fn started_activity_cancellation_abandon(hist_batches: &'static [usize]) {
 #[tokio::test]
 async fn scheduled_activity_cancellation_try_cancel_task_canceled(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
-    let activity_id = "fake_activity";
+    let activity_id = 1;
     let signal_id = "signal";
 
     let t = canned_histories::cancel_scheduled_activity_with_activity_task_cancel(
-        activity_id,
+        activity_id.to_string().as_str(),
         signal_id,
     );
     let core = build_fake_core(wfid, t, hist_batches);
@@ -466,11 +479,13 @@ async fn scheduled_activity_cancellation_try_cancel_task_canceled(hist_batches: 
 #[tokio::test]
 async fn started_activity_cancellation_try_cancel_task_canceled(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
-    let activity_id = "fake_activity";
+    let activity_id = 1;
     let signal_id = "signal";
 
-    let t =
-        canned_histories::cancel_started_activity_with_activity_task_cancel(activity_id, signal_id);
+    let t = canned_histories::cancel_started_activity_with_activity_task_cancel(
+        activity_id.to_string().as_str(),
+        signal_id,
+    );
     let core = build_fake_core(wfid, t, hist_batches);
 
     verify_activity_cancellation(&core, activity_id, ActivityCancellationType::TryCancel).await;
@@ -479,7 +494,7 @@ async fn started_activity_cancellation_try_cancel_task_canceled(hist_batches: &'
 /// Verification for try cancel & abandon histories
 async fn verify_activity_cancellation(
     core: &CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
-    activity_id: &str,
+    activity_seq: u32,
     cancel_type: ActivityCancellationType,
 ) {
     poll_and_reply(
@@ -489,7 +504,8 @@ async fn verify_activity_cancellation(
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
-                    activity_id: activity_id.to_string(),
+                    seq: activity_seq,
+                    activity_id: activity_seq.to_string(),
                     cancellation_type: cancel_type as i32,
                     ..Default::default()
                 }
@@ -497,16 +513,13 @@ async fn verify_activity_cancellation(
             ),
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
-                vec![RequestCancelActivity {
-                    activity_id: activity_id.to_string(),
-                }
-                .into()],
+                vec![RequestCancelActivity { seq: activity_seq }.into()],
             ),
             // Activity should be resolved right away
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
-                        activity_id: _,
+                        seq: _,
                         result: Some(ActivityResult {
                             status: Some(activity_result::Status::Cancelled(..)),
                         })
@@ -523,11 +536,11 @@ async fn verify_activity_cancellation(
 #[tokio::test]
 async fn scheduled_activity_cancellation_wait_for_cancellation(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
-    let activity_id = "fake_activity";
+    let activity_id = 1;
     let signal_id = "signal";
 
     let t = canned_histories::cancel_scheduled_activity_with_signal_and_activity_task_cancel(
-        activity_id,
+        activity_id.to_string().as_str(),
         signal_id,
     );
     let core = build_fake_core(wfid, t, hist_batches);
@@ -539,11 +552,11 @@ async fn scheduled_activity_cancellation_wait_for_cancellation(hist_batches: &'s
 #[tokio::test]
 async fn started_activity_cancellation_wait_for_cancellation(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
-    let activity_id = "fake_activity";
+    let activity_id = 1;
     let signal_id = "signal";
 
     let t = canned_histories::cancel_started_activity_with_signal_and_activity_task_cancel(
-        activity_id,
+        activity_id.to_string().as_str(),
         signal_id,
     );
     let core = build_fake_core(wfid, t, hist_batches);
@@ -552,7 +565,7 @@ async fn started_activity_cancellation_wait_for_cancellation(hist_batches: &'sta
 }
 
 async fn verify_activity_cancellation_wait_for_cancellation(
-    activity_id: &str,
+    activity_id: u32,
     core: &CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
 ) {
     poll_and_reply(
@@ -562,6 +575,7 @@ async fn verify_activity_cancellation_wait_for_cancellation(
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
+                    seq: activity_id,
                     activity_id: activity_id.to_string(),
                     cancellation_type: ActivityCancellationType::WaitCancellationCompleted as i32,
                     ..Default::default()
@@ -570,10 +584,7 @@ async fn verify_activity_cancellation_wait_for_cancellation(
             ),
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
-                vec![RequestCancelActivity {
-                    activity_id: activity_id.to_string(),
-                }
-                .into()],
+                vec![RequestCancelActivity { seq: activity_id }.into()],
             ),
             // Making sure that activity is not resolved until it's cancelled.
             gen_assert_and_reply(
@@ -584,7 +595,7 @@ async fn verify_activity_cancellation_wait_for_cancellation(
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
-                        activity_id: _,
+                        seq: _,
                         result: Some(ActivityResult {
                             status: Some(activity_result::Status::Cancelled(..)),
                         })
@@ -601,10 +612,13 @@ async fn verify_activity_cancellation_wait_for_cancellation(
 async fn workflow_update_random_seed_on_workflow_reset() {
     let wfid = "fake_wf_id";
     let new_run_id = "86E39A5F-AE31-4626-BDFE-398EE072D156";
-    let timer_1_id = "timer1";
+    let timer_1_id = 1;
     let randomness_seed_from_start = AtomicU64::new(0);
 
-    let t = canned_histories::workflow_fails_with_reset_after_timer(timer_1_id, new_run_id);
+    let t = canned_histories::workflow_fails_with_reset_after_timer(
+        timer_1_id.to_string().as_str(),
+        new_run_id,
+    );
     let core = build_fake_core(wfid, t, &[2]);
 
     poll_and_reply(
@@ -625,7 +639,7 @@ async fn workflow_update_random_seed_on_workflow_reset() {
                     );
                 },
                 vec![StartTimer {
-                    timer_id: timer_1_id.to_string(),
+                    seq: timer_1_id,
                     ..Default::default()
                 }
                 .into()],
@@ -656,7 +670,7 @@ async fn workflow_update_random_seed_on_workflow_reset() {
 #[tokio::test]
 async fn cancel_timer_before_sent_wf_bridge() {
     let wfid = "fake_wf_id";
-    let cancel_timer_id = "cancel_timer";
+    let cancel_timer_id = 1;
 
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -672,12 +686,12 @@ async fn cancel_timer_before_sent_wf_bridge() {
             &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
             vec![
                 StartTimer {
-                    timer_id: cancel_timer_id.to_string(),
+                    seq: cancel_timer_id,
                     ..Default::default()
                 }
                 .into(),
                 CancelTimer {
-                    timer_id: cancel_timer_id.to_string(),
+                    seq: cancel_timer_id,
                 }
                 .into(),
                 CompleteWorkflowExecution { result: None }.into(),
@@ -696,9 +710,10 @@ async fn complete_activation_with_failure(
     #[case] evict: WorkflowCachingPolicy,
 ) {
     let wfid = "fake_wf_id";
-    let timer_id = "timer";
+    let timer_id = 1;
 
-    let hist = canned_histories::workflow_fails_with_failure_after_timer(timer_id);
+    let hist =
+        canned_histories::workflow_fails_with_failure_after_timer(timer_id.to_string().as_str());
     let mock_sg = build_multihist_mock_sg(
         vec![FakeWfResponses {
             wf_id: wfid.to_string(),
@@ -718,7 +733,7 @@ async fn complete_activation_with_failure(
             gen_assert_and_reply(
                 &|_| {},
                 vec![StartTimer {
-                    timer_id: timer_id.to_owned(),
+                    seq: timer_id,
                     ..Default::default()
                 }
                 .into()],
@@ -738,9 +753,9 @@ async fn complete_activation_with_failure(
 #[tokio::test]
 async fn simple_timer_fail_wf_execution(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
-    let timer_id = "timer1";
+    let timer_id = 1;
 
-    let t = canned_histories::single_timer(timer_id);
+    let t = canned_histories::single_timer(timer_id.to_string().as_str());
     let core = build_fake_core(wfid, t, hist_batches);
 
     poll_and_reply(
@@ -750,7 +765,7 @@ async fn simple_timer_fail_wf_execution(hist_batches: &'static [usize]) {
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![StartTimer {
-                    timer_id: timer_id.to_string(),
+                    seq: timer_id,
                     ..Default::default()
                 }
                 .into()],
@@ -802,10 +817,13 @@ async fn two_signals(hist_batches: &'static [usize]) {
 #[tokio::test]
 async fn workflow_failures_only_reported_once() {
     let wfid = "fake_wf_id";
-    let timer_1 = "timer1";
-    let timer_2 = "timer2";
+    let timer_1 = 1;
+    let timer_2 = 2;
 
-    let hist = canned_histories::workflow_fails_with_failure_two_different_points(timer_1, timer_2);
+    let hist = canned_histories::workflow_fails_with_failure_two_different_points(
+        timer_1.to_string().as_str(),
+        timer_2.to_string().as_str(),
+    );
     let response_batches = vec![
         1, 2, // Start then first good reply
         2, 2, 2, // Poll for every failure
@@ -834,7 +852,7 @@ async fn workflow_failures_only_reported_once() {
             gen_assert_and_reply(
                 &|_| {},
                 vec![StartTimer {
-                    timer_id: timer_1.to_owned(),
+                    seq: timer_1,
                     ..Default::default()
                 }
                 .into()],
@@ -846,7 +864,7 @@ async fn workflow_failures_only_reported_once() {
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::FireTimer(_)),
                 vec![StartTimer {
-                    timer_id: timer_2.to_string(),
+                    seq: timer_2,
                     ..Default::default()
                 }
                 .into()],
@@ -919,7 +937,7 @@ async fn max_concurrent_wft_respected() {
                 TEST_Q,
                 r1.run_id,
                 StartTimer {
-                    timer_id: "timer-1".to_string(),
+                    seq: 1,
                     ..Default::default()
                 }
                 .into())
@@ -936,12 +954,12 @@ async fn max_concurrent_wft_respected() {
     assert_eq!(last_finisher.load(Ordering::Acquire), 2);
 
     // Since we never did anything with r2, all subsequent activations should be for wf1
-    for i in 2..20 {
+    for i in 2..21 {
         core.complete_workflow_activation(WfActivationCompletion::from_cmd(
             TEST_Q,
             r1.run_id,
             StartTimer {
-                timer_id: format!("timer-{}", i),
+                seq: i,
                 ..Default::default()
             }
             .into(),
@@ -978,7 +996,7 @@ async fn activity_not_canceled_on_replay_repro(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let t = canned_histories::unsent_at_cancel_repro();
     let core = build_fake_core(wfid, t, hist_batches);
-    let activity_id = "act-1";
+    let activity_id = 1;
 
     poll_and_reply(
         &core,
@@ -989,13 +1007,14 @@ async fn activity_not_canceled_on_replay_repro(hist_batches: &'static [usize]) {
                 // Start timer and activity
                 vec![
                     ScheduleActivity {
+                        seq: activity_id,
                         activity_id: activity_id.to_string(),
                         cancellation_type: ActivityCancellationType::TryCancel as i32,
                         ..Default::default()
                     }
                     .into(),
                     StartTimer {
-                        timer_id: "timer-1".to_owned(),
+                        seq: 1,
                         ..Default::default()
                     }
                     .into(),
@@ -1003,10 +1022,7 @@ async fn activity_not_canceled_on_replay_repro(hist_batches: &'static [usize]) {
             ),
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::FireTimer(_)),
-                vec![RequestCancelActivity {
-                    activity_id: activity_id.to_string(),
-                }
-                .into()],
+                vec![RequestCancelActivity { seq: activity_id }.into()],
             ),
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
@@ -1018,7 +1034,7 @@ async fn activity_not_canceled_on_replay_repro(hist_batches: &'static [usize]) {
                     }
                 )),
                 vec![StartTimer {
-                    timer_id: "timer-2".to_owned(),
+                    seq: 2,
                     ..Default::default()
                 }
                 .into()],
@@ -1034,7 +1050,7 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static 
     let wfid = "fake_wf_id";
     let t = canned_histories::cancel_not_sent_when_also_complete_repro();
     let core = build_fake_core(wfid, t, hist_batches);
-    let activity_id = "act-1";
+    let activity_id = 1;
 
     poll_and_reply(
         &core,
@@ -1043,6 +1059,7 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static 
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
+                    seq: activity_id,
                     activity_id: activity_id.to_string(),
                     cancellation_type: ActivityCancellationType::TryCancel as i32,
                     ..Default::default()
@@ -1052,12 +1069,9 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static 
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
                 vec![
-                    RequestCancelActivity {
-                        activity_id: activity_id.to_string(),
-                    }
-                    .into(),
+                    RequestCancelActivity { seq: activity_id }.into(),
                     StartTimer {
-                        timer_id: "timer-1".to_owned(),
+                        seq: 2,
                         ..Default::default()
                     }
                     .into(),
@@ -1083,7 +1097,7 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static 
 async fn lots_of_workflows() {
     let hists = (0..500).into_iter().map(|i| {
         let wf_id = format!("fake-wf-{}", i);
-        let hist = canned_histories::single_timer("fake_timer");
+        let hist = canned_histories::single_timer("1");
         FakeWfResponses {
             wf_id,
             hist,
@@ -1100,7 +1114,7 @@ async fn lots_of_workflows() {
             let job = &wft.jobs[0];
             let reply = match job.variant {
                 Some(wf_activation_job::Variant::StartWorkflow(_)) => StartTimer {
-                    timer_id: "fake_timer".to_string(),
+                    seq: 1,
                     ..Default::default()
                 }
                 .into(),
@@ -1138,7 +1152,7 @@ async fn wft_timeout_repro(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let t = canned_histories::wft_timeout_repro();
     let core = build_fake_core(wfid, t, hist_batches);
-    let activity_id = "act-1";
+    let activity_id = 1;
 
     poll_and_reply(
         &core,
@@ -1147,6 +1161,7 @@ async fn wft_timeout_repro(hist_batches: &'static [usize]) {
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
+                    seq: activity_id,
                     activity_id: activity_id.to_string(),
                     cancellation_type: ActivityCancellationType::TryCancel as i32,
                     ..Default::default()
@@ -1174,7 +1189,7 @@ async fn wft_timeout_repro(hist_batches: &'static [usize]) {
 #[tokio::test]
 async fn complete_after_eviction() {
     let wfid = "fake_wf_id";
-    let t = canned_histories::single_timer("fake_timer");
+    let t = canned_histories::single_timer("1");
     let mut mock = MockServerGatewayApis::new();
     mock.expect_complete_workflow_task().times(0);
     let mock = single_hist_mock_sg(wfid, t, &[2], mock, true);
@@ -1188,7 +1203,7 @@ async fn complete_after_eviction() {
         TEST_Q,
         activation.run_id,
         StartTimer {
-            timer_id: "fake_timer".to_string(),
+            seq: 1,
             ..Default::default()
         }
         .into(),
@@ -1223,7 +1238,7 @@ async fn sends_appropriate_sticky_task_queue_responses() {
     // This test verifies that when completions are sent with sticky queues enabled, that they
     // include the information that tells the server to enqueue the next task on a sticky queue.
     let wfid = "fake_wf_id";
-    let t = canned_histories::single_timer("fake_timer");
+    let t = canned_histories::single_timer("1");
     let mut mock = MockServerGatewayApis::new();
     mock.expect_complete_workflow_task()
         .withf(|comp| comp.sticky_attributes.is_some())
@@ -1239,7 +1254,7 @@ async fn sends_appropriate_sticky_task_queue_responses() {
         TEST_Q,
         activation.run_id,
         StartTimer {
-            timer_id: "fake_timer".to_string(),
+            seq: 1,
             ..Default::default()
         }
         .into(),
@@ -1253,7 +1268,7 @@ async fn sends_appropriate_sticky_task_queue_responses() {
 #[should_panic(expected = "called more than 2 times")]
 async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation() {
     let wfid = "fake_wf_id";
-    let t = canned_histories::single_timer("fake_timer");
+    let t = canned_histories::single_timer("1");
     let mock = MockServerGatewayApis::new();
     let mock = single_hist_mock_sg(wfid, t, &[1, 2], mock, true);
     let core = mock_core(mock);
@@ -1264,7 +1279,7 @@ async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation(
         TEST_Q,
         activation.run_id,
         StartTimer {
-            timer_id: "fake_timer".to_string(),
+            seq: 1,
             ..Default::default()
         }
         .into(),
@@ -1301,7 +1316,7 @@ async fn buffered_work_drained_on_shutdown() {
         EventType::TimerFired,
         history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
             started_event_id: timer_started_event_id,
-            timer_id: "timer".to_string(),
+            timer_id: "1".to_string(),
         }),
     );
     t.add_full_wf_task();
@@ -1346,7 +1361,7 @@ async fn buffered_work_drained_on_shutdown() {
             TEST_Q,
             act1.run_id,
             StartTimer {
-                timer_id: "timer".to_string(),
+                seq: 1,
                 ..Default::default()
             }
             .into(),
@@ -1364,7 +1379,7 @@ async fn buffered_work_drained_on_shutdown() {
 #[tokio::test]
 async fn buffering_tasks_doesnt_count_toward_outstanding_max() {
     let wfid = "fake_wf_id";
-    let t = canned_histories::single_timer("fake_timer");
+    let t = canned_histories::single_timer("1");
     let mock = MockServerGatewayApis::new();
     let mut tasks = VecDeque::new();
     // A way bigger task list than allowed outstanding tasks

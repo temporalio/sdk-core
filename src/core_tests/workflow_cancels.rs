@@ -32,11 +32,16 @@ async fn timer_then_cancel_req(
     #[case] completion_type: CompletionType,
 ) {
     let wfid = "fake_wf_id";
-    let timer_id = "timer";
+    let timer_seq = 1;
+    let timer_id = timer_seq.to_string();
     let t = match completion_type {
-        CompletionType::Complete => canned_histories::timer_wf_cancel_req_completed(timer_id),
-        CompletionType::Fail => canned_histories::timer_wf_cancel_req_failed(timer_id),
-        CompletionType::Cancel => canned_histories::timer_wf_cancel_req_cancelled(timer_id),
+        CompletionType::Complete => {
+            canned_histories::timer_wf_cancel_req_completed(timer_id.as_str())
+        }
+        CompletionType::Fail => canned_histories::timer_wf_cancel_req_failed(timer_id.as_str()),
+        CompletionType::Cancel => {
+            canned_histories::timer_wf_cancel_req_cancelled(timer_id.as_str())
+        }
     };
     let core = build_fake_core(wfid, t, hist_batches);
 
@@ -53,7 +58,7 @@ async fn timer_then_cancel_req(
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![StartTimer {
-                    timer_id: timer_id.to_string(),
+                    seq: timer_seq,
                     ..Default::default()
                 }
                 .into()],
@@ -83,7 +88,7 @@ async fn timer_then_cancel_req_then_timer_then_cancelled() {
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![StartTimer {
-                    timer_id: "t1".to_string(),
+                    seq: 1,
                     ..Default::default()
                 }
                 .into()],
@@ -94,7 +99,7 @@ async fn timer_then_cancel_req_then_timer_then_cancelled() {
                     wf_activation_job::Variant::CancelWorkflow(_)
                 ),
                 vec![StartTimer {
-                    timer_id: "t2".to_string(),
+                    seq: 2,
                     ..Default::default()
                 }
                 .into()],
