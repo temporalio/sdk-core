@@ -22,7 +22,7 @@ use std::{
 };
 use tonic::{
     transport::{Certificate, Channel, Endpoint, Identity},
-    Request, Status,
+    Status,
 };
 use url::Url;
 use uuid::Uuid;
@@ -33,6 +33,7 @@ use crate::protos::coresdk::PayloadsExt;
 use futures::Future;
 
 use tonic::codegen::InterceptedService;
+use tonic::service::Interceptor;
 
 /// Options for the connection to the temporal server
 #[derive(Clone, Debug)]
@@ -90,20 +91,11 @@ impl Debug for ClientTlsConfig {
 
 impl ServerGatewayOptions {
     /// Attempt to establish a connection to the Temporal server
-    pub async fn connect(
-        &self,
-    ) -> Result<
-        RetryGateway<
-            ServerGateway<
-                impl Fn(Request<()>) -> Result<Request<()>, Status> + Clone + Send + Sync,
-            >,
-        >,
-        CoreInitError,
-    > {
+    pub async fn connect(&self) -> Result<RetryGateway<ServerGateway>, CoreInitError> {
         let channel = Channel::from_shared(self.target_url.to_string())?;
         let channel = self.add_tls_to_channel(channel).await?;
         let channel = channel.connect().await?;
-        let interceptor = intercept(self);
+        let interceptor = ServiceCallInterceptor { opts: self.clone() };
         let service = WorkflowServiceClient::with_interceptor(channel, interceptor);
         let gateway = ServerGateway {
             service,
@@ -140,29 +132,32 @@ impl ServerGatewayOptions {
     }
 }
 
-/// This function will get called on each outbound request. Returning a `Status` here will cancel
-/// the request and have that status returned to the caller.
-fn intercept(
-    opts: &ServerGatewayOptions,
-) -> impl Fn(Request<()>) -> Result<Request<()>, Status> + Clone {
-    let timeout = opts.long_poll_timeout;
-    move |mut req: Request<()>| {
-        let metadata = req.metadata_mut();
+#[derive(Clone)]
+pub struct ServiceCallInterceptor {
+    opts: ServerGatewayOptions,
+}
+
+impl Interceptor for ServiceCallInterceptor {
+    /// This function will get called on each outbound request. Returning a `Status` here will cancel
+    /// the request and have that status returned to the caller.
+    fn call(&mut self, mut request: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
+        let timeout = self.opts.long_poll_timeout;
+        let metadata = request.metadata_mut();
         metadata.insert(
             "client-name",
             "core-sdk".parse().expect("Static value is parsable"),
         );
         // TODO: Only apply this to long poll requests
-        req.set_timeout(timeout);
-        Ok(req)
+        request.set_timeout(timeout);
+        Ok(request)
     }
 }
 
 /// Contains an instance of a client for interacting with the temporal server
 #[derive(Debug)]
-pub struct ServerGateway<F: Clone> {
+pub struct ServerGateway {
     /// Client for interacting with workflow service
-    pub service: WorkflowServiceClient<InterceptedService<Channel, F>>,
+    pub service: WorkflowServiceClient<InterceptedService<Channel, ServiceCallInterceptor>>,
     /// Options gateway was initialized with
     pub opts: ServerGatewayOptions,
 }
@@ -308,10 +303,7 @@ pub trait ServerGatewayApis {
 }
 
 #[async_trait::async_trait]
-impl<F> ServerGatewayApis for ServerGateway<F>
-where
-    F: Fn(Request<()>) -> Result<Request<()>, Status> + Clone + Send + Sync,
-{
+impl ServerGatewayApis for ServerGateway {
     async fn start_workflow(
         &self,
         input: Vec<Payload>,
