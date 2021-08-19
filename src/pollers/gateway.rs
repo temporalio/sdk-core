@@ -87,6 +87,7 @@ pub struct ClientTlsConfig {
     pub client_private_key: Vec<u8>,
 }
 
+/// Configuration for retrying requests to the server
 #[derive(Clone, Debug)]
 pub struct RetryConfig {
     /// initial wait time before the first retry.
