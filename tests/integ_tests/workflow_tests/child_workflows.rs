@@ -21,13 +21,12 @@ async fn parent_wf(mut ctx: WfContext) -> WorkflowResult<()> {
         ..Default::default()
     });
 
-    let _run_id = match child.start(&mut ctx).await {
-        StartStatus::Succeeded(
-            workflow_activation::ResolveChildWorkflowExecutionStartSuccess { run_id },
-        ) => run_id,
-        _ => return Err(anyhow!("Unexpected start status")),
-    };
-    match child.result(&ctx).await.status {
+    let started = child
+        .start(&mut ctx)
+        .await
+        .as_started()
+        .expect("Child chould start OK");
+    match started.result(&ctx).await.status {
         Some(child_workflow_result::Status::Completed(Success { .. })) => Ok(().into()),
         _ => Err(anyhow!("Unexpected child WF status")),
     }

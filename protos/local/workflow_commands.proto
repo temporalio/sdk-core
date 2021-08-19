@@ -187,7 +187,7 @@ message StartChildWorkflowExecution {
     child_workflow.ChildWorkflowCancellationType cancellation_type = 18;
 }
 
-/// Request cancellation of an external workflow execution
+/// Request cancellation of an external or child workflow execution
 message RequestCancelExternalWorkflowExecution {
     /// Lang's incremental sequence number, used as the operation identifier
     uint32 seq = 1;
@@ -200,7 +200,7 @@ message RequestCancelExternalWorkflowExecution {
     }
 }
 
-/// Send a signal to an external workflow, can be used for child workflows
+/// Send a signal to an external or child workflow
 message SignalExternalWorkflowExecution {
     /// Lang's incremental sequence number, used as the operation identifier
     uint32 seq = 1;

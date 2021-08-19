@@ -360,7 +360,7 @@ mod test {
             let cancel_timer_fut = ctx.timer(Duration::from_secs(500));
             ctx.timer(Duration::from_secs(5)).await;
             // Cancel the first timer after having waited on the second
-            cancel_timer_fut.cancel(&ctx);
+            cancel_timer_fut.cancel(&mut ctx);
             cancel_timer_fut.await;
             Ok(().into())
         });
@@ -409,7 +409,7 @@ mod test {
         let func = WorkflowFunction::new(|mut ctx: WfContext| async move {
             let cancel_timer_fut = ctx.timer(Duration::from_secs(500));
             // Immediately cancel the timer
-            cancel_timer_fut.cancel(&ctx);
+            cancel_timer_fut.cancel(&mut ctx);
             cancel_timer_fut.await;
             Ok(().into())
         });

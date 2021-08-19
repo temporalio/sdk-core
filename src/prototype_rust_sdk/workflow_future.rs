@@ -221,11 +221,18 @@ impl Future for WorkflowFuture {
                                     ),
                                 );
                             }
-                            CancellableID::ChildWorkflow { cmd_seq, child_seq } => {
+                            CancellableID::ChildWorkflow {
+                                cancel_cmd_seq,
+                                child_seq,
+                            } => {
+                                let seq = cancel_cmd_seq.expect(
+                                    "Cancel command sequence number must have been set when \
+                                    cancel is called",
+                                );
                                 activation_cmds.push(
                                     workflow_command::Variant::RequestCancelExternalWorkflowExecution(
                                         RequestCancelExternalWorkflowExecution {
-                                            seq: cmd_seq,
+                                            seq,
                                             target: Some(cancel_we::Target::ChildWorkflowSeq(child_seq)),
                                         },
                                     ),

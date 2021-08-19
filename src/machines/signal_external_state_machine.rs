@@ -325,7 +325,7 @@ mod tests {
 
         let wff = WorkflowFunction::new(|mut ctx: WfContext| async move {
             ctx.signal_workflow("fake_wid", "fake_rid", SIGNAME, b"hi!")
-                .cancel(&ctx);
+                .cancel(&mut ctx);
             Ok(().into())
         });
         let mut wfm = ManagedWFFunc::new(t, wff, vec![]);

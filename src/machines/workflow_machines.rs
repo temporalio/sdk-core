@@ -681,7 +681,7 @@ impl WorkflowMachines {
                         jobs.extend(self.process_cancellation(CommandID::ChildWorkflowStart(seq))?)
                     }
                     Some(cancel_we::Target::WorkflowExecution(_)) => {
-                        todo!("Cancel non-children")
+                        todo!("Cancel external non-child workflows")
                     }
                 },
                 WFCommand::SignalExternalWorkflow(attrs) => {

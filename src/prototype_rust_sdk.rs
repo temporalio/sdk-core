@@ -11,6 +11,7 @@ pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, WfContext,
 };
 
+use crate::prototype_rust_sdk::workflow_context::PendingChildWorkflow;
 use crate::{
     protos::coresdk::{
         activity_result::ActivityResult,
@@ -218,10 +219,13 @@ impl From<UnblockEvent> for ActivityResult {
     }
 }
 
-impl From<UnblockEvent> for ChildWorkflowStartStatus {
+impl From<UnblockEvent> for PendingChildWorkflow {
     fn from(ue: UnblockEvent) -> Self {
         match ue {
-            UnblockEvent::WorkflowStart(_, result) => *result,
+            UnblockEvent::WorkflowStart(seq, result) => PendingChildWorkflow {
+                child_wf_cmd_seq_num: seq,
+                status: *result,
+            },
             _ => panic!("Invalid unblock event for child workflow start"),
         }
     }
@@ -260,8 +264,9 @@ pub enum CancellableID {
     Activity(u32),
     /// Cancelling children is a resolvable command and thus needs its own id as well
     ChildWorkflow {
-        /// The sequence number for the cancel command
-        cmd_seq: u32,
+        /// The sequence number for the cancel command. This is not populated unless a cancel is
+        /// actually requested.
+        cancel_cmd_seq: Option<u32>,
         /// The sequence number of the child workflow being cancelled
         child_seq: u32,
     },
