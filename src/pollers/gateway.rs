@@ -91,13 +91,14 @@ pub struct ClientTlsConfig {
 pub struct RetryConfig {
     /// initial wait time before the first retry.
     pub initial_interval: Duration,
-    /// randomization jitter that is added or subtracted from the interval length.
+    /// randomization jitter that is used as a multiplier for the current retry interval
+    /// and is added or subtracted from the interval length.
     pub randomization_factor: f64,
     /// rate at which retry time should be increased, until it reaches max_interval.
     pub multiplier: f64,
     /// maximum amount of time to wait between retries.
     pub max_interval: Duration,
-    /// maximum total amount of time requests should be retried for.
+    /// maximum total amount of time requests should be retried for, if None is set then no limit will be used.
     pub max_elapsed_time: Option<Duration>,
     /// maximum number of retry attempts.
     pub max_retries: usize,
