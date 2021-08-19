@@ -18,12 +18,13 @@ use std::sync::mpsc::Sender;
 pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub(crate) enum CommandID {
     Timer(u32),
     Activity(u32),
     ChildWorkflowStart(u32),
     ChildWorkflowComplete(u32),
+    SignalExternal(u32),
 }
 
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
@@ -203,7 +204,12 @@ pub mod managed_wf {
             args: Vec<Payload>,
         ) -> Self {
             let (completions_tx, completions_rx) = unbounded_channel();
-            let (wff, activations) = func.start_workflow(TEST_Q.to_string(), args, completions_tx);
+            let (wff, activations) = func.start_workflow(
+                "testnamespace".to_string(),
+                TEST_Q.to_string(),
+                args,
+                completions_tx,
+            );
             let spawned = tokio::spawn(wff);
             let driver = WFFutureDriver { completions_rx };
             let state_machines = WorkflowMachines::new(

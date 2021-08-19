@@ -169,6 +169,9 @@ pub trait Core: Send + Sync {
     /// Shut down a specific worker. Will cease all polling on the task queue and future attempts
     /// to poll that queue will return [PollWfError::NoWorkerForQueue].
     async fn shutdown_worker(&self, task_queue: &str);
+
+    /// Retrieve options that were passed in when initializing core
+    fn get_init_options(&self) -> &CoreInitOptions;
 }
 
 /// Holds various configuration information required to call [init]
@@ -293,6 +296,10 @@ where
 
     async fn shutdown_worker(&self, task_queue: &str) {
         self.workers.shutdown_one(task_queue).await;
+    }
+
+    fn get_init_options(&self) -> &CoreInitOptions {
+        &self.init_options
     }
 }
 

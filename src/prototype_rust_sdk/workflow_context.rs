@@ -1,36 +1,44 @@
-use crate::prototype_rust_sdk::{CancellableID, TimerResult};
+use crate::prototype_rust_sdk::SignalExternalWfResult;
 use crate::{
     protos::coresdk::{
         activity_result::ActivityResult,
         child_workflow::ChildWorkflowResult,
-        common::Payload,
+        common::{Payload, WorkflowExecution},
         workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
         workflow_commands::{
-            workflow_command, ActivityCancellationType, ScheduleActivity, SetPatchMarker,
-            StartChildWorkflowExecution, StartTimer,
+            signal_external_workflow_execution as sig_we, workflow_command,
+            ActivityCancellationType, ScheduleActivity, SetPatchMarker,
+            SignalExternalWorkflowExecution, StartChildWorkflowExecution, StartTimer,
         },
     },
     prototype_rust_sdk::{
-        CommandCreateRequest, CommandSubscribeChildWorkflowCompletion, RustWfCmd, UnblockEvent,
+        CancellableID, CommandCreateRequest, CommandSubscribeChildWorkflowCompletion, RustWfCmd,
+        TimerResult, UnblockEvent,
     },
 };
 use crossbeam::channel::{Receiver, Sender};
-use futures::{task::Context, FutureExt};
+use futures::{task::Context, FutureExt, Stream};
 use parking_lot::RwLock;
-use std::marker::PhantomData;
-use std::time::Duration;
-use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, task::Poll};
+use std::{
+    collections::HashMap, future::Future, marker::PhantomData, pin::Pin, sync::Arc, task::Poll,
+    time::Duration,
+};
 use tokio::sync::{oneshot, watch};
 
 /// Used within workflows to issue commands, get info, etc.
 pub struct WfContext {
-    chan: Sender<RustWfCmd>,
+    namespace: String,
     args: Vec<Payload>,
+
+    chan: Sender<RustWfCmd>,
     am_cancelled: watch::Receiver<bool>,
     shared: Arc<RwLock<WfContextSharedData>>,
+
     next_timer_sequence_number: u32,
     next_activity_sequence_number: u32,
     next_child_workflow_sequence_number: u32,
+    next_cancel_external_wf_sequence_number: u32,
+    next_signal_external_wf_sequence_number: u32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -40,10 +48,13 @@ pub struct WfContextSharedData {
     pub is_replaying: bool,
 }
 
+// TODO: Dataconverter type interface to replace Payloads here. Possibly just use serde
+//    traits.
 impl WfContext {
-    /// Create a new wf context, returning the context itself, the shared cache for blocked
-    /// commands, and a receiver which outputs commands sent from the workflow.
+    /// Create a new wf context, returning the context itself and a receiver which outputs commands
+    /// sent from the workflow.
     pub(super) fn new(
+        namespace: String,
         args: Vec<Payload>,
         am_cancelled: watch::Receiver<bool>,
     ) -> (Self, Receiver<RustWfCmd>) {
@@ -51,13 +62,16 @@ impl WfContext {
         let (chan, rx) = crossbeam::channel::unbounded();
         (
             Self {
-                chan,
+                namespace,
                 args,
+                chan,
                 am_cancelled,
                 shared: Arc::new(RwLock::new(Default::default())),
                 next_timer_sequence_number: 1,
                 next_activity_sequence_number: 1,
                 next_child_workflow_sequence_number: 1,
+                next_cancel_external_wf_sequence_number: 1,
+                next_signal_external_wf_sequence_number: 1,
             },
             rx,
         )
@@ -120,19 +134,9 @@ impl WfContext {
     /// Request to start a child workflow, Returned future resolves when the child has been started.
     pub fn child_workflow(&mut self, opts: ChildWorkflowOptions) -> ChildWorkflow {
         ChildWorkflow {
-            sequence_number: None,
+            sequence_numbers: None,
             opts,
         }
-    }
-
-    /// Wait on completion of a child workflow execution started with `start_child_workflow`
-    pub fn child_workflow_result(
-        &mut self,
-        seq: u32,
-    ) -> impl CancellableFuture<ChildWorkflowResult> {
-        let (cmd, unblocker) = WFCommandFut::new(CancellableID::ChildWorkflow(seq));
-        self.send(CommandSubscribeChildWorkflowCompletion { seq, unblocker }.into());
-        cmd
     }
 
     /// Cancel any cancellable operation by ID
@@ -174,6 +178,47 @@ impl WfContext {
             .insert(patch_id.to_string(), res);
 
         res
+    }
+
+    /// Send a signal to an external workflow. May resolve as a failure if the signal didn't work
+    /// or was cancelled.
+    pub fn signal_workflow(
+        &mut self,
+        workflow_id: impl Into<String>,
+        run_id: impl Into<String>,
+        signal_name: impl Into<String>,
+        payload: impl Into<Payload>,
+    ) -> impl CancellableFuture<SignalExternalWfResult> {
+        let seq = self.next_signal_external_wf_sequence_number;
+        self.next_signal_external_wf_sequence_number += 1;
+        let (cmd, unblocker) = WFCommandFut::new(CancellableID::SignalExternalWorkflow(seq));
+        self.send(
+            CommandCreateRequest {
+                cmd: SignalExternalWorkflowExecution {
+                    seq,
+                    signal_name: signal_name.into(),
+                    args: vec![payload.into()],
+                    target: Some(sig_we::Target::WorkflowExecution(WorkflowExecution {
+                        namespace: "".to_string(),
+                        workflow_id: workflow_id.into(),
+                        run_id: run_id.into(),
+                    })),
+                }
+                .into(),
+                unblocker,
+            }
+            .into(),
+        );
+        cmd
+    }
+
+    /// Return a stream that produces values when the named signal is sent to this workflow
+    pub fn make_signal_channel(
+        &mut self,
+        signal_name: impl Into<String>,
+    ) -> impl Stream<Item = Payload> {
+        todo!();
+        futures::stream::empty()
     }
 
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
@@ -335,7 +380,8 @@ impl ChildWorkflowOptions {
 #[derive(Default, Debug)]
 pub struct ChildWorkflow {
     opts: ChildWorkflowOptions,
-    sequence_number: Option<u32>,
+    /// The cancel command's own number, then the child wf cmd's number
+    sequence_numbers: Option<(u32, u32)>,
 }
 
 impl ChildWorkflow {
@@ -344,13 +390,16 @@ impl ChildWorkflow {
         &mut self,
         cx: &mut WfContext,
     ) -> impl CancellableFuture<ChildWorkflowStartStatus> {
-        let seq = cx.next_child_workflow_sequence_number;
+        let child_seq = cx.next_child_workflow_sequence_number;
         cx.next_child_workflow_sequence_number += 1;
-        self.sequence_number = Some(seq);
-        let (cmd, unblocker) = WFCommandFut::new(CancellableID::ChildWorkflow(seq));
+        let cmd_seq = cx.next_cancel_external_wf_sequence_number;
+        cx.next_cancel_external_wf_sequence_number += 1;
+        self.sequence_numbers = Some((cmd_seq, child_seq));
+        let (cmd, unblocker) =
+            WFCommandFut::new(CancellableID::ChildWorkflow { cmd_seq, child_seq });
         cx.send(
             CommandCreateRequest {
-                cmd: self.opts.to_command(seq).into(),
+                cmd: self.opts.to_command(child_seq).into(),
                 unblocker,
             }
             .into(),
@@ -361,9 +410,16 @@ impl ChildWorkflow {
     /// Wait on completion of a child workflow execution started with `start_child_workflow`.
     /// The returned Future is cancellable.
     pub fn result(&self, cx: &WfContext) -> impl CancellableFuture<ChildWorkflowResult> {
-        if let Some(seq) = self.sequence_number {
-            let (cmd, unblocker) = WFCommandFut::new(CancellableID::ChildWorkflow(seq));
-            cx.send(CommandSubscribeChildWorkflowCompletion { seq, unblocker }.into());
+        if let Some((cmd_seq, child_seq)) = self.sequence_numbers {
+            let (cmd, unblocker) =
+                WFCommandFut::new(CancellableID::ChildWorkflow { cmd_seq, child_seq });
+            cx.send(
+                CommandSubscribeChildWorkflowCompletion {
+                    seq: child_seq,
+                    unblocker,
+                }
+                .into(),
+            );
             cmd
         } else {
             panic!("Tried to wait on a result of a child workflow which hasn't been started");

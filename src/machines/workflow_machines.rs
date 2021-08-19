@@ -18,7 +18,8 @@ use crate::{
                 NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WfActivation,
             },
             workflow_commands::{
-                signal_external_workflow_execution as sig_we, RequestCancelChildWorkflowExecution,
+                request_cancel_external_workflow_execution as cancel_we,
+                signal_external_workflow_execution as sig_we,
             },
             FromPayloadsExt,
         },
@@ -608,7 +609,7 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(timer);
                 }
                 WFCommand::CancelTimer(attrs) => {
-                    self.process_cancellation(&CommandID::Timer(attrs.seq), &mut jobs)?
+                    jobs.extend(self.process_cancellation(CommandID::Timer(attrs.seq))?)
                 }
                 WFCommand::AddActivity(attrs) => {
                     let seq = attrs.seq;
@@ -618,7 +619,7 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(activity);
                 }
                 WFCommand::RequestCancelActivity(attrs) => {
-                    self.process_cancellation(&CommandID::Activity(attrs.seq), &mut jobs)?
+                    jobs.extend(self.process_cancellation(CommandID::Activity(attrs.seq))?)
                 }
                 WFCommand::CompleteWorkflow(attrs) => {
                     let cwfm = self.add_new_command_machine(complete_workflow(attrs));
@@ -670,12 +671,19 @@ impl WorkflowMachines {
                         .insert(CommandID::ChildWorkflowStart(seq), child_workflow.machine);
                     self.current_wf_task_commands.push_back(child_workflow);
                 }
-                WFCommand::RequestCancelChildWorkflow(RequestCancelChildWorkflowExecution {
-                    child_workflow_seq,
-                }) => self.process_cancellation(
-                    &CommandID::ChildWorkflowStart(child_workflow_seq),
-                    &mut jobs,
-                )?,
+                WFCommand::RequestCancelExternalWorkflow(attrs) => match attrs.target {
+                    None => {
+                        return Err(WFMachinesError::Fatal(
+                            "Cancel external workflow command had empty target field".to_string(),
+                        ))
+                    }
+                    Some(cancel_we::Target::ChildWorkflowSeq(seq)) => {
+                        jobs.extend(self.process_cancellation(CommandID::ChildWorkflowStart(seq))?)
+                    }
+                    Some(cancel_we::Target::WorkflowExecution(_)) => {
+                        todo!("Cancel non-children")
+                    }
+                },
                 WFCommand::SignalExternalWorkflow(attrs) => {
                     let (we, only_child) = match attrs.target {
                         None => {
@@ -698,6 +706,9 @@ impl WorkflowMachines {
                     ));
                     self.current_wf_task_commands.push_back(sigm);
                 }
+                WFCommand::CancelSignalWorkflow(attrs) => {
+                    jobs.extend(self.process_cancellation(CommandID::SignalExternal(attrs.seq))?)
+                }
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level
                     unimplemented!("Query responses should not make it down into the machines")
@@ -708,8 +719,11 @@ impl WorkflowMachines {
         Ok(jobs)
     }
 
-    fn process_cancellation(&mut self, id: &CommandID, jobs: &mut Vec<Variant>) -> Result<()> {
-        let m_key = self.get_machine_key(id)?;
+    /// Given a command id to attempt to cancel, try to cancel it and return any jobs that should
+    /// be included in the activation
+    fn process_cancellation(&mut self, id: CommandID) -> Result<Vec<Variant>> {
+        let mut jobs = vec![];
+        let m_key = self.get_machine_key(&id)?;
         let res = self.machine_mut(m_key).cancel()?;
         debug!(machine_responses = ?res, cmd_id = ?id, "Cancel request responses");
         for r in res {
@@ -731,7 +745,7 @@ impl WorkflowMachines {
                 }
             }
         }
-        Ok(())
+        Ok(jobs)
     }
 
     fn get_machine_key(&self, id: &CommandID) -> Result<MachineKey> {

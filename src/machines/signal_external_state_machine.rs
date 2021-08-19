@@ -199,3 +199,18 @@ impl Cancellable for SignalExternalMachine {
         matches!(self.state, SignalExternalMachineState::Canceled(_))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prototype_rust_sdk::WfContext;
+    use futures::stream::StreamExt;
+
+    const SIGNAME: &str = "signame";
+
+    async fn signal_sender_receiver(ctx: &mut WfContext) {
+        ctx.signal_workflow("fake_wid", "fake_rid", SIGNAME, b"hi!")
+            .await;
+        ctx.make_signal_channel(SIGNAME).next().await;
+    }
+}

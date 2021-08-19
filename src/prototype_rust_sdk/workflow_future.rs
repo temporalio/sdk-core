@@ -1,23 +1,23 @@
-use crate::prototype_rust_sdk::CancellableID;
 use crate::{
     protos::coresdk::{
         common::Payload,
         workflow_activation::{
             wf_activation_job::Variant, FireTimer, NotifyHasPatch, ResolveActivity,
-            ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart, WfActivation,
-            WfActivationJob,
+            ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart,
+            ResolveSignalExternalWorkflow, WfActivation, WfActivationJob,
         },
         workflow_commands::{
-            workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
-            FailWorkflowExecution, RequestCancelActivity, RequestCancelChildWorkflowExecution,
+            request_cancel_external_workflow_execution as cancel_we, workflow_command,
+            CancelSignalWorkflow, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
+            FailWorkflowExecution, RequestCancelActivity, RequestCancelExternalWorkflowExecution,
             ScheduleActivity, StartChildWorkflowExecution, StartTimer,
         },
         workflow_completion::WfActivationCompletion,
     },
     protos::temporal::api::failure::v1::Failure,
     prototype_rust_sdk::{
-        workflow_context::WfContextSharedData, RustWfCmd, UnblockEvent, WfContext, WfExitValue,
-        WorkflowFunction, WorkflowResult,
+        workflow_context::WfContextSharedData, CancellableID, RustWfCmd, UnblockEvent, WfContext,
+        WfExitValue, WorkflowFunction, WorkflowResult,
     },
     workflow::CommandID,
 };
@@ -40,6 +40,7 @@ use tokio::sync::{
 impl WorkflowFunction {
     pub(crate) fn start_workflow(
         &self,
+        namespace: String,
         task_queue: String,
         args: Vec<Payload>,
         outgoing_completions: UnboundedSender<WfActivationCompletion>,
@@ -48,7 +49,7 @@ impl WorkflowFunction {
         UnboundedSender<WfActivation>,
     ) {
         let (cancel_tx, cancel_rx) = watch::channel(false);
-        let (wf_context, cmd_receiver) = WfContext::new(args, cancel_rx);
+        let (wf_context, cmd_receiver) = WfContext::new(namespace, args, cancel_rx);
         let (tx, incoming_activations) = unbounded_channel();
         (
             WorkflowFuture {
@@ -99,6 +100,7 @@ impl WorkflowFuture {
             UnblockEvent::Activity(seq, _) => CommandID::Activity(seq),
             UnblockEvent::WorkflowStart(seq, _) => CommandID::ChildWorkflowStart(seq),
             UnblockEvent::WorkflowComplete(seq, _) => CommandID::ChildWorkflowComplete(seq),
+            UnblockEvent::SignalExternal(seq, _) => CommandID::SignalExternal(seq),
         };
         let unblocker = self.command_status.remove(&cmd_id);
         unblocker
@@ -169,6 +171,10 @@ impl Future for WorkflowFuture {
                         Variant::NotifyHasPatch(NotifyHasPatch { patch_id }) => {
                             self.ctx_shared.write().changes.insert(patch_id, true);
                         }
+                        Variant::ResolveSignalExternalWorkflow(ResolveSignalExternalWorkflow {
+                            seq,
+                            failure,
+                        }) => self.unblock(UnblockEvent::SignalExternal(seq, failure)),
                         Variant::RemoveFromCache(_) => {
                             die_of_eviction_when_done = true;
                         }
@@ -215,12 +221,20 @@ impl Future for WorkflowFuture {
                                     ),
                                 );
                             }
-                            CancellableID::ChildWorkflow(seq) => {
+                            CancellableID::ChildWorkflow { cmd_seq, child_seq } => {
                                 activation_cmds.push(
-                                    workflow_command::Variant::RequestCancelChildWorkflowExecution(
-                                        RequestCancelChildWorkflowExecution {
-                                            child_workflow_seq: seq,
+                                    workflow_command::Variant::RequestCancelExternalWorkflowExecution(
+                                        RequestCancelExternalWorkflowExecution {
+                                            seq: cmd_seq,
+                                            target: Some(cancel_we::Target::ChildWorkflowSeq(child_seq)),
                                         },
+                                    ),
+                                );
+                            }
+                            CancellableID::SignalExternalWorkflow(seq) => {
+                                activation_cmds.push(
+                                    workflow_command::Variant::CancelSignalWorkflow(
+                                        CancelSignalWorkflow { seq },
                                     ),
                                 );
                             }

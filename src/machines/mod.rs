@@ -32,13 +32,7 @@ use crate::{
     core_tracing::VecDisplayer,
     machines::workflow_machines::MachineResponse,
     protos::{
-        coresdk::workflow_commands::{
-            workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
-            ContinueAsNewWorkflowExecution, FailWorkflowExecution, QueryResult,
-            RequestCancelActivity, RequestCancelChildWorkflowExecution, ScheduleActivity,
-            SetPatchMarker, SignalExternalWorkflowExecution, StartChildWorkflowExecution,
-            StartTimer, WorkflowCommand,
-        },
+        coresdk::workflow_commands::*,
         temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
     },
 };
@@ -72,8 +66,9 @@ pub enum WFCommand {
     CancelWorkflow(CancelWorkflowExecution),
     SetPatchMarker(SetPatchMarker),
     AddChildWorkflow(StartChildWorkflowExecution),
-    RequestCancelChildWorkflow(RequestCancelChildWorkflowExecution),
+    RequestCancelExternalWorkflow(RequestCancelExternalWorkflowExecution),
     SignalExternalWorkflow(SignalExternalWorkflowExecution),
+    CancelSignalWorkflow(CancelSignalWorkflow),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
@@ -106,14 +101,14 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::StartChildWorkflowExecution(s) => {
                 Ok(WFCommand::AddChildWorkflow(s))
             }
-            workflow_command::Variant::RequestCancelChildWorkflowExecution(s) => {
-                Ok(WFCommand::RequestCancelChildWorkflow(s))
+            workflow_command::Variant::RequestCancelExternalWorkflowExecution(s) => {
+                Ok(WFCommand::RequestCancelExternalWorkflow(s))
             }
-            workflow_command::Variant::RequestCancelExternalWorkflowExecution(_) => {
-                todo!()
+            workflow_command::Variant::SignalExternalWorkflowExecution(s) => {
+                Ok(WFCommand::SignalExternalWorkflow(s))
             }
-            workflow_command::Variant::SignalExternalWorkflowExecution(_) => {
-                todo!()
+            workflow_command::Variant::CancelSignalWorkflow(s) => {
+                Ok(WFCommand::CancelSignalWorkflow(s))
             }
         }
     }

@@ -22,6 +22,7 @@ use crate::{
         },
         workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution},
     },
+    protos::temporal::api::failure::v1::Failure,
     Core,
 };
 use anyhow::{anyhow, bail};
@@ -63,7 +64,7 @@ pub struct TestRustWorker {
 type WfFunc = dyn Fn(WfContext) -> BoxFuture<'static, WorkflowResult<()>> + Send + Sync + 'static;
 
 impl TestRustWorker {
-    /// Create a new rust worker using the provided core instance, namespace, and task queue
+    /// Create a new rust worker
     pub fn new(core: Arc<dyn Core>, task_queue: String, task_timeout: Option<Duration>) -> Self {
         Self {
             core,
@@ -133,6 +134,7 @@ impl TestRustWorker {
                         .ok_or_else(|| anyhow!("Workflow type not found"))?;
 
                     let (wff, activations) = wf_function.start_workflow(
+                        self.core.get_init_options().gateway_opts.namespace.clone(),
                         self.task_queue.clone(),
                         // NOTE: Don't clone args if this gets ported to be a non-test rust worker
                         sw.arguments.clone(),
@@ -190,14 +192,18 @@ enum UnblockEvent {
     Activity(u32, Box<ActivityResult>),
     WorkflowStart(u32, Box<ChildWorkflowStartStatus>),
     WorkflowComplete(u32, Box<ChildWorkflowResult>),
+    SignalExternal(u32, Option<Failure>),
 }
 
-type TimerResult = ();
+/// Result of awaiting on a timer
+pub struct TimerResult;
+/// Result of awaiting on sending a signal to an external workflow
+pub struct SignalExternalWfResult(Result<(), Failure>);
 
 impl From<UnblockEvent> for TimerResult {
     fn from(ue: UnblockEvent) -> Self {
         match ue {
-            UnblockEvent::Timer(_) => (),
+            UnblockEvent::Timer(_) => TimerResult,
             _ => panic!("Invalid unblock event for timer"),
         }
     }
@@ -230,6 +236,21 @@ impl From<UnblockEvent> for ChildWorkflowResult {
     }
 }
 
+impl From<UnblockEvent> for SignalExternalWfResult {
+    fn from(ue: UnblockEvent) -> Self {
+        match ue {
+            UnblockEvent::SignalExternal(_, maybefail) => {
+                SignalExternalWfResult(if let Some(f) = maybefail {
+                    Err(f)
+                } else {
+                    Ok(())
+                })
+            }
+            _ => panic!("Invalid unblock event for signal external workflow result"),
+        }
+    }
+}
+
 /// Identifier for cancellable operations
 #[derive(Debug, Copy, Clone)]
 pub enum CancellableID {
@@ -237,8 +258,15 @@ pub enum CancellableID {
     Timer(u32),
     /// Activity sequence number
     Activity(u32),
-    /// Child Workflow sequence number
-    ChildWorkflow(u32),
+    /// Cancelling children is a resolvable command and thus needs its own id as well
+    ChildWorkflow {
+        /// The sequence number for the cancel command
+        cmd_seq: u32,
+        /// The sequence number of the child workflow being cancelled
+        child_seq: u32,
+    },
+    /// Signal workflow
+    SignalExternalWorkflow(u32),
 }
 
 #[derive(derive_more::From)]
