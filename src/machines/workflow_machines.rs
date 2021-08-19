@@ -699,11 +699,14 @@ impl WorkflowMachines {
                     };
 
                     let sigm = self.add_new_command_machine(new_external_signal(
+                        attrs.seq,
                         we,
                         attrs.signal_name,
                         attrs.args,
                         only_child,
                     ));
+                    self.id_to_machine
+                        .insert(CommandID::SignalExternal(attrs.seq), sigm.machine);
                     self.current_wf_task_commands.push_back(sigm);
                 }
                 WFCommand::CancelSignalWorkflow(attrs) => {

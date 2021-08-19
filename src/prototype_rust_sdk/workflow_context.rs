@@ -199,7 +199,7 @@ impl WfContext {
                     signal_name: signal_name.into(),
                     args: vec![payload.into()],
                     target: Some(sig_we::Target::WorkflowExecution(WorkflowExecution {
-                        namespace: "".to_string(),
+                        namespace: self.namespace.clone(),
                         workflow_id: workflow_id.into(),
                         run_id: run_id.into(),
                     })),

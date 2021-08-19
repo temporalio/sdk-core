@@ -260,6 +260,9 @@ impl Future for WorkflowFuture {
                                 self.child_workflow_starts.insert(seq, req);
                                 CommandID::ChildWorkflowStart(seq)
                             }
+                            workflow_command::Variant::SignalExternalWorkflowExecution(req) => {
+                                CommandID::SignalExternal(req.seq)
+                            }
                             _ => unimplemented!("Command type not implemented"),
                         };
                         self.command_status.insert(

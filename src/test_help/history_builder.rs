@@ -1,7 +1,7 @@
 use crate::machines::HAS_CHANGE_MARKER_NAME;
 use crate::protos::coresdk::common::build_has_change_marker_details;
 use crate::{
-    protos::temporal::api::common::v1::{Payload, Payloads, WorkflowType},
+    protos::temporal::api::common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
     protos::temporal::api::failure::v1::Failure,
     protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes,
     protos::temporal::api::{
@@ -188,6 +188,48 @@ impl TestHistoryBuilder {
             ..Default::default()
         };
         self.build_and_push_event(EventType::MarkerRecorded, attrs.into());
+    }
+
+    pub(crate) fn add_signal_wf(
+        &mut self,
+        signal_name: impl Into<String>,
+        workflow_id: impl Into<String>,
+        run_id: impl Into<String>,
+    ) -> i64 {
+        let attrs = SignalExternalWorkflowExecutionInitiatedEventAttributes {
+            workflow_task_completed_event_id: self.previous_task_completed_id,
+            workflow_execution: Some(WorkflowExecution {
+                workflow_id: workflow_id.into(),
+                run_id: run_id.into(),
+            }),
+            signal_name: signal_name.into(),
+            // TODO: Maybe needed to unblock right signal request?
+            control: "".to_string(),
+            ..Default::default()
+        };
+        self.add_get_event_id(
+            EventType::SignalExternalWorkflowExecutionInitiated,
+            Some(attrs.into()),
+        )
+    }
+
+    pub(crate) fn add_external_signal_completed(&mut self, initiated_id: i64) {
+        let attrs = ExternalWorkflowExecutionSignaledEventAttributes {
+            initiated_event_id: initiated_id,
+            ..Default::default()
+        };
+        self.build_and_push_event(EventType::ExternalWorkflowExecutionSignaled, attrs.into());
+    }
+
+    pub(crate) fn add_external_signal_failed(&mut self, initiated_id: i64) {
+        let attrs = SignalExternalWorkflowExecutionFailedEventAttributes {
+            initiated_event_id: initiated_id,
+            ..Default::default()
+        };
+        self.build_and_push_event(
+            EventType::SignalExternalWorkflowExecutionFailed,
+            attrs.into(),
+        );
     }
 
     pub(crate) fn as_history_update(&self) -> HistoryUpdate {

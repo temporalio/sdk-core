@@ -3,6 +3,7 @@ mod cancel_wf;
 mod child_workflows;
 mod continue_as_new;
 mod patches;
+mod signals;
 mod stickyness;
 mod timers;
 

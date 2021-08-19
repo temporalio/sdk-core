@@ -198,7 +198,7 @@ enum UnblockEvent {
 /// Result of awaiting on a timer
 pub struct TimerResult;
 /// Result of awaiting on sending a signal to an external workflow
-pub struct SignalExternalWfResult(Result<(), Failure>);
+pub type SignalExternalWfResult = Result<(), Failure>;
 
 impl From<UnblockEvent> for TimerResult {
     fn from(ue: UnblockEvent) -> Self {
@@ -240,11 +240,11 @@ impl From<UnblockEvent> for SignalExternalWfResult {
     fn from(ue: UnblockEvent) -> Self {
         match ue {
             UnblockEvent::SignalExternal(_, maybefail) => {
-                SignalExternalWfResult(if let Some(f) = maybefail {
+                if let Some(f) = maybefail {
                     Err(f)
                 } else {
                     Ok(())
-                })
+                }
             }
             _ => panic!("Invalid unblock event for signal external workflow result"),
         }

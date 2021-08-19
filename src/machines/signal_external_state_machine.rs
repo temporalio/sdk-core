@@ -4,13 +4,15 @@ use crate::{
     protos::{
         coresdk::{
             common::{Payload, WorkflowExecution},
+            workflow_activation::ResolveSignalExternalWorkflow,
             IntoPayloadsExt,
         },
         temporal::api::{
             command::v1::{command, Command, SignalExternalWorkflowExecutionCommandAttributes},
             common::v1::WorkflowExecution as UpstreamWE,
-            enums::v1::{CommandType, EventType},
-            history::v1::HistoryEvent,
+            enums::v1::{CommandType, EventType, SignalExternalWorkflowExecutionFailedCause},
+            failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
+            history::v1::{history_event, HistoryEvent},
         },
     },
 };
@@ -21,6 +23,7 @@ fsm! {
     pub(super) name SignalExternalMachine;
     command SignalExternalCommand;
     error WFMachinesError;
+    shared_state SharedState;
 
     Created --(Schedule, on_schedule) --> SignalExternalCommandCreated;
 
@@ -35,13 +38,24 @@ fsm! {
     SignalExternalCommandRecorded
       --(ExternalWorkflowExecutionSignaled, on_external_workflow_execution_signaled) --> Signaled;
     SignalExternalCommandRecorded
-      --(SignalExternalWorkflowExecutionFailed, on_signal_external_workflow_execution_failed) --> Failed;
+      --(SignalExternalWorkflowExecutionFailed(SignalExternalWorkflowExecutionFailedCause),
+         on_signal_external_workflow_execution_failed) --> Failed;
+}
+
+#[derive(Default, Clone)]
+pub(super) struct SharedState {
+    seq: u32,
 }
 
 #[derive(Debug, derive_more::Display)]
-pub(super) enum SignalExternalCommand {}
+pub(super) enum SignalExternalCommand {
+    Signaled,
+    #[display(fmt = "Failed")]
+    Failed(SignalExternalWorkflowExecutionFailedCause),
+}
 
 pub(super) fn new_external_signal(
+    seq: u32,
     workflow_execution: WorkflowExecution,
     signal_name: String,
     payloads: impl IntoIterator<Item = Payload>,
@@ -49,7 +63,7 @@ pub(super) fn new_external_signal(
 ) -> NewMachineWithCommand<SignalExternalMachine> {
     let mut s = SignalExternalMachine {
         state: Created {}.into(),
-        shared_state: (),
+        shared_state: SharedState { seq },
     };
     OnEventWrapper::on_event_mut(&mut s, SignalExternalMachineEvents::Schedule)
         .expect("Scheduling activities doesn't fail");
@@ -68,7 +82,7 @@ pub(super) fn new_external_signal(
         },
     );
     let cmd = Command {
-        command_type: CommandType::ScheduleActivityTask as i32,
+        command_type: CommandType::SignalExternalWorkflowExecution as i32,
         attributes: Some(cmd_attrs),
     };
     NewMachineWithCommand {
@@ -87,7 +101,7 @@ impl Created {
     pub(super) fn on_schedule(
         self,
     ) -> SignalExternalMachineTransition<SignalExternalCommandCreated> {
-        unimplemented!()
+        TransitionResult::default()
     }
 }
 
@@ -104,7 +118,7 @@ impl SignalExternalCommandCreated {
     pub(super) fn on_signal_external_workflow_execution_initiated(
         self,
     ) -> SignalExternalMachineTransition<SignalExternalCommandRecorded> {
-        unimplemented!()
+        TransitionResult::default()
     }
 }
 
@@ -115,12 +129,13 @@ impl SignalExternalCommandRecorded {
     pub(super) fn on_external_workflow_execution_signaled(
         self,
     ) -> SignalExternalMachineTransition<Signaled> {
-        unimplemented!()
+        TransitionResult::commands(vec![SignalExternalCommand::Signaled])
     }
     pub(super) fn on_signal_external_workflow_execution_failed(
         self,
+        cause: SignalExternalWorkflowExecutionFailedCause,
     ) -> SignalExternalMachineTransition<Failed> {
-        unimplemented!()
+        TransitionResult::commands(vec![SignalExternalCommand::Failed(cause)])
     }
 }
 
@@ -149,7 +164,19 @@ impl TryFrom<HistoryEvent> for SignalExternalMachineEvents {
                 Self::SignalExternalWorkflowExecutionInitiated
             }
             EventType::SignalExternalWorkflowExecutionFailed => {
-                Self::SignalExternalWorkflowExecutionFailed
+                if let Some(
+                    history_event::Attributes::SignalExternalWorkflowExecutionFailedEventAttributes(
+                        attrs,
+                    ),
+                ) = e.attributes
+                {
+                    Self::SignalExternalWorkflowExecutionFailed(attrs.cause())
+                } else {
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Signal workflow failed attributes were unset: {}",
+                        e
+                    )));
+                }
             }
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
@@ -164,10 +191,36 @@ impl TryFrom<HistoryEvent> for SignalExternalMachineEvents {
 impl WFMachinesAdapter for SignalExternalMachine {
     fn adapt_response(
         &self,
-        _my_command: Self::Command,
+        my_command: Self::Command,
         _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        panic!("Signal external machine does not produce commands")
+        Ok(match my_command {
+            SignalExternalCommand::Signaled => {
+                vec![ResolveSignalExternalWorkflow {
+                    seq: self.shared_state.seq,
+                    failure: None,
+                }
+                .into()]
+            }
+            SignalExternalCommand::Failed(f) => {
+                vec![ResolveSignalExternalWorkflow {
+                    seq: self.shared_state.seq,
+                    // TODO: Create new failure type upstream for this
+                    failure: Some(Failure {
+                        message: "Unable to signal external workflow because it was not found"
+                            .to_string(),
+                        failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                            ApplicationFailureInfo {
+                                r#type: f.to_string(),
+                                ..Default::default()
+                            },
+                        )),
+                        ..Default::default()
+                    }),
+                }
+                .into()]
+            }
+        })
     }
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
@@ -203,14 +256,87 @@ impl Cancellable for SignalExternalMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prototype_rust_sdk::WfContext;
-    use futures::stream::StreamExt;
+    use crate::{
+        prototype_rust_sdk::{CancellableFuture, WfContext, WorkflowFunction, WorkflowResult},
+        test_help::TestHistoryBuilder,
+        workflow::managed_wf::ManagedWFFunc,
+    };
 
     const SIGNAME: &str = "signame";
 
-    async fn signal_sender_receiver(ctx: &mut WfContext) {
-        ctx.signal_workflow("fake_wid", "fake_rid", SIGNAME, b"hi!")
+    async fn signal_sender(mut ctx: WfContext) -> WorkflowResult<()> {
+        let res = ctx
+            .signal_workflow("fake_wid", "fake_rid", SIGNAME, b"hi!")
             .await;
-        ctx.make_signal_channel(SIGNAME).next().await;
+        if res.is_err() {
+            Err(anyhow::anyhow!("Signal fail!"))
+        } else {
+            Ok(().into())
+        }
+    }
+
+    #[rstest::rstest]
+    #[case::succeeds(false)]
+    #[case::fails(true)]
+    #[tokio::test]
+    async fn sends_signal(#[case] fails: bool) {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        let id = t.add_signal_wf(SIGNAME, "fake_wid", "fake_rid");
+        if fails {
+            t.add_external_signal_failed(id);
+        } else {
+            t.add_external_signal_completed(id);
+        }
+        t.add_full_wf_task();
+        t.add_workflow_execution_completed();
+
+        let wff = WorkflowFunction::new(signal_sender);
+        let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
+        wfm.get_next_activation().await.unwrap();
+        let cmds = wfm.get_server_commands().await.commands;
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(
+            cmds[0].command_type(),
+            CommandType::SignalExternalWorkflowExecution
+        );
+        wfm.get_next_activation().await.unwrap();
+        let cmds = wfm.get_server_commands().await.commands;
+        assert_eq!(cmds.len(), 1);
+        if fails {
+            assert_eq!(cmds[0].command_type(), CommandType::FailWorkflowExecution);
+        } else {
+            assert_eq!(
+                cmds[0].command_type(),
+                CommandType::CompleteWorkflowExecution
+            );
+        }
+
+        wfm.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancels_before_sending() {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_workflow_execution_completed();
+
+        let wff = WorkflowFunction::new(|mut ctx: WfContext| async move {
+            ctx.signal_workflow("fake_wid", "fake_rid", SIGNAME, b"hi!")
+                .cancel(&ctx);
+            Ok(().into())
+        });
+        let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
+
+        wfm.get_next_activation().await.unwrap();
+        let cmds = wfm.get_server_commands().await.commands;
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(
+            cmds[0].command_type(),
+            CommandType::CompleteWorkflowExecution
+        );
+        wfm.shutdown().await.unwrap();
     }
 }
