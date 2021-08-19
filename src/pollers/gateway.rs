@@ -60,8 +60,8 @@ pub struct ServerGatewayOptions {
     /// certs or keys as bytes, loading them from disk itself if needed.
     pub tls_cfg: Option<TlsConfig>,
 
-    /// Optional retry configuration for the server gateway. If not supplied defaults will be used.
-    pub retry_config: Option<RetryConfig>,
+    /// Retry configuration for the server gateway.
+    pub retry_config: RetryConfig,
 }
 
 /// Configuration options for TLS

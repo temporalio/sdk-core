@@ -61,10 +61,10 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
 }
 
 impl<SG> RetryGateway<SG> {
-    pub fn new(gateway: SG, retry_config: Option<RetryConfig>) -> Self {
+    pub fn new(gateway: SG, retry_config: RetryConfig) -> Self {
         Self {
             gateway,
-            retry_config: retry_config.unwrap_or_default(),
+            retry_config,
         }
     }
 }
