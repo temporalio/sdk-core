@@ -29,7 +29,7 @@ use crossbeam::queue::SegQueue;
 use futures::FutureExt;
 use parking_lot::Mutex;
 use std::{fmt::Debug, ops::DerefMut, sync::Arc};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::watch;
 
 /// Centralizes concerns related to applying new workflow tasks and reporting the activations they
 /// produce.
@@ -45,7 +45,7 @@ pub struct WorkflowTaskManager {
     /// Holds poll wft responses from the server that need to be applied
     ready_buffered_wft: SegQueue<ValidPollWFTQResponse>,
     /// Used to wake blocked workflow task polling
-    workflow_activations_update: UnboundedSender<WfActivationUpdate>,
+    pending_activations_notifier: watch::Sender<bool>,
     /// Lock guarded cache manager, which is the authority for limit-based workflow machine eviction
     /// from the cache.
     // TODO: Also should be moved inside concurrency manager, but there is some complexity around
@@ -144,14 +144,14 @@ macro_rules! machine_mut {
 
 impl WorkflowTaskManager {
     pub(crate) fn new(
-        workflow_activations_update: UnboundedSender<WfActivationUpdate>,
+        pending_activations_notifier: watch::Sender<bool>,
         eviction_policy: WorkflowCachingPolicy,
     ) -> Self {
         Self {
             workflow_machines: WorkflowConcurrencyManager::new(),
             pending_activations: Default::default(),
             ready_buffered_wft: Default::default(),
-            workflow_activations_update,
+            pending_activations_notifier,
             cache_manager: Mutex::new(WorkflowCacheManager::new(eviction_policy)),
         }
     }
@@ -193,9 +193,7 @@ impl WorkflowTaskManager {
                 // Queue up an eviction activation
                 self.pending_activations
                     .push(create_evict_activation(run_id.to_string()));
-                let _ = self
-                    .workflow_activations_update
-                    .send(WfActivationUpdate::NewPendingActivation);
+                let _ = self.pending_activations_notifier.send(true);
             }
             self.workflow_machines
                 .get_task(run_id)
@@ -392,10 +390,7 @@ impl WorkflowTaskManager {
 
     /// Record that an activation failed, returns enum that indicates if failure should be reported
     /// to the server
-    pub(crate) fn failed_activation(
-        &self,
-        run_id: &str,
-    ) -> Result<FailedActivationOutcome, WorkflowUpdateError> {
+    pub(crate) fn failed_activation(&self, run_id: &str) -> FailedActivationOutcome {
         let tt = if let Some(tt) = self
             .workflow_machines
             .get_task(run_id)
@@ -407,10 +402,10 @@ impl WorkflowTaskManager {
                 "No info for workflow with run id {} found when trying to fail activation",
                 run_id
             );
-            return Ok(FailedActivationOutcome::NoReport);
+            return FailedActivationOutcome::NoReport;
         };
         // If the outstanding activation is a legacy query task, report that we need to fail it
-        let ret = if let Some(OutstandingActivation::LegacyQuery) =
+        if let Some(OutstandingActivation::LegacyQuery) =
             self.workflow_machines.get_activation(run_id)
         {
             FailedActivationOutcome::ReportLegacyQueryFailure(tt)
@@ -427,10 +422,7 @@ impl WorkflowTaskManager {
             } else {
                 FailedActivationOutcome::NoReport
             }
-        };
-
-        self.after_wft_report(run_id)?;
-        Ok(ret)
+        }
     }
 
     /// Will create a new workflow manager if needed for the workflow activation, if not, it will
@@ -495,9 +487,7 @@ impl WorkflowTaskManager {
             .boxed())?;
         if !next_activation.jobs.is_empty() {
             self.pending_activations.push(next_activation);
-            let _ = self
-                .workflow_activations_update
-                .send(WfActivationUpdate::NewPendingActivation);
+            let _ = self.pending_activations_notifier.send(true);
         }
         Ok(())
     }
@@ -506,7 +496,9 @@ impl WorkflowTaskManager {
     /// evictions if required. It is important this is called *after* reporting a successful WFT
     /// to server, as some replies (task not found) may require an eviction, which could be avoided
     /// if this is called too early.
-    pub(crate) fn after_wft_report(&self, run_id: &str) -> Result<(), WorkflowUpdateError> {
+    ///
+    /// Returns true if WFT is complete
+    pub(crate) fn after_wft_report(&self, run_id: &str) -> Result<bool, WorkflowUpdateError> {
         let mut just_evicted = false;
 
         if let Some(OutstandingActivation::Normal {
@@ -526,10 +518,8 @@ impl WorkflowTaskManager {
                     if let Some(query) = ot.legacy_query.take() {
                         let na = create_query_activation(run_id.to_string(), [query]);
                         self.pending_activations.push(na);
-                        let _ = self
-                            .workflow_activations_update
-                            .send(WfActivationUpdate::NewPendingActivation);
-                        return Ok(());
+                        let _ = self.pending_activations_notifier.send(true);
+                        return Ok(false);
                     }
                 }
 
@@ -548,13 +538,9 @@ impl WorkflowTaskManager {
 
             // The evict may or may not have already done this, but even when we aren't evicting
             // we want to clear the outstanding workflow task since it's now complete.
-            if self.workflow_machines.delete_wft(run_id).is_some() {
-                let _ = self
-                    .workflow_activations_update
-                    .send(WfActivationUpdate::WorkflowTaskComplete);
-            }
+            return Ok(self.workflow_machines.delete_wft(run_id).is_some());
         }
-        Ok(())
+        Ok(false)
     }
 
     /// Must be called after *every* activation is replied to, regardless of whether or not we
@@ -564,9 +550,7 @@ impl WorkflowTaskManager {
     /// Any subsequent action that needs to be taken will be created as a new activation
     pub(crate) fn on_activation_done(&self, run_id: &str) {
         if self.workflow_machines.delete_activation(run_id).is_some() {
-            let _ = self
-                .workflow_activations_update
-                .send(WfActivationUpdate::NewPendingActivation);
+            let _ = self.pending_activations_notifier.send(true);
         }
         // It's possible the activation is already removed due to completing an eviction
     }
@@ -604,9 +588,4 @@ impl WorkflowTaskManager {
             .map(|oa| oa.has_eviction())
             .unwrap_or_default()
     }
-}
-
-pub enum WfActivationUpdate {
-    NewPendingActivation,
-    WorkflowTaskComplete,
 }
