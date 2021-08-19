@@ -1,6 +1,7 @@
 mod activity_tasks;
 mod queries;
 mod replay_flag;
+mod retry;
 mod workers;
 mod workflow_cancels;
 mod workflow_tasks;
