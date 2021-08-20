@@ -173,6 +173,7 @@ impl TestRustWorker {
 
                 let completion = completions_rx.recv().await.expect("No workflows left?");
                 if completion.has_execution_ending() {
+                    debug!("Workflow {} says it's finishing", &completion.run_id);
                     self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
                 }
                 self.core
