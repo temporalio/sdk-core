@@ -594,18 +594,6 @@ impl Cancellable for ChildWorkflowMachine {
                     }
                     .into()]
                 }
-                // TODO: This shouldn't be possible?
-                ChildWorkflowCommand::Fail(failure) => {
-                    vec![ResolveChildWorkflowExecution {
-                        seq: self.shared_state.lang_sequence_number,
-                        result: Some(ChildWorkflowResult {
-                            status: Some(ChildWorkflowStatus::Failed(wfr::Failure {
-                                failure: Some(failure),
-                            })),
-                        }),
-                    }
-                    .into()]
-                }
                 x => panic!("Invalid cancel event response {:?}", x),
             })
             .collect();
