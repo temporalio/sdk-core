@@ -191,16 +191,16 @@ pub struct CoreInitOptions {
 ///   cannot construct a runtime from within a runtime.
 pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
     // Initialize server client
-    let work_provider = opts.gateway_opts.connect().await?;
+    let server_gateway = opts.gateway_opts.connect().await?;
 
-    Ok(CoreSDK::new(work_provider, opts))
+    Ok(CoreSDK::new(server_gateway, opts))
 }
 
-struct CoreSDK<WP> {
+struct CoreSDK<SG> {
     /// Options provided at initialization time
     init_options: CoreInitOptions,
     /// Provides work in the form of responses the server would send from polling task Qs
-    server_gateway: Arc<WP>,
+    server_gateway: Arc<SG>,
     /// Controls access to workers
     workers: WorkerDispatcher,
     /// Has shutdown been called?

@@ -1,5 +1,5 @@
 use crate::{
-    pollers::Result,
+    pollers::{retry::RetryGateway, Result},
     protos::{
         coresdk::{common::Payload, workflow_commands::QueryResult, IntoPayloadsExt},
         temporal::api::{
@@ -15,14 +15,16 @@ use crate::{
     task_token::TaskToken,
     CoreInitError,
 };
+use backoff::{ExponentialBackoff, SystemClock};
 use std::{
     fmt::{Debug, Formatter},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tonic::{
     codegen::InterceptedService,
+    service::Interceptor,
     transport::{Certificate, Channel, Endpoint, Identity},
-    Request, Status,
+    Status,
 };
 use url::Url;
 use uuid::Uuid;
@@ -52,6 +54,9 @@ pub struct ServerGatewayOptions {
     /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
     /// certs or keys as bytes, loading them from disk itself if needed.
     pub tls_cfg: Option<TlsConfig>,
+
+    /// Retry configuration for the server gateway.
+    pub retry_config: RetryConfig,
 }
 
 /// Configuration options for TLS
@@ -77,6 +82,51 @@ pub struct ClientTlsConfig {
     pub client_private_key: Vec<u8>,
 }
 
+#[derive(Clone, Debug)]
+pub struct RetryConfig {
+    /// initial wait time before the first retry.
+    pub initial_interval: Duration,
+    /// randomization jitter that is used as a multiplier for the current retry interval
+    /// and is added or subtracted from the interval length.
+    pub randomization_factor: f64,
+    /// rate at which retry time should be increased, until it reaches max_interval.
+    pub multiplier: f64,
+    /// maximum amount of time to wait between retries.
+    pub max_interval: Duration,
+    /// maximum total amount of time requests should be retried for, if None is set then no limit will be used.
+    pub max_elapsed_time: Option<Duration>,
+    /// maximum number of retry attempts.
+    pub max_retries: usize,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            initial_interval: Duration::from_millis(100), // 100 ms wait by default.
+            randomization_factor: 0.2,                    // +-20% jitter.
+            multiplier: 1.5, // each next retry delay will increase by 50%
+            max_interval: Duration::from_secs(5), // until it reaches 5 seconds.
+            max_elapsed_time: Some(Duration::from_secs(10)), // 10 seconds total allocated time for all retries.
+            max_retries: 10,
+        }
+    }
+}
+
+impl From<RetryConfig> for ExponentialBackoff {
+    fn from(c: RetryConfig) -> Self {
+        ExponentialBackoff {
+            current_interval: c.initial_interval,
+            initial_interval: c.initial_interval,
+            randomization_factor: c.randomization_factor,
+            multiplier: c.multiplier,
+            max_interval: c.max_interval,
+            max_elapsed_time: c.max_elapsed_time,
+            clock: SystemClock::default(),
+            start_time: Instant::now(),
+        }
+    }
+}
+
 impl Debug for ClientTlsConfig {
     // Intentionally omit details here since they could leak a key if ever printed
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -86,21 +136,18 @@ impl Debug for ClientTlsConfig {
 
 impl ServerGatewayOptions {
     /// Attempt to establish a connection to the Temporal server
-    pub async fn connect(
-        &self,
-    ) -> Result<
-        ServerGateway<impl Fn(Request<()>) -> Result<Request<()>, Status> + Clone + Send + Sync>,
-        CoreInitError,
-    > {
+    pub async fn connect(&self) -> Result<RetryGateway<ServerGateway>, CoreInitError> {
         let channel = Channel::from_shared(self.target_url.to_string())?;
         let channel = self.add_tls_to_channel(channel).await?;
         let channel = channel.connect().await?;
-        let interceptor = intercept(self);
+        let interceptor = ServiceCallInterceptor { opts: self.clone() };
         let service = WorkflowServiceClient::with_interceptor(channel, interceptor);
-        Ok(ServerGateway {
+        let gateway = ServerGateway {
             service,
             opts: self.clone(),
-        })
+        };
+        let retry_gateway = RetryGateway::new(gateway, self.retry_config.clone());
+        Ok(retry_gateway)
     }
 
     /// If TLS is configured, set the appropriate options on the provided channel and return it.
@@ -130,29 +177,32 @@ impl ServerGatewayOptions {
     }
 }
 
-/// This function will get called on each outbound request. Returning a `Status` here will cancel
-/// the request and have that status returned to the caller.
-fn intercept(
-    opts: &ServerGatewayOptions,
-) -> impl Fn(Request<()>) -> Result<Request<()>, Status> + Clone {
-    let timeout = opts.long_poll_timeout;
-    move |mut req: Request<()>| {
-        let metadata = req.metadata_mut();
+#[derive(Clone)]
+pub struct ServiceCallInterceptor {
+    opts: ServerGatewayOptions,
+}
+
+impl Interceptor for ServiceCallInterceptor {
+    /// This function will get called on each outbound request. Returning a `Status` here will cancel
+    /// the request and have that status returned to the caller.
+    fn call(&mut self, mut request: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
+        let timeout = self.opts.long_poll_timeout;
+        let metadata = request.metadata_mut();
         metadata.insert(
             "client-name",
             "core-sdk".parse().expect("Static value is parsable"),
         );
         // TODO: Only apply this to long poll requests
-        req.set_timeout(timeout);
-        Ok(req)
+        request.set_timeout(timeout);
+        Ok(request)
     }
 }
 
 /// Contains an instance of a client for interacting with the temporal server
 #[derive(Debug)]
-pub struct ServerGateway<F: Clone> {
+pub struct ServerGateway {
     /// Client for interacting with workflow service
-    pub service: WorkflowServiceClient<InterceptedService<Channel, F>>,
+    pub service: WorkflowServiceClient<InterceptedService<Channel, ServiceCallInterceptor>>,
     /// Options gateway was initialized with
     pub opts: ServerGatewayOptions,
 }
@@ -292,13 +342,13 @@ pub trait ServerGatewayApis {
         workflow_id: String,
         run_id: Option<String>,
     ) -> Result<TerminateWorkflowExecutionResponse>;
+
+    /// Lists all available namespaces
+    async fn list_namespaces(&self) -> Result<ListNamespacesResponse>;
 }
 
 #[async_trait::async_trait]
-impl<F> ServerGatewayApis for ServerGateway<F>
-where
-    F: Fn(Request<()>) -> Result<Request<()>, Status> + Clone + Send + Sync,
-{
+impl ServerGatewayApis for ServerGateway {
     async fn start_workflow(
         &self,
         input: Vec<Payload>,
@@ -680,6 +730,15 @@ where
             .await?
             .into_inner())
     }
+
+    async fn list_namespaces(&self) -> Result<ListNamespacesResponse> {
+        Ok(self
+            .service
+            .clone()
+            .list_namespaces(ListNamespacesRequest::default())
+            .await?
+            .into_inner())
+    }
 }
 
 // Need a version of the mock that can return futures so we can return potentially pending
@@ -807,6 +866,11 @@ mockall::mock! {
             workflow_id: String,
             run_id: Option<String>,
         ) -> impl Future<Output = Result<TerminateWorkflowExecutionResponse>> + Send + 'b
+            where 'a: 'b, Self: 'b;
+
+        fn list_namespaces<'a, 'b>(
+            &self,
+        ) -> impl Future<Output = Result<ListNamespacesResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
     }
 }

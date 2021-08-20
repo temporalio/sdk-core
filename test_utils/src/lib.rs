@@ -167,6 +167,7 @@ pub fn get_integ_server_options() -> ServerGatewayOptions {
         long_poll_timeout: Duration::from_secs(60),
         target_url: url,
         tls_cfg: None,
+        retry_config: Default::default(),
     }
 }
 
