@@ -1,3 +1,4 @@
+use crate::machines::child_workflow_state_machine::ChildWorkflowMachine;
 use crate::machines::signal_external_state_machine::new_external_signal;
 use crate::{
     core_tracing::VecDisplayer,
@@ -12,7 +13,7 @@ use crate::{
     },
     protos::{
         coresdk::{
-            common::Payload,
+            common::{Payload, WorkflowExecution},
             workflow_activation::{
                 wf_activation_job::{self, Variant},
                 NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WfActivation,
@@ -66,12 +67,14 @@ pub(crate) struct WorkflowMachines {
     /// The current workflow time if it has been established
     current_wf_time: Option<SystemTime>,
 
+    // TODO: Nothing gets deleted from here
     all_machines: SlotMap<MachineKey, Box<dyn TemporalStateMachine + 'static>>,
 
     /// A mapping for accessing machines associated to a particular event, where the key is the id
     /// of the initiating event for that machine.
     machines_by_event_id: HashMap<i64, MachineKey>,
 
+    // TODO: Nothing gets deleted from here
     /// Maps command ids as created by workflow authors to their associated machines.
     id_to_machine: HashMap<CommandID, MachineKey>,
 
@@ -692,8 +695,24 @@ impl WorkflowMachines {
                                     .to_string(),
                             ))
                         }
-                        Some(sig_we::Target::ChildWorkflowSeq(_)) => {
-                            todo!("Look up deets from child wf machine if present")
+                        Some(sig_we::Target::ChildWorkflowSeq(seq)) => {
+                            let child_wf_machine =
+                                self.get_machine_key(CommandID::ChildWorkflowStart(seq))?;
+                            let mach = self.machine(child_wf_machine);
+                            let as_child: Option<&ChildWorkflowMachine> =
+                                mach.as_any().downcast_ref();
+                            if let Some(child_machine) = as_child {
+                                (
+                                    WorkflowExecution {
+                                        namespace: child_machine.namespace().to_string(),
+                                        workflow_id: child_machine.workflow_id().to_string(),
+                                        run_id: "".to_string(),
+                                    },
+                                    true,
+                                )
+                            } else {
+                                todo!("Return signal failed")
+                            }
                         }
                         Some(sig_we::Target::WorkflowExecution(we)) => (we, false),
                     };
@@ -726,7 +745,7 @@ impl WorkflowMachines {
     /// be included in the activation
     fn process_cancellation(&mut self, id: CommandID) -> Result<Vec<Variant>> {
         let mut jobs = vec![];
-        let m_key = self.get_machine_key(&id)?;
+        let m_key = self.get_machine_key(id)?;
         let res = self.machine_mut(m_key).cancel()?;
         debug!(machine_responses = ?res, cmd_id = ?id, "Cancel request responses");
         for r in res {
@@ -751,8 +770,8 @@ impl WorkflowMachines {
         Ok(jobs)
     }
 
-    fn get_machine_key(&self, id: &CommandID) -> Result<MachineKey> {
-        Ok(*self.id_to_machine.get(id).ok_or_else(|| {
+    fn get_machine_key(&self, id: CommandID) -> Result<MachineKey> {
+        Ok(*self.id_to_machine.get(&id).ok_or_else(|| {
             WFMachinesError::Fatal(format!("Missing associated machine for {:?}", id))
         })?)
     }

@@ -194,6 +194,34 @@ impl WfContext {
         signal_name: impl Into<String>,
         payload: impl Into<Payload>,
     ) -> impl CancellableFuture<SignalExternalWfResult> {
+        let target = sig_we::Target::WorkflowExecution(WorkflowExecution {
+            namespace: self.namespace.clone(),
+            workflow_id: workflow_id.into(),
+            run_id: run_id.into(),
+        });
+        self.send_signal_wf(signal_name, payload, target)
+    }
+
+    /// Return a stream that produces values when the named signal is sent to this workflow
+    pub fn make_signal_channel(
+        &mut self,
+        _signal_name: impl Into<String>,
+    ) -> impl Stream<Item = Payload> {
+        todo!();
+        futures::stream::empty()
+    }
+
+    /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
+    pub fn force_task_fail(&self, with: anyhow::Error) {
+        self.send(with.into())
+    }
+
+    fn send_signal_wf(
+        &mut self,
+        signal_name: impl Into<String>,
+        payload: impl Into<Payload>,
+        target: sig_we::Target,
+    ) -> impl CancellableFuture<SignalExternalWfResult> {
         let seq = self.next_signal_external_wf_sequence_number;
         self.next_signal_external_wf_sequence_number += 1;
         let (cmd, unblocker) = WFCommandFut::new(CancellableID::SignalExternalWorkflow(seq));
@@ -203,11 +231,7 @@ impl WfContext {
                     seq,
                     signal_name: signal_name.into(),
                     args: vec![payload.into()],
-                    target: Some(sig_we::Target::WorkflowExecution(WorkflowExecution {
-                        namespace: self.namespace.clone(),
-                        workflow_id: workflow_id.into(),
-                        run_id: run_id.into(),
-                    })),
+                    target: Some(target),
                 }
                 .into(),
                 unblocker,
@@ -215,20 +239,6 @@ impl WfContext {
             .into(),
         );
         cmd
-    }
-
-    /// Return a stream that produces values when the named signal is sent to this workflow
-    pub fn make_signal_channel(
-        &mut self,
-        signal_name: impl Into<String>,
-    ) -> impl Stream<Item = Payload> {
-        todo!();
-        futures::stream::empty()
-    }
-
-    /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
-    pub fn force_task_fail(&self, with: anyhow::Error) {
-        self.send(with.into())
     }
 
     fn send(&self, c: RustWfCmd) {
@@ -425,7 +435,7 @@ impl ChildWorkflow {
 }
 
 impl StartedChildWorkflow {
-    /// Wait on completion of a child workflow execution started with `start_child_workflow`.
+    /// Create a future that will wait until completion of this child workflow execution
     pub fn result(&self, cx: &WfContext) -> impl CancellableFuture<ChildWorkflowResult> {
         let (cmd, unblocker) = WFCommandFut::new(CancellableID::ChildWorkflow {
             child_seq: self.child_wf_cmd_seq_num,
@@ -439,5 +449,15 @@ impl StartedChildWorkflow {
             .into(),
         );
         cmd
+    }
+
+    pub fn signal(
+        &self,
+        cx: &mut WfContext,
+        signal_name: impl Into<String>,
+        payload: impl Into<Payload>,
+    ) -> impl CancellableFuture<SignalExternalWfResult> {
+        let target = sig_we::Target::ChildWorkflowSeq(self.child_wf_cmd_seq_num);
+        cx.send_signal_wf(signal_name, payload, target)
     }
 }

@@ -43,6 +43,7 @@ use std::{
     fmt::{Debug, Display},
 };
 
+use std::any::Any;
 #[cfg(test)]
 use transition_coverage::add_coverage;
 
@@ -157,6 +158,8 @@ trait TemporalStateMachine: CheckStateMachineInFinal + Send {
     /// Should return true if the command was cancelled before we sent it to the server. Always
     /// returns false for non-cancellable machines
     fn was_cancelled_before_sent_to_server(&self) -> bool;
+
+    fn as_any(&self) -> &dyn Any;
 }
 
 impl<SM> TemporalStateMachine for SM
@@ -167,7 +170,8 @@ where
         + Cancellable
         + OnEventWrapper
         + Clone
-        + Send,
+        + Send
+        + 'static,
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
     <SM as StateMachine>::Event: Display,
@@ -255,6 +259,10 @@ where
 
     fn was_cancelled_before_sent_to_server(&self) -> bool {
         self.was_cancelled_before_sent_to_server()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

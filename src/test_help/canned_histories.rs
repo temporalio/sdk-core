@@ -1368,21 +1368,7 @@ pub fn activity_double_resolve_repro() -> TestHistoryBuilder {
     t
 }
 
-///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
-///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
-///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
-///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
-///  6: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED
-///  7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-///  8: EVENT_TYPE_WORKFLOW_TASK_STARTED
-///  9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
-/// 10: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED
-/// 11: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-/// 12: EVENT_TYPE_WORKFLOW_TASK_STARTED
-/// 13: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
-/// 14: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
-pub fn single_child_workflow(child_wf_id: &str) -> TestHistoryBuilder {
+fn start_child_wf_preamble(child_wf_id: &str) -> (TestHistoryBuilder, i64, i64) {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
@@ -1413,6 +1399,25 @@ pub fn single_child_workflow(child_wf_id: &str) -> TestHistoryBuilder {
         ),
     );
     t.add_full_wf_task();
+    (t, initiated_event_id, started_event_id)
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
+///  6: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED
+///  7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 10: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED
+/// 11: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 12: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 13: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 14: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+pub fn single_child_workflow(child_wf_id: &str) -> TestHistoryBuilder {
+    let (mut t, initiated_event_id, started_event_id) = start_child_wf_preamble(child_wf_id);
     t.add(
         EventType::ChildWorkflowExecutionCompleted,
         history_event::Attributes::ChildWorkflowExecutionCompletedEventAttributes(
@@ -1444,42 +1449,49 @@ pub fn single_child_workflow(child_wf_id: &str) -> TestHistoryBuilder {
 /// 13: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
 /// 14: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
 pub fn single_child_workflow_fail(child_wf_id: &str) -> TestHistoryBuilder {
-    let mut t = TestHistoryBuilder::default();
-    t.add_by_type(EventType::WorkflowExecutionStarted);
-    t.add_full_wf_task();
-    let initiated_event_id = t.add_get_event_id(
-        EventType::StartChildWorkflowExecutionInitiated,
-        Some(
-            history_event::Attributes::StartChildWorkflowExecutionInitiatedEventAttributes(
-                StartChildWorkflowExecutionInitiatedEventAttributes {
-                    workflow_id: child_wf_id.to_owned(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
-    let started_event_id = t.add_get_event_id(
-        EventType::ChildWorkflowExecutionStarted,
-        Some(
-            history_event::Attributes::ChildWorkflowExecutionStartedEventAttributes(
-                ChildWorkflowExecutionStartedEventAttributes {
-                    initiated_event_id,
-                    workflow_execution: Some(WorkflowExecution {
-                        workflow_id: child_wf_id.to_owned(),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
-    t.add_full_wf_task();
+    let (mut t, initiated_event_id, started_event_id) = start_child_wf_preamble(child_wf_id);
     t.add(
         EventType::ChildWorkflowExecutionFailed,
         history_event::Attributes::ChildWorkflowExecutionFailedEventAttributes(
             ChildWorkflowExecutionFailedEventAttributes {
                 initiated_event_id,
                 started_event_id,
+                ..Default::default()
+            },
+        ),
+    );
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
+///  6: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED
+///  7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 10: EVENT_TYPE_SIGNAL_WORKFLOW_EXECUTION_INITIATED
+/// 11: EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED
+/// 12: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED
+/// 13: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 14: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 15: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 16: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+pub fn single_child_workflow_signaled(child_wf_id: &str, signame: &str) -> TestHistoryBuilder {
+    let (mut t, initiated_event_id, started_event_id) = start_child_wf_preamble(child_wf_id);
+    let id = t.add_signal_wf(signame, "fake_wid", "fake_rid");
+    t.add_external_signal_completed(id);
+    t.add(
+        EventType::ChildWorkflowExecutionCompleted,
+        history_event::Attributes::ChildWorkflowExecutionCompletedEventAttributes(
+            ChildWorkflowExecutionCompletedEventAttributes {
+                initiated_event_id,
+                started_event_id,
+                // todo add the result payload
                 ..Default::default()
             },
         ),
