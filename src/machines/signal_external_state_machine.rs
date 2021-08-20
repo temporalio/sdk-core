@@ -1,6 +1,8 @@
-use crate::machines::{EventInfo, MachineKind, NewMachineWithCommand, WFMachinesAdapter};
 use crate::{
-    machines::{workflow_machines::MachineResponse, Cancellable, OnEventWrapper, WFMachinesError},
+    machines::{
+        workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind,
+        NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    },
     protos::{
         coresdk::{
             common::{Payload, WorkflowExecution},

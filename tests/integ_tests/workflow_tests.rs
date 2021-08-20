@@ -106,7 +106,7 @@ async fn workflow_lru_cache_evictions() {
     let wf_type = "workflow_lru_cache_evictions";
     let mut starter = CoreWfStarter::new(wf_type);
     starter.max_cached_workflows(1);
-    let worker = starter.worker().await;
+    let mut worker = starter.worker().await;
     worker.register_wf(wf_type.to_string(), cache_evictions_wf);
 
     let n_workflows = 3;

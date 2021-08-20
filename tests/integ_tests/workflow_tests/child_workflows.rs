@@ -33,7 +33,7 @@ async fn parent_wf(mut ctx: WfContext) -> WorkflowResult<()> {
 #[tokio::test]
 async fn child_workflow_happy_path() {
     let mut starter = CoreWfStarter::new("child-workflows");
-    let worker = starter.worker().await;
+    let mut worker = starter.worker().await;
 
     worker.register_wf(PARENT_WF_TYPE.to_string(), parent_wf);
     worker.register_wf(CHILD_WF_TYPE.to_string(), child_wf);

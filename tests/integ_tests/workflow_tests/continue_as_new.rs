@@ -22,7 +22,7 @@ async fn continue_as_new_wf(mut ctx: WfContext) -> WorkflowResult<()> {
 async fn continue_as_new_happy_path() {
     let wf_name = "continue_as_new_happy_path";
     let mut starter = CoreWfStarter::new(wf_name);
-    let worker = starter.worker().await;
+    let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_string(), continue_as_new_wf);
 
     worker

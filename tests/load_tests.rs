@@ -21,7 +21,7 @@ async fn activity_load() {
         .max_cached_workflows(CONCURRENCY)
         .max_at_polls(10)
         .max_at(CONCURRENCY);
-    let worker = starter.worker().await;
+    let mut worker = starter.worker().await;
     let task_q = starter.get_task_queue().to_owned();
 
     let activity_id = "act-1";

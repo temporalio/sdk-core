@@ -11,25 +11,27 @@ pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, WfContext,
 };
 
-use crate::prototype_rust_sdk::workflow_context::PendingChildWorkflow;
 use crate::{
-    protos::coresdk::{
-        activity_result::ActivityResult,
-        child_workflow::ChildWorkflowResult,
-        common::Payload,
-        workflow_activation::{
-            resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
-            wf_activation_job::Variant, WfActivation, WfActivationJob,
+    protos::{
+        coresdk::{
+            activity_result::ActivityResult,
+            child_workflow::ChildWorkflowResult,
+            common::Payload,
+            workflow_activation::{
+                resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
+                wf_activation_job::Variant, WfActivation, WfActivationJob,
+            },
+            workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution},
         },
-        workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution},
+        temporal::api::failure::v1::Failure,
     },
-    protos::temporal::api::failure::v1::Failure,
+    prototype_rust_sdk::workflow_context::PendingChildWorkflow,
     Core,
 };
 use anyhow::{anyhow, bail};
-use dashmap::DashMap;
-use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt, TryFutureExt};
 use std::{
+    collections::HashMap,
     fmt::Debug,
     future::Future,
     sync::{
@@ -38,14 +40,11 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::watch;
-use tokio::{
-    sync::{
-        mpsc::{unbounded_channel, UnboundedSender},
-        oneshot,
-    },
-    task::JoinHandle,
+use tokio::sync::{
+    mpsc::{unbounded_channel, UnboundedSender},
+    oneshot, watch,
 };
+use tokio::task::JoinError;
 
 /// A worker that can poll for and respond to workflow tasks by using [WorkflowFunction]s
 pub struct TestRustWorker {
@@ -53,14 +52,14 @@ pub struct TestRustWorker {
     task_queue: String,
     task_timeout: Option<Duration>,
     /// Maps run id to the driver
-    workflows: DashMap<String, UnboundedSender<WfActivation>>,
+    workflows: HashMap<String, UnboundedSender<WfActivation>>,
     /// Maps workflow id to the function for executing workflow runs with that ID
-    workflow_fns: DashMap<String, WorkflowFunction>,
+    workflow_fns: HashMap<String, WorkflowFunction>,
     /// Number of live workflows
     incomplete_workflows: Arc<AtomicUsize>,
     /// Handles for each spawned workflow run are inserted here to be cleaned up when all runs
     /// are finished
-    join_handles: FuturesUnordered<JoinHandle<WorkflowResult<()>>>,
+    join_handles: FuturesUnordered<BoxFuture<'static, Result<WorkflowResult<()>, JoinError>>>,
 }
 type WfFunc = dyn Fn(WfContext) -> BoxFuture<'static, WorkflowResult<()>> + Send + Sync + 'static;
 
@@ -108,7 +107,7 @@ impl TestRustWorker {
 
     /// Register a Workflow function to invoke when Worker is requested to run `workflow_type`
     pub fn register_wf<F: Into<WorkflowFunction>>(
-        &self,
+        &mut self,
         workflow_type: impl Into<String>,
         wf_function: F,
     ) {
@@ -125,7 +124,7 @@ impl TestRustWorker {
 
     /// Drives all workflows until they have all finished, repeatedly polls server to fetch work
     /// for them.
-    pub async fn run_until_done(self) -> Result<(), anyhow::Error> {
+    pub async fn run_until_done(mut self) -> Result<(), anyhow::Error> {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let poller = async move {
             let (completions_tx, mut completions_rx) = unbounded_channel();
@@ -151,15 +150,20 @@ impl TestRustWorker {
                         completions_tx.clone(),
                     );
                     let mut shutdown_rx = shutdown_rx.clone();
+                    let iwclone = self.incomplete_workflows.clone();
                     let jh = tokio::spawn(async move {
                         tokio::select! {
                             r = wff => r,
                             _ = shutdown_rx.changed() => Ok(WfExitValue::Evicted)
                         }
+                    })
+                    .inspect_err(move |e| {
+                        iwclone.fetch_sub(1, Ordering::SeqCst);
+                        error!("Workflow future errored out! {:?}", e)
                     });
                     self.workflows
                         .insert(activation.run_id.clone(), activations);
-                    self.join_handles.push(jh);
+                    self.join_handles.push(jh.boxed());
                 }
 
                 // The activation is expected to apply to some workflow we know about. Use it to
@@ -369,7 +373,7 @@ mod tests {
         let wf_type = DEFAULT_WORKFLOW_TYPE;
         let t = canned_histories::single_timer("1");
         let core = build_fake_core(wf_id, t, [2]);
-        let worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
+        let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
         worker.register_wf(wf_type.to_owned(), timer_wf);
         worker

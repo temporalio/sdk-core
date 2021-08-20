@@ -24,7 +24,7 @@ pub async fn changes_wf(mut ctx: WfContext) -> WorkflowResult<()> {
 async fn writes_change_markers() {
     let wf_name = "writes_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
-    let worker = starter.worker().await;
+    let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), changes_wf);
 
     worker
@@ -60,7 +60,7 @@ pub async fn no_change_then_change_wf(mut ctx: WfContext) -> WorkflowResult<()> 
 async fn can_add_change_markers() {
     let wf_name = "can_add_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
-    let worker = starter.worker().await;
+    let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), no_change_then_change_wf);
 
     worker
@@ -86,7 +86,7 @@ pub async fn replay_with_change_marker_wf(mut ctx: WfContext) -> WorkflowResult<
 async fn replaying_with_patch_marker() {
     let wf_name = "replaying_with_patch_marker";
     let mut starter = CoreWfStarter::new(wf_name);
-    let worker = starter.worker().await;
+    let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), replay_with_change_marker_wf);
 
     worker
