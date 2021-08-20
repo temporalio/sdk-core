@@ -80,31 +80,40 @@ impl TestRustWorker {
 
     /// Create a workflow, asking the server to start it with the provided workflow ID and using the
     /// provided workflow function.
+    ///
     /// Increments the expected Workflow run count.
+    ///
+    /// Returns the run id of the started workflow
     pub async fn submit_wf(
         &self,
-        workflow_id: String,
-        workflow_type: String,
+        workflow_id: impl Into<String>,
+        workflow_type: impl Into<String>,
         input: Vec<Payload>,
-    ) -> Result<(), tonic::Status> {
-        self.core
+    ) -> Result<String, tonic::Status> {
+        let res = self
+            .core
             .server_gateway()
             .start_workflow(
                 input,
                 self.task_queue.clone(),
-                workflow_id,
-                workflow_type,
+                workflow_id.into(),
+                workflow_type.into(),
                 self.task_timeout,
             )
             .await?;
 
         self.incr_expected_run_count(1);
-        Ok(())
+        Ok(res.run_id)
     }
 
     /// Register a Workflow function to invoke when Worker is requested to run `workflow_type`
-    pub fn register_wf<F: Into<WorkflowFunction>>(&self, workflow_type: String, wf_function: F) {
-        self.workflow_fns.insert(workflow_type, wf_function.into());
+    pub fn register_wf<F: Into<WorkflowFunction>>(
+        &self,
+        workflow_type: impl Into<String>,
+        wf_function: F,
+    ) {
+        self.workflow_fns
+            .insert(workflow_type.into(), wf_function.into());
     }
 
     /// Increment the expected Workflow run count on this Worker. The Worker tracks the run count
@@ -283,6 +292,7 @@ enum RustWfCmd {
     NewCmd(CommandCreateRequest),
     NewNonblockingCmd(workflow_command::Variant),
     SubscribeChildWorkflowCompletion(CommandSubscribeChildWorkflowCompletion),
+    SubscribeSignal(String, UnboundedSender<Vec<Payload>>),
 }
 
 struct CommandCreateRequest {

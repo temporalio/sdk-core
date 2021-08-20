@@ -1,12 +1,13 @@
-use crate::machines::HAS_CHANGE_MARKER_NAME;
-use crate::protos::coresdk::common::build_has_change_marker_details;
 use crate::{
-    protos::temporal::api::common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
-    protos::temporal::api::failure::v1::Failure,
-    protos::temporal::api::history::v1::WorkflowExecutionSignaledEventAttributes,
-    protos::temporal::api::{
-        enums::v1::{EventType, WorkflowTaskFailedCause},
-        history::v1::{history_event::Attributes, *},
+    machines::HAS_CHANGE_MARKER_NAME,
+    protos::{
+        coresdk::common::build_has_change_marker_details,
+        temporal::api::{
+            common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
+            enums::v1::{EventType, WorkflowTaskFailedCause},
+            failure::v1::Failure,
+            history::v1::{history_event::Attributes, *},
+        },
     },
     test_help::{
         history_info::{HistoryInfo, HistoryInfoError},
@@ -203,7 +204,6 @@ impl TestHistoryBuilder {
                 run_id: run_id.into(),
             }),
             signal_name: signal_name.into(),
-            // TODO: Maybe needed to unblock right signal request?
             control: "".to_string(),
             ..Default::default()
         };

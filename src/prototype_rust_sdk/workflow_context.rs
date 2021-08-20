@@ -23,7 +23,8 @@ use std::{
     collections::HashMap, future::Future, marker::PhantomData, pin::Pin, sync::Arc, task::Poll,
     time::Duration,
 };
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{mpsc, oneshot, watch};
+use tokio_stream::wrappers::UnboundedReceiverStream;
 
 /// Used within workflows to issue commands, get info, etc.
 pub struct WfContext {
@@ -205,10 +206,11 @@ impl WfContext {
     /// Return a stream that produces values when the named signal is sent to this workflow
     pub fn make_signal_channel(
         &mut self,
-        _signal_name: impl Into<String>,
-    ) -> impl Stream<Item = Payload> {
-        todo!();
-        futures::stream::empty()
+        signal_name: impl Into<String>,
+    ) -> impl Stream<Item = Vec<Payload>> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.send(RustWfCmd::SubscribeSignal(signal_name.into(), tx));
+        UnboundedReceiverStream::new(rx)
     }
 
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)

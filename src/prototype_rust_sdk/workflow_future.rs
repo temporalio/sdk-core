@@ -62,6 +62,7 @@ impl WorkflowFunction {
                 command_status: Default::default(),
                 cancel_sender: cancel_tx,
                 child_workflow_starts: Default::default(),
+                sig_chans: Default::default(),
             },
             tx,
         )
@@ -91,6 +92,8 @@ pub struct WorkflowFuture {
     ctx_shared: Arc<RwLock<WfContextSharedData>>,
     /// Mapping of sequence number to a StartChildWorkflowExecution request
     child_workflow_starts: HashMap<u32, StartChildWorkflowExecution>,
+    /// Maps signal IDs to channels to send down when they are signaled
+    sig_chans: HashMap<String, UnboundedSender<Vec<Payload>>>,
 }
 
 impl WorkflowFuture {
@@ -165,8 +168,17 @@ impl Future for WorkflowFuture {
                                 .send(true)
                                 .expect("Cancel rx not dropped");
                         }
-                        Variant::SignalWorkflow(_) => {
-                            todo!()
+                        Variant::SignalWorkflow(sig) => {
+                            if let Some(chan) = self.sig_chans.get(&sig.signal_name) {
+                                chan.send(sig.input)
+                                    .expect("Signal channel must exist if signal is registered");
+                            } else {
+                                return Err(anyhow!(
+                                    "Received unknown signal: {}!",
+                                    sig.signal_name
+                                ))
+                                .into();
+                            }
                         }
                         Variant::NotifyHasPatch(NotifyHasPatch { patch_id }) => {
                             self.ctx_shared.write().changes.insert(patch_id, true);
@@ -289,6 +301,9 @@ impl Future for WorkflowFuture {
                                 unblocker: sub.unblocker,
                             },
                         );
+                    }
+                    RustWfCmd::SubscribeSignal(signame, chan) => {
+                        self.sig_chans.insert(signame, chan);
                     }
                     RustWfCmd::ForceWFTFailure(err) => {
                         self.outgoing_completions

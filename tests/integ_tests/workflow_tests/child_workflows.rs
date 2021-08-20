@@ -1,8 +1,6 @@
 use anyhow::anyhow;
 use temporal_sdk_core::{
     protos::coresdk::child_workflow::{child_workflow_result, Success},
-    protos::coresdk::workflow_activation,
-    protos::coresdk::workflow_activation::resolve_child_workflow_execution_start::Status as StartStatus,
     prototype_rust_sdk::{ChildWorkflowOptions, WfContext, WorkflowResult},
 };
 use test_utils::CoreWfStarter;
