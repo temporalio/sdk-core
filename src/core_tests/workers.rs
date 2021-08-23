@@ -3,8 +3,8 @@ use crate::{
     protos::coresdk::{
         workflow_activation::wf_activation_job,
         workflow_commands::{
-            ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity,
-            ScheduleActivity, StartTimer,
+            workflow_command, ActivityCancellationType, CompleteWorkflowExecution,
+            RequestCancelActivity, ScheduleActivity, StartTimer,
         },
         workflow_completion::WfActivationCompletion,
     },
@@ -18,6 +18,7 @@ use crate::{
 };
 use futures::FutureExt;
 use rstest::{fixture, rstest};
+use std::time::Duration;
 use tokio::sync::watch;
 
 #[tokio::test]
@@ -146,15 +147,33 @@ async fn after_shutdown_of_worker_get_shutdown_err() {
     let core = build_fake_core("fake_wf_id", t, &[1]);
     let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
+    let run_id = res.run_id;
+
     tokio::join!(core.shutdown_worker(TEST_Q), async {
+        // Need to complete task for shutdown to finish
+        core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+            TEST_Q,
+            run_id.clone(),
+            workflow_command::Variant::StartTimer(StartTimer {
+                seq: 1,
+                start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+            }),
+        ))
+        .await
+        .unwrap();
+        // Since non-sticky, one more activation for eviction
+        let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        assert_matches!(
+            res.jobs[0].variant,
+            Some(wf_activation_job::Variant::RemoveFromCache(true))
+        );
+        core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, run_id.clone()))
+            .await
+            .unwrap();
         assert_matches!(
             core.poll_workflow_activation(TEST_Q).await.unwrap_err(),
             PollWfError::ShutDown
         );
-        // Need to complete task for shutdown to finish
-        core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, res.run_id))
-            .await
-            .unwrap();
     });
 }
 

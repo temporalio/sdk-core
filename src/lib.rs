@@ -31,7 +31,7 @@ mod test_help;
 
 pub use core_tracing::tracing_init;
 pub use pollers::{
-    ClientTlsConfig, ServerGateway, ServerGatewayApis, ServerGatewayOptions, TlsConfig,
+    ClientTlsConfig, RetryConfig, ServerGateway, ServerGatewayApis, ServerGatewayOptions, TlsConfig,
 };
 pub use protosext::IntoCompletion;
 pub use url::Url;

@@ -67,6 +67,7 @@ impl WorkerActivityTasks {
 
     pub(crate) fn notify_shutdown(&self) {
         self.poller.notify_shutdown();
+        self.heartbeat_manager.notify_shutdown();
     }
 
     pub(crate) async fn shutdown(self) {
