@@ -31,7 +31,7 @@ fsm! {
 
     SignalExternalCommandCreated --(CommandSignalExternalWorkflowExecution)
         --> SignalExternalCommandCreated;
-    SignalExternalCommandCreated --(Cancel, on_cancel) --> Canceled;
+    SignalExternalCommandCreated --(Cancel, on_cancel) --> Cancelled;
     SignalExternalCommandCreated
       --(SignalExternalWorkflowExecutionInitiated, on_signal_external_workflow_execution_initiated)
         --> SignalExternalCommandRecorded;
@@ -94,7 +94,7 @@ pub(super) fn new_external_signal(
 }
 
 #[derive(Default, Clone)]
-pub(super) struct Canceled {}
+pub(super) struct Cancelled {}
 
 #[derive(Default, Clone)]
 pub(super) struct Created {}
@@ -114,7 +114,7 @@ pub(super) struct Failed {}
 pub(super) struct SignalExternalCommandCreated {}
 
 impl SignalExternalCommandCreated {
-    pub(super) fn on_cancel(self) -> SignalExternalMachineTransition<Canceled> {
+    pub(super) fn on_cancel(self) -> SignalExternalMachineTransition<Cancelled> {
         TransitionResult::default()
     }
     pub(super) fn on_signal_external_workflow_execution_initiated(
@@ -249,9 +249,9 @@ impl Cancellable for SignalExternalMachine {
     }
 
     fn was_cancelled_before_sent_to_server(&self) -> bool {
-        // We are only ever in the canceled state if canceled before sent to server, there is no
+        // We are only ever in the cancelled state if cancelled before sent to server, there is no
         // after sent cancellation here.
-        matches!(self.state, SignalExternalMachineState::Canceled(_))
+        matches!(self.state, SignalExternalMachineState::Cancelled(_))
     }
 }
 

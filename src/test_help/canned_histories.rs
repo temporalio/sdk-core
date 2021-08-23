@@ -1368,6 +1368,15 @@ pub fn activity_double_resolve_repro() -> TestHistoryBuilder {
     t
 }
 
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
+///  6: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED
+///  7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
 fn start_child_wf_preamble(child_wf_id: &str) -> (TestHistoryBuilder, i64, i64) {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);

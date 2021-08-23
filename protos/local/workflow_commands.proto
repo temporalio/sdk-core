@@ -195,7 +195,8 @@ message RequestCancelExternalWorkflowExecution {
     oneof target {
         // A specific workflow instance
         common.NamespacedWorkflowExecution workflow_execution = 2;
-        // The desired target must be a child of the issuing workflow, and this is its command id
+        // The desired target must be a child of the issuing workflow, and this is its correlation
+        // sequence
         uint32 child_workflow_seq = 3;
     }
 }

@@ -247,7 +247,7 @@ impl Started {
             }
             _ => ChildWorkflowMachineTransition::ok(
                 vec![ChildWorkflowCommand::Cancel(Failure {
-                    message: "Child Workflow execution cancelled before scheduled".to_owned(),
+                    message: "Child Workflow execution cancelled".to_owned(),
                     cause: Some(Box::new(Failure {
                         failure_info: Some(FailureInfo::CanceledFailureInfo(
                             failure::CanceledFailureInfo {
