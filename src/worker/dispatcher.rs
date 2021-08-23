@@ -49,7 +49,7 @@ impl WorkerDispatcher {
         info!("Shutting down worker on queue {}", task_queue);
         let mut maybe_worker = None;
         if let Some(w) = self.workers.load().get(task_queue) {
-            w.notify_shutdown().await;
+            w.shutdown().await;
             self.workers.rcu(|map| {
                 let mut map = HashMap::clone(map);
                 if maybe_worker.is_none() {
@@ -65,9 +65,7 @@ impl WorkerDispatcher {
 
     pub async fn shutdown_all(&self) {
         // First notify all workers and allow tasks to drain
-        for w in self.workers.load().values() {
-            w.notify_shutdown().await;
-        }
+        join_all(self.workers.load().values().map(|w| w.shutdown())).await;
 
         let mut all_workers = HashMap::new();
         self.workers.rcu(|map| {
@@ -101,7 +99,7 @@ impl WorkerRefCt {
             self.notify.notified().await;
             match Arc::try_unwrap(arc) {
                 Ok(w) => {
-                    w.shutdown_complete().await;
+                    w.finalize_shutdown().await;
                     return;
                 }
                 Err(a) => {

@@ -161,9 +161,9 @@ impl Worker {
         }
     }
 
-    /// Tell the worker to begin the shutdown process. Can be used before [shutdown_complete] if
-    /// polling should be ceased before it is possible to consume the worker instance.
-    pub(crate) async fn notify_shutdown(&self) {
+    /// Will shutdown the worker. Does not resolve until all outstanding workflow tasks have been
+    /// completed
+    pub(crate) async fn shutdown(&self) {
         let _ = self.shutdown_sender.send(true);
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.notify_shutdown();
@@ -183,8 +183,8 @@ impl Worker {
         }
     }
 
-    /// Resolves when shutdown of the worker is complete
-    pub(crate) async fn shutdown_complete(self) {
+    /// Finish shutting down by consuming the background pollers and freeing all resources
+    pub(crate) async fn finalize_shutdown(self) {
         self.wf_task_poll_buffer.shutdown_box().await;
         if let Some(b) = self.at_task_mgr {
             b.shutdown().await;
