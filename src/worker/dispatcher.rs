@@ -123,11 +123,15 @@ impl Deref for WorkerRefCt {
 
 impl Drop for WorkerRefCt {
     fn drop(&mut self) {
-        if let Some(arc) = &self.inner {
-            // We wait until 2 rather than 1 because we ourselves still have an Arc
-            if Arc::strong_count(arc) == 2 {
-                self.notify.notify_one()
+        match &self.inner {
+            // Notify once destroy has been requested
+            None => self.notify.notify_one(),
+            Some(arc) => {
+                // We wait until 2 rather than 1 because we ourselves still have an Arc
+                if Arc::strong_count(arc) == 2 {
+                    self.notify.notify_one()
+                }
             }
-        }
+        };
     }
 }

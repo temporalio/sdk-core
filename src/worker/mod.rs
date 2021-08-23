@@ -5,6 +5,7 @@ mod dispatcher;
 pub use crate::worker::config::{WorkerConfig, WorkerConfigBuilder};
 pub use dispatcher::WorkerDispatcher;
 
+use crate::errors::WorkflowUpdateError;
 use crate::{
     errors::CompleteWfError,
     machines::EmptyWorkflowCommandErr,
@@ -29,7 +30,6 @@ use crate::{
     },
     protosext::{ValidPollWFTQResponse, WorkflowTaskCompletion},
     task_token::TaskToken,
-    workflow::workflow_tasks::WfActivationUpdate,
     workflow::{
         workflow_tasks::{
             ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
@@ -42,10 +42,7 @@ use crate::{
 use activities::WorkerActivityTasks;
 use futures::{Future, TryFutureExt};
 use std::{convert::TryInto, sync::Arc};
-use tokio::sync::{
-    mpsc::{unbounded_channel, UnboundedReceiver},
-    watch, Mutex, Semaphore,
-};
+use tokio::sync::{watch, Mutex, Semaphore};
 
 /// A worker polls on a certain task queue
 pub struct Worker {
@@ -67,7 +64,11 @@ pub struct Worker {
     workflows_semaphore: Semaphore,
     /// Used to wake blocked workflow task polling when there is some change to workflow activations
     /// that should cause us to restart the loop
-    workflow_activations_update: Mutex<UnboundedReceiver<WfActivationUpdate>>,
+    pending_activations_notification_receiver: Mutex<watch::Receiver<bool>>,
+    /// Watched during shutdown to wait for all WFTs to complete
+    wfts_drained: watch::Receiver<bool>,
+    /// notifies when all WFTs have been drained after shutdown
+    wfts_drained_sender: watch::Sender<bool>,
     /// Has shutdown been called?
     shutdown_requested: watch::Receiver<bool>,
     shutdown_sender: watch::Sender<bool>,
@@ -139,13 +140,14 @@ impl Worker {
                 max_cached_workflows: config.max_cached_workflows,
             }
         };
-        let (wau_tx, wau_rx) = unbounded_channel();
+        let (pan_tx, pan_rx) = watch::channel(true);
+        let (wftd_tx, wftd_rx) = watch::channel(false);
         let (shut_tx, shut_rx) = watch::channel(false);
         Self {
             server_gateway: sg.clone(),
             sticky_name: sticky_queue_name,
             wf_task_poll_buffer: wft_poller,
-            wft_manager: WorkflowTaskManager::new(wau_tx, cache_policy),
+            wft_manager: WorkflowTaskManager::new(pan_tx, cache_policy),
             at_task_mgr: act_poller.map(|ap| {
                 WorkerActivityTasks::new(config.max_outstanding_activities, ap, sg.gw.clone())
             }),
@@ -153,7 +155,9 @@ impl Worker {
             config,
             shutdown_requested: shut_rx,
             shutdown_sender: shut_tx,
-            workflow_activations_update: Mutex::new(wau_rx),
+            wfts_drained: wftd_rx,
+            wfts_drained_sender: wftd_tx,
+            pending_activations_notification_receiver: Mutex::new(pan_rx),
         }
     }
 
@@ -161,18 +165,21 @@ impl Worker {
     /// polling should be ceased before it is possible to consume the worker instance.
     pub(crate) async fn notify_shutdown(&self) {
         let _ = self.shutdown_sender.send(true);
-        self.wf_task_poll_buffer.notify_shutdown();
-        if let Some(b) = self.at_task_mgr.as_ref() {
-            b.notify_shutdown();
+        if let Some(atm) = self.at_task_mgr.as_ref() {
+            atm.notify_shutdown();
         }
-        loop {
-            // Wait until all outstanding workflow tasks have been completed before shutting down
-            if self.outstanding_workflow_tasks() != 0 {
-                let mut waulock = self.workflow_activations_update.lock().await;
-                let _ = waulock.recv().await;
-                continue;
-            }
-            break;
+        self.wf_task_poll_buffer.notify_shutdown();
+        // Notify in case shutdown was requested while there were no more outstanding WFTs.
+        // This is required because the only other place where we notify wfts_drained is on
+        // activation completion and activation polling checks for wfts_drained.
+        self.maybe_notify_wtfs_drained();
+        // wait until all outstanding workflow tasks have been completed before shutting down
+        if !*self.wfts_drained.borrow() {
+            self.wfts_drained
+                .clone()
+                .changed()
+                .await
+                .expect("wfts_drained should not be dropped");
         }
     }
 
@@ -257,33 +264,22 @@ impl Worker {
                     _ => continue,
                 }
             }
+            let mut pending_activations_notification =
+                self.pending_activations_notification_receiver.lock().await;
 
-            if *self.shutdown_requested.borrow() {
-                return Err(PollWfError::ShutDown);
-            }
-
-            let mut waulock = self.workflow_activations_update.lock().await;
-            let activation_update_fut = waulock.recv();
-            let poll_result_future =
-                Self::workflow_poll(&self.workflows_semaphore, &self.wf_task_poll_buffer)
-                    .map_err(Into::into);
             let selected_f = tokio::select! {
                 biased;
 
                 // If an activation is completed while we are waiting on polling, we need to restart
-                // the loop right away to provide any potential new pending activation
-                update = activation_update_fut => {
-                    self.maybe_mark_task_done(update);
-                    continue;
-                }
-                r = poll_result_future => r,
-                _ = self.shutdown_notifier() => {
-                    return Err(PollWfError::ShutDown);
-                }
-            };
+                // the loop right away to provide any potential new pending activation.
+                // Continue here means that we unnecessarily add another permit to the poll buffer,
+                // this will go away when polling is done in the background.
+                _ = pending_activations_notification.changed() => continue,
+                r = self.workflow_poll_or_wfts_drained() => r,
+            }?;
 
             match selected_f {
-                Ok(Some(work)) => match self.apply_server_work(work).await? {
+                Some(work) => match self.apply_server_work(work).await? {
                     NewWfTaskOutcome::IssueActivation(a) => return Ok(a),
                     NewWfTaskOutcome::TaskBuffered => {
                         // If the task was buffered, it's not actually outstanding, so we can
@@ -292,12 +288,9 @@ impl Worker {
                     }
                     _ => {}
                 },
-                Ok(None) => {
+                None => {
                     debug!("Poll wft timeout");
                 }
-                // Drain pending activations in case of shutdown.
-                Err(PollWfError::ShutDown) => {}
-                Err(e) => return Err(e),
             }
 
             // Make sure that polling looping doesn't hog up the whole scheduler. Realistically
@@ -324,9 +317,18 @@ impl Worker {
                 completion: None,
             }),
         };
-
+        self.after_wft_report(&completion.run_id)?;
         self.wft_manager.on_activation_done(&completion.run_id);
+        self.maybe_notify_wtfs_drained();
         r
+    }
+
+    fn maybe_notify_wtfs_drained(&self) {
+        if *self.shutdown_requested.borrow() && self.outstanding_workflow_tasks() == 0 {
+            self.wfts_drained_sender
+                .send(true)
+                .expect("wfts_drained sender shouldn't be dropped");
+        }
     }
 
     /// Tell the worker a workflow task has completed, for tracking max outstanding WFTs
@@ -336,6 +338,36 @@ impl Worker {
 
     pub(crate) fn request_wf_eviction(&self, run_id: &str) {
         self.wft_manager.request_eviction(run_id);
+    }
+
+    /// Resolves with WFT poll response or `PollWfError::ShutDown` if WFTs have been drained
+    async fn workflow_poll_or_wfts_drained(
+        &self,
+    ) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
+        loop {
+            if *self.wfts_drained.borrow() {
+                debug!("Returning shutdown error");
+                return Err(PollWfError::ShutDown);
+            } else if *self.shutdown_requested.borrow() {
+                self.wfts_drained
+                    .clone()
+                    .changed()
+                    .await
+                    .expect("wfts_drained should not be dropped");
+            } else {
+                let mut shutdown_requested = self.shutdown_requested.clone();
+                tokio::select! {
+                    biased;
+
+                    r = Self::workflow_poll(&self.workflows_semaphore, &self.wf_task_poll_buffer)
+                        .map_err(Into::into) => match r {
+                         Err(PollWfError::ShutDown) => {},
+                        _ => return r,
+                    },
+                    _ = shutdown_requested.changed() => {},
+                }
+            };
+        }
     }
 
     /// Wait until not at the outstanding workflow task limit, and then poll this worker's task
@@ -472,7 +504,6 @@ impl Worker {
             None => {}
         }
 
-        self.wft_manager.after_wft_report(run_id)?;
         Ok(())
     }
 
@@ -482,7 +513,7 @@ impl Worker {
         run_id: &str,
         failure: workflow_completion::Failure,
     ) -> Result<(), CompleteWfError> {
-        match self.wft_manager.failed_activation(run_id)? {
+        match self.wft_manager.failed_activation(run_id) {
             FailedActivationOutcome::Report(tt) => {
                 self.handle_wft_complete_errs(run_id, || async {
                     self.server_gateway
@@ -502,6 +533,14 @@ impl Worker {
             }
             _ => {}
         }
+
+        Ok(())
+    }
+
+    fn after_wft_report(&self, run_id: &str) -> Result<(), WorkflowUpdateError> {
+        if self.wft_manager.after_wft_report(run_id)? {
+            self.return_workflow_task_permit();
+        };
         Ok(())
     }
 
@@ -555,13 +594,6 @@ impl Worker {
                     self.config.sticky_queue_schedule_to_start_timeout.into(),
                 ),
             })
-    }
-
-    fn maybe_mark_task_done(&self, update: Option<WfActivationUpdate>) {
-        // If the update indicates a task completed, free a slot in the worker
-        if let Some(WfActivationUpdate::WorkflowTaskComplete) = update {
-            self.return_workflow_task_permit();
-        }
     }
 
     /// A future that resolves to true the shutdown flag has been set to true, false is simply

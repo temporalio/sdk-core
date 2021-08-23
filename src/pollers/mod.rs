@@ -6,7 +6,8 @@ mod retry;
 pub use gateway::{MockManualGateway, MockServerGatewayApis};
 
 pub use gateway::{
-    ClientTlsConfig, GatewayRef, ServerGateway, ServerGatewayApis, ServerGatewayOptions, TlsConfig,
+    ClientTlsConfig, GatewayRef, RetryConfig, ServerGateway, ServerGatewayApis,
+    ServerGatewayOptions, TlsConfig,
 };
 pub use poll_buffer::{
     new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,

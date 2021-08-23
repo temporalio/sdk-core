@@ -92,11 +92,15 @@ impl ActivityHeartbeatManager {
         self.incoming_cancels.lock().await.recv().await
     }
 
+    pub(super) fn notify_shutdown(&self) {
+        let _ = self.shutting_down.send(true);
+    }
+
     // TODO: Can own self now!
     /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all heartbeat
     /// processors to terminate gracefully.
     pub(super) async fn shutdown(&self) {
-        let _ = self.shutting_down.send(true);
+        self.notify_shutdown();
         let mut handle = self.join_handle.lock().await;
         if let Some(h) = handle.take() {
             h.await.expect("shutdown should exit cleanly");
