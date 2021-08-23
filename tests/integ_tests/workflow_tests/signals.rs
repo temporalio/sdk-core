@@ -1,6 +1,5 @@
 use futures::StreamExt;
 use temporal_sdk_core::prototype_rust_sdk::{ChildWorkflowOptions, WfContext, WorkflowResult};
-use temporal_sdk_core::tracing_init;
 use test_utils::CoreWfStarter;
 use uuid::Uuid;
 
@@ -49,7 +48,6 @@ async fn signal_receiver(mut ctx: WfContext) -> WorkflowResult<()> {
 
 #[tokio::test]
 async fn sends_signal_to_other_wf() {
-    tracing_init();
     let mut starter = CoreWfStarter::new("sends_signal_to_other_wf");
     let mut worker = starter.worker().await;
     worker.register_wf("sender", signal_sender);

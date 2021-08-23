@@ -29,7 +29,7 @@ use crate::{
     Core,
 };
 use anyhow::{anyhow, bail};
-use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt, TryFutureExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -150,16 +150,11 @@ impl TestRustWorker {
                         completions_tx.clone(),
                     );
                     let mut shutdown_rx = shutdown_rx.clone();
-                    let iwclone = self.incomplete_workflows.clone();
                     let jh = tokio::spawn(async move {
                         tokio::select! {
                             r = wff => r,
                             _ = shutdown_rx.changed() => Ok(WfExitValue::Evicted)
                         }
-                    })
-                    .inspect_err(move |e| {
-                        iwclone.fetch_sub(1, Ordering::SeqCst);
-                        error!("Workflow future errored out! {:?}", e)
                     });
                     self.workflows
                         .insert(activation.run_id.clone(), activations);
