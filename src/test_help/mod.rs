@@ -75,7 +75,7 @@ pub(crate) fn build_fake_core(
     wf_id: &str,
     t: TestHistoryBuilder,
     response_batches: impl IntoIterator<Item = impl Into<ResponseType>>,
-) -> CoreSDK<impl ServerGatewayApis + Send + Sync + 'static> {
+) -> CoreSDK {
     let response_batches = response_batches.into_iter().map(Into::into).collect();
     let mock_gateway = build_multihist_mock_sg(
         vec![FakeWfResponses {
@@ -90,7 +90,7 @@ pub(crate) fn build_fake_core(
     mock_core(mock_gateway)
 }
 
-pub(crate) fn mock_core<SG>(mocks: MocksHolder<SG>) -> CoreSDK<SG>
+pub(crate) fn mock_core<SG>(mocks: MocksHolder<SG>) -> CoreSDK
 where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
@@ -100,7 +100,7 @@ where
 pub(crate) fn mock_core_with_opts<SG>(
     mocks: MocksHolder<SG>,
     opts: CoreInitOptionsBuilder,
-) -> CoreSDK<SG>
+) -> CoreSDK
 where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
@@ -109,12 +109,10 @@ where
     core
 }
 
-pub(crate) fn register_mock_workers<SG>(
-    core: &mut CoreSDK<SG>,
+pub(crate) fn register_mock_workers(
+    core: &mut CoreSDK,
     mocks: impl IntoIterator<Item = MockWorker>,
-) where
-    SG: ServerGatewayApis + Send + Sync + 'static,
-{
+) {
     for worker in mocks {
         core.reg_worker_sync(worker);
     }
@@ -123,7 +121,7 @@ pub(crate) fn register_mock_workers<SG>(
 pub(crate) fn mock_core_with_opts_no_workers<SG>(
     sg: SG,
     mut opts: CoreInitOptionsBuilder,
-) -> CoreSDK<SG>
+) -> CoreSDK
 where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
@@ -509,7 +507,7 @@ type AsserterWithReply<'a> = (&'a dyn Fn(&WfActivation), wf_activation_completio
 /// since they clearly can't be returned every time we replay the workflow, or it could never
 /// proceed
 pub(crate) async fn poll_and_reply<'a>(
-    core: &'a CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
+    core: &'a CoreSDK,
     eviction_mode: WorkflowCachingPolicy,
     expect_and_reply: &'a [AsserterWithReply<'a>],
 ) {
@@ -517,7 +515,7 @@ pub(crate) async fn poll_and_reply<'a>(
 }
 
 pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
-    core: &'a CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
+    core: &'a CoreSDK,
     outstanding_map: Option<Arc<RwLock<BiMap<String, TaskToken>>>>,
     eviction_mode: WorkflowCachingPolicy,
     expect_and_reply: &'a [AsserterWithReply<'a>],

@@ -128,7 +128,7 @@ struct ActivityHbState {
 impl ActivityHeartbeatManager {
     /// Creates a new instance of an activity heartbeat manager and returns a handle to the user,
     /// which allows to send new heartbeats and initiate the shutdown.
-    pub fn new(sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>) -> Self {
+    pub fn new(sg: Arc<impl ServerGatewayApis + Send + Sync + 'static + ?Sized>) -> Self {
         let (heartbeat_tx, heartbeat_rx) = unbounded_channel();
         let (cancels_tx, cancels_rx) = unbounded_channel();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);

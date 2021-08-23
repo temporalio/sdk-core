@@ -60,15 +60,6 @@ fsm! {
     Started --(ChildWorkflowExecutionTerminated, shared on_child_workflow_execution_terminated) --> Terminated;
 }
 
-impl ChildWorkflowMachine {
-    pub(crate) fn workflow_id(&self) -> &str {
-        &self.shared_state.workflow_id
-    }
-    pub(crate) fn namespace(&self) -> &str {
-        &self.shared_state.namespace
-    }
-}
-
 pub struct ChildWorkflowExecutionStartedEvent {
     workflow_execution: WorkflowExecution,
     started_event_id: i64,

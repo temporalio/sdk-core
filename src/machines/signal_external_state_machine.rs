@@ -5,7 +5,7 @@ use crate::{
     },
     protos::{
         coresdk::{
-            common::{Payload, WorkflowExecution},
+            common::{NamespacedWorkflowExecution, Payload},
             workflow_activation::ResolveSignalExternalWorkflow,
             IntoPayloadsExt,
         },
@@ -58,7 +58,7 @@ pub(super) enum SignalExternalCommand {
 
 pub(super) fn new_external_signal(
     seq: u32,
-    workflow_execution: WorkflowExecution,
+    workflow_execution: NamespacedWorkflowExecution,
     signal_name: String,
     payloads: impl IntoIterator<Item = Payload>,
     only_child: bool,

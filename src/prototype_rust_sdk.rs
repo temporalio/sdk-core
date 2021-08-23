@@ -215,8 +215,15 @@ pub struct TimerResult;
 /// Result of awaiting on sending a signal to an external workflow
 pub type SignalExternalWfResult = Result<(), Failure>;
 
-impl From<UnblockEvent> for TimerResult {
-    fn from(ue: UnblockEvent) -> Self {
+trait Unblockable {
+    type OtherDat;
+
+    fn unblock(ue: UnblockEvent, od: &Self::OtherDat) -> Self;
+}
+
+impl Unblockable for TimerResult {
+    type OtherDat = ();
+    fn unblock(ue: UnblockEvent, _: &Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::Timer(_) => TimerResult,
             _ => panic!("Invalid unblock event for timer"),
@@ -224,8 +231,9 @@ impl From<UnblockEvent> for TimerResult {
     }
 }
 
-impl From<UnblockEvent> for ActivityResult {
-    fn from(ue: UnblockEvent) -> Self {
+impl Unblockable for ActivityResult {
+    type OtherDat = ();
+    fn unblock(ue: UnblockEvent, _: &Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::Activity(_, result) => *result,
             _ => panic!("Invalid unblock event for activity"),
@@ -233,20 +241,24 @@ impl From<UnblockEvent> for ActivityResult {
     }
 }
 
-impl From<UnblockEvent> for PendingChildWorkflow {
-    fn from(ue: UnblockEvent) -> Self {
+impl Unblockable for PendingChildWorkflow {
+    // Other data here is workflow id
+    type OtherDat = String;
+    fn unblock(ue: UnblockEvent, od: &Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::WorkflowStart(seq, result) => PendingChildWorkflow {
                 child_wf_cmd_seq_num: seq,
                 status: *result,
+                wfid: od.clone(),
             },
             _ => panic!("Invalid unblock event for child workflow start"),
         }
     }
 }
 
-impl From<UnblockEvent> for ChildWorkflowResult {
-    fn from(ue: UnblockEvent) -> Self {
+impl Unblockable for ChildWorkflowResult {
+    type OtherDat = ();
+    fn unblock(ue: UnblockEvent, _: &Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::WorkflowComplete(_, result) => *result,
             _ => panic!("Invalid unblock event for child workflow complete"),
@@ -254,8 +266,9 @@ impl From<UnblockEvent> for ChildWorkflowResult {
     }
 }
 
-impl From<UnblockEvent> for SignalExternalWfResult {
-    fn from(ue: UnblockEvent) -> Self {
+impl Unblockable for SignalExternalWfResult {
+    type OtherDat = ();
+    fn unblock(ue: UnblockEvent, _: &Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::SignalExternal(_, maybefail) => {
                 if let Some(f) = maybefail {

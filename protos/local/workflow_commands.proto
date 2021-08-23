@@ -194,7 +194,7 @@ message RequestCancelExternalWorkflowExecution {
     // What workflow is being targeted
     oneof target {
         // A specific workflow instance
-        common.WorkflowExecution workflow_execution = 2;
+        common.NamespacedWorkflowExecution workflow_execution = 2;
         // The desired target must be a child of the issuing workflow, and this is its command id
         uint32 child_workflow_seq = 3;
     }
@@ -207,9 +207,9 @@ message SignalExternalWorkflowExecution {
     // What workflow is being targeted
     oneof target {
         // A specific workflow instance
-        common.WorkflowExecution workflow_execution = 2;
-        // The desired target must be a child of the issuing workflow, and this is its command id
-        uint32 child_workflow_seq = 3;
+        common.NamespacedWorkflowExecution workflow_execution = 2;
+        // The desired target must be a child of the issuing workflow, and this is its workflow id
+        string child_workflow_id = 3;
     }
     /// Name of the signal handler
     string signal_name = 4;

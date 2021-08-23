@@ -18,6 +18,8 @@ use crate::{
 use backoff::{ExponentialBackoff, SystemClock};
 use std::{
     fmt::{Debug, Formatter},
+    ops::Deref,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use tonic::{
@@ -31,6 +33,28 @@ use uuid::Uuid;
 
 #[cfg(test)]
 use futures::Future;
+
+pub struct GatewayRef {
+    pub gw: Arc<dyn ServerGatewayApis + Send + Sync>,
+    pub options: ServerGatewayOptions,
+}
+
+impl GatewayRef {
+    pub fn new<SG: ServerGatewayApis + Send + Sync + 'static>(
+        gw: Arc<SG>,
+        options: ServerGatewayOptions,
+    ) -> Self {
+        Self { gw, options }
+    }
+}
+
+impl Deref for GatewayRef {
+    type Target = dyn ServerGatewayApis + Send + Sync;
+
+    fn deref(&self) -> &Self::Target {
+        self.gw.as_ref()
+    }
+}
 
 /// Options for the connection to the temporal server
 #[derive(Clone, Debug)]

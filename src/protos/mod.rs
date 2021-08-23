@@ -592,7 +592,6 @@ pub mod coresdk {
                             .map(|wt| wt.name)
                             .unwrap_or_else(|| "".to_string()),
                         workflow_execution: Some(common::WorkflowExecution {
-                            namespace: r.workflow_namespace,
                             workflow_id,
                             run_id,
                         }),

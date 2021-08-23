@@ -151,7 +151,7 @@ impl Poller<PollWorkflowTaskQueueResponse> for WorkflowTaskPoller {
 
 pub type PollWorkflowTaskBuffer = LongPollBuffer<PollWorkflowTaskQueueResponse>;
 pub fn new_workflow_task_buffer(
-    sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>,
+    sg: Arc<impl ServerGatewayApis + Send + Sync + 'static + ?Sized>,
     task_queue: String,
     concurrent_pollers: usize,
     buffer_size: usize,
@@ -169,7 +169,7 @@ pub fn new_workflow_task_buffer(
 
 pub type PollActivityTaskBuffer = LongPollBuffer<PollActivityTaskQueueResponse>;
 pub fn new_activity_task_buffer(
-    sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>,
+    sg: Arc<impl ServerGatewayApis + Send + Sync + 'static + ?Sized>,
     task_queue: String,
     concurrent_pollers: usize,
     buffer_size: usize,

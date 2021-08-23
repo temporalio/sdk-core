@@ -1,4 +1,3 @@
-use crate::machines::child_workflow_state_machine::ChildWorkflowMachine;
 use crate::machines::signal_external_state_machine::new_external_signal;
 use crate::{
     core_tracing::VecDisplayer,
@@ -13,7 +12,7 @@ use crate::{
     },
     protos::{
         coresdk::{
-            common::{Payload, WorkflowExecution},
+            common::{NamespacedWorkflowExecution, Payload},
             workflow_activation::{
                 wf_activation_job::{self, Variant},
                 NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WfActivation,
@@ -60,6 +59,8 @@ pub(crate) struct WorkflowMachines {
     next_started_event_id: i64,
     /// True if the workflow is replaying from history
     pub replaying: bool,
+    /// Namespace this workflow exists in
+    pub namespace: String,
     /// Workflow identifier
     pub workflow_id: String,
     /// Identifies the current run
@@ -144,6 +145,7 @@ pub(crate) enum WFMachinesError {
 
 impl WorkflowMachines {
     pub(crate) fn new(
+        namespace: String,
         workflow_id: String,
         run_id: String,
         history: HistoryUpdate,
@@ -152,6 +154,7 @@ impl WorkflowMachines {
         let replaying = history.previous_started_event_id > 0;
         Self {
             last_history_from_server: history,
+            namespace,
             workflow_id,
             run_id,
             drive_me: driven_wf,
@@ -695,25 +698,14 @@ impl WorkflowMachines {
                                     .to_string(),
                             ))
                         }
-                        Some(sig_we::Target::ChildWorkflowSeq(seq)) => {
-                            let child_wf_machine =
-                                self.get_machine_key(CommandID::ChildWorkflowStart(seq))?;
-                            let mach = self.machine(child_wf_machine);
-                            let as_child: Option<&ChildWorkflowMachine> =
-                                mach.as_any().downcast_ref();
-                            if let Some(child_machine) = as_child {
-                                (
-                                    WorkflowExecution {
-                                        namespace: child_machine.namespace().to_string(),
-                                        workflow_id: child_machine.workflow_id().to_string(),
-                                        run_id: "".to_string(),
-                                    },
-                                    true,
-                                )
-                            } else {
-                                todo!("Return signal failed")
-                            }
-                        }
+                        Some(sig_we::Target::ChildWorkflowId(wfid)) => (
+                            NamespacedWorkflowExecution {
+                                namespace: self.namespace.clone(),
+                                workflow_id: wfid,
+                                run_id: "".to_string(),
+                            },
+                            true,
+                        ),
                         Some(sig_we::Target::WorkflowExecution(we)) => (we, false),
                     };
 

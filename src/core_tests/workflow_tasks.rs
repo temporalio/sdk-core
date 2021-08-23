@@ -29,8 +29,7 @@ use crate::{
         TestHistoryBuilder, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
-    Core, CoreInitOptionsBuilder, CoreSDK, ServerGatewayApis, WfActivationCompletion,
-    WorkerConfigBuilder,
+    Core, CoreInitOptionsBuilder, CoreSDK, WfActivationCompletion, WorkerConfigBuilder,
 };
 use rstest::{fixture, rstest};
 use std::{
@@ -41,9 +40,7 @@ use std::{
 use test_utils::fanout_tasks;
 
 #[fixture(hist_batches = &[])]
-fn single_timer_setup(
-    hist_batches: &'static [usize],
-) -> CoreSDK<impl ServerGatewayApis + Send + Sync + 'static> {
+fn single_timer_setup(hist_batches: &'static [usize]) -> CoreSDK {
     let wfid = "fake_wf_id";
 
     let t = canned_histories::single_timer("1");
@@ -51,9 +48,7 @@ fn single_timer_setup(
 }
 
 #[fixture(hist_batches = &[])]
-fn single_activity_setup(
-    hist_batches: &'static [usize],
-) -> CoreSDK<impl ServerGatewayApis + Send + Sync + 'static> {
+fn single_activity_setup(hist_batches: &'static [usize]) -> CoreSDK {
     let wfid = "fake_wf_id";
 
     let t = canned_histories::single_activity("fake_activity");
@@ -61,9 +56,7 @@ fn single_activity_setup(
 }
 
 #[fixture(hist_batches = &[])]
-fn single_activity_failure_setup(
-    hist_batches: &'static [usize],
-) -> CoreSDK<impl ServerGatewayApis + Send + Sync + 'static> {
+fn single_activity_failure_setup(hist_batches: &'static [usize]) -> CoreSDK {
     let wfid = "fake_wf_id";
 
     let t = canned_histories::single_failed_activity("fake_activity");
@@ -76,10 +69,7 @@ fn single_activity_failure_setup(
 #[case::incremental_evict(single_timer_setup(&[1, 2]), AfterEveryReply)]
 #[case::replay_evict(single_timer_setup(&[2, 2]), AfterEveryReply)]
 #[tokio::test]
-async fn single_timer(
-    #[case] core: CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
-    #[case] evict: WorkflowCachingPolicy,
-) {
+async fn single_timer(#[case] core: CoreSDK, #[case] evict: WorkflowCachingPolicy) {
     poll_and_reply(
         &core,
         evict,
@@ -108,7 +98,7 @@ case::replay(single_activity_setup(&[2])),
 case::replay_activity_failure(single_activity_failure_setup(&[2]))
 )]
 #[tokio::test]
-async fn single_activity_completion(core: CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>) {
+async fn single_activity_completion(core: CoreSDK) {
     poll_and_reply(
         &core,
         NonSticky,
@@ -493,7 +483,7 @@ async fn started_activity_cancellation_try_cancel_task_canceled(hist_batches: &'
 
 /// Verification for try cancel & abandon histories
 async fn verify_activity_cancellation(
-    core: &CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
+    core: &CoreSDK,
     activity_seq: u32,
     cancel_type: ActivityCancellationType,
 ) {
@@ -564,10 +554,7 @@ async fn started_activity_cancellation_wait_for_cancellation(hist_batches: &'sta
     verify_activity_cancellation_wait_for_cancellation(activity_id, &core).await;
 }
 
-async fn verify_activity_cancellation_wait_for_cancellation(
-    activity_id: u32,
-    core: &CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
-) {
+async fn verify_activity_cancellation_wait_for_cancellation(activity_id: u32, core: &CoreSDK) {
     poll_and_reply(
         core,
         NonSticky,

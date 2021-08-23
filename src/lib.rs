@@ -54,6 +54,7 @@ use std::sync::{
     Arc,
 };
 
+use crate::pollers::GatewayRef;
 #[cfg(test)]
 use crate::test_help::MockWorker;
 use crate::worker::Worker;
@@ -196,11 +197,11 @@ pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
     Ok(CoreSDK::new(server_gateway, opts))
 }
 
-struct CoreSDK<SG> {
+struct CoreSDK {
     /// Options provided at initialization time
     init_options: CoreInitOptions,
     /// Provides work in the form of responses the server would send from polling task Qs
-    server_gateway: Arc<SG>,
+    server_gateway: Arc<GatewayRef>,
     /// Controls access to workers
     workers: WorkerDispatcher,
     /// Has shutdown been called?
@@ -208,10 +209,7 @@ struct CoreSDK<SG> {
 }
 
 #[async_trait::async_trait]
-impl<WP> Core for CoreSDK<WP>
-where
-    WP: ServerGatewayApis + Send + Sync + 'static,
-{
+impl Core for CoreSDK {
     async fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError> {
         let sticky_q = self.get_sticky_q_name_for_worker(&config);
         self.workers
@@ -286,7 +284,7 @@ where
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {
-        self.server_gateway.clone()
+        self.server_gateway.gw.clone()
     }
 
     async fn shutdown(&self) {
@@ -303,12 +301,15 @@ where
     }
 }
 
-impl<SG: ServerGatewayApis + Send + Sync + 'static> CoreSDK<SG> {
-    pub(crate) fn new(server_gateway: SG, init_options: CoreInitOptions) -> Self {
-        let sg = Arc::new(server_gateway);
+impl CoreSDK {
+    pub(crate) fn new<SG: ServerGatewayApis + Send + Sync + 'static>(
+        server_gateway: SG,
+        init_options: CoreInitOptions,
+    ) -> Self {
+        let sg = GatewayRef::new(Arc::new(server_gateway), init_options.gateway_opts.clone());
         let workers = WorkerDispatcher::default();
         Self {
-            server_gateway: sg,
+            server_gateway: Arc::new(sg),
             workers,
             init_options,
             shutdown_requested: AtomicBool::new(false),

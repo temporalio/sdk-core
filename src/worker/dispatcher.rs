@@ -1,4 +1,4 @@
-use crate::{worker::Worker, ServerGatewayApis, WorkerConfig, WorkerRegistrationError};
+use crate::{pollers::GatewayRef, worker::Worker, WorkerConfig, WorkerRegistrationError};
 use arc_swap::ArcSwap;
 use futures::future::join_all;
 use std::{collections::HashMap, ops::Deref, sync::Arc};
@@ -16,7 +16,7 @@ impl WorkerDispatcher {
         &self,
         config: WorkerConfig,
         sticky_queue: Option<String>,
-        gateway: Arc<impl ServerGatewayApis + Send + Sync + 'static>,
+        gateway: Arc<GatewayRef>,
     ) -> Result<(), WorkerRegistrationError> {
         let tq = config.task_queue.clone();
         let worker = Worker::new(config, sticky_queue, gateway);

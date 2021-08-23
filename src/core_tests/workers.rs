@@ -14,7 +14,7 @@ use crate::{
         mock_core_with_opts_no_workers, register_mock_workers, single_hist_mock_sg,
         FakeWfResponses, MockWorker, MocksHolder, ResponseType, TEST_Q,
     },
-    Core, CoreInitOptionsBuilder, CoreSDK, PollWfError, ServerGatewayApis, WorkerConfigBuilder,
+    Core, CoreInitOptionsBuilder, CoreSDK, PollWfError, WorkerConfigBuilder,
 };
 use futures::FutureExt;
 use rstest::{fixture, rstest};
@@ -216,7 +216,7 @@ async fn shutdown_worker_can_complete_pending_activation() {
 }
 
 #[fixture]
-fn worker_shutdown() -> (CoreSDK<MockServerGatewayApis>, watch::Sender<bool>) {
+fn worker_shutdown() -> (CoreSDK, watch::Sender<bool>) {
     let (tx, rx) = watch::channel(false);
 
     let mut mock_pollers = vec![];
@@ -260,10 +260,7 @@ fn worker_shutdown() -> (CoreSDK<MockServerGatewayApis>, watch::Sender<bool>) {
 #[rstest]
 #[tokio::test]
 async fn worker_shutdown_during_poll_doesnt_deadlock(
-    worker_shutdown: (
-        CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
-        watch::Sender<bool>,
-    ),
+    worker_shutdown: (CoreSDK, watch::Sender<bool>),
 ) {
     let (core, tx) = worker_shutdown;
     let pollfut = core.poll_workflow_activation("q1");
@@ -281,10 +278,7 @@ async fn worker_shutdown_during_poll_doesnt_deadlock(
 #[rstest]
 #[tokio::test]
 async fn worker_shutdown_during_multiple_poll_doesnt_deadlock(
-    worker_shutdown: (
-        CoreSDK<impl ServerGatewayApis + Send + Sync + 'static>,
-        watch::Sender<bool>,
-    ),
+    worker_shutdown: (CoreSDK, watch::Sender<bool>),
 ) {
     let (core, tx) = worker_shutdown;
 

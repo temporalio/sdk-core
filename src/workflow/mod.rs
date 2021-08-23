@@ -9,9 +9,7 @@ pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
 
 use crate::{
     machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
-    protos::{
-        coresdk::workflow_activation::WfActivation, temporal::api::common::v1::WorkflowExecution,
-    },
+    protos::coresdk::workflow_activation::WfActivation,
 };
 use std::sync::mpsc::Sender;
 
@@ -39,11 +37,17 @@ pub(crate) struct WorkflowManager {
 impl WorkflowManager {
     /// Create a new workflow manager given workflow history and execution info as would be found
     /// in [PollWorkflowTaskQueueResponse]
-    pub fn new(history: HistoryUpdate, workflow_execution: WorkflowExecution) -> Self {
+    pub fn new(
+        history: HistoryUpdate,
+        namespace: String,
+        workflow_id: String,
+        run_id: String,
+    ) -> Self {
         let (wfb, cmd_sink) = WorkflowBridge::new();
         let state_machines = WorkflowMachines::new(
-            workflow_execution.workflow_id,
-            workflow_execution.run_id,
+            namespace,
+            workflow_id,
+            run_id,
             history,
             Box::new(wfb).into(),
         );
@@ -213,6 +217,7 @@ pub mod managed_wf {
             let spawned = tokio::spawn(wff);
             let driver = WFFutureDriver { completions_rx };
             let state_machines = WorkflowMachines::new(
+                "test_namespace".to_string(),
                 "wfid".to_string(),
                 "runid".to_string(),
                 hist,
