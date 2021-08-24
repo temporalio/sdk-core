@@ -205,12 +205,15 @@ impl WFMachinesAdapter for SignalExternalMachine {
                 .into()]
             }
             SignalExternalCommand::Failed(f) => {
+                let reason = match f {
+                    SignalExternalWorkflowExecutionFailedCause::Unspecified => "unknown",
+                    SignalExternalWorkflowExecutionFailedCause::ExternalWorkflowExecutionNotFound => "it was not found"
+                };
                 vec![ResolveSignalExternalWorkflow {
                     seq: self.shared_state.seq,
                     // TODO: Create new failure type upstream for this
                     failure: Some(Failure {
-                        message: "Unable to signal external workflow because it was not found"
-                            .to_string(),
+                        message: format!("Unable to signal external workflow because {}", reason),
                         failure_info: Some(FailureInfo::ApplicationFailureInfo(
                             ApplicationFailureInfo {
                                 r#type: f.to_string(),
