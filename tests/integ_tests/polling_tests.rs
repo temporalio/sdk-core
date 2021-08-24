@@ -146,7 +146,7 @@ async fn can_paginate_long_history() {
     // Do not use sticky queues so we are forced to paginate once history gets long
     starter.max_cached_workflows(0);
 
-    let worker = starter.worker().await;
+    let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), many_parallel_timers_longhist);
     worker
         .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])

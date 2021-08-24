@@ -38,7 +38,7 @@ pub const HAS_CHANGE_MARKER_NAME: &str = "core_patch";
 
 fsm! {
     pub(super) name PatchMachine;
-    command VersionCommand;
+    command PatchCommand;
     error WFMachinesError;
     shared_state SharedState;
 
@@ -64,7 +64,7 @@ pub(super) struct SharedState {
 }
 
 #[derive(Debug, derive_more::Display)]
-pub(super) enum VersionCommand {}
+pub(super) enum PatchCommand {}
 
 /// Patch machines are created when the user invokes `has_change` (or whatever it may be named
 /// in that lang).

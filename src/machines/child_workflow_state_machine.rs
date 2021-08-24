@@ -247,7 +247,7 @@ impl Started {
             }
             _ => ChildWorkflowMachineTransition::ok(
                 vec![ChildWorkflowCommand::Cancel(Failure {
-                    message: "Child Workflow execution cancelled before scheduled".to_owned(),
+                    message: "Child Workflow execution cancelled".to_owned(),
                     cause: Some(Box::new(Failure {
                         failure_info: Some(FailureInfo::CanceledFailureInfo(
                             failure::CanceledFailureInfo {
@@ -585,17 +585,6 @@ impl Cancellable for ChildWorkflowMachine {
                     }
                     .into()]
                 }
-                ChildWorkflowCommand::Fail(failure) => {
-                    vec![ResolveChildWorkflowExecution {
-                        seq: self.shared_state.lang_sequence_number,
-                        result: Some(ChildWorkflowResult {
-                            status: Some(ChildWorkflowStatus::Failed(wfr::Failure {
-                                failure: Some(failure),
-                            })),
-                        }),
-                    }
-                    .into()]
-                }
                 x => panic!("Invalid cancel event response {:?}", x),
             })
             .collect();
@@ -640,13 +629,12 @@ fn convert_payloads(
 
 #[cfg(test)]
 mod test {
-    extern crate derive_more;
-
     use super::*;
-
     use crate::{
-        protos::coresdk::child_workflow::child_workflow_result,
-        protos::coresdk::workflow_activation::resolve_child_workflow_execution_start::Status as StartStatus,
+        protos::coresdk::{
+            child_workflow::child_workflow_result,
+            workflow_activation::resolve_child_workflow_execution_start::Status as StartStatus,
+        },
         prototype_rust_sdk::{
             CancellableFuture, ChildWorkflowOptions, WfContext, WorkflowFunction, WorkflowResult,
         },
@@ -656,11 +644,11 @@ mod test {
     use anyhow::anyhow;
     use rstest::{fixture, rstest};
 
-    #[derive(Clone)]
+    #[derive(Clone, Copy)]
     enum Expectation {
-        Success = 0,
-        Failure = 1,
-        StartFailure = 2,
+        Success,
+        Failure,
+        StartFailure,
     }
 
     impl Expectation {
@@ -706,12 +694,16 @@ mod test {
             input: vec![],
         });
 
-        match (expectation.clone(), child.start(&mut ctx).await) {
+        let start_res = child.start(&mut ctx).await;
+        match (expectation, &start_res.status) {
             (Expectation::Success | Expectation::Failure, StartStatus::Succeeded(_)) => {}
             (Expectation::StartFailure, StartStatus::Failed(_)) => return Ok(().into()),
             _ => return Err(anyhow!("Unexpected start status")),
         };
-        match (expectation, child.result(&ctx).await.status) {
+        match (
+            expectation,
+            start_res.as_started().unwrap().result(&ctx).await.status,
+        ) {
             (Expectation::Success, Some(child_workflow_result::Status::Completed(_))) => {
                 Ok(().into())
             }
@@ -780,8 +772,8 @@ mod test {
             input: vec![],
         });
         let start = child.start(&mut ctx);
-        start.cancel(&ctx);
-        match start.await {
+        start.cancel(&mut ctx);
+        match start.await.status {
             StartStatus::Cancelled(_) => Ok(().into()),
             _ => Err(anyhow!("Unexpected start status")),
         }

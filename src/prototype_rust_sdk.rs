@@ -12,22 +12,26 @@ pub use workflow_context::{
 };
 
 use crate::{
-    protos::coresdk::{
-        activity_result::ActivityResult,
-        child_workflow::ChildWorkflowResult,
-        common::Payload,
-        workflow_activation::{
-            resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
-            wf_activation_job::Variant, WfActivation, WfActivationJob,
+    protos::{
+        coresdk::{
+            activity_result::ActivityResult,
+            child_workflow::ChildWorkflowResult,
+            common::Payload,
+            workflow_activation::{
+                resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
+                wf_activation_job::Variant, WfActivation, WfActivationJob,
+            },
+            workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution},
         },
-        workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution},
+        temporal::api::failure::v1::Failure,
     },
+    prototype_rust_sdk::workflow_context::PendingChildWorkflow,
     Core,
 };
 use anyhow::{anyhow, bail};
-use dashmap::DashMap;
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use std::{
+    collections::HashMap,
     fmt::Debug,
     future::Future,
     sync::{
@@ -36,14 +40,11 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::watch;
-use tokio::{
-    sync::{
-        mpsc::{unbounded_channel, UnboundedSender},
-        oneshot,
-    },
-    task::JoinHandle,
+use tokio::sync::{
+    mpsc::{unbounded_channel, UnboundedSender},
+    oneshot, watch,
 };
+use tokio::task::JoinError;
 
 /// A worker that can poll for and respond to workflow tasks by using [WorkflowFunction]s
 pub struct TestRustWorker {
@@ -51,19 +52,19 @@ pub struct TestRustWorker {
     task_queue: String,
     task_timeout: Option<Duration>,
     /// Maps run id to the driver
-    workflows: DashMap<String, UnboundedSender<WfActivation>>,
+    workflows: HashMap<String, UnboundedSender<WfActivation>>,
     /// Maps workflow id to the function for executing workflow runs with that ID
-    workflow_fns: DashMap<String, WorkflowFunction>,
+    workflow_fns: HashMap<String, WorkflowFunction>,
     /// Number of live workflows
     incomplete_workflows: Arc<AtomicUsize>,
     /// Handles for each spawned workflow run are inserted here to be cleaned up when all runs
     /// are finished
-    join_handles: FuturesUnordered<JoinHandle<WorkflowResult<()>>>,
+    join_handles: FuturesUnordered<BoxFuture<'static, Result<WorkflowResult<()>, JoinError>>>,
 }
 type WfFunc = dyn Fn(WfContext) -> BoxFuture<'static, WorkflowResult<()>> + Send + Sync + 'static;
 
 impl TestRustWorker {
-    /// Create a new rust worker using the provided core instance, namespace, and task queue
+    /// Create a new rust worker
     pub fn new(core: Arc<dyn Core>, task_queue: String, task_timeout: Option<Duration>) -> Self {
         Self {
             core,
@@ -78,31 +79,40 @@ impl TestRustWorker {
 
     /// Create a workflow, asking the server to start it with the provided workflow ID and using the
     /// provided workflow function.
+    ///
     /// Increments the expected Workflow run count.
+    ///
+    /// Returns the run id of the started workflow
     pub async fn submit_wf(
         &self,
-        workflow_id: String,
-        workflow_type: String,
+        workflow_id: impl Into<String>,
+        workflow_type: impl Into<String>,
         input: Vec<Payload>,
-    ) -> Result<(), tonic::Status> {
-        self.core
+    ) -> Result<String, tonic::Status> {
+        let res = self
+            .core
             .server_gateway()
             .start_workflow(
                 input,
                 self.task_queue.clone(),
-                workflow_id,
-                workflow_type,
+                workflow_id.into(),
+                workflow_type.into(),
                 self.task_timeout,
             )
             .await?;
 
         self.incr_expected_run_count(1);
-        Ok(())
+        Ok(res.run_id)
     }
 
     /// Register a Workflow function to invoke when Worker is requested to run `workflow_type`
-    pub fn register_wf<F: Into<WorkflowFunction>>(&self, workflow_type: String, wf_function: F) {
-        self.workflow_fns.insert(workflow_type, wf_function.into());
+    pub fn register_wf<F: Into<WorkflowFunction>>(
+        &mut self,
+        workflow_type: impl Into<String>,
+        wf_function: F,
+    ) {
+        self.workflow_fns
+            .insert(workflow_type.into(), wf_function.into());
     }
 
     /// Increment the expected Workflow run count on this Worker. The Worker tracks the run count
@@ -114,7 +124,7 @@ impl TestRustWorker {
 
     /// Drives all workflows until they have all finished, repeatedly polls server to fetch work
     /// for them.
-    pub async fn run_until_done(self) -> Result<(), anyhow::Error> {
+    pub async fn run_until_done(mut self) -> Result<(), anyhow::Error> {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let poller = async move {
             let (completions_tx, mut completions_rx) = unbounded_channel();
@@ -133,6 +143,7 @@ impl TestRustWorker {
                         .ok_or_else(|| anyhow!("Workflow type not found"))?;
 
                     let (wff, activations) = wf_function.start_workflow(
+                        self.core.get_init_options().gateway_opts.namespace.clone(),
                         self.task_queue.clone(),
                         // NOTE: Don't clone args if this gets ported to be a non-test rust worker
                         sw.arguments.clone(),
@@ -147,7 +158,7 @@ impl TestRustWorker {
                     });
                     self.workflows
                         .insert(activation.run_id.clone(), activations);
-                    self.join_handles.push(jh);
+                    self.join_handles.push(jh.boxed());
                 }
 
                 // The activation is expected to apply to some workflow we know about. Use it to
@@ -161,6 +172,7 @@ impl TestRustWorker {
 
                 let completion = completions_rx.recv().await.expect("No workflows left?");
                 if completion.has_execution_ending() {
+                    debug!("Workflow {} says it's finishing", &completion.run_id);
                     self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
                 }
                 self.core
@@ -190,21 +202,33 @@ enum UnblockEvent {
     Activity(u32, Box<ActivityResult>),
     WorkflowStart(u32, Box<ChildWorkflowStartStatus>),
     WorkflowComplete(u32, Box<ChildWorkflowResult>),
+    SignalExternal(u32, Option<Failure>),
 }
 
-type TimerResult = ();
+/// Result of awaiting on a timer
+pub struct TimerResult;
+/// Result of awaiting on sending a signal to an external workflow
+pub type SignalExternalWfResult = Result<(), Failure>;
 
-impl From<UnblockEvent> for TimerResult {
-    fn from(ue: UnblockEvent) -> Self {
+trait Unblockable {
+    type OtherDat;
+
+    fn unblock(ue: UnblockEvent, od: &Self::OtherDat) -> Self;
+}
+
+impl Unblockable for TimerResult {
+    type OtherDat = ();
+    fn unblock(ue: UnblockEvent, _: &Self::OtherDat) -> Self {
         match ue {
-            UnblockEvent::Timer(_) => (),
+            UnblockEvent::Timer(_) => TimerResult,
             _ => panic!("Invalid unblock event for timer"),
         }
     }
 }
 
-impl From<UnblockEvent> for ActivityResult {
-    fn from(ue: UnblockEvent) -> Self {
+impl Unblockable for ActivityResult {
+    type OtherDat = ();
+    fn unblock(ue: UnblockEvent, _: &Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::Activity(_, result) => *result,
             _ => panic!("Invalid unblock event for activity"),
@@ -212,20 +236,43 @@ impl From<UnblockEvent> for ActivityResult {
     }
 }
 
-impl From<UnblockEvent> for ChildWorkflowStartStatus {
-    fn from(ue: UnblockEvent) -> Self {
+impl Unblockable for PendingChildWorkflow {
+    // Other data here is workflow id
+    type OtherDat = String;
+    fn unblock(ue: UnblockEvent, od: &Self::OtherDat) -> Self {
         match ue {
-            UnblockEvent::WorkflowStart(_, result) => *result,
+            UnblockEvent::WorkflowStart(seq, result) => PendingChildWorkflow {
+                child_wf_cmd_seq_num: seq,
+                status: *result,
+                wfid: od.clone(),
+            },
             _ => panic!("Invalid unblock event for child workflow start"),
         }
     }
 }
 
-impl From<UnblockEvent> for ChildWorkflowResult {
-    fn from(ue: UnblockEvent) -> Self {
+impl Unblockable for ChildWorkflowResult {
+    type OtherDat = ();
+    fn unblock(ue: UnblockEvent, _: &Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::WorkflowComplete(_, result) => *result,
             _ => panic!("Invalid unblock event for child workflow complete"),
+        }
+    }
+}
+
+impl Unblockable for SignalExternalWfResult {
+    type OtherDat = ();
+    fn unblock(ue: UnblockEvent, _: &Self::OtherDat) -> Self {
+        match ue {
+            UnblockEvent::SignalExternal(_, maybefail) => {
+                if let Some(f) = maybefail {
+                    Err(f)
+                } else {
+                    Ok(())
+                }
+            }
+            _ => panic!("Invalid unblock event for signal external workflow result"),
         }
     }
 }
@@ -237,8 +284,16 @@ pub enum CancellableID {
     Timer(u32),
     /// Activity sequence number
     Activity(u32),
-    /// Child Workflow sequence number
-    ChildWorkflow(u32),
+    /// Cancelling children is a resolvable command and thus needs its own id as well
+    ChildWorkflow {
+        /// The sequence number for the cancel command. This is not populated unless a cancel is
+        /// actually requested.
+        cancel_cmd_seq: Option<u32>,
+        /// The sequence number of the child workflow being cancelled
+        child_seq: u32,
+    },
+    /// Signal workflow
+    SignalExternalWorkflow(u32),
 }
 
 #[derive(derive_more::From)]
@@ -250,6 +305,7 @@ enum RustWfCmd {
     NewCmd(CommandCreateRequest),
     NewNonblockingCmd(workflow_command::Variant),
     SubscribeChildWorkflowCompletion(CommandSubscribeChildWorkflowCompletion),
+    SubscribeSignal(String, UnboundedSender<Vec<Payload>>),
 }
 
 struct CommandCreateRequest {
@@ -325,7 +381,7 @@ mod tests {
         let wf_type = DEFAULT_WORKFLOW_TYPE;
         let t = canned_histories::single_timer("1");
         let core = build_fake_core(wf_id, t, [2]);
-        let worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
+        let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
         worker.register_wf(wf_type.to_owned(), timer_wf);
         worker

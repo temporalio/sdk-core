@@ -16,7 +16,6 @@ mod mutable_side_effect_state_machine;
 mod patch_state_machine;
 #[allow(unused)]
 mod side_effect_state_machine;
-#[allow(unused)]
 mod signal_external_state_machine;
 mod timer_state_machine;
 #[allow(unused)]
@@ -33,12 +32,7 @@ use crate::{
     core_tracing::VecDisplayer,
     machines::workflow_machines::MachineResponse,
     protos::{
-        coresdk::workflow_commands::{
-            workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
-            ContinueAsNewWorkflowExecution, FailWorkflowExecution, QueryResult,
-            RequestCancelActivity, RequestCancelExternalWorkflowExecution, ScheduleActivity,
-            SetPatchMarker, StartChildWorkflowExecution, StartTimer, WorkflowCommand,
-        },
+        coresdk::workflow_commands::*,
         temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
     },
 };
@@ -72,7 +66,9 @@ pub enum WFCommand {
     CancelWorkflow(CancelWorkflowExecution),
     SetPatchMarker(SetPatchMarker),
     AddChildWorkflow(StartChildWorkflowExecution),
-    RequestCancelChildWorkflow(RequestCancelExternalWorkflowExecution),
+    RequestCancelExternalWorkflow(RequestCancelExternalWorkflowExecution),
+    SignalExternalWorkflow(SignalExternalWorkflowExecution),
+    CancelSignalWorkflow(CancelSignalWorkflow),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
@@ -106,10 +102,13 @@ impl TryFrom<WorkflowCommand> for WFCommand {
                 Ok(WFCommand::AddChildWorkflow(s))
             }
             workflow_command::Variant::RequestCancelExternalWorkflowExecution(s) => {
-                Ok(WFCommand::RequestCancelChildWorkflow(s))
+                Ok(WFCommand::RequestCancelExternalWorkflow(s))
             }
-            workflow_command::Variant::SignalExternalWorkflowExecution(_) => {
-                Err(EmptyWorkflowCommandErr) // TODO
+            workflow_command::Variant::SignalExternalWorkflowExecution(s) => {
+                Ok(WFCommand::SignalExternalWorkflow(s))
+            }
+            workflow_command::Variant::CancelSignalWorkflow(s) => {
+                Ok(WFCommand::CancelSignalWorkflow(s))
             }
         }
     }
@@ -126,6 +125,7 @@ enum MachineKind {
     Timer,
     Version,
     WorkflowTask,
+    SignalExternalWorkflow,
 }
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
@@ -167,7 +167,8 @@ where
         + Cancellable
         + OnEventWrapper
         + Clone
-        + Send,
+        + Send
+        + 'static,
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
     <SM as StateMachine>::Event: Display,

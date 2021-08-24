@@ -30,6 +30,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[derive(::derive_more::From)]",
         )
         .type_attribute(
+            "temporal.api.enums.v1.SignalExternalWorkflowExecutionFailedCause",
+            "#[derive(::derive_more::Display)]",
+        )
+        .type_attribute(
             "coresdk.workflow_commands.WorkflowCommand.variant",
             "#[derive(::derive_more::From)]",
         )

@@ -1,8 +1,6 @@
 use crate::{
     errors::WorkflowUpdateError,
-    protos::{
-        coresdk::workflow_activation::WfActivation, temporal::api::common::v1::WorkflowExecution,
-    },
+    protos::coresdk::workflow_activation::WfActivation,
     protosext::ValidPollWFTQResponse,
     workflow::{
         workflow_tasks::{OutstandingActivation, OutstandingTask},
@@ -173,11 +171,14 @@ impl WorkflowConcurrencyManager {
         self.runs.read().get(run_id).is_some()
     }
 
+    /// Create or update some workflow's machines. `workflow_id` and `namespace` are only used if
+    /// this call creates the machines for the first time.
     pub async fn create_or_update(
         &self,
         run_id: &str,
         history: HistoryUpdate,
-        workflow_execution: WorkflowExecution,
+        workflow_id: String,
+        namespace: String,
     ) -> Result<WfActivation> {
         let span = debug_span!("create_or_update machines", %run_id);
 
@@ -195,7 +196,7 @@ impl WorkflowConcurrencyManager {
         } else {
             // Create a new workflow machines instance for this workflow, initialize it, and
             // track it.
-            let mut wfm = WorkflowManager::new(history, workflow_execution);
+            let mut wfm = WorkflowManager::new(history, namespace, workflow_id, run_id.to_owned());
             match wfm.get_next_activation().await {
                 Ok(activation) => {
                     if activation.jobs.is_empty() {
@@ -274,7 +275,8 @@ mod tests {
             .create_or_update(
                 "some_run_id",
                 HistoryUpdate::new_from_events(vec![], 0),
-                Default::default(),
+                "fake_wf_id".to_string(),
+                "fake_namespace".to_string(),
             )
             .await;
         // Should whine that the machines have nothing to do (history empty)

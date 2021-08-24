@@ -1,4 +1,4 @@
-use crate::machines::MachineKind;
+use crate::machines::signal_external_state_machine::new_external_signal;
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
@@ -8,17 +8,20 @@ use crate::{
         continue_as_new_workflow_state_machine::continue_as_new,
         fail_workflow_state_machine::fail_workflow, patch_state_machine::has_change,
         timer_state_machine::new_timer, workflow_task_state_machine::WorkflowTaskMachine,
-        NewMachineWithCommand, ProtoCommand, TemporalStateMachine, WFCommand,
+        MachineKind, NewMachineWithCommand, ProtoCommand, TemporalStateMachine, WFCommand,
     },
     protos::{
         coresdk::{
-            common::Payload,
+            common::{NamespacedWorkflowExecution, Payload},
             workflow_activation::{
                 wf_activation_job::{self, Variant},
                 NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WfActivation,
             },
-            workflow_commands::RequestCancelExternalWorkflowExecution,
-            PayloadsExt,
+            workflow_commands::{
+                request_cancel_external_workflow_execution as cancel_we,
+                signal_external_workflow_execution as sig_we,
+            },
+            FromPayloadsExt,
         },
         temporal::api::{
             common::v1::Header,
@@ -56,6 +59,8 @@ pub(crate) struct WorkflowMachines {
     next_started_event_id: i64,
     /// True if the workflow is replaying from history
     pub replaying: bool,
+    /// Namespace this workflow exists in
+    pub namespace: String,
     /// Workflow identifier
     pub workflow_id: String,
     /// Identifies the current run
@@ -63,12 +68,14 @@ pub(crate) struct WorkflowMachines {
     /// The current workflow time if it has been established
     current_wf_time: Option<SystemTime>,
 
+    // TODO: Nothing gets deleted from here
     all_machines: SlotMap<MachineKey, Box<dyn TemporalStateMachine + 'static>>,
 
     /// A mapping for accessing machines associated to a particular event, where the key is the id
     /// of the initiating event for that machine.
     machines_by_event_id: HashMap<i64, MachineKey>,
 
+    // TODO: Nothing gets deleted from here
     /// Maps command ids as created by workflow authors to their associated machines.
     id_to_machine: HashMap<CommandID, MachineKey>,
 
@@ -138,6 +145,7 @@ pub(crate) enum WFMachinesError {
 
 impl WorkflowMachines {
     pub(crate) fn new(
+        namespace: String,
         workflow_id: String,
         run_id: String,
         history: HistoryUpdate,
@@ -146,6 +154,7 @@ impl WorkflowMachines {
         let replaying = history.previous_started_event_id > 0;
         Self {
             last_history_from_server: history,
+            namespace,
             workflow_id,
             run_id,
             drive_me: driven_wf,
@@ -606,7 +615,7 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(timer);
                 }
                 WFCommand::CancelTimer(attrs) => {
-                    self.process_cancellation(&CommandID::Timer(attrs.seq), &mut jobs)?
+                    jobs.extend(self.process_cancellation(CommandID::Timer(attrs.seq))?)
                 }
                 WFCommand::AddActivity(attrs) => {
                     let seq = attrs.seq;
@@ -616,7 +625,7 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(activity);
                 }
                 WFCommand::RequestCancelActivity(attrs) => {
-                    self.process_cancellation(&CommandID::Activity(attrs.seq), &mut jobs)?
+                    jobs.extend(self.process_cancellation(CommandID::Activity(attrs.seq))?)
                 }
                 WFCommand::CompleteWorkflow(attrs) => {
                     let cwfm = self.add_new_command_machine(complete_workflow(attrs));
@@ -668,14 +677,52 @@ impl WorkflowMachines {
                         .insert(CommandID::ChildWorkflowStart(seq), child_workflow.machine);
                     self.current_wf_task_commands.push_back(child_workflow);
                 }
-                WFCommand::RequestCancelChildWorkflow(RequestCancelExternalWorkflowExecution {
-                    seq: Some(seq),
-                    ..
-                }) => self.process_cancellation(&CommandID::ChildWorkflowStart(seq), &mut jobs)?,
-                WFCommand::RequestCancelChildWorkflow(RequestCancelExternalWorkflowExecution {
-                    seq: None,
-                    ..
-                }) => {}
+                WFCommand::RequestCancelExternalWorkflow(attrs) => match attrs.target {
+                    None => {
+                        return Err(WFMachinesError::Fatal(
+                            "Cancel external workflow command had empty target field".to_string(),
+                        ))
+                    }
+                    Some(cancel_we::Target::ChildWorkflowSeq(seq)) => {
+                        jobs.extend(self.process_cancellation(CommandID::ChildWorkflowStart(seq))?)
+                    }
+                    Some(cancel_we::Target::WorkflowExecution(_)) => {
+                        todo!("Cancel external non-child workflows")
+                    }
+                },
+                WFCommand::SignalExternalWorkflow(attrs) => {
+                    let (we, only_child) = match attrs.target {
+                        None => {
+                            return Err(WFMachinesError::Fatal(
+                                "Signal external workflow command had empty target field"
+                                    .to_string(),
+                            ))
+                        }
+                        Some(sig_we::Target::ChildWorkflowId(wfid)) => (
+                            NamespacedWorkflowExecution {
+                                namespace: self.namespace.clone(),
+                                workflow_id: wfid,
+                                run_id: "".to_string(),
+                            },
+                            true,
+                        ),
+                        Some(sig_we::Target::WorkflowExecution(we)) => (we, false),
+                    };
+
+                    let sigm = self.add_new_command_machine(new_external_signal(
+                        attrs.seq,
+                        we,
+                        attrs.signal_name,
+                        attrs.args,
+                        only_child,
+                    ));
+                    self.id_to_machine
+                        .insert(CommandID::SignalExternal(attrs.seq), sigm.machine);
+                    self.current_wf_task_commands.push_back(sigm);
+                }
+                WFCommand::CancelSignalWorkflow(attrs) => {
+                    jobs.extend(self.process_cancellation(CommandID::SignalExternal(attrs.seq))?)
+                }
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level
                     unimplemented!("Query responses should not make it down into the machines")
@@ -686,7 +733,10 @@ impl WorkflowMachines {
         Ok(jobs)
     }
 
-    fn process_cancellation(&mut self, id: &CommandID, jobs: &mut Vec<Variant>) -> Result<()> {
+    /// Given a command id to attempt to cancel, try to cancel it and return any jobs that should
+    /// be included in the activation
+    fn process_cancellation(&mut self, id: CommandID) -> Result<Vec<Variant>> {
+        let mut jobs = vec![];
         let m_key = self.get_machine_key(id)?;
         let res = self.machine_mut(m_key).cancel()?;
         debug!(machine_responses = ?res, cmd_id = ?id, "Cancel request responses");
@@ -709,11 +759,11 @@ impl WorkflowMachines {
                 }
             }
         }
-        Ok(())
+        Ok(jobs)
     }
 
-    fn get_machine_key(&self, id: &CommandID) -> Result<MachineKey> {
-        Ok(*self.id_to_machine.get(id).ok_or_else(|| {
+    fn get_machine_key(&self, id: CommandID) -> Result<MachineKey> {
+        Ok(*self.id_to_machine.get(&id).ok_or_else(|| {
             WFMachinesError::Fatal(format!("Missing associated machine for {:?}", id))
         })?)
     }

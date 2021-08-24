@@ -55,7 +55,7 @@ impl WorkerActivityTasks {
     pub(crate) fn new(
         max_activity_tasks: usize,
         poller: BoxedActPoller,
-        sg: Arc<impl ServerGatewayApis + Send + Sync + 'static>,
+        sg: Arc<impl ServerGatewayApis + Send + Sync + 'static + ?Sized>,
     ) -> Self {
         Self {
             heartbeat_manager: ActivityHeartbeatManager::new(sg),

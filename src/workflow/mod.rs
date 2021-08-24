@@ -9,21 +9,20 @@ pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
 
 use crate::{
     machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
-    protos::{
-        coresdk::workflow_activation::WfActivation, temporal::api::common::v1::WorkflowExecution,
-    },
+    protos::coresdk::workflow_activation::WfActivation,
 };
 use std::sync::mpsc::Sender;
 
 pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub(crate) enum CommandID {
     Timer(u32),
     Activity(u32),
     ChildWorkflowStart(u32),
     ChildWorkflowComplete(u32),
+    SignalExternal(u32),
 }
 
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
@@ -38,11 +37,17 @@ pub(crate) struct WorkflowManager {
 impl WorkflowManager {
     /// Create a new workflow manager given workflow history and execution info as would be found
     /// in [PollWorkflowTaskQueueResponse]
-    pub fn new(history: HistoryUpdate, workflow_execution: WorkflowExecution) -> Self {
+    pub fn new(
+        history: HistoryUpdate,
+        namespace: String,
+        workflow_id: String,
+        run_id: String,
+    ) -> Self {
         let (wfb, cmd_sink) = WorkflowBridge::new();
         let state_machines = WorkflowMachines::new(
-            workflow_execution.workflow_id,
-            workflow_execution.run_id,
+            namespace,
+            workflow_id,
+            run_id,
             history,
             Box::new(wfb).into(),
         );
@@ -203,10 +208,16 @@ pub mod managed_wf {
             args: Vec<Payload>,
         ) -> Self {
             let (completions_tx, completions_rx) = unbounded_channel();
-            let (wff, activations) = func.start_workflow(TEST_Q.to_string(), args, completions_tx);
+            let (wff, activations) = func.start_workflow(
+                "testnamespace".to_string(),
+                TEST_Q.to_string(),
+                args,
+                completions_tx,
+            );
             let spawned = tokio::spawn(wff);
             let driver = WFFutureDriver { completions_rx };
             let state_machines = WorkflowMachines::new(
+                "test_namespace".to_string(),
                 "wfid".to_string(),
                 "runid".to_string(),
                 hist,

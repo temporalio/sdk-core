@@ -7,13 +7,14 @@ use crate::{
     errors::WorkflowUpdateError,
     machines::{ProtoCommand, WFCommand, WFMachinesError},
     pending_activations::PendingActivations,
+    pollers::GatewayRef,
     protos::coresdk::{
         workflow_activation::{
             create_evict_activation, create_query_activation, wf_activation_job, QueryWorkflow,
             WfActivation,
         },
         workflow_commands::QueryResult,
-        PayloadsExt,
+        FromPayloadsExt,
     },
     protosext::ValidPollWFTQResponse,
     task_token::TaskToken,
@@ -23,12 +24,11 @@ use crate::{
         },
         HistoryPaginator, HistoryUpdate, WorkflowCachingPolicy, WorkflowManager, LEGACY_QUERY_ID,
     },
-    ServerGatewayApis,
 };
 use crossbeam::queue::SegQueue;
 use futures::FutureExt;
 use parking_lot::Mutex;
-use std::{fmt::Debug, ops::DerefMut, sync::Arc};
+use std::{fmt::Debug, ops::DerefMut};
 use tokio::sync::watch;
 
 /// Centralizes concerns related to applying new workflow tasks and reporting the activations they
@@ -234,7 +234,7 @@ impl WorkflowTaskManager {
     pub(crate) async fn apply_new_poll_resp(
         &self,
         work: ValidPollWFTQResponse,
-        gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+        gateway: &GatewayRef,
     ) -> Result<NewWfTaskOutcome, WorkflowUpdateError> {
         let mut work = if let Some(w) = self.workflow_machines.buffer_resp_if_outstanding_work(work)
         {
@@ -432,7 +432,7 @@ impl WorkflowTaskManager {
     async fn instantiate_or_update_workflow(
         &self,
         poll_wf_resp: ValidPollWFTQResponse,
-        gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+        gateway: &GatewayRef,
     ) -> Result<(WorkflowTaskInfo, WfActivation), WorkflowUpdateError> {
         let run_id = poll_wf_resp.workflow_execution.run_id.clone();
 
@@ -452,11 +452,12 @@ impl WorkflowTaskManager {
                         poll_wf_resp.workflow_execution.workflow_id.clone(),
                         poll_wf_resp.workflow_execution.run_id.clone(),
                         poll_wf_resp.next_page_token,
-                        gateway,
+                        gateway.gw.clone(),
                     ),
                     poll_wf_resp.previous_started_event_id,
                 ),
-                poll_wf_resp.workflow_execution,
+                poll_wf_resp.workflow_execution.workflow_id.clone(),
+                gateway.options.namespace.clone(),
             )
             .await
         {

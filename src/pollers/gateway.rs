@@ -1,8 +1,7 @@
 use crate::{
-    pollers::Result,
+    pollers::{retry::RetryGateway, Result},
     protos::{
-        coresdk::common::Payload,
-        coresdk::workflow_commands::QueryResult,
+        coresdk::{common::Payload, workflow_commands::QueryResult, IntoPayloadsExt},
         temporal::api::{
             common::v1::{Payloads, WorkflowExecution, WorkflowType},
             enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
@@ -16,26 +15,46 @@ use crate::{
     task_token::TaskToken,
     CoreInitError,
 };
+use backoff::{ExponentialBackoff, SystemClock};
 use std::{
     fmt::{Debug, Formatter},
-    time::Duration,
+    ops::Deref,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 use tonic::{
+    codegen::InterceptedService,
+    service::Interceptor,
     transport::{Certificate, Channel, Endpoint, Identity},
     Status,
 };
 use url::Url;
 use uuid::Uuid;
 
-use crate::pollers::retry::RetryGateway;
-use crate::protos::coresdk::PayloadsExt;
 #[cfg(test)]
 use futures::Future;
 
-use backoff::{ExponentialBackoff, SystemClock};
-use std::time::Instant;
-use tonic::codegen::InterceptedService;
-use tonic::service::Interceptor;
+pub struct GatewayRef {
+    pub gw: Arc<dyn ServerGatewayApis + Send + Sync>,
+    pub options: ServerGatewayOptions,
+}
+
+impl GatewayRef {
+    pub fn new<SG: ServerGatewayApis + Send + Sync + 'static>(
+        gw: Arc<SG>,
+        options: ServerGatewayOptions,
+    ) -> Self {
+        Self { gw, options }
+    }
+}
+
+impl Deref for GatewayRef {
+    type Target = dyn ServerGatewayApis + Send + Sync;
+
+    fn deref(&self) -> &Self::Target {
+        self.gw.as_ref()
+    }
+}
 
 /// Options for the connection to the temporal server
 #[derive(Clone, Debug)]

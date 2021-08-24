@@ -11,7 +11,7 @@ async fn timer_workflow_not_sticky() {
     let wf_name = "timer_wf_not_sticky";
     let mut starter = CoreWfStarter::new(wf_name);
     starter.max_cached_workflows(0);
-    let worker = starter.worker().await;
+    let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), timer_wf);
 
     worker
@@ -42,7 +42,7 @@ async fn timer_workflow_timeout_on_sticky() {
     let wf_name = "timer_workflow_timeout_on_sticky";
     let mut starter = CoreWfStarter::new(wf_name);
     starter.wft_timeout(Duration::from_secs(2));
-    let worker = starter.worker().await;
+    let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), timer_timeout_wf);
 
     worker

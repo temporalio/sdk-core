@@ -1,14 +1,14 @@
-use crate::prototype_rust_sdk::CancellableID;
 use crate::{
     protos::coresdk::{
         common::Payload,
         workflow_activation::{
             wf_activation_job::Variant, FireTimer, NotifyHasPatch, ResolveActivity,
-            ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart, WfActivation,
-            WfActivationJob,
+            ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart,
+            ResolveSignalExternalWorkflow, WfActivation, WfActivationJob,
         },
         workflow_commands::{
-            workflow_command, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
+            request_cancel_external_workflow_execution as cancel_we, workflow_command,
+            CancelSignalWorkflow, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
             FailWorkflowExecution, RequestCancelActivity, RequestCancelExternalWorkflowExecution,
             ScheduleActivity, StartChildWorkflowExecution, StartTimer,
         },
@@ -16,15 +16,16 @@ use crate::{
     },
     protos::temporal::api::failure::v1::Failure,
     prototype_rust_sdk::{
-        workflow_context::WfContextSharedData, RustWfCmd, UnblockEvent, WfContext, WfExitValue,
-        WorkflowFunction, WorkflowResult,
+        workflow_context::WfContextSharedData, CancellableID, RustWfCmd, UnblockEvent, WfContext,
+        WfExitValue, WorkflowFunction, WorkflowResult,
     },
     workflow::CommandID,
 };
-use anyhow::anyhow;
+use anyhow::{bail, Context as AnyhowContext, Error};
 use crossbeam::channel::Receiver;
 use futures::{future::BoxFuture, FutureExt};
 use parking_lot::RwLock;
+use std::collections::hash_map::Entry;
 use std::{
     collections::HashMap,
     future::Future,
@@ -40,6 +41,7 @@ use tokio::sync::{
 impl WorkflowFunction {
     pub(crate) fn start_workflow(
         &self,
+        namespace: String,
         task_queue: String,
         args: Vec<Payload>,
         outgoing_completions: UnboundedSender<WfActivationCompletion>,
@@ -48,7 +50,7 @@ impl WorkflowFunction {
         UnboundedSender<WfActivation>,
     ) {
         let (cancel_tx, cancel_rx) = watch::channel(false);
-        let (wf_context, cmd_receiver) = WfContext::new(args, cancel_rx);
+        let (wf_context, cmd_receiver) = WfContext::new(namespace, args, cancel_rx);
         let (tx, incoming_activations) = unbounded_channel();
         (
             WorkflowFuture {
@@ -61,6 +63,7 @@ impl WorkflowFunction {
                 command_status: Default::default(),
                 cancel_sender: cancel_tx,
                 child_workflow_starts: Default::default(),
+                sig_chans: Default::default(),
             },
             tx,
         )
@@ -69,6 +72,15 @@ impl WorkflowFunction {
 
 struct WFCommandFutInfo {
     unblocker: oneshot::Sender<UnblockEvent>,
+}
+
+// Allows the workflow to receive signals even though the signal handler may not yet be registered.
+// TODO: Either make this go away by requiring all signals to be registered up-front in a more
+//   production-ready SDK design, or if desired to allow dynamic signal registration, prevent this
+//   from growing unbounded if being sent lots of unhandled signals.
+enum SigChanOrBuffer {
+    Chan(UnboundedSender<Vec<Payload>>),
+    Buffer(Vec<Vec<Payload>>),
 }
 
 pub struct WorkflowFuture {
@@ -90,6 +102,8 @@ pub struct WorkflowFuture {
     ctx_shared: Arc<RwLock<WfContextSharedData>>,
     /// Mapping of sequence number to a StartChildWorkflowExecution request
     child_workflow_starts: HashMap<u32, StartChildWorkflowExecution>,
+    /// Maps signal IDs to channels to send down when they are signaled
+    sig_chans: HashMap<String, SigChanOrBuffer>,
 }
 
 impl WorkflowFuture {
@@ -99,6 +113,7 @@ impl WorkflowFuture {
             UnblockEvent::Activity(seq, _) => CommandID::Activity(seq),
             UnblockEvent::WorkflowStart(seq, _) => CommandID::ChildWorkflowStart(seq),
             UnblockEvent::WorkflowComplete(seq, _) => CommandID::ChildWorkflowComplete(seq),
+            UnblockEvent::SignalExternal(seq, _) => CommandID::SignalExternal(seq),
         };
         let unblocker = self.command_status.remove(&cmd_id);
         unblocker
@@ -106,6 +121,98 @@ impl WorkflowFuture {
             .unblocker
             .send(event)
             .unwrap();
+    }
+
+    fn fail_wft(&self, run_id: String, fail: Error) {
+        warn!("Workflow task failed for {}: {}", run_id, fail);
+        self.outgoing_completions
+            .send(WfActivationCompletion::fail(
+                &self.task_queue,
+                run_id,
+                fail.into(),
+            ))
+            .expect("Completion channel intact");
+    }
+
+    fn send_completion(&self, run_id: String, activation_cmds: Vec<workflow_command::Variant>) {
+        self.outgoing_completions
+            .send(WfActivationCompletion::from_cmds(
+                &self.task_queue,
+                run_id,
+                activation_cmds,
+            ))
+            .expect("Completion channel intact");
+    }
+
+    /// Handle a particular workflow activation job.
+    ///
+    /// Returns Ok(true) if the workflow should be evicted. Returns an error in the event that
+    /// the workflow task should be failed.
+    ///
+    /// Panics if internal assumptions are violated
+    fn handle_job(&mut self, variant: Option<Variant>) -> Result<bool, Error> {
+        if let Some(v) = variant {
+            match v {
+                Variant::StartWorkflow(_) => {
+                    // TODO: Can assign randomness seed whenever needed
+                }
+                Variant::FireTimer(FireTimer { seq }) => self.unblock(UnblockEvent::Timer(seq)),
+                Variant::ResolveActivity(ResolveActivity { seq, result }) => {
+                    self.unblock(UnblockEvent::Activity(
+                        seq,
+                        Box::new(result.context("Activity must have result")?),
+                    ))
+                }
+                Variant::ResolveChildWorkflowExecutionStart(
+                    ResolveChildWorkflowExecutionStart { seq, status },
+                ) => self.unblock(UnblockEvent::WorkflowStart(
+                    seq,
+                    Box::new(status.context("Workflow start must have status")?),
+                )),
+                Variant::ResolveChildWorkflowExecution(ResolveChildWorkflowExecution {
+                    seq,
+                    result,
+                }) => self.unblock(UnblockEvent::WorkflowComplete(
+                    seq,
+                    Box::new(result.context("Child Workflow execution must have a result")?),
+                )),
+                Variant::UpdateRandomSeed(_) => {}
+                Variant::QueryWorkflow(_) => {
+                    todo!()
+                }
+                Variant::CancelWorkflow(_) => {
+                    // TODO: Cancel pending futures, etc
+                    self.cancel_sender
+                        .send(true)
+                        .expect("Cancel rx not dropped");
+                }
+                Variant::SignalWorkflow(sig) => match self.sig_chans.entry(sig.signal_name) {
+                    Entry::Occupied(mut o) => match o.get_mut() {
+                        SigChanOrBuffer::Chan(chan) => {
+                            let _ = chan.send(sig.input);
+                        }
+                        SigChanOrBuffer::Buffer(ref mut buf) => buf.push(sig.input),
+                    },
+                    Entry::Vacant(v) => {
+                        v.insert(SigChanOrBuffer::Buffer(vec![sig.input]));
+                    }
+                },
+                Variant::NotifyHasPatch(NotifyHasPatch { patch_id }) => {
+                    self.ctx_shared.write().changes.insert(patch_id, true);
+                }
+                Variant::ResolveSignalExternalWorkflow(ResolveSignalExternalWorkflow {
+                    seq,
+                    failure,
+                }) => self.unblock(UnblockEvent::SignalExternal(seq, failure)),
+                Variant::RemoveFromCache(_) => {
+                    return Ok(true);
+                }
+            }
+        } else {
+            bail!("Empty activation job variant");
+        }
+
+        Ok(false)
     }
 }
 
@@ -122,59 +229,19 @@ impl Future for WorkflowFuture {
 
             let is_only_eviction = activation.is_only_eviction();
             let run_id = activation.run_id;
-            let mut die_of_eviction_when_done = false;
             self.ctx_shared.write().is_replaying = activation.is_replaying;
 
+            let mut die_of_eviction_when_done = false;
             for WfActivationJob { variant } in activation.jobs {
-                if let Some(v) = variant {
-                    match v {
-                        Variant::StartWorkflow(_) => {
-                            // TODO: Can assign randomness seed whenever needed
-                        }
-                        Variant::FireTimer(FireTimer { seq }) => {
-                            self.unblock(UnblockEvent::Timer(seq))
-                        }
-                        Variant::ResolveActivity(ResolveActivity { seq, result }) => {
-                            self.unblock(UnblockEvent::Activity(
-                                seq,
-                                Box::new(result.expect("Activity must have result")),
-                            ))
-                        }
-                        Variant::ResolveChildWorkflowExecutionStart(
-                            ResolveChildWorkflowExecutionStart { seq, status },
-                        ) => self.unblock(UnblockEvent::WorkflowStart(
-                            seq,
-                            Box::new(status.expect("Workflow start must have status")),
-                        )),
-                        Variant::ResolveChildWorkflowExecution(ResolveChildWorkflowExecution {
-                            seq,
-                            result,
-                        }) => self.unblock(UnblockEvent::WorkflowComplete(
-                            seq,
-                            Box::new(result.expect("Child Workflow execution must have a result")),
-                        )),
-                        Variant::UpdateRandomSeed(_) => {}
-                        Variant::QueryWorkflow(_) => {
-                            todo!()
-                        }
-                        Variant::CancelWorkflow(_) => {
-                            // TODO: Cancel pending futures, etc
-                            self.cancel_sender
-                                .send(true)
-                                .expect("Cancel rx not dropped");
-                        }
-                        Variant::SignalWorkflow(_) => {
-                            todo!()
-                        }
-                        Variant::NotifyHasPatch(NotifyHasPatch { patch_id }) => {
-                            self.ctx_shared.write().changes.insert(patch_id, true);
-                        }
-                        Variant::RemoveFromCache(_) => {
-                            die_of_eviction_when_done = true;
-                        }
+                match self.handle_job(variant) {
+                    Ok(true) => {
+                        die_of_eviction_when_done = true;
                     }
-                } else {
-                    return Err(anyhow!("Empty activation job variant")).into();
+                    Err(e) => {
+                        self.fail_wft(run_id, e);
+                        continue 'activations;
+                    }
+                    _ => (),
                 }
             }
 
@@ -202,7 +269,8 @@ impl Future for WorkflowFuture {
                                 activation_cmds.push(workflow_command::Variant::CancelTimer(
                                     CancelTimer { seq },
                                 ));
-                                // TODO: cancelled timer should not simply be unblocked, in the other SDKs this returns an error
+                                // TODO: cancelled timer should not simply be unblocked, in the
+                                //   other SDKs this returns an error
                                 self.unblock(UnblockEvent::Timer(seq));
                                 // Re-poll wf future since a timer is now unblocked
                                 res = self.inner.poll_unpin(cx);
@@ -214,19 +282,27 @@ impl Future for WorkflowFuture {
                                     ),
                                 );
                             }
-                            CancellableID::ChildWorkflow(seq) => {
-                                let start_request = self
-                                    .child_workflow_starts
-                                    .get(&seq)
-                                    .expect("Tried to cancel unknown child");
+                            CancellableID::ChildWorkflow {
+                                cancel_cmd_seq,
+                                child_seq,
+                            } => {
+                                let seq = cancel_cmd_seq.expect(
+                                    "Cancel command sequence number must have been set when \
+                                    cancel is called",
+                                );
                                 activation_cmds.push(
                                     workflow_command::Variant::RequestCancelExternalWorkflowExecution(
                                         RequestCancelExternalWorkflowExecution {
-                                            seq: Some(seq),
-                                            namespace: start_request.namespace.clone(),
-                                            workflow_id: start_request.workflow_id.clone(),
-                                            ..Default::default()
+                                            seq,
+                                            target: Some(cancel_we::Target::ChildWorkflowSeq(child_seq)),
                                         },
+                                    ),
+                                );
+                            }
+                            CancellableID::SignalExternalWorkflow(seq) => {
+                                activation_cmds.push(
+                                    workflow_command::Variant::CancelSignalWorkflow(
+                                        CancelSignalWorkflow { seq },
                                     ),
                                 );
                             }
@@ -252,6 +328,9 @@ impl Future for WorkflowFuture {
                                 self.child_workflow_starts.insert(seq, req);
                                 CommandID::ChildWorkflowStart(seq)
                             }
+                            workflow_command::Variant::SignalExternalWorkflowExecution(req) => {
+                                CommandID::SignalExternal(req.seq)
+                            }
                             _ => unimplemented!("Command type not implemented"),
                         };
                         self.command_status.insert(
@@ -272,14 +351,21 @@ impl Future for WorkflowFuture {
                             },
                         );
                     }
+                    RustWfCmd::SubscribeSignal(signame, chan) => {
+                        // Deal with any buffered signal inputs for signals that were not yet
+                        // registered
+                        if let Some(SigChanOrBuffer::Buffer(buf)) = self.sig_chans.remove(&signame)
+                        {
+                            for input in buf {
+                                let _ = chan.send(input);
+                            }
+                            // Re-poll wf future since signals may be unblocked
+                            res = self.inner.poll_unpin(cx);
+                        }
+                        self.sig_chans.insert(signame, SigChanOrBuffer::Chan(chan));
+                    }
                     RustWfCmd::ForceWFTFailure(err) => {
-                        self.outgoing_completions
-                            .send(WfActivationCompletion::fail(
-                                &self.task_queue,
-                                run_id,
-                                err.into(),
-                            ))
-                            .expect("Completion channel intact");
+                        self.fail_wft(run_id, err);
                         continue 'activations;
                     }
                 }
@@ -328,13 +414,7 @@ impl Future for WorkflowFuture {
             // not produce any commands which is completely viable in the case WF is waiting on
             // multiple completions.
 
-            self.outgoing_completions
-                .send(WfActivationCompletion::from_cmds(
-                    &self.task_queue,
-                    run_id,
-                    activation_cmds,
-                ))
-                .expect("Completion channel intact");
+            self.send_completion(run_id, activation_cmds);
 
             if die_of_eviction_when_done {
                 return Ok(WfExitValue::Evicted).into();
@@ -345,3 +425,5 @@ impl Future for WorkflowFuture {
         }
     }
 }
+
+impl WorkflowFuture {}

@@ -15,11 +15,25 @@ message Payload {
     bytes data = 2;
 }
 
-// Identifying information about a particular workflow execution
+// Identifying information about a particular workflow execution. Namespace is expected to be
+// assumed or included in whatever message is wrapping this one.
 message WorkflowExecution {
+    // Can never be empty
     string workflow_id = 1;
+    // May be empty if the most recent run of the workflow with the given ID is being targeted
     string run_id = 2;
 }
+
+// Identifying information about a particular workflow execution, including namespace
+message NamespacedWorkflowExecution {
+    // Namespace the workflow run is located in
+    string namespace = 1;
+    // Can never be empty
+    string workflow_id = 2;
+    // May be empty if the most recent run of the workflow with the given ID is being targeted
+    string run_id = 3;
+}
+
 
 // Defines how an activity or workflow should be retried in the event of failure, timeout, etc.
 message RetryPolicy {

@@ -1,4 +1,5 @@
 mod activity_tasks;
+mod child_workflows;
 mod queries;
 mod replay_flag;
 mod retry;
