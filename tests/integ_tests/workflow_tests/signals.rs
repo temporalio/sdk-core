@@ -74,7 +74,7 @@ async fn signals_child(mut ctx: WfContext) -> WorkflowResult<()> {
         .child_workflow(ChildWorkflowOptions {
             workflow_id: "my_precious_child".to_string(),
             workflow_type: "child_receiver".to_string(),
-            input: vec![],
+            ..Default::default()
         })
         .start(&mut ctx)
         .await

@@ -241,30 +241,25 @@ impl Started {
         self,
         state: SharedState,
     ) -> ChildWorkflowMachineTransition<Cancelled> {
-        match state.cancellation_type {
-            ChildWorkflowCancellationType::Abandon => {
-                ChildWorkflowMachineTransition::ok(vec![], Cancelled::default())
-            }
-            _ => ChildWorkflowMachineTransition::ok(
-                vec![ChildWorkflowCommand::Cancel(Failure {
-                    message: "Child Workflow execution cancelled".to_owned(),
-                    cause: Some(Box::new(Failure {
-                        failure_info: Some(FailureInfo::CanceledFailureInfo(
-                            failure::CanceledFailureInfo {
-                                ..Default::default()
-                            },
-                        )),
-                        ..Default::default()
-                    })),
-                    failure_info: failure_info_from_state(
-                        state,
-                        RetryState::NonRetryableFailure as i32,
-                    ),
+        ChildWorkflowMachineTransition::ok(
+            vec![ChildWorkflowCommand::Cancel(Failure {
+                message: "Child Workflow execution cancelled".to_owned(),
+                cause: Some(Box::new(Failure {
+                    failure_info: Some(FailureInfo::CanceledFailureInfo(
+                        failure::CanceledFailureInfo {
+                            ..Default::default()
+                        },
+                    )),
                     ..Default::default()
-                })],
-                Cancelled::default(),
-            ),
-        }
+                })),
+                failure_info: failure_info_from_state(
+                    state,
+                    RetryState::NonRetryableFailure as i32,
+                ),
+                ..Default::default()
+            })],
+            Cancelled::default(),
+        )
     }
     pub(super) fn on_child_workflow_execution_terminated(
         self,
