@@ -346,6 +346,9 @@ impl Future for WorkflowFuture {
                             workflow_command::Variant::SignalExternalWorkflowExecution(req) => {
                                 CommandID::SignalExternal(req.seq)
                             }
+                            workflow_command::Variant::RequestCancelExternalWorkflowExecution(
+                                req,
+                            ) => CommandID::CancelExternal(req.seq),
                             _ => unimplemented!("Command type not implemented"),
                         };
                         self.command_status.insert(

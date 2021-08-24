@@ -1,7 +1,7 @@
 use crate::{
     machines::HAS_CHANGE_MARKER_NAME,
     protos::{
-        coresdk::common::build_has_change_marker_details,
+        coresdk::common::{build_has_change_marker_details, NamespacedWorkflowExecution},
         temporal::api::{
             common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
             enums::v1::{EventType, WorkflowTaskFailedCause},
@@ -228,6 +228,44 @@ impl TestHistoryBuilder {
         };
         self.build_and_push_event(
             EventType::SignalExternalWorkflowExecutionFailed,
+            attrs.into(),
+        );
+    }
+
+    pub(crate) fn add_cancel_external_wf(&mut self, execution: NamespacedWorkflowExecution) -> i64 {
+        let attrs = RequestCancelExternalWorkflowExecutionInitiatedEventAttributes {
+            workflow_task_completed_event_id: self.previous_task_completed_id,
+            namespace: execution.namespace,
+            workflow_execution: Some(WorkflowExecution {
+                workflow_id: execution.workflow_id,
+                run_id: execution.run_id,
+            }),
+            ..Default::default()
+        };
+        self.add_get_event_id(
+            EventType::RequestCancelExternalWorkflowExecutionInitiated,
+            Some(attrs.into()),
+        )
+    }
+
+    pub(crate) fn add_cancel_external_wf_completed(&mut self, initiated_id: i64) {
+        let attrs = ExternalWorkflowExecutionCancelRequestedEventAttributes {
+            initiated_event_id: initiated_id,
+            ..Default::default()
+        };
+        self.build_and_push_event(
+            EventType::ExternalWorkflowExecutionCancelRequested,
+            attrs.into(),
+        );
+    }
+
+    pub(crate) fn add_cancel_external_wf_failed(&mut self, initiated_id: i64) {
+        let attrs = RequestCancelExternalWorkflowExecutionFailedEventAttributes {
+            initiated_event_id: initiated_id,
+            ..Default::default()
+        };
+        self.build_and_push_event(
+            EventType::RequestCancelExternalWorkflowExecutionFailed,
             attrs.into(),
         );
     }

@@ -228,3 +228,71 @@ impl WFMachinesAdapter for CancelExternalMachine {
 }
 
 impl Cancellable for CancelExternalMachine {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prototype_rust_sdk::{WfContext, WorkflowFunction, WorkflowResult};
+    use crate::test_help::TestHistoryBuilder;
+    use crate::workflow::managed_wf::ManagedWFFunc;
+
+    async fn cancel_sender(mut ctx: WfContext) -> WorkflowResult<()> {
+        let res = ctx
+            .cancel_external(NamespacedWorkflowExecution {
+                namespace: "some_namespace".to_string(),
+                workflow_id: "fake_wid".to_string(),
+                run_id: "fake_rid".to_string(),
+            })
+            .await;
+        if res.is_err() {
+            Err(anyhow::anyhow!("Cancel fail!"))
+        } else {
+            Ok(().into())
+        }
+    }
+
+    #[rstest::rstest]
+    #[case::succeeds(false)]
+    #[case::fails(true)]
+    #[tokio::test]
+    async fn sends_cancel(#[case] fails: bool) {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        let id = t.add_cancel_external_wf(NamespacedWorkflowExecution {
+            namespace: "some_namespace".to_string(),
+            workflow_id: "fake_wid".to_string(),
+            run_id: "fake_rid".to_string(),
+        });
+        if fails {
+            t.add_cancel_external_wf_failed(id);
+        } else {
+            t.add_cancel_external_wf_completed(id);
+        }
+        t.add_full_wf_task();
+        t.add_workflow_execution_completed();
+
+        let wff = WorkflowFunction::new(cancel_sender);
+        let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
+        wfm.get_next_activation().await.unwrap();
+        let cmds = wfm.get_server_commands().await.commands;
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(
+            cmds[0].command_type(),
+            CommandType::RequestCancelExternalWorkflowExecution
+        );
+        wfm.get_next_activation().await.unwrap();
+        let cmds = wfm.get_server_commands().await.commands;
+        assert_eq!(cmds.len(), 1);
+        if fails {
+            assert_eq!(cmds[0].command_type(), CommandType::FailWorkflowExecution);
+        } else {
+            assert_eq!(
+                cmds[0].command_type(),
+                CommandType::CompleteWorkflowExecution
+            );
+        }
+
+        wfm.shutdown().await.unwrap();
+    }
+}
