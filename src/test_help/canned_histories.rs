@@ -1,20 +1,11 @@
 use crate::{
+    protos::coresdk::common::NamespacedWorkflowExecution,
     protos::temporal::api::common::v1::{Payload, WorkflowExecution},
     protos::temporal::api::enums::v1::{
         EventType, StartChildWorkflowExecutionFailedCause, WorkflowTaskFailedCause,
     },
     protos::temporal::api::failure::v1::Failure,
-    protos::temporal::api::history::v1::{
-        history_event, ActivityTaskCancelRequestedEventAttributes,
-        ActivityTaskCanceledEventAttributes, ActivityTaskCompletedEventAttributes,
-        ActivityTaskFailedEventAttributes, ActivityTaskScheduledEventAttributes,
-        ActivityTaskStartedEventAttributes, ActivityTaskTimedOutEventAttributes,
-        ChildWorkflowExecutionCompletedEventAttributes,
-        ChildWorkflowExecutionFailedEventAttributes, ChildWorkflowExecutionStartedEventAttributes,
-        StartChildWorkflowExecutionFailedEventAttributes,
-        StartChildWorkflowExecutionInitiatedEventAttributes, TimerCanceledEventAttributes,
-        TimerFiredEventAttributes,
-    },
+    protos::temporal::api::history::v1::*,
     test_help::TestHistoryBuilder,
 };
 
@@ -1500,7 +1491,44 @@ pub fn single_child_workflow_signaled(child_wf_id: &str, signame: &str) -> TestH
             ChildWorkflowExecutionCompletedEventAttributes {
                 initiated_event_id,
                 started_event_id,
-                // todo add the result payload
+                ..Default::default()
+            },
+        ),
+    );
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
+///  6: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED
+///  7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 10: EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED
+/// 11: EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED
+/// 12: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELLED
+/// 13: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 14: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 15: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 16: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+pub fn single_child_workflow_cancelled(child_wf_id: &str) -> TestHistoryBuilder {
+    let (mut t, initiated_event_id, started_event_id) = start_child_wf_preamble(child_wf_id);
+    let id = t.add_cancel_external_wf(NamespacedWorkflowExecution {
+        workflow_id: child_wf_id.to_string(),
+        ..Default::default()
+    });
+    t.add_cancel_external_wf_completed(id);
+    t.add(
+        EventType::ChildWorkflowExecutionCanceled,
+        history_event::Attributes::ChildWorkflowExecutionCanceledEventAttributes(
+            ChildWorkflowExecutionCanceledEventAttributes {
+                initiated_event_id,
+                started_event_id,
                 ..Default::default()
             },
         ),

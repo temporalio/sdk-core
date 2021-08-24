@@ -84,7 +84,7 @@ async fn signals_child(mut ctx: WfContext) -> WorkflowResult<()> {
         .signal(&mut ctx, SIGNAME, b"hiya!")
         .await
         .unwrap();
-    started_child.result(&ctx).await.status.unwrap();
+    started_child.result(&mut ctx).await.status.unwrap();
     Ok(().into())
 }
 

@@ -1,6 +1,8 @@
+use crate::prototype_rust_sdk::CancelExternalWfResult;
 use crate::{
     protos::coresdk::{
         activity_result::ActivityResult,
+        child_workflow::ChildWorkflowCancellationType,
         child_workflow::ChildWorkflowResult,
         common::{NamespacedWorkflowExecution, Payload},
         workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
@@ -77,6 +79,11 @@ impl WfContext {
             },
             rx,
         )
+    }
+
+    /// Return the namespace the workflow is executing in
+    pub fn namespace(&self) -> &str {
+        &self.namespace
     }
 
     /// Get the arguments provided to the workflow upon execution start
@@ -212,7 +219,7 @@ impl WfContext {
     pub fn cancel_external(
         &mut self,
         target: NamespacedWorkflowExecution,
-    ) -> impl Future<Output = SignalExternalWfResult> {
+    ) -> impl Future<Output = CancelExternalWfResult> {
         let target = cancel_we::Target::WorkflowExecution(target);
         let seq = self.next_cancel_external_wf_sequence_number;
         self.next_cancel_external_wf_sequence_number += 1;
@@ -424,7 +431,7 @@ impl ActivityOptions {
 }
 
 /// Options for scheduling a child workflow
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct ChildWorkflowOptions {
     /// Workflow ID
     pub workflow_id: String,
@@ -432,27 +439,27 @@ pub struct ChildWorkflowOptions {
     pub workflow_type: String,
     /// Input to send the child Workflow
     pub input: Vec<Payload>,
-    // Add more fields here as needed
+    /// Cancellation strategy for the child workflow
+    pub cancel_type: ChildWorkflowCancellationType,
 }
 
 impl ChildWorkflowOptions {
     /// Turns a `ChildWorkflowOptions` struct to a `StartChildWorkflowExecution` struct using
     /// given `seq`
-    pub fn to_command(&self, seq: u32) -> StartChildWorkflowExecution {
+    pub fn into_command(self, seq: u32) -> StartChildWorkflowExecution {
         StartChildWorkflowExecution {
             seq,
-            workflow_id: self.workflow_id.clone(),
-            workflow_type: self.workflow_type.clone(),
-            // TODO: see if there's a way not to clone this
-            input: self.input.clone(),
+            workflow_id: self.workflow_id,
+            workflow_type: self.workflow_type,
+            input: self.input,
+            cancellation_type: self.cancel_type as i32,
             ..Default::default()
         }
     }
 }
 
-/// A stub representing a child workflow.
-/// Use its methods to interact with the child.
-#[derive(Default, Debug)]
+/// A stub representing an unstarted child workflow.
+#[derive(Default, Debug, Clone)]
 pub struct ChildWorkflow {
     opts: ChildWorkflowOptions,
 }
@@ -486,7 +493,7 @@ pub struct StartedChildWorkflow {
 
 impl ChildWorkflow {
     /// Start the child workflow, the returned Future is cancellable.
-    pub fn start(&mut self, cx: &mut WfContext) -> impl CancellableFuture<PendingChildWorkflow> {
+    pub fn start(self, cx: &mut WfContext) -> impl CancellableFuture<PendingChildWorkflow> {
         let child_seq = cx.next_child_workflow_sequence_number;
         cx.next_child_workflow_sequence_number += 1;
         let (cmd, unblocker) = CancellableWFCommandFut::new_with_dat(
@@ -495,7 +502,7 @@ impl ChildWorkflow {
         );
         cx.send(
             CommandCreateRequest {
-                cmd: self.opts.to_command(child_seq).into(),
+                cmd: self.opts.into_command(child_seq).into(),
                 unblocker,
             }
             .into(),
@@ -527,6 +534,17 @@ impl StartedChildWorkflow {
         cmd
     }
 
+    /// Cancel the child workflow
+    pub fn cancel(&self, cx: &mut WfContext) -> impl Future<Output = CancelExternalWfResult> {
+        let target = NamespacedWorkflowExecution {
+            namespace: cx.namespace().to_string(),
+            workflow_id: self.workflow_id.clone(),
+            ..Default::default()
+        };
+        cx.cancel_external(target)
+    }
+
+    /// Signal the child workflow
     pub fn signal(
         &self,
         cx: &mut WfContext,

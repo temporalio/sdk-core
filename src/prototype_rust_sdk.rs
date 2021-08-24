@@ -208,8 +208,16 @@ enum UnblockEvent {
 
 /// Result of awaiting on a timer
 pub struct TimerResult;
+
+/// Successful result of sending a signal to an external workflow
+pub struct SignalExternalOk;
 /// Result of awaiting on sending a signal to an external workflow
-pub type SignalExternalWfResult = Result<(), Failure>;
+pub type SignalExternalWfResult = Result<SignalExternalOk, Failure>;
+
+/// Successful result of sending a cancel request to an external workflow
+pub struct CancelExternalOk;
+/// Result of awaiting on sending a cancel request to an external workflow
+pub type CancelExternalWfResult = Result<CancelExternalOk, Failure>;
 
 trait Unblockable {
     type OtherDat;
@@ -270,7 +278,23 @@ impl Unblockable for SignalExternalWfResult {
                 if let Some(f) = maybefail {
                     Err(f)
                 } else {
-                    Ok(())
+                    Ok(SignalExternalOk)
+                }
+            }
+            _ => panic!("Invalid unblock event for signal external workflow result"),
+        }
+    }
+}
+
+impl Unblockable for CancelExternalWfResult {
+    type OtherDat = ();
+    fn unblock(ue: UnblockEvent, _: &Self::OtherDat) -> Self {
+        match ue {
+            UnblockEvent::CancelExternal(_, maybefail) => {
+                if let Some(f) = maybefail {
+                    Err(f)
+                } else {
+                    Ok(CancelExternalOk)
                 }
             }
             _ => panic!("Invalid unblock event for signal external workflow result"),

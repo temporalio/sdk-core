@@ -688,10 +688,10 @@ mod test {
 
     async fn parent_wf(mut ctx: WfContext) -> WorkflowResult<()> {
         let expectation = Expectation::try_from_u8(ctx.get_args()[0].data[0]).unwrap();
-        let mut child = ctx.child_workflow(ChildWorkflowOptions {
+        let child = ctx.child_workflow(ChildWorkflowOptions {
             workflow_id: "child-id-1".to_string(),
             workflow_type: "child".to_string(),
-            input: vec![],
+            ..Default::default()
         });
 
         let start_res = child.start(&mut ctx).await;
@@ -771,10 +771,10 @@ mod test {
 
     async fn cancel_before_send_wf(mut ctx: WfContext) -> WorkflowResult<()> {
         let workflow_id = "child-id-1";
-        let mut child = ctx.child_workflow(ChildWorkflowOptions {
+        let child = ctx.child_workflow(ChildWorkflowOptions {
             workflow_id: workflow_id.to_string(),
             workflow_type: "child".to_string(),
-            input: vec![],
+            ..Default::default()
         });
         let start = child.start(&mut ctx);
         start.cancel(&mut ctx);
