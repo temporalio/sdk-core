@@ -53,6 +53,8 @@ message WFActivationJob {
         ResolveChildWorkflowExecution resolve_child_workflow_execution = 11;
         /// An attempt to signal an external workflow resolved
         ResolveSignalExternalWorkflow resolve_signal_external_workflow = 12;
+        /// An attempt to cancel an external workflow resolved
+        ResolveRequestCancelExternalWorkflow resolve_request_cancel_external_workflow = 13;
         /// Remove the workflow identified by the [WFActivation] containing this job from the cache
         /// after performing the activation.
         ///
@@ -94,7 +96,8 @@ message ResolveActivity {
     activity_result.ActivityResult result = 2;
 }
 
-/// Notify a workflow that a start child workflow execution request has succeeded, failed or was cancelled.
+/// Notify a workflow that a start child workflow execution request has succeeded, failed or was
+/// cancelled.
 message ResolveChildWorkflowExecutionStart {
     /// Sequence number as provided by lang in the corresponding StartChildWorkflowExecution command
     uint32 seq = 1;
@@ -170,6 +173,15 @@ message NotifyHasPatch {
 message ResolveSignalExternalWorkflow {
     /// Sequence number as provided by lang in the corresponding SignalExternalWorkflowExecution
     /// command
+    uint32 seq = 1;
+    /// If populated, this signal either failed to be sent or was cancelled depending on failure
+    /// type / info.
+    temporal.api.failure.v1.Failure failure = 2;
+}
+
+message ResolveRequestCancelExternalWorkflow {
+    /// Sequence number as provided by lang in the corresponding
+    /// RequestCancelExternalWorkflowExecution command
     uint32 seq = 1;
     /// If populated, this signal either failed to be sent or was cancelled depending on failure
     /// type / info.

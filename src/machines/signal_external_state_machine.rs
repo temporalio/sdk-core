@@ -68,7 +68,7 @@ pub(super) fn new_external_signal(
         shared_state: SharedState { seq },
     };
     OnEventWrapper::on_event_mut(&mut s, SignalExternalMachineEvents::Schedule)
-        .expect("Scheduling activities doesn't fail");
+        .expect("Scheduling signal external wf command doesn't fail");
     let cmd_attrs = command::Attributes::SignalExternalWorkflowExecutionCommandAttributes(
         SignalExternalWorkflowExecutionCommandAttributes {
             namespace: workflow_execution.namespace,

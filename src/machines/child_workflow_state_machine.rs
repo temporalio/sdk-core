@@ -702,7 +702,12 @@ mod test {
         };
         match (
             expectation,
-            start_res.as_started().unwrap().result(&ctx).await.status,
+            start_res
+                .as_started()
+                .unwrap()
+                .result(&mut ctx)
+                .await
+                .status,
         ) {
             (Expectation::Success, Some(child_workflow_result::Status::Completed(_))) => {
                 Ok(().into())

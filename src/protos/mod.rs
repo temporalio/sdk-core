@@ -232,6 +232,9 @@ pub mod coresdk {
                         wf_activation_job::Variant::RemoveFromCache(_) => {
                             write!(f, "RemoveFromCache")
                         }
+                        wf_activation_job::Variant::ResolveRequestCancelExternalWorkflow(_) => {
+                            write!(f, "ResolveRequestCancelExternalWorkflow")
+                        }
                     },
                 }
             }
@@ -320,6 +323,9 @@ pub mod coresdk {
                         }
                         workflow_command::Variant::CancelSignalWorkflow(_) => {
                             write!(f, "CancelSignalWorkflow")
+                        }
+                        workflow_command::Variant::CancelUnstartedChildWorkflowExecution(_) => {
+                            write!(f, "CancelUnstartedChildWorkflowExecution")
                         }
                     },
                 }

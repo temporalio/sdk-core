@@ -1,3 +1,4 @@
+use crate::machines::cancel_external_state_machine::new_external_cancel;
 use crate::machines::signal_external_state_machine::new_external_signal;
 use crate::{
     core_tracing::VecDisplayer,
@@ -677,19 +678,33 @@ impl WorkflowMachines {
                         .insert(CommandID::ChildWorkflowStart(seq), child_workflow.machine);
                     self.current_wf_task_commands.push_back(child_workflow);
                 }
-                WFCommand::RequestCancelExternalWorkflow(attrs) => match attrs.target {
-                    None => {
-                        return Err(WFMachinesError::Fatal(
-                            "Cancel external workflow command had empty target field".to_string(),
-                        ))
-                    }
-                    Some(cancel_we::Target::ChildWorkflowSeq(seq)) => {
-                        jobs.extend(self.process_cancellation(CommandID::ChildWorkflowStart(seq))?)
-                    }
-                    Some(cancel_we::Target::WorkflowExecution(_)) => {
-                        todo!("Cancel external non-child workflows")
-                    }
-                },
+                WFCommand::CancelUnstartedChild(attrs) => jobs.extend(self.process_cancellation(
+                    CommandID::ChildWorkflowStart(attrs.child_workflow_seq),
+                )?),
+                WFCommand::RequestCancelExternalWorkflow(attrs) => {
+                    let (we, only_child) = match attrs.target {
+                        None => {
+                            return Err(WFMachinesError::Fatal(
+                                "Cancel external workflow command had empty target field"
+                                    .to_string(),
+                            ))
+                        }
+                        Some(cancel_we::Target::ChildWorkflowId(wfid)) => (
+                            NamespacedWorkflowExecution {
+                                namespace: self.namespace.clone(),
+                                workflow_id: wfid,
+                                run_id: "".to_string(),
+                            },
+                            true,
+                        ),
+                        Some(cancel_we::Target::WorkflowExecution(we)) => (we, false),
+                    };
+                    let mach = self
+                        .add_new_command_machine(new_external_cancel(attrs.seq, we, only_child));
+                    self.id_to_machine
+                        .insert(CommandID::CancelExternal(attrs.seq), mach.machine);
+                    self.current_wf_task_commands.push_back(mach);
+                }
                 WFCommand::SignalExternalWorkflow(attrs) => {
                     let (we, only_child) = match attrs.target {
                         None => {

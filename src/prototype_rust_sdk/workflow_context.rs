@@ -138,15 +138,7 @@ impl WfContext {
     }
 
     /// Cancel any cancellable operation by ID
-    fn cancel(&mut self, mut cancellable_id: CancellableID) {
-        if let CancellableID::ChildWorkflow {
-            ref mut cancel_cmd_seq,
-            ..
-        } = cancellable_id
-        {
-            *cancel_cmd_seq = Some(self.next_cancel_external_wf_sequence_number);
-            self.next_cancel_external_wf_sequence_number += 1;
-        }
+    fn cancel(&mut self, cancellable_id: CancellableID) {
         self.send(RustWfCmd::Cancel(cancellable_id))
     }
 
@@ -304,7 +296,7 @@ where
     T: Unblockable<OtherDat = D>,
 {
     fn cancel(&self, cx: &mut WfContext) {
-        cx.cancel(self.cancellable_id);
+        cx.cancel(self.cancellable_id.clone());
     }
 }
 
@@ -437,10 +429,7 @@ impl ChildWorkflow {
         let child_seq = cx.next_child_workflow_sequence_number;
         cx.next_child_workflow_sequence_number += 1;
         let (cmd, unblocker) = WFCommandFut::new_with_dat(
-            CancellableID::ChildWorkflow {
-                child_seq,
-                cancel_cmd_seq: None,
-            },
+            CancellableID::ChildWorkflow(child_seq),
             self.opts.workflow_id.clone(),
         );
         cx.send(
@@ -456,10 +445,16 @@ impl ChildWorkflow {
 
 impl StartedChildWorkflow {
     /// Create a future that will wait until completion of this child workflow execution
-    pub fn result(&self, cx: &WfContext) -> impl CancellableFuture<ChildWorkflowResult> {
-        let (cmd, unblocker) = WFCommandFut::new(CancellableID::ChildWorkflow {
-            child_seq: self.child_wf_cmd_seq_num,
-            cancel_cmd_seq: None,
+    pub fn result(&self, cx: &mut WfContext) -> impl CancellableFuture<ChildWorkflowResult> {
+        let cancel_seq = cx.next_cancel_external_wf_sequence_number;
+        cx.next_cancel_external_wf_sequence_number += 1;
+        let (cmd, unblocker) = WFCommandFut::new(CancellableID::ExternalWorkflow {
+            seqnum: cancel_seq,
+            execution: NamespacedWorkflowExecution {
+                workflow_id: self.workflow_id.clone(),
+                ..Default::default()
+            },
+            only_child: true,
         });
         cx.send(
             CommandSubscribeChildWorkflowCompletion {

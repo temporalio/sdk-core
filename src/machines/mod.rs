@@ -2,7 +2,6 @@ mod workflow_machines;
 
 // TODO: Move all these inside a submachines module
 mod activity_state_machine;
-#[allow(unused)]
 mod cancel_external_state_machine;
 mod cancel_workflow_state_machine;
 mod child_workflow_state_machine;
@@ -66,6 +65,7 @@ pub enum WFCommand {
     CancelWorkflow(CancelWorkflowExecution),
     SetPatchMarker(SetPatchMarker),
     AddChildWorkflow(StartChildWorkflowExecution),
+    CancelUnstartedChild(CancelUnstartedChildWorkflowExecution),
     RequestCancelExternalWorkflow(RequestCancelExternalWorkflowExecution),
     SignalExternalWorkflow(SignalExternalWorkflowExecution),
     CancelSignalWorkflow(CancelSignalWorkflow),
@@ -110,6 +110,9 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::CancelSignalWorkflow(s) => {
                 Ok(WFCommand::CancelSignalWorkflow(s))
             }
+            workflow_command::Variant::CancelUnstartedChildWorkflowExecution(s) => {
+                Ok(WFCommand::CancelUnstartedChild(s))
+            }
         }
     }
 }
@@ -126,6 +129,7 @@ enum MachineKind {
     Version,
     WorkflowTask,
     SignalExternalWorkflow,
+    CancelExternalWorkflow,
 }
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.

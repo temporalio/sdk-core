@@ -20,7 +20,7 @@ async fn parent_wf(mut ctx: WfContext) -> WorkflowResult<()> {
         .as_started()
         .expect("Child should get started");
     let sigfut = start_res.signal(&mut ctx, SIGNAME, b"Hi!");
-    let resfut = start_res.result(&ctx);
+    let resfut = start_res.result(&mut ctx);
     let (sigres, res) = join!(sigfut, resfut);
     sigres.expect("signal result is ok");
     res.status.expect("child wf result is ok");

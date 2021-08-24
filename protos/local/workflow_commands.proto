@@ -25,9 +25,10 @@ message WorkflowCommand {
         CancelWorkflowExecution cancel_workflow_execution = 9;
         SetPatchMarker set_patch_marker = 10;
         StartChildWorkflowExecution start_child_workflow_execution = 11;
-        RequestCancelExternalWorkflowExecution request_cancel_external_workflow_execution = 12;
-        SignalExternalWorkflowExecution signal_external_workflow_execution = 13;
-        CancelSignalWorkflow cancel_signal_workflow = 14;
+        CancelUnstartedChildWorkflowExecution cancel_unstarted_child_workflow_execution = 12;
+        RequestCancelExternalWorkflowExecution request_cancel_external_workflow_execution = 13;
+        SignalExternalWorkflowExecution signal_external_workflow_execution = 14;
+        CancelSignalWorkflow cancel_signal_workflow = 15;
 
         // To be added as/if needed:
         //  UpsertWorkflowSearchAttributes upsert_workflow_search_attributes_command_attributes = 14;
@@ -187,7 +188,13 @@ message StartChildWorkflowExecution {
     child_workflow.ChildWorkflowCancellationType cancellation_type = 18;
 }
 
-/// Request cancellation of an external or child workflow execution
+/// Cancel a not-yet-started child workflow
+message CancelUnstartedChildWorkflowExecution {
+    // Sequence number as given to the `StartChildWorkflowExecution` command
+    uint32 child_workflow_seq = 1;
+}
+
+/// Request cancellation of an external workflow execution (which may be a started child)
 message RequestCancelExternalWorkflowExecution {
     /// Lang's incremental sequence number, used as the operation identifier
     uint32 seq = 1;
@@ -195,9 +202,8 @@ message RequestCancelExternalWorkflowExecution {
     oneof target {
         // A specific workflow instance
         common.NamespacedWorkflowExecution workflow_execution = 2;
-        // The desired target must be a child of the issuing workflow, and this is its correlation
-        // sequence
-        uint32 child_workflow_seq = 3;
+        // The desired target must be a child of the issuing workflow, and this is its workflow id
+        string child_workflow_id = 3;
     }
 }
 
