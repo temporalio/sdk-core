@@ -1,5 +1,7 @@
-use crate::pollers::{MockServerGatewayApis, RetryGateway, RETRYABLE_ERROR_CODES};
-use crate::ServerGatewayApis;
+use crate::{
+    pollers::{MockServerGatewayApis, RetryGateway, RETRYABLE_ERROR_CODES},
+    ServerGatewayApis,
+};
 use tonic::{Code, Status};
 
 #[tokio::test]
@@ -10,6 +12,9 @@ async fn non_retryable_errors() {
         Code::AlreadyExists,
         Code::PermissionDenied,
         Code::FailedPrecondition,
+        Code::DeadlineExceeded,
+        Code::Unauthenticated,
+        Code::Unimplemented,
     ] {
         let mut mock_gateway = MockServerGatewayApis::new();
         mock_gateway
