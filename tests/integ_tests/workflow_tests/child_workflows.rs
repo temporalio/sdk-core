@@ -13,7 +13,7 @@ async fn child_wf(_ctx: WfContext) -> WorkflowResult<()> {
 }
 
 async fn parent_wf(mut ctx: WfContext) -> WorkflowResult<()> {
-    let mut child = ctx.child_workflow(ChildWorkflowOptions {
+    let child = ctx.child_workflow(ChildWorkflowOptions {
         workflow_id: "child-1".to_owned(),
         workflow_type: CHILD_WF_TYPE.to_owned(),
         ..Default::default()
@@ -24,7 +24,7 @@ async fn parent_wf(mut ctx: WfContext) -> WorkflowResult<()> {
         .await
         .as_started()
         .expect("Child chould start OK");
-    match started.result(&ctx).await.status {
+    match started.result(&mut ctx).await.status {
         Some(child_workflow_result::Status::Completed(Success { .. })) => Ok(().into()),
         _ => Err(anyhow!("Unexpected child WF status")),
     }

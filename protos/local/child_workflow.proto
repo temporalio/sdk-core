@@ -61,7 +61,7 @@ enum StartChildWorkflowExecutionFailedCause {
 }
 
 /**
- * Controls at which point to report back to lang when it cancels a child workflow
+ * Controls at which point to report back to lang when a child workflow is cancelled
  */
 enum ChildWorkflowCancellationType {
     /** Do not request cancellation of the child workflow if already scheduled */

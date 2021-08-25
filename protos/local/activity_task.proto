@@ -25,6 +25,8 @@ message ActivityTask {
 
 /// Begin executing an activity
 message Start {
+    /// The namespace the workflow lives in
+    string workflow_namespace = 1;
     /// The workflow's type name or function identifier
     string workflow_type = 2;
     common.WorkflowExecution workflow_execution = 3;
