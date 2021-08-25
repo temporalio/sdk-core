@@ -26,10 +26,9 @@ use tonic::Code;
 pub type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
 /// List of gRPC error codes that client will retry.
-pub const RETRYABLE_ERROR_CODES: [Code; 11] = [
+pub const RETRYABLE_ERROR_CODES: [Code; 10] = [
     Code::Cancelled,
     Code::DataLoss,
-    Code::DeadlineExceeded,
     Code::Internal,
     Code::Unknown,
     Code::ResourceExhausted,
