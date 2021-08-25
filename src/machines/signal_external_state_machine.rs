@@ -13,13 +13,17 @@ use crate::{
             command::v1::{command, Command, SignalExternalWorkflowExecutionCommandAttributes},
             common::v1::WorkflowExecution as UpstreamWE,
             enums::v1::{CommandType, EventType, SignalExternalWorkflowExecutionFailedCause},
-            failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
+            failure::v1::{
+                failure::FailureInfo, ApplicationFailureInfo, CanceledFailureInfo, Failure,
+            },
             history::v1::{history_event, HistoryEvent},
         },
     },
 };
 use rustfsm::{fsm, MachineError, TransitionResult};
 use std::convert::TryFrom;
+
+const SIG_CANCEL_MSG: &str = "Signal was cancelled before being sent";
 
 fsm! {
     pub(super) name SignalExternalMachine;
@@ -54,6 +58,7 @@ pub(super) enum SignalExternalCommand {
     Signaled,
     #[display(fmt = "Failed")]
     Failed(SignalExternalWorkflowExecutionFailedCause),
+    Cancelled,
 }
 
 pub(super) fn new_external_signal(
@@ -115,7 +120,7 @@ pub(super) struct SignalExternalCommandCreated {}
 
 impl SignalExternalCommandCreated {
     pub(super) fn on_cancel(self) -> SignalExternalMachineTransition<Cancelled> {
-        TransitionResult::default()
+        TransitionResult::commands(vec![SignalExternalCommand::Cancelled])
     }
     pub(super) fn on_signal_external_workflow_execution_initiated(
         self,
@@ -225,6 +230,9 @@ impl WFMachinesAdapter for SignalExternalMachine {
                 }
                 .into()]
             }
+            SignalExternalCommand::Cancelled => {
+                panic!("Cancelled command not expected as part of non-cancel transition")
+            }
         })
     }
 
@@ -245,10 +253,25 @@ impl WFMachinesAdapter for SignalExternalMachine {
 impl Cancellable for SignalExternalMachine {
     fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
         let res = OnEventWrapper::on_event_mut(self, SignalExternalMachineEvents::Cancel)?;
-        if !res.is_empty() {
-            panic!("Signal external machine cancel event should not produce commands");
-        }
-        Ok(vec![])
+        let mut ret = vec![];
+        match res.get(0) {
+            Some(SignalExternalCommand::Cancelled) => {
+                ret = vec![ResolveSignalExternalWorkflow {
+                    seq: self.shared_state.seq,
+                    failure: Some(Failure {
+                        message: SIG_CANCEL_MSG.to_string(),
+                        failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
+                            details: None,
+                        })),
+                        ..Default::default()
+                    }),
+                }
+                .into()]
+            }
+            Some(_) => panic!("Signal external machine cancel produced unexpected result"),
+            None => (),
+        };
+        Ok(ret)
     }
 
     fn was_cancelled_before_sent_to_server(&self) -> bool {
@@ -262,6 +285,7 @@ impl Cancellable for SignalExternalMachine {
 mod tests {
     use super::*;
     use crate::{
+        protos::coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
         prototype_rust_sdk::{CancellableFuture, WfContext, WorkflowFunction, WorkflowResult},
         test_help::TestHistoryBuilder,
         workflow::managed_wf::ManagedWFFunc,
@@ -329,13 +353,29 @@ mod tests {
         t.add_workflow_execution_completed();
 
         let wff = WorkflowFunction::new(|mut ctx: WfContext| async move {
-            ctx.signal_workflow("fake_wid", "fake_rid", SIGNAME, b"hi!")
-                .cancel(&mut ctx);
+            let sig = ctx.signal_workflow("fake_wid", "fake_rid", SIGNAME, b"hi!");
+            sig.cancel(&mut ctx);
+            let _res = sig.await;
             Ok(().into())
         });
         let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
 
         wfm.get_next_activation().await.unwrap();
+        // No commands b/c we're waiting on the signal which is immediately going to be cancelled
+        let cmds = wfm.get_server_commands().await.commands;
+        assert_eq!(cmds.len(), 0);
+        let act = wfm.get_next_activation().await.unwrap();
+        assert_matches!(
+            &act.jobs[0],
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveSignalExternalWorkflow(
+                    ResolveSignalExternalWorkflow {
+                        failure: Some(c),
+                        ..
+                    }
+                ))
+            } => c.message == SIG_CANCEL_MSG
+        );
         let cmds = wfm.get_server_commands().await.commands;
         assert_eq!(cmds.len(), 1);
         assert_eq!(
