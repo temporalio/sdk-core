@@ -74,7 +74,7 @@ async fn signals_child(mut ctx: WfContext) -> WorkflowResult<()> {
         .child_workflow(ChildWorkflowOptions {
             workflow_id: "my_precious_child".to_string(),
             workflow_type: "child_receiver".to_string(),
-            input: vec![],
+            ..Default::default()
         })
         .start(&mut ctx)
         .await
@@ -84,7 +84,7 @@ async fn signals_child(mut ctx: WfContext) -> WorkflowResult<()> {
         .signal(&mut ctx, SIGNAME, b"hiya!")
         .await
         .unwrap();
-    started_child.result(&ctx).await.status.unwrap();
+    started_child.result(&mut ctx).await.status.unwrap();
     Ok(().into())
 }
 

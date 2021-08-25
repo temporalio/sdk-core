@@ -3,14 +3,15 @@ use crate::{
         common::Payload,
         workflow_activation::{
             wf_activation_job::Variant, FireTimer, NotifyHasPatch, ResolveActivity,
-            ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart,
-            ResolveSignalExternalWorkflow, WfActivation, WfActivationJob,
+            ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart, WfActivation,
+            WfActivationJob,
         },
         workflow_commands::{
             request_cancel_external_workflow_execution as cancel_we, workflow_command,
-            CancelSignalWorkflow, CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution,
-            FailWorkflowExecution, RequestCancelActivity, RequestCancelExternalWorkflowExecution,
-            ScheduleActivity, StartChildWorkflowExecution, StartTimer,
+            CancelSignalWorkflow, CancelTimer, CancelUnstartedChildWorkflowExecution,
+            CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
+            RequestCancelActivity, RequestCancelExternalWorkflowExecution, ScheduleActivity,
+            StartChildWorkflowExecution, StartTimer,
         },
         workflow_completion::WfActivationCompletion,
     },
@@ -114,6 +115,7 @@ impl WorkflowFuture {
             UnblockEvent::WorkflowStart(seq, _) => CommandID::ChildWorkflowStart(seq),
             UnblockEvent::WorkflowComplete(seq, _) => CommandID::ChildWorkflowComplete(seq),
             UnblockEvent::SignalExternal(seq, _) => CommandID::SignalExternal(seq),
+            UnblockEvent::CancelExternal(seq, _) => CommandID::CancelExternal(seq),
         };
         let unblocker = self.command_status.remove(&cmd_id);
         unblocker
@@ -200,10 +202,13 @@ impl WorkflowFuture {
                 Variant::NotifyHasPatch(NotifyHasPatch { patch_id }) => {
                     self.ctx_shared.write().changes.insert(patch_id, true);
                 }
-                Variant::ResolveSignalExternalWorkflow(ResolveSignalExternalWorkflow {
-                    seq,
-                    failure,
-                }) => self.unblock(UnblockEvent::SignalExternal(seq, failure)),
+                Variant::ResolveSignalExternalWorkflow(attrs) => {
+                    self.unblock(UnblockEvent::SignalExternal(attrs.seq, attrs.failure))
+                }
+                Variant::ResolveRequestCancelExternalWorkflow(attrs) => {
+                    self.unblock(UnblockEvent::CancelExternal(attrs.seq, attrs.failure))
+                }
+
                 Variant::RemoveFromCache(_) => {
                     return Ok(true);
                 }
@@ -282,19 +287,11 @@ impl Future for WorkflowFuture {
                                     ),
                                 );
                             }
-                            CancellableID::ChildWorkflow {
-                                cancel_cmd_seq,
-                                child_seq,
-                            } => {
-                                let seq = cancel_cmd_seq.expect(
-                                    "Cancel command sequence number must have been set when \
-                                    cancel is called",
-                                );
+                            CancellableID::ChildWorkflow(seq) => {
                                 activation_cmds.push(
-                                    workflow_command::Variant::RequestCancelExternalWorkflowExecution(
-                                        RequestCancelExternalWorkflowExecution {
-                                            seq,
-                                            target: Some(cancel_we::Target::ChildWorkflowSeq(child_seq)),
+                                    workflow_command::Variant::CancelUnstartedChildWorkflowExecution(
+                                        CancelUnstartedChildWorkflowExecution {
+                                            child_workflow_seq: seq
                                         },
                                     ),
                                 );
@@ -303,6 +300,24 @@ impl Future for WorkflowFuture {
                                 activation_cmds.push(
                                     workflow_command::Variant::CancelSignalWorkflow(
                                         CancelSignalWorkflow { seq },
+                                    ),
+                                );
+                            }
+                            CancellableID::ExternalWorkflow {
+                                seqnum,
+                                execution,
+                                only_child,
+                            } => {
+                                activation_cmds.push(
+                                    workflow_command::Variant::RequestCancelExternalWorkflowExecution(
+                                        RequestCancelExternalWorkflowExecution {
+                                            seq: seqnum,
+                                            target: Some(if only_child {
+                                                cancel_we::Target::ChildWorkflowId(execution.workflow_id)
+                                            } else {
+                                                cancel_we::Target::WorkflowExecution(execution)
+                                            }),
+                                        },
                                     ),
                                 );
                             }
@@ -331,6 +346,9 @@ impl Future for WorkflowFuture {
                             workflow_command::Variant::SignalExternalWorkflowExecution(req) => {
                                 CommandID::SignalExternal(req.seq)
                             }
+                            workflow_command::Variant::RequestCancelExternalWorkflowExecution(
+                                req,
+                            ) => CommandID::CancelExternal(req.seq),
                             _ => unimplemented!("Command type not implemented"),
                         };
                         self.command_status.insert(
@@ -425,5 +443,3 @@ impl Future for WorkflowFuture {
         }
     }
 }
-
-impl WorkflowFuture {}

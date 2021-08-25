@@ -241,30 +241,25 @@ impl Started {
         self,
         state: SharedState,
     ) -> ChildWorkflowMachineTransition<Cancelled> {
-        match state.cancellation_type {
-            ChildWorkflowCancellationType::Abandon => {
-                ChildWorkflowMachineTransition::ok(vec![], Cancelled::default())
-            }
-            _ => ChildWorkflowMachineTransition::ok(
-                vec![ChildWorkflowCommand::Cancel(Failure {
-                    message: "Child Workflow execution cancelled".to_owned(),
-                    cause: Some(Box::new(Failure {
-                        failure_info: Some(FailureInfo::CanceledFailureInfo(
-                            failure::CanceledFailureInfo {
-                                ..Default::default()
-                            },
-                        )),
-                        ..Default::default()
-                    })),
-                    failure_info: failure_info_from_state(
-                        state,
-                        RetryState::NonRetryableFailure as i32,
-                    ),
+        ChildWorkflowMachineTransition::ok(
+            vec![ChildWorkflowCommand::Cancel(Failure {
+                message: "Child Workflow execution cancelled".to_owned(),
+                cause: Some(Box::new(Failure {
+                    failure_info: Some(FailureInfo::CanceledFailureInfo(
+                        failure::CanceledFailureInfo {
+                            ..Default::default()
+                        },
+                    )),
                     ..Default::default()
-                })],
-                Cancelled::default(),
-            ),
-        }
+                })),
+                failure_info: failure_info_from_state(
+                    state,
+                    RetryState::NonRetryableFailure as i32,
+                ),
+                ..Default::default()
+            })],
+            Cancelled::default(),
+        )
     }
     pub(super) fn on_child_workflow_execution_terminated(
         self,
@@ -688,10 +683,10 @@ mod test {
 
     async fn parent_wf(mut ctx: WfContext) -> WorkflowResult<()> {
         let expectation = Expectation::try_from_u8(ctx.get_args()[0].data[0]).unwrap();
-        let mut child = ctx.child_workflow(ChildWorkflowOptions {
+        let child = ctx.child_workflow(ChildWorkflowOptions {
             workflow_id: "child-id-1".to_string(),
             workflow_type: "child".to_string(),
-            input: vec![],
+            ..Default::default()
         });
 
         let start_res = child.start(&mut ctx).await;
@@ -702,7 +697,12 @@ mod test {
         };
         match (
             expectation,
-            start_res.as_started().unwrap().result(&ctx).await.status,
+            start_res
+                .as_started()
+                .unwrap()
+                .result(&mut ctx)
+                .await
+                .status,
         ) {
             (Expectation::Success, Some(child_workflow_result::Status::Completed(_))) => {
                 Ok(().into())
@@ -766,10 +766,10 @@ mod test {
 
     async fn cancel_before_send_wf(mut ctx: WfContext) -> WorkflowResult<()> {
         let workflow_id = "child-id-1";
-        let mut child = ctx.child_workflow(ChildWorkflowOptions {
+        let child = ctx.child_workflow(ChildWorkflowOptions {
             workflow_id: workflow_id.to_string(),
             workflow_type: "child".to_string(),
-            input: vec![],
+            ..Default::default()
         });
         let start = child.start(&mut ctx);
         start.cancel(&mut ctx);

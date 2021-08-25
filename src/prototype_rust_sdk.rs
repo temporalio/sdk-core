@@ -16,7 +16,7 @@ use crate::{
         coresdk::{
             activity_result::ActivityResult,
             child_workflow::ChildWorkflowResult,
-            common::Payload,
+            common::{NamespacedWorkflowExecution, Payload},
             workflow_activation::{
                 resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
                 wf_activation_job::Variant, WfActivation, WfActivationJob,
@@ -203,12 +203,21 @@ enum UnblockEvent {
     WorkflowStart(u32, Box<ChildWorkflowStartStatus>),
     WorkflowComplete(u32, Box<ChildWorkflowResult>),
     SignalExternal(u32, Option<Failure>),
+    CancelExternal(u32, Option<Failure>),
 }
 
 /// Result of awaiting on a timer
 pub struct TimerResult;
+
+/// Successful result of sending a signal to an external workflow
+pub struct SignalExternalOk;
 /// Result of awaiting on sending a signal to an external workflow
-pub type SignalExternalWfResult = Result<(), Failure>;
+pub type SignalExternalWfResult = Result<SignalExternalOk, Failure>;
+
+/// Successful result of sending a cancel request to an external workflow
+pub struct CancelExternalOk;
+/// Result of awaiting on sending a cancel request to an external workflow
+pub type CancelExternalWfResult = Result<CancelExternalOk, Failure>;
 
 trait Unblockable {
     type OtherDat;
@@ -269,7 +278,23 @@ impl Unblockable for SignalExternalWfResult {
                 if let Some(f) = maybefail {
                     Err(f)
                 } else {
-                    Ok(())
+                    Ok(SignalExternalOk)
+                }
+            }
+            _ => panic!("Invalid unblock event for signal external workflow result"),
+        }
+    }
+}
+
+impl Unblockable for CancelExternalWfResult {
+    type OtherDat = ();
+    fn unblock(ue: UnblockEvent, _: &Self::OtherDat) -> Self {
+        match ue {
+            UnblockEvent::CancelExternal(_, maybefail) => {
+                if let Some(f) = maybefail {
+                    Err(f)
+                } else {
+                    Ok(CancelExternalOk)
                 }
             }
             _ => panic!("Invalid unblock event for signal external workflow result"),
@@ -278,22 +303,25 @@ impl Unblockable for SignalExternalWfResult {
 }
 
 /// Identifier for cancellable operations
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum CancellableID {
     /// Timer sequence number
     Timer(u32),
     /// Activity sequence number
     Activity(u32),
-    /// Cancelling children is a resolvable command and thus needs its own id as well
-    ChildWorkflow {
-        /// The sequence number for the cancel command. This is not populated unless a cancel is
-        /// actually requested.
-        cancel_cmd_seq: Option<u32>,
-        /// The sequence number of the child workflow being cancelled
-        child_seq: u32,
-    },
+    /// Start child sequence number
+    ChildWorkflow(u32),
     /// Signal workflow
     SignalExternalWorkflow(u32),
+    /// An external workflow identifier as may have been created by a started child workflow
+    ExternalWorkflow {
+        /// Sequence number which will be used for the cancel command
+        seqnum: u32,
+        /// Identifying information about the workflow to be cancelled
+        execution: NamespacedWorkflowExecution,
+        /// Set to true if this workflow is a child of the issuing workflow
+        only_child: bool,
+    },
 }
 
 #[derive(derive_more::From)]

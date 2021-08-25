@@ -23,6 +23,7 @@ pub(crate) enum CommandID {
     ChildWorkflowStart(u32),
     ChildWorkflowComplete(u32),
     SignalExternal(u32),
+    CancelExternal(u32),
 }
 
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
