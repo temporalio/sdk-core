@@ -53,7 +53,6 @@ async fn parent_cancels_child_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     let cancel_fut = start_res.cancel(&mut ctx);
     let resfut = start_res.result(&mut ctx);
     let (cancel_res, res) = join!(cancel_fut, resfut);
-    warn!("Futures resolved");
     cancel_res.expect("cancel result is ok");
     let stat = res.status.expect("child wf result is ok");
     assert_matches!(stat, child_workflow_result::Status::Cancelled(_));

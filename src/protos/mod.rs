@@ -593,6 +593,7 @@ pub mod coresdk {
                 activity_id: r.activity_id,
                 variant: Some(activity_task::activity_task::Variant::Start(
                     activity_task::Start {
+                        workflow_namespace: r.workflow_namespace,
                         workflow_type: r
                             .workflow_type
                             .map(|wt| wt.name)

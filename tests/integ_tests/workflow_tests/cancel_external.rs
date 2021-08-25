@@ -1,7 +1,7 @@
-use std::time::Duration;
-use temporal_sdk_core::protos::coresdk::common::NamespacedWorkflowExecution;
-use temporal_sdk_core::prototype_rust_sdk::{WfContext, WfExitValue, WorkflowResult};
-use temporal_sdk_core::tracing_init;
+use temporal_sdk_core::{
+    protos::coresdk::common::NamespacedWorkflowExecution,
+    prototype_rust_sdk::{WfContext, WorkflowResult},
+};
 use test_utils::CoreWfStarter;
 
 const RECEIVER_WFID: &str = "sends-cancel-receiver";
@@ -27,21 +27,12 @@ async fn cancel_sender(mut ctx: WfContext) -> WorkflowResult<()> {
 }
 
 async fn cancel_receiver(mut ctx: WfContext) -> WorkflowResult<()> {
-    let cancelled = tokio::select! {
-        _ = ctx.timer(Duration::from_secs(500)) => false,
-        _ = ctx.cancelled() => true
-    };
-    if cancelled {
-        Ok(WfExitValue::Cancelled)
-    } else {
-        panic!("Should have been cancelled")
-    }
+    ctx.cancelled().await;
+    Ok(().into())
 }
 
 #[tokio::test]
 async fn sends_cancel_to_other_wf() {
-    tracing_init();
-
     let mut starter = CoreWfStarter::new("sends_cancel_to_other_wf");
     let mut worker = starter.worker().await;
     worker.register_wf("sender", cancel_sender);
