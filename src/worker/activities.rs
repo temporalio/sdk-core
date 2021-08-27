@@ -1,22 +1,23 @@
 mod activity_heartbeat_manager;
 
 use crate::{
-    pollers::BoxedActPoller,
-    protos::{
-        coresdk::{
-            activity_result::{self as ar, activity_result},
-            activity_task::{ActivityCancelReason, ActivityTask},
-            ActivityHeartbeat,
-        },
-        temporal::api::failure::v1::{failure::FailureInfo, CanceledFailureInfo, Failure},
-        temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
-    },
-    task_token::TaskToken,
-    ActivityHeartbeatError, CompleteActivityError, PollActivityError, ServerGatewayApis,
+    pollers::BoxedActPoller, task_token::TaskToken, ActivityHeartbeatError, CompleteActivityError,
+    PollActivityError, ServerGatewayApis,
 };
 use activity_heartbeat_manager::ActivityHeartbeatManager;
 use dashmap::DashMap;
 use std::{convert::TryInto, ops::Div, sync::Arc, time::Duration};
+use temporal_sdk_core_protos::{
+    coresdk::{
+        activity_result::{self as ar, activity_result},
+        activity_task::{ActivityCancelReason, ActivityTask},
+        ActivityHeartbeat,
+    },
+    temporal::api::{
+        failure::v1::{failure::FailureInfo, CanceledFailureInfo, Failure},
+        workflowservice::v1::PollActivityTaskQueueResponse,
+    },
+};
 use tokio::sync::Semaphore;
 
 #[derive(Debug, derive_more::Constructor)]
@@ -247,7 +248,7 @@ impl WorkerActivityTasks {
                     details.known_not_found = true;
                 }
                 Ok(Some(ActivityTask::cancel_from_ids(
-                    task_token,
+                    task_token.0,
                     details.activity_id.clone(),
                     reason,
                 )))

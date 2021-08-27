@@ -1,20 +1,17 @@
-use crate::machines::{EventInfo, MachineKind};
-use crate::{
-    machines::{
-        workflow_machines::MachineResponse, Cancellable, NewMachineWithCommand, OnEventWrapper,
-        WFMachinesAdapter, WFMachinesError,
-    },
-    protos::{
-        coresdk::workflow_commands::CompleteWorkflowExecution,
-        temporal::api::{
-            command::v1::Command,
-            enums::v1::{CommandType, EventType},
-            history::v1::HistoryEvent,
-        },
-    },
+use crate::machines::{
+    workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, NewMachineWithCommand,
+    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
+use temporal_sdk_core_protos::{
+    coresdk::workflow_commands::CompleteWorkflowExecution,
+    temporal::api::{
+        command::v1::Command,
+        enums::v1::{CommandType, EventType},
+        history::v1::HistoryEvent,
+    },
+};
 
 fsm! {
     pub(super)

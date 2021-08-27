@@ -1,13 +1,5 @@
 use crate::{
-    errors::ActivityHeartbeatError,
-    pollers::ServerGatewayApis,
-    protos::{
-        coresdk::{
-            activity_task::ActivityCancelReason, common, ActivityHeartbeat, IntoPayloadsExt,
-        },
-        temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
-    },
-    task_token::TaskToken,
+    errors::ActivityHeartbeatError, pollers::ServerGatewayApis, task_token::TaskToken,
     worker::activities::PendingActivityCancel,
 };
 use futures::StreamExt;
@@ -15,6 +7,10 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     sync::Arc,
     time::{self, Duration, Instant},
+};
+use temporal_sdk_core_protos::{
+    coresdk::{activity_task::ActivityCancelReason, common, ActivityHeartbeat, IntoPayloadsExt},
+    temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
 };
 use tokio::{
     sync::{
@@ -253,15 +249,12 @@ impl ActivityHeartbeatManager {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_help::TEST_Q;
-    use crate::{
-        pollers::MockServerGatewayApis,
-        protos::{
-            coresdk::common::Payload,
-            temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
-        },
-    };
+    use crate::{pollers::MockServerGatewayApis, test_help::TEST_Q};
     use std::time::Duration;
+    use temporal_sdk_core_protos::{
+        coresdk::common::Payload,
+        temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
+    };
     use tokio::time::sleep;
 
     /// Ensure that heartbeats that are sent with a small delay are aggregated and sent roughly once

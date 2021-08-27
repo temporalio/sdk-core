@@ -1,6 +1,6 @@
 //! Contains the protobuf definitions used as arguments to and return values from interactions with
-//! [super::Core]. Language SDK authors can generate structs using the proto definitions that will
-//! match the generated structs in this module.
+//! the Temporal Core SDK. Language SDK authors can generate structs using the proto definitions
+//! that will match the generated structs in this module.
 
 #[allow(clippy::large_enum_variant)]
 // I'd prefer not to do this, but there are some generated things that just don't need it.
@@ -10,14 +10,13 @@ pub mod coresdk {
 
     tonic::include_proto!("coresdk");
 
-    use crate::protos::temporal::api::{
+    use crate::temporal::api::{
         common::v1::{ActivityType, Payloads, WorkflowExecution},
         failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
         workflowservice::v1::PollActivityTaskQueueResponse,
     };
     use activity_result::ActivityResult;
     use activity_task::ActivityTask;
-    use anyhow::Error;
     use common::Payload;
     use std::{
         collections::HashMap,
@@ -31,18 +30,16 @@ pub mod coresdk {
 
     #[allow(clippy::module_inception)]
     pub mod activity_task {
-        use crate::task_token::TaskToken;
-
         tonic::include_proto!("coresdk.activity_task");
 
         impl ActivityTask {
             pub fn cancel_from_ids(
-                task_token: TaskToken,
+                task_token: Vec<u8>,
                 activity_id: String,
                 reason: ActivityCancelReason,
             ) -> Self {
                 ActivityTask {
-                    task_token: task_token.0,
+                    task_token,
                     activity_id,
                     variant: Some(activity_task::Variant::Cancel(Cancel {
                         reason: reason as i32,
@@ -54,10 +51,12 @@ pub mod coresdk {
     #[allow(clippy::module_inception)]
     pub mod activity_result {
         tonic::include_proto!("coresdk.activity_result");
-        use super::super::temporal::api::failure::v1::{
-            failure, CanceledFailureInfo, Failure as APIFailure,
+        use super::{
+            super::temporal::api::failure::v1::{
+                failure, CanceledFailureInfo, Failure as APIFailure,
+            },
+            common::Payload,
         };
-        use super::common::Payload;
 
         impl ActivityResult {
             pub fn cancel_from_details(payload: Option<Payload>) -> Self {
@@ -80,7 +79,7 @@ pub mod coresdk {
     }
     pub mod common {
         tonic::include_proto!("coresdk.common");
-        use crate::protos::temporal::api::common::v1::Payloads;
+        use crate::temporal::api::common::v1::Payloads;
         use std::collections::HashMap;
 
         impl<T> From<T> for Payload
@@ -102,7 +101,7 @@ pub mod coresdk {
             }
         }
 
-        pub(crate) fn build_has_change_marker_details(
+        pub fn build_has_change_marker_details(
             patch_id: &str,
             deprecated: bool,
         ) -> HashMap<String, Payloads> {
@@ -113,7 +112,7 @@ pub mod coresdk {
             hm
         }
 
-        pub(crate) fn decode_change_marker_details(
+        pub fn decode_change_marker_details(
             details: &HashMap<String, Payloads>,
         ) -> Option<(String, bool)> {
             let name = std::str::from_utf8(&details.get("patch_id")?.payloads.get(0)?.data).ok()?;
@@ -124,13 +123,11 @@ pub mod coresdk {
 
     pub mod workflow_activation {
         use crate::{
-            core_tracing::VecDisplayer,
-            protos::coresdk::FromPayloadsExt,
-            protos::temporal::api::history::v1::{
+            coresdk::FromPayloadsExt,
+            temporal::api::history::v1::{
                 WorkflowExecutionCancelRequestedEventAttributes,
                 WorkflowExecutionSignaledEventAttributes,
             },
-            workflow::LEGACY_QUERY_ID,
         };
         use std::fmt::{Display, Formatter};
 
@@ -162,16 +159,9 @@ pub mod coresdk {
         }
 
         impl WfActivation {
-            /// Returns true if this activation has one and only one job to perform a legacy query
-            pub(crate) fn is_legacy_query(&self) -> bool {
-                matches!(&self.jobs.as_slice(), &[WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::QueryWorkflow(qr))
-                }] if qr.query_id == LEGACY_QUERY_ID)
-            }
-
             /// Returns the index of the eviction job if this activation contains one. If present
             /// it should always be the last job in the list.
-            pub(crate) fn eviction_index(&self) -> Option<usize> {
+            pub fn eviction_index(&self) -> Option<usize> {
                 self.jobs.iter().position(|j| {
                     matches!(
                         j,
@@ -183,7 +173,7 @@ pub mod coresdk {
             }
 
             /// Returns true if the only job is eviction
-            pub(crate) fn is_only_eviction(&self) -> bool {
+            pub fn is_only_eviction(&self) -> bool {
                 self.jobs.len() == 1 && self.eviction_index().is_some()
             }
         }
@@ -193,7 +183,16 @@ pub mod coresdk {
                 write!(f, "WfActivation(")?;
                 write!(f, "run_id: {}, ", self.run_id)?;
                 write!(f, "is_replaying: {}, ", self.is_replaying)?;
-                write!(f, "jobs: {})", self.jobs.display())
+                write!(
+                    f,
+                    "jobs: {})",
+                    self.jobs
+                        .iter()
+                        .map(|j| j.to_string())
+                        .collect::<Vec<_>>()
+                        .as_slice()
+                        .join(", ")
+                )
             }
         }
 
@@ -258,7 +257,7 @@ pub mod coresdk {
     }
 
     pub mod workflow_completion {
-        use crate::protos::coresdk::workflow_completion::wf_activation_completion::Status;
+        use crate::coresdk::workflow_completion::wf_activation_completion::Status;
         tonic::include_proto!("coresdk.workflow_completion");
 
         impl wf_activation_completion::Status {
@@ -277,10 +276,7 @@ pub mod coresdk {
     pub mod workflow_commands {
         tonic::include_proto!("coresdk.workflow_commands");
 
-        use super::workflow_completion;
-        use crate::protos::temporal::api::common::v1::Payloads;
-        use crate::protos::temporal::api::enums::v1::QueryResultType;
-        use crate::workflow::LEGACY_QUERY_ID;
+        use crate::temporal::api::{common::v1::Payloads, enums::v1::QueryResultType};
         use std::fmt::{Display, Formatter};
 
         impl Display for WorkflowCommand {
@@ -358,15 +354,6 @@ pub mod coresdk {
                         None,
                         "Query response was empty".to_string(),
                     ),
-                }
-            }
-
-            pub fn legacy_failure(fail: workflow_completion::Failure) -> Self {
-                QueryResult {
-                    query_id: LEGACY_QUERY_ID.to_string(),
-                    variant: Some(query_result::Variant::Failed(
-                        fail.failure.unwrap_or_default(),
-                    )),
                 }
             }
         }
@@ -529,6 +516,33 @@ pub mod coresdk {
         }
     }
 
+    /// Makes converting outgoing lang commands into [WfActivationCompletion]s easier
+    pub trait IntoCompletion {
+        /// The conversion function
+        fn into_completion(self, task_queue: String, run_id: String) -> WfActivationCompletion;
+    }
+
+    impl IntoCompletion for workflow_command::Variant {
+        fn into_completion(self, task_queue: String, run_id: String) -> WfActivationCompletion {
+            WfActivationCompletion::from_cmd(task_queue, run_id, self)
+        }
+    }
+
+    impl<I, V> IntoCompletion for I
+    where
+        I: IntoIterator<Item = V>,
+        V: Into<WorkflowCommand>,
+    {
+        fn into_completion(self, task_queue: String, run_id: String) -> WfActivationCompletion {
+            let success = self.into_iter().map(Into::into).collect::<Vec<_>>().into();
+            WfActivationCompletion {
+                run_id,
+                task_queue,
+                status: Some(wf_activation_completion::Status::Successful(success)),
+            }
+        }
+    }
+
     impl Display for WfActivationCompletion {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             write!(
@@ -659,15 +673,6 @@ pub mod coresdk {
         }
     }
 
-    impl From<anyhow::Error> for Failure {
-        fn from(e: Error) -> Self {
-            Self {
-                message: e.to_string(),
-                ..Default::default()
-            }
-        }
-    }
-
     impl From<common::Payload> for super::temporal::api::common::v1::Payload {
         fn from(p: Payload) -> Self {
             Self {
@@ -789,10 +794,12 @@ pub mod temporal {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.command.v1");
 
-                use crate::protos::{
+                use crate::{
                     coresdk::{workflow_commands, IntoPayloadsExt},
-                    temporal::api::common::v1::{ActivityType, WorkflowType},
-                    temporal::api::enums::v1::CommandType,
+                    temporal::api::{
+                        common::v1::{ActivityType, WorkflowType},
+                        enums::v1::CommandType,
+                    },
                 };
                 use command::Attributes;
                 use std::fmt::{Display, Formatter};
@@ -978,7 +985,7 @@ pub mod temporal {
         }
         pub mod common {
             pub mod v1 {
-                use crate::protos::coresdk::common;
+                use crate::coresdk::common;
                 use std::collections::HashMap;
                 tonic::include_proto!("temporal.api.common.v1");
 
@@ -1039,9 +1046,7 @@ pub mod temporal {
         }
         pub mod history {
             pub mod v1 {
-                use crate::machines::HAS_CHANGE_MARKER_NAME;
-                use crate::protos::coresdk::common::decode_change_marker_details;
-                use crate::protos::temporal::api::{
+                use crate::temporal::api::{
                     enums::v1::EventType, history::v1::history_event::Attributes,
                 };
                 use prost::alloc::fmt::Formatter;
@@ -1070,10 +1075,6 @@ pub mod temporal {
                                 _ => false,
                             }
                         } else {
-                            debug!(
-                                "Could not determine type of event with enum index {}",
-                                self.event_type
-                            );
                             false
                         }
                     }
@@ -1140,29 +1141,6 @@ pub mod temporal {
                         )
                     }
                 }
-
-                impl HistoryEvent {
-                    /// If this history event represents a `changed` marker, return the info about
-                    /// it. Returns `None` if it is any other kind of event or marker.
-                    pub fn get_changed_marker_details(&self) -> Option<(String, bool)> {
-                        if self.event_type() == EventType::MarkerRecorded {
-                            match &self.attributes {
-                                Some(Attributes::MarkerRecordedEventAttributes(
-                                    MarkerRecordedEventAttributes {
-                                        marker_name,
-                                        details,
-                                        ..
-                                    },
-                                )) if marker_name == HAS_CHANGE_MARKER_NAME => {
-                                    decode_change_marker_details(details)
-                                }
-                                _ => None,
-                            }
-                        } else {
-                            None
-                        }
-                    }
-                }
             }
         }
 
@@ -1186,7 +1164,7 @@ pub mod temporal {
 
         pub mod taskqueue {
             pub mod v1 {
-                use crate::protos::temporal::api::enums::v1::TaskQueueKind;
+                use crate::temporal::api::enums::v1::TaskQueueKind;
                 tonic::include_proto!("temporal.api.taskqueue.v1");
 
                 impl From<String> for TaskQueue {
@@ -1260,7 +1238,7 @@ pub mod temporal {
 
                 impl QueryWorkflowResponse {
                     /// Unwrap a successful response as vec of payloads
-                    pub fn unwrap(self) -> Vec<crate::protos::temporal::api::common::v1::Payload> {
+                    pub fn unwrap(self) -> Vec<crate::temporal::api::common::v1::Payload> {
                         self.query_result.unwrap().payloads
                     }
                 }

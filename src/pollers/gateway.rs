@@ -1,16 +1,5 @@
 use crate::{
     pollers::{retry::RetryGateway, Result},
-    protos::{
-        coresdk::{common::Payload, workflow_commands::QueryResult, IntoPayloadsExt},
-        temporal::api::{
-            common::v1::{Payloads, WorkflowExecution, WorkflowType},
-            enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
-            failure::v1::Failure,
-            query::v1::{WorkflowQuery, WorkflowQueryResult},
-            taskqueue::v1::TaskQueue,
-            workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
-        },
-    },
     protosext::WorkflowTaskCompletion,
     task_token::TaskToken,
     CoreInitError,
@@ -21,6 +10,17 @@ use std::{
     ops::Deref,
     sync::Arc,
     time::{Duration, Instant},
+};
+use temporal_sdk_core_protos::{
+    coresdk::{common::Payload, workflow_commands::QueryResult, IntoPayloadsExt},
+    temporal::api::{
+        common::v1::{Payloads, WorkflowExecution, WorkflowType},
+        enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
+        failure::v1::Failure,
+        query::v1::{WorkflowQuery, WorkflowQueryResult},
+        taskqueue::v1::TaskQueue,
+        workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
+    },
 };
 use tonic::{
     codegen::InterceptedService,

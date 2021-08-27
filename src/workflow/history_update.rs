@@ -1,9 +1,4 @@
-use crate::{
-    protos::temporal::api::enums::v1::EventType,
-    protos::temporal::api::history::v1::{History, HistoryEvent},
-    protos::temporal::api::workflowservice::v1::GetWorkflowExecutionHistoryResponse,
-    ServerGatewayApis,
-};
+use crate::ServerGatewayApis;
 use futures::{future::BoxFuture, stream, stream::BoxStream, FutureExt, Stream, StreamExt};
 use std::{
     collections::VecDeque,
@@ -11,6 +6,11 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+};
+use temporal_sdk_core_protos::temporal::api::{
+    enums::v1::EventType,
+    history::v1::{History, HistoryEvent},
+    workflowservice::v1::GetWorkflowExecutionHistoryResponse,
 };
 
 /// A slimmed down version of a poll workflow task response which includes just the info needed
@@ -230,8 +230,7 @@ impl HistoryUpdate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pollers::MockServerGatewayApis;
-    use crate::test_help::canned_histories;
+    use crate::{pollers::MockServerGatewayApis, test_help::canned_histories};
 
     #[tokio::test]
     async fn consumes_standard_wft_sequence() {

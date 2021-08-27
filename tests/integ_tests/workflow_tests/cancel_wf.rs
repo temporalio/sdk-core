@@ -1,8 +1,6 @@
 use std::time::Duration;
-use temporal_sdk_core::{
-    protos::temporal::api::enums::v1::WorkflowExecutionStatus,
-    prototype_rust_sdk::{WfContext, WfExitValue, WorkflowResult},
-};
+use temporal_sdk_core::prototype_rust_sdk::{WfContext, WfExitValue, WorkflowResult};
+use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowExecutionStatus;
 use test_utils::CoreWfStarter;
 
 async fn cancelled_wf(mut ctx: WfContext) -> WorkflowResult<()> {

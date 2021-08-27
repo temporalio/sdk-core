@@ -1,10 +1,12 @@
-use crate::protos::coresdk::workflow_activation::{
-    wf_activation_job, WfActivation, WfActivationJob,
-};
 use parking_lot::RwLock;
 use slotmap::SlotMap;
-use std::cmp::Ordering;
-use std::collections::{HashMap, VecDeque};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, VecDeque},
+};
+use temporal_sdk_core_protos::coresdk::workflow_activation::{
+    wf_activation_job, WfActivation, WfActivationJob,
+};
 
 /// Tracks pending activations using an internal queue, while also allowing lookup and removal of
 /// any pending activations by run ID.
@@ -154,7 +156,7 @@ fn evictions_always_last_compare(a: &WfActivationJob, b: &WfActivationJob) -> Or
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protos::coresdk::workflow_activation::create_evict_activation;
+    use temporal_sdk_core_protos::coresdk::workflow_activation::create_evict_activation;
 
     #[test]
     fn merges_same_ids_with_evictions() {

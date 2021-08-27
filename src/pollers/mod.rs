@@ -15,7 +15,7 @@ pub use poll_buffer::{
 };
 pub use retry::RetryGateway;
 
-use crate::protos::temporal::api::workflowservice::v1::{
+use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
     PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
 };
 

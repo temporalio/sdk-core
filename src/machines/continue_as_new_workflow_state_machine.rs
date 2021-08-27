@@ -1,15 +1,16 @@
-use crate::machines::{EventInfo, MachineKind};
-use crate::{
-    machines::{
-        Cancellable, HistoryEvent, MachineResponse, NewMachineWithCommand, OnEventWrapper,
-        WFMachinesAdapter, WFMachinesError,
-    },
-    protos::coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
-    protos::temporal::api::command::v1::Command,
-    protos::temporal::api::enums::v1::{CommandType, EventType},
+use crate::machines::{
+    Cancellable, EventInfo, HistoryEvent, MachineKind, MachineResponse, NewMachineWithCommand,
+    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
+use temporal_sdk_core_protos::{
+    coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
+    temporal::api::{
+        command::v1::Command,
+        enums::v1::{CommandType, EventType},
+    },
+};
 
 fsm! {
     pub(super)
@@ -119,9 +120,8 @@ impl Cancellable for ContinueAsNewWorkflowMachine {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prototype_rust_sdk::{WfExitValue, WorkflowResult};
     use crate::{
-        prototype_rust_sdk::{WfContext, WorkflowFunction},
+        prototype_rust_sdk::{WfContext, WfExitValue, WorkflowFunction, WorkflowResult},
         test_help::canned_histories,
         workflow::managed_wf::ManagedWFFunc,
     };

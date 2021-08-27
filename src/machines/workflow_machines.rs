@@ -1,35 +1,17 @@
-use crate::machines::cancel_external_state_machine::new_external_cancel;
-use crate::machines::signal_external_state_machine::new_external_signal;
 use crate::{
     core_tracing::VecDisplayer,
     machines::{
-        activity_state_machine::new_activity, cancel_workflow_state_machine::cancel_workflow,
+        activity_state_machine::new_activity, cancel_external_state_machine::new_external_cancel,
+        cancel_workflow_state_machine::cancel_workflow,
         child_workflow_state_machine::new_child_workflow,
         complete_workflow_state_machine::complete_workflow,
         continue_as_new_workflow_state_machine::continue_as_new,
         fail_workflow_state_machine::fail_workflow, patch_state_machine::has_change,
-        timer_state_machine::new_timer, workflow_task_state_machine::WorkflowTaskMachine,
-        MachineKind, NewMachineWithCommand, ProtoCommand, TemporalStateMachine, WFCommand,
+        signal_external_state_machine::new_external_signal, timer_state_machine::new_timer,
+        workflow_task_state_machine::WorkflowTaskMachine, MachineKind, NewMachineWithCommand,
+        ProtoCommand, TemporalStateMachine, WFCommand,
     },
-    protos::{
-        coresdk::{
-            common::{NamespacedWorkflowExecution, Payload},
-            workflow_activation::{
-                wf_activation_job::{self, Variant},
-                NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WfActivation,
-            },
-            workflow_commands::{
-                request_cancel_external_workflow_execution as cancel_we,
-                signal_external_workflow_execution as sig_we,
-            },
-            FromPayloadsExt,
-        },
-        temporal::api::{
-            common::v1::Header,
-            enums::v1::EventType,
-            history::v1::{history_event, HistoryEvent},
-        },
-    },
+    protosext::HistoryEventExt,
     workflow::{CommandID, DrivenWorkflow, HistoryUpdate, WorkflowFetcher},
 };
 use slotmap::SlotMap;
@@ -38,6 +20,25 @@ use std::{
     collections::{hash_map::DefaultHasher, HashMap, VecDeque},
     hash::{Hash, Hasher},
     time::SystemTime,
+};
+use temporal_sdk_core_protos::{
+    coresdk::{
+        common::{NamespacedWorkflowExecution, Payload},
+        workflow_activation::{
+            wf_activation_job::{self, Variant},
+            NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WfActivation,
+        },
+        workflow_commands::{
+            request_cancel_external_workflow_execution as cancel_we,
+            signal_external_workflow_execution as sig_we,
+        },
+        FromPayloadsExt,
+    },
+    temporal::api::{
+        common::v1::Header,
+        enums::v1::EventType,
+        history::v1::{history_event, HistoryEvent},
+    },
 };
 use tracing::Level;
 
@@ -110,12 +111,12 @@ struct ChangeInfo {
 }
 
 /// Returned by [TemporalStateMachine]s when handling events
-#[derive(Debug, derive_more::From, derive_more::Display)]
+#[derive(Debug, derive_more::Display)]
 #[must_use]
 #[allow(clippy::large_enum_variant)]
 pub enum MachineResponse {
     #[display(fmt = "PushWFJob")]
-    PushWFJob(#[from(forward)] wf_activation_job::Variant),
+    PushWFJob(wf_activation_job::Variant),
 
     IssueNewCommand(ProtoCommand),
     #[display(fmt = "TriggerWFTaskStarted")]
@@ -127,6 +128,16 @@ pub enum MachineResponse {
     UpdateRunIdOnWorkflowReset {
         run_id: String,
     },
+}
+
+// Must use `From` b/c ofZZ
+impl<T> From<T> for MachineResponse
+where
+    T: Into<wf_activation_job::Variant>,
+{
+    fn from(v: T) -> Self {
+        MachineResponse::PushWFJob(v.into())
+    }
 }
 
 #[derive(thiserror::Error, Debug)]

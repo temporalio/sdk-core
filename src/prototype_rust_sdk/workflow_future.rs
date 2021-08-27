@@ -1,5 +1,23 @@
 use crate::{
-    protos::coresdk::{
+    prototype_rust_sdk::{
+        conversions::anyhow_to_fail, workflow_context::WfContextSharedData, CancellableID,
+        RustWfCmd, UnblockEvent, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
+    },
+    workflow::CommandID,
+};
+use anyhow::{bail, Context as AnyhowContext, Error};
+use crossbeam::channel::Receiver;
+use futures::{future::BoxFuture, FutureExt};
+use parking_lot::RwLock;
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
+use temporal_sdk_core_protos::{
+    coresdk::{
         common::Payload,
         workflow_activation::{
             wf_activation_job::Variant, FireTimer, NotifyHasPatch, ResolveActivity,
@@ -15,24 +33,7 @@ use crate::{
         },
         workflow_completion::WfActivationCompletion,
     },
-    protos::temporal::api::failure::v1::Failure,
-    prototype_rust_sdk::{
-        workflow_context::WfContextSharedData, CancellableID, RustWfCmd, UnblockEvent, WfContext,
-        WfExitValue, WorkflowFunction, WorkflowResult,
-    },
-    workflow::CommandID,
-};
-use anyhow::{bail, Context as AnyhowContext, Error};
-use crossbeam::channel::Receiver;
-use futures::{future::BoxFuture, FutureExt};
-use parking_lot::RwLock;
-use std::collections::hash_map::Entry;
-use std::{
-    collections::HashMap,
-    future::Future,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
+    temporal::api::failure::v1::Failure,
 };
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -131,7 +132,7 @@ impl WorkflowFuture {
             .send(WfActivationCompletion::fail(
                 &self.task_queue,
                 run_id,
-                fail.into(),
+                anyhow_to_fail(fail),
             ))
             .expect("Completion channel intact");
     }

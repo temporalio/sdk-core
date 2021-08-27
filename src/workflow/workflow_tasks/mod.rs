@@ -8,15 +8,7 @@ use crate::{
     machines::{ProtoCommand, WFCommand, WFMachinesError},
     pending_activations::PendingActivations,
     pollers::GatewayRef,
-    protos::coresdk::{
-        workflow_activation::{
-            create_evict_activation, create_query_activation, wf_activation_job, QueryWorkflow,
-            WfActivation,
-        },
-        workflow_commands::QueryResult,
-        FromPayloadsExt,
-    },
-    protosext::ValidPollWFTQResponse,
+    protosext::{ValidPollWFTQResponse, WfActivationExt},
     task_token::TaskToken,
     workflow::{
         workflow_tasks::{
@@ -29,6 +21,14 @@ use crossbeam::queue::SegQueue;
 use futures::FutureExt;
 use parking_lot::Mutex;
 use std::{fmt::Debug, ops::DerefMut};
+use temporal_sdk_core_protos::coresdk::{
+    workflow_activation::{
+        create_evict_activation, create_query_activation, wf_activation_job, QueryWorkflow,
+        WfActivation,
+    },
+    workflow_commands::QueryResult,
+    FromPayloadsExt,
+};
 use tokio::sync::watch;
 
 /// Centralizes concerns related to applying new workflow tasks and reporting the activations they

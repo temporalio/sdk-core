@@ -1,12 +1,12 @@
-use crate::{
-    protos::coresdk::common::NamespacedWorkflowExecution,
-    protos::temporal::api::common::v1::{Payload, WorkflowExecution},
-    protos::temporal::api::enums::v1::{
-        EventType, StartChildWorkflowExecutionFailedCause, WorkflowTaskFailedCause,
+use crate::test_help::TestHistoryBuilder;
+use temporal_sdk_core_protos::{
+    coresdk::common::NamespacedWorkflowExecution,
+    temporal::api::{
+        common::v1::{Payload, WorkflowExecution},
+        enums::v1::{EventType, StartChildWorkflowExecutionFailedCause, WorkflowTaskFailedCause},
+        failure::v1::Failure,
+        history::v1::*,
     },
-    protos::temporal::api::failure::v1::Failure,
-    protos::temporal::api::history::v1::*,
-    test_help::TestHistoryBuilder,
 };
 
 ///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED

@@ -1,43 +1,39 @@
-use crate::{
-    machines::{
-        workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind,
-        NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
-    },
-    protos::{
-        coresdk::{
-            child_workflow::{
-                self as wfr, child_workflow_result::Status as ChildWorkflowStatus,
-                ChildWorkflowCancellationType, ChildWorkflowResult,
-            },
-            common::Payload,
-            workflow_activation::{
-                resolve_child_workflow_execution_start, ResolveChildWorkflowExecution,
-                ResolveChildWorkflowExecutionStart, ResolveChildWorkflowExecutionStartCancelled,
-                ResolveChildWorkflowExecutionStartFailure,
-                ResolveChildWorkflowExecutionStartSuccess,
-            },
-            workflow_commands::StartChildWorkflowExecution,
-        },
-        temporal::api::{
-            command::v1::Command,
-            common::v1::{Payloads, WorkflowExecution, WorkflowType},
-            enums::v1::{
-                CommandType, EventType, RetryState, StartChildWorkflowExecutionFailedCause,
-                TimeoutType,
-            },
-            failure::v1::{self as failure, failure::FailureInfo, Failure},
-            history::v1::{
-                history_event, ChildWorkflowExecutionCompletedEventAttributes,
-                ChildWorkflowExecutionFailedEventAttributes,
-                ChildWorkflowExecutionStartedEventAttributes,
-                ChildWorkflowExecutionTimedOutEventAttributes, HistoryEvent,
-                StartChildWorkflowExecutionFailedEventAttributes,
-            },
-        },
-    },
+use crate::machines::{
+    workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, NewMachineWithCommand,
+    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use rustfsm::{fsm, MachineError, TransitionResult};
 use std::convert::{TryFrom, TryInto};
+use temporal_sdk_core_protos::{
+    coresdk::{
+        child_workflow::{
+            self as wfr, child_workflow_result::Status as ChildWorkflowStatus,
+            ChildWorkflowCancellationType, ChildWorkflowResult,
+        },
+        common::Payload,
+        workflow_activation::{
+            resolve_child_workflow_execution_start, ResolveChildWorkflowExecution,
+            ResolveChildWorkflowExecutionStart, ResolveChildWorkflowExecutionStartCancelled,
+            ResolveChildWorkflowExecutionStartFailure, ResolveChildWorkflowExecutionStartSuccess,
+        },
+        workflow_commands::StartChildWorkflowExecution,
+    },
+    temporal::api::{
+        command::v1::Command,
+        common::v1::{Payloads, WorkflowExecution, WorkflowType},
+        enums::v1::{
+            CommandType, EventType, RetryState, StartChildWorkflowExecutionFailedCause, TimeoutType,
+        },
+        failure::v1::{self as failure, failure::FailureInfo, Failure},
+        history::v1::{
+            history_event, ChildWorkflowExecutionCompletedEventAttributes,
+            ChildWorkflowExecutionFailedEventAttributes,
+            ChildWorkflowExecutionStartedEventAttributes,
+            ChildWorkflowExecutionTimedOutEventAttributes, HistoryEvent,
+            StartChildWorkflowExecutionFailedEventAttributes,
+        },
+    },
+};
 
 fsm! {
     pub(super) name ChildWorkflowMachine;
@@ -626,10 +622,6 @@ fn convert_payloads(
 mod test {
     use super::*;
     use crate::{
-        protos::coresdk::{
-            child_workflow::child_workflow_result,
-            workflow_activation::resolve_child_workflow_execution_start::Status as StartStatus,
-        },
         prototype_rust_sdk::{
             CancellableFuture, ChildWorkflowOptions, WfContext, WorkflowFunction, WorkflowResult,
         },
@@ -638,6 +630,10 @@ mod test {
     };
     use anyhow::anyhow;
     use rstest::{fixture, rstest};
+    use temporal_sdk_core_protos::coresdk::{
+        child_workflow::child_workflow_result,
+        workflow_activation::resolve_child_workflow_execution_start::Status as StartStatus,
+    };
 
     #[derive(Clone, Copy)]
     enum Expectation {

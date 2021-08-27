@@ -68,10 +68,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("coresdk.Task.variant", "#[derive(::derive_more::From)]")
         .compile(
             &[
-                "protos/local/core_interface.proto",
-                "protos/api_upstream/temporal/api/workflowservice/v1/service.proto",
+                "../protos/local/core_interface.proto",
+                "../protos/api_upstream/temporal/api/workflowservice/v1/service.proto",
             ],
-            &["protos/api_upstream", "protos/local"],
+            &["../protos/api_upstream", "../protos/local"],
         )?;
     Ok(())
 }

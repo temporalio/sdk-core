@@ -1,8 +1,10 @@
 use crate::{
-    protos::coresdk::child_workflow::{child_workflow_result, ChildWorkflowCancellationType},
     prototype_rust_sdk::{ChildWorkflowOptions, WfContext, WorkflowFunction, WorkflowResult},
     test_help::canned_histories,
     workflow::managed_wf::ManagedWFFunc,
+};
+use temporal_sdk_core_protos::coresdk::child_workflow::{
+    child_workflow_result, ChildWorkflowCancellationType,
 };
 use tokio::join;
 

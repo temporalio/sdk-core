@@ -1,13 +1,12 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporal_sdk_core::protos::{
+use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{wf_activation_job, WfActivationJob},
         workflow_commands::{QueryResult, QuerySuccess, StartTimer},
         workflow_completion::WfActivationCompletion,
     },
-    temporal::api::failure::v1::Failure,
-    temporal::api::query::v1::WorkflowQuery,
+    temporal::api::{failure::v1::Failure, query::v1::WorkflowQuery},
 };
 use test_utils::{init_core_and_create_wf, with_gw, CoreTestHelpers, CoreWfStarter, GwApi};
 

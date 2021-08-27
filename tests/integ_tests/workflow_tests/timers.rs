@@ -1,9 +1,9 @@
 use std::time::Duration;
-use temporal_sdk_core::protos::coresdk::{
+use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
+use temporal_sdk_core_protos::coresdk::{
     workflow_commands::{CancelTimer, CompleteWorkflowExecution, StartTimer},
     workflow_completion::WfActivationCompletion,
 };
-use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
 use test_utils::{init_core_and_create_wf, CoreTestHelpers, CoreWfStarter};
 
 pub async fn timer_wf(mut command_sink: WfContext) -> WorkflowResult<()> {

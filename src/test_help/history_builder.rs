@@ -1,14 +1,5 @@
 use crate::{
     machines::HAS_CHANGE_MARKER_NAME,
-    protos::{
-        coresdk::common::{build_has_change_marker_details, NamespacedWorkflowExecution},
-        temporal::api::{
-            common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
-            enums::v1::{EventType, WorkflowTaskFailedCause},
-            failure::v1::Failure,
-            history::v1::{history_event::Attributes, *},
-        },
-    },
     test_help::{
         history_info::{HistoryInfo, HistoryInfoError},
         Result,
@@ -17,6 +8,15 @@ use crate::{
 };
 use anyhow::bail;
 use std::time::SystemTime;
+use temporal_sdk_core_protos::{
+    coresdk::common::{build_has_change_marker_details, NamespacedWorkflowExecution},
+    temporal::api::{
+        common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
+        enums::v1::{EventType, WorkflowTaskFailedCause},
+        failure::v1::Failure,
+        history::v1::{history_event::Attributes, *},
+    },
+};
 use uuid::Uuid;
 
 #[derive(Default, Clone, Debug)]

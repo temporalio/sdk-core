@@ -1,7 +1,7 @@
-use crate::{
-    protos::temporal::api::enums::v1::EventType,
-    protos::temporal::api::history::v1::{History, HistoryEvent},
-    workflow::HistoryUpdate,
+use crate::workflow::HistoryUpdate;
+use temporal_sdk_core_protos::temporal::api::{
+    enums::v1::EventType,
+    history::v1::{History, HistoryEvent},
 };
 
 #[derive(Clone, Debug, PartialEq)]

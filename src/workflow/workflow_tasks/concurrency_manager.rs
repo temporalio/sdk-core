@@ -1,6 +1,5 @@
 use crate::{
     errors::WorkflowUpdateError,
-    protos::coresdk::workflow_activation::WfActivation,
     protosext::ValidPollWFTQResponse,
     workflow::{
         workflow_tasks::{OutstandingActivation, OutstandingTask},
@@ -14,6 +13,7 @@ use std::{
     fmt::Debug,
     ops::{Deref, DerefMut},
 };
+use temporal_sdk_core_protos::coresdk::workflow_activation::WfActivation;
 
 /// Provides a thread-safe way to access workflow machines for specific workflow runs
 pub(crate) struct WorkflowConcurrencyManager {

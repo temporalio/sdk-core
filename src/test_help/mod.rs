@@ -3,26 +3,12 @@ pub mod canned_histories;
 mod history_builder;
 mod history_info;
 
+pub(crate) use history_builder::{TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE};
+
 use crate::{
     pollers::{
         BoxedActPoller, BoxedPoller, BoxedWFPoller, MockManualPoller, MockPoller,
         MockServerGatewayApis,
-    },
-    protos::{
-        coresdk::{
-            workflow_activation::WfActivation,
-            workflow_commands::workflow_command,
-            workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
-        },
-        temporal::api::common::v1::{WorkflowExecution, WorkflowType},
-        temporal::api::enums::v1::TaskQueueKind,
-        temporal::api::failure::v1::Failure,
-        temporal::api::history::v1::History,
-        temporal::api::taskqueue::v1::TaskQueue,
-        temporal::api::workflowservice::v1::{
-            PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
-            RespondWorkflowTaskCompletedResponse,
-        },
     },
     task_token::TaskToken,
     workflow::WorkflowCachingPolicy,
@@ -31,8 +17,6 @@ use crate::{
 };
 use bimap::BiMap;
 use futures::FutureExt;
-pub(crate) use history_builder::TestHistoryBuilder;
-pub(crate) use history_builder::DEFAULT_WORKFLOW_TYPE;
 use mockall::TimesRange;
 use parking_lot::RwLock;
 use rand::{thread_rng, Rng};
@@ -41,6 +25,24 @@ use std::{
     ops::RangeFull,
     str::FromStr,
     sync::Arc,
+};
+use temporal_sdk_core_protos::{
+    coresdk::{
+        workflow_activation::WfActivation,
+        workflow_commands::workflow_command,
+        workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
+    },
+    temporal::api::{
+        common::v1::{WorkflowExecution, WorkflowType},
+        enums::v1::TaskQueueKind,
+        failure::v1::Failure,
+        history::v1::History,
+        taskqueue::v1::TaskQueue,
+        workflowservice::v1::{
+            PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
+            RespondWorkflowTaskCompletedResponse,
+        },
+    },
 };
 
 pub type Result<T, E = anyhow::Error> = std::result::Result<T, E>;

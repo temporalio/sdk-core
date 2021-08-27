@@ -27,19 +27,16 @@ mod transition_coverage;
 pub use patch_state_machine::HAS_CHANGE_MARKER_NAME;
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
-use crate::{
-    core_tracing::VecDisplayer,
-    machines::workflow_machines::MachineResponse,
-    protos::{
-        coresdk::workflow_commands::*,
-        temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
-    },
-};
+use crate::{core_tracing::VecDisplayer, machines::workflow_machines::MachineResponse};
 use prost::alloc::fmt::Formatter;
 use rustfsm::{MachineError, StateMachine};
 use std::{
     convert::{TryFrom, TryInto},
     fmt::{Debug, Display},
+};
+use temporal_sdk_core_protos::{
+    coresdk::workflow_commands::*,
+    temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
 };
 
 #[cfg(test)]

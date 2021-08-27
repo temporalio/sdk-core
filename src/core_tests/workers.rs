@@ -1,14 +1,5 @@
 use crate::{
     pollers::{MockManualGateway, MockManualPoller, MockServerGatewayApis},
-    protos::coresdk::{
-        workflow_activation::wf_activation_job,
-        workflow_commands::{
-            workflow_command, ActivityCancellationType, CompleteWorkflowExecution,
-            RequestCancelActivity, ScheduleActivity, StartTimer,
-        },
-        workflow_completion::WfActivationCompletion,
-    },
-    protos::temporal::api::workflowservice::v1::RespondWorkflowTaskCompletedResponse,
     test_help::{
         build_fake_core, build_multihist_mock_sg, canned_histories, hist_to_poll_resp, mock_core,
         mock_core_with_opts_no_workers, register_mock_workers, single_hist_mock_sg,
@@ -19,6 +10,17 @@ use crate::{
 use futures::FutureExt;
 use rstest::{fixture, rstest};
 use std::time::Duration;
+use temporal_sdk_core_protos::{
+    coresdk::{
+        workflow_activation::wf_activation_job,
+        workflow_commands::{
+            workflow_command, ActivityCancellationType, CompleteWorkflowExecution,
+            RequestCancelActivity, ScheduleActivity, StartTimer,
+        },
+        workflow_completion::WfActivationCompletion,
+    },
+    temporal::api::workflowservice::v1::RespondWorkflowTaskCompletedResponse,
+};
 use tokio::sync::watch;
 
 #[tokio::test]

@@ -20,16 +20,18 @@ use std::{
 };
 use temporal_sdk_core::{
     errors::PollWfError,
-    protos::coresdk::{
+    prototype_rust_sdk::{WfContext, WorkflowResult},
+    Core,
+};
+use temporal_sdk_core_protos::{
+    coresdk::{
         activity_result::ActivityResult,
         workflow_activation::{wf_activation_job, WfActivation, WfActivationJob},
         workflow_commands::{ActivityCancellationType, FailWorkflowExecution, StartTimer},
         workflow_completion::WfActivationCompletion,
-        ActivityTaskCompletion,
+        ActivityTaskCompletion, IntoCompletion,
     },
-    protos::temporal::api::failure::v1::Failure,
-    prototype_rust_sdk::{WfContext, WorkflowResult},
-    Core, IntoCompletion,
+    temporal::api::failure::v1::Failure,
 };
 use test_utils::{
     init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreTestHelpers, CoreWfStarter, GwApi,

@@ -1,16 +1,19 @@
 use crate::{
     pollers::{self, Poller},
-    protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
-    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
     ServerGatewayApis,
 };
 use futures::{prelude::stream::FuturesUnordered, StreamExt};
 use std::{fmt::Debug, future::Future, sync::Arc};
-use tokio::sync::{
-    mpsc::{channel, Receiver},
-    watch, Mutex, Semaphore,
+use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
+    PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
 };
-use tokio::task::JoinHandle;
+use tokio::{
+    sync::{
+        mpsc::{channel, Receiver},
+        watch, Mutex, Semaphore,
+    },
+    task::JoinHandle,
+};
 
 pub struct LongPollBuffer<T> {
     buffered_polls: Mutex<Receiver<pollers::Result<T>>>,

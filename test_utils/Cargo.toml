@@ -13,3 +13,7 @@ temporal-sdk-core = { path = ".." }
 rand = "0.8"
 url = "2.2"
 base64 = "0.13"
+
+[dependencies.temporal-sdk-core-protos]
+path = "../sdk-core-protos"
+version = "0.1"

@@ -10,8 +10,6 @@ mod workflow_tasks;
 use crate::{
     errors::{PollActivityError, PollWfError},
     pollers::MockManualGateway,
-    protos::coresdk::workflow_completion::WfActivationCompletion,
-    protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
     test_help::{
         build_fake_core, canned_histories, fake_sg_opts, hist_to_poll_resp, ResponseType, TEST_Q,
     },
@@ -19,6 +17,10 @@ use crate::{
 };
 use futures::FutureExt;
 use std::time::Duration;
+use temporal_sdk_core_protos::{
+    coresdk::workflow_completion::WfActivationCompletion,
+    temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
+};
 use tokio::{sync::Barrier, time::sleep};
 
 #[tokio::test]

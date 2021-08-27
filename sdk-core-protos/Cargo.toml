@@ -1,0 +1,20 @@
+[package]
+name = "temporal-sdk-core-protos"
+version = "0.1.0"
+edition = "2018"
+authors = ["Spencer Judge <spencer@temporal.io>"]
+license-file = "LICENSE.txt"
+description = "Protobuf definitions for Temporal SDKs Core/Lang interface"
+homepage = "https://temporal.io/"
+repository = "https://github.com/temporalio/sdk-core"
+keywords = ["temporal", "workflow"]
+categories = ["development-tools"]
+
+[dependencies]
+derive_more = "0.99"
+prost = "0.8"
+prost-types = "0.8"
+tonic = "0.5"
+
+[build-dependencies]
+tonic-build = "0.5"

@@ -1,8 +1,6 @@
 use anyhow::anyhow;
-use temporal_sdk_core::{
-    protos::coresdk::child_workflow::{child_workflow_result, Success},
-    prototype_rust_sdk::{ChildWorkflowOptions, WfContext, WorkflowResult},
-};
+use temporal_sdk_core::prototype_rust_sdk::{ChildWorkflowOptions, WfContext, WorkflowResult};
+use temporal_sdk_core_protos::coresdk::child_workflow::{child_workflow_result, Success};
 use test_utils::CoreWfStarter;
 
 static PARENT_WF_TYPE: &str = "parent_wf";
