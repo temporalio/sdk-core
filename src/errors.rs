@@ -1,9 +1,9 @@
 //! Error types exposed by public APIs
 
-use crate::{
-    machines::WFMachinesError, protos::coresdk::activity_result::ActivityResult,
-    protos::coresdk::workflow_completion::WfActivationCompletion,
-    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse, WorkerLookupErr,
+use crate::{machines::WFMachinesError, WorkerLookupErr};
+use temporal_sdk_core_protos::{
+    coresdk::{activity_result::ActivityResult, workflow_completion::WfActivationCompletion},
+    temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
 };
 use tonic::codegen::http::uri::InvalidUri;
 

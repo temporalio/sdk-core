@@ -3,14 +3,15 @@ use crossbeam::channel::{unbounded, RecvTimeoutError};
 use futures::future::join_all;
 use std::time::Duration;
 use temporal_sdk_core::{
-    protos::coresdk::{
-        activity_task::activity_task as act_task,
-        workflow_activation::{wf_activation_job, FireTimer, WfActivationJob},
-        workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
-        workflow_completion::WfActivationCompletion,
-    },
     prototype_rust_sdk::{WfContext, WorkflowResult},
-    Core, CoreInitOptionsBuilder, IntoCompletion,
+    Core, CoreInitOptionsBuilder,
+};
+use temporal_sdk_core_protos::coresdk::{
+    activity_task::activity_task as act_task,
+    workflow_activation::{wf_activation_job, FireTimer, WfActivationJob},
+    workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
+    workflow_completion::WfActivationCompletion,
+    IntoCompletion,
 };
 use test_utils::{
     get_integ_server_options, init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers,

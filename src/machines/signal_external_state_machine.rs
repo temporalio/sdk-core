@@ -1,27 +1,23 @@
-use crate::{
-    machines::{
-        workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind,
-        NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
-    },
-    protos::{
-        coresdk::{
-            common::{NamespacedWorkflowExecution, Payload},
-            workflow_activation::ResolveSignalExternalWorkflow,
-            IntoPayloadsExt,
-        },
-        temporal::api::{
-            command::v1::{command, Command, SignalExternalWorkflowExecutionCommandAttributes},
-            common::v1::WorkflowExecution as UpstreamWE,
-            enums::v1::{CommandType, EventType, SignalExternalWorkflowExecutionFailedCause},
-            failure::v1::{
-                failure::FailureInfo, ApplicationFailureInfo, CanceledFailureInfo, Failure,
-            },
-            history::v1::{history_event, HistoryEvent},
-        },
-    },
+use crate::machines::{
+    workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, NewMachineWithCommand,
+    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use rustfsm::{fsm, MachineError, TransitionResult};
 use std::convert::TryFrom;
+use temporal_sdk_core_protos::{
+    coresdk::{
+        common::{NamespacedWorkflowExecution, Payload},
+        workflow_activation::ResolveSignalExternalWorkflow,
+        IntoPayloadsExt,
+    },
+    temporal::api::{
+        command::v1::{command, Command, SignalExternalWorkflowExecutionCommandAttributes},
+        common::v1::WorkflowExecution as UpstreamWE,
+        enums::v1::{CommandType, EventType, SignalExternalWorkflowExecutionFailedCause},
+        failure::v1::{failure::FailureInfo, ApplicationFailureInfo, CanceledFailureInfo, Failure},
+        history::v1::{history_event, HistoryEvent},
+    },
+};
 
 const SIG_CANCEL_MSG: &str = "Signal was cancelled before being sent";
 
@@ -285,10 +281,12 @@ impl Cancellable for SignalExternalMachine {
 mod tests {
     use super::*;
     use crate::{
-        protos::coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
         prototype_rust_sdk::{CancellableFuture, WfContext, WorkflowFunction, WorkflowResult},
         test_help::TestHistoryBuilder,
         workflow::managed_wf::ManagedWFFunc,
+    };
+    use temporal_sdk_core_protos::coresdk::workflow_activation::{
+        wf_activation_job, WfActivationJob,
     };
 
     const SIGNAME: &str = "signame";

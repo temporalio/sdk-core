@@ -7,11 +7,9 @@ pub(crate) use bridge::WorkflowBridge;
 pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
 pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
 
-use crate::{
-    machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
-    protos::coresdk::workflow_activation::WfActivation,
-};
+use crate::machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines};
 use std::sync::mpsc::Sender;
+use temporal_sdk_core_protos::coresdk::workflow_activation::WfActivation;
 
 pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
@@ -148,17 +146,16 @@ pub mod managed_wf {
     use super::*;
     use crate::{
         machines::WFCommand,
-        protos::coresdk::{
-            common::Payload,
-            workflow_activation::create_evict_activation,
-            workflow_completion::{wf_activation_completion::Status, WfActivationCompletion},
-        },
         prototype_rust_sdk::{WorkflowFunction, WorkflowResult},
-        test_help::TestHistoryBuilder,
-        test_help::TEST_Q,
+        test_help::{TestHistoryBuilder, TEST_Q},
         workflow::WorkflowFetcher,
     };
     use std::convert::TryInto;
+    use temporal_sdk_core_protos::coresdk::{
+        common::Payload,
+        workflow_activation::create_evict_activation,
+        workflow_completion::{wf_activation_completion::Status, WfActivationCompletion},
+    };
     use tokio::{
         sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
         task::JoinHandle,

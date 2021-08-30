@@ -1,13 +1,11 @@
-use crate::{
-    machines::WFCommand,
-    protos::{
-        coresdk::workflow_activation::{
-            wf_activation_job, CancelWorkflow, SignalWorkflow, WfActivationJob,
-        },
-        temporal::api::history::v1::WorkflowExecutionStartedEventAttributes,
-    },
-};
+use crate::machines::WFCommand;
 use std::collections::VecDeque;
+use temporal_sdk_core_protos::{
+    coresdk::workflow_activation::{
+        wf_activation_job, CancelWorkflow, SignalWorkflow, WfActivationJob,
+    },
+    temporal::api::history::v1::WorkflowExecutionStartedEventAttributes,
+};
 
 /// Abstracts away the concept of an actual workflow implementation, handling sending it new
 /// jobs and fetching output from it.

@@ -1,7 +1,5 @@
-use temporal_sdk_core::{
-    protos::coresdk::common::NamespacedWorkflowExecution,
-    prototype_rust_sdk::{WfContext, WorkflowResult},
-};
+use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
+use temporal_sdk_core_protos::coresdk::common::NamespacedWorkflowExecution;
 use test_utils::CoreWfStarter;
 
 const RECEIVER_WFID: &str = "sends-cancel-receiver";

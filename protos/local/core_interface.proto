@@ -16,7 +16,7 @@ import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/empty.proto";
 
-// A request as given to [crate::Core::record_activity_heartbeat]
+// A request as given to `record_activity_heartbeat`
 message ActivityHeartbeat {
     bytes task_token = 1;
     // The task queue / worker this activity is associated with
@@ -24,7 +24,7 @@ message ActivityHeartbeat {
     repeated common.Payload details = 3;
 }
 
-// A request as given to [crate::Core::complete_activity_task]
+// A request as given to `complete_activity_task`
 message ActivityTaskCompletion {
     bytes task_token = 1;
     // The task queue / worker this task is associated with

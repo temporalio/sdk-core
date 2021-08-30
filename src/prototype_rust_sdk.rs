@@ -4,6 +4,7 @@
 //!
 //! Needs lots of love to be production ready but the basis is there
 
+mod conversions;
 mod workflow_context;
 mod workflow_future;
 
@@ -11,23 +12,7 @@ pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, WfContext,
 };
 
-use crate::{
-    protos::{
-        coresdk::{
-            activity_result::ActivityResult,
-            child_workflow::ChildWorkflowResult,
-            common::{NamespacedWorkflowExecution, Payload},
-            workflow_activation::{
-                resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
-                wf_activation_job::Variant, WfActivation, WfActivationJob,
-            },
-            workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution},
-        },
-        temporal::api::failure::v1::Failure,
-    },
-    prototype_rust_sdk::workflow_context::PendingChildWorkflow,
-    Core,
-};
+use crate::{prototype_rust_sdk::workflow_context::PendingChildWorkflow, Core};
 use anyhow::{anyhow, bail};
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use std::{
@@ -40,11 +25,26 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::{
-    mpsc::{unbounded_channel, UnboundedSender},
-    oneshot, watch,
+use temporal_sdk_core_protos::{
+    coresdk::{
+        activity_result::ActivityResult,
+        child_workflow::ChildWorkflowResult,
+        common::{NamespacedWorkflowExecution, Payload},
+        workflow_activation::{
+            resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
+            wf_activation_job::Variant, WfActivation, WfActivationJob,
+        },
+        workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution},
+    },
+    temporal::api::failure::v1::Failure,
 };
-use tokio::task::JoinError;
+use tokio::{
+    sync::{
+        mpsc::{unbounded_channel, UnboundedSender},
+        oneshot, watch,
+    },
+    task::JoinError,
+};
 
 /// A worker that can poll for and respond to workflow tasks by using [WorkflowFunction]s
 pub struct TestRustWorker {

@@ -1,36 +1,33 @@
 #![allow(clippy::large_enum_variant)]
 
-use crate::machines::MachineKind;
-use crate::{
-    machines::{
-        workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
-        OnEventWrapper, WFMachinesAdapter, WFMachinesError,
-    },
-    protos::{
-        coresdk::{
-            activity_result::{self as ar, activity_result, ActivityResult, Cancellation},
-            common::Payload,
-            workflow_activation::ResolveActivity,
-            workflow_commands::{ActivityCancellationType, ScheduleActivity},
-        },
-        temporal::api::{
-            command::v1::{command, Command, RequestCancelActivityTaskCommandAttributes},
-            common::v1::{ActivityType, Payloads},
-            enums::v1::{CommandType, EventType, RetryState},
-            failure::v1::{
-                self as failure, failure::FailureInfo, ActivityFailureInfo, CanceledFailureInfo,
-                Failure,
-            },
-            history::v1::{
-                history_event, ActivityTaskCanceledEventAttributes,
-                ActivityTaskCompletedEventAttributes, ActivityTaskFailedEventAttributes,
-                ActivityTaskTimedOutEventAttributes, HistoryEvent,
-            },
-        },
-    },
+use crate::machines::{
+    workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, NewMachineWithCommand,
+    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::convert::{TryFrom, TryInto};
+use temporal_sdk_core_protos::{
+    coresdk::{
+        activity_result::{self as ar, activity_result, ActivityResult, Cancellation},
+        common::Payload,
+        workflow_activation::ResolveActivity,
+        workflow_commands::{ActivityCancellationType, ScheduleActivity},
+    },
+    temporal::api::{
+        command::v1::{command, Command, RequestCancelActivityTaskCommandAttributes},
+        common::v1::{ActivityType, Payloads},
+        enums::v1::{CommandType, EventType, RetryState},
+        failure::v1::{
+            self as failure, failure::FailureInfo, ActivityFailureInfo, CanceledFailureInfo,
+            Failure,
+        },
+        history::v1::{
+            history_event, ActivityTaskCanceledEventAttributes,
+            ActivityTaskCompletedEventAttributes, ActivityTaskFailedEventAttributes,
+            ActivityTaskTimedOutEventAttributes, HistoryEvent,
+        },
+    },
+};
 
 fsm! {
     pub(super) name ActivityMachine;
@@ -129,7 +126,9 @@ impl ActivityMachine {
         if self.shared_state.cancellation_type
             != ActivityCancellationType::WaitCancellationCompleted
         {
-            r.push(self.create_cancelation_resolve(None).into())
+            r.push(MachineResponse::PushWFJob(
+                self.create_cancelation_resolve(None).into(),
+            ))
         }
         r
     }
@@ -728,14 +727,17 @@ fn convert_payloads(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::prototype_rust_sdk::CancellableFuture;
     use crate::{
-        protos::coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
-        prototype_rust_sdk::{ActivityOptions, WfContext, WorkflowFunction, WorkflowResult},
+        prototype_rust_sdk::{
+            ActivityOptions, CancellableFuture, WfContext, WorkflowFunction, WorkflowResult,
+        },
         test_help::{canned_histories, TestHistoryBuilder},
         workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::{fixture, rstest};
+    use temporal_sdk_core_protos::coresdk::workflow_activation::{
+        wf_activation_job, WfActivationJob,
+    };
 
     #[fixture]
     fn activity_happy_hist() -> ManagedWFFunc {

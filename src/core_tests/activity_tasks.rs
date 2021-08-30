@@ -2,22 +2,6 @@ use crate::{
     errors::PollActivityError,
     job_assert,
     pollers::{MockManualGateway, MockServerGatewayApis},
-    protos::{
-        coresdk::{
-            activity_result::{activity_result, ActivityResult},
-            activity_task::activity_task,
-            workflow_activation::{wf_activation_job, ResolveActivity, WfActivationJob},
-            workflow_commands::{
-                ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity,
-                ScheduleActivity, StartTimer,
-            },
-            ActivityTaskCompletion,
-        },
-        temporal::api::workflowservice::v1::{
-            PollActivityTaskQueueResponse, RecordActivityTaskHeartbeatResponse,
-            RespondActivityTaskCompletedResponse,
-        },
-    },
     test_help::{
         build_fake_core, canned_histories, fake_sg_opts, gen_assert_and_reply, mock_core,
         mock_core_with_opts_no_workers, mock_manual_poller, mock_poller, mock_poller_from_resps,
@@ -27,15 +11,32 @@ use crate::{
     ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
 };
 use futures::FutureExt;
-use std::sync::Arc;
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::Duration,
 };
+use temporal_sdk_core_protos::{
+    coresdk::{
+        activity_result::{activity_result, ActivityResult},
+        activity_task::activity_task,
+        workflow_activation::{wf_activation_job, ResolveActivity, WfActivationJob},
+        workflow_commands::{
+            ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity,
+            ScheduleActivity, StartTimer,
+        },
+        ActivityTaskCompletion,
+    },
+    temporal::api::workflowservice::v1::{
+        PollActivityTaskQueueResponse, RecordActivityTaskHeartbeatResponse,
+        RespondActivityTaskCompletedResponse,
+    },
+};
 use test_utils::fanout_tasks;
-use tokio::sync::Notify;
-use tokio::time::sleep;
+use tokio::{sync::Notify, time::sleep};
 
 #[tokio::test]
 async fn max_activities_respected() {

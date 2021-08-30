@@ -1,11 +1,11 @@
-use crate::workflow::managed_wf::ManagedWFFunc;
 use crate::{
-    protos::temporal::api::enums::v1::CommandType,
     prototype_rust_sdk::{WfContext, WorkflowFunction},
     test_help::canned_histories,
+    workflow::managed_wf::ManagedWFFunc,
 };
 use rstest::{fixture, rstest};
 use std::time::Duration;
+use temporal_sdk_core_protos::temporal::api::enums::v1::CommandType;
 
 fn timers_wf(num_timers: u32) -> WorkflowFunction {
     WorkflowFunction::new(move |mut command_sink: WfContext| async move {

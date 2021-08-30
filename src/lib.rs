@@ -11,7 +11,6 @@ pub extern crate assert_matches;
 extern crate tracing;
 
 pub mod errors;
-pub mod protos;
 pub mod prototype_rust_sdk;
 
 pub(crate) mod core_tracing;
@@ -33,7 +32,6 @@ pub use core_tracing::tracing_init;
 pub use pollers::{
     ClientTlsConfig, RetryConfig, ServerGateway, ServerGatewayApis, ServerGatewayOptions, TlsConfig,
 };
-pub use protosext::IntoCompletion;
 pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
@@ -42,23 +40,24 @@ use crate::{
         ActivityHeartbeatError, CompleteActivityError, CompleteWfError, CoreInitError,
         PollActivityError, PollWfError, WorkerRegistrationError,
     },
-    protos::coresdk::{
-        activity_task::ActivityTask, workflow_activation::WfActivation,
-        workflow_completion::WfActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
-    },
+    pollers::GatewayRef,
     task_token::TaskToken,
-    worker::WorkerDispatcher,
+    worker::{Worker, WorkerDispatcher},
 };
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use std::{
+    ops::Deref,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
+use temporal_sdk_core_protos::coresdk::{
+    activity_task::ActivityTask, workflow_activation::WfActivation,
+    workflow_completion::WfActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
 };
 
-use crate::pollers::GatewayRef;
 #[cfg(test)]
 use crate::test_help::MockWorker;
-use crate::worker::Worker;
-use std::ops::Deref;
 
 lazy_static::lazy_static! {
     /// A process-wide unique string, which will be different on every startup

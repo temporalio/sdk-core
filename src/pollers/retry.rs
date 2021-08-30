@@ -1,24 +1,20 @@
-use std::future::Future;
-use std::{fmt::Debug, time::Duration};
-
-use backoff::backoff::Backoff;
-use backoff::ExponentialBackoff;
-use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
-
-use crate::pollers::gateway::{RetryConfig, ServerGatewayApis};
-use crate::pollers::RETRYABLE_ERROR_CODES;
 use crate::{
-    pollers::Result,
-    protos::{
-        coresdk::common::Payload,
-        coresdk::workflow_commands::QueryResult,
-        temporal::api::{
-            common::v1::Payloads, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
-            query::v1::WorkflowQuery, workflowservice::v1::*,
-        },
+    pollers::{
+        gateway::{RetryConfig, ServerGatewayApis},
+        Result, RETRYABLE_ERROR_CODES,
     },
     protosext::WorkflowTaskCompletion,
     task_token::TaskToken,
+};
+use backoff::{backoff::Backoff, ExponentialBackoff};
+use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
+use std::{fmt::Debug, future::Future, time::Duration};
+use temporal_sdk_core_protos::{
+    coresdk::{common::Payload, workflow_commands::QueryResult},
+    temporal::api::{
+        common::v1::Payloads, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
+        query::v1::WorkflowQuery, workflowservice::v1::*,
+    },
 };
 
 #[derive(Debug)]

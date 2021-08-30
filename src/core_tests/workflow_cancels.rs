@@ -1,17 +1,17 @@
 use crate::{
     job_assert,
-    protos::coresdk::{
-        workflow_activation::{wf_activation_job, WfActivationJob},
-        workflow_commands::{
-            CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution, StartTimer,
-        },
-    },
     test_help::{
         build_fake_core, canned_histories, gen_assert_and_reply, poll_and_reply, ResponseType,
     },
     workflow::WorkflowCachingPolicy::NonSticky,
 };
 use rstest::rstest;
+use temporal_sdk_core_protos::coresdk::{
+    workflow_activation::{wf_activation_job, WfActivationJob},
+    workflow_commands::{
+        CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution, StartTimer,
+    },
+};
 
 enum CompletionType {
     Complete,

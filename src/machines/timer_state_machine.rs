@@ -1,26 +1,23 @@
 #![allow(clippy::large_enum_variant)]
 
-use crate::machines::{EventInfo, MachineKind};
-use crate::{
-    machines::{
-        workflow_machines::{MachineResponse, WFMachinesError},
-        Cancellable, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter,
-    },
-    protos::{
-        coresdk::{
-            workflow_activation::FireTimer,
-            workflow_commands::{CancelTimer, StartTimer},
-            HistoryEventId,
-        },
-        temporal::api::{
-            command::v1::Command,
-            enums::v1::{CommandType, EventType},
-            history::v1::{history_event, HistoryEvent, TimerFiredEventAttributes},
-        },
-    },
+use crate::machines::{
+    workflow_machines::{MachineResponse, WFMachinesError},
+    Cancellable, EventInfo, MachineKind, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter,
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::convert::TryFrom;
+use temporal_sdk_core_protos::{
+    coresdk::{
+        workflow_activation::FireTimer,
+        workflow_commands::{CancelTimer, StartTimer},
+        HistoryEventId,
+    },
+    temporal::api::{
+        command::v1::Command,
+        enums::v1::{CommandType, EventType},
+        history::v1::{history_event, HistoryEvent, TimerFiredEventAttributes},
+    },
+};
 
 fsm! {
     pub(super) name TimerMachine;
@@ -272,12 +269,10 @@ impl Cancellable for TimerMachine {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::prototype_rust_sdk::CancellableFuture;
-    use crate::prototype_rust_sdk::WorkflowFunction;
-    use crate::workflow::managed_wf::ManagedWFFunc;
     use crate::{
-        prototype_rust_sdk::WfContext,
+        prototype_rust_sdk::{CancellableFuture, WfContext, WorkflowFunction},
         test_help::{canned_histories, TestHistoryBuilder},
+        workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::{fixture, rstest};
     use std::time::Duration;

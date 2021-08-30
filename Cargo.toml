@@ -15,10 +15,10 @@ categories = ["development-tools"]
 # TODO: Feature flag opentelem stuff
 [dependencies]
 anyhow = "1.0"
-async-trait = "0.1"
 arc-swap = "1.3"
-base64 = "0.13"
+async-trait = "0.1"
 backoff = "0.3.0"
+base64 = "0.13"
 crossbeam = "0.8"
 dashmap = "4.0"
 derive_builder = "0.10"
@@ -47,6 +47,11 @@ tracing-subscriber = "0.2"
 url = "2.2"
 uuid = { version = "0.8.2", features = ["v4"] }
 
+# 1st party local deps
+[dependencies.temporal-sdk-core-protos]
+path = "sdk-core-protos"
+version = "0.1"
+
 [dependencies.rustfsm]
 path = "fsm"
 version = "0.1"
@@ -62,7 +67,7 @@ test_utils = { path = "test_utils" }
 tonic-build = "0.5"
 
 [workspace]
-members = [".", "fsm", "test_utils"]
+members = [".", "fsm", "test_utils", "sdk-core-protos"]
 
 [[test]]
 name = "integ_tests"

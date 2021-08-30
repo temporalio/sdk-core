@@ -1,22 +1,23 @@
-use std::collections::{HashMap, VecDeque};
-
 use crate::{
     pollers::MockServerGatewayApis,
-    protos::{
-        coresdk::{
-            workflow_activation::{wf_activation_job, WfActivationJob},
-            workflow_commands::{CompleteWorkflowExecution, QueryResult, QuerySuccess, StartTimer},
-            workflow_completion::WfActivationCompletion,
-        },
-        temporal::api::failure::v1::Failure,
-        temporal::api::history::v1::History,
-        temporal::api::query::v1::WorkflowQuery,
-        temporal::api::workflowservice::v1::{
+    test_help::{canned_histories, hist_to_poll_resp, mock_core, MocksHolder, TEST_Q},
+    Core,
+};
+use std::collections::{HashMap, VecDeque};
+use temporal_sdk_core_protos::{
+    coresdk::{
+        workflow_activation::{wf_activation_job, WfActivationJob},
+        workflow_commands::{CompleteWorkflowExecution, QueryResult, QuerySuccess, StartTimer},
+        workflow_completion::WfActivationCompletion,
+    },
+    temporal::api::{
+        failure::v1::Failure,
+        history::v1::History,
+        query::v1::WorkflowQuery,
+        workflowservice::v1::{
             RespondQueryTaskCompletedResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
-    test_help::{canned_histories, hist_to_poll_resp, mock_core, MocksHolder, TEST_Q},
-    Core,
 };
 
 #[rstest::rstest]

@@ -1,20 +1,17 @@
 #![allow(clippy::enum_variant_names)]
 
-use crate::{
-    machines::{
-        workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, WFMachinesAdapter,
-        WFMachinesError,
-    },
-    protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
-    protos::temporal::api::{
-        enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
-        history::v1::HistoryEvent,
-    },
+use crate::machines::{
+    workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, WFMachinesAdapter,
+    WFMachinesError,
 };
 use rustfsm::{fsm, TransitionResult};
 use std::{
     convert::{TryFrom, TryInto},
     time::SystemTime,
+};
+use temporal_sdk_core_protos::temporal::api::{
+    enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
+    history::v1::{history_event::Attributes::WorkflowTaskFailedEventAttributes, HistoryEvent},
 };
 
 fsm! {

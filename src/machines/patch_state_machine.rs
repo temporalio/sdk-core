@@ -22,17 +22,18 @@ use crate::{
         workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind,
         NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
     },
-    protos::{
-        coresdk::common::build_has_change_marker_details,
-        temporal::api::{
-            command::v1::{Command, RecordMarkerCommandAttributes},
-            enums::v1::CommandType,
-            history::v1::HistoryEvent,
-        },
-    },
+    protosext::HistoryEventExt,
 };
 use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
+use temporal_sdk_core_protos::{
+    coresdk::common::build_has_change_marker_details,
+    temporal::api::{
+        command::v1::{Command, RecordMarkerCommandAttributes},
+        enums::v1::CommandType,
+        history::v1::HistoryEvent,
+    },
+};
 
 pub const HAS_CHANGE_MARKER_NAME: &str = "core_patch";
 
@@ -222,29 +223,31 @@ impl TryFrom<HistoryEvent> for PatchMachineEvents {
 mod tests {
     use crate::{
         machines::{WFMachinesError, HAS_CHANGE_MARKER_NAME},
-        protos::{
-            coresdk::{
-                common::decode_change_marker_details,
-                workflow_activation::{wf_activation_job, NotifyHasPatch, WfActivationJob},
-            },
-            temporal::api::command::v1::{
-                command::Attributes, RecordMarkerCommandAttributes,
-                ScheduleActivityTaskCommandAttributes,
-            },
-            temporal::api::common::v1::ActivityType,
-            temporal::api::enums::v1::{CommandType, EventType},
-            temporal::api::history::v1::{
-                history_event, ActivityTaskCompletedEventAttributes,
-                ActivityTaskScheduledEventAttributes, ActivityTaskStartedEventAttributes,
-                TimerFiredEventAttributes,
-            },
-        },
         prototype_rust_sdk::{ActivityOptions, WfContext, WorkflowFunction},
         test_help::TestHistoryBuilder,
         workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::rstest;
     use std::time::Duration;
+    use temporal_sdk_core_protos::{
+        coresdk::{
+            common::decode_change_marker_details,
+            workflow_activation::{wf_activation_job, NotifyHasPatch, WfActivationJob},
+        },
+        temporal::api::{
+            command::v1::{
+                command::Attributes, RecordMarkerCommandAttributes,
+                ScheduleActivityTaskCommandAttributes,
+            },
+            common::v1::ActivityType,
+            enums::v1::{CommandType, EventType},
+            history::v1::{
+                history_event, ActivityTaskCompletedEventAttributes,
+                ActivityTaskScheduledEventAttributes, ActivityTaskStartedEventAttributes,
+                TimerFiredEventAttributes,
+            },
+        },
+    };
 
     const MY_PATCH_ID: &str = "test_patch_id";
     #[derive(Eq, PartialEq, Copy, Clone)]

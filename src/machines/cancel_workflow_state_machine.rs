@@ -1,16 +1,16 @@
-use crate::{
-    machines::{
-        Cancellable, EventInfo, HistoryEvent, MachineKind, MachineResponse, NewMachineWithCommand,
-        OnEventWrapper, WFMachinesAdapter, WFMachinesError,
-    },
-    protos::{
-        coresdk::workflow_commands::CancelWorkflowExecution,
-        temporal::api::command::v1::Command,
-        temporal::api::enums::v1::{CommandType, EventType},
-    },
+use crate::machines::{
+    Cancellable, EventInfo, HistoryEvent, MachineKind, MachineResponse, NewMachineWithCommand,
+    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
+use temporal_sdk_core_protos::{
+    coresdk::workflow_commands::CancelWorkflowExecution,
+    temporal::api::{
+        command::v1::Command,
+        enums::v1::{CommandType, EventType},
+    },
+};
 
 fsm! {
     pub(super)
@@ -121,14 +121,15 @@ impl Cancellable for CancelWorkflowMachine {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prototype_rust_sdk::WfExitValue;
     use crate::{
-        protos::coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
-        prototype_rust_sdk::{WfContext, WorkflowFunction, WorkflowResult},
+        prototype_rust_sdk::{WfContext, WfExitValue, WorkflowFunction, WorkflowResult},
         test_help::canned_histories,
         workflow::managed_wf::ManagedWFFunc,
     };
     use std::time::Duration;
+    use temporal_sdk_core_protos::coresdk::workflow_activation::{
+        wf_activation_job, WfActivationJob,
+    };
 
     async fn wf_with_timer(mut ctx: WfContext) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(500)).await;

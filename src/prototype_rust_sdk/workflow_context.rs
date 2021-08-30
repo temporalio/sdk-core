@@ -1,23 +1,7 @@
-use crate::prototype_rust_sdk::CancelExternalWfResult;
-use crate::{
-    protos::coresdk::{
-        activity_result::ActivityResult,
-        child_workflow::ChildWorkflowCancellationType,
-        child_workflow::ChildWorkflowResult,
-        common::{NamespacedWorkflowExecution, Payload},
-        workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
-        workflow_commands::{
-            request_cancel_external_workflow_execution as cancel_we,
-            signal_external_workflow_execution as sig_we, workflow_command,
-            ActivityCancellationType, RequestCancelExternalWorkflowExecution, ScheduleActivity,
-            SetPatchMarker, SignalExternalWorkflowExecution, StartChildWorkflowExecution,
-            StartTimer,
-        },
-    },
-    prototype_rust_sdk::{
-        CancellableID, CommandCreateRequest, CommandSubscribeChildWorkflowCompletion, RustWfCmd,
-        SignalExternalWfResult, TimerResult, UnblockEvent, Unblockable,
-    },
+use crate::prototype_rust_sdk::{
+    CancelExternalWfResult, CancellableID, CommandCreateRequest,
+    CommandSubscribeChildWorkflowCompletion, RustWfCmd, SignalExternalWfResult, TimerResult,
+    UnblockEvent, Unblockable,
 };
 use crossbeam::channel::{Receiver, Sender};
 use futures::{task::Context, FutureExt, Stream};
@@ -25,6 +9,18 @@ use parking_lot::RwLock;
 use std::{
     collections::HashMap, future::Future, marker::PhantomData, pin::Pin, sync::Arc, task::Poll,
     time::Duration,
+};
+use temporal_sdk_core_protos::coresdk::{
+    activity_result::ActivityResult,
+    child_workflow::{ChildWorkflowCancellationType, ChildWorkflowResult},
+    common::{NamespacedWorkflowExecution, Payload},
+    workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
+    workflow_commands::{
+        request_cancel_external_workflow_execution as cancel_we,
+        signal_external_workflow_execution as sig_we, workflow_command, ActivityCancellationType,
+        RequestCancelExternalWorkflowExecution, ScheduleActivity, SetPatchMarker,
+        SignalExternalWorkflowExecution, StartChildWorkflowExecution, StartTimer,
+    },
 };
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;

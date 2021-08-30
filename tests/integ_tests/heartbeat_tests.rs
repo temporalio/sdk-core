@@ -1,14 +1,13 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporal_sdk_core::protos::coresdk::{
+use temporal_sdk_core_protos::coresdk::{
     activity_result::{self, activity_result as act_res, ActivityResult},
     activity_task::activity_task as act_task,
     common::Payload,
     workflow_activation::{wf_activation_job, ResolveActivity, WfActivationJob},
     workflow_commands::ActivityCancellationType,
-    ActivityHeartbeat, ActivityTaskCompletion,
+    ActivityHeartbeat, ActivityTaskCompletion, IntoCompletion,
 };
-use temporal_sdk_core::IntoCompletion;
 use test_utils::{init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers};
 use tokio::time::sleep;
 

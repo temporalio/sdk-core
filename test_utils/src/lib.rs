@@ -2,14 +2,15 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use rand::{distributions::Standard, Rng};
 use std::{convert::TryFrom, env, future::Future, sync::Arc, time::Duration};
 use temporal_sdk_core::{
-    protos::coresdk::workflow_commands::{
+    prototype_rust_sdk::TestRustWorker, Core, CoreInitOptions, CoreInitOptionsBuilder,
+    ServerGatewayApis, ServerGatewayOptions, WorkerConfig, WorkerConfigBuilder,
+};
+use temporal_sdk_core_protos::coresdk::{
+    workflow_commands::{
         workflow_command, ActivityCancellationType, CompleteWorkflowExecution, ScheduleActivity,
         StartTimer,
     },
-    protos::coresdk::workflow_completion::WfActivationCompletion,
-    prototype_rust_sdk::TestRustWorker,
-    Core, CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayApis, ServerGatewayOptions,
-    WorkerConfig, WorkerConfigBuilder,
+    workflow_completion::WfActivationCompletion,
 };
 use url::Url;
 

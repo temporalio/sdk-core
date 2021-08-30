@@ -5,30 +5,14 @@ mod dispatcher;
 pub use crate::worker::config::{WorkerConfig, WorkerConfigBuilder};
 pub use dispatcher::WorkerDispatcher;
 
-use crate::errors::WorkflowUpdateError;
 use crate::{
-    errors::CompleteWfError,
+    errors::{CompleteWfError, WorkflowUpdateError},
     machines::EmptyWorkflowCommandErr,
     pollers::{
         new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, BoxedWFPoller,
         GatewayRef, Poller, WorkflowTaskPoller,
     },
-    protos::{
-        coresdk::{
-            activity_result::activity_result,
-            activity_task::ActivityTask,
-            workflow_activation::WfActivation,
-            workflow_commands::QueryResult,
-            workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
-        },
-        temporal::api::enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
-        temporal::api::failure::v1::Failure,
-        temporal::api::taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
-        temporal::api::workflowservice::v1::{
-            PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
-        },
-    },
-    protosext::{ValidPollWFTQResponse, WorkflowTaskCompletion},
+    protosext::{legacy_query_failure, ValidPollWFTQResponse, WorkflowTaskCompletion},
     task_token::TaskToken,
     workflow::{
         workflow_tasks::{
@@ -42,6 +26,20 @@ use crate::{
 use activities::WorkerActivityTasks;
 use futures::{Future, TryFutureExt};
 use std::{convert::TryInto, sync::Arc};
+use temporal_sdk_core_protos::{
+    coresdk::{
+        activity_result::activity_result,
+        activity_task::ActivityTask,
+        workflow_activation::WfActivation,
+        workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
+    },
+    temporal::api::{
+        enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
+        failure::v1::Failure,
+        taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
+        workflowservice::v1::{PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse},
+    },
+};
 use tokio::sync::{watch, Mutex, Semaphore};
 
 /// A worker polls on a certain task queue
@@ -528,7 +526,7 @@ impl Worker {
             }
             FailedActivationOutcome::ReportLegacyQueryFailure(task_token) => {
                 self.server_gateway
-                    .respond_legacy_query(task_token, QueryResult::legacy_failure(failure))
+                    .respond_legacy_query(task_token, legacy_query_failure(failure))
                     .await?;
             }
             _ => {}
@@ -620,13 +618,12 @@ impl WorkerConfig {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{
         pollers::MockServerGatewayApis,
-        protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
         test_help::{fake_sg_opts, mock_poller_from_resps},
     };
-
-    use super::*;
+    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 
     #[tokio::test]
     async fn activity_timeouts_dont_eat_permits() {

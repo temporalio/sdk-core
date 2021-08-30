@@ -1,23 +1,21 @@
-use crate::{
-    machines::{
-        workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind,
-        NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
-    },
-    protos::{
-        coresdk::common::NamespacedWorkflowExecution,
-        coresdk::workflow_activation::ResolveRequestCancelExternalWorkflow,
-        temporal::api::command::v1::{
-            command, Command, RequestCancelExternalWorkflowExecutionCommandAttributes,
-        },
-        temporal::api::enums::v1::{
-            CancelExternalWorkflowExecutionFailedCause, CommandType, EventType,
-        },
-        temporal::api::failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
-        temporal::api::history::v1::{history_event, HistoryEvent},
-    },
+use crate::machines::{
+    workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, NewMachineWithCommand,
+    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
+use temporal_sdk_core_protos::{
+    coresdk::{
+        common::NamespacedWorkflowExecution,
+        workflow_activation::ResolveRequestCancelExternalWorkflow,
+    },
+    temporal::api::{
+        command::v1::{command, Command, RequestCancelExternalWorkflowExecutionCommandAttributes},
+        enums::v1::{CancelExternalWorkflowExecutionFailedCause, CommandType, EventType},
+        failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
+        history::v1::{history_event, HistoryEvent},
+    },
+};
 
 fsm! {
     pub(super)
@@ -232,9 +230,11 @@ impl Cancellable for CancelExternalMachine {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prototype_rust_sdk::{WfContext, WorkflowFunction, WorkflowResult};
-    use crate::test_help::TestHistoryBuilder;
-    use crate::workflow::managed_wf::ManagedWFFunc;
+    use crate::{
+        prototype_rust_sdk::{WfContext, WorkflowFunction, WorkflowResult},
+        test_help::TestHistoryBuilder,
+        workflow::managed_wf::ManagedWFFunc,
+    };
 
     async fn cancel_sender(mut ctx: WfContext) -> WorkflowResult<()> {
         let res = ctx

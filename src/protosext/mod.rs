@@ -1,21 +1,25 @@
 use crate::{
-    machines::ProtoCommand,
-    protos::{
-        coresdk::{
-            workflow_activation::QueryWorkflow,
-            workflow_commands::{workflow_command, QueryResult, WorkflowCommand},
-            workflow_completion::{wf_activation_completion, WfActivationCompletion},
-            FromPayloadsExt,
-        },
-        temporal::api::common::v1::WorkflowExecution,
-        temporal::api::history::v1::History,
-        temporal::api::query::v1::WorkflowQuery,
-        temporal::api::taskqueue::v1::StickyExecutionAttributes,
-        temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
-    },
+    machines::{ProtoCommand, HAS_CHANGE_MARKER_NAME},
     task_token::TaskToken,
+    workflow::LEGACY_QUERY_ID,
 };
 use std::convert::TryFrom;
+use temporal_sdk_core_protos::{
+    coresdk::{
+        common::decode_change_marker_details,
+        workflow_activation::{wf_activation_job, QueryWorkflow, WfActivation, WfActivationJob},
+        workflow_commands::{query_result, QueryResult},
+        workflow_completion, FromPayloadsExt,
+    },
+    temporal::api::{
+        common::v1::WorkflowExecution,
+        enums::v1::EventType,
+        history::v1::{history_event, History, HistoryEvent, MarkerRecordedEventAttributes},
+        query::v1::WorkflowQuery,
+        taskqueue::v1::StickyExecutionAttributes,
+        workflowservice::v1::PollWorkflowTaskQueueResponse,
+    },
+};
 
 /// A validated version of a [PollWorkflowTaskQueueResponse]
 #[derive(Debug, Clone, PartialEq)]
@@ -91,33 +95,6 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
     }
 }
 
-/// Makes converting outgoing lang commands into [WfActivationCompletion]s easier
-pub trait IntoCompletion {
-    /// The conversion function
-    fn into_completion(self, task_queue: String, run_id: String) -> WfActivationCompletion;
-}
-
-impl IntoCompletion for workflow_command::Variant {
-    fn into_completion(self, task_queue: String, run_id: String) -> WfActivationCompletion {
-        WfActivationCompletion::from_cmd(task_queue, run_id, self)
-    }
-}
-
-impl<I, V> IntoCompletion for I
-where
-    I: IntoIterator<Item = V>,
-    V: Into<WorkflowCommand>,
-{
-    fn into_completion(self, task_queue: String, run_id: String) -> WfActivationCompletion {
-        let success = self.into_iter().map(Into::into).collect::<Vec<_>>().into();
-        WfActivationCompletion {
-            run_id,
-            task_queue,
-            status: Some(wf_activation_completion::Status::Successful(success)),
-        }
-    }
-}
-
 /// A version of [RespondWorkflowTaskCompletedRequest] that will finish being filled out by the
 /// server client
 #[derive(Debug, Clone, PartialEq)]
@@ -132,4 +109,54 @@ pub struct WorkflowTaskCompletion {
     pub query_responses: Vec<QueryResult>,
     pub return_new_workflow_task: bool,
     pub force_create_new_workflow_task: bool,
+}
+
+pub(crate) trait WfActivationExt {
+    /// Returns true if this activation has one and only one job to perform a legacy query
+    fn is_legacy_query(&self) -> bool;
+}
+
+impl WfActivationExt for WfActivation {
+    fn is_legacy_query(&self) -> bool {
+        matches!(&self.jobs.as_slice(), &[WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::QueryWorkflow(qr))
+                }] if qr.query_id == LEGACY_QUERY_ID)
+    }
+}
+
+/// Create a legacy query failure result
+pub(crate) fn legacy_query_failure(fail: workflow_completion::Failure) -> QueryResult {
+    QueryResult {
+        query_id: LEGACY_QUERY_ID.to_string(),
+        variant: Some(query_result::Variant::Failed(
+            fail.failure.unwrap_or_default(),
+        )),
+    }
+}
+
+pub(crate) trait HistoryEventExt {
+    /// If this history event represents a `changed` marker, return the info about
+    /// it. Returns `None` if it is any other kind of event or marker.
+    fn get_changed_marker_details(&self) -> Option<(String, bool)>;
+}
+
+impl HistoryEventExt for HistoryEvent {
+    fn get_changed_marker_details(&self) -> Option<(String, bool)> {
+        if self.event_type() == EventType::MarkerRecorded {
+            match &self.attributes {
+                Some(history_event::Attributes::MarkerRecordedEventAttributes(
+                    MarkerRecordedEventAttributes {
+                        marker_name,
+                        details,
+                        ..
+                    },
+                )) if marker_name == HAS_CHANGE_MARKER_NAME => {
+                    decode_change_marker_details(details)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
 }
