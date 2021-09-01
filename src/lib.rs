@@ -13,12 +13,12 @@ extern crate tracing;
 pub mod errors;
 pub mod prototype_rust_sdk;
 
-pub(crate) mod core_tracing;
 mod machines;
 mod pending_activations;
 mod pollers;
 mod protosext;
 pub(crate) mod task_token;
+pub(crate) mod telemetry;
 mod worker;
 mod workflow;
 
@@ -28,10 +28,10 @@ mod core_tests;
 #[macro_use]
 mod test_help;
 
-pub use core_tracing::tracing_init;
 pub use pollers::{
     ClientTlsConfig, RetryConfig, ServerGateway, ServerGatewayApis, ServerGatewayOptions, TlsConfig,
 };
+pub use telemetry::telemetry_init;
 pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 

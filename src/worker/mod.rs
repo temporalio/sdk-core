@@ -14,6 +14,10 @@ use crate::{
     },
     protosext::{legacy_query_failure, ValidPollWFTQResponse, WorkflowTaskCompletion},
     task_token::TaskToken,
+    telemetry::metrics::{
+        KEY_NAMESPACE, WORKFLOW_TASK_QUEUE_POLL_EMPTY_COUNTER,
+        WORKFLOW_TASK_QUEUE_POLL_SUCCEED_COUNTER,
+    },
     workflow::{
         workflow_tasks::{
             ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
@@ -25,6 +29,7 @@ use crate::{
 };
 use activities::WorkerActivityTasks;
 use futures::{Future, TryFutureExt};
+use opentelemetry::KeyValue;
 use std::{convert::TryInto, sync::Arc};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -277,16 +282,32 @@ impl Worker {
             }?;
 
             match selected_f {
-                Some(work) => match self.apply_server_work(work).await? {
-                    NewWfTaskOutcome::IssueActivation(a) => return Ok(a),
-                    NewWfTaskOutcome::TaskBuffered => {
-                        // If the task was buffered, it's not actually outstanding, so we can
-                        // immediately return a permit.
-                        self.return_workflow_task_permit();
+                Some(work) => {
+                    WORKFLOW_TASK_QUEUE_POLL_SUCCEED_COUNTER.add(
+                        1,
+                        &[KeyValue::new(
+                            KEY_NAMESPACE,
+                            self.server_gateway.options.namespace.clone(),
+                        )],
+                    );
+                    match self.apply_server_work(work).await? {
+                        NewWfTaskOutcome::IssueActivation(a) => return Ok(a),
+                        NewWfTaskOutcome::TaskBuffered => {
+                            // If the task was buffered, it's not actually outstanding, so we can
+                            // immediately return a permit.
+                            self.return_workflow_task_permit();
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                },
+                }
                 None => {
+                    WORKFLOW_TASK_QUEUE_POLL_EMPTY_COUNTER.add(
+                        1,
+                        &[KeyValue::new(
+                            KEY_NAMESPACE,
+                            self.server_gateway.options.namespace.clone(),
+                        )],
+                    );
                     debug!("Poll wft timeout");
                 }
             }

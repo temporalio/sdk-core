@@ -27,7 +27,7 @@ mod transition_coverage;
 pub use patch_state_machine::HAS_CHANGE_MARKER_NAME;
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
-use crate::{core_tracing::VecDisplayer, machines::workflow_machines::MachineResponse};
+use crate::{machines::workflow_machines::MachineResponse, telemetry::VecDisplayer};
 use prost::alloc::fmt::Formatter;
 use rustfsm::{MachineError, StateMachine};
 use std::{
