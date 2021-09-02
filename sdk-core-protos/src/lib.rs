@@ -1246,3 +1246,24 @@ pub mod temporal {
         }
     }
 }
+
+// No need to lint these
+#[allow(clippy::all)]
+#[allow(missing_docs)]
+pub mod opentelemetry {
+    pub mod metrics {
+        pub mod v1 {
+            tonic::include_proto!("opentelemetry.proto.metrics.v1");
+        }
+    }
+    pub mod resource {
+        pub mod v1 {
+            tonic::include_proto!("opentelemetry.proto.resource.v1");
+        }
+    }
+    pub mod common {
+        pub mod v1 {
+            tonic::include_proto!("opentelemetry.proto.common.v1");
+        }
+    }
+}

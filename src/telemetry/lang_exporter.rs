@@ -1,11 +1,18 @@
-use opentelemetry::trace::TraceError;
+mod proto_serialization;
+
+use crate::telemetry::lang_exporter::proto_serialization::metrics::{
+    record_to_metric, sink, CheckpointedMetrics,
+};
 use opentelemetry::{
     metrics::Descriptor,
     sdk::export::{
         metrics::{CheckpointSet, ExportKind, ExportKindFor, ExportKindSelector, Exporter},
         trace::{ExportResult, SpanData, SpanExporter},
     },
+    sdk::InstrumentationLibrary,
+    trace::TraceError,
 };
+use std::sync::Arc;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 #[derive(Default)]
@@ -17,6 +24,7 @@ pub struct OTelExportStreams {
 #[derive(Debug)]
 struct LangMetricsExporter {
     sender: Sender<()>,
+    export_kind_selector: Arc<dyn ExportKindFor + Send + Sync>,
 }
 
 impl ExportKindFor for LangMetricsExporter {
@@ -27,10 +35,22 @@ impl ExportKindFor for LangMetricsExporter {
 
 impl Exporter for LangMetricsExporter {
     fn export(&self, checkpoint_set: &mut dyn CheckpointSet) -> opentelemetry::metrics::Result<()> {
-        checkpoint_set.try_for_each(self, &mut |record| {
-            // Construct the metric proto per record
-            Ok(())
+        let mut resource_metrics: Vec<CheckpointedMetrics> = Vec::default();
+        checkpoint_set.try_for_each(self.export_kind_selector.as_ref(), &mut |record| {
+            let metric_result = record_to_metric(record, self.export_kind_selector.as_ref());
+            match metric_result {
+                Ok(metrics) => {
+                    resource_metrics.push((
+                        record.resource().clone().into(),
+                        InstrumentationLibrary::new("temporal-sdk-core-exporter", None),
+                        metrics,
+                    ));
+                    Ok(())
+                }
+                Err(err) => Err(err),
+            }
         })?;
+        let resource_metrics = sink(resource_metrics);
         Ok(())
     }
 }

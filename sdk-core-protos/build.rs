@@ -70,8 +70,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &[
                 "../protos/local/core_interface.proto",
                 "../protos/api_upstream/temporal/api/workflowservice/v1/service.proto",
+                "../protos/otel/opentelemetry/proto/metrics/v1/metrics.proto",
             ],
-            &["../protos/api_upstream", "../protos/local"],
+            &[
+                "../protos/api_upstream",
+                "../protos/local",
+                "../protos/otel",
+            ],
         )?;
     Ok(())
 }
