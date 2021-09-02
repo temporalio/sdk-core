@@ -12,6 +12,7 @@ use std::{collections::VecDeque, sync::Once};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 const TELEM_SERVICE_NAME: &str = "temporal-core-sdk";
+const TELEM_NAMESPACE_NAME: &str = "temporal-sdks";
 const ENABLE_OPENTELEM_ENV_VAR: &str = "TEMPORAL_ENABLE_OPENTELEMETRY";
 static TRACING_INIT: Once = Once::new();
 
@@ -22,6 +23,7 @@ static TRACING_INIT: Once = Once::new();
 /// pattern for filtering opentelem output. If it is *not* set, the standard `RUST_LOG` env var
 /// is used for filtering console output.
 pub fn telemetry_init() -> Result<OTelExportStreams, anyhow::Error> {
+    dbg!("Telemetry init");
     let mut retme = Err(anyhow::anyhow!("Telemetry already initialized"));
     TRACING_INIT.call_once(|| {
         let opentelem_on = std::env::var(ENABLE_OPENTELEM_ENV_VAR).is_ok();
@@ -31,6 +33,7 @@ pub fn telemetry_init() -> Result<OTelExportStreams, anyhow::Error> {
             EnvFilter::DEFAULT_ENV
         };
 
+        // TODO: Some weird problem here when env var not set
         let filter_layer = EnvFilter::try_from_env(filter_env_var)
             .or_else(|_| EnvFilter::try_new("info"))
             .unwrap();
@@ -41,10 +44,10 @@ pub fn telemetry_init() -> Result<OTelExportStreams, anyhow::Error> {
             let (trace_export, trace_rx) = LangSpanExporter::new(10);
             export_streams.tracing = Some(trace_rx);
 
-            let tracer_cfg = Config::default().with_resource(Resource::new(vec![KeyValue::new(
-                "service.name",
-                TELEM_SERVICE_NAME,
-            )]));
+            let tracer_cfg = Config::default().with_resource(Resource::new(vec![
+                KeyValue::new("service.name", TELEM_SERVICE_NAME),
+                KeyValue::new("service.namespace", TELEM_NAMESPACE_NAME),
+            ]));
             let tracer_provider = TracerProvider::builder()
                 .with_batch_exporter(trace_export, opentelemetry::runtime::TokioCurrentThread)
                 .with_config(tracer_cfg)

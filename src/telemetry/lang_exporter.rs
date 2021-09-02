@@ -11,6 +11,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 #[derive(Default)]
 pub struct OTelExportStreams {
     pub tracing: Option<Receiver<Vec<SpanData>>>,
+    pub metrics: Option<Receiver<Vec<SpanData>>>,
 }
 
 #[derive(Debug)]
@@ -26,7 +27,7 @@ impl ExportKindFor for LangMetricsExporter {
 
 impl Exporter for LangMetricsExporter {
     fn export(&self, checkpoint_set: &mut dyn CheckpointSet) -> opentelemetry::metrics::Result<()> {
-        checkpoint_set.try_for_each(self, &mut |_record| {
+        checkpoint_set.try_for_each(self, &mut |record| {
             // Construct the metric proto per record
             Ok(())
         })?;
