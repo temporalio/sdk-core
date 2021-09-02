@@ -1,20 +1,35 @@
 mod lang_exporter;
 pub(crate) mod metrics;
 
-use crate::telemetry::lang_exporter::{LangSpanExporter, OTelExportStreams};
+use crate::telemetry::lang_exporter::{LangMetricsExporter, LangSpanExporter, OTelExportStreams};
 use itertools::Itertools;
-use opentelemetry::sdk::trace::Config;
-use opentelemetry::sdk::Resource;
+use once_cell::sync::OnceCell;
+use opentelemetry::sdk::metrics::PushController;
 use opentelemetry::{
-    global, sdk::trace::TracerProvider, trace::TracerProvider as TracerProviderTrait, KeyValue,
+    global,
+    sdk::{
+        export::metrics::ExportKindSelector,
+        metrics as otelmet,
+        trace::{Config, TracerProvider},
+        Resource,
+    },
+    trace::TracerProvider as TracerProviderTrait,
+    KeyValue,
 };
-use std::{collections::VecDeque, sync::Once};
+use std::{collections::VecDeque, time::Duration};
+use tokio_stream::wrappers::IntervalStream;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 const TELEM_SERVICE_NAME: &str = "temporal-core-sdk";
 const TELEM_NAMESPACE_NAME: &str = "temporal-sdks";
 const ENABLE_OPENTELEM_ENV_VAR: &str = "TEMPORAL_ENABLE_OPENTELEMETRY";
-static TRACING_INIT: Once = Once::new();
+static TRACING_INIT: OnceCell<GlobalTracingDats> = OnceCell::new();
+
+/// Things that need to not be dropped while telemetry is ongoing
+#[derive(Default)]
+struct GlobalTracingDats {
+    metric_push_controller: Option<PushController>,
+}
 
 /// Initialize tracing subscribers and output. Core will not call this itself, it exists here so
 /// that consumers and tests have an easy way to initialize tracing.
@@ -23,9 +38,9 @@ static TRACING_INIT: Once = Once::new();
 /// pattern for filtering opentelem output. If it is *not* set, the standard `RUST_LOG` env var
 /// is used for filtering console output.
 pub fn telemetry_init() -> Result<OTelExportStreams, anyhow::Error> {
-    dbg!("Telemetry init");
     let mut retme = Err(anyhow::anyhow!("Telemetry already initialized"));
-    TRACING_INIT.call_once(|| {
+    TRACING_INIT.get_or_init(|| {
+        let mut globaldat = GlobalTracingDats::default();
         let opentelem_on = std::env::var(ENABLE_OPENTELEM_ENV_VAR).is_ok();
         let filter_env_var = if opentelem_on {
             ENABLE_OPENTELEM_ENV_VAR
@@ -54,7 +69,26 @@ pub fn telemetry_init() -> Result<OTelExportStreams, anyhow::Error> {
                 .build();
             let tracer = tracer_provider.tracer("temporal-core-sdk-tracer", None);
 
-            // TODO: Metrics pipeline
+            let (metrics_exporter, metrics_rx) =
+                LangMetricsExporter::new(10, ExportKindSelector::Cumulative);
+            let pusher = otelmet::controllers::push(
+                otelmet::selectors::simple::Selector::Exact,
+                ExportKindSelector::Cumulative,
+                metrics_exporter,
+                // Apparently this callback is taking a worker future that needs to get driven
+                // somehow, so we spawn it.
+                tokio::spawn,
+                |dur| {
+                    // Seemingly this callback is supposed to create a stream that produces a new
+                    // item per-duration, but that's not really documented anywhere.
+                    IntervalStream::new(tokio::time::interval(dur))
+                },
+            )
+            .with_period(Duration::from_secs(1))
+            .build();
+            global::set_meter_provider(pusher.provider());
+            globaldat.metric_push_controller = Some(pusher);
+            export_streams.metrics = Some(metrics_rx);
 
             retme = Ok(export_streams);
 
@@ -80,6 +114,7 @@ pub fn telemetry_init() -> Result<OTelExportStreams, anyhow::Error> {
             );
             tracing::subscriber::set_global_default(reg).unwrap();
         };
+        globaldat
     });
     retme
 }

@@ -1,0 +1,11 @@
+/// Protos for exporting metrics / traces from core to lang
+
+syntax = "proto3";
+
+package coresdk.otel;
+
+import "opentelemetry/proto/metrics/v1/metrics.proto";
+
+message MetricsBatch {
+  repeated opentelemetry.proto.metrics.v1.ResourceMetrics resource_metrics = 1;
+}

@@ -16,21 +16,24 @@ fn to_nanos(time: SystemTime) -> u64 {
 pub(crate) mod metrics {
     use super::to_nanos;
     use opentelemetry::{
-        metrics::MetricsError,
-        metrics::{Number, NumberKind},
-        sdk::export::metrics::{
-            Count, ExportKind, Histogram as HgTrait, LastValue, Max, Min, Points, Sum as SumTrait,
-        },
-        sdk::metrics::aggregators::{HistogramAggregator, MinMaxSumCountAggregator, SumAggregator},
-        sdk::InstrumentationLibrary,
+        metrics::{MetricsError, Number, NumberKind},
         sdk::{
-            export::metrics::{ExportKindFor, Record},
-            metrics::aggregators::{ArrayAggregator, LastValueAggregator},
+            export::metrics::{
+                Count, ExportKind, ExportKindFor, Histogram as HgTrait, LastValue, Max, Min,
+                Points, Record, Sum as SumTrait,
+            },
+            metrics::aggregators::{
+                ArrayAggregator, HistogramAggregator, LastValueAggregator,
+                MinMaxSumCountAggregator, SumAggregator,
+            },
+            InstrumentationLibrary,
         },
         Array, Key, Value,
     };
-    use std::cmp::Ordering;
-    use std::collections::{BTreeMap, HashMap};
+    use std::{
+        cmp::Ordering,
+        collections::{BTreeMap, HashMap},
+    };
     use temporal_sdk_core_protos::opentelemetry::{
         common::v1::{
             any_value, AnyValue, ArrayValue, InstrumentationLibrary as ProtoIL, KeyValue,

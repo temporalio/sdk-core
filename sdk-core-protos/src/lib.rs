@@ -120,7 +120,9 @@ pub mod coresdk {
             Some((name.to_string(), deprecated))
         }
     }
-
+    pub mod otel {
+        tonic::include_proto!("coresdk.otel");
+    }
     pub mod workflow_activation {
         use crate::{
             coresdk::FromPayloadsExt,
@@ -1251,6 +1253,11 @@ pub mod temporal {
 #[allow(clippy::all)]
 #[allow(missing_docs)]
 pub mod opentelemetry {
+    pub mod proto {
+        // Need to re-export everything with "proto" prefix for some imports to work.
+        pub use super::*;
+    }
+
     pub mod metrics {
         pub mod v1 {
             tonic::include_proto!("opentelemetry.proto.metrics.v1");

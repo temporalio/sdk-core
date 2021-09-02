@@ -4,27 +4,46 @@ use crate::telemetry::lang_exporter::proto_serialization::metrics::{
     record_to_metric, sink, CheckpointedMetrics,
 };
 use opentelemetry::{
-    metrics::Descriptor,
-    sdk::export::{
-        metrics::{CheckpointSet, ExportKind, ExportKindFor, ExportKindSelector, Exporter},
-        trace::{ExportResult, SpanData, SpanExporter},
+    metrics::{Descriptor, MetricsError},
+    sdk::{
+        export::{
+            metrics::{CheckpointSet, ExportKind, ExportKindFor, ExportKindSelector, Exporter},
+            trace::{ExportResult, SpanData, SpanExporter},
+        },
+        InstrumentationLibrary,
     },
-    sdk::InstrumentationLibrary,
     trace::TraceError,
 };
 use std::sync::Arc;
+use temporal_sdk_core_protos::coresdk::otel::MetricsBatch;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 #[derive(Default)]
 pub struct OTelExportStreams {
     pub tracing: Option<Receiver<Vec<SpanData>>>,
-    pub metrics: Option<Receiver<Vec<SpanData>>>,
+    pub metrics: Option<Receiver<MetricsBatch>>,
 }
 
 #[derive(Debug)]
-struct LangMetricsExporter {
-    sender: Sender<()>,
-    export_kind_selector: Arc<dyn ExportKindFor + Send + Sync>,
+pub(crate) struct LangMetricsExporter {
+    sender: Sender<MetricsBatch>,
+    pub export_kind_selector: Arc<dyn ExportKindFor + Send + Sync>,
+}
+
+impl LangMetricsExporter {
+    pub fn new(
+        buffer_size: usize,
+        export_kind_selector: impl ExportKindFor + Send + Sync + 'static,
+    ) -> (Self, Receiver<MetricsBatch>) {
+        let (tx, rx) = channel(buffer_size);
+        (
+            Self {
+                sender: tx,
+                export_kind_selector: Arc::new(export_kind_selector),
+            },
+            rx,
+        )
+    }
 }
 
 impl ExportKindFor for LangMetricsExporter {
@@ -51,6 +70,12 @@ impl Exporter for LangMetricsExporter {
             }
         })?;
         let resource_metrics = sink(resource_metrics);
+        let metrics_batch = MetricsBatch { resource_metrics };
+        self.sender.try_send(metrics_batch).map_err(|_| {
+            MetricsError::Other(format!(
+                "Cannot export metrics because receive half of export channel is closed or full"
+            ))
+        })?;
         Ok(())
     }
 }
@@ -70,11 +95,10 @@ impl LangSpanExporter {
 #[async_trait::async_trait]
 impl SpanExporter for LangSpanExporter {
     async fn export(&mut self, batch: Vec<SpanData>) -> ExportResult {
-        self.sender.send(batch).await.map_err(|e| {
+        self.sender.send(batch).await.map_err(|_| {
             TraceError::Other(
                 anyhow::anyhow!(
-                    "Cannot export spans because receive half of export channel is closed: {:?}",
-                    e
+                    "Cannot export spans because receive half of export channel is closed"
                 )
                 .into(),
             )
