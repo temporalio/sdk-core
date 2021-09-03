@@ -1,5 +1,4 @@
 use crate::{
-    core_tracing::VecDisplayer,
     machines::{
         activity_state_machine::new_activity, cancel_external_state_machine::new_external_cancel,
         cancel_workflow_state_machine::cancel_workflow,
@@ -12,6 +11,7 @@ use crate::{
         ProtoCommand, TemporalStateMachine, WFCommand,
     },
     protosext::HistoryEventExt,
+    telemetry::VecDisplayer,
     workflow::{CommandID, DrivenWorkflow, HistoryUpdate, WorkflowFetcher},
 };
 use slotmap::SlotMap;
