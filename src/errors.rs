@@ -23,6 +23,9 @@ pub enum CoreInitError {
     /// Server connection error. Crashing and restarting the worker is likely best.
     #[error("Server connection error: {0:?}")]
     TonicTransportError(#[from] tonic::transport::Error),
+    /// There was a problem initializing telemetry
+    #[error("Telemetry initialization error: {0:?}")]
+    TelemetryInitError(anyhow::Error),
 }
 
 /// Errors thrown by [crate::Core::poll_workflow_activation]
