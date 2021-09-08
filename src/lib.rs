@@ -13,12 +13,12 @@ extern crate tracing;
 pub mod errors;
 pub mod prototype_rust_sdk;
 
-pub(crate) mod core_tracing;
 mod machines;
 mod pending_activations;
 mod pollers;
 mod protosext;
 pub(crate) mod task_token;
+pub(crate) mod telemetry;
 mod worker;
 mod workflow;
 
@@ -28,10 +28,10 @@ mod core_tests;
 #[macro_use]
 mod test_help;
 
-pub use core_tracing::tracing_init;
 pub use pollers::{
     ClientTlsConfig, RetryConfig, ServerGateway, ServerGatewayApis, ServerGatewayOptions, TlsConfig,
 };
+pub use telemetry::TelemetryOptions;
 pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
@@ -56,6 +56,7 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_completion::WfActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
 };
 
+use crate::telemetry::telemetry_init;
 #[cfg(test)]
 use crate::test_help::MockWorker;
 
@@ -180,6 +181,9 @@ pub trait Core: Send + Sync {
 pub struct CoreInitOptions {
     /// Options for the connection to the temporal server
     pub gateway_opts: ServerGatewayOptions,
+    /// Options for telemetry (traces and metrics)
+    #[builder(default)]
+    pub telemetry_opts: TelemetryOptions,
 }
 
 /// Initializes an instance of the core sdk and establishes a connection to the temporal server.
@@ -190,6 +194,7 @@ pub struct CoreInitOptions {
 /// * Will panic if called from within an async context, as it will construct a runtime and you
 ///   cannot construct a runtime from within a runtime.
 pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
+    telemetry_init(&opts.telemetry_opts).map_err(CoreInitError::TelemetryInitError)?;
     // Initialize server client
     let server_gateway = opts.gateway_opts.connect().await?;
 
