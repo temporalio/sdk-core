@@ -233,7 +233,7 @@ impl WorkflowConcurrencyManager {
             .expect("Machine cannot possibly be accessed simultaneously");
         let res = mutator(&mut wfm).await;
         // Reinsert machine behind lock
-        wfm_mutex.insert(wfm);
+        let _ = wfm_mutex.insert(wfm);
 
         res
     }

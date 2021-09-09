@@ -1,8 +1,8 @@
 pub(crate) mod metrics;
 
-use crate::log_export::CoreExportLogger;
+use crate::{log_export::CoreExportLogger, CoreLog};
 use itertools::Itertools;
-use log::set_boxed_logger;
+use log::LevelFilter;
 use once_cell::sync::OnceCell;
 use opentelemetry::{
     global,
@@ -12,13 +12,13 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::WithExportConfig;
 use std::{collections::VecDeque, time::Duration};
-use tracing::log::LevelFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use url::Url;
 
 const TELEM_SERVICE_NAME: &str = "temporal-core-sdk";
 const LOG_FILTER_ENV_VAR: &str = "TEMPORAL_TRACING_FILTER";
-static TRACING_INIT: OnceCell<Result<GlobalTracingDats, anyhow::Error>> = OnceCell::new();
+static DEFAULT_FILTER: &str = "temporal_sdk_core=INFO";
+static GLOBAL_TELEM_DAT: OnceCell<GlobalTelemDat> = OnceCell::new();
 
 /// Telemetry configuration options
 #[derive(Debug, Clone)]
@@ -31,21 +31,31 @@ pub struct TelemetryOptions {
     /// telemetry or console output. May be overridden by the `TEMPORAL_TRACING_FILTER` env
     /// variable.
     pub tracing_filter: String,
+    /// Core can forward logs to lang for them to be rendered by the user's logging facility.
+    /// The logs are somewhat contextually lacking, but still useful in a local test situation when
+    /// running only one workflow at a time. This sets the level at which they are filtered.
+    /// TRACE level will export span start/stop info as well.
+    ///
+    /// Default is INFO. If set to `Off`, the mechanism is disabled entirely (saves on perf).
+    /// If set to anything besides `Off`, any console output directly from core is disabled.
+    pub log_forwarding_level: LevelFilter,
 }
 
 impl Default for TelemetryOptions {
     fn default() -> Self {
         Self {
             otel_collector_url: None,
-            tracing_filter: "temporal_sdk_core=INFO".to_string(),
+            tracing_filter: DEFAULT_FILTER.to_string(),
+            log_forwarding_level: LevelFilter::Info,
         }
     }
 }
 
 /// Things that need to not be dropped while telemetry is ongoing
 #[derive(Default)]
-struct GlobalTracingDats {
+struct GlobalTelemDat {
     metric_push_controller: Option<PushController>,
+    core_export_logger: Option<CoreExportLogger>,
 }
 
 /// Initialize tracing subscribers and output. Core [crate::init] calls this, but it may be called
@@ -54,14 +64,24 @@ struct GlobalTracingDats {
 ///
 /// See [TelemetryOptions] docs for more on configuration.
 pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<(), anyhow::Error> {
-    TRACING_INIT.get_or_init(|| {
-        let mut globaldat = GlobalTracingDats::default();
+    let res = GLOBAL_TELEM_DAT.get_or_try_init::<_, anyhow::Error>(|| {
+        let mut globaldat = GlobalTelemDat::default();
+        let mut am_forwarding_logs = false;
 
-        log::set_max_level(LevelFilter::Debug);
-        set_boxed_logger(Box::new(CoreExportLogger::default()))?;
+        if opts.log_forwarding_level != LevelFilter::Off {
+            log::set_max_level(opts.log_forwarding_level);
+            globaldat.core_export_logger = Some(CoreExportLogger::new(opts.log_forwarding_level));
+            am_forwarding_logs = true;
+        }
 
-        let filter_layer = EnvFilter::try_from_env(LOG_FILTER_ENV_VAR)
-            .or_else(|_| EnvFilter::try_new(&opts.tracing_filter))?;
+        let filter_layer = EnvFilter::try_from_env(LOG_FILTER_ENV_VAR).or_else(|_| {
+            let filter = if opts.tracing_filter.is_empty() {
+                DEFAULT_FILTER
+            } else {
+                &opts.tracing_filter
+            };
+            EnvFilter::try_new(filter)
+        })?;
 
         if let Some(otel_url) = opts.otel_collector_url.as_ref() {
             let tracer_cfg = Config::default().with_resource(Resource::new(vec![KeyValue::new(
@@ -100,7 +120,7 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<(), anyhow::Erro
                 .with(opentelemetry)
                 .with(filter_layer)
                 .try_init()?;
-        } else {
+        } else if !am_forwarding_logs {
             let pretty_fmt = tracing_subscriber::fmt::format()
                 .pretty()
                 .with_source_location(false);
@@ -112,9 +132,26 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<(), anyhow::Erro
             tracing::subscriber::set_global_default(reg)?;
         };
         Ok(globaldat)
-    });
+    })?;
+
+    if let Some(loggr) = &res.core_export_logger {
+        // If telem init is called twice for some reason, this would error, so just ignore that.
+        let _ = log::set_logger(loggr);
+    }
 
     Ok(())
+}
+
+/// Returned buffered logs for export to lang from the global logging instance
+pub(crate) fn fetch_global_buffered_logs() -> Vec<CoreLog> {
+    if let Some(loggr) = GLOBAL_TELEM_DAT
+        .get()
+        .and_then(|gd| gd.core_export_logger.as_ref())
+    {
+        loggr.drain()
+    } else {
+        vec![]
+    }
 }
 
 #[allow(dead_code)] // Not always used, called to enable for debugging when needed
@@ -123,6 +160,7 @@ pub(crate) fn test_telem() {
     telemetry_init(&TelemetryOptions {
         otel_collector_url: None,
         tracing_filter: "temporal_sdk_core=DEBUG".to_string(),
+        log_forwarding_level: LevelFilter::Off,
     })
     .unwrap()
 }

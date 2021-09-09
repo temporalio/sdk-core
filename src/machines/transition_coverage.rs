@@ -79,7 +79,7 @@ mod machine_coverage_report {
         workflow_task_state_machine::WorkflowTaskMachine,
     };
     use rustfsm::StateMachine;
-    use std::{fs::File, io::Write};
+    use std::{fs::File, io::Write, ops::Deref};
 
     // This "test" needs to exist so that we have a way to join the spawned thread. Otherwise
     // it'll just get abandoned.
@@ -89,10 +89,7 @@ mod machine_coverage_report {
     #[ignore]
     fn reporter() {
         // Make sure thread handle exists
-        #[allow(clippy::no_effect)] // Haha clippy, you'd be wrong here.
-        {
-            &*COVERAGE_SENDER;
-        }
+        let _ = COVERAGE_SENDER.deref();
         // Join it
         THREAD_HANDLE
             .lock()

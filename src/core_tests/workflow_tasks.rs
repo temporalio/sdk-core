@@ -2,7 +2,6 @@ use crate::{
     errors::PollWfError,
     job_assert,
     pollers::MockServerGatewayApis,
-    telemetry::test_telem,
     test_help::{
         build_fake_core, build_multihist_mock_sg, canned_histories, gen_assert_and_fail,
         gen_assert_and_reply, hist_to_poll_resp, mock_core, mock_core_with_opts_no_workers,
@@ -803,7 +802,6 @@ async fn two_signals(hist_batches: &'static [usize]) {
 
 #[tokio::test]
 async fn workflow_failures_only_reported_once() {
-    test_telem();
     let wfid = "fake_wf_id";
     let timer_1 = 1;
     let timer_2 = 2;
