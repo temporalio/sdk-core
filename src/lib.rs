@@ -13,6 +13,7 @@ extern crate tracing;
 pub mod errors;
 pub mod prototype_rust_sdk;
 
+mod log_export;
 mod machines;
 mod pending_activations;
 mod pollers;
@@ -42,6 +43,7 @@ use crate::{
     },
     pollers::GatewayRef,
     task_token::TaskToken,
+    telemetry::telemetry_init,
     worker::{Worker, WorkerDispatcher},
 };
 use std::{
@@ -56,7 +58,6 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_completion::WfActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
 };
 
-use crate::telemetry::telemetry_init;
 #[cfg(test)]
 use crate::test_help::MockWorker;
 
@@ -173,6 +174,14 @@ pub trait Core: Send + Sync {
 
     /// Retrieve options that were passed in when initializing core
     fn get_init_options(&self) -> &CoreInitOptions;
+
+    /// Core buffers logs that should be shuttled over to lang so that they may be rendered with
+    /// the user's desired logging library. Use this function to grab the most recent buffered logs
+    /// since the last time it was called. A fixed number of such logs are retained at maximum, with
+    /// the oldest being dropped when full.
+    ///
+    /// Returns the list of logs from oldest to newest
+    fn fetch_buffered_logs(&self) -> Vec<()>;
 }
 
 /// Holds various configuration information required to call [init]
@@ -221,7 +230,7 @@ impl Core for CoreSDK {
             .await
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self), fields(run_id))]
     async fn poll_workflow_activation(
         &self,
         task_queue: &str,
@@ -302,6 +311,10 @@ impl Core for CoreSDK {
 
     fn get_init_options(&self) -> &CoreInitOptions {
         &self.init_options
+    }
+
+    fn fetch_buffered_logs(&self) -> Vec<()> {
+        todo!()
     }
 }
 

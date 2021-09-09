@@ -189,7 +189,7 @@ impl WorkflowTaskManager {
     pub fn request_eviction(&self, run_id: &str) -> Option<u32> {
         if self.workflow_machines.exists(run_id) {
             if !self.activation_has_eviction(run_id) {
-                debug!(%run_id, "Eviction requested for");
+                debug!(%run_id, "Eviction requested");
                 // Queue up an eviction activation
                 self.pending_activations
                     .push(create_evict_activation(run_id.to_string()));

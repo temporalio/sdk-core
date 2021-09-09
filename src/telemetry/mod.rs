@@ -1,6 +1,8 @@
 pub(crate) mod metrics;
 
+use crate::log_export::CoreExportLogger;
 use itertools::Itertools;
+use log::set_boxed_logger;
 use once_cell::sync::OnceCell;
 use opentelemetry::{
     global,
@@ -10,6 +12,7 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::WithExportConfig;
 use std::{collections::VecDeque, time::Duration};
+use tracing::log::LevelFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use url::Url;
 
@@ -53,6 +56,9 @@ struct GlobalTracingDats {
 pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<(), anyhow::Error> {
     TRACING_INIT.get_or_init(|| {
         let mut globaldat = GlobalTracingDats::default();
+
+        log::set_max_level(LevelFilter::Debug);
+        set_boxed_logger(Box::new(CoreExportLogger::default()))?;
 
         let filter_layer = EnvFilter::try_from_env(LOG_FILTER_ENV_VAR)
             .or_else(|_| EnvFilter::try_new(&opts.tracing_filter))?;

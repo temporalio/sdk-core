@@ -466,6 +466,9 @@ impl WorkflowMachines {
 
     /// Apply the next entire workflow task from history to these machines.
     pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<()> {
+        // A much higher-up span (ex: poll) may want this field filled
+        tracing::Span::current().record("run_id", &self.run_id.as_str());
+
         let last_handled_wft_started_id = self.current_started_event_id;
         let events = self
             .last_history_from_server
