@@ -62,11 +62,6 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                 queries,
                 ..
             } => {
-                if !next_page_token.is_empty() {
-                    // TODO: Support history pagination
-                    unimplemented!("History pagination not yet implemented");
-                }
-
                 let query_requests = queries
                     .into_iter()
                     .map(|(id, q)| QueryWorkflow {
