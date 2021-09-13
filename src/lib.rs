@@ -13,6 +13,7 @@ extern crate tracing;
 pub mod errors;
 pub mod prototype_rust_sdk;
 
+mod log_export;
 mod machines;
 mod pending_activations;
 mod pollers;
@@ -28,6 +29,7 @@ mod core_tests;
 #[macro_use]
 mod test_help;
 
+pub use log_export::CoreLog;
 pub use pollers::{
     ClientTlsConfig, RetryConfig, ServerGateway, ServerGatewayApis, ServerGatewayOptions, TlsConfig,
 };
@@ -42,6 +44,7 @@ use crate::{
     },
     pollers::GatewayRef,
     task_token::TaskToken,
+    telemetry::{fetch_global_buffered_logs, telemetry_init},
     worker::{Worker, WorkerDispatcher},
 };
 use std::{
@@ -56,7 +59,6 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_completion::WfActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
 };
 
-use crate::telemetry::telemetry_init;
 #[cfg(test)]
 use crate::test_help::MockWorker;
 
@@ -173,6 +175,15 @@ pub trait Core: Send + Sync {
 
     /// Retrieve options that were passed in when initializing core
     fn get_init_options(&self) -> &CoreInitOptions;
+
+    /// Core buffers logs that should be shuttled over to lang so that they may be rendered with
+    /// the user's desired logging library. Use this function to grab the most recent buffered logs
+    /// since the last time it was called. A fixed number of such logs are retained at maximum, with
+    /// the oldest being dropped when full.
+    ///
+    /// Returns the list of logs from oldest to newest. Returns an empty vec if the feature is not
+    /// configured.
+    fn fetch_buffered_logs(&self) -> Vec<CoreLog>;
 }
 
 /// Holds various configuration information required to call [init]
@@ -215,13 +226,17 @@ struct CoreSDK {
 #[async_trait::async_trait]
 impl Core for CoreSDK {
     async fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError> {
+        info!(
+            task_queue = config.task_queue.as_str(),
+            "Registering worker"
+        );
         let sticky_q = self.get_sticky_q_name_for_worker(&config);
         self.workers
             .new_worker(config, sticky_q, self.server_gateway.clone())
             .await
     }
 
-    #[instrument(skip(self))]
+    #[instrument(level = "debug", skip(self), fields(run_id))]
     async fn poll_workflow_activation(
         &self,
         task_queue: &str,
@@ -230,7 +245,7 @@ impl Core for CoreSDK {
         worker.next_workflow_activation().await
     }
 
-    #[instrument(skip(self))]
+    #[instrument(level = "debug", skip(self))]
     async fn poll_activity_task(
         &self,
         task_queue: &str,
@@ -247,7 +262,7 @@ impl Core for CoreSDK {
         }
     }
 
-    #[instrument(skip(self, completion), fields(completion=%&completion))]
+    #[instrument(level = "debug", skip(self, completion), fields(completion=%&completion))]
     async fn complete_workflow_activation(
         &self,
         completion: WfActivationCompletion,
@@ -256,7 +271,7 @@ impl Core for CoreSDK {
         worker.complete_workflow_activation(completion).await
     }
 
-    #[instrument(skip(self))]
+    #[instrument(level = "debug", skip(self))]
     async fn complete_activity_task(
         &self,
         completion: ActivityTaskCompletion,
@@ -302,6 +317,10 @@ impl Core for CoreSDK {
 
     fn get_init_options(&self) -> &CoreInitOptions {
         &self.init_options
+    }
+
+    fn fetch_buffered_logs(&self) -> Vec<CoreLog> {
+        fetch_global_buffered_logs()
     }
 }
 
