@@ -14,8 +14,8 @@ use temporal_sdk_core_protos::coresdk::{
     IntoCompletion,
 };
 use test_utils::{
-    get_integ_server_options, init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers,
-    CoreWfStarter,
+    get_integ_server_options, get_integ_telem_options, init_core_and_create_wf,
+    schedule_activity_cmd, CoreTestHelpers, CoreWfStarter,
 };
 use tokio::time::timeout;
 
@@ -109,6 +109,9 @@ async fn long_poll_timeout_is_retried() {
     let core = temporal_sdk_core::init(
         CoreInitOptionsBuilder::default()
             .gateway_opts(gateway_opts)
+            // TODO: First core to be initted wins the telem race so this has to be the same
+            //   everywhere which is somewhat annoying.
+            .telemetry_opts(get_integ_telem_options())
             .build()
             .unwrap(),
     )

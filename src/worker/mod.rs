@@ -15,8 +15,7 @@ use crate::{
     protosext::{legacy_query_failure, ValidPollWFTQResponse, WorkflowTaskCompletion},
     task_token::TaskToken,
     telemetry::metrics::{
-        KEY_NAMESPACE, WORKFLOW_TASK_QUEUE_POLL_EMPTY_COUNTER,
-        WORKFLOW_TASK_QUEUE_POLL_SUCCEED_COUNTER,
+        KEY_NAMESPACE, WF_TASK_QUEUE_POLL_EMPTY_COUNTER, WF_TASK_QUEUE_POLL_SUCCEED_COUNTER,
     },
     workflow::{
         workflow_tasks::{
@@ -283,7 +282,7 @@ impl Worker {
 
             match selected_f {
                 Some(work) => {
-                    WORKFLOW_TASK_QUEUE_POLL_SUCCEED_COUNTER.add(
+                    WF_TASK_QUEUE_POLL_SUCCEED_COUNTER.add(
                         1,
                         &[KeyValue::new(
                             KEY_NAMESPACE,
@@ -301,7 +300,7 @@ impl Worker {
                     }
                 }
                 None => {
-                    WORKFLOW_TASK_QUEUE_POLL_EMPTY_COUNTER.add(
+                    WF_TASK_QUEUE_POLL_EMPTY_COUNTER.add(
                         1,
                         &[KeyValue::new(
                             KEY_NAMESPACE,
