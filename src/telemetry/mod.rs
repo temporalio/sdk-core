@@ -12,7 +12,7 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::WithExportConfig;
 use std::{collections::VecDeque, time::Duration};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{layer::SubscriberExt, EnvFilter};
 use url::Url;
 
 const TELEM_SERVICE_NAME: &str = "temporal-core-sdk";
@@ -28,8 +28,8 @@ pub struct TelemetryOptions {
     /// to the console instead.
     pub otel_collector_url: Option<Url>,
     /// A string in the [EnvFilter] format which specifies what tracing data is included in
-    /// telemetry or console output. May be overridden by the `TEMPORAL_TRACING_FILTER` env
-    /// variable.
+    /// telemetry, log forwarded to lang, or console output. May be overridden by the
+    /// `TEMPORAL_TRACING_FILTER` env variable.
     pub tracing_filter: String,
     /// Core can forward logs to lang for them to be rendered by the user's logging facility.
     /// The logs are somewhat contextually lacking, but still useful in a local test situation when
@@ -116,10 +116,11 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<(), anyhow::Erro
             // TODO: Need https://github.com/tokio-rs/tracing/pull/1523 to land in order to filter
             //   console output and telemetry output differently. For now we'll assume if telemetry
             //   is on then we prefer that over outputting tracing data to the console.
-            tracing_subscriber::registry()
+            let reg = tracing_subscriber::registry()
                 .with(opentelemetry)
-                .with(filter_layer)
-                .try_init()?;
+                .with(filter_layer);
+            // Can't use try_init here as it will blow away our custom logger if we do
+            tracing::subscriber::set_global_default(reg)?;
         } else if !am_forwarding_logs {
             let pretty_fmt = tracing_subscriber::fmt::format()
                 .pretty()

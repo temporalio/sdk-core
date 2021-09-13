@@ -1,6 +1,6 @@
 use log::{Level, LevelFilter, Log, Metadata, Record};
+use ringbuf::{Consumer, Producer, RingBuffer};
 use std::{
-    collections::VecDeque,
     sync::Mutex,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -28,24 +28,35 @@ impl CoreLog {
 }
 
 pub(crate) struct CoreExportLogger {
-    records: Mutex<VecDeque<CoreLog>>,
+    logs_in: Mutex<Producer<CoreLog>>,
+    logs_out: Mutex<Consumer<CoreLog>>,
     level_filter: LevelFilter,
 }
 
 impl CoreExportLogger {
     pub(crate) fn new(level: LevelFilter) -> Self {
+        let (lin, lout) = RingBuffer::new(2048).split();
         Self {
-            records: Mutex::new(Default::default()),
+            logs_in: Mutex::new(lin),
+            logs_out: Mutex::new(lout),
             level_filter: level,
         }
     }
 
     pub(crate) fn drain(&self) -> Vec<CoreLog> {
-        self.records
+        let mut lout = self
+            .logs_out
             .lock()
-            .expect("Logging mutex must be acquired")
-            .drain(..)
-            .collect()
+            .expect("Logging output mutex must be acquired");
+        let mut retme = Vec::with_capacity(lout.len());
+        lout.pop_each(
+            |el| {
+                retme.push(el);
+                true
+            },
+            None,
+        );
+        retme
     }
 }
 
@@ -64,10 +75,11 @@ impl Log for CoreExportLogger {
             timestamp: SystemTime::now(),
             level: record.level(),
         };
-        self.records
+        let _ = self
+            .logs_in
             .lock()
             .expect("Logging mutex must be acquired")
-            .push_back(clog)
+            .push(clog);
     }
 
     fn flush(&self) {}
