@@ -25,7 +25,7 @@ pub(crate) struct WorkflowConcurrencyManager {
 }
 
 struct ManagedRun {
-    wfm: Mutex<Option<WorkflowManager>>,
+    wfm: Mutex<WorkflowManager>,
     wft: Option<OutstandingTask>,
     activation: Option<OutstandingActivation>,
     /// If set, it indicates there is a buffered poll response from the server that applies to this
@@ -38,7 +38,7 @@ struct ManagedRun {
 impl ManagedRun {
     fn new(wfm: WorkflowManager) -> Self {
         Self {
-            wfm: Mutex::new(Some(wfm)),
+            wfm: Mutex::new(wfm),
             wft: None,
             activation: None,
             buffered_resp: None,
@@ -239,12 +239,7 @@ impl WorkflowConcurrencyManager {
         // we never access the machines for the same run simultaneously anyway. This should all
         // get fixed with a generally different approach which moves the runs inside workers.
         let mut wfm_mutex = m.wfm.lock();
-        let mut wfm = wfm_mutex
-            .take()
-            .expect("Machine cannot possibly be accessed simultaneously");
-        let res = mutator(&mut wfm).await;
-        // Reinsert machine behind lock
-        let _ = wfm_mutex.insert(wfm);
+        let res = mutator(&mut wfm_mutex).await;
 
         res
     }
