@@ -7,7 +7,10 @@ pub(crate) use bridge::WorkflowBridge;
 pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
 pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
 
-use crate::machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines};
+use crate::{
+    machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
+    telemetry::metrics::MetricsContext,
+};
 use std::sync::mpsc::Sender;
 use temporal_sdk_core_protos::coresdk::workflow_activation::WfActivation;
 
@@ -41,6 +44,7 @@ impl WorkflowManager {
         namespace: String,
         workflow_id: String,
         run_id: String,
+        metrics: MetricsContext,
     ) -> Self {
         let (wfb, cmd_sink) = WorkflowBridge::new();
         let state_machines = WorkflowMachines::new(
@@ -49,6 +53,7 @@ impl WorkflowManager {
             run_id,
             history,
             Box::new(wfb).into(),
+            metrics,
         );
         Self {
             machines: state_machines,
@@ -220,6 +225,7 @@ pub mod managed_wf {
                 "runid".to_string(),
                 hist,
                 Box::new(driver).into(),
+                Default::default(),
             );
             let mgr = WorkflowManager::new_from_machines(state_machines);
             Self {

@@ -59,6 +59,7 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_completion::WfActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
 };
 
+use crate::telemetry::metrics::MetricsContext;
 #[cfg(test)]
 use crate::test_help::MockWorker;
 
@@ -221,6 +222,8 @@ struct CoreSDK {
     workers: WorkerDispatcher,
     /// Has shutdown been called?
     shutdown_requested: AtomicBool,
+    /// Top-level metrics context
+    metrics: MetricsContext,
 }
 
 #[async_trait::async_trait]
@@ -232,7 +235,12 @@ impl Core for CoreSDK {
         );
         let sticky_q = self.get_sticky_q_name_for_worker(&config);
         self.workers
-            .new_worker(config, sticky_q, self.server_gateway.clone())
+            .new_worker(
+                config,
+                sticky_q,
+                self.server_gateway.clone(),
+                self.metrics.clone(),
+            )
             .await
     }
 
@@ -332,10 +340,11 @@ impl CoreSDK {
         let sg = GatewayRef::new(Arc::new(server_gateway), init_options.gateway_opts.clone());
         let workers = WorkerDispatcher::default();
         Self {
-            server_gateway: Arc::new(sg),
             workers,
             init_options,
             shutdown_requested: AtomicBool::new(false),
+            metrics: MetricsContext::top_level(sg.options.namespace.clone()),
+            server_gateway: Arc::new(sg),
         }
     }
 
@@ -350,6 +359,7 @@ impl CoreSDK {
             self.server_gateway.clone(),
             worker.wf_poller,
             worker.act_poller,
+            self.metrics.clone(),
         );
         self.workers.set_worker_for_task_queue(tq, worker).unwrap();
     }

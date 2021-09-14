@@ -6,25 +6,93 @@ use opentelemetry::{
         export::metrics::{Aggregator, AggregatorSelector},
         metrics::aggregators::{histogram, last_value, sum},
     },
+    KeyValue,
 };
 use std::sync::Arc;
+
+/// Used to track context associated with metrics, and record/update them
+#[derive(Default, Clone)]
+pub(crate) struct MetricsContext {
+    kvs: Arc<Vec<KeyValue>>,
+    // TODO: Ideally this would hold bound metrics, but using them is basically impossible because
+    //   of lifetime issues: https://github.com/open-telemetry/opentelemetry-rust/issues/629
+    //   Use once fixed.
+}
+
+impl MetricsContext {
+    pub(crate) fn top_level(namespace: String) -> Self {
+        Self::new(vec![KeyValue::new(KEY_NAMESPACE, namespace)])
+    }
+
+    /// Extend an existing metrics context with new attributes
+    pub(crate) fn with_new_attrs(&self, new_kvs: impl IntoIterator<Item = KeyValue>) -> Self {
+        let mut kvs = self.kvs.clone();
+        Arc::make_mut(&mut kvs).extend(new_kvs);
+        Self { kvs }
+    }
+
+    fn new(kvs: Vec<KeyValue>) -> Self {
+        Self { kvs: Arc::new(kvs) }
+    }
+
+    /// A workflow task queue poll succeeded
+    pub(crate) fn wf_tq_poll_ok(&self) {
+        WF_TASK_QUEUE_POLL_SUCCEED_COUNTER.add(1, &self.kvs);
+    }
+
+    /// A workflow task queue poll timed out / had empty response
+    pub(crate) fn wf_tq_poll_empty(&self) {
+        WF_TASK_QUEUE_POLL_EMPTY_COUNTER.add(1, &self.kvs);
+    }
+
+    /// A workflow task execution failed
+    pub(crate) fn wf_task_failed(&self) {
+        WF_TASK_EXECUTION_FAILURE_COUNTER.add(1, &self.kvs);
+    }
+
+    /// A workflow completed successfully
+    pub(crate) fn wf_completed(&self) {
+        WF_COMPLETED_COUNTER.add(1, &self.kvs);
+    }
+
+    /// A workflow ended cancelled
+    pub(crate) fn wf_canceled(&self) {
+        WF_CANCELED_COUNTER.add(1, &self.kvs);
+    }
+
+    /// A workflow ended failed
+    pub(crate) fn wf_failed(&self) {
+        WF_FAILED_COUNTER.add(1, &self.kvs);
+    }
+
+    /// A workflow continued as new
+    pub(crate) fn wf_continued_as_new(&self) {
+        WF_CONT_COUNTER.add(1, &self.kvs);
+    }
+
+    /// Record workflow total execution time in milliseconds
+    pub(crate) fn wf_e2e_latency(&self, duration_millis: u64) {
+        WF_E2E_LATENCY.record(duration_millis, &self.kvs);
+    }
+}
 
 lazy_static::lazy_static! {
     static ref METRIC_METER: Meter = global::meter(TELEM_SERVICE_NAME);
 }
 
-/// Define a temporal metric
+/// Define a temporal metric. All metrics are kept private to this file, and should be accessed
+/// through functions on the [MetricsContext]
 macro_rules! tm {
     (ctr, $ident:ident, $name:expr) => {
         lazy_static::lazy_static! {
-            pub(crate) static ref $ident: Counter<u64> = {
+            static ref $ident: Counter<u64> = {
                 METRIC_METER.u64_counter($name).init()
             };
         }
     };
     (vr_u64, $ident:ident, $name:expr) => {
         lazy_static::lazy_static! {
-            pub(crate) static ref $ident: ValueRecorder<u64> = {
+            static ref $ident: ValueRecorder<u64> = {
                 METRIC_METER.u64_value_recorder($name).init()
             };
         }
@@ -32,13 +100,13 @@ macro_rules! tm {
 }
 
 pub(crate) const KEY_NAMESPACE: &str = "namespace";
+pub(crate) const KEY_WF_TYPE: &str = "workflow_type";
 
 tm!(ctr, WF_COMPLETED_COUNTER, "workflow_completed");
 tm!(ctr, WF_CANCELED_COUNTER, "workflow_canceled");
 tm!(ctr, WF_FAILED_COUNTER, "workflow_failed");
 tm!(ctr, WF_CONT_COUNTER, "workflow_continue_as_new");
 const WF_E2E_LATENCY_NAME: &str = "workflow_endtoend_latency";
-// Workflow total execution time in milliseconds
 tm!(vr_u64, WF_E2E_LATENCY, WF_E2E_LATENCY_NAME);
 
 tm!(
@@ -56,13 +124,7 @@ tm!(
     WF_TASK_EXECUTION_FAILURE_COUNTER,
     "workflow_task_execution_failed"
 );
-tm!(
-    ctr,
-    WF_TASK_NO_COMPLETION_COUNTER,
-    "workflow_task_no_completion"
-);
 const WF_TASK_REPLAY_LATENCY_NAME: &str = "workflow_task_replay_latency";
-// TODO: Doc
 tm!(vr_u64, WF_TASK_REPLAY_LATENCY, WF_TASK_REPLAY_LATENCY_NAME);
 
 /// Artisanal, handcrafted latency buckets for workflow e2e latency which should expose a useful

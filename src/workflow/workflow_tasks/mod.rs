@@ -10,6 +10,7 @@ use crate::{
     pollers::GatewayRef,
     protosext::{ValidPollWFTQResponse, WfActivationExt},
     task_token::TaskToken,
+    telemetry::metrics::MetricsContext,
     workflow::{
         workflow_tasks::{
             cache_manager::WorkflowCacheManager, concurrency_manager::WorkflowConcurrencyManager,
@@ -51,6 +52,8 @@ pub struct WorkflowTaskManager {
     // TODO: Also should be moved inside concurrency manager, but there is some complexity around
     //   how inserts to it happen that requires a little thought (or a custom LRU impl)
     cache_manager: Mutex<WorkflowCacheManager>,
+
+    metrics: MetricsContext,
 }
 
 #[derive(Clone, Debug)]
@@ -89,7 +92,6 @@ impl OutstandingActivation {
 pub struct WorkflowTaskInfo {
     pub task_token: TaskToken,
     pub attempt: u32,
-    pub task_queue: String,
 }
 
 #[derive(Debug, derive_more::From)]
@@ -146,6 +148,7 @@ impl WorkflowTaskManager {
     pub(crate) fn new(
         pending_activations_notifier: watch::Sender<bool>,
         eviction_policy: WorkflowCachingPolicy,
+        metrics: MetricsContext,
     ) -> Self {
         Self {
             workflow_machines: WorkflowConcurrencyManager::new(),
@@ -153,6 +156,7 @@ impl WorkflowTaskManager {
             ready_buffered_wft: Default::default(),
             pending_activations_notifier,
             cache_manager: Mutex::new(WorkflowCacheManager::new(eviction_policy)),
+            metrics,
         }
     }
 
@@ -404,6 +408,8 @@ impl WorkflowTaskManager {
             );
             return FailedActivationOutcome::NoReport;
         };
+        // TODO: Get workflow type from machine here & attach to counter -- or better yet just
+        //   access its metrics context or something
         // If the outstanding activation is a legacy query task, report that we need to fail it
         if let Some(OutstandingActivation::LegacyQuery) =
             self.workflow_machines.get_activation(run_id)
@@ -438,7 +444,6 @@ impl WorkflowTaskManager {
 
         let wft_info = WorkflowTaskInfo {
             attempt: poll_wf_resp.attempt,
-            task_queue: poll_wf_resp.task_queue,
             task_token: poll_wf_resp.task_token,
         };
 
@@ -456,8 +461,10 @@ impl WorkflowTaskManager {
                     ),
                     poll_wf_resp.previous_started_event_id,
                 ),
-                poll_wf_resp.workflow_execution.workflow_id.clone(),
-                gateway.options.namespace.clone(),
+                &poll_wf_resp.workflow_execution.workflow_id,
+                &gateway.options.namespace,
+                &poll_wf_resp.workflow_type,
+                &self.metrics,
             )
             .await
         {

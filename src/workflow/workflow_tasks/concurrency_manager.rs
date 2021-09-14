@@ -1,12 +1,15 @@
+use crate::telemetry::metrics::KEY_WF_TYPE;
 use crate::{
     errors::WorkflowUpdateError,
     protosext::ValidPollWFTQResponse,
+    telemetry::metrics::MetricsContext,
     workflow::{
         workflow_tasks::{OutstandingActivation, OutstandingTask},
         HistoryUpdate, Result, WFMachinesError, WorkflowManager,
     },
 };
 use futures::future::{BoxFuture, FutureExt};
+use opentelemetry::KeyValue;
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{
     collections::HashMap,
@@ -171,14 +174,16 @@ impl WorkflowConcurrencyManager {
         self.runs.read().get(run_id).is_some()
     }
 
-    /// Create or update some workflow's machines. `workflow_id` and `namespace` are only used if
-    /// this call creates the machines for the first time.
+    /// Create or update some workflow's machines. Borrowed arguments are cloned in the case of a
+    /// new workflow instance.
     pub async fn create_or_update(
         &self,
         run_id: &str,
         history: HistoryUpdate,
-        workflow_id: String,
-        namespace: String,
+        workflow_id: &str,
+        namespace: &str,
+        wf_type: &str,
+        parent_metrics: &MetricsContext,
     ) -> Result<WfActivation> {
         let span = debug_span!("create_or_update machines", %run_id);
 
@@ -196,7 +201,13 @@ impl WorkflowConcurrencyManager {
         } else {
             // Create a new workflow machines instance for this workflow, initialize it, and
             // track it.
-            let mut wfm = WorkflowManager::new(history, namespace, workflow_id, run_id.to_owned());
+            let mut wfm = WorkflowManager::new(
+                history,
+                namespace.to_owned(),
+                workflow_id.to_owned(),
+                run_id.to_owned(),
+                parent_metrics.with_new_attrs([KeyValue::new(KEY_WF_TYPE, wf_type.to_string())]),
+            );
             match wfm.get_next_activation().await {
                 Ok(activation) => {
                     if activation.jobs.is_empty() {
@@ -275,8 +286,10 @@ mod tests {
             .create_or_update(
                 "some_run_id",
                 HistoryUpdate::new_from_events(vec![], 0),
-                "fake_wf_id".to_string(),
-                "fake_namespace".to_string(),
+                "fake_wf_id",
+                "fake_namespace",
+                "fake_wf_type",
+                &Default::default(),
             )
             .await;
         // Should whine that the machines have nothing to do (history empty)

@@ -11,13 +11,9 @@ use crate::{
         ProtoCommand, TemporalStateMachine, WFCommand,
     },
     protosext::HistoryEventExt,
-    telemetry::{
-        metrics::{KEY_NAMESPACE, WF_COMPLETED_COUNTER, WF_E2E_LATENCY},
-        VecDisplayer,
-    },
+    telemetry::{metrics::MetricsContext, VecDisplayer},
     workflow::{CommandID, DrivenWorkflow, HistoryUpdate, WorkflowFetcher},
 };
-use opentelemetry::KeyValue;
 use prost_types::TimestampOutOfSystemRangeError;
 use slotmap::SlotMap;
 use std::{
@@ -106,6 +102,9 @@ pub(crate) struct WorkflowMachines {
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: DrivenWorkflow,
+
+    /// Metrics context
+    metrics: MetricsContext,
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -179,6 +178,7 @@ impl WorkflowMachines {
         run_id: String,
         history: HistoryUpdate,
         driven_wf: DrivenWorkflow,
+        metrics: MetricsContext,
     ) -> Self {
         let replaying = history.previous_started_event_id > 0;
         Self {
@@ -188,6 +188,7 @@ impl WorkflowMachines {
             run_id,
             drive_me: driven_wf,
             replaying,
+            metrics,
             // In an ideal world one could say ..Default::default() here and it'd still work.
             current_started_event_id: 0,
             next_started_event_id: 0,
@@ -499,10 +500,7 @@ impl WorkflowMachines {
         self.prepare_commands()?;
         if self.workflow_is_finished() {
             if let Some(rt) = self.total_runtime() {
-                WF_E2E_LATENCY.record(
-                    rt.as_millis() as u64,
-                    &[KeyValue::new(KEY_NAMESPACE, self.namespace.clone())],
-                );
+                self.metrics.wf_e2e_latency(rt.as_millis() as u64);
             }
         }
         Ok(has_new_lang_jobs)
@@ -687,17 +685,19 @@ impl WorkflowMachines {
                     jobs.extend(self.process_cancellation(CommandID::Activity(attrs.seq))?)
                 }
                 WFCommand::CompleteWorkflow(attrs) => {
-                    WF_COMPLETED_COUNTER
-                        .add(1, &[KeyValue::new(KEY_NAMESPACE, self.namespace.clone())]);
+                    self.metrics.wf_completed();
                     self.add_terminal_command(complete_workflow(attrs));
                 }
                 WFCommand::FailWorkflow(attrs) => {
+                    self.metrics.wf_failed();
                     self.add_terminal_command(fail_workflow(attrs));
                 }
                 WFCommand::ContinueAsNew(attrs) => {
+                    self.metrics.wf_continued_as_new();
                     self.add_terminal_command(continue_as_new(attrs));
                 }
                 WFCommand::CancelWorkflow(attrs) => {
+                    self.metrics.wf_canceled();
                     self.add_terminal_command(cancel_workflow(attrs));
                 }
                 WFCommand::SetPatchMarker(attrs) => {

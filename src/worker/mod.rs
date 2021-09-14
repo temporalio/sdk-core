@@ -3,7 +3,7 @@ mod config;
 mod dispatcher;
 
 pub use crate::worker::config::{WorkerConfig, WorkerConfigBuilder};
-pub use dispatcher::WorkerDispatcher;
+pub(crate) use dispatcher::WorkerDispatcher;
 
 use crate::{
     errors::{CompleteWfError, WorkflowUpdateError},
@@ -14,9 +14,7 @@ use crate::{
     },
     protosext::{legacy_query_failure, ValidPollWFTQResponse, WorkflowTaskCompletion},
     task_token::TaskToken,
-    telemetry::metrics::{
-        KEY_NAMESPACE, WF_TASK_QUEUE_POLL_EMPTY_COUNTER, WF_TASK_QUEUE_POLL_SUCCEED_COUNTER,
-    },
+    telemetry::metrics::MetricsContext,
     workflow::{
         workflow_tasks::{
             ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
@@ -28,7 +26,6 @@ use crate::{
 };
 use activities::WorkerActivityTasks;
 use futures::{Future, TryFutureExt};
-use opentelemetry::KeyValue;
 use std::{convert::TryInto, sync::Arc};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -74,6 +71,8 @@ pub struct Worker {
     /// Has shutdown been called?
     shutdown_requested: watch::Receiver<bool>,
     shutdown_sender: watch::Sender<bool>,
+
+    metrics: MetricsContext,
 }
 
 impl Worker {
@@ -81,6 +80,7 @@ impl Worker {
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
         sg: Arc<GatewayRef>,
+        metrics: MetricsContext,
     ) -> Self {
         let max_nonsticky_polls = if sticky_queue_name.is_some() {
             config.max_nonsticky_polls()
@@ -125,6 +125,7 @@ impl Worker {
             sg,
             wf_task_poll_buffer,
             act_poll_buffer,
+            metrics,
         )
     }
 
@@ -134,6 +135,7 @@ impl Worker {
         sg: Arc<GatewayRef>,
         wft_poller: BoxedWFPoller,
         act_poller: Option<BoxedActPoller>,
+        metrics: MetricsContext,
     ) -> Self {
         let cache_policy = if config.max_cached_workflows == 0 {
             WorkflowCachingPolicy::NonSticky
@@ -149,7 +151,7 @@ impl Worker {
             server_gateway: sg.clone(),
             sticky_name: sticky_queue_name,
             wf_task_poll_buffer: wft_poller,
-            wft_manager: WorkflowTaskManager::new(pan_tx, cache_policy),
+            wft_manager: WorkflowTaskManager::new(pan_tx, cache_policy, metrics.clone()),
             at_task_mgr: act_poller.map(|ap| {
                 WorkerActivityTasks::new(config.max_outstanding_activities, ap, sg.gw.clone())
             }),
@@ -160,6 +162,7 @@ impl Worker {
             wfts_drained: wftd_rx,
             wfts_drained_sender: wftd_tx,
             pending_activations_notification_receiver: Mutex::new(pan_rx),
+            metrics,
         }
     }
 
@@ -282,13 +285,7 @@ impl Worker {
 
             match selected_f {
                 Some(work) => {
-                    WF_TASK_QUEUE_POLL_SUCCEED_COUNTER.add(
-                        1,
-                        &[KeyValue::new(
-                            KEY_NAMESPACE,
-                            self.server_gateway.options.namespace.clone(),
-                        )],
-                    );
+                    self.metrics.wf_tq_poll_ok();
                     match self.apply_server_work(work).await? {
                         NewWfTaskOutcome::IssueActivation(a) => return Ok(a),
                         NewWfTaskOutcome::TaskBuffered => {
@@ -300,13 +297,7 @@ impl Worker {
                     }
                 }
                 None => {
-                    WF_TASK_QUEUE_POLL_EMPTY_COUNTER.add(
-                        1,
-                        &[KeyValue::new(
-                            KEY_NAMESPACE,
-                            self.server_gateway.options.namespace.clone(),
-                        )],
-                    );
+                    self.metrics.wf_tq_poll_empty();
                     debug!("Poll wft timeout");
                 }
             }
@@ -658,7 +649,7 @@ mod tests {
             .max_outstanding_activities(5usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, None, Arc::new(gwref));
+        let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
         assert_eq!(worker.activity_poll().await.unwrap(), None);
         assert_eq!(worker.at_task_mgr.unwrap().remaining_activity_capacity(), 5);
     }
@@ -688,7 +679,7 @@ mod tests {
             .max_outstanding_activities(5usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, None, Arc::new(gwref));
+        let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
         assert!(worker.activity_poll().await.is_err());
         assert_eq!(worker.at_task_mgr.unwrap().remaining_activity_capacity(), 5);
     }
