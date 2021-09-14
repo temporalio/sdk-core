@@ -1,8 +1,7 @@
-use crate::telemetry::metrics::KEY_WF_TYPE;
 use crate::{
     errors::WorkflowUpdateError,
     protosext::ValidPollWFTQResponse,
-    telemetry::metrics::MetricsContext,
+    telemetry::metrics::{MetricsContext, KEY_WF_TYPE},
     workflow::{
         workflow_tasks::{OutstandingActivation, OutstandingTask},
         HistoryUpdate, Result, WFMachinesError, WorkflowManager,
@@ -28,6 +27,7 @@ struct ManagedRun {
     wfm: Mutex<WorkflowManager>,
     wft: Option<OutstandingTask>,
     activation: Option<OutstandingActivation>,
+    metrics: MetricsContext,
     /// If set, it indicates there is a buffered poll response from the server that applies to this
     /// run. This can happen when lang takes too long to complete a task and the task times out, for
     /// example. Upon next completion, the buffered response will be removed and can be made ready
@@ -36,11 +36,12 @@ struct ManagedRun {
 }
 
 impl ManagedRun {
-    fn new(wfm: WorkflowManager) -> Self {
+    fn new(wfm: WorkflowManager, metrics: MetricsContext) -> Self {
         Self {
             wfm: Mutex::new(wfm),
             wft: None,
             activation: None,
+            metrics,
             buffered_resp: None,
         }
     }
@@ -104,6 +105,22 @@ impl WorkflowConcurrencyManager {
         }
     }
 
+    /// Fetch metrics context for a run
+    pub(crate) fn run_metrics(
+        &self,
+        run_id: &str,
+    ) -> Option<impl Deref<Target = MetricsContext> + '_> {
+        let readlock = self.runs.read();
+        if readlock.get(run_id).is_some() {
+            Some(RwLockReadGuard::map(readlock, |hm| {
+                // Unwraps are safe because we hold the lock and just ensured run is in the map
+                &hm.get(run_id).unwrap().metrics
+            }))
+        } else {
+            None
+        }
+    }
+
     /// Stores some work if there is any outstanding WFT or activation for the run. If there was
     /// not, returns the work back out inside the option.
     pub fn buffer_resp_if_outstanding_work(
@@ -135,12 +152,18 @@ impl WorkflowConcurrencyManager {
         Ok(())
     }
 
-    pub fn delete_wft(&self, run_id: &str) -> Option<OutstandingTask> {
-        if let Ok(ot) = self.get_task_mut(run_id).as_deref_mut() {
-            ot.take()
+    /// Indicate it's finished and remove any outstanding workflow task associated with the run
+    pub fn complete_wft(&self, run_id: &str) -> Option<OutstandingTask> {
+        let retme = if let Ok(ot) = self.get_task_mut(run_id).as_deref_mut() {
+            (*ot).take()
         } else {
             None
+        };
+        if let Some(ot) = &retme {
+            self.run_metrics(run_id)
+                .map(|m| m.wf_task_latency(ot.start_time.elapsed().as_millis() as u64));
         }
+        retme
     }
 
     pub fn insert_activation(
@@ -201,12 +224,14 @@ impl WorkflowConcurrencyManager {
         } else {
             // Create a new workflow machines instance for this workflow, initialize it, and
             // track it.
+            let metrics =
+                parent_metrics.with_new_attrs([KeyValue::new(KEY_WF_TYPE, wf_type.to_string())]);
             let mut wfm = WorkflowManager::new(
                 history,
                 namespace.to_owned(),
                 workflow_id.to_owned(),
                 run_id.to_owned(),
-                parent_metrics.with_new_attrs([KeyValue::new(KEY_WF_TYPE, wf_type.to_string())]),
+                metrics.clone(),
             );
             match wfm.get_next_activation().await {
                 Ok(activation) => {
@@ -217,7 +242,7 @@ impl WorkflowConcurrencyManager {
                     } else {
                         self.runs
                             .write()
-                            .insert(run_id.to_string(), ManagedRun::new(wfm));
+                            .insert(run_id.to_string(), ManagedRun::new(wfm, metrics));
                         Ok(activation)
                     }
                 }

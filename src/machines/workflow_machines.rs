@@ -21,7 +21,7 @@ use std::{
     collections::{hash_map::DefaultHasher, HashMap, VecDeque},
     convert::TryInto,
     hash::{Hash, Hasher},
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -104,7 +104,7 @@ pub(crate) struct WorkflowMachines {
     drive_me: DrivenWorkflow,
 
     /// Metrics context
-    metrics: MetricsContext,
+    pub metrics: MetricsContext,
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -506,7 +506,8 @@ impl WorkflowMachines {
         Ok(has_new_lang_jobs)
     }
 
-    /// Apply the next entire workflow task from history to these machines.
+    /// Apply the next (unapplied) entire workflow task from history to these machines. Will replay
+    /// any events that need to be replayed until caught up to the newest WFT.
     pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<()> {
         // A much higher-up span (ex: poll) may want this field filled
         tracing::Span::current().record("run_id", &self.run_id.as_str());
@@ -523,6 +524,7 @@ impl WorkflowMachines {
         if events.is_empty() {
             self.replaying = false;
         }
+        let replay_start = Instant::now();
 
         if let Some(last_event) = events.last() {
             if last_event.event_type == EventType::WorkflowTaskStarted as i32 {
@@ -571,6 +573,11 @@ impl WorkflowMachines {
                         patch_id,
                     }));
             }
+        }
+
+        if !self.replaying {
+            self.metrics
+                .wf_task_replay_latency(replay_start.elapsed().as_millis() as u64);
         }
 
         Ok(())

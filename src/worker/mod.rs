@@ -368,7 +368,7 @@ impl Worker {
                 tokio::select! {
                     biased;
 
-                    r = Self::workflow_poll(&self.workflows_semaphore, &self.wf_task_poll_buffer)
+                    r = self.workflow_poll()
                         .map_err(Into::into) => match r {
                          Err(PollWfError::ShutDown) => {},
                         _ => return r,
@@ -380,23 +380,30 @@ impl Worker {
     }
 
     /// Wait until not at the outstanding workflow task limit, and then poll this worker's task
-    /// queue for new workflow tasks. This doesn't take `&self` in order to allow a disjoint borrow
+    /// queue for new workflow tasks.
     ///
     /// Returns `Ok(None)` in the event of a poll timeout
-    async fn workflow_poll(
-        sem: &Semaphore,
-        wf_poller: &BoxedWFPoller,
-    ) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
-        let sem = sem
+    async fn workflow_poll(&self) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
+        let sem = self
+            .workflows_semaphore
             .acquire()
             .await
             .expect("outstanding workflow tasks semaphore not dropped");
 
-        let res = wf_poller.poll().await.ok_or(PollWfError::ShutDown)??;
+        let res = self
+            .wf_task_poll_buffer
+            .poll()
+            .await
+            .ok_or(PollWfError::ShutDown)??;
 
         if res == PollWorkflowTaskQueueResponse::default() {
             // We get the default proto in the event that the long poll times out.
             return Ok(None);
+        }
+
+        if let Some(dur) = res.sched_to_start() {
+            self.metrics
+                .wf_task_sched_to_start_latency(dur.as_millis() as u64);
         }
 
         let work: ValidPollWFTQResponse = res
@@ -630,10 +637,7 @@ impl WorkerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        pollers::MockServerGatewayApis,
-        test_help::{fake_sg_opts, mock_poller_from_resps},
-    };
+    use crate::{pollers::MockServerGatewayApis, test_help::fake_sg_opts};
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 
     #[tokio::test]
@@ -656,14 +660,20 @@ mod tests {
 
     #[tokio::test]
     async fn workflow_timeouts_dont_eat_permits() {
-        let mock_poller =
-            mock_poller_from_resps(vec![PollWorkflowTaskQueueResponse::default()].into());
-        let sem = Semaphore::new(2);
-        assert_eq!(
-            Worker::workflow_poll(&sem, &mock_poller).await.unwrap(),
-            None
-        );
-        assert_eq!(sem.available_permits(), 2);
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_poll_workflow_task()
+            .returning(|_| Ok(PollWorkflowTaskQueueResponse::default()));
+        let gwref = GatewayRef::new(Arc::new(mock_gateway), fake_sg_opts());
+
+        let cfg = WorkerConfigBuilder::default()
+            .task_queue("whatever")
+            .max_outstanding_workflow_tasks(5usize)
+            .build()
+            .unwrap();
+        let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
+        assert_eq!(worker.workflow_poll().await.unwrap(), None);
+        assert_eq!(worker.workflows_semaphore.available_permits(), 5);
     }
 
     #[tokio::test]
@@ -686,11 +696,20 @@ mod tests {
 
     #[tokio::test]
     async fn workflow_errs_dont_eat_permits() {
-        let mock_poller = mock_poller_from_resps(vec![].into());
-        let sem = Semaphore::new(2);
-        // Will immediately be an error - no responses
-        assert!(Worker::workflow_poll(&sem, &mock_poller).await.is_err());
-        assert_eq!(sem.available_permits(), 2);
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_poll_workflow_task()
+            .returning(|_| Err(tonic::Status::internal("ahhh")));
+        let gwref = GatewayRef::new(Arc::new(mock_gateway), fake_sg_opts());
+
+        let cfg = WorkerConfigBuilder::default()
+            .task_queue("whatever")
+            .max_outstanding_workflow_tasks(5usize)
+            .build()
+            .unwrap();
+        let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
+        assert!(worker.workflow_poll().await.is_err());
+        assert_eq!(worker.workflows_semaphore.available_permits(), 5);
     }
 
     #[test]

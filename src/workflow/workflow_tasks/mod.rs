@@ -21,7 +21,7 @@ use crate::{
 use crossbeam::queue::SegQueue;
 use futures::FutureExt;
 use parking_lot::Mutex;
-use std::{fmt::Debug, ops::DerefMut};
+use std::{fmt::Debug, ops::DerefMut, time::Instant};
 use temporal_sdk_core_protos::coresdk::{
     workflow_activation::{
         create_evict_activation, create_query_activation, wf_activation_job, QueryWorkflow,
@@ -62,6 +62,7 @@ pub(crate) struct OutstandingTask {
     /// If set the outstanding task has query from the old `query` field which must be fulfilled
     /// upon finishing replay
     pub legacy_query: Option<QueryWorkflow>,
+    start_time: Instant,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -252,6 +253,7 @@ impl WorkflowTaskManager {
             history_length = %work.history.events.len(),
             "Applying new workflow task from server"
         );
+        let task_start_time = Instant::now();
 
         // Check if there is a legacy query we either need to immediately issue an activation for
         // (if there is no more replay work to do) or we need to store for later answering.
@@ -286,7 +288,11 @@ impl WorkflowTaskManager {
 
         self.workflow_machines.insert_wft(
             &next_activation.run_id,
-            OutstandingTask { info, legacy_query },
+            OutstandingTask {
+                info,
+                legacy_query,
+                start_time: task_start_time,
+            },
         )?;
 
         if !next_activation.jobs.is_empty() {
@@ -408,8 +414,9 @@ impl WorkflowTaskManager {
             );
             return FailedActivationOutcome::NoReport;
         };
-        // TODO: Get workflow type from machine here & attach to counter -- or better yet just
-        //   access its metrics context or something
+        self.workflow_machines
+            .run_metrics(run_id)
+            .map(|m| m.wf_task_failed());
         // If the outstanding activation is a legacy query task, report that we need to fail it
         if let Some(OutstandingActivation::LegacyQuery) =
             self.workflow_machines.get_activation(run_id)
@@ -546,7 +553,7 @@ impl WorkflowTaskManager {
 
             // The evict may or may not have already done this, but even when we aren't evicting
             // we want to clear the outstanding workflow task since it's now complete.
-            return Ok(self.workflow_machines.delete_wft(run_id).is_some());
+            return Ok(self.workflow_machines.complete_wft(run_id).is_some());
         }
         Ok(false)
     }

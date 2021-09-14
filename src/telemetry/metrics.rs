@@ -11,6 +11,9 @@ use opentelemetry::{
 use std::sync::Arc;
 
 /// Used to track context associated with metrics, and record/update them
+///
+/// Possible improvement: make generic over some type tag so that methods are only exposed if the
+/// appropriate k/vs have already been set.
 #[derive(Default, Clone)]
 pub(crate) struct MetricsContext {
     kvs: Arc<Vec<KeyValue>>,
@@ -74,6 +77,21 @@ impl MetricsContext {
     pub(crate) fn wf_e2e_latency(&self, duration_millis: u64) {
         WF_E2E_LATENCY.record(duration_millis, &self.kvs);
     }
+
+    /// Record workflow task schedule to start time in millis
+    pub(crate) fn wf_task_sched_to_start_latency(&self, duration_millis: u64) {
+        WF_TASK_SCHED_TO_START_LATENCY.record(duration_millis, &self.kvs);
+    }
+
+    /// Record workflow task execution time in milliseconds
+    pub(crate) fn wf_task_latency(&self, duration_millis: u64) {
+        WF_TASK_EXECUTION_LATENCY.record(duration_millis, &self.kvs);
+    }
+
+    /// Record time it takes to catch up on replaying a WFT
+    pub(crate) fn wf_task_replay_latency(&self, duration_millis: u64) {
+        WF_TASK_REPLAY_LATENCY.record(duration_millis, &self.kvs);
+    }
 }
 
 lazy_static::lazy_static! {
@@ -124,8 +142,20 @@ tm!(
     WF_TASK_EXECUTION_FAILURE_COUNTER,
     "workflow_task_execution_failed"
 );
+const WF_TASK_SCHED_TO_START_LATENCY_NAME: &str = "workflow_task_schedule_to_start_latency";
+tm!(
+    vr_u64,
+    WF_TASK_SCHED_TO_START_LATENCY,
+    WF_TASK_SCHED_TO_START_LATENCY_NAME
+);
 const WF_TASK_REPLAY_LATENCY_NAME: &str = "workflow_task_replay_latency";
 tm!(vr_u64, WF_TASK_REPLAY_LATENCY, WF_TASK_REPLAY_LATENCY_NAME);
+const WF_TASK_EXECUTION_LATENCY_NAME: &str = "workflow_task_execution_latency";
+tm!(
+    vr_u64,
+    WF_TASK_EXECUTION_LATENCY,
+    WF_TASK_EXECUTION_LATENCY_NAME
+);
 
 /// Artisanal, handcrafted latency buckets for workflow e2e latency which should expose a useful
 /// set of buckets for < 1 day runtime workflows. Beyond that, this metric probably isn't very
@@ -149,6 +179,10 @@ static WF_LATENCY_MS_BUCKETS: &[f64] = &[
     8.64e7,      // 24 hrs
 ];
 
+/// Task latencies are expected to be fast, no longer than a second which was generally the deadlock
+/// timeout in old SDKs. Here it's a bit different since a WFT may represent multiple activations.
+static WF_TASK_MS_BUCKETS: &[f64] = &[1., 10., 20., 50., 100., 200., 500., 1000.];
+
 /// Default buckets. Should never really be used as they will be meaningless for many things, but
 /// broadly it's trying to represent latencies in millis.
 static DEFAULT_BUCKETS: &[f64] = &[50., 100., 500., 1000., 2500., 10_000.];
@@ -168,6 +202,8 @@ impl AggregatorSelector for SDKAggSelector {
         if *descriptor.instrument_kind() == InstrumentKind::ValueRecorder {
             let buckets = match descriptor.name() {
                 WF_E2E_LATENCY_NAME => WF_LATENCY_MS_BUCKETS,
+                WF_TASK_EXECUTION_LATENCY_NAME => WF_TASK_MS_BUCKETS,
+                WF_TASK_REPLAY_LATENCY_NAME => WF_TASK_MS_BUCKETS,
                 _ => DEFAULT_BUCKETS,
             };
             return Some(Arc::new(histogram(descriptor, buckets)));

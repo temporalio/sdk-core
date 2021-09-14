@@ -130,7 +130,7 @@ async fn long_poll_timeout_is_retried() {
 }
 
 pub async fn many_parallel_timers_longhist(mut ctx: WfContext) -> WorkflowResult<()> {
-    for _ in 0..100 {
+    for _ in 0..20 {
         let mut futs = vec![];
         for _ in 0..1000 {
             futs.push(ctx.timer(Duration::from_millis(100)));

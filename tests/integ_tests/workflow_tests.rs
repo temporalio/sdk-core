@@ -300,7 +300,6 @@ async fn signal_workflow() {
         );
     }
     core.complete_execution(&task_q, &res.run_id).await;
-    dbg!("Done");
 }
 
 #[tokio::test]
