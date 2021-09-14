@@ -14,7 +14,7 @@ use std::sync::Arc;
 ///
 /// Possible improvement: make generic over some type tag so that methods are only exposed if the
 /// appropriate k/vs have already been set.
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub(crate) struct MetricsContext {
     kvs: Arc<Vec<KeyValue>>,
     // TODO: Ideally this would hold bound metrics, but using them is basically impossible because
@@ -92,6 +92,21 @@ impl MetricsContext {
     pub(crate) fn wf_task_replay_latency(&self, duration_millis: u64) {
         WF_TASK_REPLAY_LATENCY.record(duration_millis, &self.kvs);
     }
+
+    /// A workflow task found a cached workflow to run against
+    pub(crate) fn sticky_cache_hit(&self) {
+        STICKY_CACHE_HIT.add(1, &self.kvs);
+    }
+
+    /// A workflow task did not find a cached workflow
+    pub(crate) fn sticky_cache_miss(&self) {
+        STICKY_CACHE_MISS.add(1, &self.kvs);
+    }
+
+    /// Record current cache size (in number of wfs, not bytes)
+    pub(crate) fn cache_size(&self, size: u64) {
+        STICKY_CACHE_SIZE.record(size, &self.kvs);
+    }
 }
 
 lazy_static::lazy_static! {
@@ -157,6 +172,11 @@ tm!(
     WF_TASK_EXECUTION_LATENCY_NAME
 );
 
+tm!(ctr, STICKY_CACHE_HIT, "sticky_cache_hit");
+tm!(ctr, STICKY_CACHE_MISS, "sticky_cache_miss");
+const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
+tm!(vr_u64, STICKY_CACHE_SIZE, STICKY_CACHE_SIZE_NAME);
+
 /// Artisanal, handcrafted latency buckets for workflow e2e latency which should expose a useful
 /// set of buckets for < 1 day runtime workflows. Beyond that, this metric probably isn't very
 /// helpful
@@ -198,8 +218,14 @@ impl AggregatorSelector for SDKAggSelector {
             return Some(Arc::new(last_value()));
         }
 
-        // Recorders will select their appropriate buckets
         if *descriptor.instrument_kind() == InstrumentKind::ValueRecorder {
+            // Some recorders are just gauges
+            match descriptor.name() {
+                STICKY_CACHE_SIZE_NAME => return Some(Arc::new(last_value())),
+                _ => (),
+            }
+
+            // Other recorders will select their appropriate buckets
             let buckets = match descriptor.name() {
                 WF_E2E_LATENCY_NAME => WF_LATENCY_MS_BUCKETS,
                 WF_TASK_EXECUTION_LATENCY_NAME => WF_TASK_MS_BUCKETS,

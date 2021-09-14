@@ -540,6 +540,7 @@ impl WorkflowMachines {
         // Need to reset sticky and trigger another poll.
         if self.current_started_event_id == 0 && first_event_id != 1 && !events.is_empty() {
             debug!("Cache miss.");
+            self.metrics.sticky_cache_miss();
             return Err(WFMachinesError::CacheMiss);
         }
 

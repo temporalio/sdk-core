@@ -215,6 +215,7 @@ impl WorkflowConcurrencyManager {
                 .access(run_id, move |wfm: &mut WorkflowManager| {
                     async move {
                         let _enter = span.enter();
+                        wfm.machines.metrics.sticky_cache_hit();
                         wfm.feed_history_from_server(history).await
                     }
                     .boxed()

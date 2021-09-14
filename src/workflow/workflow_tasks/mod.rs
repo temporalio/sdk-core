@@ -156,7 +156,7 @@ impl WorkflowTaskManager {
             pending_activations: Default::default(),
             ready_buffered_wft: Default::default(),
             pending_activations_notifier,
-            cache_manager: Mutex::new(WorkflowCacheManager::new(eviction_policy)),
+            cache_manager: Mutex::new(WorkflowCacheManager::new(eviction_policy, metrics.clone())),
             metrics,
         }
     }

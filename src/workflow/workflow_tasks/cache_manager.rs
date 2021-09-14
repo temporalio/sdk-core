@@ -1,3 +1,4 @@
+use crate::telemetry::metrics::MetricsContext;
 use crate::workflow::WorkflowCachingPolicy;
 use lru::LruCache;
 
@@ -6,10 +7,11 @@ use lru::LruCache;
 #[derive(Debug)]
 pub(crate) struct WorkflowCacheManager {
     cache: LruCache<String, ()>,
+    metrics: MetricsContext,
 }
 
 impl WorkflowCacheManager {
-    pub fn new(policy: WorkflowCachingPolicy) -> Self {
+    pub fn new(policy: WorkflowCachingPolicy, metrics: MetricsContext) -> Self {
         let cap = match policy {
             WorkflowCachingPolicy::Sticky {
                 max_cached_workflows,
@@ -18,13 +20,19 @@ impl WorkflowCacheManager {
         };
         Self {
             cache: LruCache::new(cap),
+            metrics,
         }
+    }
+
+    #[cfg(test)]
+    fn new_test(policy: WorkflowCachingPolicy) -> Self {
+        Self::new(policy, Default::default())
     }
 
     /// Inserts a record associated with the run id into the lru cache.
     /// Once cache reaches capacity, overflow records will be returned back to the caller.
     pub fn insert(&mut self, run_id: &str) -> Option<String> {
-        if self.cache.len() < self.cache.cap() {
+        let res = if self.cache.len() < self.cache.cap() {
             // Blindly add a record into the cache, since it still has capacity.
             self.cache.put(run_id.to_owned(), ());
             None
@@ -39,7 +47,11 @@ impl WorkflowCacheManager {
         } else {
             // Run id should be evicted right away as cache size is 0.
             Some(run_id.to_owned())
-        }
+        };
+
+        self.metrics.cache_size(self.cache.len() as u64);
+
+        res
     }
 
     /// If run id exists in the cache it will be moved to the top of the LRU cache.
@@ -51,6 +63,7 @@ impl WorkflowCacheManager {
     pub fn remove(&mut self, run_id: &str) {
         // https://github.com/jeromefroe/lru-rs/issues/85
         self.cache.pop(&run_id.to_owned());
+        self.metrics.cache_size(self.cache.len() as u64);
     }
 }
 
@@ -59,7 +72,7 @@ mod tests {
     use super::*;
     #[test]
     fn insert_with_overflow() {
-        let mut wcm = WorkflowCacheManager::new(WorkflowCachingPolicy::Sticky {
+        let mut wcm = WorkflowCacheManager::new_test(WorkflowCachingPolicy::Sticky {
             max_cached_workflows: 2,
         });
         assert_matches!(wcm.insert("1"), None);
@@ -71,7 +84,7 @@ mod tests {
 
     #[test]
     fn insert_remove_insert() {
-        let mut wcm = WorkflowCacheManager::new(WorkflowCachingPolicy::Sticky {
+        let mut wcm = WorkflowCacheManager::new_test(WorkflowCachingPolicy::Sticky {
             max_cached_workflows: 1,
         });
         assert_matches!(wcm.insert("1"), None);
@@ -84,7 +97,7 @@ mod tests {
 
     #[test]
     fn insert_same_id_twice_doesnt_evict_self() {
-        let mut wcm = WorkflowCacheManager::new(WorkflowCachingPolicy::Sticky {
+        let mut wcm = WorkflowCacheManager::new_test(WorkflowCachingPolicy::Sticky {
             max_cached_workflows: 1,
         });
         assert_matches!(wcm.insert("1"), None);
@@ -93,7 +106,7 @@ mod tests {
 
     #[test]
     fn insert_and_touch() {
-        let mut wcm = WorkflowCacheManager::new(WorkflowCachingPolicy::Sticky {
+        let mut wcm = WorkflowCacheManager::new_test(WorkflowCachingPolicy::Sticky {
             max_cached_workflows: 2,
         });
         assert_matches!(wcm.insert("1"), None);
@@ -106,7 +119,7 @@ mod tests {
 
     #[test]
     fn touch_early() {
-        let mut wcm = WorkflowCacheManager::new(WorkflowCachingPolicy::Sticky {
+        let mut wcm = WorkflowCacheManager::new_test(WorkflowCachingPolicy::Sticky {
             max_cached_workflows: 2,
         });
         wcm.touch("1");
@@ -119,7 +132,7 @@ mod tests {
 
     #[test]
     fn zero_cache_size() {
-        let mut wcm = WorkflowCacheManager::new(WorkflowCachingPolicy::Sticky {
+        let mut wcm = WorkflowCacheManager::new_test(WorkflowCachingPolicy::Sticky {
             max_cached_workflows: 0,
         });
         assert_matches!(wcm.insert("1"), Some(run_id) => {
@@ -132,7 +145,7 @@ mod tests {
 
     #[test]
     fn non_sticky_always_pending_eviction() {
-        let mut wcm = WorkflowCacheManager::new(WorkflowCachingPolicy::NonSticky);
+        let mut wcm = WorkflowCacheManager::new_test(WorkflowCachingPolicy::NonSticky);
         assert_matches!(wcm.insert("1"), Some(run_id) => {
             assert_eq!(run_id, "1")
         });
