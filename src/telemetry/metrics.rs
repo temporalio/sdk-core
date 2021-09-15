@@ -9,6 +9,7 @@ use opentelemetry::{
     KeyValue,
 };
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Used to track context associated with metrics, and record/update them
 ///
@@ -74,23 +75,44 @@ impl MetricsContext {
     }
 
     /// Record workflow total execution time in milliseconds
-    pub(crate) fn wf_e2e_latency(&self, duration_millis: u64) {
-        WF_E2E_LATENCY.record(duration_millis, &self.kvs);
+    pub(crate) fn wf_e2e_latency(&self, dur: Duration) {
+        WF_E2E_LATENCY.record(dur.as_millis() as u64, &self.kvs);
     }
 
     /// Record workflow task schedule to start time in millis
-    pub(crate) fn wf_task_sched_to_start_latency(&self, duration_millis: u64) {
-        WF_TASK_SCHED_TO_START_LATENCY.record(duration_millis, &self.kvs);
+    pub(crate) fn wf_task_sched_to_start_latency(&self, dur: Duration) {
+        WF_TASK_SCHED_TO_START_LATENCY.record(dur.as_millis() as u64, &self.kvs);
     }
 
     /// Record workflow task execution time in milliseconds
-    pub(crate) fn wf_task_latency(&self, duration_millis: u64) {
-        WF_TASK_EXECUTION_LATENCY.record(duration_millis, &self.kvs);
+    pub(crate) fn wf_task_latency(&self, dur: Duration) {
+        WF_TASK_EXECUTION_LATENCY.record(dur.as_millis() as u64, &self.kvs);
     }
 
     /// Record time it takes to catch up on replaying a WFT
-    pub(crate) fn wf_task_replay_latency(&self, duration_millis: u64) {
-        WF_TASK_REPLAY_LATENCY.record(duration_millis, &self.kvs);
+    pub(crate) fn wf_task_replay_latency(&self, dur: Duration) {
+        WF_TASK_REPLAY_LATENCY.record(dur.as_millis() as u64, &self.kvs);
+    }
+
+    /// An activity long poll timed out
+    pub(crate) fn act_poll_timeout(&self) {
+        ACT_POLL_NO_TASK.add(1, &self.kvs);
+    }
+
+    /// An activity execution failed
+    pub(crate) fn act_execution_failed(&self) {
+        ACT_EXECUTION_FAILED.add(1, &self.kvs);
+    }
+
+    /// Record activity task schedule to start time in millis
+    pub(crate) fn act_sched_to_start_latency(&self, dur: Duration) {
+        ACT_SCHED_TO_START_LATENCY.record(dur.as_millis() as u64, &self.kvs);
+    }
+
+    /// Record time it took to complete activity execution, from the time core generated the
+    /// activity task, to the time lang responded with a completion (failure or success).
+    pub(crate) fn act_execution_latency(&self, dur: Duration) {
+        ACT_EXEC_LATENCY.record(dur.as_millis() as u64, &self.kvs);
     }
 
     /// A workflow task found a cached workflow to run against
@@ -134,6 +156,8 @@ macro_rules! tm {
 
 pub(crate) const KEY_NAMESPACE: &str = "namespace";
 pub(crate) const KEY_WF_TYPE: &str = "workflow_type";
+pub(crate) const KEY_TASK_QUEUE: &str = "task_queue";
+pub(crate) const KEY_ACT_TYPE: &str = "activity_type";
 
 tm!(ctr, WF_COMPLETED_COUNTER, "workflow_completed");
 tm!(ctr, WF_CANCELED_COUNTER, "workflow_canceled");
@@ -171,6 +195,19 @@ tm!(
     WF_TASK_EXECUTION_LATENCY,
     WF_TASK_EXECUTION_LATENCY_NAME
 );
+
+tm!(ctr, ACT_POLL_NO_TASK, "activity_poll_no_task");
+tm!(ctr, ACT_EXECUTION_FAILED, "activity_execution_failed");
+// Act task unregistered can't be known by core right now since it's not well defined as an
+// activity result. We could add a flag to the failed activity result if desired.
+const ACT_SCHED_TO_START_LATENCY_NAME: &str = "activity_schedule_to_start_latency";
+tm!(
+    vr_u64,
+    ACT_SCHED_TO_START_LATENCY,
+    ACT_SCHED_TO_START_LATENCY_NAME
+);
+const ACT_EXEC_LATENCY_NAME: &str = "activity_execution_latency";
+tm!(vr_u64, ACT_EXEC_LATENCY, ACT_EXEC_LATENCY_NAME);
 
 tm!(ctr, STICKY_CACHE_HIT, "sticky_cache_hit");
 tm!(ctr, STICKY_CACHE_MISS, "sticky_cache_miss");

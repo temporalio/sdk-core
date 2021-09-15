@@ -153,7 +153,12 @@ impl Worker {
             wf_task_poll_buffer: wft_poller,
             wft_manager: WorkflowTaskManager::new(pan_tx, cache_policy, metrics.clone()),
             at_task_mgr: act_poller.map(|ap| {
-                WorkerActivityTasks::new(config.max_outstanding_activities, ap, sg.gw.clone())
+                WorkerActivityTasks::new(
+                    config.max_outstanding_activities,
+                    ap,
+                    sg.gw.clone(),
+                    metrics.clone(),
+                )
             }),
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             config,
@@ -402,8 +407,7 @@ impl Worker {
         }
 
         if let Some(dur) = res.sched_to_start() {
-            self.metrics
-                .wf_task_sched_to_start_latency(dur.as_millis() as u64);
+            self.metrics.wf_task_sched_to_start_latency(dur);
         }
 
         let work: ValidPollWFTQResponse = res

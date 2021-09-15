@@ -414,9 +414,9 @@ impl WorkflowTaskManager {
             );
             return FailedActivationOutcome::NoReport;
         };
-        self.workflow_machines
-            .run_metrics(run_id)
-            .map(|m| m.wf_task_failed());
+        if let Some(m) = self.workflow_machines.run_metrics(run_id) {
+            m.wf_task_failed();
+        }
         // If the outstanding activation is a legacy query task, report that we need to fail it
         if let Some(OutstandingActivation::LegacyQuery) =
             self.workflow_machines.get_activation(run_id)

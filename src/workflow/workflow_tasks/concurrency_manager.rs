@@ -160,8 +160,9 @@ impl WorkflowConcurrencyManager {
             None
         };
         if let Some(ot) = &retme {
-            self.run_metrics(run_id)
-                .map(|m| m.wf_task_latency(ot.start_time.elapsed().as_millis() as u64));
+            if let Some(m) = self.run_metrics(run_id) {
+                m.wf_task_latency(ot.start_time.elapsed());
+            }
         }
         retme
     }

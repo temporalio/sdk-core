@@ -1206,21 +1206,27 @@ pub mod temporal {
 
                 tonic::include_proto!("temporal.api.workflowservice.v1");
 
-                impl PollWorkflowTaskQueueResponse {
-                    /// Return the duration of the WFT schedule time to its start time if both
-                    /// are set and time went forward.
-                    pub fn sched_to_start(&self) -> Option<Duration> {
-                        if let Some((sch, st)) =
-                            self.scheduled_time.clone().zip(self.started_time.clone())
-                        {
-                            let sch: Result<SystemTime, _> = sch.try_into();
-                            let st: Result<SystemTime, _> = st.try_into();
-                            if let (Ok(sch), Ok(st)) = (sch, st) {
-                                return st.duration_since(sch).ok();
+                macro_rules! sched_to_start_impl {
+                    () => {
+                        /// Return the duration of the task schedule time to its start time if both
+                        /// are set and time went forward.
+                        pub fn sched_to_start(&self) -> Option<Duration> {
+                            if let Some((sch, st)) =
+                                self.scheduled_time.clone().zip(self.started_time.clone())
+                            {
+                                let sch: Result<SystemTime, _> = sch.try_into();
+                                let st: Result<SystemTime, _> = st.try_into();
+                                if let (Ok(sch), Ok(st)) = (sch, st) {
+                                    return st.duration_since(sch).ok();
+                                }
                             }
+                            None
                         }
-                        None
-                    }
+                    };
+                }
+
+                impl PollWorkflowTaskQueueResponse {
+                    sched_to_start_impl!();
                 }
 
                 impl Display for PollWorkflowTaskQueueResponse {
@@ -1261,6 +1267,10 @@ pub mod temporal {
                         writeln!(f, "query: {:#?}", self.0.query)?;
                         writeln!(f, "queries: {:#?}", self.0.queries)
                     }
+                }
+
+                impl PollActivityTaskQueueResponse {
+                    sched_to_start_impl!();
                 }
 
                 impl QueryWorkflowResponse {

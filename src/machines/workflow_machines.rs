@@ -500,7 +500,7 @@ impl WorkflowMachines {
         self.prepare_commands()?;
         if self.workflow_is_finished() {
             if let Some(rt) = self.total_runtime() {
-                self.metrics.wf_e2e_latency(rt.as_millis() as u64);
+                self.metrics.wf_e2e_latency(rt);
             }
         }
         Ok(has_new_lang_jobs)
@@ -577,8 +577,7 @@ impl WorkflowMachines {
         }
 
         if !self.replaying {
-            self.metrics
-                .wf_task_replay_latency(replay_start.elapsed().as_millis() as u64);
+            self.metrics.wf_task_replay_latency(replay_start.elapsed());
         }
 
         Ok(())

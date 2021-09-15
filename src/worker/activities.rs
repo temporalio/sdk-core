@@ -1,11 +1,14 @@
 mod activity_heartbeat_manager;
 
+use crate::telemetry::metrics::{MetricsContext, KEY_ACT_TYPE, KEY_WF_TYPE};
 use crate::{
     pollers::BoxedActPoller, task_token::TaskToken, ActivityHeartbeatError, CompleteActivityError,
     PollActivityError, ServerGatewayApis,
 };
 use activity_heartbeat_manager::ActivityHeartbeatManager;
 use dashmap::DashMap;
+use opentelemetry::KeyValue;
+use std::time::Instant;
 use std::{convert::TryInto, ops::Div, sync::Arc, time::Duration};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -27,9 +30,11 @@ struct PendingActivityCancel {
 }
 
 /// Contains minimal set of details that core needs to store, while activity is running.
-#[derive(derive_more::Constructor, Debug)]
+#[derive(Debug)]
 struct InflightActivityDetails {
     pub activity_id: String,
+    pub activity_type: String,
+    pub workflow_type: String,
     /// Used to calculate aggregation delay between activity heartbeats.
     pub heartbeat_timeout: Option<prost_types::Duration>,
     /// Set to true if we have already issued a cancellation activation to lang for this activity
@@ -38,6 +43,25 @@ struct InflightActivityDetails {
     /// we have learned from heartbeating and issued a cancel task, in which case we may simply
     /// discard the reply.
     pub known_not_found: bool,
+    start_time: Instant,
+}
+impl InflightActivityDetails {
+    fn new(
+        activity_id: String,
+        activity_type: String,
+        workflow_type: String,
+        heartbeat_timeout: Option<prost_types::Duration>,
+    ) -> Self {
+        Self {
+            activity_id,
+            activity_type,
+            workflow_type,
+            heartbeat_timeout,
+            issued_cancel_to_lang: false,
+            known_not_found: false,
+            start_time: Instant::now(),
+        }
+    }
 }
 
 pub(crate) struct WorkerActivityTasks {
@@ -50,6 +74,8 @@ pub(crate) struct WorkerActivityTasks {
     poller: BoxedActPoller,
     /// Ensures we stay at or below this worker's maximum concurrent activity limit
     activities_semaphore: Semaphore,
+
+    metrics: MetricsContext,
 }
 
 impl WorkerActivityTasks {
@@ -57,12 +83,14 @@ impl WorkerActivityTasks {
         max_activity_tasks: usize,
         poller: BoxedActPoller,
         sg: Arc<impl ServerGatewayApis + Send + Sync + 'static + ?Sized>,
+        metrics: MetricsContext,
     ) -> Self {
         Self {
             heartbeat_manager: ActivityHeartbeatManager::new(sg),
             outstanding_activity_tasks: Default::default(),
             poller,
             activities_semaphore: Semaphore::new(max_activity_tasks),
+            metrics,
         }
     }
 
@@ -102,15 +130,22 @@ impl WorkerActivityTasks {
                     Some(Ok(work)) => {
                         if work == PollActivityTaskQueueResponse::default() {
                             // Timeout
+                            self.metrics.act_poll_timeout();
                             return Ok(None)
                         }
+
+                        if let Some(dur) = work.sched_to_start() {
+                            self.metrics
+                                .act_sched_to_start_latency(dur);
+                        }
+
                         self.outstanding_activity_tasks.insert(
                             work.task_token.clone().into(),
                             InflightActivityDetails::new(
                                 work.activity_id.clone(),
-                                work.heartbeat_timeout.clone(),
-                                false,
-                                false,
+                                work.activity_type.clone().unwrap_or_default().name,
+                                work.workflow_type.clone().unwrap_or_default().name,
+                                work.heartbeat_timeout.clone()
                             ),
                         );
                         // Only permanently take a permit in the event the poll finished properly
@@ -132,22 +167,27 @@ impl WorkerActivityTasks {
         status: activity_result::Status,
         gateway: &(dyn ServerGatewayApis + Send + Sync),
     ) -> Result<(), CompleteActivityError> {
-        if let Some(is_known_not_found) = self
-            .outstanding_activity_tasks
-            .get(&task_token)
-            .map(|t| t.known_not_found)
-        {
+        if let Some(act_info) = self.outstanding_activity_tasks.get(&task_token) {
+            let act_metrics = self.metrics.with_new_attrs([
+                KeyValue::new(KEY_ACT_TYPE, act_info.activity_type.clone()),
+                KeyValue::new(KEY_WF_TYPE, act_info.workflow_type.clone()),
+            ]);
+            act_metrics.act_execution_latency(act_info.start_time.elapsed());
+
             // No need to report activities which we already know the server doesn't care about
-            let should_remove = if !is_known_not_found {
+            let should_remove = if !act_info.known_not_found {
                 let maybe_net_err = match status {
                     activity_result::Status::Completed(ar::Success { result }) => gateway
                         .complete_activity_task(task_token.clone(), result.map(Into::into))
                         .await
                         .err(),
-                    activity_result::Status::Failed(ar::Failure { failure, .. }) => gateway
-                        .fail_activity_task(task_token.clone(), failure.map(Into::into))
-                        .await
-                        .err(),
+                    activity_result::Status::Failed(ar::Failure { failure }) => {
+                        act_metrics.act_execution_failed();
+                        gateway
+                            .fail_activity_task(task_token.clone(), failure.map(Into::into))
+                            .await
+                            .err()
+                    }
                     activity_result::Status::Cancelled(ar::Cancellation { failure }) => {
                         let details = match failure {
                             Some(Failure {
@@ -182,6 +222,7 @@ impl WorkerActivityTasks {
             } else {
                 true
             };
+            drop(act_info); // TODO: Get rid of dashmap. Deadlocks if we're holding ref still here.
 
             if should_remove
                 && self
