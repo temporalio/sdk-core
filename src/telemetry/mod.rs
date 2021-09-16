@@ -11,8 +11,6 @@ use opentelemetry::{
     KeyValue,
 };
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_prometheus::PrometheusExporter;
-use prometheus::{Encoder, TextEncoder};
 use std::{collections::VecDeque, time::Duration};
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter};
 use url::Url;
@@ -59,7 +57,8 @@ struct GlobalTelemDat {
     metric_push_controller: Option<PushController>,
     core_export_logger: Option<CoreExportLogger>,
     runtime: Option<tokio::runtime::Runtime>,
-    prom_exporter: Option<PrometheusExporter>,
+    // TODO: Expose prometheus metrics directly when requested
+    // prom_exporter: Option<PrometheusExporter>,
 }
 
 /// Initialize tracing subscribers and output. Core [crate::init] calls this, but it may be called
@@ -111,8 +110,8 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<(), anyhow::Erro
                             .install_batch(opentelemetry::runtime::Tokio)?;
 
                         let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-                        // global::set_error_handler(|_| {})?;
 
+                        // TODO: Expose prometheus metrics directly when requested
                         // let promexport = opentelemetry_prometheus::exporter()
                         //     .with_resource(Resource::new(vec![]))
                         //     .init();

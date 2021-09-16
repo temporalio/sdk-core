@@ -23,6 +23,8 @@ pub struct LongPollBuffer<T> {
     /// means unit tests can continue to function in a predictable manner when calling mocks.
     polls_requested: Arc<Semaphore>,
     join_handles: FuturesUnordered<JoinHandle<()>>,
+    /// Called every time the number of pollers is changed
+    num_pollers_changed: Option<Box<dyn Fn(usize) + Send + Sync>>,
 }
 
 impl<T> LongPollBuffer<T>
@@ -31,7 +33,7 @@ where
 {
     pub fn new<FT>(
         poll_fn: impl Fn() -> FT + Send + Sync + 'static,
-        concurrent_pollers: usize,
+        max_pollers: usize,
         buffer_size: usize,
     ) -> Self
     where
@@ -42,7 +44,7 @@ where
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let join_handles = FuturesUnordered::new();
         let pf = Arc::new(poll_fn);
-        for _ in 0..concurrent_pollers {
+        for _ in 0..max_pollers {
             let tx = tx.clone();
             let pf = pf.clone();
             let mut shutdown = shutdown_rx.clone();
@@ -71,7 +73,14 @@ where
             shutdown: shutdown_tx,
             polls_requested,
             join_handles,
+            num_pollers_changed: None,
         }
+    }
+
+    /// Set a function that will be called every time the number of pollers changes.
+    /// TODO: Currently a bit weird, will make more sense once we implement dynamic poller scaling.
+    pub fn set_num_pollers_handler(&mut self, handler: impl Fn(usize) + Send + Sync + 'static) {
+        self.num_pollers_changed = Some(Box::new(handler));
     }
 }
 
@@ -93,8 +102,18 @@ where
     #[instrument(name = "long_poll", level = "trace", skip(self))]
     async fn poll(&self) -> Option<pollers::Result<T>> {
         self.polls_requested.add_permits(1);
+        if let Some(fun) = self.num_pollers_changed.as_ref() {
+            fun(self.polls_requested.available_permits());
+        }
+
         let mut locked = self.buffered_polls.lock().await;
-        (*locked).recv().await
+        let res = (*locked).recv().await;
+
+        if let Some(fun) = self.num_pollers_changed.as_ref() {
+            fun(self.polls_requested.available_permits());
+        }
+
+        res
     }
 
     fn notify_shutdown(&self) {

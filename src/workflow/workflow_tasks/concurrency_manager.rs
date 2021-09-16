@@ -1,14 +1,13 @@
 use crate::{
     errors::WorkflowUpdateError,
     protosext::ValidPollWFTQResponse,
-    telemetry::metrics::{MetricsContext, KEY_WF_TYPE},
+    telemetry::metrics::{workflow_type, MetricsContext},
     workflow::{
         workflow_tasks::{OutstandingActivation, OutstandingTask},
         HistoryUpdate, Result, WFMachinesError, WorkflowManager,
     },
 };
 use futures::future::{BoxFuture, FutureExt};
-use opentelemetry::KeyValue;
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{
     collections::HashMap,
@@ -226,8 +225,7 @@ impl WorkflowConcurrencyManager {
         } else {
             // Create a new workflow machines instance for this workflow, initialize it, and
             // track it.
-            let metrics =
-                parent_metrics.with_new_attrs([KeyValue::new(KEY_WF_TYPE, wf_type.to_string())]);
+            let metrics = parent_metrics.with_new_attrs([workflow_type(wf_type.to_string())]);
             let mut wfm = WorkflowManager::new(
                 history,
                 namespace.to_owned(),

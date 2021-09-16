@@ -1,15 +1,19 @@
 mod activity_heartbeat_manager;
 
-use crate::telemetry::metrics::{MetricsContext, KEY_ACT_TYPE, KEY_WF_TYPE};
 use crate::{
-    pollers::BoxedActPoller, task_token::TaskToken, ActivityHeartbeatError, CompleteActivityError,
-    PollActivityError, ServerGatewayApis,
+    pollers::BoxedActPoller,
+    task_token::TaskToken,
+    telemetry::metrics::{activity_type, workflow_type, MetricsContext},
+    ActivityHeartbeatError, CompleteActivityError, PollActivityError, ServerGatewayApis,
 };
 use activity_heartbeat_manager::ActivityHeartbeatManager;
 use dashmap::DashMap;
-use opentelemetry::KeyValue;
-use std::time::Instant;
-use std::{convert::TryInto, ops::Div, sync::Arc, time::Duration};
+use std::{
+    convert::TryInto,
+    ops::Div,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_result},
@@ -169,13 +173,14 @@ impl WorkerActivityTasks {
     ) -> Result<(), CompleteActivityError> {
         if let Some(act_info) = self.outstanding_activity_tasks.get(&task_token) {
             let act_metrics = self.metrics.with_new_attrs([
-                KeyValue::new(KEY_ACT_TYPE, act_info.activity_type.clone()),
-                KeyValue::new(KEY_WF_TYPE, act_info.workflow_type.clone()),
+                activity_type(act_info.activity_type.clone()),
+                workflow_type(act_info.workflow_type.clone()),
             ]);
             act_metrics.act_execution_latency(act_info.start_time.elapsed());
 
             // No need to report activities which we already know the server doesn't care about
             let should_remove = if !act_info.known_not_found {
+                drop(act_info); // TODO: Get rid of dashmap. If we hold ref across await, bad stuff.
                 let maybe_net_err = match status {
                     activity_result::Status::Completed(ar::Success { result }) => gateway
                         .complete_activity_task(task_token.clone(), result.map(Into::into))
@@ -222,7 +227,6 @@ impl WorkerActivityTasks {
             } else {
                 true
             };
-            drop(act_info); // TODO: Get rid of dashmap. Deadlocks if we're holding ref still here.
 
             if should_remove
                 && self
@@ -231,9 +235,6 @@ impl WorkerActivityTasks {
                     .is_some()
             {
                 self.activities_semaphore.add_permits(1);
-                self.outstanding_activity_tasks
-                    .remove(&task_token)
-                    .map(|x| x.1);
                 self.heartbeat_manager.evict(task_token);
             }
             Ok(())

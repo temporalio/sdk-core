@@ -1,11 +1,11 @@
-use crate::telemetry::metrics::KEY_TASK_QUEUE;
 use crate::{
-    pollers::GatewayRef, telemetry::metrics::MetricsContext, worker::Worker, WorkerConfig,
-    WorkerRegistrationError,
+    pollers::GatewayRef,
+    telemetry::metrics::{task_queue, MetricsContext},
+    worker::Worker,
+    WorkerConfig, WorkerRegistrationError,
 };
 use arc_swap::ArcSwap;
 use futures::future::join_all;
-use opentelemetry::KeyValue;
 use std::{collections::HashMap, ops::Deref, sync::Arc};
 use tokio::sync::Notify;
 
@@ -25,8 +25,7 @@ impl WorkerDispatcher {
         parent_metrics: MetricsContext,
     ) -> Result<(), WorkerRegistrationError> {
         let tq = config.task_queue.clone();
-        let metrics = parent_metrics
-            .with_new_attrs([KeyValue::new(KEY_TASK_QUEUE, config.task_queue.clone())]);
+        let metrics = parent_metrics.with_new_attrs([task_queue(config.task_queue.clone())]);
         let worker = Worker::new(config, sticky_queue, gateway, metrics);
         self.set_worker_for_task_queue(tq, worker)
     }

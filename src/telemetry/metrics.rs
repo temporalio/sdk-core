@@ -8,8 +8,7 @@ use opentelemetry::{
     },
     KeyValue,
 };
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 /// Used to track context associated with metrics, and record/update them
 ///
@@ -115,6 +114,16 @@ impl MetricsContext {
         ACT_EXEC_LATENCY.record(dur.as_millis() as u64, &self.kvs);
     }
 
+    /// A worker was registered
+    pub(crate) fn worker_registered(&self) {
+        WORKER_REGISTERED.add(1, &self.kvs);
+    }
+
+    /// Record current number of pollers. Context should include poller type / task queue tag.
+    pub(crate) fn record_num_pollers(&self, num: usize) {
+        NUM_POLLERS.record(num as u64, &self.kvs);
+    }
+
     /// A workflow task found a cached workflow to run against
     pub(crate) fn sticky_cache_hit(&self) {
         STICKY_CACHE_HIT.add(1, &self.kvs);
@@ -154,10 +163,30 @@ macro_rules! tm {
     };
 }
 
-pub(crate) const KEY_NAMESPACE: &str = "namespace";
-pub(crate) const KEY_WF_TYPE: &str = "workflow_type";
-pub(crate) const KEY_TASK_QUEUE: &str = "task_queue";
-pub(crate) const KEY_ACT_TYPE: &str = "activity_type";
+const KEY_NAMESPACE: &str = "namespace";
+const KEY_WF_TYPE: &str = "workflow_type";
+const KEY_TASK_QUEUE: &str = "task_queue";
+const KEY_ACT_TYPE: &str = "activity_type";
+const KEY_POLLER_TYPE: &str = "poller_type";
+
+pub(crate) fn workflow_poller() -> KeyValue {
+    KeyValue::new(KEY_POLLER_TYPE, "workflow_task")
+}
+pub(crate) fn workflow_sticky_poller() -> KeyValue {
+    KeyValue::new(KEY_POLLER_TYPE, "sticky_workflow_task")
+}
+pub(crate) fn activity_poller() -> KeyValue {
+    KeyValue::new(KEY_POLLER_TYPE, "activity_task")
+}
+pub(crate) fn task_queue(tq: String) -> KeyValue {
+    KeyValue::new(KEY_TASK_QUEUE, tq)
+}
+pub(crate) fn activity_type(ty: String) -> KeyValue {
+    KeyValue::new(KEY_ACT_TYPE, ty)
+}
+pub(crate) fn workflow_type(ty: String) -> KeyValue {
+    KeyValue::new(KEY_WF_TYPE, ty)
+}
 
 tm!(ctr, WF_COMPLETED_COUNTER, "workflow_completed");
 tm!(ctr, WF_CANCELED_COUNTER, "workflow_canceled");
@@ -209,6 +238,11 @@ tm!(
 const ACT_EXEC_LATENCY_NAME: &str = "activity_execution_latency";
 tm!(vr_u64, ACT_EXEC_LATENCY, ACT_EXEC_LATENCY_NAME);
 
+// name kept as worker start for compat with old sdk / what users expect
+tm!(ctr, WORKER_REGISTERED, "worker_start");
+const NUM_POLLERS_NAME: &str = "num_pollers";
+tm!(vr_u64, NUM_POLLERS, NUM_POLLERS_NAME);
+
 tm!(ctr, STICKY_CACHE_HIT, "sticky_cache_hit");
 tm!(ctr, STICKY_CACHE_MISS, "sticky_cache_miss");
 const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
@@ -240,9 +274,16 @@ static WF_LATENCY_MS_BUCKETS: &[f64] = &[
 /// timeout in old SDKs. Here it's a bit different since a WFT may represent multiple activations.
 static WF_TASK_MS_BUCKETS: &[f64] = &[1., 10., 20., 50., 100., 200., 500., 1000.];
 
+/// Activity are generally expected to take at least a little time, and sometimes quite a while,
+/// since they're doing side-effecty things, etc.
+static ACT_EXE_MS_BUCKETS: &[f64] = &[50., 100., 500., 1000., 5000., 10_000., 60_000.];
+
+/// Schedule-to-start latency buckets for both WFT and AT
+static TASK_SCHED_TO_START_MS_BUCKETS: &[f64] = &[100., 500., 1000., 5000., 10_000.];
+
 /// Default buckets. Should never really be used as they will be meaningless for many things, but
 /// broadly it's trying to represent latencies in millis.
-static DEFAULT_BUCKETS: &[f64] = &[50., 100., 500., 1000., 2500., 10_000.];
+static DEFAULT_MS_BUCKETS: &[f64] = &[50., 100., 500., 1000., 2500., 10_000.];
 
 /// Chooses appropriate aggregators for our metrics
 #[derive(Debug)]
@@ -259,6 +300,7 @@ impl AggregatorSelector for SDKAggSelector {
             // Some recorders are just gauges
             match descriptor.name() {
                 STICKY_CACHE_SIZE_NAME => return Some(Arc::new(last_value())),
+                NUM_POLLERS_NAME => return Some(Arc::new(last_value())),
                 _ => (),
             }
 
@@ -267,7 +309,11 @@ impl AggregatorSelector for SDKAggSelector {
                 WF_E2E_LATENCY_NAME => WF_LATENCY_MS_BUCKETS,
                 WF_TASK_EXECUTION_LATENCY_NAME => WF_TASK_MS_BUCKETS,
                 WF_TASK_REPLAY_LATENCY_NAME => WF_TASK_MS_BUCKETS,
-                _ => DEFAULT_BUCKETS,
+                WF_TASK_SCHED_TO_START_LATENCY_NAME | ACT_SCHED_TO_START_LATENCY_NAME => {
+                    TASK_SCHED_TO_START_MS_BUCKETS
+                }
+                ACT_EXEC_LATENCY_NAME => ACT_EXE_MS_BUCKETS,
+                _ => DEFAULT_MS_BUCKETS,
             };
             return Some(Arc::new(histogram(descriptor, buckets)));
         }

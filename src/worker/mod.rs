@@ -14,7 +14,9 @@ use crate::{
     },
     protosext::{legacy_query_failure, ValidPollWFTQResponse, WorkflowTaskCompletion},
     task_token::TaskToken,
-    telemetry::metrics::MetricsContext,
+    telemetry::metrics::{
+        activity_poller, workflow_poller, workflow_sticky_poller, MetricsContext,
+    },
     workflow::{
         workflow_tasks::{
             ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
@@ -82,35 +84,45 @@ impl Worker {
         sg: Arc<GatewayRef>,
         metrics: MetricsContext,
     ) -> Self {
+        metrics.worker_registered();
+
         let max_nonsticky_polls = if sticky_queue_name.is_some() {
             config.max_nonsticky_polls()
         } else {
             config.max_concurrent_wft_polls
         };
         let max_sticky_polls = config.max_sticky_polls();
-        let wf_task_poll_buffer = new_workflow_task_buffer(
+        let wft_metrics = metrics.with_new_attrs([workflow_poller()]);
+        let mut wf_task_poll_buffer = new_workflow_task_buffer(
             sg.gw.clone(),
             config.task_queue.clone(),
             max_nonsticky_polls,
             max_nonsticky_polls * 2,
         );
+        wf_task_poll_buffer.set_num_pollers_handler(move |np| wft_metrics.record_num_pollers(np));
         let sticky_queue_poller = sticky_queue_name.as_ref().map(|sqn| {
-            new_workflow_task_buffer(
+            let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
+            let mut sp = new_workflow_task_buffer(
                 sg.gw.clone(),
                 sqn.clone(),
                 max_sticky_polls,
                 max_sticky_polls * 2,
-            )
+            );
+            sp.set_num_pollers_handler(move |np| sticky_metrics.record_num_pollers(np));
+            sp
         });
         let act_poll_buffer = if config.no_remote_activities {
             None
         } else {
-            Some(Box::from(new_activity_task_buffer(
+            let mut ap = new_activity_task_buffer(
                 sg.gw.clone(),
                 config.task_queue.clone(),
                 config.max_concurrent_at_polls,
                 config.max_concurrent_at_polls * 2,
-            ))
+            );
+            let act_metrics = metrics.with_new_attrs([activity_poller()]);
+            ap.set_num_pollers_handler(move |np| act_metrics.record_num_pollers(np));
+            Some(Box::from(ap)
                 as Box<
                     dyn Poller<PollActivityTaskQueueResponse> + Send + Sync,
                 >)
