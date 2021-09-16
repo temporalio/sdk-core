@@ -3,6 +3,7 @@ use crate::{
     ServerGatewayApis,
 };
 use futures::{prelude::stream::FuturesUnordered, StreamExt};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{fmt::Debug, future::Future, sync::Arc};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
     PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
@@ -25,6 +26,20 @@ pub struct LongPollBuffer<T> {
     join_handles: FuturesUnordered<JoinHandle<()>>,
     /// Called every time the number of pollers is changed
     num_pollers_changed: Option<Box<dyn Fn(usize) + Send + Sync>>,
+    active_pollers: Arc<AtomicUsize>,
+}
+
+struct ActiveCounter<'a>(&'a AtomicUsize);
+impl<'a> ActiveCounter<'a> {
+    fn new(a: &'a AtomicUsize) -> Self {
+        a.fetch_add(1, Ordering::Relaxed);
+        Self(a)
+    }
+}
+impl Drop for ActiveCounter<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 impl<T> LongPollBuffer<T>
@@ -41,6 +56,7 @@ where
     {
         let (tx, rx) = channel(buffer_size);
         let polls_requested = Arc::new(Semaphore::new(0));
+        let active_pollers = Arc::new(AtomicUsize::new(0));
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let join_handles = FuturesUnordered::new();
         let pf = Arc::new(poll_fn);
@@ -49,6 +65,7 @@ where
             let pf = pf.clone();
             let mut shutdown = shutdown_rx.clone();
             let polls_requested = polls_requested.clone();
+            let ap = active_pollers.clone();
             let jh = tokio::spawn(async move {
                 loop {
                     if *shutdown.borrow() {
@@ -58,6 +75,7 @@ where
                         sp = polls_requested.acquire() => sp.expect("Polls semaphore not dropped"),
                         _ = shutdown.changed() => continue,
                     };
+                    let _active_guard = ActiveCounter::new(ap.as_ref());
                     let r = tokio::select! {
                         r = pf() => r,
                         _ = shutdown.changed() => continue,
@@ -74,6 +92,7 @@ where
             polls_requested,
             join_handles,
             num_pollers_changed: None,
+            active_pollers,
         }
     }
 
@@ -103,14 +122,14 @@ where
     async fn poll(&self) -> Option<pollers::Result<T>> {
         self.polls_requested.add_permits(1);
         if let Some(fun) = self.num_pollers_changed.as_ref() {
-            fun(self.polls_requested.available_permits());
+            fun(self.active_pollers.load(Ordering::Relaxed));
         }
 
         let mut locked = self.buffered_polls.lock().await;
         let res = (*locked).recv().await;
 
         if let Some(fun) = self.num_pollers_changed.as_ref() {
-            fun(self.polls_requested.available_permits());
+            fun(self.active_pollers.load(Ordering::Relaxed));
         }
 
         res
