@@ -7,6 +7,7 @@ mod integ_tests {
     use test_utils::NAMESPACE;
     use url::Url;
 
+    mod client_tests;
     mod heartbeat_tests;
     mod polling_tests;
     mod queries_tests;

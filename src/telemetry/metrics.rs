@@ -16,13 +16,21 @@ use std::{sync::Arc, time::Duration};
 /// appropriate k/vs have already been set.
 #[derive(Default, Clone, Debug)]
 pub(crate) struct MetricsContext {
-    kvs: Arc<Vec<KeyValue>>,
     // TODO: Ideally this would hold bound metrics, but using them is basically impossible because
     //   of lifetime issues: https://github.com/open-telemetry/opentelemetry-rust/issues/629
     //   Use once fixed.
+    kvs: Arc<Vec<KeyValue>>,
+    poll_is_long: bool,
 }
 
 impl MetricsContext {
+    fn new(kvs: Vec<KeyValue>) -> Self {
+        Self {
+            kvs: Arc::new(kvs),
+            poll_is_long: false,
+        }
+    }
+
     pub(crate) fn top_level(namespace: String) -> Self {
         Self::new(vec![KeyValue::new(KEY_NAMESPACE, namespace)])
     }
@@ -31,11 +39,14 @@ impl MetricsContext {
     pub(crate) fn with_new_attrs(&self, new_kvs: impl IntoIterator<Item = KeyValue>) -> Self {
         let mut kvs = self.kvs.clone();
         Arc::make_mut(&mut kvs).extend(new_kvs);
-        Self { kvs }
+        Self {
+            kvs,
+            poll_is_long: false,
+        }
     }
 
-    fn new(kvs: Vec<KeyValue>) -> Self {
-        Self { kvs: Arc::new(kvs) }
+    pub(crate) fn set_is_long_poll(&mut self) {
+        self.poll_is_long = true;
     }
 
     /// A workflow task queue poll succeeded
@@ -138,6 +149,33 @@ impl MetricsContext {
     pub(crate) fn cache_size(&self, size: u64) {
         STICKY_CACHE_SIZE.record(size, &self.kvs);
     }
+
+    /// A request to the temporal service was made
+    pub(crate) fn svc_request(&self) {
+        if self.poll_is_long {
+            LONG_SVC_REQUEST.add(1, &self.kvs);
+        } else {
+            SVC_REQUEST.add(1, &self.kvs);
+        }
+    }
+
+    /// A request to the temporal service failed
+    pub(crate) fn svc_request_failed(&self) {
+        if self.poll_is_long {
+            LONG_SVC_REQUEST_FAILED.add(1, &self.kvs);
+        } else {
+            SVC_REQUEST_FAILED.add(1, &self.kvs);
+        }
+    }
+
+    /// Record service request latency
+    pub(crate) fn record_svc_req_latency(&self, dur: Duration) {
+        if self.poll_is_long {
+            LONG_SVC_REQUEST_LATENCY.record(dur.as_millis() as u64, &self.kvs);
+        } else {
+            SVC_REQUEST_LATENCY.record(dur.as_millis() as u64, &self.kvs);
+        }
+    }
 }
 
 lazy_static::lazy_static! {
@@ -168,6 +206,7 @@ const KEY_WF_TYPE: &str = "workflow_type";
 const KEY_TASK_QUEUE: &str = "task_queue";
 const KEY_ACT_TYPE: &str = "activity_type";
 const KEY_POLLER_TYPE: &str = "poller_type";
+const KEY_SVC_METHOD: &str = "operation";
 
 pub(crate) fn workflow_poller() -> KeyValue {
     KeyValue::new(KEY_POLLER_TYPE, "workflow_task")
@@ -186,6 +225,9 @@ pub(crate) fn activity_type(ty: String) -> KeyValue {
 }
 pub(crate) fn workflow_type(ty: String) -> KeyValue {
     KeyValue::new(KEY_WF_TYPE, ty)
+}
+pub(crate) fn svc_operation(op: String) -> KeyValue {
+    KeyValue::new(KEY_SVC_METHOD, op)
 }
 
 tm!(ctr, WF_COMPLETED_COUNTER, "workflow_completed");
@@ -247,6 +289,19 @@ tm!(ctr, STICKY_CACHE_HIT, "sticky_cache_hit");
 tm!(ctr, STICKY_CACHE_MISS, "sticky_cache_miss");
 const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
 tm!(vr_u64, STICKY_CACHE_SIZE, STICKY_CACHE_SIZE_NAME);
+
+tm!(ctr, SVC_REQUEST, "request");
+tm!(ctr, SVC_REQUEST_FAILED, "request_failure");
+const SVC_REQUEST_LATENCY_NAME: &str = "request_latency";
+tm!(vr_u64, SVC_REQUEST_LATENCY, SVC_REQUEST_LATENCY_NAME);
+tm!(ctr, LONG_SVC_REQUEST, "long_request");
+tm!(ctr, LONG_SVC_REQUEST_FAILED, "long_request_failure");
+const LONG_SVC_REQUEST_LATENCY_NAME: &str = "long_request_latency";
+tm!(
+    vr_u64,
+    LONG_SVC_REQUEST_LATENCY,
+    LONG_SVC_REQUEST_LATENCY_NAME
+);
 
 /// Artisanal, handcrafted latency buckets for workflow e2e latency which should expose a useful
 /// set of buckets for < 1 day runtime workflows. Beyond that, this metric probably isn't very

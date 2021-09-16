@@ -3,8 +3,14 @@ use crate::{
     ServerGatewayApis,
 };
 use futures::{prelude::stream::FuturesUnordered, StreamExt};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::{fmt::Debug, future::Future, sync::Arc};
+use std::{
+    fmt::Debug,
+    future::Future,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
     PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
 };
