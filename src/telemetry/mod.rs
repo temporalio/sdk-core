@@ -1,6 +1,11 @@
 pub(crate) mod metrics;
+mod prometheus_server;
 
-use crate::{log_export::CoreExportLogger, telemetry::metrics::SDKAggSelector, CoreLog};
+use crate::{
+    log_export::CoreExportLogger,
+    telemetry::{metrics::SDKAggSelector, prometheus_server::PromServer},
+    CoreLog,
+};
 use itertools::Itertools;
 use log::LevelFilter;
 use once_cell::sync::OnceCell;
@@ -11,7 +16,8 @@ use opentelemetry::{
     KeyValue,
 };
 use opentelemetry_otlp::WithExportConfig;
-use std::{collections::VecDeque, time::Duration};
+use parking_lot::{const_mutex, Mutex};
+use std::{collections::VecDeque, net::SocketAddr, ops::Deref, time::Duration};
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter};
 use url::Url;
 
@@ -19,6 +25,7 @@ const TELEM_SERVICE_NAME: &str = "temporal-core-sdk";
 const LOG_FILTER_ENV_VAR: &str = "TEMPORAL_TRACING_FILTER";
 static DEFAULT_FILTER: &str = "temporal_sdk_core=INFO";
 static GLOBAL_TELEM_DAT: OnceCell<GlobalTelemDat> = OnceCell::new();
+static TELETM_MUTEX: Mutex<()> = const_mutex(());
 
 /// Telemetry configuration options
 #[derive(Debug, Clone)]
@@ -39,6 +46,11 @@ pub struct TelemetryOptions {
     /// Default is INFO. If set to `Off`, the mechanism is disabled entirely (saves on perf).
     /// If set to anything besides `Off`, any console output directly from core is disabled.
     pub log_forwarding_level: LevelFilter,
+    /// If set, prometheus metrics will be exposed directly via an embedded http server bound to
+    /// the provided address. Useful if users would like to collect metrics with prometheus but
+    /// do not want to run an OTel collector. **Note**: If this is set metrics will *not* be sent
+    /// to the OTel collector if it is also set, only traces will be.
+    pub prometheus_export_bind_address: Option<SocketAddr>,
 }
 
 impl Default for TelemetryOptions {
@@ -47,6 +59,7 @@ impl Default for TelemetryOptions {
             otel_collector_url: None,
             tracing_filter: DEFAULT_FILTER.to_string(),
             log_forwarding_level: LevelFilter::Info,
+            prometheus_export_bind_address: None,
         }
     }
 }
@@ -57,8 +70,21 @@ struct GlobalTelemDat {
     metric_push_controller: Option<PushController>,
     core_export_logger: Option<CoreExportLogger>,
     runtime: Option<tokio::runtime::Runtime>,
-    // TODO: Expose prometheus metrics directly when requested
-    // prom_exporter: Option<PrometheusExporter>,
+    prom_srv: Option<PromServer>,
+}
+
+impl GlobalTelemDat {
+    fn init(&'static self) {
+        if let Some(loggr) = &self.core_export_logger {
+            let _ = log::set_logger(loggr);
+        }
+        if let Some(srv) = &self.prom_srv {
+            self.runtime
+                .as_ref()
+                .expect("Telemetry runtime is initted")
+                .spawn(srv.run());
+        }
+    }
 }
 
 /// Initialize tracing subscribers and output. Core [crate::init] calls this, but it may be called
@@ -70,6 +96,12 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<(), anyhow::Erro
     // TODO: Per-layer filtering has been implemented but does not yet support
     //   env-filter. When it does, allow filtering logs/telemetry separately.
 
+    // Ensure we don't pointlessly spawn threads that won't do anything or call telem dat's init 2x
+    let guard = TELETM_MUTEX.lock();
+    if GLOBAL_TELEM_DAT.get().is_some() {
+        return Ok(());
+    }
+
     // This is a bit odd, but functional. It's desirable to create a separate tokio runtime for
     // metrics handling, since tests typically use a single-threaded runtime and initializing
     // pipeline requires us to know if the runtime is single or multithreaded, we will crash
@@ -78,7 +110,10 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<(), anyhow::Erro
     // way which is nice.
     let opts = opts.clone();
     std::thread::spawn(move || {
-        let res = GLOBAL_TELEM_DAT.get_or_try_init::<_, anyhow::Error>(|| {
+        let res = GLOBAL_TELEM_DAT.get_or_try_init::<_, anyhow::Error>(move || {
+            // Ensure closure captures the mutex guard
+            let _ = guard.deref();
+
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .thread_name("telemetry")
                 .worker_threads(2)
@@ -103,6 +138,11 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<(), anyhow::Erro
                 EnvFilter::try_new(filter)
             })?;
 
+            if let Some(addr) = opts.prometheus_export_bind_address.as_ref() {
+                let srv = PromServer::new(*addr)?;
+                globaldat.prom_srv = Some(srv);
+            };
+
             if let Some(otel_url) = opts.otel_collector_url.as_ref() {
                 runtime.block_on(async {
                     let tracer_cfg =
@@ -122,39 +162,22 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<(), anyhow::Erro
 
                     let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
-                    // TODO: Expose prometheus metrics directly when requested
-                    // let promexport = opentelemetry_prometheus::exporter()
-                    //     .with_resource(Resource::new(vec![]))
-                    //     .init();
-                    // globaldat.prom_exporter = Some(promexport);
-                    //
-                    // tokio::spawn(async {
-                    //     let encoder = TextEncoder::new();
-                    //     loop {
-                    //         tokio::time::sleep(Duration::from_millis(100));
-                    //         if let Some(gt) = GLOBAL_TELEM_DAT.get() {
-                    //             let mf = gt.prom_exporter.as_ref().unwrap().registry().gather();
-                    //             let mut buffer = vec![];
-                    //             encoder.encode(&mf, &mut buffer).unwrap();
-                    //             dbg!(String::from_utf8(buffer));
-                    //         }
-                    //     }
-                    // });
-
-                    let metrics = opentelemetry_otlp::new_pipeline()
-                        .metrics(|f| runtime.spawn(f), tokio_interval_stream)
-                        .with_aggregator_selector(SDKAggSelector)
-                        .with_period(Duration::from_secs(1))
-                        .with_exporter(
-                            // No joke exporter builder literally not cloneable for some insane
-                            // reason
-                            opentelemetry_otlp::new_exporter()
-                                .tonic()
-                                .with_endpoint(otel_url.to_string()),
-                        )
-                        .build()?;
-                    global::set_meter_provider(metrics.provider());
-                    globaldat.metric_push_controller = Some(metrics);
+                    if globaldat.prom_srv.is_none() {
+                        let metrics = opentelemetry_otlp::new_pipeline()
+                            .metrics(|f| runtime.spawn(f), tokio_interval_stream)
+                            .with_aggregator_selector(SDKAggSelector)
+                            .with_period(Duration::from_secs(1))
+                            .with_exporter(
+                                // No joke exporter builder literally not cloneable for some insane
+                                // reason
+                                opentelemetry_otlp::new_exporter()
+                                    .tonic()
+                                    .with_endpoint(otel_url.to_string()),
+                            )
+                            .build()?;
+                        global::set_meter_provider(metrics.provider());
+                        globaldat.metric_push_controller = Some(metrics);
+                    }
 
                     let reg = tracing_subscriber::registry()
                         .with(opentelemetry)
@@ -174,15 +197,12 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<(), anyhow::Erro
                 );
                 tracing::subscriber::set_global_default(reg)?;
             };
+
             globaldat.runtime = Some(runtime);
             Ok(globaldat)
         })?;
 
-        if let Some(loggr) = &res.core_export_logger {
-            // If telem init is called twice for some reason, this would error, so just ignore that.
-            let _ = log::set_logger(loggr);
-        }
-
+        res.init();
         Result::<_, anyhow::Error>::Ok(())
     })
     .join()
@@ -210,6 +230,7 @@ pub(crate) fn test_telem_console() {
         otel_collector_url: None,
         tracing_filter: "temporal_sdk_core=DEBUG".to_string(),
         log_forwarding_level: LevelFilter::Off,
+        prometheus_export_bind_address: None,
     })
     .unwrap()
 }
@@ -221,6 +242,7 @@ pub(crate) fn test_telem_collector() {
         otel_collector_url: Some("grpc://localhost:4317".parse().unwrap()),
         tracing_filter: "temporal_sdk_core=DEBUG".to_string(),
         log_forwarding_level: LevelFilter::Off,
+        prometheus_export_bind_address: None,
     })
     .unwrap()
 }

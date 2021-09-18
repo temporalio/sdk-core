@@ -31,7 +31,8 @@ mod test_help;
 
 pub use log_export::CoreLog;
 pub use pollers::{
-    ClientTlsConfig, RetryConfig, ServerGateway, ServerGatewayApis, ServerGatewayOptions, TlsConfig,
+    ClientTlsConfig, RetryConfig, RetryGateway, ServerGateway, ServerGatewayApis,
+    ServerGatewayOptions, TlsConfig,
 };
 pub use telemetry::TelemetryOptions;
 pub use url::Url;

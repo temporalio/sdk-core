@@ -149,6 +149,7 @@ pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn Core>, String)
     (core, starter.get_task_queue().to_string())
 }
 
+// TODO: This should get removed. Pretty pointless now that gateway is exported
 pub async fn with_gw<F: FnOnce(GwApi) -> Fout, Fout: Future>(
     core: &dyn Core,
     fun: F,
@@ -177,9 +178,11 @@ pub fn get_integ_server_options() -> ServerGatewayOptions {
 pub fn get_integ_telem_options() -> TelemetryOptions {
     // TODO: Customize w/ env var
     TelemetryOptions {
-        otel_collector_url: Some("grpc://localhost:4317".parse().unwrap()),
-        tracing_filter: "temporal_sdk_core=DEBUG".to_string(),
+        // otel_collector_url: Some("grpc://localhost:4317".parse().unwrap()),
+        otel_collector_url: None,
+        tracing_filter: "temporal_sdk_core=INFO".to_string(),
         log_forwarding_level: LevelFilter::Off,
+        prometheus_export_bind_address: Some(([127, 0, 0, 1], 3000).into()),
     }
 }
 

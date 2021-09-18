@@ -12,7 +12,6 @@ categories = ["development-tools"]
 
 [lib]
 
-# TODO: Feature flag opentelem stuff
 [dependencies]
 anyhow = "1.0"
 arc-swap = "1.3"
@@ -26,6 +25,7 @@ derive_more = "0.99"
 futures = "0.3"
 futures-retry = "0.6.0"
 http = "0.2"
+hyper = "0.14"
 itertools = "0.10"
 lazy_static = "1.4"
 log = "0.4"
