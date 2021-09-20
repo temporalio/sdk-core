@@ -1,3 +1,0 @@
-[submodule "protos/api_upstream"]
-	path = protos/api_upstream
-	url = git://github.com/temporalio/api.git

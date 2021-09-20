@@ -29,6 +29,7 @@ option java_package = "io.temporal.api.command.v1";
 option java_multiple_files = true;
 option java_outer_classname = "MessageProto";
 option ruby_package = "Temporal::Api::Command::V1";
+option csharp_namespace = "Temporal.Api.Command.V1";
 
 import "google/protobuf/duration.proto";
 

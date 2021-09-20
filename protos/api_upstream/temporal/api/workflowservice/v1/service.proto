@@ -29,6 +29,7 @@ option java_package = "io.temporal.api.workflowservice.v1";
 option java_multiple_files = true;
 option java_outer_classname = "ServiceProto";
 option ruby_package = "Temporal::Api::WorkflowService::V1";
+option csharp_namespace = "Temporal.Api.WorkflowService.V1";
 
 
 import "temporal/api/workflowservice/v1/request_response.proto";
@@ -111,8 +112,10 @@ service WorkflowService {
     // Application is expected to call 'RespondActivityTaskCompleted' or 'RespondActivityTaskFailed' once it is done
     // processing the task.
     // Application also needs to call 'RecordActivityTaskHeartbeat' API within 'heartbeatTimeoutSeconds' interval to
-    // prevent the task from getting timed out.  An event 'ActivityTaskStarted' event is also written to workflow execution
-    // history before the ActivityTask is dispatched to application worker.
+    // prevent the Task from getting timed out.  An in memory event 'ActivityTaskStarted' is also written to mutable state
+    // before the ActivityTask is dispatched to application Worker. 'ActivityTaskStarted' and Activity finish event:
+    // 'ActivityTaskCompleted' / 'ActivityTaskFailed' / 'ActivityTaskTimedout' will both be written to Workflow execution 
+    // history when Activity is finished.
     rpc PollActivityTaskQueue (PollActivityTaskQueueRequest) returns (PollActivityTaskQueueResponse) {
     }
 
