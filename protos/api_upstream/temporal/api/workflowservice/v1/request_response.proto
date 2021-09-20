@@ -29,12 +29,14 @@ option java_package = "io.temporal.api.workflowservice.v1";
 option java_multiple_files = true;
 option java_outer_classname = "RequestResponseProto";
 option ruby_package = "Temporal::Api::WorkflowService::V1";
+option csharp_namespace = "Temporal.Api.WorkflowService.V1";
 
 import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/enums/v1/namespace.proto";
 import "temporal/api/enums/v1/failed_cause.proto";
 import "temporal/api/enums/v1/common.proto";
 import "temporal/api/enums/v1/query.proto";
+import "temporal/api/enums/v1/reset.proto";
 import "temporal/api/enums/v1/task_queue.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/history/v1/message.proto";
@@ -410,6 +412,7 @@ message ResetWorkflowExecutionRequest {
     string reason = 3;
     int64 workflow_task_finish_event_id = 4;
     string request_id = 5;
+    temporal.api.enums.v1.ResetReapplyType reset_reapply_type = 6;
 }
 
 message ResetWorkflowExecutionResponse {

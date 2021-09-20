@@ -29,6 +29,7 @@ option java_package = "io.temporal.api.replication.v1";
 option java_multiple_files = true;
 option java_outer_classname = "MessageProto";
 option ruby_package = "Temporal::Api::Replication::V1";
+option csharp_namespace = "Temporal.Api.Replication.V1";
 
 message ClusterReplicationConfig {
     string cluster_name = 1;

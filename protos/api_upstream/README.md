@@ -1,5 +1,7 @@
 # Temporal proto files  
 
+## How to use
+
 Install as git submodule to the project.
 
 ## License

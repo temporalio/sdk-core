@@ -29,6 +29,7 @@ option java_package = "io.temporal.api.enums.v1";
 option java_multiple_files = true;
 option java_outer_classname = "FailedCauseProto";
 option ruby_package = "Temporal::Api::Enums::V1";
+option csharp_namespace = "Temporal.Api.Enums.V1";
 
 enum WorkflowTaskFailedCause {
     WORKFLOW_TASK_FAILED_CAUSE_UNSPECIFIED = 0;
@@ -55,6 +56,7 @@ enum WorkflowTaskFailedCause {
     WORKFLOW_TASK_FAILED_CAUSE_BAD_BINARY = 21;
     WORKFLOW_TASK_FAILED_CAUSE_SCHEDULE_ACTIVITY_DUPLICATE_ID = 22;
     WORKFLOW_TASK_FAILED_CAUSE_BAD_SEARCH_ATTRIBUTES = 23;
+    WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR = 24;
 }
 
 enum StartChildWorkflowExecutionFailedCause {
