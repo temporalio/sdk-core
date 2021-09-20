@@ -565,8 +565,14 @@ pub mod coresdk {
                     commands,
                 }) => {
                     write!(f, "Success(")?;
+                    let mut written = 0;
                     for c in commands {
-                        write!(f, " {} ", c)?;
+                        write!(f, "{} ", c)?;
+                        written += 1;
+                        if written >= 10 && written < commands.len() {
+                            write!(f, "... {} more", commands.len() - written)?;
+                            break;
+                        }
                     }
                     write!(f, ")")
                 }
@@ -1192,9 +1198,36 @@ pub mod temporal {
 
         pub mod workflowservice {
             pub mod v1 {
-                use std::fmt::{Display, Formatter};
+                use std::{
+                    convert::TryInto,
+                    fmt::{Display, Formatter},
+                    time::{Duration, SystemTime},
+                };
 
                 tonic::include_proto!("temporal.api.workflowservice.v1");
+
+                macro_rules! sched_to_start_impl {
+                    () => {
+                        /// Return the duration of the task schedule time to its start time if both
+                        /// are set and time went forward.
+                        pub fn sched_to_start(&self) -> Option<Duration> {
+                            if let Some((sch, st)) =
+                                self.scheduled_time.clone().zip(self.started_time.clone())
+                            {
+                                let sch: Result<SystemTime, _> = sch.try_into();
+                                let st: Result<SystemTime, _> = st.try_into();
+                                if let (Ok(sch), Ok(st)) = (sch, st) {
+                                    return st.duration_since(sch).ok();
+                                }
+                            }
+                            None
+                        }
+                    };
+                }
+
+                impl PollWorkflowTaskQueueResponse {
+                    sched_to_start_impl!();
+                }
 
                 impl Display for PollWorkflowTaskQueueResponse {
                     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -1234,6 +1267,10 @@ pub mod temporal {
                         writeln!(f, "query: {:#?}", self.0.query)?;
                         writeln!(f, "queries: {:#?}", self.0.queries)
                     }
+                }
+
+                impl PollActivityTaskQueueResponse {
+                    sched_to_start_impl!();
                 }
 
                 impl QueryWorkflowResponse {

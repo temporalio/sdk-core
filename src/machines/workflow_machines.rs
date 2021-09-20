@@ -11,15 +11,17 @@ use crate::{
         ProtoCommand, TemporalStateMachine, WFCommand,
     },
     protosext::HistoryEventExt,
-    telemetry::VecDisplayer,
+    telemetry::{metrics::MetricsContext, VecDisplayer},
     workflow::{CommandID, DrivenWorkflow, HistoryUpdate, WorkflowFetcher},
 };
+use prost_types::TimestampOutOfSystemRangeError;
 use slotmap::SlotMap;
 use std::{
     borrow::{Borrow, BorrowMut},
     collections::{hash_map::DefaultHasher, HashMap, VecDeque},
+    convert::TryInto,
     hash::{Hash, Hasher},
-    time::SystemTime,
+    time::{Duration, Instant, SystemTime},
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -67,6 +69,11 @@ pub(crate) struct WorkflowMachines {
     pub workflow_id: String,
     /// Identifies the current run
     pub run_id: String,
+    /// The time the workflow execution began, as told by the WEStarted event
+    workflow_start_time: Option<SystemTime>,
+    /// The time the workflow execution finished, as determined by when the machines handled
+    /// a terminal workflow command. If this is `Some`, you know the workflow is ended.
+    workflow_end_time: Option<SystemTime>,
     /// The current workflow time if it has been established
     current_wf_time: Option<SystemTime>,
 
@@ -95,6 +102,9 @@ pub(crate) struct WorkflowMachines {
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: DrivenWorkflow,
+
+    /// Metrics context
+    pub metrics: MetricsContext,
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -155,6 +165,12 @@ pub(crate) enum WFMachinesError {
     CacheMiss,
 }
 
+impl From<TimestampOutOfSystemRangeError> for WFMachinesError {
+    fn from(_: TimestampOutOfSystemRangeError) -> Self {
+        WFMachinesError::Fatal("Could not decode timestamp".to_string())
+    }
+}
+
 impl WorkflowMachines {
     pub(crate) fn new(
         namespace: String,
@@ -162,6 +178,7 @@ impl WorkflowMachines {
         run_id: String,
         history: HistoryUpdate,
         driven_wf: DrivenWorkflow,
+        metrics: MetricsContext,
     ) -> Self {
         let replaying = history.previous_started_event_id > 0;
         Self {
@@ -171,9 +188,12 @@ impl WorkflowMachines {
             run_id,
             drive_me: driven_wf,
             replaying,
+            metrics,
             // In an ideal world one could say ..Default::default() here and it'd still work.
             current_started_event_id: 0,
             next_started_event_id: 0,
+            workflow_start_time: None,
+            workflow_end_time: None,
             current_wf_time: None,
             all_machines: Default::default(),
             machines_by_event_id: Default::default(),
@@ -182,6 +202,19 @@ impl WorkflowMachines {
             current_wf_task_commands: Default::default(),
             encountered_change_markers: Default::default(),
         }
+    }
+
+    /// Returns true if workflow has seen a terminal command
+    pub(crate) fn workflow_is_finished(&self) -> bool {
+        self.workflow_end_time.is_some()
+    }
+
+    /// Returns the total time it took to execute the workflow. Returns `None` if workflow is
+    /// incomplete, or time went backwards.
+    pub(crate) fn total_runtime(&self) -> Option<Duration> {
+        self.workflow_start_time
+            .zip(self.workflow_end_time)
+            .and_then(|(st, et)| et.duration_since(st).ok())
     }
 
     pub(crate) async fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
@@ -338,6 +371,10 @@ impl WorkflowMachines {
                 )) = &event.attributes
                 {
                     self.run_id = attrs.original_execution_run_id.clone();
+                    if let Some(st) = event.event_time.as_ref() {
+                        let as_systime: SystemTime = st.clone().try_into()?;
+                        self.workflow_start_time = Some(as_systime);
+                    }
                     // We need to notify the lang sdk that it's time to kick off a workflow
                     self.drive_me.send_job(
                         StartWorkflow {
@@ -461,10 +498,16 @@ impl WorkflowMachines {
             self.drive_me.send_job(job);
         }
         self.prepare_commands()?;
+        if self.workflow_is_finished() {
+            if let Some(rt) = self.total_runtime() {
+                self.metrics.wf_e2e_latency(rt);
+            }
+        }
         Ok(has_new_lang_jobs)
     }
 
-    /// Apply the next entire workflow task from history to these machines.
+    /// Apply the next (unapplied) entire workflow task from history to these machines. Will replay
+    /// any events that need to be replayed until caught up to the newest WFT.
     pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<()> {
         // A much higher-up span (ex: poll) may want this field filled
         tracing::Span::current().record("run_id", &self.run_id.as_str());
@@ -481,6 +524,7 @@ impl WorkflowMachines {
         if events.is_empty() {
             self.replaying = false;
         }
+        let replay_start = Instant::now();
 
         if let Some(last_event) = events.last() {
             if last_event.event_type == EventType::WorkflowTaskStarted as i32 {
@@ -496,6 +540,7 @@ impl WorkflowMachines {
         // Need to reset sticky and trigger another poll.
         if self.current_started_event_id == 0 && first_event_id != 1 && !events.is_empty() {
             debug!("Cache miss.");
+            self.metrics.sticky_cache_miss();
             return Err(WFMachinesError::CacheMiss);
         }
 
@@ -529,6 +574,10 @@ impl WorkflowMachines {
                         patch_id,
                     }));
             }
+        }
+
+        if !self.replaying {
+            self.metrics.wf_task_replay_latency(replay_start.elapsed());
         }
 
         Ok(())
@@ -643,20 +692,20 @@ impl WorkflowMachines {
                     jobs.extend(self.process_cancellation(CommandID::Activity(attrs.seq))?)
                 }
                 WFCommand::CompleteWorkflow(attrs) => {
-                    let cwfm = self.add_new_command_machine(complete_workflow(attrs));
-                    self.current_wf_task_commands.push_back(cwfm);
+                    self.metrics.wf_completed();
+                    self.add_terminal_command(complete_workflow(attrs));
                 }
                 WFCommand::FailWorkflow(attrs) => {
-                    let fwfm = self.add_new_command_machine(fail_workflow(attrs));
-                    self.current_wf_task_commands.push_back(fwfm);
+                    self.metrics.wf_failed();
+                    self.add_terminal_command(fail_workflow(attrs));
                 }
                 WFCommand::ContinueAsNew(attrs) => {
-                    let canm = self.add_new_command_machine(continue_as_new(attrs));
-                    self.current_wf_task_commands.push_back(canm);
+                    self.metrics.wf_continued_as_new();
+                    self.add_terminal_command(continue_as_new(attrs));
                 }
                 WFCommand::CancelWorkflow(attrs) => {
-                    let cancm = self.add_new_command_machine(cancel_workflow(attrs));
-                    self.current_wf_task_commands.push_back(cancm);
+                    self.metrics.wf_canceled();
+                    self.add_terminal_command(cancel_workflow(attrs));
                 }
                 WFCommand::SetPatchMarker(attrs) => {
                     // Do not create commands for change IDs that we have already created commands
@@ -795,6 +844,15 @@ impl WorkflowMachines {
         Ok(*self.id_to_machine.get(&id).ok_or_else(|| {
             WFMachinesError::Fatal(format!("Missing associated machine for {:?}", id))
         })?)
+    }
+
+    fn add_terminal_command<T: TemporalStateMachine + 'static>(
+        &mut self,
+        machine: NewMachineWithCommand<T>,
+    ) {
+        let cwfm = self.add_new_command_machine(machine);
+        self.workflow_end_time = Some(SystemTime::now());
+        self.current_wf_task_commands.push_back(cwfm);
     }
 
     fn add_new_command_machine<T: TemporalStateMachine + 'static>(

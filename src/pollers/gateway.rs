@@ -2,13 +2,16 @@ use crate::{
     pollers::{retry::RetryGateway, Result},
     protosext::WorkflowTaskCompletion,
     task_token::TaskToken,
+    telemetry::metrics::{svc_operation, MetricsContext},
     CoreInitError,
 };
 use backoff::{ExponentialBackoff, SystemClock};
+use futures::{future::BoxFuture, task::Context, FutureExt};
 use std::{
     fmt::{Debug, Formatter},
     ops::Deref,
     sync::Arc,
+    task::Poll,
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
@@ -23,16 +26,20 @@ use temporal_sdk_core_protos::{
     },
 };
 use tonic::{
-    codegen::InterceptedService,
+    body::BoxBody,
+    codegen::{InterceptedService, Service},
     service::Interceptor,
     transport::{Certificate, Channel, Endpoint, Identity},
     Status,
 };
+use tower::ServiceBuilder;
 use url::Url;
 use uuid::Uuid;
 
 #[cfg(test)]
 use futures::Future;
+
+static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivityTaskQueue"];
 
 pub struct GatewayRef {
     pub gw: Arc<dyn ServerGatewayApis + Send + Sync>,
@@ -165,8 +172,11 @@ impl ServerGatewayOptions {
         let channel = Channel::from_shared(self.target_url.to_string())?;
         let channel = self.add_tls_to_channel(channel).await?;
         let channel = channel.connect().await?;
+        let service = ServiceBuilder::new()
+            .layer_fn(|c| GrpcMetricSvc::new(c, MetricsContext::top_level(self.namespace.clone())))
+            .service(channel);
         let interceptor = ServiceCallInterceptor { opts: self.clone() };
-        let service = WorkflowServiceClient::with_interceptor(channel, interceptor);
+        let service = WorkflowServiceClient::with_interceptor(service, interceptor);
         let gateway = ServerGateway {
             service,
             opts: self.clone(),
@@ -208,18 +218,65 @@ pub struct ServiceCallInterceptor {
 }
 
 impl Interceptor for ServiceCallInterceptor {
-    /// This function will get called on each outbound request. Returning a `Status` here will cancel
-    /// the request and have that status returned to the caller.
+    /// This function will get called on each outbound request. Returning a `Status` here will
+    /// cancel the request and have that status returned to the caller.
     fn call(&mut self, mut request: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
-        let timeout = self.opts.long_poll_timeout;
         let metadata = request.metadata_mut();
         metadata.insert(
             "client-name",
             "core-sdk".parse().expect("Static value is parsable"),
         );
         // TODO: Only apply this to long poll requests
-        request.set_timeout(timeout);
+        request.set_timeout(self.opts.long_poll_timeout);
         Ok(request)
+    }
+}
+
+/// Implements metrics functionality for gRPC (really, any http) calls
+#[derive(derive_more::Constructor, Debug, Clone)]
+pub(crate) struct GrpcMetricSvc {
+    inner: Channel,
+    metrics: MetricsContext,
+}
+
+impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
+    type Response = http::Response<tonic::transport::Body>;
+    type Error = tonic::transport::Error;
+    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx).map_err(Into::into)
+    }
+
+    fn call(&mut self, req: http::Request<BoxBody>) -> Self::Future {
+        let metrics = req
+            .uri()
+            .to_string()
+            .rsplitn(2, '/')
+            .next()
+            .map(|method_name| {
+                let mut metrics = self
+                    .metrics
+                    .with_new_attrs([svc_operation(method_name.to_string())]);
+                if LONG_POLL_METHOD_NAMES.contains(&method_name) {
+                    metrics.set_is_long_poll();
+                }
+                metrics.svc_request();
+                metrics
+            });
+        let callfut = self.inner.call(req);
+        async move {
+            let started = Instant::now();
+            let res = callfut.await;
+            if let Some(metrics) = metrics {
+                metrics.record_svc_req_latency(started.elapsed());
+                if res.is_err() {
+                    metrics.svc_request_failed();
+                }
+            }
+            res
+        }
+        .boxed()
     }
 }
 
@@ -227,7 +284,7 @@ impl Interceptor for ServiceCallInterceptor {
 #[derive(Debug)]
 pub struct ServerGateway {
     /// Client for interacting with workflow service
-    pub service: WorkflowServiceClient<InterceptedService<Channel, ServiceCallInterceptor>>,
+    service: WorkflowServiceClient<InterceptedService<GrpcMetricSvc, ServiceCallInterceptor>>,
     /// Options gateway was initialized with
     pub opts: ServerGatewayOptions,
 }

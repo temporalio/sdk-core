@@ -1,9 +1,10 @@
 use futures::{stream::FuturesUnordered, StreamExt};
+use log::LevelFilter;
 use rand::{distributions::Standard, Rng};
 use std::{convert::TryFrom, env, future::Future, sync::Arc, time::Duration};
 use temporal_sdk_core::{
     prototype_rust_sdk::TestRustWorker, Core, CoreInitOptions, CoreInitOptionsBuilder,
-    ServerGatewayApis, ServerGatewayOptions, WorkerConfig, WorkerConfigBuilder,
+    ServerGatewayApis, ServerGatewayOptions, TelemetryOptions, WorkerConfig, WorkerConfigBuilder,
 };
 use temporal_sdk_core_protos::coresdk::{
     workflow_commands::{
@@ -35,6 +36,7 @@ impl CoreWfStarter {
             test_name: test_name.to_owned(),
             core_options: CoreInitOptionsBuilder::default()
                 .gateway_opts(get_integ_server_options())
+                .telemetry_opts(get_integ_telem_options())
                 .build()
                 .unwrap(),
             worker_config: WorkerConfigBuilder::default()
@@ -169,6 +171,15 @@ pub fn get_integ_server_options() -> ServerGatewayOptions {
         target_url: url,
         tls_cfg: None,
         retry_config: Default::default(),
+    }
+}
+
+pub fn get_integ_telem_options() -> TelemetryOptions {
+    // TODO: Customize w/ env var
+    TelemetryOptions {
+        otel_collector_url: Some("grpc://localhost:4317".parse().unwrap()),
+        tracing_filter: "temporal_sdk_core=DEBUG".to_string(),
+        log_forwarding_level: LevelFilter::Off,
     }
 }
 

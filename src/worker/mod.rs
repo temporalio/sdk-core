@@ -3,7 +3,7 @@ mod config;
 mod dispatcher;
 
 pub use crate::worker::config::{WorkerConfig, WorkerConfigBuilder};
-pub use dispatcher::WorkerDispatcher;
+pub(crate) use dispatcher::WorkerDispatcher;
 
 use crate::{
     errors::{CompleteWfError, WorkflowUpdateError},
@@ -15,8 +15,7 @@ use crate::{
     protosext::{legacy_query_failure, ValidPollWFTQResponse, WorkflowTaskCompletion},
     task_token::TaskToken,
     telemetry::metrics::{
-        KEY_NAMESPACE, WORKFLOW_TASK_QUEUE_POLL_EMPTY_COUNTER,
-        WORKFLOW_TASK_QUEUE_POLL_SUCCEED_COUNTER,
+        activity_poller, workflow_poller, workflow_sticky_poller, MetricsContext,
     },
     workflow::{
         workflow_tasks::{
@@ -29,7 +28,6 @@ use crate::{
 };
 use activities::WorkerActivityTasks;
 use futures::{Future, TryFutureExt};
-use opentelemetry::KeyValue;
 use std::{convert::TryInto, sync::Arc};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -75,6 +73,8 @@ pub struct Worker {
     /// Has shutdown been called?
     shutdown_requested: watch::Receiver<bool>,
     shutdown_sender: watch::Sender<bool>,
+
+    metrics: MetricsContext,
 }
 
 impl Worker {
@@ -82,36 +82,47 @@ impl Worker {
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
         sg: Arc<GatewayRef>,
+        metrics: MetricsContext,
     ) -> Self {
+        metrics.worker_registered();
+
         let max_nonsticky_polls = if sticky_queue_name.is_some() {
             config.max_nonsticky_polls()
         } else {
             config.max_concurrent_wft_polls
         };
         let max_sticky_polls = config.max_sticky_polls();
-        let wf_task_poll_buffer = new_workflow_task_buffer(
+        let wft_metrics = metrics.with_new_attrs([workflow_poller()]);
+        let mut wf_task_poll_buffer = new_workflow_task_buffer(
             sg.gw.clone(),
             config.task_queue.clone(),
             max_nonsticky_polls,
             max_nonsticky_polls * 2,
         );
+        wf_task_poll_buffer.set_num_pollers_handler(move |np| wft_metrics.record_num_pollers(np));
         let sticky_queue_poller = sticky_queue_name.as_ref().map(|sqn| {
-            new_workflow_task_buffer(
+            let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
+            let mut sp = new_workflow_task_buffer(
                 sg.gw.clone(),
                 sqn.clone(),
                 max_sticky_polls,
                 max_sticky_polls * 2,
-            )
+            );
+            sp.set_num_pollers_handler(move |np| sticky_metrics.record_num_pollers(np));
+            sp
         });
         let act_poll_buffer = if config.no_remote_activities {
             None
         } else {
-            Some(Box::from(new_activity_task_buffer(
+            let mut ap = new_activity_task_buffer(
                 sg.gw.clone(),
                 config.task_queue.clone(),
                 config.max_concurrent_at_polls,
                 config.max_concurrent_at_polls * 2,
-            ))
+            );
+            let act_metrics = metrics.with_new_attrs([activity_poller()]);
+            ap.set_num_pollers_handler(move |np| act_metrics.record_num_pollers(np));
+            Some(Box::from(ap)
                 as Box<
                     dyn Poller<PollActivityTaskQueueResponse> + Send + Sync,
                 >)
@@ -126,6 +137,7 @@ impl Worker {
             sg,
             wf_task_poll_buffer,
             act_poll_buffer,
+            metrics,
         )
     }
 
@@ -135,6 +147,7 @@ impl Worker {
         sg: Arc<GatewayRef>,
         wft_poller: BoxedWFPoller,
         act_poller: Option<BoxedActPoller>,
+        metrics: MetricsContext,
     ) -> Self {
         let cache_policy = if config.max_cached_workflows == 0 {
             WorkflowCachingPolicy::NonSticky
@@ -150,9 +163,14 @@ impl Worker {
             server_gateway: sg.clone(),
             sticky_name: sticky_queue_name,
             wf_task_poll_buffer: wft_poller,
-            wft_manager: WorkflowTaskManager::new(pan_tx, cache_policy),
+            wft_manager: WorkflowTaskManager::new(pan_tx, cache_policy, metrics.clone()),
             at_task_mgr: act_poller.map(|ap| {
-                WorkerActivityTasks::new(config.max_outstanding_activities, ap, sg.gw.clone())
+                WorkerActivityTasks::new(
+                    config.max_outstanding_activities,
+                    ap,
+                    sg.gw.clone(),
+                    metrics.clone(),
+                )
             }),
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             config,
@@ -161,6 +179,7 @@ impl Worker {
             wfts_drained: wftd_rx,
             wfts_drained_sender: wftd_tx,
             pending_activations_notification_receiver: Mutex::new(pan_rx),
+            metrics,
         }
     }
 
@@ -283,13 +302,7 @@ impl Worker {
 
             match selected_f {
                 Some(work) => {
-                    WORKFLOW_TASK_QUEUE_POLL_SUCCEED_COUNTER.add(
-                        1,
-                        &[KeyValue::new(
-                            KEY_NAMESPACE,
-                            self.server_gateway.options.namespace.clone(),
-                        )],
-                    );
+                    self.metrics.wf_tq_poll_ok();
                     match self.apply_server_work(work).await? {
                         NewWfTaskOutcome::IssueActivation(a) => return Ok(a),
                         NewWfTaskOutcome::TaskBuffered => {
@@ -301,13 +314,7 @@ impl Worker {
                     }
                 }
                 None => {
-                    WORKFLOW_TASK_QUEUE_POLL_EMPTY_COUNTER.add(
-                        1,
-                        &[KeyValue::new(
-                            KEY_NAMESPACE,
-                            self.server_gateway.options.namespace.clone(),
-                        )],
-                    );
+                    self.metrics.wf_tq_poll_empty();
                     debug!("Poll wft timeout");
                 }
             }
@@ -378,7 +385,7 @@ impl Worker {
                 tokio::select! {
                     biased;
 
-                    r = Self::workflow_poll(&self.workflows_semaphore, &self.wf_task_poll_buffer)
+                    r = self.workflow_poll()
                         .map_err(Into::into) => match r {
                          Err(PollWfError::ShutDown) => {},
                         _ => return r,
@@ -390,23 +397,29 @@ impl Worker {
     }
 
     /// Wait until not at the outstanding workflow task limit, and then poll this worker's task
-    /// queue for new workflow tasks. This doesn't take `&self` in order to allow a disjoint borrow
+    /// queue for new workflow tasks.
     ///
     /// Returns `Ok(None)` in the event of a poll timeout
-    async fn workflow_poll(
-        sem: &Semaphore,
-        wf_poller: &BoxedWFPoller,
-    ) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
-        let sem = sem
+    async fn workflow_poll(&self) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
+        let sem = self
+            .workflows_semaphore
             .acquire()
             .await
             .expect("outstanding workflow tasks semaphore not dropped");
 
-        let res = wf_poller.poll().await.ok_or(PollWfError::ShutDown)??;
+        let res = self
+            .wf_task_poll_buffer
+            .poll()
+            .await
+            .ok_or(PollWfError::ShutDown)??;
 
         if res == PollWorkflowTaskQueueResponse::default() {
             // We get the default proto in the event that the long poll times out.
             return Ok(None);
+        }
+
+        if let Some(dur) = res.sched_to_start() {
+            self.metrics.wf_task_sched_to_start_latency(dur);
         }
 
         let work: ValidPollWFTQResponse = res
@@ -640,10 +653,7 @@ impl WorkerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        pollers::MockServerGatewayApis,
-        test_help::{fake_sg_opts, mock_poller_from_resps},
-    };
+    use crate::{pollers::MockServerGatewayApis, test_help::fake_sg_opts};
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 
     #[tokio::test]
@@ -659,21 +669,27 @@ mod tests {
             .max_outstanding_activities(5usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, None, Arc::new(gwref));
+        let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
         assert_eq!(worker.activity_poll().await.unwrap(), None);
         assert_eq!(worker.at_task_mgr.unwrap().remaining_activity_capacity(), 5);
     }
 
     #[tokio::test]
     async fn workflow_timeouts_dont_eat_permits() {
-        let mock_poller =
-            mock_poller_from_resps(vec![PollWorkflowTaskQueueResponse::default()].into());
-        let sem = Semaphore::new(2);
-        assert_eq!(
-            Worker::workflow_poll(&sem, &mock_poller).await.unwrap(),
-            None
-        );
-        assert_eq!(sem.available_permits(), 2);
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_poll_workflow_task()
+            .returning(|_| Ok(PollWorkflowTaskQueueResponse::default()));
+        let gwref = GatewayRef::new(Arc::new(mock_gateway), fake_sg_opts());
+
+        let cfg = WorkerConfigBuilder::default()
+            .task_queue("whatever")
+            .max_outstanding_workflow_tasks(5usize)
+            .build()
+            .unwrap();
+        let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
+        assert_eq!(worker.workflow_poll().await.unwrap(), None);
+        assert_eq!(worker.workflows_semaphore.available_permits(), 5);
     }
 
     #[tokio::test]
@@ -689,18 +705,27 @@ mod tests {
             .max_outstanding_activities(5usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, None, Arc::new(gwref));
+        let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
         assert!(worker.activity_poll().await.is_err());
         assert_eq!(worker.at_task_mgr.unwrap().remaining_activity_capacity(), 5);
     }
 
     #[tokio::test]
     async fn workflow_errs_dont_eat_permits() {
-        let mock_poller = mock_poller_from_resps(vec![].into());
-        let sem = Semaphore::new(2);
-        // Will immediately be an error - no responses
-        assert!(Worker::workflow_poll(&sem, &mock_poller).await.is_err());
-        assert_eq!(sem.available_permits(), 2);
+        let mut mock_gateway = MockServerGatewayApis::new();
+        mock_gateway
+            .expect_poll_workflow_task()
+            .returning(|_| Err(tonic::Status::internal("ahhh")));
+        let gwref = GatewayRef::new(Arc::new(mock_gateway), fake_sg_opts());
+
+        let cfg = WorkerConfigBuilder::default()
+            .task_queue("whatever")
+            .max_outstanding_workflow_tasks(5usize)
+            .build()
+            .unwrap();
+        let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
+        assert!(worker.workflow_poll().await.is_err());
+        assert_eq!(worker.workflows_semaphore.available_permits(), 5);
     }
 
     #[test]

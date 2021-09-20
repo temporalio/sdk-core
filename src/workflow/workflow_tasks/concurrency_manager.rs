@@ -1,6 +1,7 @@
 use crate::{
     errors::WorkflowUpdateError,
     protosext::ValidPollWFTQResponse,
+    telemetry::metrics::{workflow_type, MetricsContext},
     workflow::{
         workflow_tasks::{OutstandingActivation, OutstandingTask},
         HistoryUpdate, Result, WFMachinesError, WorkflowManager,
@@ -22,9 +23,10 @@ pub(crate) struct WorkflowConcurrencyManager {
 }
 
 struct ManagedRun {
-    wfm: Mutex<Option<WorkflowManager>>,
+    wfm: Mutex<WorkflowManager>,
     wft: Option<OutstandingTask>,
     activation: Option<OutstandingActivation>,
+    metrics: MetricsContext,
     /// If set, it indicates there is a buffered poll response from the server that applies to this
     /// run. This can happen when lang takes too long to complete a task and the task times out, for
     /// example. Upon next completion, the buffered response will be removed and can be made ready
@@ -33,11 +35,12 @@ struct ManagedRun {
 }
 
 impl ManagedRun {
-    fn new(wfm: WorkflowManager) -> Self {
+    fn new(wfm: WorkflowManager, metrics: MetricsContext) -> Self {
         Self {
-            wfm: Mutex::new(Some(wfm)),
+            wfm: Mutex::new(wfm),
             wft: None,
             activation: None,
+            metrics,
             buffered_resp: None,
         }
     }
@@ -101,6 +104,22 @@ impl WorkflowConcurrencyManager {
         }
     }
 
+    /// Fetch metrics context for a run
+    pub(crate) fn run_metrics(
+        &self,
+        run_id: &str,
+    ) -> Option<impl Deref<Target = MetricsContext> + '_> {
+        let readlock = self.runs.read();
+        if readlock.get(run_id).is_some() {
+            Some(RwLockReadGuard::map(readlock, |hm| {
+                // Unwraps are safe because we hold the lock and just ensured run is in the map
+                &hm.get(run_id).unwrap().metrics
+            }))
+        } else {
+            None
+        }
+    }
+
     /// Stores some work if there is any outstanding WFT or activation for the run. If there was
     /// not, returns the work back out inside the option.
     pub fn buffer_resp_if_outstanding_work(
@@ -132,12 +151,19 @@ impl WorkflowConcurrencyManager {
         Ok(())
     }
 
-    pub fn delete_wft(&self, run_id: &str) -> Option<OutstandingTask> {
-        if let Ok(ot) = self.get_task_mut(run_id).as_deref_mut() {
-            ot.take()
+    /// Indicate it's finished and remove any outstanding workflow task associated with the run
+    pub fn complete_wft(&self, run_id: &str) -> Option<OutstandingTask> {
+        let retme = if let Ok(ot) = self.get_task_mut(run_id).as_deref_mut() {
+            (*ot).take()
         } else {
             None
+        };
+        if let Some(ot) = &retme {
+            if let Some(m) = self.run_metrics(run_id) {
+                m.wf_task_latency(ot.start_time.elapsed());
+            }
         }
+        retme
     }
 
     pub fn insert_activation(
@@ -171,14 +197,16 @@ impl WorkflowConcurrencyManager {
         self.runs.read().get(run_id).is_some()
     }
 
-    /// Create or update some workflow's machines. `workflow_id` and `namespace` are only used if
-    /// this call creates the machines for the first time.
+    /// Create or update some workflow's machines. Borrowed arguments are cloned in the case of a
+    /// new workflow instance.
     pub async fn create_or_update(
         &self,
         run_id: &str,
         history: HistoryUpdate,
-        workflow_id: String,
-        namespace: String,
+        workflow_id: &str,
+        namespace: &str,
+        wf_type: &str,
+        parent_metrics: &MetricsContext,
     ) -> Result<WfActivation> {
         let span = debug_span!("create_or_update machines", %run_id);
 
@@ -187,6 +215,7 @@ impl WorkflowConcurrencyManager {
                 .access(run_id, move |wfm: &mut WorkflowManager| {
                     async move {
                         let _enter = span.enter();
+                        wfm.machines.metrics.sticky_cache_hit();
                         wfm.feed_history_from_server(history).await
                     }
                     .boxed()
@@ -196,7 +225,14 @@ impl WorkflowConcurrencyManager {
         } else {
             // Create a new workflow machines instance for this workflow, initialize it, and
             // track it.
-            let mut wfm = WorkflowManager::new(history, namespace, workflow_id, run_id.to_owned());
+            let metrics = parent_metrics.with_new_attrs([workflow_type(wf_type.to_string())]);
+            let mut wfm = WorkflowManager::new(
+                history,
+                namespace.to_owned(),
+                workflow_id.to_owned(),
+                run_id.to_owned(),
+                metrics.clone(),
+            );
             match wfm.get_next_activation().await {
                 Ok(activation) => {
                     if activation.jobs.is_empty() {
@@ -206,7 +242,7 @@ impl WorkflowConcurrencyManager {
                     } else {
                         self.runs
                             .write()
-                            .insert(run_id.to_string(), ManagedRun::new(wfm));
+                            .insert(run_id.to_string(), ManagedRun::new(wfm, metrics));
                         Ok(activation)
                     }
                 }
@@ -228,12 +264,7 @@ impl WorkflowConcurrencyManager {
         // we never access the machines for the same run simultaneously anyway. This should all
         // get fixed with a generally different approach which moves the runs inside workers.
         let mut wfm_mutex = m.wfm.lock();
-        let mut wfm = wfm_mutex
-            .take()
-            .expect("Machine cannot possibly be accessed simultaneously");
-        let res = mutator(&mut wfm).await;
-        // Reinsert machine behind lock
-        let _ = wfm_mutex.insert(wfm);
+        let res = mutator(&mut wfm_mutex).await;
 
         res
     }
@@ -275,8 +306,10 @@ mod tests {
             .create_or_update(
                 "some_run_id",
                 HistoryUpdate::new_from_events(vec![], 0),
-                "fake_wf_id".to_string(),
-                "fake_namespace".to_string(),
+                "fake_wf_id",
+                "fake_namespace",
+                "fake_wf_type",
+                &Default::default(),
             )
             .await;
         // Should whine that the machines have nothing to do (history empty)

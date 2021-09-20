@@ -10,6 +10,7 @@ use crate::{
     pollers::GatewayRef,
     protosext::{ValidPollWFTQResponse, WfActivationExt},
     task_token::TaskToken,
+    telemetry::metrics::MetricsContext,
     workflow::{
         workflow_tasks::{
             cache_manager::WorkflowCacheManager, concurrency_manager::WorkflowConcurrencyManager,
@@ -20,7 +21,7 @@ use crate::{
 use crossbeam::queue::SegQueue;
 use futures::FutureExt;
 use parking_lot::Mutex;
-use std::{fmt::Debug, ops::DerefMut};
+use std::{fmt::Debug, ops::DerefMut, time::Instant};
 use temporal_sdk_core_protos::coresdk::{
     workflow_activation::{
         create_evict_activation, create_query_activation, wf_activation_job, QueryWorkflow,
@@ -51,6 +52,8 @@ pub struct WorkflowTaskManager {
     // TODO: Also should be moved inside concurrency manager, but there is some complexity around
     //   how inserts to it happen that requires a little thought (or a custom LRU impl)
     cache_manager: Mutex<WorkflowCacheManager>,
+
+    metrics: MetricsContext,
 }
 
 #[derive(Clone, Debug)]
@@ -59,6 +62,7 @@ pub(crate) struct OutstandingTask {
     /// If set the outstanding task has query from the old `query` field which must be fulfilled
     /// upon finishing replay
     pub legacy_query: Option<QueryWorkflow>,
+    start_time: Instant,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -89,7 +93,6 @@ impl OutstandingActivation {
 pub struct WorkflowTaskInfo {
     pub task_token: TaskToken,
     pub attempt: u32,
-    pub task_queue: String,
 }
 
 #[derive(Debug, derive_more::From)]
@@ -146,13 +149,15 @@ impl WorkflowTaskManager {
     pub(crate) fn new(
         pending_activations_notifier: watch::Sender<bool>,
         eviction_policy: WorkflowCachingPolicy,
+        metrics: MetricsContext,
     ) -> Self {
         Self {
             workflow_machines: WorkflowConcurrencyManager::new(),
             pending_activations: Default::default(),
             ready_buffered_wft: Default::default(),
             pending_activations_notifier,
-            cache_manager: Mutex::new(WorkflowCacheManager::new(eviction_policy)),
+            cache_manager: Mutex::new(WorkflowCacheManager::new(eviction_policy, metrics.clone())),
+            metrics,
         }
     }
 
@@ -248,6 +253,7 @@ impl WorkflowTaskManager {
             history_length = %work.history.events.len(),
             "Applying new workflow task from server"
         );
+        let task_start_time = Instant::now();
 
         // Check if there is a legacy query we either need to immediately issue an activation for
         // (if there is no more replay work to do) or we need to store for later answering.
@@ -282,7 +288,11 @@ impl WorkflowTaskManager {
 
         self.workflow_machines.insert_wft(
             &next_activation.run_id,
-            OutstandingTask { info, legacy_query },
+            OutstandingTask {
+                info,
+                legacy_query,
+                start_time: task_start_time,
+            },
         )?;
 
         if !next_activation.jobs.is_empty() {
@@ -404,6 +414,9 @@ impl WorkflowTaskManager {
             );
             return FailedActivationOutcome::NoReport;
         };
+        if let Some(m) = self.workflow_machines.run_metrics(run_id) {
+            m.wf_task_failed();
+        }
         // If the outstanding activation is a legacy query task, report that we need to fail it
         if let Some(OutstandingActivation::LegacyQuery) =
             self.workflow_machines.get_activation(run_id)
@@ -438,7 +451,6 @@ impl WorkflowTaskManager {
 
         let wft_info = WorkflowTaskInfo {
             attempt: poll_wf_resp.attempt,
-            task_queue: poll_wf_resp.task_queue,
             task_token: poll_wf_resp.task_token,
         };
 
@@ -456,8 +468,10 @@ impl WorkflowTaskManager {
                     ),
                     poll_wf_resp.previous_started_event_id,
                 ),
-                poll_wf_resp.workflow_execution.workflow_id.clone(),
-                gateway.options.namespace.clone(),
+                &poll_wf_resp.workflow_execution.workflow_id,
+                &gateway.options.namespace,
+                &poll_wf_resp.workflow_type,
+                &self.metrics,
             )
             .await
         {
@@ -539,7 +553,7 @@ impl WorkflowTaskManager {
 
             // The evict may or may not have already done this, but even when we aren't evicting
             // we want to clear the outstanding workflow task since it's now complete.
-            return Ok(self.workflow_machines.delete_wft(run_id).is_some());
+            return Ok(self.workflow_machines.complete_wft(run_id).is_some());
         }
         Ok(false)
     }

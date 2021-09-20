@@ -8,11 +8,12 @@ edition = "2018"
 
 [dependencies]
 async-trait = "0.1"
-futures = "0.3"
-temporal-sdk-core = { path = ".." }
-rand = "0.8"
-url = "2.2"
 base64 = "0.13"
+futures = "0.3"
+log = "0.4"
+rand = "0.8"
+temporal-sdk-core = { path = ".." }
+url = "2.2"
 
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"

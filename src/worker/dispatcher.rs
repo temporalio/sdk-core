@@ -1,4 +1,9 @@
-use crate::{pollers::GatewayRef, worker::Worker, WorkerConfig, WorkerRegistrationError};
+use crate::{
+    pollers::GatewayRef,
+    telemetry::metrics::{task_queue, MetricsContext},
+    worker::Worker,
+    WorkerConfig, WorkerRegistrationError,
+};
 use arc_swap::ArcSwap;
 use futures::future::join_all;
 use std::{collections::HashMap, ops::Deref, sync::Arc};
@@ -6,7 +11,7 @@ use tokio::sync::Notify;
 
 /// Allows access to workers by task queue name
 #[derive(Default)]
-pub struct WorkerDispatcher {
+pub(crate) struct WorkerDispatcher {
     /// Maps task queue names to workers
     workers: ArcSwap<HashMap<String, WorkerRefCt>>,
 }
@@ -17,9 +22,11 @@ impl WorkerDispatcher {
         config: WorkerConfig,
         sticky_queue: Option<String>,
         gateway: Arc<GatewayRef>,
+        parent_metrics: MetricsContext,
     ) -> Result<(), WorkerRegistrationError> {
         let tq = config.task_queue.clone();
-        let worker = Worker::new(config, sticky_queue, gateway);
+        let metrics = parent_metrics.with_new_attrs([task_queue(config.task_queue.clone())]);
+        let worker = Worker::new(config, sticky_queue, gateway, metrics);
         self.set_worker_for_task_queue(tq, worker)
     }
 

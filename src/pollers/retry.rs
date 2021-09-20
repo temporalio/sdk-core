@@ -23,6 +23,34 @@ pub struct RetryGateway<SG> {
     retry_config: RetryConfig,
 }
 
+impl<SG> RetryGateway<SG> {
+    pub fn new(gateway: SG, retry_config: RetryConfig) -> Self {
+        Self {
+            gateway,
+            retry_config,
+        }
+    }
+}
+
+impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
+    async fn call_with_retry<R, F, Fut>(&self, factory: F) -> Result<R>
+    where
+        F: Fn() -> Fut + Unpin,
+        Fut: Future<Output = Result<R>>,
+    {
+        Ok(FutureRetry::new(
+            factory,
+            TonicErrorHandler::new(
+                self.retry_config.clone().into(),
+                self.retry_config.max_retries,
+            ),
+        )
+        .await
+        .map_err(|(e, _attempt)| e)?
+        .0)
+    }
+}
+
 #[derive(Debug)]
 pub struct TonicErrorHandler {
     backoff: ExponentialBackoff,
@@ -52,15 +80,6 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
             }
         } else {
             RetryPolicy::ForwardError(e)
-        }
-    }
-}
-
-impl<SG> RetryGateway<SG> {
-    pub fn new(gateway: SG, retry_config: RetryConfig) -> Self {
-        Self {
-            gateway,
-            retry_config,
         }
     }
 }
@@ -286,24 +305,5 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse> {
         let factory = move || self.gateway.list_namespaces();
         self.call_with_retry(factory).await
-    }
-}
-
-impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
-    async fn call_with_retry<R, F, Fut>(&self, factory: F) -> Result<R>
-    where
-        F: Fn() -> Fut + Unpin,
-        Fut: Future<Output = Result<R>>,
-    {
-        Ok(FutureRetry::new(
-            factory,
-            TonicErrorHandler::new(
-                self.retry_config.clone().into(),
-                self.retry_config.max_retries,
-            ),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
     }
 }

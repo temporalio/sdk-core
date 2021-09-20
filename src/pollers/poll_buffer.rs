@@ -3,7 +3,14 @@ use crate::{
     ServerGatewayApis,
 };
 use futures::{prelude::stream::FuturesUnordered, StreamExt};
-use std::{fmt::Debug, future::Future, sync::Arc};
+use std::{
+    fmt::Debug,
+    future::Future,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
     PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
 };
@@ -23,6 +30,22 @@ pub struct LongPollBuffer<T> {
     /// means unit tests can continue to function in a predictable manner when calling mocks.
     polls_requested: Arc<Semaphore>,
     join_handles: FuturesUnordered<JoinHandle<()>>,
+    /// Called every time the number of pollers is changed
+    num_pollers_changed: Option<Box<dyn Fn(usize) + Send + Sync>>,
+    active_pollers: Arc<AtomicUsize>,
+}
+
+struct ActiveCounter<'a>(&'a AtomicUsize);
+impl<'a> ActiveCounter<'a> {
+    fn new(a: &'a AtomicUsize) -> Self {
+        a.fetch_add(1, Ordering::Relaxed);
+        Self(a)
+    }
+}
+impl Drop for ActiveCounter<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 impl<T> LongPollBuffer<T>
@@ -31,7 +54,7 @@ where
 {
     pub fn new<FT>(
         poll_fn: impl Fn() -> FT + Send + Sync + 'static,
-        concurrent_pollers: usize,
+        max_pollers: usize,
         buffer_size: usize,
     ) -> Self
     where
@@ -39,14 +62,16 @@ where
     {
         let (tx, rx) = channel(buffer_size);
         let polls_requested = Arc::new(Semaphore::new(0));
+        let active_pollers = Arc::new(AtomicUsize::new(0));
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let join_handles = FuturesUnordered::new();
         let pf = Arc::new(poll_fn);
-        for _ in 0..concurrent_pollers {
+        for _ in 0..max_pollers {
             let tx = tx.clone();
             let pf = pf.clone();
             let mut shutdown = shutdown_rx.clone();
             let polls_requested = polls_requested.clone();
+            let ap = active_pollers.clone();
             let jh = tokio::spawn(async move {
                 loop {
                     if *shutdown.borrow() {
@@ -56,6 +81,7 @@ where
                         sp = polls_requested.acquire() => sp.expect("Polls semaphore not dropped"),
                         _ = shutdown.changed() => continue,
                     };
+                    let _active_guard = ActiveCounter::new(ap.as_ref());
                     let r = tokio::select! {
                         r = pf() => r,
                         _ = shutdown.changed() => continue,
@@ -71,7 +97,15 @@ where
             shutdown: shutdown_tx,
             polls_requested,
             join_handles,
+            num_pollers_changed: None,
+            active_pollers,
         }
+    }
+
+    /// Set a function that will be called every time the number of pollers changes.
+    /// TODO: Currently a bit weird, will make more sense once we implement dynamic poller scaling.
+    pub fn set_num_pollers_handler(&mut self, handler: impl Fn(usize) + Send + Sync + 'static) {
+        self.num_pollers_changed = Some(Box::new(handler));
     }
 }
 
@@ -93,8 +127,18 @@ where
     #[instrument(name = "long_poll", level = "trace", skip(self))]
     async fn poll(&self) -> Option<pollers::Result<T>> {
         self.polls_requested.add_permits(1);
+        if let Some(fun) = self.num_pollers_changed.as_ref() {
+            fun(self.active_pollers.load(Ordering::Relaxed));
+        }
+
         let mut locked = self.buffered_polls.lock().await;
-        (*locked).recv().await
+        let res = (*locked).recv().await;
+
+        if let Some(fun) = self.num_pollers_changed.as_ref() {
+            fun(self.active_pollers.load(Ordering::Relaxed));
+        }
+
+        res
     }
 
     fn notify_shutdown(&self) {
