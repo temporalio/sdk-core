@@ -29,6 +29,7 @@ option java_package = "io.temporal.api.failure.v1";
 option java_multiple_files = true;
 option java_outer_classname = "MessageProto";
 option ruby_package = "Temporal::Api::Failure::V1";
+option csharp_namespace = "Temporal.Api.Failure.V1";
 
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/enums/v1/workflow.proto";

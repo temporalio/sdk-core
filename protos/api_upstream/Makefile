@@ -1,7 +1,9 @@
 $(VERBOSE).SILENT:
 ############################# Main targets #############################
-# Install everything, run all linters, and compile proto files.
-install: grpc-install api-linter-install buf-install proto
+ci-build: install proto
+
+# Install dependencies.
+install: grpc-install api-linter-install buf-install
 
 # Run all linters and compile proto files.
 proto: grpc
@@ -43,21 +45,21 @@ fix-path:
 ##### Plugins & tools #####
 grpc-install: gogo-protobuf-install
 	printf $(COLOR) "Install/update gRPC plugins..."
-	GO111MODULE=on go get google.golang.org/grpc@v1.34.0
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.1.0
 
 gogo-protobuf-install: go-protobuf-install
-	go get github.com/temporalio/gogo-protobuf/protoc-gen-gogoslick
+	GO111MODULE=off go get github.com/temporalio/gogo-protobuf/protoc-gen-gogoslick
 
 go-protobuf-install:
-	GO111MODULE=on go get github.com/golang/protobuf/protoc-gen-go@v1.4.3
+	go install github.com/golang/protobuf/protoc-gen-go@v1.4.3
 
 api-linter-install:
 	printf $(COLOR) "Install/update api-linter..."
-	GO111MODULE=on go get github.com/googleapis/api-linter/cmd/api-linter@v1.10.0
+	go install github.com/googleapis/api-linter/cmd/api-linter@v1.22.0
 
 buf-install:
 	printf $(COLOR) "Install/update buf..."
-	GO111MODULE=on go get github.com/bufbuild/buf/cmd/buf@v0.33.0
+	go install github.com/bufbuild/buf/cmd/buf@v0.43.2
 
 ##### Linters #####
 api-linter:
@@ -66,11 +68,11 @@ api-linter:
 
 buf-lint:
 	printf $(COLOR) "Run buf linter..."
-	(cd $(PROTO_ROOT) && buf check lint)
+	(cd $(PROTO_ROOT) && buf lint)
 
 buf-breaking:
-	@printf $(COLOR) "Run buf breaking changes check against master branch..."
-	@(cd $(PROTO_ROOT) && buf check breaking --against '.git#branch=master')
+	@printf $(COLOR) "Run buf breaking changes check against master branch..."	
+	@(cd $(PROTO_ROOT) && buf breaking --against '.git#branch=master')
 
 ##### Clean #####
 clean:

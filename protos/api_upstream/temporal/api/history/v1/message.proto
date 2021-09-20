@@ -29,6 +29,7 @@ option java_package = "io.temporal.api.history.v1";
 option java_multiple_files = true;
 option java_outer_classname = "MessageProto";
 option ruby_package = "Temporal::Api::History::V1";
+option csharp_namespace = "Temporal.Api.History.V1";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
@@ -56,6 +57,7 @@ message WorkflowExecutionStartedEventAttributes {
     google.protobuf.Duration workflow_run_timeout = 8 [(gogoproto.stdduration) = true];
     // Timeout of a single workflow task.
     google.protobuf.Duration workflow_task_timeout = 9 [(gogoproto.stdduration) = true];
+    // Run id of previous ContinueAsNew or retry or cron execution.
     string continued_execution_run_id = 10;
     temporal.api.enums.v1.ContinueAsNewInitiator initiator = 11;
     temporal.api.failure.v1.Failure continued_failure = 12;
@@ -81,16 +83,22 @@ message WorkflowExecutionStartedEventAttributes {
 message WorkflowExecutionCompletedEventAttributes {
     temporal.api.common.v1.Payloads result = 1;
     int64 workflow_task_completed_event_id = 2;
+    // If another run is started by cron, this contains the new run id.
+    string new_execution_run_id = 3;
 }
 
 message WorkflowExecutionFailedEventAttributes {
     temporal.api.failure.v1.Failure failure = 1;
     temporal.api.enums.v1.RetryState retry_state = 2;
     int64 workflow_task_completed_event_id = 3;
+    // If another run is started by cron or retry, this contains the new run id.
+    string new_execution_run_id = 4;
 }
 
 message WorkflowExecutionTimedOutEventAttributes {
     temporal.api.enums.v1.RetryState retry_state = 1;
+    // If another run is started by cron or retry, this contains the new run id.
+    string new_execution_run_id = 2;
 }
 
 message WorkflowExecutionContinuedAsNewEventAttributes {

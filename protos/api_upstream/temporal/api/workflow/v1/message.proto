@@ -29,6 +29,7 @@ option java_package = "io.temporal.api.workflow.v1";
 option java_multiple_files = true;
 option java_outer_classname = "MessageProto";
 option ruby_package = "Temporal::Api::Workflow::V1";
+option csharp_namespace = "Temporal.Api.Workflow.V1";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
@@ -54,6 +55,7 @@ message WorkflowExecutionInfo {
     temporal.api.common.v1.SearchAttributes search_attributes = 11;
     ResetPoints auto_reset_points = 12;
     string task_queue = 13;
+    int64 state_transition_count = 14;
 }
 
 message WorkflowExecutionConfig {

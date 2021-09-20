@@ -31,6 +31,7 @@ option java_package = "io.temporal.api.errordetails.v1";
 option java_multiple_files = true;
 option java_outer_classname = "MessageProto";
 option ruby_package = "Temporal::Api::ErrorDetails::V1";
+option csharp_namespace = "Temporal.Api.ErrorDetails.V1";
 
 message NotFoundFailure {
     string current_cluster = 1;
@@ -66,4 +67,8 @@ message CancellationAlreadyRequestedFailure {
 }
 
 message QueryFailedFailure {
+}
+
+message PermissionDeniedFailure {
+    string reason = 1;
 }
