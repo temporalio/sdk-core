@@ -1,0 +1,27 @@
+version: '3.5'
+
+services:
+  unit-test:
+    build:
+      context: ../../
+      dockerfile: .buildkite/docker/Dockerfile
+    security_opt:
+      - seccomp:unconfined
+    command: /bin/sh -c ".buildkite/docker/build.sh"
+    environment:
+      - "USER=unittest"
+    volumes:
+      - "../../:/sdk-core"
+
+  integ-test:
+    build:
+      context: ../../
+      dockerfile: .buildkite/docker/Dockerfile
+    command: /bin/sh -c ".buildkite/docker/build.sh"
+    environment:
+      - "USER=unittest"
+      - "TEMPORAL_SERVICE_ADDRESS=http://temporal:7233"
+    depends_on:
+      - temporal
+    volumes:
+      - "../../:/sdk-core"
