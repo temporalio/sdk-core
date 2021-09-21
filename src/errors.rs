@@ -51,7 +51,7 @@ pub enum PollWfError {
     ShutDown,
     /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
     /// errors, so lang should consider this fatal.
-    #[error("Unhandled error when calling the temporal server: {0:?}")]
+    #[error("Unhandled grpc error when workflow polling: {0:?}")]
     TonicError(#[from] tonic::Status),
     /// Unhandled error when completing a workflow during a poll -- this can happen when there is no
     /// work for lang to perform, but the server sent us a workflow task (EX: An activity completed
@@ -90,7 +90,7 @@ pub enum PollActivityError {
     ShutDown,
     /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
     /// errors, so lang should consider this fatal.
-    #[error("Unhandled error when calling the temporal server: {0:?}")]
+    #[error("Unhandled grpc error when activity polling: {0:?}")]
     TonicError(#[from] tonic::Status),
     /// There is no worker registered for the queue being polled
     #[error("No worker registered for queue: {0}")]
@@ -132,7 +132,7 @@ pub enum CompleteWfError {
     NoWorkerForQueue(String),
     /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
     /// errors, so lang should consider this fatal.
-    #[error("Unhandled error when calling the temporal server: {0:?}")]
+    #[error("Unhandled grpc error when completing workflow task: {0:?}")]
     TonicError(#[from] tonic::Status),
 }
 
@@ -167,7 +167,7 @@ pub enum CompleteActivityError {
     },
     /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
     /// errors, so lang should consider this fatal.
-    #[error("Unhandled error when calling the temporal server: {0:?}")]
+    #[error("Unhandled grpc error when completing activity: {0:?}")]
     TonicError(#[from] tonic::Status),
     /// There is no worker registered or alive for the activity being completed
     #[error("No worker registered or alive for queue: {0}")]
