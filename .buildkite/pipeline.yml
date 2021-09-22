@@ -8,7 +8,9 @@ steps:
     plugins:
       - docker-compose#v3.0.0:
           run: unit-test
-          config: .buildkite/docker/docker-compose.yaml
+          config:
+            - .buildkite/docker/docker-compose.yaml
+            - .buildkite/docker/docker-compose-ci.yaml
           env:
             - RUSTDOCFLAGS=-Dwarnings
   - label: "lint"
@@ -20,7 +22,9 @@ steps:
     plugins:
       - docker-compose#v3.0.0:
           run: unit-test
-          config: .buildkite/docker/docker-compose.yaml
+          config:
+            - .buildkite/docker/docker-compose.yaml
+            - .buildkite/docker/docker-compose-ci.yaml
   - label: "test"
     agents:
       queue: "default"
@@ -33,7 +37,9 @@ steps:
     plugins:
       - docker-compose#v3.0.0:
           run: unit-test
-          config: .buildkite/docker/docker-compose.yaml
+          config:
+            - .buildkite/docker/docker-compose.yaml
+            - .buildkite/docker/docker-compose-ci.yaml
   - label: "integ-test"
     agents:
       queue: "default"
@@ -43,5 +49,7 @@ steps:
     plugins:
       - docker-compose#v3.0.0:
           run: integ-test
-          config: .buildkite/docker/docker-compose.yaml
+          config:
+            - .buildkite/docker/docker-compose.yaml
+            - .buildkite/docker/docker-compose-ci.yaml
   - wait

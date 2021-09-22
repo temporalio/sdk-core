@@ -1,6 +1,7 @@
 use futures::{stream::FuturesUnordered, StreamExt};
 use log::LevelFilter;
 use rand::{distributions::Standard, Rng};
+use std::net::SocketAddr;
 use std::{convert::TryFrom, env, future::Future, sync::Arc, time::Duration};
 use temporal_sdk_core::{
     prototype_rust_sdk::TestRustWorker, Core, CoreInitOptions, CoreInitOptionsBuilder,
@@ -17,6 +18,10 @@ use url::Url;
 
 pub const NAMESPACE: &str = "default";
 pub type GwApi = Arc<dyn ServerGatewayApis>;
+/// If set, turn export traces and metrics to the OTel collector at the given URL
+const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
+/// If set, enable direct scraping of prom metrics on the specified port
+const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
 
 /// Implements a builder pattern to help integ tests initialize core and create workflows
 pub struct CoreWfStarter {
@@ -149,6 +154,7 @@ pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn Core>, String)
     (core, starter.get_task_queue().to_string())
 }
 
+// TODO: This should get removed. Pretty pointless now that gateway is exported
 pub async fn with_gw<F: FnOnce(GwApi) -> Fout, Fout: Future>(
     core: &dyn Core,
     fun: F,
@@ -175,11 +181,16 @@ pub fn get_integ_server_options() -> ServerGatewayOptions {
 }
 
 pub fn get_integ_telem_options() -> TelemetryOptions {
-    // TODO: Customize w/ env var
+    let otel_collector_url = env::var(OTEL_URL_ENV_VAR).ok().map(|x| x.parse().unwrap());
+    let prometheus_export_bind_address = env::var(PROM_ENABLE_ENV_VAR)
+        .ok()
+        .map(|x| SocketAddr::new([127, 0, 0, 1].into(), x.parse().unwrap()));
+
     TelemetryOptions {
-        otel_collector_url: Some("grpc://localhost:4317".parse().unwrap()),
-        tracing_filter: "temporal_sdk_core=DEBUG".to_string(),
+        otel_collector_url,
+        tracing_filter: "temporal_sdk_core=INFO".to_string(),
         log_forwarding_level: LevelFilter::Off,
+        prometheus_export_bind_address,
     }
 }
 

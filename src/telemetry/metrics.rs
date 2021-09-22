@@ -179,7 +179,13 @@ impl MetricsContext {
 }
 
 lazy_static::lazy_static! {
-    static ref METRIC_METER: Meter = global::meter(TELEM_SERVICE_NAME);
+    static ref METRIC_METER: Meter = {
+        #[cfg(not(test))]
+        if crate::telemetry::GLOBAL_TELEM_DAT.get().is_none() {
+            panic!("Tried to use a metric but telemetry has not been initialized")
+        }
+        global::meter(TELEM_SERVICE_NAME)
+    };
 }
 
 /// Define a temporal metric. All metrics are kept private to this file, and should be accessed
@@ -338,7 +344,7 @@ static TASK_SCHED_TO_START_MS_BUCKETS: &[f64] = &[100., 500., 1000., 5000., 10_0
 
 /// Default buckets. Should never really be used as they will be meaningless for many things, but
 /// broadly it's trying to represent latencies in millis.
-static DEFAULT_MS_BUCKETS: &[f64] = &[50., 100., 500., 1000., 2500., 10_000.];
+pub(super) static DEFAULT_MS_BUCKETS: &[f64] = &[50., 100., 500., 1000., 2500., 10_000.];
 
 /// Chooses appropriate aggregators for our metrics
 #[derive(Debug)]

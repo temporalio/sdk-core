@@ -18,12 +18,14 @@ use temporal_sdk_core_protos::{
 };
 
 #[derive(Debug)]
+/// A wrapper for a [ServerGatewayApis] implementor which performs auto-retries
 pub struct RetryGateway<SG> {
     gateway: SG,
     retry_config: RetryConfig,
 }
 
 impl<SG> RetryGateway<SG> {
+    /// Use the provided retry config with the provided gateway
     pub fn new(gateway: SG, retry_config: RetryConfig) -> Self {
         Self {
             gateway,
