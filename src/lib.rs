@@ -32,9 +32,9 @@ mod test_help;
 pub use log_export::CoreLog;
 pub use pollers::{
     ClientTlsConfig, RetryConfig, RetryGateway, ServerGateway, ServerGatewayApis,
-    ServerGatewayOptions, TlsConfig,
+    ServerGatewayOptions, ServerGatewayOptionsBuilder, TlsConfig,
 };
-pub use telemetry::TelemetryOptions;
+pub use telemetry::{TelemetryOptions, TelemetryOptionsBuilder};
 pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
@@ -191,6 +191,7 @@ pub trait Core: Send + Sync {
 /// Holds various configuration information required to call [init]
 #[derive(Debug, Clone, derive_builder::Builder)]
 #[builder(setter(into))]
+#[non_exhaustive]
 pub struct CoreInitOptions {
     /// Options for the connection to the temporal server
     pub gateway_opts: ServerGatewayOptions,

@@ -30,7 +30,7 @@ use tonic::{
     codegen::{InterceptedService, Service},
     service::Interceptor,
     transport::{Certificate, Channel, Endpoint, Identity},
-    Status,
+    IntoRequest, Status,
 };
 use tower::ServiceBuilder;
 use url::Url;
@@ -38,8 +38,13 @@ use uuid::Uuid;
 
 #[cfg(test)]
 use futures::Future;
+use std::collections::HashMap;
+use std::str::FromStr;
+use tonic::metadata::{MetadataKey, MetadataValue};
 
 static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivityTaskQueue"];
+const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(60);
+const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct GatewayRef {
     pub gw: Arc<dyn ServerGatewayApis + Send + Sync>,
@@ -63,30 +68,44 @@ impl Deref for GatewayRef {
     }
 }
 
-/// Options for the connection to the temporal server
-#[derive(Clone, Debug)]
+/// Options for the connection to the temporal server. Construct with [ServerGatewayOptionsBuilder]
+#[derive(Clone, Debug, derive_builder::Builder)]
+#[non_exhaustive]
 pub struct ServerGatewayOptions {
     /// The URL of the Temporal server to connect to
+    #[builder(setter(into))]
     pub target_url: Url,
 
     /// What namespace will we operate under
     pub namespace: String,
 
-    /// A human-readable string that can identify this process
+    /// The name of the SDK being implemented on top of core. Is set as `client-name` header in
+    /// all RPC calls
+    pub client_name: String,
+
+    /// The version of the SDK being implemented on top of core. Is set as `client-version` header
+    /// in all RPC calls. The server decides if the client is supported based on this.
+    pub client_version: String,
+
+    /// Other non-required static headers which should be attached to every request
+    #[builder(default)]
+    pub static_headers: HashMap<String, String>,
+
+    /// A human-readable string that can identify this process. Defaults to empty string.
+    #[builder(default)]
     pub identity: String,
 
     /// A string that should be unique to this process' binary
     pub worker_binary_id: String,
 
-    /// Timeout for long polls (polling of task queues)
-    pub long_poll_timeout: Duration,
-
     /// If specified, use TLS as configured by the [TlsConfig] struct. If this is set core will
     /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
     /// certs or keys as bytes, loading them from disk itself if needed.
+    #[builder(setter(strip_option), default)]
     pub tls_cfg: Option<TlsConfig>,
 
-    /// Retry configuration for the server gateway.
+    /// Retry configuration for the server gateway. Default is [RetryConfig::default]
+    #[builder(default)]
     pub retry_config: RetryConfig,
 }
 
@@ -125,7 +144,8 @@ pub struct RetryConfig {
     pub multiplier: f64,
     /// maximum amount of time to wait between retries.
     pub max_interval: Duration,
-    /// maximum total amount of time requests should be retried for, if None is set then no limit will be used.
+    /// maximum total amount of time requests should be retried for, if None is set then no limit
+    /// will be used.
     pub max_elapsed_time: Option<Duration>,
     /// maximum number of retry attempts.
     pub max_retries: usize,
@@ -224,10 +244,27 @@ impl Interceptor for ServiceCallInterceptor {
         let metadata = request.metadata_mut();
         metadata.insert(
             "client-name",
-            "core-sdk".parse().expect("Static value is parsable"),
+            self.opts
+                .client_name
+                .parse()
+                .unwrap_or_else(|_| MetadataValue::from_static("")),
         );
-        // TODO: Only apply this to long poll requests
-        request.set_timeout(self.opts.long_poll_timeout);
+        metadata.insert(
+            "client-version",
+            self.opts
+                .client_version
+                .parse()
+                .unwrap_or_else(|_| MetadataValue::from_static("")),
+        );
+        for (k, v) in self.opts.static_headers.iter() {
+            if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), MetadataValue::from_str(v)) {
+                metadata.insert(k, v);
+            }
+        }
+        if metadata.get("grpc-timeout").is_none() {
+            request.set_timeout(OTHER_CALL_TIMEOUT);
+        }
+
         Ok(request)
     }
 }
@@ -467,7 +504,7 @@ impl ServerGatewayApis for ServerGateway {
         &self,
         task_queue: String,
     ) -> Result<PollWorkflowTaskQueueResponse> {
-        let request = PollWorkflowTaskQueueRequest {
+        let mut request = PollWorkflowTaskQueueRequest {
             namespace: self.opts.namespace.clone(),
             task_queue: Some(TaskQueue {
                 name: task_queue,
@@ -475,7 +512,9 @@ impl ServerGatewayApis for ServerGateway {
             }),
             identity: self.opts.identity.clone(),
             binary_checksum: self.opts.worker_binary_id.clone(),
-        };
+        }
+        .into_request();
+        request.set_timeout(LONG_POLL_TIMEOUT);
 
         Ok(self
             .service
@@ -489,7 +528,7 @@ impl ServerGatewayApis for ServerGateway {
         &self,
         task_queue: String,
     ) -> Result<PollActivityTaskQueueResponse> {
-        let request = PollActivityTaskQueueRequest {
+        let mut request = PollActivityTaskQueueRequest {
             namespace: self.opts.namespace.clone(),
             task_queue: Some(TaskQueue {
                 name: task_queue,
@@ -497,7 +536,9 @@ impl ServerGatewayApis for ServerGateway {
             }),
             identity: self.opts.identity.clone(),
             task_queue_metadata: None,
-        };
+        }
+        .into_request();
+        request.set_timeout(LONG_POLL_TIMEOUT);
 
         Ok(self
             .service

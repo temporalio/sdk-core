@@ -1,11 +1,7 @@
 use assert_matches::assert_matches;
-use crossbeam::channel::{unbounded, RecvTimeoutError};
 use futures::future::join_all;
 use std::time::Duration;
-use temporal_sdk_core::{
-    prototype_rust_sdk::{WfContext, WorkflowResult},
-    Core, CoreInitOptionsBuilder,
-};
+use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{
     activity_task::activity_task as act_task,
     workflow_activation::{wf_activation_job, FireTimer, WfActivationJob},
@@ -13,10 +9,7 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_completion::WfActivationCompletion,
     IntoCompletion,
 };
-use test_utils::{
-    get_integ_server_options, get_integ_telem_options, init_core_and_create_wf,
-    schedule_activity_cmd, CoreTestHelpers, CoreWfStarter,
-};
+use test_utils::{init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers, CoreWfStarter};
 use tokio::time::timeout;
 
 #[tokio::test]
@@ -99,34 +92,6 @@ async fn out_of_order_completion_doesnt_hang() {
     .unwrap();
 
     jh.await.unwrap();
-}
-
-#[tokio::test]
-async fn long_poll_timeout_is_retried() {
-    let mut gateway_opts = get_integ_server_options();
-    // Server whines unless long poll > 2 seconds
-    gateway_opts.long_poll_timeout = Duration::from_secs(3);
-    let core = temporal_sdk_core::init(
-        CoreInitOptionsBuilder::default()
-            .gateway_opts(gateway_opts)
-            // TODO: First core to be initted wins the telem race so this has to be the same
-            //   everywhere which is somewhat annoying.
-            .telemetry_opts(get_integ_telem_options())
-            .build()
-            .unwrap(),
-    )
-    .await
-    .unwrap();
-    // Should block for more than 3 seconds, since we internally retry long poll
-    let (tx, rx) = unbounded();
-    tokio::spawn(async move {
-        core.poll_workflow_activation("doesnt_matter")
-            .await
-            .unwrap();
-        tx.send(())
-    });
-    let err = rx.recv_timeout(Duration::from_secs(4)).unwrap_err();
-    assert_matches!(err, RecvTimeoutError::Timeout);
 }
 
 pub async fn many_parallel_timers_longhist(mut ctx: WfContext) -> WorkflowResult<()> {

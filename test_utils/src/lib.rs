@@ -4,7 +4,8 @@ use rand::{distributions::Standard, Rng};
 use std::{convert::TryFrom, env, future::Future, net::SocketAddr, sync::Arc, time::Duration};
 use temporal_sdk_core::{
     prototype_rust_sdk::TestRustWorker, Core, CoreInitOptions, CoreInitOptionsBuilder,
-    ServerGatewayApis, ServerGatewayOptions, TelemetryOptions, WorkerConfig, WorkerConfigBuilder,
+    ServerGatewayApis, ServerGatewayOptions, ServerGatewayOptionsBuilder, TelemetryOptions,
+    TelemetryOptionsBuilder, WorkerConfig, WorkerConfigBuilder,
 };
 use temporal_sdk_core_protos::coresdk::{
     workflow_commands::{
@@ -168,29 +169,35 @@ pub fn get_integ_server_options() -> ServerGatewayOptions {
         Err(_) => "http://localhost:7233".to_owned(),
     };
     let url = Url::try_from(&*temporal_server_address).unwrap();
-    ServerGatewayOptions {
-        namespace: NAMESPACE.to_string(),
-        identity: "integ_tester".to_string(),
-        worker_binary_id: "".to_string(),
-        long_poll_timeout: Duration::from_secs(60),
-        target_url: url,
-        tls_cfg: None,
-        retry_config: Default::default(),
-    }
+    ServerGatewayOptionsBuilder::default()
+        .namespace(NAMESPACE.to_string())
+        .identity("integ_tester".to_string())
+        .worker_binary_id("fakebinaryid".to_string())
+        .target_url(url)
+        .client_name("temporal-core".to_string())
+        .client_version("0.1.0".to_string())
+        .build()
+        .unwrap()
 }
 
 pub fn get_integ_telem_options() -> TelemetryOptions {
-    let otel_collector_url = env::var(OTEL_URL_ENV_VAR).ok().map(|x| x.parse().unwrap());
-    let prometheus_export_bind_address = env::var(PROM_ENABLE_ENV_VAR)
+    let mut ob = TelemetryOptionsBuilder::default();
+    if let Some(url) = env::var(OTEL_URL_ENV_VAR)
         .ok()
-        .map(|x| SocketAddr::new([127, 0, 0, 1].into(), x.parse().unwrap()));
-
-    TelemetryOptions {
-        otel_collector_url,
-        tracing_filter: "temporal_sdk_core=INFO".to_string(),
-        log_forwarding_level: LevelFilter::Off,
-        prometheus_export_bind_address,
+        .map(|x| x.parse::<Url>().unwrap())
+    {
+        ob.otel_collector_url(url);
     }
+    if let Some(addr) = env::var(PROM_ENABLE_ENV_VAR)
+        .ok()
+        .map(|x| SocketAddr::new([127, 0, 0, 1].into(), x.parse().unwrap()))
+    {
+        ob.prometheus_export_bind_address(addr);
+    }
+    ob.tracing_filter("temporal_sdk_core=INFO".to_string())
+        .log_forwarding_level(LevelFilter::Off)
+        .build()
+        .unwrap()
 }
 
 pub fn schedule_activity_cmd(
