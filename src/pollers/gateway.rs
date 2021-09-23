@@ -43,7 +43,8 @@ use std::str::FromStr;
 use tonic::metadata::{MetadataKey, MetadataValue};
 
 static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivityTaskQueue"];
-const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(60);
+/// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
+const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(62);
 const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct GatewayRef {
