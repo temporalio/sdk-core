@@ -251,7 +251,7 @@ impl WorkflowTaskManager {
         debug!(
             task_token = %&work.task_token,
             history_length = %work.history.events.len(),
-            "Applying new workflow task from server {:?}", work
+            "Applying new workflow task from server"
         );
         let task_start_time = Instant::now();
 

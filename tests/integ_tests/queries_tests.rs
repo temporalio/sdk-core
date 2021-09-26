@@ -1,6 +1,5 @@
 use assert_matches::assert_matches;
-use futures::prelude::stream::FuturesUnordered;
-use futures::{FutureExt, StreamExt};
+use futures::{prelude::stream::FuturesUnordered, FutureExt, StreamExt};
 use std::time::Duration;
 use temporal_sdk_core_protos::{
     coresdk::{

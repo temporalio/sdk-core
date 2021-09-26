@@ -1,6 +1,8 @@
 use crate::{
     pollers::MockServerGatewayApis,
-    test_help::{canned_histories, hist_to_poll_resp, mock_core, MocksHolder, TEST_Q},
+    test_help::{
+        canned_histories, hist_to_poll_resp, mock_core, MocksHolder, ResponseType, TEST_Q,
+    },
     Core,
 };
 use std::collections::{HashMap, VecDeque};
@@ -284,6 +286,98 @@ async fn legacy_query_failure_on_wft_failure() {
     ))
     .await
     .unwrap();
+
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn legacy_query_with_full_history_after_complete() {
+    let wfid = "fake_wf_id";
+    let t = canned_histories::single_timer_wf_completes("1");
+    let query_with_hist_task = {
+        let mut pr = hist_to_poll_resp(
+            &t,
+            wfid.to_owned(),
+            ResponseType::AllHistory,
+            TEST_Q.to_string(),
+        );
+        pr.query = Some(WorkflowQuery {
+            query_type: "query-type".to_string(),
+            query_args: Some(b"hi".into()),
+        });
+        pr
+    };
+    let tasks = VecDeque::from(vec![
+        hist_to_poll_resp(
+            &t,
+            wfid.to_owned(),
+            ResponseType::AllHistory,
+            TEST_Q.to_string(),
+        ),
+        query_with_hist_task.clone(),
+        query_with_hist_task,
+    ]);
+    let mut mock_gateway = MockServerGatewayApis::new();
+    mock_gateway
+        .expect_complete_workflow_task()
+        .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
+    mock_gateway
+        .expect_respond_legacy_query()
+        .times(2)
+        .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
+
+    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![].into());
+    mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
+    let core = mock_core(mock);
+
+    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+        TEST_Q,
+        task.run_id,
+        StartTimer {
+            seq: 1,
+            ..Default::default()
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
+    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    dbg!(&task);
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        TEST_Q,
+        task.run_id,
+        vec![CompleteWorkflowExecution { result: None }.into()],
+    ))
+    .await
+    .unwrap();
+
+    // We should get queries two times
+    for _ in 1..=2 {
+        let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        let query = assert_matches!(
+            task.jobs.as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::QueryWorkflow(q)),
+            }] => q
+        );
+        core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+            TEST_Q,
+            task.run_id,
+            QueryResult {
+                query_id: query.query_id.clone(),
+                variant: Some(
+                    QuerySuccess {
+                        response: Some("whatever".into()),
+                    }
+                    .into(),
+                ),
+            }
+            .into(),
+        ))
+        .await
+        .unwrap();
+    }
 
     core.shutdown().await;
 }
