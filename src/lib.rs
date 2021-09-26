@@ -160,7 +160,7 @@ pub trait Core: Send + Sync {
     fn request_workflow_eviction(&self, task_queue: &str, run_id: &str);
 
     /// Returns core's instance of the [ServerGatewayApis] implementor it is using.
-    fn server_gateway(&self) -> Arc<dyn ServerGatewayApis>;
+    fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync>;
 
     /// Initiates async shutdown procedure, eventually ceases all polling of the server and shuts
     /// down all registered workers. [Core::poll_workflow_activation] should be called until it
@@ -311,7 +311,7 @@ impl Core for CoreSDK {
         }
     }
 
-    fn server_gateway(&self) -> Arc<dyn ServerGatewayApis> {
+    fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
         self.server_gateway.gw.clone()
     }
 

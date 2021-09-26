@@ -33,6 +33,13 @@ pub fn single_timer(timer_id: &str) -> TestHistoryBuilder {
     t
 }
 
+pub fn single_timer_wf_completes(timer_id: &str) -> TestHistoryBuilder {
+    let mut t = single_timer(timer_id);
+    t.add_workflow_task_completed();
+    t.add_workflow_execution_completed();
+    t
+}
+
 ///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
 ///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
 ///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED

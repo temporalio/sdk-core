@@ -1,4 +1,5 @@
 use assert_matches::assert_matches;
+use futures::{prelude::stream::FuturesUnordered, FutureExt, StreamExt};
 use std::time::Duration;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -108,11 +109,38 @@ async fn simple_query_legacy() {
 async fn query_after_execution_complete(#[case] do_evict: bool) {
     let workflow_id = &format!("after_done_query_evict-{}", do_evict);
     let query_resp = b"response";
-    let (core, task_q) = init_core_and_create_wf(workflow_id).await;
+    let (ref core, ref task_q) = init_core_and_create_wf(workflow_id).await;
 
-    let do_workflow = || async {
+    let do_workflow = |go_until_query: bool| async move {
         loop {
-            let task = core.poll_workflow_activation(&task_q).await.unwrap();
+            let task = core.poll_workflow_activation(task_q).await.unwrap();
+
+            // When we see the query, handle it.
+            if go_until_query {
+                if let [WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::QueryWorkflow(query)),
+                }] = task.jobs.as_slice()
+                {
+                    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+                        task_q,
+                        task.run_id,
+                        QueryResult {
+                            query_id: query.query_id.clone(),
+                            variant: Some(
+                                QuerySuccess {
+                                    response: Some(query_resp.into()),
+                                }
+                                .into(),
+                            ),
+                        }
+                        .into(),
+                    ))
+                    .await
+                    .unwrap();
+                    break "".to_string();
+                }
+            }
+
             if matches!(
                 task.jobs.as_slice(),
                 [WfActivationJob {
@@ -120,7 +148,7 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
                 }]
             ) {
                 core.complete_workflow_activation(WfActivationCompletion::empty(
-                    &task_q,
+                    task_q,
                     task.run_id,
                 ))
                 .await
@@ -134,68 +162,47 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
                 }]
             );
             let run_id = task.run_id.clone();
-            core.complete_timer(&task_q, &task.run_id, 1, Duration::from_millis(500))
+            core.complete_timer(task_q, &task.run_id, 1, Duration::from_millis(500))
                 .await;
-            let task = core.poll_workflow_activation(&task_q).await.unwrap();
-            core.complete_execution(&task_q, &task.run_id).await;
-            break run_id;
+            let task = core.poll_workflow_activation(task_q).await.unwrap();
+            core.complete_execution(task_q, &task.run_id).await;
+            if !go_until_query {
+                break run_id;
+            }
         }
     };
 
-    let run_id = do_workflow().await;
+    let run_id = &do_workflow(false).await;
+    assert!(!run_id.is_empty());
 
     if do_evict {
-        core.request_workflow_eviction(&task_q, &run_id);
+        core.request_workflow_eviction(task_q, run_id);
     }
+    // Spam some queries (sending multiple queries after WF closed covers a possible path where
+    // we could screw-up re-applying the final WFT)
+    let mut query_futs = FuturesUnordered::new();
+    for _ in 0..3 {
+        let gw = core.server_gateway().clone();
+        let query_fut = async move {
+            let q_resp = gw
+                .query_workflow_execution(
+                    workflow_id.to_string(),
+                    run_id.to_string(),
+                    WorkflowQuery {
+                        query_type: "myquery".to_string(),
+                        query_args: Some(b"hi".into()),
+                    },
+                )
+                .await
+                .unwrap();
+            // Ensure query response is as expected
+            assert_eq!(q_resp.unwrap()[0].data, query_resp);
+        };
 
-    let query_fut = with_gw(core.as_ref(), |gw: GwApi| async move {
-        gw.query_workflow_execution(
-            workflow_id.to_string(),
-            run_id,
-            WorkflowQuery {
-                query_type: "myquery".to_string(),
-                query_args: Some(b"hi".into()),
-            },
-        )
-        .await
-        .unwrap()
-    });
-
-    let query_handling_fut = async {
-        // If we evicted, we should need to replay the whole workflow before we execute the query
-        if do_evict {
-            do_workflow().await;
-        }
-
-        let task = core.poll_workflow_activation(&task_q).await.unwrap();
-
-        let query = assert_matches!(
-            task.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::QueryWorkflow(q)),
-            }] => q
-        );
-        // Complete the query
-        core.complete_workflow_activation(WfActivationCompletion::from_cmd(
-            &task_q,
-            task.run_id,
-            QueryResult {
-                query_id: query.query_id.clone(),
-                variant: Some(
-                    QuerySuccess {
-                        response: Some(query_resp.into()),
-                    }
-                    .into(),
-                ),
-            }
-            .into(),
-        ))
-        .await
-        .unwrap();
-    };
-    let (q_resp, _) = tokio::join!(query_fut, query_handling_fut);
-    // Ensure query response is as expected
-    assert_eq!(&q_resp.unwrap()[0].data, query_resp);
+        query_futs.push(query_fut.boxed());
+        query_futs.push(do_workflow(true).map(|_| ()).boxed());
+    }
+    while query_futs.next().await.is_some() {}
 }
 
 #[ignore]

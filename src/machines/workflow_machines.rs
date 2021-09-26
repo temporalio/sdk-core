@@ -103,6 +103,10 @@ pub(crate) struct WorkflowMachines {
     /// The workflow that is being driven by this instance of the machines
     drive_me: DrivenWorkflow,
 
+    /// Is set to true once we've seen the final event in workflow history, to avoid accidentally
+    /// re-applying the final workflow task.
+    have_seen_terminal_event: bool,
+
     /// Metrics context
     pub metrics: MetricsContext,
 }
@@ -201,6 +205,7 @@ impl WorkflowMachines {
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
             encountered_change_markers: Default::default(),
+            have_seen_terminal_event: false,
         }
     }
 
@@ -234,6 +239,10 @@ impl WorkflowMachines {
         event: &HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
+        if event.is_final_wf_execution_event() {
+            self.have_seen_terminal_event = true;
+        }
+
         if event.is_command_event() {
             self.handle_command_event(event)?;
             return Ok(());
@@ -511,6 +520,13 @@ impl WorkflowMachines {
     pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<()> {
         // A much higher-up span (ex: poll) may want this field filled
         tracing::Span::current().record("run_id", &self.run_id.as_str());
+
+        // If we have already seen the terminal event for the entire workflow in a previous WFT,
+        // then we don't need to do anything here, and in fact we need to avoid re-applying the
+        // final WFT.
+        if self.have_seen_terminal_event {
+            return Ok(());
+        }
 
         let last_handled_wft_started_id = self.current_started_event_id;
         let events = self
