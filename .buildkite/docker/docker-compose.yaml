@@ -9,7 +9,7 @@ services:
   #      - '9042:9042'
 
   temporal:
-    image: temporalio/auto-setup:1.11.0
+    image: temporalio/auto-setup:1.12.1
     ports:
       - "7233:7233"
       - "7234:7234"

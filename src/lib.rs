@@ -379,14 +379,14 @@ impl CoreSDK {
 
     fn worker(&self, tq: &str) -> Result<impl Deref<Target = Worker>, WorkerLookupErr> {
         let worker = self.workers.get(tq);
-        if worker.is_none() && self.shutdown_requested.load(Ordering::Relaxed) {
+        if worker.is_err() && self.shutdown_requested.load(Ordering::Relaxed) {
             return Err(WorkerLookupErr::Shutdown(tq.to_owned()));
         }
-        let worker = worker.ok_or_else(|| WorkerLookupErr::NoWorker(tq.to_owned()))?;
-        Ok(worker)
+        worker
     }
 }
 
+#[derive(Debug)]
 enum WorkerLookupErr {
     Shutdown(String),
     NoWorker(String),
