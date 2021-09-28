@@ -27,16 +27,19 @@ static DEFAULT_FILTER: &str = "temporal_sdk_core=INFO";
 static GLOBAL_TELEM_DAT: OnceCell<GlobalTelemDat> = OnceCell::new();
 static TELETM_MUTEX: Mutex<()> = const_mutex(());
 
-/// Telemetry configuration options
-#[derive(Debug, Clone)]
+/// Telemetry configuration options. Construct with [TelemetryOptionsBuilder]
+#[derive(Debug, Clone, derive_builder::Builder)]
+#[non_exhaustive]
 pub struct TelemetryOptions {
     /// The url of the OTel collector to export telemetry and metrics to. Lang SDK should also
     /// export to this same collector. If unset, telemetry is not exported and tracing data goes
     /// to the console instead.
+    #[builder(setter(into, strip_option), default)]
     pub otel_collector_url: Option<Url>,
     /// A string in the [EnvFilter] format which specifies what tracing data is included in
     /// telemetry, log forwarded to lang, or console output. May be overridden by the
     /// `TEMPORAL_TRACING_FILTER` env variable.
+    #[builder(default = "DEFAULT_FILTER.to_string()")]
     pub tracing_filter: String,
     /// Core can forward logs to lang for them to be rendered by the user's logging facility.
     /// The logs are somewhat contextually lacking, but still useful in a local test situation when
@@ -45,22 +48,19 @@ pub struct TelemetryOptions {
     ///
     /// Default is INFO. If set to `Off`, the mechanism is disabled entirely (saves on perf).
     /// If set to anything besides `Off`, any console output directly from core is disabled.
+    #[builder(setter(into), default = "LevelFilter::Info")]
     pub log_forwarding_level: LevelFilter,
     /// If set, prometheus metrics will be exposed directly via an embedded http server bound to
     /// the provided address. Useful if users would like to collect metrics with prometheus but
     /// do not want to run an OTel collector. **Note**: If this is set metrics will *not* be sent
     /// to the OTel collector if it is also set, only traces will be.
+    #[builder(setter(into, strip_option), default)]
     pub prometheus_export_bind_address: Option<SocketAddr>,
 }
 
 impl Default for TelemetryOptions {
     fn default() -> Self {
-        Self {
-            otel_collector_url: None,
-            tracing_filter: DEFAULT_FILTER.to_string(),
-            log_forwarding_level: LevelFilter::Info,
-            prometheus_export_bind_address: None,
-        }
+        TelemetryOptionsBuilder::default().build().unwrap()
     }
 }
 

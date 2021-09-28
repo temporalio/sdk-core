@@ -60,6 +60,18 @@ async fn no_worker_for_queue_error_returned_properly() {
     // Empty batches to specify 0 calls to poll expectation
     let core = build_fake_core("fake_wf_id", t, Vec::<ResponseType>::new());
 
+    core.shutdown_worker(TEST_Q).await;
+    let res = core.poll_workflow_activation(TEST_Q).await.unwrap_err();
+    assert_matches!(res, PollWfError::ShutDown);
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn shutdown_worker_stays_shutdown_not_no_worker() {
+    let t = canned_histories::single_timer("1");
+    // Empty batches to specify 0 calls to poll expectation
+    let core = build_fake_core("fake_wf_id", t, Vec::<ResponseType>::new());
+
     let fake_q = "not a registered queue";
     let res = core.poll_workflow_activation(fake_q).await.unwrap_err();
     assert_matches!(res, PollWfError::NoWorkerForQueue(err_q) => err_q == fake_q);
@@ -184,16 +196,21 @@ async fn after_shutdown_of_worker_can_be_reregistered() {
     let t = canned_histories::single_timer("1");
     let mut core = build_fake_core("fake_wf_id", t.clone(), &[1]);
     let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    assert_eq!(res.jobs.len(), 1);
     core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, res.run_id))
         .await
         .unwrap();
-    assert_eq!(res.jobs.len(), 1);
     core.shutdown_worker(TEST_Q).await;
     // Need to recreate mock to re-register worker
-    let mocks = single_hist_mock_sg("fake_wf_id", t, &[2], MockServerGatewayApis::new(), true);
-    register_mock_workers(&mut core, mocks.take_pollers().into_values());
+    let mocks = single_hist_mock_sg("fake_wf_id", t, &[1], MockServerGatewayApis::new(), true);
+    let pollers = mocks.take_pollers().into_values();
+    register_mock_workers(&mut core, pollers);
     // Worker is replaced and the different mock returns a new wft
-    assert!(core.poll_workflow_activation(TEST_Q).await.is_ok());
+    let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, res.run_id))
+        .await
+        .unwrap();
+    core.shutdown().await;
 }
 
 #[tokio::test]

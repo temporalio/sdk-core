@@ -7,7 +7,7 @@ pub use gateway::{MockManualGateway, MockServerGatewayApis};
 
 pub use gateway::{
     ClientTlsConfig, GatewayRef, RetryConfig, ServerGateway, ServerGatewayApis,
-    ServerGatewayOptions, TlsConfig,
+    ServerGatewayOptions, ServerGatewayOptionsBuilder, TlsConfig,
 };
 pub use poll_buffer::{
     new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,

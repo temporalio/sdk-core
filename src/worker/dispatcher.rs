@@ -2,7 +2,7 @@ use crate::{
     pollers::GatewayRef,
     telemetry::metrics::{task_queue, MetricsContext},
     worker::Worker,
-    WorkerConfig, WorkerRegistrationError,
+    WorkerConfig, WorkerLookupErr, WorkerRegistrationError,
 };
 use arc_swap::ArcSwap;
 use futures::future::join_all;
@@ -12,8 +12,9 @@ use tokio::sync::Notify;
 /// Allows access to workers by task queue name
 #[derive(Default)]
 pub(crate) struct WorkerDispatcher {
-    /// Maps task queue names to workers
-    workers: ArcSwap<HashMap<String, WorkerRefCt>>,
+    /// Maps task queue names to workers. If the value is `None` then the worker existed at one
+    /// point and was shut down.
+    workers: ArcSwap<HashMap<String, Option<WorkerRefCt>>>,
 }
 
 impl WorkerDispatcher {
@@ -35,32 +36,48 @@ impl WorkerDispatcher {
         tq: String,
         worker: Worker,
     ) -> Result<(), WorkerRegistrationError> {
-        if self.workers.load().get(&tq).is_some() {
+        if self
+            .workers
+            .load()
+            .get(&tq)
+            .map(|wo| wo.is_some())
+            .unwrap_or_default()
+        {
             return Err(WorkerRegistrationError::WorkerAlreadyRegisteredForQueue(tq));
         }
         let tq = &tq;
         let worker = WorkerRefCt::new(worker);
         self.workers.rcu(|map| {
             let mut map = HashMap::clone(map);
-            map.insert(tq.clone(), worker.clone());
+            map.insert(tq.clone(), Some(worker.clone()));
             map
         });
         Ok(())
     }
 
-    pub fn get(&self, task_queue: &str) -> Option<impl Deref<Target = Worker>> {
-        self.workers.load().get(task_queue).cloned()
+    pub fn get(&self, task_queue: &str) -> Result<impl Deref<Target = Worker>, WorkerLookupErr> {
+        if let Some(w) = self.workers.load().get(task_queue) {
+            if let Some(w) = w {
+                Ok(w.clone())
+            } else {
+                Err(WorkerLookupErr::Shutdown(task_queue.to_string()))
+            }
+        } else {
+            Err(WorkerLookupErr::NoWorker(task_queue.to_string()))
+        }
     }
 
     pub async fn shutdown_one(&self, task_queue: &str) {
         info!("Shutting down worker on queue {}", task_queue);
         let mut maybe_worker = None;
-        if let Some(w) = self.workers.load().get(task_queue) {
-            w.shutdown().await;
+        if let Some(stored_worker) = self.workers.load().get(task_queue) {
+            if let Some(w) = stored_worker {
+                w.shutdown().await;
+            }
             self.workers.rcu(|map| {
                 let mut map = HashMap::clone(map);
                 if maybe_worker.is_none() {
-                    maybe_worker = map.remove(task_queue);
+                    maybe_worker = map.get_mut(task_queue).and_then(|o| o.take());
                 }
                 map
             });
@@ -72,7 +89,12 @@ impl WorkerDispatcher {
 
     pub async fn shutdown_all(&self) {
         // First notify all workers and allow tasks to drain
-        join_all(self.workers.load().values().map(|w| w.shutdown())).await;
+        join_all(self.workers.load().values().map(|w| async move {
+            if let Some(w) = w {
+                w.shutdown().await;
+            }
+        }))
+        .await;
 
         let mut all_workers = HashMap::new();
         self.workers.rcu(|map| {
@@ -80,7 +102,12 @@ impl WorkerDispatcher {
             all_workers.extend(map.drain());
             map
         });
-        join_all(all_workers.into_values().map(|w| w.destroy())).await;
+        join_all(all_workers.into_values().map(|w| async move {
+            if let Some(w) = w {
+                w.destroy().await;
+            }
+        }))
+        .await;
     }
 }
 

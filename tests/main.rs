@@ -2,8 +2,10 @@
 
 #[cfg(test)]
 mod integ_tests {
-    use std::{str::FromStr, time::Duration};
-    use temporal_sdk_core::{ClientTlsConfig, ServerGatewayApis, ServerGatewayOptions, TlsConfig};
+    use std::str::FromStr;
+    use temporal_sdk_core::{
+        ClientTlsConfig, ServerGatewayApis, ServerGatewayOptionsBuilder, TlsConfig,
+    };
     use test_utils::NAMESPACE;
     use url::Url;
 
@@ -35,22 +37,20 @@ mod integ_tests {
         )
         .await
         .unwrap();
-        let sgo = ServerGatewayOptions {
-            target_url: Url::from_str("https://localhost:7233").unwrap(),
-            namespace: NAMESPACE.to_string(),
-            identity: "ident".to_string(),
-            worker_binary_id: "binident".to_string(),
-            long_poll_timeout: Duration::from_secs(60),
-            tls_cfg: Some(TlsConfig {
+        let sgo = ServerGatewayOptionsBuilder::default()
+            .target_url(Url::from_str("https://localhost:7233").unwrap())
+            .namespace(NAMESPACE.to_string())
+            .worker_binary_id("binident".to_string())
+            .tls_cfg(TlsConfig {
                 server_root_ca_cert: Some(root),
                 domain: Some("tls-sample".to_string()),
                 client_tls_config: Some(ClientTlsConfig {
                     client_cert,
                     client_private_key,
                 }),
-            }),
-            retry_config: Default::default(),
-        };
+            })
+            .build()
+            .unwrap();
         let con = sgo.connect().await.unwrap();
         con.list_namespaces().await.unwrap();
     }

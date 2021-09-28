@@ -32,9 +32,9 @@ mod test_help;
 pub use log_export::CoreLog;
 pub use pollers::{
     ClientTlsConfig, RetryConfig, RetryGateway, ServerGateway, ServerGatewayApis,
-    ServerGatewayOptions, TlsConfig,
+    ServerGatewayOptions, ServerGatewayOptionsBuilder, TlsConfig,
 };
-pub use telemetry::TelemetryOptions;
+pub use telemetry::{TelemetryOptions, TelemetryOptionsBuilder};
 pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
@@ -191,6 +191,7 @@ pub trait Core: Send + Sync {
 /// Holds various configuration information required to call [init]
 #[derive(Debug, Clone, derive_builder::Builder)]
 #[builder(setter(into))]
+#[non_exhaustive]
 pub struct CoreInitOptions {
     /// Options for the connection to the temporal server
     pub gateway_opts: ServerGatewayOptions,
@@ -378,14 +379,14 @@ impl CoreSDK {
 
     fn worker(&self, tq: &str) -> Result<impl Deref<Target = Worker>, WorkerLookupErr> {
         let worker = self.workers.get(tq);
-        if worker.is_none() && self.shutdown_requested.load(Ordering::Relaxed) {
+        if worker.is_err() && self.shutdown_requested.load(Ordering::Relaxed) {
             return Err(WorkerLookupErr::Shutdown(tq.to_owned()));
         }
-        let worker = worker.ok_or_else(|| WorkerLookupErr::NoWorker(tq.to_owned()))?;
-        Ok(worker)
+        worker
     }
 }
 
+#[derive(Debug)]
 enum WorkerLookupErr {
     Shutdown(String),
     NoWorker(String),

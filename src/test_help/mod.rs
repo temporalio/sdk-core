@@ -491,9 +491,11 @@ pub fn fake_sg_opts() -> ServerGatewayOptions {
     ServerGatewayOptions {
         target_url: Url::from_str("https://fake").unwrap(),
         namespace: "".to_string(),
+        client_name: "".to_string(),
+        client_version: "".to_string(),
+        static_headers: Default::default(),
         identity: "".to_string(),
         worker_binary_id: "".to_string(),
-        long_poll_timeout: Default::default(),
         tls_cfg: None,
         retry_config: Default::default(),
     }
