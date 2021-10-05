@@ -12,6 +12,7 @@ use parking_lot::RwLock;
 use std::{
     collections::{hash_map::Entry, HashMap},
     future::Future,
+    panic::AssertUnwindSafe,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -266,8 +267,28 @@ impl Future for WorkflowFuture {
                 return Ok(WfExitValue::Evicted).into();
             }
 
-            // TODO: Trap panics in wf code here?
-            let mut res = self.inner.poll_unpin(cx);
+            // TODO: Make sure this is *actually* safe before un-prototyping rust sdk
+            let mut res = match AssertUnwindSafe(&mut self.inner)
+                .catch_unwind()
+                .poll_unpin(cx)
+            {
+                Poll::Ready(Err(e)) => {
+                    self.outgoing_completions
+                        .send(WfActivationCompletion::fail(
+                            &self.task_queue,
+                            run_id,
+                            Failure {
+                                message: format!("Workflow function panicked: {:?}", e),
+                                ..Default::default()
+                            },
+                        ))
+                        .expect("Completion channel intact");
+                    // Loop back up because we're about to get evicted
+                    continue;
+                }
+                Poll::Ready(Ok(r)) => Poll::Ready(r),
+                Poll::Pending => Poll::Pending,
+            };
 
             let mut activation_cmds = vec![];
             while let Ok(cmd) = self.incoming_commands.try_recv() {

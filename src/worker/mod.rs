@@ -7,7 +7,7 @@ pub(crate) use dispatcher::WorkerDispatcher;
 
 use crate::{
     errors::{CompleteWfError, WorkflowUpdateError},
-    machines::EmptyWorkflowCommandErr,
+    machines::{EmptyWorkflowCommandErr, WFMachinesError},
     pollers::{
         new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, BoxedWFPoller,
         GatewayRef, Poller, WorkflowTaskPoller,
@@ -499,15 +499,15 @@ impl Worker {
                 completion: None,
             })?;
 
-        match self.wft_manager.successful_activation(run_id, cmds).await? {
-            Some(ServerCommandsWithWorkflowInfo {
+        match self.wft_manager.successful_activation(run_id, cmds).await {
+            Ok(Some(ServerCommandsWithWorkflowInfo {
                 task_token,
                 action:
                     ActivationAction::WftComplete {
                         commands,
                         query_responses,
                     },
-            }) => {
+            })) => {
                 debug!("Sending commands to server: {:?}", &commands);
                 let mut completion = WorkflowTaskCompletion {
                     task_token,
@@ -519,21 +519,47 @@ impl Worker {
                 };
                 let sticky_attrs = self.get_sticky_attrs();
                 completion.sticky_attributes = sticky_attrs;
-                self.handle_wft_complete_errs(run_id, || async {
+                self.handle_wft_reporting_errs(run_id, || async {
                     self.server_gateway.complete_workflow_task(completion).await
                 })
                 .await?;
             }
-            Some(ServerCommandsWithWorkflowInfo {
+            Ok(Some(ServerCommandsWithWorkflowInfo {
                 task_token,
                 action: ActivationAction::RespondLegacyQuery { result },
                 ..
-            }) => {
+            })) => {
                 self.server_gateway
                     .respond_legacy_query(task_token, result)
                     .await?;
             }
-            None => {}
+            Ok(None) => {}
+            Err(update_err) => {
+                // Automatically fail the workflow task in the event we couldn't update machines
+                let fail_cause = if matches!(&update_err.source, WFMachinesError::Nondeterminism(_))
+                {
+                    WorkflowTaskFailedCause::NonDeterministicError
+                } else {
+                    WorkflowTaskFailedCause::Unspecified
+                };
+
+                if let Some(ref tt) = update_err.task_token {
+                    self.handle_wft_reporting_errs(run_id, || async {
+                        self.server_gateway
+                            .fail_workflow_task(
+                                tt.clone(),
+                                fail_cause,
+                                Some(Failure::application_failure(
+                                    format!("{:?}", update_err),
+                                    false,
+                                )),
+                            )
+                            .await
+                    })
+                    .await?;
+                }
+                return Err(update_err.into());
+            }
         }
 
         Ok(())
@@ -547,7 +573,7 @@ impl Worker {
     ) -> Result<(), CompleteWfError> {
         match self.wft_manager.failed_activation(run_id) {
             FailedActivationOutcome::Report(tt) => {
-                self.handle_wft_complete_errs(run_id, || async {
+                self.handle_wft_reporting_errs(run_id, || async {
                     self.server_gateway
                         .fail_workflow_task(
                             tt,
@@ -578,7 +604,7 @@ impl Worker {
 
     /// Handle server errors from either completing or failing a workflow task. Returns any errors
     /// that can't be automatically handled.
-    async fn handle_wft_complete_errs<T, Fut>(
+    async fn handle_wft_reporting_errs<T, Fut>(
         &self,
         run_id: &str,
         completer: impl FnOnce() -> Fut,

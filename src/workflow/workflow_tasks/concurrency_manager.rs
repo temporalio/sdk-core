@@ -100,6 +100,7 @@ impl WorkflowConcurrencyManager {
             Err(WorkflowUpdateError {
                 source: WFMachinesError::Fatal("Workflow machines not found".to_string()),
                 run_id: run_id.to_owned(),
+                task_token: None,
             })
         }
     }
@@ -179,6 +180,7 @@ impl WorkflowConcurrencyManager {
             Err(WorkflowUpdateError {
                 source: WFMachinesError::Fatal("Workflow machines not found".to_string()),
                 run_id: run_id.to_owned(),
+                task_token: None,
             })
         }
     }
