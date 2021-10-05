@@ -38,8 +38,7 @@ use uuid::Uuid;
 
 #[cfg(test)]
 use futures::Future;
-use std::collections::HashMap;
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 use tonic::metadata::{MetadataKey, MetadataValue};
 
 static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivityTaskQueue"];

@@ -3,13 +3,13 @@ use crate::{
     job_assert,
     pollers::MockServerGatewayApis,
     test_help::{
-        build_fake_core, build_multihist_mock_sg, canned_histories, gen_assert_and_fail,
-        gen_assert_and_reply, hist_to_poll_resp, mock_core, mock_core_with_opts_no_workers,
-        poll_and_reply, poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg,
-        FakeWfResponses, MocksHolder, ResponseType, TestHistoryBuilder, TEST_Q,
+        build_fake_core, build_mock_pollers, build_multihist_mock_sg, canned_histories,
+        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_core, poll_and_reply,
+        poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, FakeWfResponses,
+        MockPollCfg, MocksHolder, ResponseType, TestHistoryBuilder, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
-    Core, CoreInitOptionsBuilder, CoreSDK, WfActivationCompletion, WorkerConfigBuilder,
+    Core, CoreSDK, WfActivationCompletion,
 };
 use rstest::{fixture, rstest};
 use std::{
@@ -872,50 +872,39 @@ async fn max_concurrent_wft_respected() {
     // Create long histories for three workflows
     let t1 = canned_histories::long_sequential_timers(20);
     let t2 = canned_histories::long_sequential_timers(20);
-    let mut tasks = VecDeque::from(vec![
-        hist_to_poll_resp(
-            &t1,
-            "wf1".to_owned(),
-            ResponseType::AllHistory,
-            TEST_Q.to_string(),
-        ),
-        hist_to_poll_resp(
-            &t2,
-            "wf2".to_owned(),
-            ResponseType::AllHistory,
-            TEST_Q.to_string(),
-        ),
-    ]);
+    let mh = MockPollCfg::new(
+        vec![
+            FakeWfResponses {
+                wf_id: "wf1".to_string(),
+                hist: t1,
+                response_batches: vec![ResponseType::AllHistory],
+                task_q: TEST_Q.to_string(),
+            },
+            FakeWfResponses {
+                wf_id: "wf2".to_string(),
+                hist: t2,
+                response_batches: vec![ResponseType::AllHistory],
+                task_q: TEST_Q.to_string(),
+            },
+        ],
+        true,
+        None,
+    );
+    let mut mock = build_mock_pollers(mh);
     // Limit the core to two outstanding workflow tasks, hence we should only see polling
     // happen twice, since we will not actually finish the two workflows
-    let mut mock_gateway = MockServerGatewayApis::new();
-    mock_gateway
-        .expect_poll_workflow_task()
-        .times(2)
-        .returning(move |_| Ok(tasks.pop_front().unwrap()));
-    // Response not really important here
-    mock_gateway
-        .expect_complete_workflow_task()
-        .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
-
-    let core = mock_core_with_opts_no_workers(mock_gateway, CoreInitOptionsBuilder::default());
-    core.register_worker(
-        WorkerConfigBuilder::default()
-            .task_queue(TEST_Q)
-            .max_cached_workflows(2_usize)
-            .max_outstanding_workflow_tasks(2_usize)
-            .build()
-            .unwrap(),
-    )
-    .await
-    .unwrap();
+    mock.worker_cfg(TEST_Q, |cfg| {
+        cfg.max_cached_workflows = 2;
+        cfg.max_outstanding_workflow_tasks = 2;
+    });
+    let core = mock_core(mock);
 
     // Poll twice in a row before completing -- we should be at limit
     let r1 = core.poll_workflow_activation(TEST_Q).await.unwrap();
     let r1_run_id = r1.run_id.clone();
     let r2 = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    // Now we immediately poll for new work, and complete one of the existing activations. The
-    // poll must not unblock until the completion goes through.
+    // Now we immediately poll for new work, and complete the r1 activation. The poll must not
+    // unblock until the completion goes through.
     let last_finisher = AtomicUsize::new(0);
     let (_, mut r1) = tokio::join! {
         async {
@@ -940,7 +929,7 @@ async fn max_concurrent_wft_respected() {
     assert_eq!(last_finisher.load(Ordering::Acquire), 2);
 
     // Since we never did anything with r2, all subsequent activations should be for wf1
-    for i in 2..21 {
+    for i in 2..=20 {
         core.complete_workflow_activation(WfActivationCompletion::from_cmd(
             TEST_Q,
             r1.run_id,
@@ -963,13 +952,23 @@ async fn max_concurrent_wft_respected() {
     ))
     .await
     .unwrap();
-    // Just evict r2, we don't care about completing it properly
+    // Evict r2
     core.request_workflow_eviction(TEST_Q, &r2.run_id);
+    // We have to properly complete the outstanding task (or the mock will be confused why a task
+    // failure was reported)
     let _ = core
-        .complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, r2.run_id))
+        .complete_workflow_activation(WfActivationCompletion::from_cmd(
+            TEST_Q,
+            r2.run_id,
+            StartTimer {
+                seq: 1,
+                ..Default::default()
+            }
+            .into(),
+        ))
         .await;
+    // Get and complete eviction
     let r2 = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    dbg!(&r2);
     let _ = core
         .complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, r2.run_id))
         .await;

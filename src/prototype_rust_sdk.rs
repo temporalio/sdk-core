@@ -175,10 +175,7 @@ impl TestRustWorker {
                     debug!("Workflow {} says it's finishing", &completion.run_id);
                     self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
                 }
-                self.core
-                    .complete_workflow_activation(completion)
-                    .await
-                    .unwrap();
+                self.core.complete_workflow_activation(completion).await?;
                 if self.incomplete_workflows.load(Ordering::SeqCst) == 0 {
                     break Ok(self);
                 }

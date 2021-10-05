@@ -992,7 +992,10 @@ pub mod temporal {
         pub mod common {
             pub mod v1 {
                 use crate::coresdk::common;
-                use std::collections::HashMap;
+                use std::{
+                    collections::HashMap,
+                    fmt::{Display, Formatter},
+                };
                 tonic::include_proto!("temporal.api.common.v1");
 
                 impl From<HashMap<String, common::Payload>> for Header {
@@ -1000,6 +1003,24 @@ pub mod temporal {
                         Self {
                             fields: h.into_iter().map(|(k, v)| (k, v.into())).collect(),
                         }
+                    }
+                }
+
+                impl Display for Payload {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        // Attempt to render payloads as strings
+                        write!(f, "{}", std::str::from_utf8(&self.data).unwrap_or_default())
+                    }
+                }
+
+                impl Display for Header {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        write!(f, "Header(")?;
+                        for kv in &self.fields {
+                            write!(f, "{}: ", kv.0)?;
+                            write!(f, "{}, ", kv.1)?;
+                        }
+                        write!(f, ")")
                     }
                 }
 

@@ -34,7 +34,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         common::v1::{WorkflowExecution, WorkflowType},
-        enums::v1::TaskQueueKind,
+        enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
         history::v1::History,
         taskqueue::v1::TaskQueue,
@@ -289,12 +289,12 @@ pub fn build_multihist_mock_sg(
     enforce_correct_number_of_polls: bool,
     num_expected_fails: Option<usize>,
 ) -> MocksHolder<MockServerGatewayApis> {
-    build_mock_pollers(
-        hists,
+    let mh = MockPollCfg::new(
+        hists.into_iter().collect(),
         enforce_correct_number_of_polls,
         num_expected_fails,
-        MockServerGatewayApis::new(),
-    )
+    );
+    build_mock_pollers(mh)
 }
 
 /// See [build_multihist_mock_sg] -- one history convenience version
@@ -305,32 +305,64 @@ pub fn single_hist_mock_sg(
     mock_gateway: MockServerGatewayApis,
     enforce_num_polls: bool,
 ) -> MocksHolder<MockServerGatewayApis> {
-    build_mock_pollers(
-        vec![FakeWfResponses {
-            wf_id: wf_id.to_owned(),
-            hist: t,
-            response_batches: response_batches.into_iter().map(Into::into).collect(),
-            task_q: TEST_Q.to_owned(),
-        }],
-        enforce_num_polls,
-        None,
-        mock_gateway,
-    )
+    let mut mh = MockPollCfg::from_resp_batches(wf_id, t, response_batches, mock_gateway);
+    mh.enforce_correct_number_of_polls = enforce_num_polls;
+    build_mock_pollers(mh)
+}
+
+pub struct MockPollCfg {
+    pub hists: Vec<FakeWfResponses>,
+    pub enforce_correct_number_of_polls: bool,
+    pub num_expected_fails: Option<usize>,
+    pub mock_gateway: MockServerGatewayApis,
+    /// All calls to fail WFTs must match this predicate
+    pub expect_fail_wft_matcher:
+        Box<dyn Fn(&TaskToken, &WorkflowTaskFailedCause, &Option<Failure>) -> bool + Send>,
+}
+
+impl MockPollCfg {
+    pub fn new(
+        hists: Vec<FakeWfResponses>,
+        enforce_correct_number_of_polls: bool,
+        num_expected_fails: Option<usize>,
+    ) -> Self {
+        Self {
+            hists,
+            enforce_correct_number_of_polls,
+            num_expected_fails,
+            mock_gateway: MockServerGatewayApis::new(),
+            expect_fail_wft_matcher: Box::new(|_, _, _| true),
+        }
+    }
+    pub fn from_resp_batches(
+        wf_id: &str,
+        t: TestHistoryBuilder,
+        resps: impl IntoIterator<Item = impl Into<ResponseType>>,
+        mock_gateway: MockServerGatewayApis,
+    ) -> Self {
+        Self {
+            hists: vec![FakeWfResponses {
+                wf_id: wf_id.to_owned(),
+                hist: t,
+                response_batches: resps.into_iter().map(Into::into).collect(),
+                task_q: TEST_Q.to_owned(),
+            }],
+            enforce_correct_number_of_polls: true,
+            num_expected_fails: None,
+            mock_gateway,
+            expect_fail_wft_matcher: Box::new(|_, _, _| true),
+        }
+    }
 }
 
 /// Given an iterable of fake responses, return the mocks & associated data to work with them
-pub fn build_mock_pollers(
-    hists: impl IntoIterator<Item = FakeWfResponses>,
-    enforce_correct_number_of_polls: bool,
-    num_expected_fails: Option<usize>,
-    mut mock_gateway: MockServerGatewayApis,
-) -> MocksHolder<MockServerGatewayApis> {
+pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockServerGatewayApis> {
     // Maps task queues to maps of wfid -> responses
     let mut task_queues_to_resps: HashMap<String, BTreeMap<String, VecDeque<_>>> = HashMap::new();
     let outstanding_wf_task_tokens = Arc::new(RwLock::new(BiMap::new()));
     let mut correct_num_polls = None;
 
-    for hist in hists {
+    for hist in cfg.hists {
         let full_hist_info = hist.hist.get_full_history_info().unwrap();
         // Ensure no response batch is trying to return more tasks than the history contains
         for respt in &hist.response_batches {
@@ -354,7 +386,7 @@ pub fn build_mock_pollers(
         //     "response batches must have increasing wft numbers"
         // );
 
-        if enforce_correct_number_of_polls {
+        if cfg.enforce_correct_number_of_polls {
             *correct_num_polls.get_or_insert(0) += hist.response_batches.len();
         }
 
@@ -404,12 +436,12 @@ pub fn build_mock_pollers(
             )
             .returning(move || {
                 for (_, tasks) in queue_tasks.iter_mut() {
-                    if let Some(t) = tasks.pop_front() {
-                        // Must extract run id from a workflow task associated with this workflow
-                        // TODO: Case where run id changes for same workflow id is not handled here
+                    // Must extract run id from a workflow task associated with this workflow
+                    // TODO: Case where run id changes for same workflow id is not handled here
+                    if let Some(t) = tasks.get(0) {
                         let rid = t.workflow_execution.as_ref().unwrap().run_id.clone();
-
                         if !outstanding.read().contains_left(&rid) {
+                            let t = tasks.pop_front().unwrap();
                             outstanding
                                 .write()
                                 .insert(rid, TaskToken(t.task_token.clone()));
@@ -424,17 +456,18 @@ pub fn build_mock_pollers(
     }
 
     let outstanding = outstanding_wf_task_tokens.clone();
-    mock_gateway
+    cfg.mock_gateway
         .expect_complete_workflow_task()
         .returning(move |comp| {
             outstanding.write().remove_by_right(&comp.task_token);
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
     let outstanding = outstanding_wf_task_tokens.clone();
-    mock_gateway
+    cfg.mock_gateway
         .expect_fail_workflow_task()
+        .withf(cfg.expect_fail_wft_matcher)
         .times(
-            num_expected_fails
+            cfg.num_expected_fails
                 .map::<TimesRange, _>(Into::into)
                 .unwrap_or_else(|| RangeFull.into()),
         )
@@ -442,12 +475,12 @@ pub fn build_mock_pollers(
             outstanding.write().remove_by_right(&tt);
             Ok(Default::default())
         });
-    mock_gateway
+    cfg.mock_gateway
         .expect_start_workflow()
         .returning(|_, _, _, _, _| Ok(Default::default()));
 
     MocksHolder {
-        sg: mock_gateway,
+        sg: cfg.mock_gateway,
         mock_pollers,
         outstanding_task_map: Some(outstanding_wf_task_tokens),
     }

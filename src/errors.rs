@@ -1,17 +1,20 @@
 //! Error types exposed by public APIs
 
-use crate::{machines::WFMachinesError, WorkerLookupErr};
+use crate::{machines::WFMachinesError, task_token::TaskToken, WorkerLookupErr};
 use temporal_sdk_core_protos::{
     coresdk::{activity_result::ActivityResult, workflow_completion::WfActivationCompletion},
     temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
 };
 use tonic::codegen::http::uri::InvalidUri;
 
+#[derive(Debug)]
 pub(crate) struct WorkflowUpdateError {
     /// Underlying workflow error
     pub source: WFMachinesError,
     /// The run id of the erring workflow
     pub run_id: String,
+    /// The task token associated with this update, if one existed yet.
+    pub task_token: Option<TaskToken>,
 }
 
 /// Errors thrown during initialization of [crate::Core]
