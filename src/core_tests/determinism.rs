@@ -18,13 +18,17 @@ use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
 static DID_FAIL: AtomicBool = AtomicBool::new(false);
 pub async fn timer_wf_fails_once(mut ctx: WfContext) -> WorkflowResult<()> {
     ctx.timer(Duration::from_secs(1)).await;
-    if !DID_FAIL.load(Ordering::Relaxed) {
-        DID_FAIL.store(true, Ordering::Relaxed);
+    if DID_FAIL
+        .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        .is_ok()
+    {
         panic!("Ahh");
     }
     Ok(().into())
 }
 
+/// Verifies that workflow panics (which in this case the Rust SDK turns into workflow activation
+/// failures) are turned into unspecified WFT failures.
 #[tokio::test]
 async fn test_wf_task_rejected_properly() {
     let wf_id = "fakeid";
@@ -49,6 +53,8 @@ async fn test_wf_task_rejected_properly() {
     worker.run_until_done().await.unwrap();
 }
 
+/// Verifies nondeterministic behavior in workflows results in automatic WFT failure with the
+/// appropriate nondeterminism cause.
 #[rstest::rstest]
 #[case::with_cache(true)]
 #[case::without_cache(false)]
@@ -72,16 +78,12 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
     let core = mock_core(mock);
     let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
-    worker.register_wf(wf_type.to_owned(), |mut ctx: WfContext| {
-        let did_nondeterminism = AtomicBool::new(false);
-        async move {
-            ctx.timer(Duration::from_secs(1)).await;
-            if !did_nondeterminism.load(Ordering::Relaxed) {
-                did_nondeterminism.store(true, Ordering::Relaxed);
-                ctx.timer(Duration::from_secs(1)).await;
-            }
-            Ok(().into())
-        }
+    // The workflow is replaying all of history, so the when it schedules an extra timer it should
+    // not have, it causes a nondeterminism error.
+    worker.register_wf(wf_type.to_owned(), |mut ctx: WfContext| async move {
+        ctx.timer(Duration::from_secs(1)).await;
+        ctx.timer(Duration::from_secs(1)).await;
+        Ok(().into())
     });
 
     worker
