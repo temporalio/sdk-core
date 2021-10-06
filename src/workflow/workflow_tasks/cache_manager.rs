@@ -55,13 +55,11 @@ impl WorkflowCacheManager {
 
     /// If run id exists in the cache it will be moved to the top of the LRU cache.
     pub fn touch(&mut self, run_id: &str) {
-        // https://github.com/jeromefroe/lru-rs/issues/85
-        self.cache.get(&run_id.to_owned());
+        self.cache.get(run_id);
     }
 
     pub fn remove(&mut self, run_id: &str) {
-        // https://github.com/jeromefroe/lru-rs/issues/85
-        self.cache.pop(&run_id.to_owned());
+        self.cache.pop(run_id);
         self.metrics.cache_size(self.cache.len() as u64);
     }
 }
