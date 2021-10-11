@@ -2,8 +2,10 @@ pub mod canned_histories;
 
 mod history_builder;
 mod history_info;
+mod signal_when_donerator;
 
 pub(crate) use history_builder::{TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE};
+pub(crate) use signal_when_donerator::SignalWhenDonerator;
 
 use crate::{
     pollers::{
@@ -209,11 +211,17 @@ where
     }
 
     /// Uses the provided list of tasks to create a mock poller for the `TEST_Q`
-    pub fn from_gateway_with_responses(
+    pub fn from_gateway_with_responses<WFT, ACT>(
         sg: SG,
-        wf_tasks: VecDeque<PollWorkflowTaskQueueResponse>,
-        act_tasks: VecDeque<PollActivityTaskQueueResponse>,
-    ) -> MocksHolder<SG> {
+        wf_tasks: WFT,
+        act_tasks: ACT,
+    ) -> MocksHolder<SG>
+    where
+        WFT: IntoIterator<Item = PollWorkflowTaskQueueResponse>,
+        ACT: IntoIterator<Item = PollActivityTaskQueueResponse>,
+        <WFT as IntoIterator>::IntoIter: std::marker::Send + 'static,
+        <ACT as IntoIterator>::IntoIter: std::marker::Send + 'static,
+    {
         let mut mock_pollers = HashMap::new();
         let mock_poller = mock_poller_from_resps(wf_tasks);
         let mock_act_poller = mock_poller_from_resps(act_tasks);
@@ -236,13 +244,16 @@ where
     }
 }
 
-pub fn mock_poller_from_resps<T>(mut tasks: VecDeque<T>) -> BoxedPoller<T>
+pub fn mock_poller_from_resps<T, I>(tasks: I) -> BoxedPoller<T>
 where
     T: Send + Sync + 'static,
+    I: IntoIterator<Item = T>,
+    <I as IntoIterator>::IntoIter: std::marker::Send + 'static,
 {
     let mut mock_poller = mock_poller();
+    let mut tasks = tasks.into_iter();
     mock_poller.expect_poll().returning(move || {
-        if let Some(t) = tasks.pop_front() {
+        if let Some(t) = tasks.next() {
             Some(Ok(t))
         } else {
             Some(Err(tonic::Status::out_of_range(

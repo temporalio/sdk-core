@@ -44,6 +44,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tokio::sync::{watch, Mutex, Semaphore};
+use tracing_futures::Instrument;
 
 /// A worker polls on a certain task queue
 pub struct Worker {
@@ -300,22 +301,16 @@ impl Worker {
                 r = self.workflow_poll_or_wfts_drained() => r,
             }?;
 
-            match selected_f {
-                Some(work) => {
-                    self.metrics.wf_tq_poll_ok();
-                    match self.apply_server_work(work).await? {
-                        NewWfTaskOutcome::IssueActivation(a) => return Ok(a),
-                        NewWfTaskOutcome::TaskBuffered => {
-                            // If the task was buffered, it's not actually outstanding, so we can
-                            // immediately return a permit.
-                            self.return_workflow_task_permit();
-                        }
-                        _ => {}
+            if let Some(work) = selected_f {
+                self.metrics.wf_tq_poll_ok();
+                match self.apply_server_work(work).await? {
+                    NewWfTaskOutcome::IssueActivation(a) => return Ok(a),
+                    NewWfTaskOutcome::TaskBuffered => {
+                        // If the task was buffered, it's not actually outstanding, so we can
+                        // immediately return a permit.
+                        self.return_workflow_task_permit();
                     }
-                }
-                None => {
-                    self.metrics.wf_tq_poll_empty();
-                    debug!("Poll wft timeout");
+                    _ => {}
                 }
             }
 
@@ -399,7 +394,8 @@ impl Worker {
     /// Wait until not at the outstanding workflow task limit, and then poll this worker's task
     /// queue for new workflow tasks.
     ///
-    /// Returns `Ok(None)` in the event of a poll timeout
+    /// Returns `Ok(None)` in the event of a poll timeout, or if there was some gRPC error that
+    /// callers can't do anything about.
     async fn workflow_poll(&self) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
         let sem = self
             .workflows_semaphore
@@ -407,14 +403,23 @@ impl Worker {
             .await
             .expect("outstanding workflow tasks semaphore not dropped");
 
-        let res = self
+        let res = match self
             .wf_task_poll_buffer
             .poll()
             .await
-            .ok_or(PollWfError::ShutDown)??;
+            .ok_or(PollWfError::ShutDown)?
+        {
+            Ok(res) => res,
+            Err(err) => {
+                warn!(error = ?err, "gRPC error while polling");
+                return Ok(None);
+            }
+        };
 
         if res == PollWorkflowTaskQueueResponse::default() {
             // We get the default proto in the event that the long poll times out.
+            debug!("Poll wft timeout");
+            self.metrics.wf_tq_poll_empty();
             return Ok(None);
         }
 
@@ -422,9 +427,14 @@ impl Worker {
             self.metrics.wf_task_sched_to_start_latency(dur);
         }
 
-        let work: ValidPollWFTQResponse = res
-            .try_into()
-            .map_err(|resp| PollWfError::BadPollResponseFromServer(Box::new(resp)))?;
+        let work: ValidPollWFTQResponse = match res.try_into() {
+            Ok(pr) => pr,
+            Err(resp) => {
+                warn!(resp=?resp,
+                    "Server returned a poll response that could not be validated");
+                return Ok(None);
+            }
+        };
 
         // Only permanently take a permit in the event the poll finished completely
         sem.forget();
@@ -458,12 +468,14 @@ impl Worker {
                     run_id: we.run_id,
                     status: Some(workflow_completion::Success::from_variants(vec![]).into()),
                 })
+                .map_err(Box::new)
                 .await?;
             }
             NewWfTaskOutcome::CacheMiss => {
                 debug!(workflow_execution=?we, "Unable to process workflow task with partial \
                 history because workflow cache does not contain workflow anymore.");
-                self.server_gateway
+                if let Err(e) = self
+                    .server_gateway
                     .fail_workflow_task(
                         tt,
                         WorkflowTaskFailedCause::ResetStickyTaskQueue,
@@ -474,7 +486,10 @@ impl Worker {
                             ..Default::default()
                         }),
                     )
-                    .await?;
+                    .await
+                {
+                    warn!(error = ?e, "gRPC error while resetting sticky queue");
+                }
             }
         };
         Ok(res)
@@ -509,6 +524,9 @@ impl Worker {
                     },
             })) => {
                 debug!("Sending commands to server: {:?}", &commands);
+                if !query_responses.is_empty() {
+                    debug!("Sending query responses to server: {:?}", &query_responses);
+                }
                 let mut completion = WorkflowTaskCompletion {
                     task_token,
                     commands,
@@ -520,7 +538,10 @@ impl Worker {
                 let sticky_attrs = self.get_sticky_attrs();
                 completion.sticky_attributes = sticky_attrs;
                 self.handle_wft_reporting_errs(run_id, || async {
-                    self.server_gateway.complete_workflow_task(completion).await
+                    self.server_gateway
+                        .complete_workflow_task(completion)
+                        .instrument(span!(tracing::Level::DEBUG, "Complete WFT call"))
+                        .await
                 })
                 .await?;
             }
@@ -732,7 +753,8 @@ mod tests {
             .build()
             .unwrap();
         let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
-        assert!(worker.activity_poll().await.is_err());
+        // Will return None since the error is silenced
+        assert!(worker.activity_poll().await.unwrap().is_none());
         assert_eq!(worker.at_task_mgr.unwrap().remaining_activity_capacity(), 5);
     }
 
@@ -750,7 +772,7 @@ mod tests {
             .build()
             .unwrap();
         let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
-        assert!(worker.workflow_poll().await.is_err());
+        assert!(worker.workflow_poll().await.unwrap().is_none());
         assert_eq!(worker.workflows_semaphore.available_permits(), 5);
     }
 

@@ -159,7 +159,10 @@ impl WorkerActivityTasks {
                     None => {
                         Err(PollActivityError::ShutDown)
                     }
-                    Some(Err(e)) => Err(e.into())
+                    Some(Err(e)) => {
+                        warn!(error = ?e, "gRPC error while activity polling");
+                        Ok(None)
+                    }
                 }
             }
         }

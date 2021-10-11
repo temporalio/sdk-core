@@ -54,7 +54,7 @@ async fn legacy_query(#[case] include_history: bool) {
         .times(1)
         .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
 
-    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![].into());
+    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![]);
     if !include_history {
         mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
     }
@@ -167,7 +167,7 @@ async fn new_queries(#[case] num_queries: usize) {
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
     mock_gateway.expect_respond_legacy_query().times(0);
 
-    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![].into());
+    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![]);
     mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
     let core = mock_core(mock);
 
@@ -250,7 +250,7 @@ async fn legacy_query_failure_on_wft_failure() {
         .times(1)
         .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
 
-    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![].into());
+    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![]);
     mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
     let core = mock_core(mock);
 
@@ -326,7 +326,7 @@ async fn legacy_query_with_full_history_after_complete() {
         .times(2)
         .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
 
-    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![].into());
+    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![]);
     mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
     let core = mock_core(mock);
 
@@ -343,7 +343,6 @@ async fn legacy_query_with_full_history_after_complete() {
     .await
     .unwrap();
     let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    dbg!(&task);
     core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         TEST_Q,
         task.run_id,
