@@ -1,9 +1,9 @@
 use crate::{
-    pollers::{MockManualGateway, MockManualPoller, MockServerGatewayApis},
+    pollers::{MockManualGateway, MockServerGatewayApis},
     test_help::{
         build_fake_core, build_multihist_mock_sg, canned_histories, hist_to_poll_resp, mock_core,
-        mock_core_with_opts_no_workers, register_mock_workers, single_hist_mock_sg,
-        FakeWfResponses, MockWorker, MocksHolder, ResponseType, TEST_Q,
+        mock_core_with_opts_no_workers, mock_manual_poller, register_mock_workers,
+        single_hist_mock_sg, FakeWfResponses, MockWorker, MocksHolder, ResponseType, TEST_Q,
     },
     Core, CoreInitOptionsBuilder, CoreSDK, PollWfError, WorkerConfigBuilder,
 };
@@ -260,11 +260,7 @@ fn worker_shutdown() -> (CoreSDK, watch::Sender<bool>) {
     let mut mock_pollers = vec![];
     for i in 1..=2 {
         let tq = format!("q{}", i);
-        let mut mock_poller = MockManualPoller::new();
-        mock_poller.expect_notify_shutdown().return_const(());
-        mock_poller
-            .expect_shutdown_box()
-            .returning(|| async {}.boxed());
+        let mut mock_poller = mock_manual_poller();
         let rx = rx.clone();
         let tqc = tq.clone();
         mock_poller.expect_poll().returning(move || {

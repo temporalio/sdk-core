@@ -1,9 +1,8 @@
 //! Error types exposed by public APIs
 
 use crate::{machines::WFMachinesError, task_token::TaskToken, WorkerLookupErr};
-use temporal_sdk_core_protos::{
-    coresdk::{activity_result::ActivityResult, workflow_completion::WfActivationCompletion},
-    temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
+use temporal_sdk_core_protos::coresdk::{
+    activity_result::ActivityResult, workflow_completion::WfActivationCompletion,
 };
 use tonic::codegen::http::uri::InvalidUri;
 
@@ -43,10 +42,6 @@ pub enum PollWfError {
         /// The run id of the erring workflow
         run_id: String,
     },
-    /// The server returned a malformed polling response. Either we aren't handling a valid form,
-    /// or the server is bugging out. Likely fatal.
-    #[error("Poll workflow response from server was malformed: {0:?}")]
-    BadPollResponseFromServer(Box<PollWorkflowTaskQueueResponse>),
     /// [crate::Core::shutdown] was called, and there are no more replay tasks to be handled. Lang
     /// must call [crate::Core::complete_workflow_activation] for any remaining tasks, and then may
     /// exit.

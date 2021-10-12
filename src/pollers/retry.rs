@@ -40,12 +40,25 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
         F: Fn() -> Fut + Unpin,
         Fut: Future<Output = Result<R>>,
     {
+        self.call_type_with_retry(factory, CallType::Normal).await
+    }
+
+    async fn long_poll_call_with_retry<R, F, Fut>(&self, factory: F) -> Result<R>
+    where
+        F: Fn() -> Fut + Unpin,
+        Fut: Future<Output = Result<R>>,
+    {
+        self.call_type_with_retry(factory, CallType::LongPoll).await
+    }
+
+    async fn call_type_with_retry<R, F, Fut>(&self, factory: F, ct: CallType) -> Result<R>
+    where
+        F: Fn() -> Fut + Unpin,
+        Fut: Future<Output = Result<R>>,
+    {
         Ok(FutureRetry::new(
             factory,
-            TonicErrorHandler::new(
-                self.retry_config.clone().into(),
-                self.retry_config.max_retries,
-            ),
+            TonicErrorHandler::new(self.retry_config.clone(), ct),
         )
         .await
         .map_err(|(e, _attempt)| e)?
@@ -54,27 +67,44 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
 }
 
 #[derive(Debug)]
-pub struct TonicErrorHandler {
+struct TonicErrorHandler {
     backoff: ExponentialBackoff,
     max_attempts: usize,
+    call_type: CallType,
 }
-
 impl TonicErrorHandler {
-    pub fn new(backoff: ExponentialBackoff, max_attempts: usize) -> Self {
-        TonicErrorHandler {
-            backoff,
-            max_attempts,
+    fn new(mut cfg: RetryConfig, call_type: CallType) -> Self {
+        if call_type == CallType::LongPoll {
+            // Long polls can retry forever
+            cfg.max_elapsed_time = None;
+        }
+        Self {
+            max_attempts: cfg.max_retries,
+            backoff: cfg.into(),
+            call_type,
         }
     }
+}
+#[derive(Debug, Eq, PartialEq, Hash)]
+enum CallType {
+    Normal,
+    LongPoll,
 }
 
 impl ErrorHandler<tonic::Status> for TonicErrorHandler {
     type OutError = tonic::Status;
 
     fn handle(&mut self, current_attempt: usize, e: tonic::Status) -> RetryPolicy<tonic::Status> {
+        // Long poll calls get unlimited retries
         if current_attempt >= self.max_attempts {
-            return RetryPolicy::ForwardError(e);
+            if self.call_type == CallType::Normal {
+                return RetryPolicy::ForwardError(e);
+            } else {
+                // But once they exceed the normal max attempts, start logging warnings
+                warn!(error=?e, "Polling encountered repeated error")
+            }
         }
+
         if RETRYABLE_ERROR_CODES.contains(&e.code()) {
             match self.backoff.next_backoff() {
                 None => RetryPolicy::ForwardError(e), // None is returned when we've ran out of time.
@@ -114,7 +144,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         task_queue: String,
     ) -> Result<PollWorkflowTaskQueueResponse> {
         let factory = move || self.gateway.poll_workflow_task(task_queue.clone());
-        self.call_with_retry(factory).await
+        self.long_poll_call_with_retry(factory).await
     }
 
     async fn poll_activity_task(
@@ -122,7 +152,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         task_queue: String,
     ) -> Result<PollActivityTaskQueueResponse> {
         let factory = move || self.gateway.poll_activity_task(task_queue.clone());
-        self.call_with_retry(factory).await
+        self.long_poll_call_with_retry(factory).await
     }
 
     async fn reset_sticky_task_queue(

@@ -1,5 +1,4 @@
 use crate::{
-    errors::PollActivityError,
     job_assert,
     pollers::{MockManualGateway, MockServerGatewayApis},
     test_help::{
@@ -115,8 +114,8 @@ async fn activity_not_found_returns_ok() {
 
     let core = mock_core(MocksHolder::from_gateway_with_responses(
         mock_gateway,
-        vec![].into(),
-        vec![].into(),
+        [],
+        [],
     ));
 
     core.complete_activity_task(ActivityTaskCompletion {
@@ -143,8 +142,8 @@ async fn heartbeats_report_cancels_only_once() {
 
     let core = mock_core(MocksHolder::from_gateway_with_responses(
         mock_gateway,
-        vec![].into(),
-        vec![
+        [],
+        [
             PollActivityTaskQueueResponse {
                 task_token: vec![1],
                 activity_id: "act1".to_string(),
@@ -157,8 +156,7 @@ async fn heartbeats_report_cancels_only_once() {
                 heartbeat_timeout: Some(Duration::from_millis(1).into()),
                 ..Default::default()
             },
-        ]
-        .into(),
+        ],
     ));
 
     let act = core.poll_activity_task(TEST_Q).await.unwrap();
@@ -277,7 +275,10 @@ async fn activity_poll_timeout_retries() {
         if calls <= 2 {
             Some(Ok(PollActivityTaskQueueResponse::default()))
         } else {
-            Some(Err(tonic::Status::unknown("Test done")))
+            Some(Ok(PollActivityTaskQueueResponse {
+                task_token: b"hello!".to_vec(),
+                ..Default::default()
+            }))
         }
     });
     let mock_worker = MockWorker {
@@ -285,8 +286,8 @@ async fn activity_poll_timeout_retries() {
         ..Default::default()
     };
     let core = mock_core(MocksHolder::from_mock_workers(mock_gateway, [mock_worker]));
-    let r = core.poll_activity_task(TEST_Q).await;
-    assert_matches!(r.unwrap_err(), PollActivityError::TonicError(_));
+    let r = core.poll_activity_task(TEST_Q).await.unwrap();
+    assert_matches!(r.task_token.as_slice(), b"hello!");
 }
 
 #[tokio::test]
@@ -479,15 +480,12 @@ async fn only_returns_cancels_for_desired_queue() {
         });
 
     let mut w1 = MockWorker::for_queue("q1");
-    w1.act_poller = Some(mock_poller_from_resps(
-        vec![PollActivityTaskQueueResponse {
-            task_token: vec![1],
-            activity_id: "act1".to_string(),
-            heartbeat_timeout: Some(Duration::from_millis(1).into()),
-            ..Default::default()
-        }]
-        .into(),
-    ));
+    w1.act_poller = Some(mock_poller_from_resps([PollActivityTaskQueueResponse {
+        task_token: vec![1],
+        activity_id: "act1".to_string(),
+        heartbeat_timeout: Some(Duration::from_millis(1).into()),
+        ..Default::default()
+    }]));
     let mut mock_act_poller = mock_poller();
     mock_act_poller
         .expect_poll()

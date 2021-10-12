@@ -284,8 +284,8 @@ impl WorkflowMachines {
         Ok(())
     }
 
-    /// Called when we want to run the event loop because a workflow task started event has
-    /// triggered
+    /// Called when a workflow task started event has triggered. Ensures we are tracking the ID
+    /// of the current started event as well as workflow time properly.
     fn task_started(&mut self, task_started_event_id: i64, time: SystemTime) -> Result<()> {
         let s = span!(Level::DEBUG, "Task started trigger");
         let _enter = s.enter();

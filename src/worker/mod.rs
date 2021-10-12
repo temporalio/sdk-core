@@ -44,6 +44,8 @@ use temporal_sdk_core_protos::{
     },
 };
 use tokio::sync::{watch, Mutex, Semaphore};
+use tonic::Code;
+use tracing_futures::Instrument;
 
 /// A worker polls on a certain task queue
 pub struct Worker {
@@ -300,22 +302,16 @@ impl Worker {
                 r = self.workflow_poll_or_wfts_drained() => r,
             }?;
 
-            match selected_f {
-                Some(work) => {
-                    self.metrics.wf_tq_poll_ok();
-                    match self.apply_server_work(work).await? {
-                        NewWfTaskOutcome::IssueActivation(a) => return Ok(a),
-                        NewWfTaskOutcome::TaskBuffered => {
-                            // If the task was buffered, it's not actually outstanding, so we can
-                            // immediately return a permit.
-                            self.return_workflow_task_permit();
-                        }
-                        _ => {}
+            if let Some(work) = selected_f {
+                self.metrics.wf_tq_poll_ok();
+                match self.apply_server_work(work).await? {
+                    NewWfTaskOutcome::IssueActivation(a) => return Ok(a),
+                    NewWfTaskOutcome::TaskBuffered => {
+                        // If the task was buffered, it's not actually outstanding, so we can
+                        // immediately return a permit.
+                        self.return_workflow_task_permit();
                     }
-                }
-                None => {
-                    self.metrics.wf_tq_poll_empty();
-                    debug!("Poll wft timeout");
+                    _ => {}
                 }
             }
 
@@ -399,7 +395,8 @@ impl Worker {
     /// Wait until not at the outstanding workflow task limit, and then poll this worker's task
     /// queue for new workflow tasks.
     ///
-    /// Returns `Ok(None)` in the event of a poll timeout
+    /// Returns `Ok(None)` in the event of a poll timeout, or if there was some gRPC error that
+    /// callers can't do anything about.
     async fn workflow_poll(&self) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
         let sem = self
             .workflows_semaphore
@@ -415,6 +412,8 @@ impl Worker {
 
         if res == PollWorkflowTaskQueueResponse::default() {
             // We get the default proto in the event that the long poll times out.
+            debug!("Poll wft timeout");
+            self.metrics.wf_tq_poll_empty();
             return Ok(None);
         }
 
@@ -422,9 +421,15 @@ impl Worker {
             self.metrics.wf_task_sched_to_start_latency(dur);
         }
 
-        let work: ValidPollWFTQResponse = res
-            .try_into()
-            .map_err(|resp| PollWfError::BadPollResponseFromServer(Box::new(resp)))?;
+        let work: ValidPollWFTQResponse = res.try_into().map_err(|resp| {
+            PollWfError::TonicError(tonic::Status::new(
+                Code::DataLoss,
+                format!(
+                    "Server returned a poll WFT response we couldn't interpret: {:?}",
+                    resp
+                ),
+            ))
+        })?;
 
         // Only permanently take a permit in the event the poll finished completely
         sem.forget();
@@ -509,6 +514,9 @@ impl Worker {
                     },
             })) => {
                 debug!("Sending commands to server: {:?}", &commands);
+                if !query_responses.is_empty() {
+                    debug!("Sending query responses to server: {:?}", &query_responses);
+                }
                 let mut completion = WorkflowTaskCompletion {
                     task_token,
                     commands,
@@ -520,7 +528,10 @@ impl Worker {
                 let sticky_attrs = self.get_sticky_attrs();
                 completion.sticky_attributes = sticky_attrs;
                 self.handle_wft_reporting_errs(run_id, || async {
-                    self.server_gateway.complete_workflow_task(completion).await
+                    self.server_gateway
+                        .complete_workflow_task(completion)
+                        .instrument(span!(tracing::Level::DEBUG, "Complete WFT call"))
+                        .await
                 })
                 .await?;
             }

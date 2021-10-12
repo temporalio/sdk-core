@@ -1090,7 +1090,6 @@ async fn lots_of_workflows() {
             task_q: TEST_Q.to_owned(),
         }
     });
-
     let mock = build_multihist_mock_sg(hists, false, None);
     let core = &mock_core(mock);
 
@@ -1322,7 +1321,7 @@ async fn buffered_work_drained_on_shutdown() {
     let mut mock = MockServerGatewayApis::new();
     mock.expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
-    let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, vec![].into());
+    let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, []);
     // Cache on to avoid being super repetitive
     mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
     let core = &mock_core(mock);
@@ -1377,7 +1376,7 @@ async fn buffering_tasks_doesnt_count_toward_outstanding_max() {
         ))
         .take(20),
     );
-    let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, vec![].into());
+    let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, []);
     mock.worker_cfg(TEST_Q, |wc| {
         wc.max_cached_workflows = 10;
         wc.max_outstanding_workflow_tasks = 5;
