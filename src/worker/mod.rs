@@ -44,6 +44,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tokio::sync::{watch, Mutex, Semaphore};
+use tonic::Code;
 use tracing_futures::Instrument;
 
 /// A worker polls on a certain task queue
@@ -420,14 +421,15 @@ impl Worker {
             self.metrics.wf_task_sched_to_start_latency(dur);
         }
 
-        let work: ValidPollWFTQResponse = match res.try_into() {
-            Ok(pr) => pr,
-            Err(resp) => {
-                warn!(resp=?resp,
-                    "Server returned a poll response that could not be validated");
-                return Ok(None);
-            }
-        };
+        let work: ValidPollWFTQResponse = res.try_into().map_err(|resp| {
+            PollWfError::TonicError(tonic::Status::new(
+                Code::DataLoss,
+                format!(
+                    "Server returned a poll WFT response we couldn't interpret: {:?}",
+                    resp
+                ),
+            ))
+        })?;
 
         // Only permanently take a permit in the event the poll finished completely
         sem.forget();

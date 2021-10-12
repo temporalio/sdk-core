@@ -16,7 +16,6 @@ use temporal_sdk_core_protos::{
         query::v1::WorkflowQuery, workflowservice::v1::*,
     },
 };
-use tonic::Code;
 
 #[derive(Debug)]
 /// A wrapper for a [ServerGatewayApis] implementor which performs auto-retries
@@ -106,14 +105,7 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
             }
         }
 
-        // Handle edge cases where we would retry normally not-retryable error codes
-        let mut special_retry = false;
-        if self.call_type == CallType::LongPoll && e.code() == Code::NotFound {
-            // Long poll calls that hit "NotFound" are generally just waiting on namespace init
-            special_retry = true;
-        }
-
-        if RETRYABLE_ERROR_CODES.contains(&e.code()) || special_retry {
+        if RETRYABLE_ERROR_CODES.contains(&e.code()) {
             match self.backoff.next_backoff() {
                 None => RetryPolicy::ForwardError(e), // None is returned when we've ran out of time.
                 Some(backoff) => RetryPolicy::WaitRetry(backoff),
