@@ -1,11 +1,12 @@
 use crate::{
+    errors::PollWfError,
     job_assert,
     pollers::MockServerGatewayApis,
     test_help::{
         build_fake_core, build_mock_pollers, build_multihist_mock_sg, canned_histories,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_core, poll_and_reply,
         poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, FakeWfResponses,
-        MockPollCfg, MocksHolder, ResponseType, SignalWhenDonerator, TestHistoryBuilder, TEST_Q,
+        MockPollCfg, MocksHolder, ResponseType, TestHistoryBuilder, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
     Core, CoreSDK, WfActivationCompletion,
@@ -1089,42 +1090,33 @@ async fn lots_of_workflows() {
             task_q: TEST_Q.to_owned(),
         }
     });
-    let (hists, tasks_done) = SignalWhenDonerator::new(hists);
     let mock = build_multihist_mock_sg(hists, false, None);
     let core = &mock_core(mock);
 
-    fanout_tasks(5, |_| {
-        let tasks_done = tasks_done.clone();
-        async move {
-            loop {
-                if *tasks_done.borrow() {
-                    break;
+    fanout_tasks(5, |_| async move {
+        while let Ok(wft) = core.poll_workflow_activation(TEST_Q).await {
+            let job = &wft.jobs[0];
+            let reply = match job.variant {
+                Some(wf_activation_job::Variant::StartWorkflow(_)) => StartTimer {
+                    seq: 1,
+                    ..Default::default()
                 }
-
-                let wft = core.poll_workflow_activation(TEST_Q).await.unwrap();
-                let job = &wft.jobs[0];
-                let reply = match job.variant {
-                    Some(wf_activation_job::Variant::StartWorkflow(_)) => StartTimer {
-                        seq: 1,
-                        ..Default::default()
-                    }
-                    .into(),
-                    Some(wf_activation_job::Variant::RemoveFromCache(_)) => {
-                        core.complete_workflow_activation(WfActivationCompletion::empty(
-                            TEST_Q, wft.run_id,
-                        ))
-                        .await
-                        .unwrap();
-                        continue;
-                    }
-                    _ => CompleteWorkflowExecution { result: None }.into(),
-                };
-                core.complete_workflow_activation(WfActivationCompletion::from_cmd(
-                    TEST_Q, wft.run_id, reply,
-                ))
-                .await
-                .unwrap();
-            }
+                .into(),
+                Some(wf_activation_job::Variant::RemoveFromCache(_)) => {
+                    core.complete_workflow_activation(WfActivationCompletion::empty(
+                        TEST_Q, wft.run_id,
+                    ))
+                    .await
+                    .unwrap();
+                    continue;
+                }
+                _ => CompleteWorkflowExecution { result: None }.into(),
+            };
+            core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+                TEST_Q, wft.run_id, reply,
+            ))
+            .await
+            .unwrap();
         }
     })
     .await;
@@ -1384,7 +1376,6 @@ async fn buffering_tasks_doesnt_count_toward_outstanding_max() {
         ))
         .take(20),
     );
-    let (tasks, mut tasks_done) = SignalWhenDonerator::new(tasks.into_iter());
     let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, []);
     mock.worker_cfg(TEST_Q, |wc| {
         wc.max_cached_workflows = 10;
@@ -1395,12 +1386,8 @@ async fn buffering_tasks_doesnt_count_toward_outstanding_max() {
     core.poll_workflow_activation(TEST_Q).await.unwrap();
     // This will error out when the mock runs out of responses. Otherwise it would hang when we
     // hit the max
-    tokio::select! {
-        _ = core.poll_workflow_activation(TEST_Q) => panic!("Poll shouldn't resolve"),
-        _ = async {
-            // Once all tasks have been pulled out we're done. We know the tasks were buffered
-            // because the poll branch wasn't selected.
-            tasks_done.changed().await.unwrap();
-        } => {}
-    };
+    assert_matches!(
+        core.poll_workflow_activation(TEST_Q).await.unwrap_err(),
+        PollWfError::TonicError(_)
+    );
 }

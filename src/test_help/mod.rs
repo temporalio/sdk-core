@@ -2,10 +2,8 @@ pub mod canned_histories;
 
 mod history_builder;
 mod history_info;
-mod signal_when_donerator;
 
 pub(crate) use history_builder::{TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE};
-pub(crate) use signal_when_donerator::SignalWhenDonerator;
 
 use crate::{
     pollers::{

@@ -47,11 +47,15 @@ pub enum PollWfError {
     /// exit.
     #[error("Core is shut down and there are no more workflow replay tasks")]
     ShutDown,
+    /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
+    /// errors, so lang should consider this fatal.
+    #[error("Unhandled grpc error when workflow polling: {0:?}")]
+    TonicError(#[from] tonic::Status),
     /// Unhandled error when completing a workflow during a poll -- this can happen when there is no
     /// work for lang to perform, but the server sent us a workflow task (EX: An activity completed
     /// even though we already cancelled it)
     #[error("Unhandled error when auto-completing workflow task: {0:?}")]
-    AutocompleteError(#[from] Box<CompleteWfError>),
+    AutocompleteError(#[from] CompleteWfError),
     /// There is no worker registered for the queue being polled
     #[error("No worker registered for queue: {0}")]
     NoWorkerForQueue(String),
@@ -82,6 +86,10 @@ pub enum PollActivityError {
     /// ensure it is finished with any workflow replay, see [PollWfError::ShutDown]
     #[error("Core is shut down")]
     ShutDown,
+    /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
+    /// errors, so lang should consider this fatal.
+    #[error("Unhandled grpc error when activity polling: {0:?}")]
+    TonicError(#[from] tonic::Status),
     /// There is no worker registered for the queue being polled
     #[error("No worker registered for queue: {0}")]
     NoWorkerForQueue(String),
