@@ -76,6 +76,9 @@ message ScheduleActivity {
     common.RetryPolicy retry_policy = 12;
     /// Defines behaviour of the underlying workflow when activity cancellation has been requested.
     ActivityCancellationType cancellation_type = 13;
+    // If set true, this activity will be local. Only this worker will execute it and heartbeating
+    // will not apply.
+    bool local = 14;
 }
 
 enum ActivityCancellationType {
