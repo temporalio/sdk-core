@@ -644,6 +644,7 @@ pub mod coresdk {
                         start_to_close_timeout: r.start_to_close_timeout,
                         heartbeat_timeout: r.heartbeat_timeout,
                         retry_policy: r.retry_policy.map(Into::into),
+                        is_local: false,
                     },
                 )),
             }
