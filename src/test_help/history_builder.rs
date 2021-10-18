@@ -1,5 +1,5 @@
 use crate::{
-    machines::HAS_CHANGE_MARKER_NAME,
+    machines::{HAS_CHANGE_MARKER_NAME, LOCAL_ACTIVITY_MARKER_NAME},
     test_help::{
         history_info::{HistoryInfo, HistoryInfoError},
         Result,
@@ -9,7 +9,13 @@ use crate::{
 use anyhow::bail;
 use std::time::SystemTime;
 use temporal_sdk_core_protos::{
-    coresdk::common::{build_has_change_marker_details, NamespacedWorkflowExecution},
+    coresdk::{
+        common::{
+            build_has_change_marker_details, build_local_activity_marker_details,
+            NamespacedWorkflowExecution, Payload as CorePayload,
+        },
+        external_data::LocalActivityMarkerData,
+    },
     temporal::api::{
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{EventType, WorkflowTaskFailedCause},
@@ -185,6 +191,27 @@ impl TestHistoryBuilder {
         let attrs = MarkerRecordedEventAttributes {
             marker_name: HAS_CHANGE_MARKER_NAME.to_string(),
             details: build_has_change_marker_details(patch_id, deprecated),
+            workflow_task_completed_event_id: self.previous_task_completed_id,
+            ..Default::default()
+        };
+        self.build_and_push_event(EventType::MarkerRecorded, attrs.into());
+    }
+
+    pub(crate) fn add_local_activity_result_marker(
+        &mut self,
+        activity_id: &str,
+        payload: CorePayload,
+    ) {
+        let attrs = MarkerRecordedEventAttributes {
+            marker_name: LOCAL_ACTIVITY_MARKER_NAME.to_string(),
+            details: build_local_activity_marker_details(
+                LocalActivityMarkerData {
+                    activity_id: activity_id.to_string(),
+                    activity_type: "some_act_type".to_string(),
+                    time: None,
+                },
+                Some(payload),
+            ),
             workflow_task_completed_event_id: self.previous_task_completed_id,
             ..Default::default()
         };

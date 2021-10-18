@@ -34,13 +34,11 @@ pub(super) enum CompleteWFCommand {
 }
 
 /// Complete a workflow
-pub(super) fn complete_workflow(
-    attribs: CompleteWorkflowExecution,
-) -> NewMachineWithCommand<CompleteWorkflowMachine> {
+pub(super) fn complete_workflow(attribs: CompleteWorkflowExecution) -> NewMachineWithCommand {
     let (machine, add_cmd) = CompleteWorkflowMachine::new_scheduled(attribs);
     NewMachineWithCommand {
         command: add_cmd,
-        machine,
+        machine: machine.into(),
     }
 }
 

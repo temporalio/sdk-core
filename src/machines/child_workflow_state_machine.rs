@@ -303,13 +303,11 @@ pub(super) struct SharedState {
 }
 
 /// Creates a new child workflow state machine and a command to start it on the server.
-pub(super) fn new_child_workflow(
-    attribs: StartChildWorkflowExecution,
-) -> NewMachineWithCommand<ChildWorkflowMachine> {
+pub(super) fn new_child_workflow(attribs: StartChildWorkflowExecution) -> NewMachineWithCommand {
     let (wf, add_cmd) = ChildWorkflowMachine::new_scheduled(attribs);
     NewMachineWithCommand {
         command: add_cmd,
-        machine: wf,
+        machine: wf.into(),
     }
 }
 

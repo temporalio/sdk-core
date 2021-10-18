@@ -9,7 +9,8 @@ mod workflow_context;
 mod workflow_future;
 
 pub use workflow_context::{
-    ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, WfContext,
+    ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
+    WfContext,
 };
 
 use crate::{prototype_rust_sdk::workflow_context::PendingChildWorkflow, Core};

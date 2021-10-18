@@ -32,9 +32,7 @@ pub(super) enum CancelWorkflowMachineError {}
 #[derive(Debug, derive_more::Display)]
 pub(super) enum CancelWorkflowCommand {}
 
-pub(super) fn cancel_workflow(
-    attribs: CancelWorkflowExecution,
-) -> NewMachineWithCommand<CancelWorkflowMachine> {
+pub(super) fn cancel_workflow(attribs: CancelWorkflowExecution) -> NewMachineWithCommand {
     let mut machine = CancelWorkflowMachine {
         state: Created {}.into(),
         shared_state: (),
@@ -45,7 +43,10 @@ pub(super) fn cancel_workflow(
         command_type: CommandType::CancelWorkflowExecution as i32,
         attributes: Some(attribs.into()),
     };
-    NewMachineWithCommand { command, machine }
+    NewMachineWithCommand {
+        command,
+        machine: machine.into(),
+    }
 }
 
 #[derive(Default, Clone)]

@@ -92,11 +92,11 @@ pub(super) enum ActivityMachineCommand {
 }
 
 /// Creates a new activity state machine and a command to schedule it on the server.
-pub(super) fn new_activity(attribs: ScheduleActivity) -> NewMachineWithCommand<ActivityMachine> {
+pub(super) fn new_activity(attribs: ScheduleActivity) -> NewMachineWithCommand {
     let (activity, add_cmd) = ActivityMachine::new_scheduled(attribs);
     NewMachineWithCommand {
         command: add_cmd,
-        machine: activity,
+        machine: activity.into(),
     }
 }
 

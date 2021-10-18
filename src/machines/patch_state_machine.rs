@@ -78,10 +78,13 @@ pub(super) fn has_change(
     patch_id: String,
     replaying_when_invoked: bool,
     deprecated: bool,
-) -> NewMachineWithCommand<PatchMachine> {
+) -> NewMachineWithCommand {
     let (machine, command) =
         PatchMachine::new_scheduled(SharedState { patch_id }, replaying_when_invoked, deprecated);
-    NewMachineWithCommand { command, machine }
+    NewMachineWithCommand {
+        command,
+        machine: machine.into(),
+    }
 }
 
 impl PatchMachine {
@@ -184,11 +187,11 @@ impl WFMachinesAdapter for PatchMachine {
     }
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
-        event.get_changed_marker_details().is_some()
+        event.get_patch_marker_details().is_some()
     }
 
     fn kind(&self) -> MachineKind {
-        MachineKind::Version
+        MachineKind::Patch
     }
 }
 
@@ -209,7 +212,7 @@ impl TryFrom<HistoryEvent> for PatchMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
-        match e.get_changed_marker_details() {
+        match e.get_patch_marker_details() {
             Some((id, _)) => Ok(PatchMachineEvents::MarkerRecorded(id)),
             _ => Err(WFMachinesError::Nondeterminism(format!(
                 "Change machine cannot handle this event: {}",

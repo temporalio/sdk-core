@@ -30,13 +30,11 @@ pub(super) enum FailWFCommand {
 }
 
 /// Fail a workflow
-pub(super) fn fail_workflow(
-    attribs: FailWorkflowExecution,
-) -> NewMachineWithCommand<FailWorkflowMachine> {
+pub(super) fn fail_workflow(attribs: FailWorkflowExecution) -> NewMachineWithCommand {
     let (machine, add_cmd) = FailWorkflowMachine::new_scheduled(attribs);
     NewMachineWithCommand {
         command: add_cmd,
-        machine,
+        machine: machine.into(),
     }
 }
 

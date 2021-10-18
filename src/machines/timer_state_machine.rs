@@ -57,11 +57,11 @@ pub(super) struct SharedState {
 }
 
 /// Creates a new, scheduled, timer as a [CancellableCommand]
-pub(super) fn new_timer(attribs: StartTimer) -> NewMachineWithCommand<TimerMachine> {
+pub(super) fn new_timer(attribs: StartTimer) -> NewMachineWithCommand {
     let (timer, add_cmd) = TimerMachine::new_scheduled(attribs);
     NewMachineWithCommand {
         command: add_cmd,
-        machine: timer,
+        machine: timer.into(),
     }
 }
 

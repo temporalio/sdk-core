@@ -8,7 +8,6 @@ mod child_workflow_state_machine;
 mod complete_workflow_state_machine;
 mod continue_as_new_workflow_state_machine;
 mod fail_workflow_state_machine;
-#[allow(unused)]
 mod local_activity_state_machine;
 #[allow(unused)]
 mod mutable_side_effect_state_machine;
@@ -24,12 +23,23 @@ mod workflow_task_state_machine;
 #[cfg(test)]
 mod transition_coverage;
 
+pub use local_activity_state_machine::LOCAL_ACTIVITY_MARKER_NAME;
 pub use patch_state_machine::HAS_CHANGE_MARKER_NAME;
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
 use crate::{machines::workflow_machines::MachineResponse, telemetry::VecDisplayer};
+use activity_state_machine::ActivityMachine;
+use cancel_external_state_machine::CancelExternalMachine;
+use cancel_workflow_state_machine::CancelWorkflowMachine;
+use child_workflow_state_machine::ChildWorkflowMachine;
+use complete_workflow_state_machine::CompleteWorkflowMachine;
+use continue_as_new_workflow_state_machine::ContinueAsNewWorkflowMachine;
+use fail_workflow_state_machine::FailWorkflowMachine;
+use local_activity_state_machine::LocalActivityMachine;
+use patch_state_machine::PatchMachine;
 use prost::alloc::fmt::Formatter;
 use rustfsm::{MachineError, StateMachine};
+use signal_external_state_machine::SignalExternalMachine;
 use std::{
     convert::{TryFrom, TryInto},
     fmt::{Debug, Display},
@@ -38,6 +48,8 @@ use temporal_sdk_core_protos::{
     coresdk::workflow_commands::*,
     temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
 };
+use timer_state_machine::TimerMachine;
+use workflow_task_state_machine::WorkflowTaskMachine;
 
 #[cfg(test)]
 use transition_coverage::add_coverage;
@@ -123,16 +135,34 @@ enum MachineKind {
     ContinueAsNewWorkflow,
     FailWorkflow,
     Timer,
-    Version,
+    Patch,
     WorkflowTask,
     SignalExternalWorkflow,
     CancelExternalWorkflow,
+    LocalActivity,
+}
+
+#[enum_dispatch::enum_dispatch]
+enum Machines {
+    ActivityMachine,
+    CancelExternalMachine,
+    CancelWorkflowMachine,
+    ChildWorkflowMachine,
+    CompleteWorkflowMachine,
+    ContinueAsNewWorkflowMachine,
+    FailWorkflowMachine,
+    LocalActivityMachine,
+    PatchMachine,
+    SignalExternalMachine,
+    TimerMachine,
+    WorkflowTaskMachine,
 }
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
 ///
 /// Formerly known as `EntityStateMachine` in Java.
-trait TemporalStateMachine: CheckStateMachineInFinal + Send {
+#[enum_dispatch::enum_dispatch(Machines)]
+trait TemporalStateMachine: Send {
     fn kind(&self) -> MachineKind;
     fn handle_command(
         &mut self,
@@ -158,18 +188,14 @@ trait TemporalStateMachine: CheckStateMachineInFinal + Send {
     /// Should return true if the command was cancelled before we sent it to the server. Always
     /// returns false for non-cancellable machines
     fn was_cancelled_before_sent_to_server(&self) -> bool;
+
+    /// Returns true if the state machine is in a final state
+    fn is_final_state(&self) -> bool;
 }
 
 impl<SM> TemporalStateMachine for SM
 where
-    SM: StateMachine
-        + CheckStateMachineInFinal
-        + WFMachinesAdapter
-        + Cancellable
-        + OnEventWrapper
-        + Clone
-        + Send
-        + 'static,
+    SM: StateMachine + WFMachinesAdapter + Cancellable + OnEventWrapper + Clone + Send + 'static,
     <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
     <SM as StateMachine>::Event: TryFrom<CommandType>,
     <SM as StateMachine>::Event: Display,
@@ -258,6 +284,10 @@ where
     fn was_cancelled_before_sent_to_server(&self) -> bool {
         self.was_cancelled_before_sent_to_server()
     }
+
+    fn is_final_state(&self) -> bool {
+        self.on_final_state()
+    }
 }
 
 fn process_machine_commands<SM>(
@@ -280,22 +310,6 @@ where
         machine_responses.extend(machine.adapt_response(cmd, event_info)?);
     }
     Ok(machine_responses)
-}
-
-/// Exists purely to allow generic implementation of `is_final_state` for all [StateMachine]
-/// implementors
-trait CheckStateMachineInFinal {
-    /// Returns true if the state machine is in a final state
-    fn is_final_state(&self) -> bool;
-}
-
-impl<SM> CheckStateMachineInFinal for SM
-where
-    SM: StateMachine,
-{
-    fn is_final_state(&self) -> bool {
-        self.on_final_state()
-    }
 }
 
 /// This trait exists to bridge [StateMachine]s and the [WorkflowMachines] instance. It has access
@@ -383,10 +397,9 @@ where
 {
 }
 
-#[derive(Debug)]
-struct NewMachineWithCommand<T: TemporalStateMachine> {
+struct NewMachineWithCommand {
     command: ProtoCommand,
-    machine: T,
+    machine: Machines,
 }
 
 impl Debug for dyn TemporalStateMachine {

@@ -63,7 +63,7 @@ pub(super) fn new_external_signal(
     signal_name: String,
     payloads: impl IntoIterator<Item = Payload>,
     only_child: bool,
-) -> NewMachineWithCommand<SignalExternalMachine> {
+) -> NewMachineWithCommand {
     let mut s = SignalExternalMachine {
         state: Created {}.into(),
         shared_state: SharedState { seq },
@@ -90,7 +90,7 @@ pub(super) fn new_external_signal(
     };
     NewMachineWithCommand {
         command: cmd,
-        machine: s,
+        machine: s.into(),
     }
 }
 

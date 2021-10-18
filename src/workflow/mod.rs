@@ -12,7 +12,9 @@ use crate::{
     telemetry::metrics::MetricsContext,
 };
 use std::sync::mpsc::Sender;
-use temporal_sdk_core_protos::coresdk::workflow_activation::WfActivation;
+use temporal_sdk_core_protos::coresdk::{
+    activity_result::ActivityResult, workflow_activation::WfActivation,
+};
 
 pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
@@ -76,6 +78,11 @@ pub struct OutgoingServerCommands {
     pub replaying: bool,
 }
 
+#[derive(Debug)]
+pub(crate) enum LocalResolution {
+    LocalActivity(ActivityResult),
+}
+
 impl WorkflowManager {
     /// Given history that was just obtained from the server, pipe it into this workflow's machines.
     ///
@@ -87,6 +94,12 @@ impl WorkflowManager {
     ) -> Result<WfActivation> {
         self.machines.new_history_from_server(update).await?;
         self.get_next_activation().await
+    }
+
+    /// Let this workflow know that something we've been waiting locally on has resolved, like a
+    /// local activity or side effect
+    pub fn notify_of_local_result(&mut self, seq_id: u32, resolved: LocalResolution) -> Result<()> {
+        self.machines.local_resolution(seq_id, resolved)
     }
 
     /// Fetch the next workflow activation for this workflow if one is required. Doing so will apply
@@ -257,6 +270,16 @@ pub mod managed_wf {
             let res = self.mgr.feed_history_from_server(update).await?;
             self.push_activation_to_wf(res.clone()).await?;
             Ok(res)
+        }
+
+        /// Say a local activity completed
+        pub(crate) fn complete_local_activity(
+            &mut self,
+            seq_num: u32,
+            result: ActivityResult,
+        ) -> Result<()> {
+            self.mgr
+                .notify_of_local_result(seq_num, LocalResolution::LocalActivity(result))
         }
 
         /// During testing it can be useful to run through all activations to simulate replay

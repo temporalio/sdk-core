@@ -18,6 +18,7 @@ pub mod coresdk {
     use activity_result::ActivityResult;
     use activity_task::ActivityTask;
     use common::Payload;
+    use serde::Serialize;
     use std::{
         collections::HashMap,
         convert::TryFrom,
@@ -84,9 +85,14 @@ pub mod coresdk {
             }
         }
     }
+
     pub mod common {
         tonic::include_proto!("coresdk.common");
-        use crate::temporal::api::common::v1::Payloads;
+        use super::external_data::LocalActivityMarkerData;
+        use crate::{
+            coresdk::{AsJsonPayloadExt, IntoPayloadsExt},
+            temporal::api::common::v1::{Payload as ApiPayload, Payloads},
+        };
         use std::collections::HashMap;
 
         impl<T> From<T> for Payload
@@ -125,6 +131,74 @@ pub mod coresdk {
             let name = std::str::from_utf8(&details.get("patch_id")?.payloads.get(0)?.data).ok()?;
             let deprecated = *details.get("deprecated")?.payloads.get(0)?.data.get(0)? != 0;
             Some((name.to_string(), deprecated))
+        }
+
+        pub fn build_local_activity_marker_details(
+            metadata: LocalActivityMarkerData,
+            result: Option<Payload>,
+        ) -> HashMap<String, Payloads> {
+            let mut hm = HashMap::new();
+            // TODO: It is more efficient for this to be proto binary, but then it shows up
+            //   as meaningless in the Temporal UI...
+            if let Some(jsonified) = metadata.as_json_payload().into_payloads() {
+                hm.insert("data".to_string(), jsonified);
+            }
+            if let Some(res) = result {
+                hm.insert("result".to_string(), res.into());
+            }
+            hm
+        }
+
+        /// Given a marker detail map, returns the local activity info and the result payload
+        /// (which may be empty)
+        pub fn decode_local_activity_marker_details(
+            details: &HashMap<String, Payloads>,
+        ) -> Option<(LocalActivityMarkerData, &ApiPayload)> {
+            let data_json =
+                std::str::from_utf8(&details.get("data")?.payloads.get(0)?.data).ok()?;
+            let data: LocalActivityMarkerData = serde_json::from_str(data_json).ok()?;
+            let result = details.get("result")?.payloads.get(0)?;
+            Some((data, result))
+        }
+    }
+
+    pub mod external_data {
+        use prost_types::Timestamp;
+        use serde::{Deserialize, Deserializer, Serialize, Serializer};
+        tonic::include_proto!("coresdk.external_data");
+
+        #[derive(Serialize, Deserialize)]
+        #[serde(remote = "Timestamp")]
+        struct TimestampDef {
+            pub seconds: i64,
+            pub nanos: i32,
+        }
+
+        // Buncha hullaballoo because prost types aren't serde compat.
+        // See https://github.com/tokio-rs/prost/issues/75 which hilariously Chad opened ages ago
+        mod opt_timestamp {
+            use super::*;
+
+            pub fn serialize<S>(value: &Option<Timestamp>, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                #[derive(Serialize)]
+                struct Helper<'a>(#[serde(with = "TimestampDef")] &'a Timestamp);
+
+                value.as_ref().map(Helper).serialize(serializer)
+            }
+
+            pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Timestamp>, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                #[derive(Deserialize)]
+                struct Helper(#[serde(with = "TimestampDef")] Timestamp);
+
+                let helper = Option::deserialize(deserializer)?;
+                Ok(helper.map(|Helper(external)| external))
+            }
         }
     }
 
@@ -771,6 +845,26 @@ pub mod coresdk {
             Payloads {
                 payloads: vec![v.into()],
             }
+        }
+    }
+
+    pub trait AsJsonPayloadExt {
+        fn as_json_payload(&self) -> Option<Payload>;
+    }
+    impl<T> AsJsonPayloadExt for T
+    where
+        T: Serialize,
+    {
+        fn as_json_payload(&self) -> Option<Payload> {
+            if let Ok(as_json) = serde_json::to_string(self) {
+                let mut metadata = HashMap::new();
+                metadata.insert("encoding".to_string(), b"json/plain".to_vec());
+                return Some(Payload {
+                    metadata,
+                    data: as_json.into_bytes(),
+                });
+            }
+            None
         }
     }
 

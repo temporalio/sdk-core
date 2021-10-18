@@ -1,18 +1,23 @@
 use crate::{
     machines::{
-        activity_state_machine::new_activity, cancel_external_state_machine::new_external_cancel,
+        activity_state_machine::new_activity,
+        cancel_external_state_machine::new_external_cancel,
         cancel_workflow_state_machine::cancel_workflow,
         child_workflow_state_machine::new_child_workflow,
         complete_workflow_state_machine::complete_workflow,
         continue_as_new_workflow_state_machine::continue_as_new,
-        fail_workflow_state_machine::fail_workflow, patch_state_machine::has_change,
-        signal_external_state_machine::new_external_signal, timer_state_machine::new_timer,
-        workflow_task_state_machine::WorkflowTaskMachine, MachineKind, NewMachineWithCommand,
-        ProtoCommand, TemporalStateMachine, WFCommand,
+        fail_workflow_state_machine::fail_workflow,
+        local_activity_state_machine::{new_local_activity, LocalActivityMachine},
+        patch_state_machine::has_change,
+        signal_external_state_machine::new_external_signal,
+        timer_state_machine::new_timer,
+        workflow_task_state_machine::WorkflowTaskMachine,
+        MachineKind, Machines, NewMachineWithCommand, ProtoCommand, TemporalStateMachine,
+        WFCommand,
     },
     protosext::HistoryEventExt,
     telemetry::{metrics::MetricsContext, VecDisplayer},
-    workflow::{CommandID, DrivenWorkflow, HistoryUpdate, WorkflowFetcher},
+    workflow::{CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WorkflowFetcher},
 };
 use prost_types::TimestampOutOfSystemRangeError;
 use slotmap::SlotMap;
@@ -77,14 +82,12 @@ pub(crate) struct WorkflowMachines {
     /// The current workflow time if it has been established
     current_wf_time: Option<SystemTime>,
 
-    // TODO: Nothing gets deleted from here
-    all_machines: SlotMap<MachineKey, Box<dyn TemporalStateMachine + 'static>>,
+    all_machines: SlotMap<MachineKey, Machines>,
 
     /// A mapping for accessing machines associated to a particular event, where the key is the id
     /// of the initiating event for that machine.
     machines_by_event_id: HashMap<i64, MachineKey>,
 
-    // TODO: Nothing gets deleted from here
     /// Maps command ids as created by workflow authors to their associated machines.
     id_to_machine: HashMap<CommandID, MachineKey>,
 
@@ -229,16 +232,28 @@ impl WorkflowMachines {
         Ok(())
     }
 
+    pub(crate) fn local_resolution(
+        &mut self,
+        seq_id: u32,
+        resolution: LocalResolution,
+    ) -> Result<()> {
+        match resolution {
+            LocalResolution::LocalActivity(res) => {
+                let act_id = CommandID::Activity(seq_id);
+                let mach = self.machine_mut(self.get_machine_key(act_id)?);
+                // let downcasted: Option<&mut LocalActivityMachine> =
+                //     (mach as &mut dyn Any).downcast_mut();
+            }
+        }
+        Ok(())
+    }
+
     /// Handle a single event from the workflow history. `has_next_event` should be false if `event`
     /// is the last event in the history.
     ///
     /// TODO: Describe what actually happens in here
     #[instrument(level = "debug", skip(self, event), fields(event=%event))]
-    pub(crate) fn handle_event(
-        &mut self,
-        event: &HistoryEvent,
-        has_next_event: bool,
-    ) -> Result<()> {
+    fn handle_event(&mut self, event: &HistoryEvent, has_next_event: bool) -> Result<()> {
         if event.is_final_wf_execution_event() {
             self.have_seen_terminal_event = true;
         }
@@ -417,7 +432,9 @@ impl WorkflowMachines {
             }
             Some(EventType::WorkflowTaskScheduled) => {
                 let wf_task_sm = WorkflowTaskMachine::new(self.next_started_event_id);
-                let key = self.all_machines.insert(Box::new(wf_task_sm));
+                let key = self
+                    .all_machines
+                    .insert(Machines::WorkflowTaskMachine(wf_task_sm));
                 self.submachine_handle_event(key, event, has_next_event)?;
                 self.machines_by_event_id.insert(event.event_id, key);
             }
@@ -576,7 +593,7 @@ impl WorkflowMachines {
         // Scan through to the next WFT, searching for any patch markers, so that we can
         // pre-resolve them.
         for e in self.last_history_from_server.peek_next_wft_sequence() {
-            if let Some((patch_id, deprecated)) = e.get_changed_marker_details() {
+            if let Some((patch_id, deprecated)) = e.get_patch_marker_details() {
                 self.encountered_change_markers.insert(
                     patch_id.clone(),
                     ChangeInfo {
@@ -699,10 +716,16 @@ impl WorkflowMachines {
                 }
                 WFCommand::AddActivity(attrs) => {
                     let seq = attrs.seq;
-                    let activity = self.add_new_command_machine(new_activity(attrs));
-                    self.id_to_machine
-                        .insert(CommandID::Activity(seq), activity.machine);
-                    self.current_wf_task_commands.push_back(activity);
+                    if attrs.local {
+                        let la = new_local_activity(attrs, self.replaying);
+                        let machkey = self.all_machines.insert(Machines::LocalActivityMachine(la));
+                        self.id_to_machine.insert(CommandID::Activity(seq), machkey);
+                    } else {
+                        let activity = self.add_new_command_machine(new_activity(attrs));
+                        self.id_to_machine
+                            .insert(CommandID::Activity(seq), activity.machine);
+                        self.current_wf_task_commands.push_back(activity);
+                    };
                 }
                 WFCommand::RequestCancelActivity(attrs) => {
                     jobs.extend(self.process_cancellation(CommandID::Activity(attrs.seq))?)
@@ -862,34 +885,28 @@ impl WorkflowMachines {
         })?)
     }
 
-    fn add_terminal_command<T: TemporalStateMachine + 'static>(
-        &mut self,
-        machine: NewMachineWithCommand<T>,
-    ) {
+    fn add_terminal_command(&mut self, machine: NewMachineWithCommand) {
         let cwfm = self.add_new_command_machine(machine);
         self.workflow_end_time = Some(SystemTime::now());
         self.current_wf_task_commands.push_back(cwfm);
     }
 
-    fn add_new_command_machine<T: TemporalStateMachine + 'static>(
-        &mut self,
-        machine: NewMachineWithCommand<T>,
-    ) -> CommandAndMachine {
-        let k = self.all_machines.insert(Box::new(machine.machine));
+    fn add_new_command_machine(&mut self, machine: NewMachineWithCommand) -> CommandAndMachine {
+        let k = self.all_machines.insert(machine.machine);
         CommandAndMachine {
             command: machine.command,
             machine: k,
         }
     }
 
-    fn machine(&self, m: MachineKey) -> &dyn TemporalStateMachine {
+    fn machine(&self, m: MachineKey) -> &Machines {
         self.all_machines
             .get(m)
             .expect("Machine must exist")
             .borrow()
     }
 
-    fn machine_mut(&mut self, m: MachineKey) -> &mut (dyn TemporalStateMachine + 'static) {
+    fn machine_mut(&mut self, m: MachineKey) -> &mut Machines {
         self.all_machines
             .get_mut(m)
             .expect("Machine must exist")
@@ -917,7 +934,7 @@ fn change_marker_handling(
 ) -> Result<ChangeMarkerOutcome> {
     if !mach.matches_event(event) {
         // Version markers can be skipped in the event they are deprecated
-        if let Some(changed_info) = event.get_changed_marker_details() {
+        if let Some(changed_info) = event.get_patch_marker_details() {
             // Is deprecated. We can simply ignore this event, as deprecated change
             // markers are allowed without matching changed calls.
             if changed_info.1 {
@@ -933,7 +950,7 @@ fn change_marker_handling(
         // Version machines themselves may also not *have* matching markers, where non-deprecated
         // calls take the old path, and deprecated calls assume history is produced by a new-code
         // worker.
-        if mach.kind() == MachineKind::Version {
+        if mach.kind() == MachineKind::Patch {
             debug!("Skipping non-matching event against version machine");
             return Ok(ChangeMarkerOutcome::SkipCommand);
         }

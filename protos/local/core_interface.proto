@@ -5,6 +5,7 @@ package coresdk;
 import "activity_result.proto";
 import "activity_task.proto";
 import "common.proto";
+import "external_data.proto";
 import "workflow_activation.proto";
 import "workflow_commands.proto";
 import "workflow_completion.proto";

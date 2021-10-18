@@ -29,9 +29,7 @@ fsm! {
 #[derive(Debug, derive_more::Display)]
 pub(super) enum ContinueAsNewWorkflowCommand {}
 
-pub(super) fn continue_as_new(
-    attribs: ContinueAsNewWorkflowExecution,
-) -> NewMachineWithCommand<ContinueAsNewWorkflowMachine> {
+pub(super) fn continue_as_new(attribs: ContinueAsNewWorkflowExecution) -> NewMachineWithCommand {
     let mut machine = ContinueAsNewWorkflowMachine {
         state: Created {}.into(),
         shared_state: (),
@@ -42,7 +40,10 @@ pub(super) fn continue_as_new(
         command_type: CommandType::ContinueAsNewWorkflowExecution as i32,
         attributes: Some(attribs.into()),
     };
-    NewMachineWithCommand { command, machine }
+    NewMachineWithCommand {
+        command,
+        machine: machine.into(),
+    }
 }
 
 #[derive(Default, Clone)]

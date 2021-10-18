@@ -1,18 +1,19 @@
 use crate::{
-    machines::{ProtoCommand, HAS_CHANGE_MARKER_NAME},
+    machines::{ProtoCommand, HAS_CHANGE_MARKER_NAME, LOCAL_ACTIVITY_MARKER_NAME},
     task_token::TaskToken,
     workflow::LEGACY_QUERY_ID,
 };
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::{
-        common::decode_change_marker_details,
+        common::{decode_change_marker_details, decode_local_activity_marker_details},
+        external_data::LocalActivityMarkerData,
         workflow_activation::{wf_activation_job, QueryWorkflow, WfActivation, WfActivationJob},
         workflow_commands::{query_result, QueryResult},
         workflow_completion, FromPayloadsExt,
     },
     temporal::api::{
-        common::v1::WorkflowExecution,
+        common::v1::{Payload, WorkflowExecution},
         enums::v1::EventType,
         history::v1::{history_event, History, HistoryEvent, MarkerRecordedEventAttributes},
         query::v1::WorkflowQuery,
@@ -133,13 +134,16 @@ pub(crate) fn legacy_query_failure(fail: workflow_completion::Failure) -> QueryR
 }
 
 pub(crate) trait HistoryEventExt {
-    /// If this history event represents a `changed` marker, return the info about
+    /// If this history event represents a `patched` marker, return the info about
     /// it. Returns `None` if it is any other kind of event or marker.
-    fn get_changed_marker_details(&self) -> Option<(String, bool)>;
+    fn get_patch_marker_details(&self) -> Option<(String, bool)>;
+    /// If this history event represents a local activity marker, return the info about
+    /// it. Returns `None` if it is any other kind of event or marker.
+    fn get_local_activity_marker_details(&self) -> Option<(LocalActivityMarkerData, &Payload)>;
 }
 
 impl HistoryEventExt for HistoryEvent {
-    fn get_changed_marker_details(&self) -> Option<(String, bool)> {
+    fn get_patch_marker_details(&self) -> Option<(String, bool)> {
         if self.event_type() == EventType::MarkerRecorded {
             match &self.attributes {
                 Some(history_event::Attributes::MarkerRecordedEventAttributes(
@@ -150,6 +154,25 @@ impl HistoryEventExt for HistoryEvent {
                     },
                 )) if marker_name == HAS_CHANGE_MARKER_NAME => {
                     decode_change_marker_details(details)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    fn get_local_activity_marker_details(&self) -> Option<(LocalActivityMarkerData, &Payload)> {
+        if self.event_type() == EventType::MarkerRecorded {
+            match &self.attributes {
+                Some(history_event::Attributes::MarkerRecordedEventAttributes(
+                    MarkerRecordedEventAttributes {
+                        marker_name,
+                        details,
+                        ..
+                    },
+                )) if marker_name == LOCAL_ACTIVITY_MARKER_NAME => {
+                    decode_local_activity_marker_details(details)
                 }
                 _ => None,
             }

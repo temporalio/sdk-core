@@ -58,7 +58,7 @@ pub(super) fn new_external_cancel(
     seq: u32,
     workflow_execution: NamespacedWorkflowExecution,
     only_child: bool,
-) -> NewMachineWithCommand<CancelExternalMachine> {
+) -> NewMachineWithCommand {
     let mut s = CancelExternalMachine {
         state: Created {}.into(),
         shared_state: SharedState { seq },
@@ -81,7 +81,7 @@ pub(super) fn new_external_cancel(
     };
     NewMachineWithCommand {
         command: cmd,
-        machine: s,
+        machine: s.into(),
     }
 }
 
