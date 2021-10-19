@@ -1593,15 +1593,12 @@ pub fn single_child_workflow_start_fail(child_wf_id: &str) -> TestHistoryBuilder
 ///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
 ///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
 ///  5: EVENT_TYPE_MARKER_RECORDED (la result)
-///  6: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-///  7: EVENT_TYPE_WORKFLOW_TASK_STARTED
-///  8: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
-///  9: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+///  6: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
 pub fn single_local_activity(activity_id: &str) -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
     t.add_local_activity_result_marker(activity_id, b"hi".into());
-    t.add_workflow_task_scheduled_and_started();
+    t.add_workflow_execution_completed();
     t
 }

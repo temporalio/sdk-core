@@ -1,19 +1,15 @@
 use crate::{
     machines::{
-        activity_state_machine::new_activity,
-        cancel_external_state_machine::new_external_cancel,
+        activity_state_machine::new_activity, cancel_external_state_machine::new_external_cancel,
         cancel_workflow_state_machine::cancel_workflow,
         child_workflow_state_machine::new_child_workflow,
         complete_workflow_state_machine::complete_workflow,
         continue_as_new_workflow_state_machine::continue_as_new,
         fail_workflow_state_machine::fail_workflow,
-        local_activity_state_machine::{new_local_activity, LocalActivityMachine},
-        patch_state_machine::has_change,
-        signal_external_state_machine::new_external_signal,
-        timer_state_machine::new_timer,
-        workflow_task_state_machine::WorkflowTaskMachine,
-        MachineKind, Machines, NewMachineWithCommand, ProtoCommand, TemporalStateMachine,
-        WFCommand,
+        local_activity_state_machine::new_local_activity, patch_state_machine::has_change,
+        signal_external_state_machine::new_external_signal, timer_state_machine::new_timer,
+        workflow_task_state_machine::WorkflowTaskMachine, MachineKind, Machines,
+        NewMachineWithCommand, ProtoCommand, TemporalStateMachine, WFCommand,
     },
     protosext::HistoryEventExt,
     telemetry::{metrics::MetricsContext, VecDisplayer},
@@ -37,7 +33,7 @@ use temporal_sdk_core_protos::{
         },
         workflow_commands::{
             request_cancel_external_workflow_execution as cancel_we,
-            signal_external_workflow_execution as sig_we,
+            signal_external_workflow_execution as sig_we, ScheduleActivity,
         },
         FromPayloadsExt,
     },
@@ -102,6 +98,9 @@ pub(crate) struct WorkflowMachines {
     current_wf_task_commands: VecDeque<CommandAndMachine>,
     /// Information about patch markers we have already seen while replaying history
     encountered_change_markers: HashMap<String, ChangeInfo>,
+    /// Queued local activity requests which need to be executed, along with the key to their
+    /// machine, to enable reporting the request as having been sent.
+    local_activity_requests: Vec<(MachineKey, ScheduleActivity)>,
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: DrivenWorkflow,
@@ -145,6 +144,10 @@ pub enum MachineResponse {
     UpdateRunIdOnWorkflowReset {
         run_id: String,
     },
+
+    /// Queue a local activity to be processed by the worker
+    #[display(fmt = "QueueLocalActivity")]
+    QueueLocalActivity(ScheduleActivity),
 }
 
 // Must use `From` b/c ofZZ
@@ -208,6 +211,7 @@ impl WorkflowMachines {
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
             encountered_change_markers: Default::default(),
+            local_activity_requests: Default::default(),
             have_seen_terminal_event: false,
         }
     }
@@ -232,6 +236,8 @@ impl WorkflowMachines {
         Ok(())
     }
 
+    /// Let this workflow know that something we've been waiting locally on has resolved, like a
+    /// local activity or side effect
     pub(crate) fn local_resolution(
         &mut self,
         seq_id: u32,
@@ -240,12 +246,45 @@ impl WorkflowMachines {
         match resolution {
             LocalResolution::LocalActivity(res) => {
                 let act_id = CommandID::Activity(seq_id);
-                let mach = self.machine_mut(self.get_machine_key(act_id)?);
-                // let downcasted: Option<&mut LocalActivityMachine> =
-                //     (mach as &mut dyn Any).downcast_mut();
+                let mk = self.get_machine_key(act_id)?;
+                let mach = self.machine_mut(mk);
+                if let Machines::LocalActivityMachine(ref mut lam) = *mach {
+                    let resps = lam.try_resolve(res)?;
+                    self.process_machine_responses(mk, resps)?;
+                } else {
+                    return Err(WFMachinesError::Nondeterminism(format!(
+                        "Command matching activity with seq num {} existed but was not a \
+                        local activity!",
+                        seq_id
+                    )));
+                }
             }
         }
+        // TODO: If we want to produce the LA resolution as a result of handling record marker
+        //   cmd, we need to do this here. But, I don't like that, so maybe we just don't.
+        // self.prepare_commands()?;
         Ok(())
+    }
+
+    /// Fetch all queued local activities that need executing, mark them as sent
+    pub(crate) fn drain_queued_local_activities(&mut self) -> Vec<ScheduleActivity> {
+        let key_and_act = std::mem::take(&mut self.local_activity_requests);
+        key_and_act
+            .into_iter()
+            .map(|(k, act)| {
+                let mach = self.machine_mut(k);
+                if let Machines::LocalActivityMachine(ref mut lam) = *mach {
+                    lam.mark_sent().expect("works");
+                } else {
+                    // return Err(WFMachinesError::Nondeterminism(format!(
+                    //     "Command matching activity with seq num {} existed but was not a \
+                    //         local activity!",
+                    //     seq_id
+                    // )));
+                }
+                act
+            })
+            .collect()
     }
 
     /// Handle a single event from the workflow history. `has_next_event` should be false if `event`
@@ -432,9 +471,7 @@ impl WorkflowMachines {
             }
             Some(EventType::WorkflowTaskScheduled) => {
                 let wf_task_sm = WorkflowTaskMachine::new(self.next_started_event_id);
-                let key = self
-                    .all_machines
-                    .insert(Machines::WorkflowTaskMachine(wf_task_sm));
+                let key = self.all_machines.insert(wf_task_sm.into());
                 self.submachine_handle_event(key, event, has_next_event)?;
                 self.machines_by_event_id.insert(event.event_id, key);
             }
@@ -654,10 +691,10 @@ impl WorkflowMachines {
     /// this function uses to drive sending jobs to lang, trigging new workflow tasks, etc.
     fn process_machine_responses(
         &mut self,
-        sm: MachineKey,
+        smk: MachineKey,
         machine_responses: Vec<MachineResponse>,
     ) -> Result<()> {
-        let sm = self.machine_mut(sm);
+        let sm = self.machine_mut(smk);
         if !machine_responses.is_empty() {
             debug!(responses = %machine_responses.display(), machine_name = %sm.kind(),
                    "Machine produced responses");
@@ -683,8 +720,15 @@ impl WorkflowMachines {
                             },
                         ));
                 }
-                MachineResponse::IssueNewCommand(_) => {
-                    panic!("Issue new command machine response not expected here")
+                MachineResponse::IssueNewCommand(c) => {
+                    // TODO: Dedupe?
+                    self.current_wf_task_commands.push_back(CommandAndMachine {
+                        command: c,
+                        machine: smk,
+                    })
+                }
+                MachineResponse::QueueLocalActivity(act) => {
+                    self.local_activity_requests.push((smk, act));
                 }
             }
         }
@@ -717,9 +761,10 @@ impl WorkflowMachines {
                 WFCommand::AddActivity(attrs) => {
                     let seq = attrs.seq;
                     if attrs.local {
-                        let la = new_local_activity(attrs, self.replaying);
-                        let machkey = self.all_machines.insert(Machines::LocalActivityMachine(la));
+                        let (la, mach_resp) = new_local_activity(attrs, self.replaying);
+                        let machkey = self.all_machines.insert(la.into());
                         self.id_to_machine.insert(CommandID::Activity(seq), machkey);
+                        self.process_machine_responses(machkey, mach_resp)?;
                     } else {
                         let activity = self.add_new_command_machine(new_activity(attrs));
                         self.id_to_machine

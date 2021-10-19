@@ -388,6 +388,11 @@ impl WorkflowTaskManager {
                 machine_mut!(self, run_id, task_token, |wfm: &mut WorkflowManager| {
                     async move { Ok(wfm.get_server_commands()) }.boxed()
                 })?;
+
+            // TODO: This is probably where we transfer LA requests to activity manager / however
+            //   that happens, mark them as sent, and delay sending WFT until we reach WFT heartbeat
+            //   threshold or LA(s) resolve
+
             // We only actually want to send commands back to the server if there are no more
             // pending activations and we are caught up on replay.
             if !self.pending_activations.has_pending(run_id) && !server_cmds.replaying {
@@ -510,10 +515,10 @@ impl WorkflowTaskManager {
         }
     }
 
-    /// Called after every WFT completion or failure, updates outstanding task status & issues
-    /// evictions if required. It is important this is called *after* reporting a successful WFT
-    /// to server, as some replies (task not found) may require an eviction, which could be avoided
-    /// if this is called too early.
+    /// Called after every workflow activation completion or failure, updates outstanding task
+    /// status & issues evictions if required. It is important this is called *after* potentially
+    /// reporting a successful WFT to server, as some replies (task not found) may require an
+    /// eviction, which could be avoided if this is called too early.
     ///
     /// Returns true if WFT is complete
     pub(crate) fn after_wft_report(&self, run_id: &str) -> Result<bool, WorkflowUpdateError> {

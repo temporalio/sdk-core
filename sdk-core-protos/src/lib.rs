@@ -438,6 +438,12 @@ pub mod coresdk {
                 }
             }
         }
+
+        impl Display for ScheduleActivity {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "ScheduleActivity({})", self.activity_id)
+            }
+        }
     }
 
     pub type HistoryEventId = i64;
