@@ -9,9 +9,10 @@ import "google/protobuf/timestamp.proto";
 // for consumers which would like to just depend on the proto package to make sense of marker data.
 
 message LocalActivityMarkerData {
-  string activity_id = 1;
-  string activity_type = 2;
+  uint32 seq = 1;
+  string activity_id = 2;
+  string activity_type = 3;
   // You can think of this as "perceived time". It is the time the local activity thought it was
   // when it executed. Which could be different from wall-clock time because of workflow replay.
-  google.protobuf.Timestamp time = 3;
+  google.protobuf.Timestamp time = 4;
 }

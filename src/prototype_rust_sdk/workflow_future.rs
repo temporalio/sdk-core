@@ -116,6 +116,7 @@ impl WorkflowFuture {
     fn unblock(&mut self, event: UnblockEvent) {
         let cmd_id = match event {
             UnblockEvent::Timer(seq) => CommandID::Timer(seq),
+            // TODO: Local activities separate here too? May not actually need to
             UnblockEvent::Activity(seq, _) => CommandID::Activity(seq),
             UnblockEvent::WorkflowStart(seq, _) => CommandID::ChildWorkflowStart(seq),
             UnblockEvent::WorkflowComplete(seq, _) => CommandID::ChildWorkflowComplete(seq),

@@ -1598,7 +1598,7 @@ pub fn single_local_activity(activity_id: &str) -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    t.add_local_activity_result_marker(activity_id, b"hi".into());
+    t.add_local_activity_result_marker(1, activity_id, b"hi".into());
     t.add_workflow_execution_completed();
     t
 }

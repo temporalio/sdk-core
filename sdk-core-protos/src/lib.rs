@@ -150,15 +150,17 @@ pub mod coresdk {
         }
 
         /// Given a marker detail map, returns the local activity info and the result payload
-        /// (which may be empty)
-        pub fn decode_local_activity_marker_details(
-            details: &HashMap<String, Payloads>,
-        ) -> Option<(LocalActivityMarkerData, &ApiPayload)> {
-            let data_json =
-                std::str::from_utf8(&details.get("data")?.payloads.get(0)?.data).ok()?;
-            let data: LocalActivityMarkerData = serde_json::from_str(data_json).ok()?;
-            let result = details.get("result")?.payloads.get(0)?;
-            Some((data, result))
+        /// if they are found and the marker data is well-formed.
+        pub fn extract_local_activity_marker_details(
+            mut details: HashMap<String, Payloads>,
+        ) -> (Option<LocalActivityMarkerData>, Option<ApiPayload>) {
+            let data = details
+                .get("data")
+                .and_then(|p| p.payloads.get(0))
+                .and_then(|p| std::str::from_utf8(&p.data).ok())
+                .and_then(|s| serde_json::from_str(s).ok());
+            let result = details.remove("result").and_then(|mut p| p.payloads.pop());
+            (data, result)
         }
     }
 
@@ -280,42 +282,48 @@ pub mod coresdk {
         impl Display for WfActivationJob {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 match &self.variant {
-                    None => write!(f, "Empty"),
-                    Some(v) => match v {
-                        wf_activation_job::Variant::StartWorkflow(_) => write!(f, "StartWorkflow"),
-                        wf_activation_job::Variant::FireTimer(_) => write!(f, "FireTimer"),
-                        wf_activation_job::Variant::UpdateRandomSeed(_) => {
-                            write!(f, "UpdateRandomSeed")
-                        }
-                        wf_activation_job::Variant::QueryWorkflow(_) => write!(f, "QueryWorkflow"),
-                        wf_activation_job::Variant::CancelWorkflow(_) => {
-                            write!(f, "CancelWorkflow")
-                        }
-                        wf_activation_job::Variant::SignalWorkflow(_) => {
-                            write!(f, "SignalWorkflow")
-                        }
-                        wf_activation_job::Variant::ResolveActivity(_) => {
-                            write!(f, "ResolveActivity")
-                        }
-                        wf_activation_job::Variant::NotifyHasPatch(_) => {
-                            write!(f, "NotifyHasPatch")
-                        }
-                        wf_activation_job::Variant::ResolveChildWorkflowExecutionStart(_) => {
-                            write!(f, "ResolveChildWorkflowExecutionStart")
-                        }
-                        wf_activation_job::Variant::ResolveChildWorkflowExecution(_) => {
-                            write!(f, "ResolveChildWorkflowExecution")
-                        }
-                        wf_activation_job::Variant::ResolveSignalExternalWorkflow(_) => {
-                            write!(f, "ResolveSignalExternalWorkflow")
-                        }
-                        wf_activation_job::Variant::RemoveFromCache(_) => {
-                            write!(f, "RemoveFromCache")
-                        }
-                        wf_activation_job::Variant::ResolveRequestCancelExternalWorkflow(_) => {
-                            write!(f, "ResolveRequestCancelExternalWorkflow")
-                        }
-                    },
+                    None => write!(f, "empty"),
+                    Some(v) => write!(f, "{}", v),
+                }
+            }
+        }
+
+        impl Display for wf_activation_job::Variant {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    wf_activation_job::Variant::StartWorkflow(_) => write!(f, "StartWorkflow"),
+                    wf_activation_job::Variant::FireTimer(_) => write!(f, "FireTimer"),
+                    wf_activation_job::Variant::UpdateRandomSeed(_) => {
+                        write!(f, "UpdateRandomSeed")
+                    }
+                    wf_activation_job::Variant::QueryWorkflow(_) => write!(f, "QueryWorkflow"),
+                    wf_activation_job::Variant::CancelWorkflow(_) => {
+                        write!(f, "CancelWorkflow")
+                    }
+                    wf_activation_job::Variant::SignalWorkflow(_) => {
+                        write!(f, "SignalWorkflow")
+                    }
+                    wf_activation_job::Variant::ResolveActivity(_) => {
+                        write!(f, "ResolveActivity")
+                    }
+                    wf_activation_job::Variant::NotifyHasPatch(_) => {
+                        write!(f, "NotifyHasPatch")
+                    }
+                    wf_activation_job::Variant::ResolveChildWorkflowExecutionStart(_) => {
+                        write!(f, "ResolveChildWorkflowExecutionStart")
+                    }
+                    wf_activation_job::Variant::ResolveChildWorkflowExecution(_) => {
+                        write!(f, "ResolveChildWorkflowExecution")
+                    }
+                    wf_activation_job::Variant::ResolveSignalExternalWorkflow(_) => {
+                        write!(f, "ResolveSignalExternalWorkflow")
+                    }
+                    wf_activation_job::Variant::RemoveFromCache(_) => {
+                        write!(f, "RemoveFromCache")
+                    }
+                    wf_activation_job::Variant::ResolveRequestCancelExternalWorkflow(_) => {
+                        write!(f, "ResolveRequestCancelExternalWorkflow")
+                    }
                 }
             }
         }

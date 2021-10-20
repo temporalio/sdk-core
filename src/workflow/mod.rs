@@ -24,6 +24,7 @@ type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 pub(crate) enum CommandID {
     Timer(u32),
     Activity(u32),
+    LocalActivity(u32),
     ChildWorkflowStart(u32),
     ChildWorkflowComplete(u32),
     SignalExternal(u32),
@@ -193,6 +194,7 @@ pub mod managed_wf {
     impl WorkflowFetcher for WFFutureDriver {
         async fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
             if let Some(completion) = self.completions_rx.recv().await {
+                debug!("Managed wf completion: {}", completion);
                 completion
                     .status
                     .map(|s| match s {
@@ -255,6 +257,7 @@ pub mod managed_wf {
             }
         }
 
+        #[instrument(level = "debug", skip(self))]
         pub(crate) async fn get_next_activation(&mut self) -> Result<WfActivation> {
             let res = self.mgr.get_next_activation().await?;
             debug!("Managed wf next activation: {}", &res);
@@ -268,6 +271,7 @@ pub mod managed_wf {
         }
 
         /// Feed new history, as if received a new poll result. Returns new activation
+        #[instrument(level = "debug", skip(self, update))]
         pub(crate) async fn new_history(&mut self, update: HistoryUpdate) -> Result<WfActivation> {
             let res = self.mgr.feed_history_from_server(update).await?;
             self.push_activation_to_wf(&res).await?;
@@ -306,6 +310,7 @@ pub mod managed_wf {
             self.future_handle.take().unwrap().await.unwrap()
         }
 
+        #[instrument(level = "debug", skip(self, res))]
         async fn push_activation_to_wf(&mut self, res: &WfActivation) -> Result<()> {
             if res.jobs.is_empty() {
                 // Nothing to do here

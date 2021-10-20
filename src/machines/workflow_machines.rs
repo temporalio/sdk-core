@@ -1,15 +1,19 @@
 use crate::{
     machines::{
-        activity_state_machine::new_activity, cancel_external_state_machine::new_external_cancel,
+        activity_state_machine::new_activity,
+        cancel_external_state_machine::new_external_cancel,
         cancel_workflow_state_machine::cancel_workflow,
         child_workflow_state_machine::new_child_workflow,
         complete_workflow_state_machine::complete_workflow,
         continue_as_new_workflow_state_machine::continue_as_new,
         fail_workflow_state_machine::fail_workflow,
-        local_activity_state_machine::new_local_activity, patch_state_machine::has_change,
-        signal_external_state_machine::new_external_signal, timer_state_machine::new_timer,
-        workflow_task_state_machine::WorkflowTaskMachine, MachineKind, Machines,
-        NewMachineWithCommand, ProtoCommand, TemporalStateMachine, WFCommand,
+        local_activity_state_machine::{new_local_activity, ResolveDat},
+        patch_state_machine::has_change,
+        signal_external_state_machine::new_external_signal,
+        timer_state_machine::new_timer,
+        workflow_task_state_machine::WorkflowTaskMachine,
+        MachineKind, Machines, NewMachineWithCommand, ProtoCommand, TemporalStateMachine,
+        WFCommand,
     },
     protosext::HistoryEventExt,
     telemetry::{metrics::MetricsContext, VecDisplayer},
@@ -101,6 +105,8 @@ pub(crate) struct WorkflowMachines {
     /// Queued local activity requests which need to be executed, along with the key to their
     /// machine, to enable reporting the request as having been sent.
     local_activity_requests: Vec<(MachineKey, ScheduleActivity)>,
+    // TODO: Doc if works
+    local_activity_resolutions: Vec<ResolveDat>,
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: DrivenWorkflow,
@@ -116,8 +122,15 @@ pub(crate) struct WorkflowMachines {
 #[derive(Debug, derive_more::Display)]
 #[display(fmt = "Cmd&Machine({})", "command")]
 struct CommandAndMachine {
-    command: ProtoCommand,
+    command: MachineAssociatedCommand,
     machine: MachineKey,
+}
+
+#[derive(Debug, derive_more::Display)]
+enum MachineAssociatedCommand {
+    Real(ProtoCommand),
+    #[display(fmt = "FakeLocalActivityMarker({})", "_0")]
+    FakeLocalActivityMarker(u32),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -131,10 +144,12 @@ struct ChangeInfo {
 #[must_use]
 #[allow(clippy::large_enum_variant)]
 pub enum MachineResponse {
-    #[display(fmt = "PushWFJob")]
+    #[display(fmt = "PushWFJob({})", "_0")]
     PushWFJob(wf_activation_job::Variant),
 
     IssueNewCommand(ProtoCommand),
+    #[display(fmt = "IssueFakeLocalActivityMarker({})", "_0")]
+    IssueFakeLocalActivityMarker(u32),
     #[display(fmt = "TriggerWFTaskStarted")]
     TriggerWFTaskStarted {
         task_started_event_id: i64,
@@ -150,7 +165,6 @@ pub enum MachineResponse {
     QueueLocalActivity(ScheduleActivity),
 }
 
-// Must use `From` b/c ofZZ
 impl<T> From<T> for MachineResponse
 where
     T: Into<wf_activation_job::Variant>,
@@ -212,6 +226,7 @@ impl WorkflowMachines {
             current_wf_task_commands: Default::default(),
             encountered_change_markers: Default::default(),
             local_activity_requests: Default::default(),
+            local_activity_resolutions: Default::default(),
             have_seen_terminal_event: false,
         }
     }
@@ -245,11 +260,11 @@ impl WorkflowMachines {
     ) -> Result<()> {
         match resolution {
             LocalResolution::LocalActivity(res) => {
-                let act_id = CommandID::Activity(seq_id);
+                let act_id = CommandID::LocalActivity(seq_id);
                 let mk = self.get_machine_key(act_id)?;
                 let mach = self.machine_mut(mk);
                 if let Machines::LocalActivityMachine(ref mut lam) = *mach {
-                    let resps = lam.try_resolve(res)?;
+                    let resps = lam.try_resolve(res, seq_id)?;
                     self.process_machine_responses(mk, resps)?;
                 } else {
                     return Err(WFMachinesError::Nondeterminism(format!(
@@ -369,11 +384,6 @@ impl WorkflowMachines {
     /// with a state machine, which is then notified about the event and the command is removed from
     /// the commands queue.
     fn handle_command_event(&mut self, event: &HistoryEvent) -> Result<()> {
-        // TODO: Local activity handling stuff
-        //     if (handleLocalActivityMarker(event)) {
-        //       return;
-        //     }
-
         let consumed_cmd = loop {
             if let Some(peek_machine) = self.commands.front() {
                 let mach = self.machine(peek_machine.machine);
@@ -407,8 +417,6 @@ impl WorkflowMachines {
                 break command;
             }
         };
-
-        // TODO: validate command
 
         if !self.machine(consumed_cmd.machine).is_final_state() {
             self.machines_by_event_id
@@ -515,7 +523,10 @@ impl WorkflowMachines {
             .iter()
             .filter_map(|c| {
                 if !self.machine(c.machine).is_final_state() {
-                    Some(c.command.clone())
+                    match &c.command {
+                        MachineAssociatedCommand::Real(cmd) => Some(cmd.clone()),
+                        MachineAssociatedCommand::FakeLocalActivityMarker(_) => None,
+                    }
                 } else {
                     None
                 }
@@ -530,6 +541,7 @@ impl WorkflowMachines {
     /// The job list may be empty, in which case it is expected the caller handles what to do in a
     /// "no work" situation. Possibly, it may know about some work the machines don't, like queries.
     pub(crate) fn get_wf_activation(&mut self) -> WfActivation {
+        warn!("Get wf activation");
         let jobs = self.drive_me.drain_jobs();
         WfActivation {
             timestamp: self.current_wf_time.map(Into::into),
@@ -553,6 +565,7 @@ impl WorkflowMachines {
     /// Returns a boolean flag which indicates whether or not new activations were produced by the
     /// state machine. If true, pending activation should be created by the caller making jobs
     /// available to the lang side.
+    /// TODO: Return value of this fn never used
     pub(crate) async fn iterate_machines(&mut self) -> Result<bool> {
         let results = self.drive_me.fetch_workflow_iteration_output().await;
         let jobs = self.handle_driven_results(results)?;
@@ -619,6 +632,7 @@ impl WorkflowMachines {
         while let Some(event) = history.next() {
             let next_event = history.peek();
 
+            // TODO: use only one handle_event call in this loop
             if event.event_type == EventType::WorkflowTaskStarted as i32 && next_event.is_none() {
                 self.handle_event(event, false)?;
                 break;
@@ -630,6 +644,7 @@ impl WorkflowMachines {
         // Scan through to the next WFT, searching for any patch markers, so that we can
         // pre-resolve them.
         for e in self.last_history_from_server.peek_next_wft_sequence() {
+            warn!("peeked {}", e);
             if let Some((patch_id, deprecated)) = e.get_patch_marker_details() {
                 self.encountered_change_markers.insert(
                     patch_id.clone(),
@@ -643,6 +658,11 @@ impl WorkflowMachines {
                     .send_job(wf_activation_job::Variant::NotifyHasPatch(NotifyHasPatch {
                         patch_id,
                     }));
+            } else if e.is_local_activity_marker() {
+                warn!("Found la");
+                if let Some(la_dat) = e.clone().into_local_activity_marker_details() {
+                    self.local_activity_resolutions.push(la_dat.into());
+                } // todo: else
             }
         }
 
@@ -676,10 +696,15 @@ impl WorkflowMachines {
                 .machine(c.machine)
                 .was_cancelled_before_sent_to_server()
             {
-                let machine_responses = self
-                    .machine_mut(c.machine)
-                    .handle_command(c.command.command_type())?;
-                self.process_machine_responses(c.machine, machine_responses)?;
+                match &c.command {
+                    MachineAssociatedCommand::Real(cmd) => {
+                        let machine_responses = self
+                            .machine_mut(c.machine)
+                            .handle_command(cmd.command_type())?;
+                        self.process_machine_responses(c.machine, machine_responses)?;
+                    }
+                    MachineAssociatedCommand::FakeLocalActivityMarker(_) => {}
+                }
             }
             self.commands.push_back(c);
         }
@@ -688,13 +713,13 @@ impl WorkflowMachines {
     }
 
     /// After a machine handles either an event or a command, it produces [MachineResponses] which
-    /// this function uses to drive sending jobs to lang, trigging new workflow tasks, etc.
+    /// this function uses to drive sending jobs to lang, triggering new workflow tasks, etc.
     fn process_machine_responses(
         &mut self,
         smk: MachineKey,
         machine_responses: Vec<MachineResponse>,
     ) -> Result<()> {
-        let sm = self.machine_mut(smk);
+        let sm = self.machine(smk);
         if !machine_responses.is_empty() {
             debug!(responses = %machine_responses.display(), machine_name = %sm.kind(),
                    "Machine produced responses");
@@ -721,11 +746,41 @@ impl WorkflowMachines {
                         ));
                 }
                 MachineResponse::IssueNewCommand(c) => {
-                    // TODO: Dedupe?
+                    // TODO: Dedupe
                     self.current_wf_task_commands.push_back(CommandAndMachine {
-                        command: c,
+                        command: MachineAssociatedCommand::Real(c),
                         machine: smk,
                     })
+                }
+                MachineResponse::IssueFakeLocalActivityMarker(seq) => {
+                    let resolutions =
+                        std::mem::replace(&mut self.local_activity_resolutions, vec![]);
+                    let mut more_responses = vec![];
+                    if let Machines::LocalActivityMachine(ref mut lam) = self.machine_mut(smk) {
+                        warn!("Issuing fake LA marker {}", seq);
+
+                        // If there are pending local activity resolutions, first handle those
+                        // TODO: probably producing a fake marker means there *must* be some
+                        if !resolutions.is_empty() {
+                            // TODO: Only do this for matching ones
+                            for res in resolutions {
+                                let resp = lam.try_resolve(res.result, res.seq)?;
+                                warn!("Got resp from la mach {:?}", resp);
+                                more_responses.extend(resp);
+                            }
+                        }
+
+                        self.current_wf_task_commands.push_back(CommandAndMachine {
+                            command: MachineAssociatedCommand::FakeLocalActivityMarker(seq),
+                            machine: smk,
+                        })
+                    } else {
+                        return Err(WFMachinesError::Fatal(
+                            "Non local-activity machine returned fake LA marker".to_string(),
+                        ));
+                    };
+
+                    self.process_machine_responses(smk, more_responses)?;
                 }
                 MachineResponse::QueueLocalActivity(act) => {
                     self.local_activity_requests.push((smk, act));
@@ -763,7 +818,8 @@ impl WorkflowMachines {
                     if attrs.local {
                         let (la, mach_resp) = new_local_activity(attrs, self.replaying);
                         let machkey = self.all_machines.insert(la.into());
-                        self.id_to_machine.insert(CommandID::Activity(seq), machkey);
+                        self.id_to_machine
+                            .insert(CommandID::LocalActivity(seq), machkey);
                         self.process_machine_responses(machkey, mach_resp)?;
                     } else {
                         let activity = self.add_new_command_machine(new_activity(attrs));
@@ -906,7 +962,7 @@ impl WorkflowMachines {
             match r {
                 MachineResponse::IssueNewCommand(c) => {
                     self.current_wf_task_commands.push_back(CommandAndMachine {
-                        command: c,
+                        command: MachineAssociatedCommand::Real(c),
                         machine: m_key,
                     })
                 }
@@ -939,7 +995,7 @@ impl WorkflowMachines {
     fn add_new_command_machine(&mut self, machine: NewMachineWithCommand) -> CommandAndMachine {
         let k = self.all_machines.insert(machine.machine);
         CommandAndMachine {
-            command: machine.command,
+            command: MachineAssociatedCommand::Real(machine.command),
             machine: k,
         }
     }

@@ -6,7 +6,7 @@ use crate::{
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::{
-        common::{decode_change_marker_details, decode_local_activity_marker_details},
+        common::{decode_change_marker_details, extract_local_activity_marker_details},
         external_data::LocalActivityMarkerData,
         workflow_activation::{wf_activation_job, QueryWorkflow, WfActivation, WfActivationJob},
         workflow_commands::{query_result, QueryResult},
@@ -15,6 +15,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         common::v1::{Payload, WorkflowExecution},
         enums::v1::EventType,
+        failure::v1::Failure,
         history::v1::{history_event, History, HistoryEvent, MarkerRecordedEventAttributes},
         query::v1::WorkflowQuery,
         taskqueue::v1::StickyExecutionAttributes,
@@ -137,9 +138,11 @@ pub(crate) trait HistoryEventExt {
     /// If this history event represents a `patched` marker, return the info about
     /// it. Returns `None` if it is any other kind of event or marker.
     fn get_patch_marker_details(&self) -> Option<(String, bool)>;
+    /// If this history event represents a local activity marker, return true.
+    fn is_local_activity_marker(&self) -> bool;
     /// If this history event represents a local activity marker, return the info about
     /// it. Returns `None` if it is any other kind of event or marker.
-    fn get_local_activity_marker_details(&self) -> Option<(LocalActivityMarkerData, &Payload)>;
+    fn into_local_activity_marker_details(self) -> Option<CompleteLocalActivityData>;
 }
 
 impl HistoryEventExt for HistoryEvent {
@@ -162,17 +165,41 @@ impl HistoryEventExt for HistoryEvent {
         }
     }
 
-    fn get_local_activity_marker_details(&self) -> Option<(LocalActivityMarkerData, &Payload)> {
+    fn is_local_activity_marker(&self) -> bool {
         if self.event_type() == EventType::MarkerRecorded {
-            match &self.attributes {
+            return match &self.attributes {
+                Some(history_event::Attributes::MarkerRecordedEventAttributes(
+                    MarkerRecordedEventAttributes { marker_name, .. },
+                )) if marker_name == LOCAL_ACTIVITY_MARKER_NAME => true,
+                _ => false,
+            };
+        }
+        false
+    }
+
+    fn into_local_activity_marker_details(self) -> Option<CompleteLocalActivityData> {
+        if self.event_type() == EventType::MarkerRecorded {
+            match self.attributes {
                 Some(history_event::Attributes::MarkerRecordedEventAttributes(
                     MarkerRecordedEventAttributes {
                         marker_name,
                         details,
+                        failure,
                         ..
                     },
                 )) if marker_name == LOCAL_ACTIVITY_MARKER_NAME => {
-                    decode_local_activity_marker_details(details)
+                    let (data, ok_res) = extract_local_activity_marker_details(details);
+                    let data = data?;
+                    let result = if let Some(r) = ok_res {
+                        Ok(r)
+                    } else {
+                        let fail = failure?;
+                        Err(fail)
+                    };
+                    Some(CompleteLocalActivityData {
+                        marker_dat: data,
+                        result,
+                    })
                 }
                 _ => None,
             }
@@ -180,4 +207,9 @@ impl HistoryEventExt for HistoryEvent {
             None
         }
     }
+}
+
+pub(crate) struct CompleteLocalActivityData {
+    pub marker_dat: LocalActivityMarkerData,
+    pub result: Result<Payload, Failure>,
 }

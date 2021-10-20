@@ -418,7 +418,6 @@ mod tests {
         let mut wfm = patch_setup(replaying, marker_type, wf_version);
         // Start workflow activation
         wfm.get_next_activation().await.unwrap();
-        // Just starts timer
         let commands = wfm.get_server_commands().await.commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(

@@ -221,9 +221,13 @@ where
         if let Ok(converted_command) = command_type.try_into() {
             match OnEventWrapper::on_event_mut(self, converted_command) {
                 Ok(c) => process_machine_commands(self, c, None),
-                Err(MachineError::InvalidTransition) => Err(WFMachinesError::Nondeterminism(
-                    format!("Unexpected command {:?}", command_type),
-                )),
+                Err(MachineError::InvalidTransition) => {
+                    Err(WFMachinesError::Nondeterminism(format!(
+                        "Unexpected command producing an invalid transition {:?} in state {}",
+                        command_type,
+                        self.state()
+                    )))
+                }
                 Err(MachineError::Underlying(e)) => Err(e.into()),
             }
         } else {

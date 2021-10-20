@@ -199,6 +199,7 @@ impl TestHistoryBuilder {
 
     pub(crate) fn add_local_activity_result_marker(
         &mut self,
+        seq: u32,
         activity_id: &str,
         payload: CorePayload,
     ) {
@@ -206,6 +207,7 @@ impl TestHistoryBuilder {
             marker_name: LOCAL_ACTIVITY_MARKER_NAME.to_string(),
             details: build_local_activity_marker_details(
                 LocalActivityMarkerData {
+                    seq,
                     activity_id: activity_id.to_string(),
                     activity_type: "some_act_type".to_string(),
                     time: None,
