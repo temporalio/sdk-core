@@ -97,7 +97,7 @@ impl LocalActivityMachine {
                         "Invalid transition while attempting to resolve local activity in {}",
                         self.state(),
                     )),
-                    MachineError::Underlying(e) => e.into(),
+                    MachineError::Underlying(e) => e,
                 })?;
         let mr = if let Some(res) = res.pop() {
             self.adapt_response(res, None)
@@ -115,7 +115,7 @@ impl LocalActivityMachine {
                     "Invalid transition while attempting to resolve local activity in {}",
                     self.state(),
                 )),
-                MachineError::Underlying(e) => e.into(),
+                MachineError::Underlying(e) => e,
             },
         )?;
         Ok(())
