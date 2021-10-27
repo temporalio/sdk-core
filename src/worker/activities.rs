@@ -182,6 +182,7 @@ impl WorkerActivityTasks {
             let should_remove = if !act_info.known_not_found {
                 drop(act_info); // TODO: Get rid of dashmap. If we hold ref across await, bad stuff.
                 let maybe_net_err = match status {
+                    activity_result::Status::WillCompleteAsync(_) => None,
                     activity_result::Status::Completed(ar::Success { result }) => gateway
                         .complete_activity_task(task_token.clone(), result.map(Into::into))
                         .await

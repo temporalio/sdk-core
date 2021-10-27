@@ -75,6 +75,13 @@ pub mod coresdk {
                     })),
                 }
             }
+            pub fn will_complete_async() -> Self {
+                Self {
+                    status: Some(activity_result::Status::WillCompleteAsync(
+                        WillCompleteAsync {},
+                    )),
+                }
+            }
         }
     }
     pub mod common {

@@ -13,6 +13,7 @@ message ActivityResult {
         Success completed = 1;
         Failure failed = 2;
         Cancellation cancelled = 3;
+        WillCompleteAsync will_complete_async = 4;
     }
 }
 
@@ -35,3 +36,11 @@ message Failure {
 message Cancellation {
     temporal.api.failure.v1.Failure failure = 1;
 }
+
+/**
+ * Used in ActivityResult to notify Core that this Activity will complete asynchronously.
+ * Core will forget about this Activity and free up resources used to track this Activity.
+ */
+message WillCompleteAsync {
+}
+
