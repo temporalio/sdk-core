@@ -11,7 +11,7 @@ use temporal_sdk_core_protos::{
         ActivityTaskCompletion, IntoCompletion,
     },
     temporal::api::{
-        common::v1::ActivityType,
+        common::v1::{ActivityType, Payloads},
         enums::v1::RetryState,
         failure::v1::{failure::FailureInfo, ActivityFailureInfo, Failure},
     },
@@ -576,5 +576,74 @@ async fn activity_cancellation_abandon() {
     // Poll workflow task expecting that activation has been created by the state machine
     // immediately after the cancellation request.
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    core.complete_execution(&task_q, &task.run_id).await;
+}
+
+#[tokio::test]
+async fn async_activity_completion_workflow() {
+    let (core, task_q) = init_core_and_create_wf("activity_workflow").await;
+    let activity_id = "act-1";
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    // Complete workflow task and schedule activity
+    core.complete_workflow_activation(
+        schedule_activity_cmd(
+            0,
+            &task_q,
+            activity_id,
+            ActivityCancellationType::TryCancel,
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        )
+        .into_completion(task_q.clone(), task.run_id),
+    )
+    .await
+    .unwrap();
+    // Poll activity and verify that it's been scheduled with correct parameters
+    let task = core.poll_activity_task(&task_q).await.unwrap();
+    assert_matches!(
+        task.variant,
+        Some(act_task::Variant::Start(start_activity)) => {
+            assert_eq!(start_activity.activity_type, "test_activity".to_string())
+        }
+    );
+    let response_payload = Payload {
+        data: b"hello ".to_vec(),
+        metadata: Default::default(),
+    };
+    // Complete activity asynchronously.
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: task.task_token.clone(),
+        task_queue: task_q.to_string(),
+        result: Some(ActivityResult::will_complete_async()),
+    })
+    .await
+    .unwrap();
+    let gw = core.server_gateway();
+    gw.complete_activity_task(
+        task.task_token.into(),
+        Some(Payloads {
+            payloads: vec![response_payload.clone().into()],
+        }),
+    )
+    .await
+    .unwrap();
+
+    // Poll workflow task and verify that activity has succeeded.
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveActivity(
+                    ResolveActivity {seq, result: Some(ActivityResult{
+                    status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)})),
+                     ..})}
+                )),
+            },
+        ] => {
+            assert_eq!(*seq, 0);
+            assert_eq!(r, &response_payload);
+        }
+    );
     core.complete_execution(&task_q, &task.run_id).await;
 }
