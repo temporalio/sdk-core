@@ -1602,3 +1602,20 @@ pub fn single_local_activity(activity_id: &str) -> TestHistoryBuilder {
     t.add_workflow_execution_completed();
     t
 }
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_MARKER_RECORDED (la result)
+///  7: EVENT_TYPE_MARKER_RECORDED (la result)
+///  8: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+pub fn sequential_local_activities() -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_local_activity_result_marker(1, "1", b"hi".into());
+    t.add_local_activity_result_marker(2, "2", b"hi2".into());
+    t.add_workflow_execution_completed();
+    t
+}

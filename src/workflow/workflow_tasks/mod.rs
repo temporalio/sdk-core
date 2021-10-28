@@ -331,7 +331,7 @@ impl WorkflowTaskManager {
             return Ok(None);
         };
 
-        // If the only command in the activation is a legacy query response, that means we need
+        // If the only command from the activation is a legacy query response, that means we need
         // to respond differently than a typical activation.
         let ret = if matches!(&commands.as_slice(),
                     &[WFCommand::QueryResponse(qr)] if qr.query_id == LEGACY_QUERY_ID)
@@ -391,7 +391,7 @@ impl WorkflowTaskManager {
 
             // TODO: This is probably where we transfer LA requests to activity manager / however
             //   that happens, mark them as sent, and delay sending WFT until we reach WFT heartbeat
-            //   threshold or LA(s) resolve
+            //   threshold or LA(s) resolve (if there are no other new commands ready to go out)
 
             // We only actually want to send commands back to the server if there are no more
             // pending activations and we are caught up on replay.

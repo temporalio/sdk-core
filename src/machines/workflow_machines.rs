@@ -105,8 +105,9 @@ pub(crate) struct WorkflowMachines {
     /// Queued local activity requests which need to be executed, along with the key to their
     /// machine, to enable reporting the request as having been sent.
     local_activity_requests: Vec<(MachineKey, ScheduleActivity)>,
-    // TODO: Doc if works
-    local_activity_resolutions: Vec<ResolveDat>,
+    /// Maps local activity sequence numbers to their resolutions as found when looking ahead at
+    /// next WFT
+    local_activity_resolutions: HashMap<u32, ResolveDat>,
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: DrivenWorkflow,
@@ -644,7 +645,6 @@ impl WorkflowMachines {
         // Scan through to the next WFT, searching for any patch markers, so that we can
         // pre-resolve them.
         for e in self.last_history_from_server.peek_next_wft_sequence() {
-            warn!("peeked {}", e);
             if let Some((patch_id, deprecated)) = e.get_patch_marker_details() {
                 self.encountered_change_markers.insert(
                     patch_id.clone(),
@@ -659,10 +659,10 @@ impl WorkflowMachines {
                         patch_id,
                     }));
             } else if e.is_local_activity_marker() {
-                warn!("Found la");
                 if let Some(la_dat) = e.clone().into_local_activity_marker_details() {
-                    self.local_activity_resolutions.push(la_dat.into());
-                } // todo: else
+                    self.local_activity_resolutions
+                        .insert(la_dat.marker_dat.seq, la_dat.into());
+                } // todo: else blow up
             }
         }
 
@@ -753,22 +753,24 @@ impl WorkflowMachines {
                     })
                 }
                 MachineResponse::IssueFakeLocalActivityMarker(seq) => {
-                    let resolutions =
-                        std::mem::replace(&mut self.local_activity_resolutions, vec![]);
+                    let resolve_dat =
+                        if let Some(res) = self.local_activity_resolutions.remove(&seq) {
+                            res
+                        } else {
+                            return Err(WFMachinesError::Nondeterminism(format!(
+                                "Local activity machine with id {} expected to have resolve \
+                                data from history but it was missing!",
+                                seq
+                            )));
+                        };
+
                     let mut more_responses = vec![];
                     if let Machines::LocalActivityMachine(ref mut lam) = self.machine_mut(smk) {
                         warn!("Issuing fake LA marker {}", seq);
 
-                        // If there are pending local activity resolutions, first handle those
-                        // TODO: probably producing a fake marker means there *must* be some
-                        if !resolutions.is_empty() {
-                            // TODO: Only do this for matching ones
-                            for res in resolutions {
-                                let resp = lam.try_resolve(res.result, res.seq)?;
-                                warn!("Got resp from la mach {:?}", resp);
-                                more_responses.extend(resp);
-                            }
-                        }
+                        let resp = lam.try_resolve(resolve_dat.result, resolve_dat.seq)?;
+                        warn!("Got resp from la mach {:?}", resp);
+                        more_responses.extend(resp);
 
                         self.current_wf_task_commands.push_back(CommandAndMachine {
                             command: MachineAssociatedCommand::FakeLocalActivityMarker(seq),

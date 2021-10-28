@@ -128,7 +128,8 @@ impl LocalActivityMachine {
         )
         .map_err(|e| match e {
             MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
-                "Invalid transition while attempting to resolve local activity in {}",
+                "Invalid transition while attempting to resolve local activity (seq {}) in {}",
+                self.shared_state.attrs.seq,
                 self.state(),
             )),
             MachineError::Underlying(e) => e,
@@ -392,6 +393,9 @@ mod tests {
         workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::rstest;
+    use temporal_sdk_core_protos::coresdk::workflow_activation::{
+        wf_activation_job, WfActivationJob,
+    };
 
     async fn la_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
         command_sink
@@ -405,7 +409,6 @@ mod tests {
     #[case::replay(true)]
     #[tokio::test]
     async fn one_la_success(#[case] replay: bool) {
-        test_telem_console();
         let func = WorkflowFunction::new(la_wf);
         let t = canned_histories::single_local_activity("activity-id-1");
         let histinfo = if replay {
@@ -420,6 +423,13 @@ mod tests {
         wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().await.commands;
         assert_eq!(commands.len(), 0);
+
+        let ready_to_execute_las = wfm.drain_queued_local_activities();
+        if !replay {
+            assert_eq!(ready_to_execute_las.len(), 1);
+        } else {
+            assert_eq!(ready_to_execute_las.len(), 0);
+        }
 
         if !replay {
             wfm.complete_local_activity(1, ActivityResult::ok(b"Resolved".into()))
@@ -441,6 +451,103 @@ mod tests {
             assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
             assert_eq!(
                 commands[1].command_type,
+                CommandType::CompleteWorkflowExecution as i32
+            );
+        }
+
+        if !replay {
+            wfm.new_history(t.get_full_history_info().unwrap().into())
+                .await
+                .unwrap();
+        }
+        assert_eq!(wfm.get_next_activation().await.unwrap().jobs.len(), 0);
+        let commands = wfm.get_server_commands().await.commands;
+        assert_eq!(commands.len(), 0);
+
+        wfm.shutdown().await.unwrap();
+    }
+
+    async fn two_la_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
+        command_sink
+            .local_activity(LocalActivityOptions::default())
+            .await;
+        command_sink
+            .local_activity(LocalActivityOptions::default())
+            .await;
+        Ok(().into())
+    }
+
+    #[rstest]
+    #[case::incremental(false)]
+    #[case::replay(true)]
+    #[tokio::test]
+    async fn two_sequential_las(#[case] replay: bool) {
+        test_telem_console();
+        let func = WorkflowFunction::new(two_la_wf);
+        let t = canned_histories::sequential_local_activities();
+        let histinfo = if replay {
+            t.get_full_history_info().unwrap().into()
+        } else {
+            t.get_history_info(1).unwrap().into()
+        };
+        let mut wfm = ManagedWFFunc::new_from_update(histinfo, func, vec![]);
+
+        // First activation will have no server commands. Activity will be put into the activity
+        // queue locally
+        wfm.get_next_activation().await.unwrap();
+        let commands = wfm.get_server_commands().await.commands;
+        assert_eq!(commands.len(), 0);
+        let ready_to_execute_las = wfm.drain_queued_local_activities();
+        if !replay {
+            assert_eq!(ready_to_execute_las.len(), 1);
+        } else {
+            assert_eq!(ready_to_execute_las.len(), 0);
+        }
+
+        if !replay {
+            wfm.complete_local_activity(1, ActivityResult::ok(b"Resolved".into()))
+                .unwrap();
+        }
+
+        let act = wfm.get_next_activation().await.unwrap();
+        assert_matches!(
+            act.jobs.as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveActivity(ra))
+            }] => assert_eq!(ra.seq, 1)
+        );
+        let ready_to_execute_las = wfm.drain_queued_local_activities();
+        if !replay {
+            assert_eq!(ready_to_execute_las.len(), 1);
+        } else {
+            assert_eq!(ready_to_execute_las.len(), 0);
+        }
+
+        if !replay {
+            wfm.complete_local_activity(2, ActivityResult::ok(b"Resolved".into()))
+                .unwrap();
+        }
+
+        let act = wfm.get_next_activation().await.unwrap();
+        assert_matches!(
+            act.jobs.as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveActivity(ra))
+            }] => assert_eq!(ra.seq, 2)
+        );
+        let commands = wfm.get_server_commands().await.commands;
+        if replay {
+            assert_eq!(commands.len(), 1);
+            assert_eq!(
+                commands[0].command_type,
+                CommandType::CompleteWorkflowExecution as i32
+            );
+        } else {
+            assert_eq!(commands.len(), 3);
+            assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
+            assert_eq!(commands[1].command_type, CommandType::RecordMarker as i32);
+            assert_eq!(
+                commands[2].command_type,
                 CommandType::CompleteWorkflowExecution as i32
             );
         }
