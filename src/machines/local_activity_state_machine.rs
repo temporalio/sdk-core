@@ -397,10 +397,8 @@ mod tests {
         wf_activation_job, WfActivationJob,
     };
 
-    async fn la_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
-        command_sink
-            .local_activity(LocalActivityOptions::default())
-            .await;
+    async fn la_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+        ctx.local_activity(LocalActivityOptions::default()).await;
         Ok(().into())
     }
 
@@ -467,13 +465,9 @@ mod tests {
         wfm.shutdown().await.unwrap();
     }
 
-    async fn two_la_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
-        command_sink
-            .local_activity(LocalActivityOptions::default())
-            .await;
-        command_sink
-            .local_activity(LocalActivityOptions::default())
-            .await;
+    async fn two_la_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+        ctx.local_activity(LocalActivityOptions::default()).await;
+        ctx.local_activity(LocalActivityOptions::default()).await;
         Ok(().into())
     }
 
@@ -484,7 +478,7 @@ mod tests {
     async fn two_sequential_las(#[case] replay: bool) {
         test_telem_console();
         let func = WorkflowFunction::new(two_la_wf);
-        let t = canned_histories::sequential_local_activities();
+        let t = canned_histories::two_local_activities_one_wft();
         let histinfo = if replay {
             t.get_full_history_info().unwrap().into()
         } else {
@@ -498,11 +492,8 @@ mod tests {
         let commands = wfm.get_server_commands().await.commands;
         assert_eq!(commands.len(), 0);
         let ready_to_execute_las = wfm.drain_queued_local_activities();
-        if !replay {
-            assert_eq!(ready_to_execute_las.len(), 1);
-        } else {
-            assert_eq!(ready_to_execute_las.len(), 0);
-        }
+        let num_queued = if !replay { 1 } else { 0 };
+        assert_eq!(ready_to_execute_las.len(), num_queued);
 
         if !replay {
             wfm.complete_local_activity(1, ActivityResult::ok(b"Resolved".into()))
@@ -535,6 +526,87 @@ mod tests {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(ra))
             }] => assert_eq!(ra.seq, 2)
         );
+        let commands = wfm.get_server_commands().await.commands;
+        if replay {
+            assert_eq!(commands.len(), 1);
+            assert_eq!(
+                commands[0].command_type,
+                CommandType::CompleteWorkflowExecution as i32
+            );
+        } else {
+            assert_eq!(commands.len(), 3);
+            assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
+            assert_eq!(commands[1].command_type, CommandType::RecordMarker as i32);
+            assert_eq!(
+                commands[2].command_type,
+                CommandType::CompleteWorkflowExecution as i32
+            );
+        }
+
+        if !replay {
+            wfm.new_history(t.get_full_history_info().unwrap().into())
+                .await
+                .unwrap();
+        }
+        assert_eq!(wfm.get_next_activation().await.unwrap().jobs.len(), 0);
+        let commands = wfm.get_server_commands().await.commands;
+        assert_eq!(commands.len(), 0);
+
+        wfm.shutdown().await.unwrap();
+    }
+
+    async fn two_la_wf_parallel(mut ctx: WfContext) -> WorkflowResult<()> {
+        tokio::join!(
+            ctx.local_activity(LocalActivityOptions::default()),
+            ctx.local_activity(LocalActivityOptions::default())
+        );
+        Ok(().into())
+    }
+
+    #[rstest]
+    #[case::incremental(false)]
+    #[case::replay(true)]
+    #[tokio::test]
+    async fn two_parallel_las(#[case] replay: bool) {
+        test_telem_console();
+        let func = WorkflowFunction::new(two_la_wf_parallel);
+        let t = canned_histories::two_local_activities_one_wft();
+        let histinfo = if replay {
+            t.get_full_history_info().unwrap().into()
+        } else {
+            t.get_history_info(1).unwrap().into()
+        };
+        let mut wfm = ManagedWFFunc::new_from_update(histinfo, func, vec![]);
+
+        // First activation will have no server commands. Activity(ies) will be put into the queue
+        // for execution
+        wfm.get_next_activation().await.unwrap();
+        let commands = wfm.get_server_commands().await.commands;
+        assert_eq!(commands.len(), 0);
+        let ready_to_execute_las = wfm.drain_queued_local_activities();
+        let num_queued = if !replay { 2 } else { 0 };
+        assert_eq!(ready_to_execute_las.len(), num_queued);
+
+        if !replay {
+            wfm.complete_local_activity(1, ActivityResult::ok(b"Resolved".into()))
+                .unwrap();
+            wfm.complete_local_activity(2, ActivityResult::ok(b"Resolved".into()))
+                .unwrap();
+        }
+
+        let act = wfm.get_next_activation().await.unwrap();
+        assert_matches!(
+            act.jobs.as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveActivity(ra))
+            },
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveActivity(ra2))
+            }] => {assert_eq!(ra.seq, 1); assert_eq!(ra2.seq, 2)}
+        );
+        let ready_to_execute_las = wfm.drain_queued_local_activities();
+        assert_eq!(ready_to_execute_las.len(), 0);
+
         let commands = wfm.get_server_commands().await.commands;
         if replay {
             assert_eq!(commands.len(), 1);

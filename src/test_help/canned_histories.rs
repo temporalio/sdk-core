@@ -1610,7 +1610,7 @@ pub fn single_local_activity(activity_id: &str) -> TestHistoryBuilder {
 ///  5: EVENT_TYPE_MARKER_RECORDED (la result)
 ///  7: EVENT_TYPE_MARKER_RECORDED (la result)
 ///  8: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
-pub fn sequential_local_activities() -> TestHistoryBuilder {
+pub fn two_local_activities_one_wft() -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
