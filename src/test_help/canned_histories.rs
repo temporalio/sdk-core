@@ -1619,3 +1619,34 @@ pub fn two_local_activities_one_wft() -> TestHistoryBuilder {
     t.add_workflow_execution_completed();
     t
 }
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_MARKER_RECORDED (la result)
+///  6: EVENT_TYPE_TIMER_STARTED
+///  7: EVENT_TYPE_TIMER_FIRED
+///  8: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  9: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 10: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 11: EVENT_TYPE_MARKER_RECORDED (la result)
+/// 12: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+pub fn two_local_activities_separated_by_timer() -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_local_activity_result_marker(1, "1", b"hi".into());
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add(
+        EventType::TimerFired,
+        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+            started_event_id: timer_started_event_id,
+            timer_id: "1".to_string(),
+        }),
+    );
+    t.add_full_wf_task();
+    t.add_local_activity_result_marker(2, "2", b"hi2".into());
+    t.add_workflow_execution_completed();
+    t
+}
