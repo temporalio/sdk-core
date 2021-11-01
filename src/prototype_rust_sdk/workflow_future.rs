@@ -53,7 +53,8 @@ impl WorkflowFunction {
         UnboundedSender<WfActivation>,
     ) {
         let (cancel_tx, cancel_rx) = watch::channel(false);
-        let (wf_context, cmd_receiver) = WfContext::new(namespace, args, cancel_rx);
+        let (wf_context, cmd_receiver) =
+            WfContext::new(namespace, task_queue.clone(), args, cancel_rx);
         let (tx, incoming_activations) = unbounded_channel();
         (
             WorkflowFuture {

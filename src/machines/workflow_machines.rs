@@ -542,7 +542,6 @@ impl WorkflowMachines {
     /// The job list may be empty, in which case it is expected the caller handles what to do in a
     /// "no work" situation. Possibly, it may know about some work the machines don't, like queries.
     pub(crate) fn get_wf_activation(&mut self) -> WfActivation {
-        warn!("Get wf activation");
         let jobs = self.drive_me.drain_jobs();
         WfActivation {
             timestamp: self.current_wf_time.map(Into::into),

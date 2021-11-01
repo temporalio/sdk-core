@@ -18,7 +18,7 @@ pub mod coresdk {
     use activity_result::ActivityResult;
     use activity_task::ActivityTask;
     use common::Payload;
-    use serde::Serialize;
+    use serde::{Deserialize, Serialize};
     use std::{
         collections::HashMap,
         convert::TryFrom,
@@ -862,23 +862,50 @@ pub mod coresdk {
         }
     }
 
+    #[derive(thiserror::Error, Debug)]
+    pub enum PayloadDeserializeErr {
+        /// This deserializer does not handle this type of payload. Allows composing multiple
+        /// deserializers.
+        #[error("This deserializer does not understand this payload")]
+        DeserializerDoesNotHandle,
+        #[error("Error during deserialization: {0}")]
+        DeserializeErr(#[from] anyhow::Error),
+    }
+
     pub trait AsJsonPayloadExt {
-        fn as_json_payload(&self) -> Option<Payload>;
+        fn as_json_payload(&self) -> anyhow::Result<Payload>;
     }
     impl<T> AsJsonPayloadExt for T
     where
         T: Serialize,
     {
-        fn as_json_payload(&self) -> Option<Payload> {
-            if let Ok(as_json) = serde_json::to_string(self) {
-                let mut metadata = HashMap::new();
-                metadata.insert("encoding".to_string(), b"json/plain".to_vec());
-                return Some(Payload {
-                    metadata,
-                    data: as_json.into_bytes(),
-                });
+        fn as_json_payload(&self) -> anyhow::Result<Payload> {
+            let as_json = serde_json::to_string(self)?;
+            let mut metadata = HashMap::new();
+            metadata.insert("encoding".to_string(), b"json/plain".to_vec());
+            Ok(Payload {
+                metadata,
+                data: as_json.into_bytes(),
+            })
+        }
+    }
+
+    pub trait FromJsonPayloadExt: Sized {
+        fn from_json_payload(payload: &Payload) -> Result<Self, PayloadDeserializeErr>;
+    }
+    impl<T> FromJsonPayloadExt for T
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        fn from_json_payload(payload: &Payload) -> Result<Self, PayloadDeserializeErr> {
+            if !matches!(
+                payload.metadata.get("encoding").map(|v| v.as_slice()),
+                Some(b"json/plain")
+            ) {
+                return Err(PayloadDeserializeErr::DeserializerDoesNotHandle);
             }
-            None
+            let payload_str = std::str::from_utf8(&payload.data).map_err(anyhow::Error::from)?;
+            Ok(serde_json::from_str(payload_str).map_err(anyhow::Error::from)?)
         }
     }
 

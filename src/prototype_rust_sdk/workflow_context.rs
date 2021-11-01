@@ -32,6 +32,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 /// Used within workflows to issue commands, get info, etc.
 pub struct WfContext {
     namespace: String,
+    task_queue: String,
     args: Vec<Payload>,
 
     chan: Sender<RustWfCmd>,
@@ -59,6 +60,7 @@ impl WfContext {
     /// sent from the workflow.
     pub(super) fn new(
         namespace: String,
+        task_queue: String,
         args: Vec<Payload>,
         am_cancelled: watch::Receiver<bool>,
     ) -> (Self, Receiver<RustWfCmd>) {
@@ -67,6 +69,7 @@ impl WfContext {
         (
             Self {
                 namespace,
+                task_queue,
                 args,
                 chan,
                 am_cancelled,
@@ -126,7 +129,13 @@ impl WfContext {
     }
 
     /// Request to run an activity
-    pub fn activity(&mut self, opts: ActivityOptions) -> impl CancellableFuture<ActivityResult> {
+    pub fn activity(
+        &mut self,
+        mut opts: ActivityOptions,
+    ) -> impl CancellableFuture<ActivityResult> {
+        if opts.task_queue.is_empty() {
+            opts.task_queue = self.task_queue.clone()
+        }
         let seq = self.next_activity_sequence_number;
         self.next_activity_sequence_number += 1;
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));

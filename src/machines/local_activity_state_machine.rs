@@ -388,7 +388,6 @@ mod tests {
     use super::*;
     use crate::{
         prototype_rust_sdk::{LocalActivityOptions, WfContext, WorkflowFunction, WorkflowResult},
-        telemetry::test_telem_console,
         test_help::canned_histories,
         workflow::managed_wf::ManagedWFFunc,
     };
@@ -647,7 +646,6 @@ mod tests {
     #[case::replay(true)]
     #[tokio::test]
     async fn las_separated_by_timer(#[case] replay: bool) {
-        test_telem_console();
         let func = WorkflowFunction::new(la_timer_la);
         let t = canned_histories::two_local_activities_separated_by_timer();
         let histinfo = if replay {

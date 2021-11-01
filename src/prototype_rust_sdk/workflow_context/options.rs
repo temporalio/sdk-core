@@ -23,6 +23,8 @@ pub struct ActivityOptions {
     pub activity_id: Option<String>,
     /// Type of activity to schedule
     pub activity_type: String,
+    /// Input to the activity
+    pub input: Payload,
     /// Task queue to schedule the activity in
     pub task_queue: String,
     /// Time that the Activity Task can stay in the Task Queue before it is picked up by a Worker.
@@ -68,6 +70,7 @@ impl IntoWorkflowCommand for ActivityOptions {
             start_to_close_timeout: self.start_to_close_timeout.map(Into::into),
             heartbeat_timeout: self.heartbeat_timeout.map(Into::into),
             cancellation_type: self.cancellation_type as i32,
+            arguments: vec![self.input],
             ..Default::default()
         }
     }
