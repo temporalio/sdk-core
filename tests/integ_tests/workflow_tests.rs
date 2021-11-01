@@ -306,58 +306,84 @@ async fn signal_workflow() {
 async fn signal_workflow_signal_not_handled_on_workflow_completion() {
     let workflow_id = "signal_workflow_signal_not_handled_on_workflow_completion";
     let (core, task_q) = init_core_and_create_wf(workflow_id).await;
-
     let signal_id_1 = "signal1";
-    let res = core.poll_workflow_activation(&task_q).await.unwrap();
-    // Task is completed with a timer
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
-        &task_q,
-        res.run_id,
-        vec![StartTimer {
-            seq: 0,
-            start_to_fire_timeout: Some(Duration::from_millis(10).into()),
-        }
-        .into()],
-    ))
-    .await
-    .unwrap();
-
-    // Poll before sending the signal - we should have the timer job
-    let res = core.poll_workflow_activation(&task_q).await.unwrap();
-    assert_matches!(
-        res.jobs.as_slice(),
-        [WfActivationJob {
-            variant: Some(wf_activation_job::Variant::FireTimer(_)),
-        }]
-    );
-
-    let run_id = res.run_id.clone();
-    // Send the signals to the server
-    with_gw(core.as_ref(), |gw: GwApi| async move {
-        gw.signal_workflow_execution(
-            workflow_id.to_string(),
-            res.run_id.to_string(),
-            signal_id_1.to_string(),
-            None,
-        )
+    for i in 1..=2 {
+        let res = core.poll_workflow_activation(&task_q).await.unwrap();
+        // Task is completed with a timer
+        core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+            &task_q,
+            res.run_id,
+            vec![StartTimer {
+                seq: 0,
+                start_to_fire_timeout: Some(Duration::from_millis(10).into()),
+            }
+            .into()],
+        ))
         .await
         .unwrap();
-    })
-    .await;
 
-    // Send completion - not having seen a poll response with a signal in it yet (unhandled command
-    // error will be silenced)
-    core.complete_execution(&task_q, &run_id).await;
+        let res = core.poll_workflow_activation(&task_q).await.unwrap();
 
-    // We should get a new task with the signal
-    let res = core.poll_workflow_activation(&task_q).await.unwrap();
-    assert_matches!(
-        res.jobs.as_slice(),
-        [WfActivationJob {
-            variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
-        }]
-    );
-    core.complete_execution(&task_q, &res.run_id).await;
+        if i == 1 {
+            // First attempt we should only see the timer being fired
+            assert_matches!(
+                res.jobs.as_slice(),
+                [WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::FireTimer(_)),
+                }]
+            );
+
+            let run_id = res.run_id.clone();
+
+            // Send the signals to the server
+            with_gw(core.as_ref(), |gw: GwApi| async move {
+                gw.signal_workflow_execution(
+                    workflow_id.to_string(),
+                    res.run_id.to_string(),
+                    signal_id_1.to_string(),
+                    None,
+                )
+                .await
+                .unwrap();
+            })
+            .await;
+
+            // Send completion - not having seen a poll response with a signal in it yet (unhandled
+            // command error will be logged as a warning and an eviction will be issued)
+            core.complete_execution(&task_q, &run_id).await;
+
+            // We should be told to evict
+            let res = core.poll_workflow_activation(&task_q).await.unwrap();
+            assert_matches!(
+                res.jobs.as_slice(),
+                [WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+                }]
+            );
+            core.complete_workflow_activation(WfActivationCompletion::empty(
+                task_q.clone(),
+                res.run_id,
+            ))
+            .await
+            .unwrap();
+            // Loop to the top to handle wf from the beginning
+            continue;
+        }
+
+        // On the second attempt, we will see the signal we failed to handle as well as the timer
+        assert_matches!(
+            res.jobs.as_slice(),
+            [
+                WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::FireTimer(_)),
+                },
+                WfActivationJob {
+                    variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+                }
+            ]
+        );
+        core.complete_execution(&task_q, &res.run_id).await;
+    }
 }
 
 #[tokio::test]

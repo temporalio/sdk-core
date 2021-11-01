@@ -631,6 +631,7 @@ impl Worker {
                     // them besides poll again, which it will do anyway.
                     tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
                         warn!("Unhandled command response when completing: {}", err);
+                        should_evict = true;
                         Ok(())
                     }
                     tonic::Code::NotFound => {
