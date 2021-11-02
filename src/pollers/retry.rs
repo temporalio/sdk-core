@@ -16,6 +16,7 @@ use temporal_sdk_core_protos::{
         query::v1::WorkflowQuery, workflowservice::v1::*,
     },
 };
+use tonic::Code;
 
 #[derive(Debug)]
 /// A wrapper for a [ServerGatewayApis] implementor which performs auto-retries
@@ -56,33 +57,42 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
         F: Fn() -> Fut + Unpin,
         Fut: Future<Output = Result<R>>,
     {
-        Ok(FutureRetry::new(
-            factory,
-            TonicErrorHandler::new(self.retry_config.clone(), ct),
-        )
-        .await
-        .map_err(|(e, _attempt)| e)?
-        .0)
+        let rtc = match ct {
+            CallType::Normal => self.retry_config.clone(),
+            CallType::LongPoll => RetryConfig::poll_retry_policy(),
+        };
+        Ok(FutureRetry::new(factory, TonicErrorHandler::new(rtc, ct))
+            .await
+            .map_err(|(e, _attempt)| e)?
+            .0)
     }
 }
 
 #[derive(Debug)]
 struct TonicErrorHandler {
     backoff: ExponentialBackoff,
-    max_attempts: usize,
+    max_retries: usize,
     call_type: CallType,
 }
 impl TonicErrorHandler {
-    fn new(mut cfg: RetryConfig, call_type: CallType) -> Self {
-        if call_type == CallType::LongPoll {
-            // Long polls can retry forever
-            cfg.max_elapsed_time = None;
-        }
+    fn new(cfg: RetryConfig, call_type: CallType) -> Self {
         Self {
-            max_attempts: cfg.max_retries,
+            max_retries: cfg.max_retries,
             backoff: cfg.into(),
             call_type,
         }
+    }
+
+    fn should_log_retry_warning(&self, cur_attempt: usize) -> bool {
+        // Warn on more than 5 retries for unlimited retrying
+        if self.max_retries == 0 && cur_attempt > 5 {
+            return true;
+        }
+        // Warn if the attempts are more than 50% of max retries
+        if cur_attempt * 2 >= self.max_retries {
+            return true;
+        }
+        false
     }
 }
 #[derive(Debug, Eq, PartialEq, Hash)]
@@ -95,20 +105,34 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
     type OutError = tonic::Status;
 
     fn handle(&mut self, current_attempt: usize, e: tonic::Status) -> RetryPolicy<tonic::Status> {
-        // Long poll calls get unlimited retries
-        if current_attempt >= self.max_attempts {
-            if self.call_type == CallType::Normal {
-                return RetryPolicy::ForwardError(e);
-            } else {
-                // But once they exceed the normal max attempts, start logging warnings
-                warn!(error=?e, "Polling encountered repeated error")
-            }
+        // 0 max retries means unlimited retries
+        if self.max_retries > 0 && current_attempt >= self.max_retries {
+            return RetryPolicy::ForwardError(e);
         }
 
-        if RETRYABLE_ERROR_CODES.contains(&e.code()) {
+        if current_attempt == 1 {
+            debug!(error=?e, "gRPC call failed on first attempt")
+        } else if self.should_log_retry_warning(current_attempt) {
+            warn!(error=?e, "gRPC call retried {} times", current_attempt)
+        }
+
+        // Long polls are OK with being cancelled or running into the timeout because there's
+        // nothing to do but retry anyway
+        let long_poll_allowed = self.call_type == CallType::LongPoll
+            && [Code::Cancelled, Code::DeadlineExceeded].contains(&e.code());
+
+        if RETRYABLE_ERROR_CODES.contains(&e.code()) || long_poll_allowed {
             match self.backoff.next_backoff() {
-                None => RetryPolicy::ForwardError(e), // None is returned when we've ran out of time.
-                Some(backoff) => RetryPolicy::WaitRetry(backoff),
+                None => RetryPolicy::ForwardError(e), // None is returned when we've ran out of time
+                Some(backoff) => {
+                    if cfg!(test) {
+                        // Allow unit tests to do lots of retries quickly. This does *not* apply
+                        // during integration testing, importantly.
+                        RetryPolicy::WaitRetry(Duration::from_millis(1))
+                    } else {
+                        RetryPolicy::WaitRetry(backoff)
+                    }
+                }
             }
         } else {
             RetryPolicy::ForwardError(e)
