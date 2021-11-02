@@ -89,7 +89,7 @@ impl TonicErrorHandler {
             return true;
         }
         // Warn if the attempts are more than 50% of max retries
-        if cur_attempt * 2 >= self.max_retries {
+        if self.max_retries > 0 && cur_attempt * 2 >= self.max_retries {
             return true;
         }
         false
