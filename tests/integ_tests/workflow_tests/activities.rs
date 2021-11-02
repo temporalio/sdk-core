@@ -581,7 +581,7 @@ async fn activity_cancellation_abandon() {
 
 #[tokio::test]
 async fn async_activity_completion_workflow() {
-    let (core, task_q) = init_core_and_create_wf("activity_workflow").await;
+    let (core, task_q) = init_core_and_create_wf("async_activity_workflow").await;
     let activity_id = "act-1";
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Complete workflow task and schedule activity
