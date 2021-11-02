@@ -43,7 +43,7 @@ use tonic::metadata::{MetadataKey, MetadataValue};
 
 static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivityTaskQueue"];
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
-const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(62);
+const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
 const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct GatewayRef {
@@ -160,6 +160,19 @@ impl Default for RetryConfig {
             max_interval: Duration::from_secs(5), // until it reaches 5 seconds.
             max_elapsed_time: Some(Duration::from_secs(10)), // 10 seconds total allocated time for all retries.
             max_retries: 10,
+        }
+    }
+}
+
+impl RetryConfig {
+    pub(crate) fn poll_retry_policy() -> Self {
+        Self {
+            initial_interval: Duration::from_millis(200),
+            randomization_factor: 0.2,
+            multiplier: 2.0,
+            max_interval: Duration::from_secs(10),
+            max_elapsed_time: None,
+            max_retries: 0,
         }
     }
 }
