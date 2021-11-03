@@ -2,7 +2,7 @@
 name = "rustfsm_trait"
 version = "0.1.0"
 authors = ["Spencer Judge <spencer@temporal.io>"]
-edition = "2018"
+edition = "2021"
 license-file = "LICENSE.txt"
 description = "Trait sub-crate of the `rustfsm` crate"
 
