@@ -36,23 +36,12 @@ impl<SG> RetryGateway<SG> {
 }
 
 impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
-    async fn call_with_retry<R, F, Fut>(&self, factory: F) -> Result<R>
-    where
-        F: Fn() -> Fut + Unpin,
-        Fut: Future<Output = Result<R>>,
-    {
-        self.call_type_with_retry(factory, CallType::Normal).await
-    }
-
-    async fn long_poll_call_with_retry<R, F, Fut>(&self, factory: F) -> Result<R>
-    where
-        F: Fn() -> Fut + Unpin,
-        Fut: Future<Output = Result<R>>,
-    {
-        self.call_type_with_retry(factory, CallType::LongPoll).await
-    }
-
-    async fn call_type_with_retry<R, F, Fut>(&self, factory: F, ct: CallType) -> Result<R>
+    async fn call_with_retry<R, F, Fut>(
+        &self,
+        factory: F,
+        ct: CallType,
+        call_name: &'static str,
+    ) -> Result<R>
     where
         F: Fn() -> Fut + Unpin,
         Fut: Future<Output = Result<R>>,
@@ -61,10 +50,12 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
             CallType::Normal => self.retry_config.clone(),
             CallType::LongPoll => RetryConfig::poll_retry_policy(),
         };
-        Ok(FutureRetry::new(factory, TonicErrorHandler::new(rtc, ct))
-            .await
-            .map_err(|(e, _attempt)| e)?
-            .0)
+        Ok(
+            FutureRetry::new(factory, TonicErrorHandler::new(rtc, ct, call_name))
+                .await
+                .map_err(|(e, _attempt)| e)?
+                .0,
+        )
     }
 }
 
@@ -73,13 +64,15 @@ struct TonicErrorHandler {
     backoff: ExponentialBackoff,
     max_retries: usize,
     call_type: CallType,
+    call_name: &'static str,
 }
 impl TonicErrorHandler {
-    fn new(cfg: RetryConfig, call_type: CallType) -> Self {
+    fn new(cfg: RetryConfig, call_type: CallType, call_name: &'static str) -> Self {
         Self {
             max_retries: cfg.max_retries,
             backoff: cfg.into(),
             call_type,
+            call_name,
         }
     }
 
@@ -111,9 +104,9 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
         }
 
         if current_attempt == 1 {
-            debug!(error=?e, "gRPC call failed on first attempt")
+            debug!(error=?e, "gRPC call {} failed on first attempt", self.call_name)
         } else if self.should_log_retry_warning(current_attempt) {
-            warn!(error=?e, "gRPC call retried {} times", current_attempt)
+            warn!(error=?e, "gRPC call {} retried {} times", self.call_name, current_attempt)
         }
 
         // Long polls are OK with being cancelled or running into the timeout because there's
@@ -140,6 +133,13 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
     }
 }
 
+macro_rules! retry_call {
+    ($myself:ident, $ctype:expr, $call_name:ident, $($args:expr),*) => {{
+        let fact = move || { $myself.gateway.$call_name($($args,)*)};
+        $myself.call_with_retry(fact, $ctype, stringify!($call_name)).await
+    }};
+}
+
 #[async_trait::async_trait]
 impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryGateway<SG> {
     async fn start_workflow(
@@ -150,33 +150,40 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         workflow_type: String,
         task_timeout: Option<Duration>,
     ) -> Result<StartWorkflowExecutionResponse> {
-        let input = &input;
-        let factory = move || {
-            self.gateway.start_workflow(
-                input.to_vec(),
-                task_queue.clone(),
-                workflow_id.clone(),
-                workflow_type.clone(),
-                task_timeout,
-            )
-        };
-        self.call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::Normal,
+            start_workflow,
+            input.clone(),
+            task_queue.clone(),
+            workflow_id.clone(),
+            workflow_type.clone(),
+            task_timeout
+        )
     }
 
     async fn poll_workflow_task(
         &self,
         task_queue: String,
     ) -> Result<PollWorkflowTaskQueueResponse> {
-        let factory = move || self.gateway.poll_workflow_task(task_queue.clone());
-        self.long_poll_call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::LongPoll,
+            poll_workflow_task,
+            task_queue.clone()
+        )
     }
 
     async fn poll_activity_task(
         &self,
         task_queue: String,
     ) -> Result<PollActivityTaskQueueResponse> {
-        let factory = move || self.gateway.poll_activity_task(task_queue.clone());
-        self.long_poll_call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::LongPoll,
+            poll_activity_task,
+            task_queue.clone()
+        )
     }
 
     async fn reset_sticky_task_queue(
@@ -184,19 +191,25 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         workflow_id: String,
         run_id: String,
     ) -> Result<ResetStickyTaskQueueResponse> {
-        let factory = move || {
-            self.gateway
-                .reset_sticky_task_queue(workflow_id.clone(), run_id.clone())
-        };
-        self.call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::Normal,
+            reset_sticky_task_queue,
+            workflow_id.clone(),
+            run_id.clone()
+        )
     }
 
     async fn complete_workflow_task(
         &self,
         request: WorkflowTaskCompletion,
     ) -> Result<RespondWorkflowTaskCompletedResponse> {
-        let factory = move || self.gateway.complete_workflow_task(request.clone());
-        self.call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::Normal,
+            complete_workflow_task,
+            request.clone()
+        )
     }
 
     async fn complete_activity_task(
@@ -204,11 +217,13 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         task_token: TaskToken,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse> {
-        let factory = move || {
-            self.gateway
-                .complete_activity_task(task_token.clone(), result.clone())
-        };
-        self.call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::Normal,
+            complete_activity_task,
+            task_token.clone(),
+            result.clone()
+        )
     }
 
     async fn record_activity_heartbeat(
@@ -216,11 +231,13 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RecordActivityTaskHeartbeatResponse> {
-        let factory = move || {
-            self.gateway
-                .record_activity_heartbeat(task_token.clone(), details.clone())
-        };
-        self.call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::Normal,
+            record_activity_heartbeat,
+            task_token.clone(),
+            details.clone()
+        )
     }
 
     async fn cancel_activity_task(
@@ -228,11 +245,13 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse> {
-        let factory = move || {
-            self.gateway
-                .cancel_activity_task(task_token.clone(), details.clone())
-        };
-        self.call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::Normal,
+            cancel_activity_task,
+            task_token.clone(),
+            details.clone()
+        )
     }
 
     async fn fail_activity_task(
@@ -240,11 +259,13 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         task_token: TaskToken,
         failure: Option<Failure>,
     ) -> Result<RespondActivityTaskFailedResponse> {
-        let factory = move || {
-            self.gateway
-                .fail_activity_task(task_token.clone(), failure.clone())
-        };
-        self.call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::Normal,
+            fail_activity_task,
+            task_token.clone(),
+            failure.clone()
+        )
     }
 
     async fn fail_workflow_task(
@@ -253,11 +274,14 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         cause: WorkflowTaskFailedCause,
         failure: Option<Failure>,
     ) -> Result<RespondWorkflowTaskFailedResponse> {
-        let factory = move || {
-            self.gateway
-                .fail_workflow_task(task_token.clone(), cause, failure.clone())
-        };
-        self.call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::Normal,
+            fail_workflow_task,
+            task_token.clone(),
+            cause,
+            failure.clone()
+        )
     }
 
     async fn signal_workflow_execution(
@@ -267,15 +291,15 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         signal_name: String,
         payloads: Option<Payloads>,
     ) -> Result<SignalWorkflowExecutionResponse> {
-        let factory = move || {
-            self.gateway.signal_workflow_execution(
-                workflow_id.clone(),
-                run_id.clone(),
-                signal_name.clone(),
-                payloads.clone(),
-            )
-        };
-        self.call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::Normal,
+            signal_workflow_execution,
+            workflow_id.clone(),
+            run_id.clone(),
+            signal_name.clone(),
+            payloads.clone()
+        )
     }
 
     async fn query_workflow_execution(
@@ -284,14 +308,14 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         run_id: String,
         query: WorkflowQuery,
     ) -> Result<QueryWorkflowResponse> {
-        let factory = move || {
-            self.gateway.query_workflow_execution(
-                workflow_id.clone(),
-                run_id.clone(),
-                query.clone(),
-            )
-        };
-        self.call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::Normal,
+            query_workflow_execution,
+            workflow_id.clone(),
+            run_id.clone(),
+            query.clone()
+        )
     }
 
     async fn describe_workflow_execution(
@@ -299,11 +323,13 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         workflow_id: String,
         run_id: Option<String>,
     ) -> Result<DescribeWorkflowExecutionResponse> {
-        let factory = move || {
-            self.gateway
-                .describe_workflow_execution(workflow_id.clone(), run_id.clone())
-        };
-        self.call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::Normal,
+            describe_workflow_execution,
+            workflow_id.clone(),
+            run_id.clone()
+        )
     }
 
     async fn get_workflow_execution_history(
@@ -312,14 +338,14 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         run_id: Option<String>,
         page_token: Vec<u8>,
     ) -> Result<GetWorkflowExecutionHistoryResponse> {
-        let factory = move || {
-            self.gateway.get_workflow_execution_history(
-                workflow_id.clone(),
-                run_id.clone(),
-                page_token.clone(),
-            )
-        };
-        self.call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::Normal,
+            get_workflow_execution_history,
+            workflow_id.clone(),
+            run_id.clone(),
+            page_token.clone()
+        )
     }
 
     async fn respond_legacy_query(
@@ -327,11 +353,13 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         task_token: TaskToken,
         query_result: QueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse> {
-        let factory = move || {
-            self.gateway
-                .respond_legacy_query(task_token.clone(), query_result.clone())
-        };
-        self.call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::Normal,
+            respond_legacy_query,
+            task_token.clone(),
+            query_result.clone()
+        )
     }
 
     async fn cancel_workflow_execution(
@@ -339,11 +367,13 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         workflow_id: String,
         run_id: Option<String>,
     ) -> Result<RequestCancelWorkflowExecutionResponse> {
-        let factory = move || {
-            self.gateway
-                .cancel_workflow_execution(workflow_id.clone(), run_id.clone())
-        };
-        self.call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::Normal,
+            cancel_workflow_execution,
+            workflow_id.clone(),
+            run_id.clone()
+        )
     }
 
     async fn terminate_workflow_execution(
@@ -351,15 +381,16 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         workflow_id: String,
         run_id: Option<String>,
     ) -> Result<TerminateWorkflowExecutionResponse> {
-        let factory = move || {
-            self.gateway
-                .terminate_workflow_execution(workflow_id.clone(), run_id.clone())
-        };
-        self.call_with_retry(factory).await
+        retry_call!(
+            self,
+            CallType::Normal,
+            terminate_workflow_execution,
+            workflow_id.clone(),
+            run_id.clone()
+        )
     }
 
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse> {
-        let factory = move || self.gateway.list_namespaces();
-        self.call_with_retry(factory).await
+        retry_call!(self, CallType::Normal, list_namespaces,)
     }
 }

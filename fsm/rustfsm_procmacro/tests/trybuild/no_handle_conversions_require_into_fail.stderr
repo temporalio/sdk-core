@@ -1,8 +1,14 @@
 error[E0277]: the trait bound `One: From<Two>` is not satisfied
-  --> $DIR/no_handle_conversions_require_into_fail.rs:11:18
-   |
-11 |     Two --(B)--> One;
-   |                  ^^^ the trait `From<Two>` is not implemented for `One`
-   |
-   = note: required because of the requirements on the impl of `Into<One>` for `Two`
-   = note: required by `TransitionResult::<Sm, Ds>::from`
+   --> tests/trybuild/no_handle_conversions_require_into_fail.rs:11:18
+    |
+11  |     Two --(B)--> One;
+    |                  ^^^ the trait `From<Two>` is not implemented for `One`
+    |
+    = note: required because of the requirements on the impl of `Into<One>` for `Two`
+note: required by `TransitionResult::<Sm, Ds>::from`
+   --> $WORKSPACE/fsm/rustfsm_trait/src/lib.rs
+    |
+    | /     pub fn from<CurrentState>(current_state: CurrentState) -> Self
+    | |     where
+    | |         CurrentState: Into<Ds>,
+    | |_______________________________^

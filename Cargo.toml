@@ -2,7 +2,7 @@
 name = "temporal-sdk-core"
 version = "0.1.0-alpha.1"
 authors = ["Spencer Judge <spencer@temporal.io>", "Vitaly Arbuzov <vitaly@temporal.io>"]
-edition = "2018"
+edition = "2021"
 license-file = "LICENSE.txt"
 description = "Library for building new Temporal SDKs"
 homepage = "https://temporal.io/"
@@ -36,15 +36,15 @@ opentelemetry-otlp = { version = "0.9.0", features = ["tokio", "metrics"] }
 opentelemetry-prometheus = "0.9.0"
 parking_lot = { version = "0.11", features = ["send_guard"] }
 prometheus = "0.12"
-prost = "0.8"
-prost-types = "0.8"
+prost = "0.9"
+prost-types = "0.9"
 rand = "0.8.3"
 ringbuf = "0.2"
 slotmap = "1.0"
 thiserror = "1.0"
 tokio = { version = "1.1", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs"] }
 tokio-stream = "0.1"
-tonic = { version = "0.5", features = ["tls", "tls-roots"] }
+tonic = { version = "0.6", features = ["tls", "tls-roots"] }
 tower = "0.4"
 tracing = { version = "0.1", features = ["log-always"] }
 tracing-futures = "0.2"
@@ -70,7 +70,7 @@ rstest = "0.10"
 test_utils = { path = "test_utils" }
 
 [build-dependencies]
-tonic-build = "0.5"
+tonic-build = "0.6"
 
 [workspace]
 members = [".", "fsm", "test_utils", "sdk-core-protos"]
