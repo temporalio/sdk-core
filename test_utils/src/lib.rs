@@ -194,7 +194,7 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
     {
         ob.prometheus_export_bind_address(addr);
     }
-    ob.tracing_filter("temporal_sdk_core=INFO".to_string())
+    ob.tracing_filter(env::var("RUST_LOG").unwrap_or("temporal_sdk_core=INFO".to_string()))
         .log_forwarding_level(LevelFilter::Off)
         .build()
         .unwrap()

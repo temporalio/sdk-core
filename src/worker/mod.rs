@@ -2,7 +2,9 @@ mod activities;
 mod config;
 mod dispatcher;
 
-pub use crate::worker::config::{WorkerConfig, WorkerConfigBuilder};
+pub use config::{WorkerConfig, WorkerConfigBuilder};
+
+pub(crate) use activities::NewLocalAct;
 pub(crate) use dispatcher::WorkerDispatcher;
 
 use crate::{
@@ -17,21 +19,23 @@ use crate::{
     telemetry::metrics::{
         activity_poller, workflow_poller, workflow_sticky_poller, MetricsContext,
     },
+    worker::activities::LocalActivityManager,
     workflow::{
         workflow_tasks::{
             ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
             ServerCommandsWithWorkflowInfo, WorkflowTaskManager,
         },
-        WorkflowCachingPolicy,
+        LocalResolution, WorkflowCachingPolicy,
     },
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError,
 };
 use activities::WorkerActivityTasks;
 use futures::{Future, TryFutureExt};
+use parking_lot::RwLock;
 use std::{convert::TryInto, sync::Arc};
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::activity_result,
+        activity_result::{activity_result, ActivityResult},
         activity_task::ActivityTask,
         workflow_activation::WfActivation,
         workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
@@ -63,6 +67,8 @@ pub struct Worker {
     wft_manager: WorkflowTaskManager,
     /// Manages activity tasks for this worker/task queue
     at_task_mgr: Option<WorkerActivityTasks>,
+    /// Manages local activities
+    local_act_mgr: RwLock<LocalActivityManager>,
     /// Ensures we stay at or below this worker's maximum concurrent workflow limit
     workflows_semaphore: Semaphore,
     /// Used to wake blocked workflow task polling when there is some change to workflow activations
@@ -174,6 +180,7 @@ impl Worker {
                     metrics.clone(),
                 )
             }),
+            local_act_mgr: RwLock::new(LocalActivityManager::new()),
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             config,
             shutdown_requested: shut_rx,
@@ -219,12 +226,16 @@ impl Worker {
         self.wft_manager.outstanding_wft()
     }
 
-    /// Wait until not at the outstanding activity limit, and then poll this worker's task queue for
-    /// new activities.
+    /// Get new activity tasks (may be local or nonlocal). Local activities are returned first
+    /// before polling the server if there are any.
     ///
     /// Returns `Ok(None)` in the event of a poll timeout or if the polling loop should otherwise
     /// be restarted
     pub(crate) async fn activity_poll(&self) -> Result<Option<ActivityTask>, PollActivityError> {
+        if let Some(at) = self.local_act_mgr.write().next_pending() {
+            return Ok(Some(at));
+        }
+
         // No activity polling is allowed if this worker said it only handles local activities
         let act_mgr = self
             .at_task_mgr
@@ -256,6 +267,31 @@ impl Worker {
         task_token: TaskToken,
         status: activity_result::Status,
     ) -> Result<(), CompleteActivityError> {
+        if task_token.is_local_activity_task() {
+            if let Some(la_info) = self.local_act_mgr.write().complete(&task_token) {
+                if let Err(e) = self
+                    .wft_manager
+                    .notify_of_local_result(
+                        &la_info.workflow_execution.run_id,
+                        la_info.seq,
+                        LocalResolution::LocalActivity(ActivityResult {
+                            status: Some(status),
+                        }),
+                    )
+                    .await
+                {
+                    error!(
+                        "Problem completing local activity {}: {:?} -- will evict the workflow",
+                        task_token, e
+                    );
+                    self.request_wf_eviction(&la_info.workflow_execution.run_id);
+                }
+            } else {
+                error!("Tried to complete untracked local activity {}", task_token);
+            }
+            return Ok(());
+        }
+
         if let Some(atm) = &self.at_task_mgr {
             atm.complete(task_token, status, self.server_gateway.gw.as_ref())
                 .await
@@ -339,9 +375,7 @@ impl Worker {
                 completion: None,
             }),
         };
-        self.after_wft_report(&completion.run_id)?;
-        self.wft_manager.on_activation_done(&completion.run_id);
-        self.maybe_notify_wtfs_drained();
+        self.after_workflow_activation(&completion.run_id)?;
         r
     }
 
@@ -511,6 +545,7 @@ impl Worker {
                     ActivationAction::WftComplete {
                         commands,
                         query_responses,
+                        local_activities,
                     },
             })) => {
                 debug!("Sending commands to server: {:?}", &commands);
@@ -534,6 +569,13 @@ impl Worker {
                         .await
                 })
                 .await?;
+            }
+            Ok(Some(ServerCommandsWithWorkflowInfo {
+                action: ActivationAction::LocalActivitiesDelayWft { local_activities },
+                ..
+            })) => {
+                debug!("Queuing local activities: {:?}", &local_activities);
+                self.local_act_mgr.write().enqueue(local_activities);
             }
             Ok(Some(ServerCommandsWithWorkflowInfo {
                 task_token,
@@ -606,10 +648,13 @@ impl Worker {
         Ok(())
     }
 
-    fn after_wft_report(&self, run_id: &str) -> Result<(), WorkflowUpdateError> {
+    fn after_workflow_activation(&self, run_id: &str) -> Result<(), WorkflowUpdateError> {
         if self.wft_manager.after_wft_report(run_id)? {
             self.return_workflow_task_permit();
         };
+        // TODO: merge into after_wft_report
+        self.wft_manager.on_activation_done(run_id);
+        self.maybe_notify_wtfs_drained();
         Ok(())
     }
 

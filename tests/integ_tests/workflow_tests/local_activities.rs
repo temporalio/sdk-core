@@ -1,10 +1,12 @@
 use temporal_sdk_core::prototype_rust_sdk::{LocalActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
 use test_utils::CoreWfStarter;
 
 pub async fn one_local_activity_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     let res = ctx
         .local_activity(LocalActivityOptions {
             activity_type: "echo_activity".to_string(),
+            input: "hi!".as_json_payload().expect("serializes fine"),
             ..Default::default()
         })
         .await;

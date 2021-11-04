@@ -10,11 +10,11 @@ pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
 use crate::{
     machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
     telemetry::metrics::MetricsContext,
+    worker::NewLocalAct,
 };
 use std::sync::mpsc::Sender;
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityResult, workflow_activation::WfActivation,
-    workflow_commands::ScheduleActivity,
 };
 
 pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
@@ -130,8 +130,12 @@ impl WorkflowManager {
     }
 
     /// TODO: This may not be needed at all if the prepared state can be eliminated in the machine
-    pub fn drain_queued_local_activities(&mut self) -> Vec<ScheduleActivity> {
+    pub fn drain_queued_local_activities(&mut self) -> Vec<NewLocalAct> {
         self.machines.drain_queued_local_activities()
+    }
+
+    pub fn has_pending_local_activities(&self) -> bool {
+        self.machines.has_pending_local_activities()
     }
 
     /// Feed the workflow machines new commands issued by the executing workflow code, and iterate
@@ -271,7 +275,7 @@ pub mod managed_wf {
             self.mgr.get_server_commands()
         }
 
-        pub(crate) fn drain_queued_local_activities(&mut self) -> Vec<ScheduleActivity> {
+        pub(crate) fn drain_queued_local_activities(&mut self) -> Vec<NewLocalAct> {
             self.mgr.drain_queued_local_activities()
         }
 

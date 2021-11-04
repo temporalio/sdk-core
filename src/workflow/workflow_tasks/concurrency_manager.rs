@@ -271,6 +271,21 @@ impl WorkflowConcurrencyManager {
         res
     }
 
+    pub fn access_sync<F, Fout>(&self, run_id: &str, mutator: F) -> Result<Fout>
+    where
+        F: for<'a> FnOnce(&'a mut WorkflowManager) -> Result<Fout>,
+        Fout: Send + Debug,
+    {
+        let readlock = self.runs.read();
+        let m = readlock
+            .get(run_id)
+            .ok_or_else(|| WFMachinesError::Fatal("Missing workflow machines".to_string()))?;
+        let mut wfm_mutex = m.wfm.lock();
+        let res = mutator(&mut wfm_mutex);
+
+        res
+    }
+
     /// Remove the workflow with the provided run id from management
     pub fn evict(&self, run_id: &str) -> Option<ValidPollWFTQResponse> {
         let val = self.runs.write().remove(run_id);

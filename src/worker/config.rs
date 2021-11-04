@@ -6,6 +6,7 @@ use crate::test_help::TEST_Q;
 /// Defines per-worker configuration options
 #[derive(Debug, Clone, derive_builder::Builder)]
 #[builder(setter(into), build_fn(validate = "Self::validate"))]
+#[non_exhaustive]
 // TODO: per-second queue limits
 pub struct WorkerConfig {
     /// What task queue will this worker poll from? This task queue name will be used for both
@@ -23,10 +24,13 @@ pub struct WorkerConfig {
     /// "outstanding" until all activations it requires have been completed.
     #[builder(default = "100")]
     pub max_outstanding_workflow_tasks: usize,
-    /// The maximum allowed number of activity tasks that will ever be given to this worker at one
-    /// time.
+    /// The maximum number of activity tasks that will ever be given to this worker concurrently
     #[builder(default = "100")]
     pub max_outstanding_activities: usize,
+    /// The maximum number of local activity tasks that will ever be given to this worker
+    /// concurrently
+    #[builder(default = "100")]
+    pub max_outstanding_local_activities: usize,
     /// Maximum number of concurrent poll workflow task requests we will perform at a time on this
     /// worker's task queue. See also [WorkerConfig::nonsticky_to_sticky_poll_ratio]. Must be at
     /// least 1.

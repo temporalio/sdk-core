@@ -17,10 +17,12 @@ use crate::{
     },
     protosext::HistoryEventExt,
     telemetry::{metrics::MetricsContext, VecDisplayer},
+    worker::NewLocalAct,
     workflow::{CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WorkflowFetcher},
 };
 use prost_types::TimestampOutOfSystemRangeError;
 use slotmap::SlotMap;
+use std::collections::HashSet;
 use std::{
     borrow::{Borrow, BorrowMut},
     collections::{hash_map::DefaultHasher, HashMap, VecDeque},
@@ -30,7 +32,7 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        common::{NamespacedWorkflowExecution, Payload},
+        common::{NamespacedWorkflowExecution, Payload, WorkflowExecution},
         workflow_activation::{
             wf_activation_job::{self, Variant},
             NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WfActivation,
@@ -100,11 +102,15 @@ pub(crate) struct WorkflowMachines {
     /// Old note: It is a queue as commands can be added (due to marker based commands) while
     /// iterating over already added commands.
     current_wf_task_commands: VecDeque<CommandAndMachine>,
+
     /// Information about patch markers we have already seen while replaying history
     encountered_change_markers: HashMap<String, ChangeInfo>,
+
     /// Queued local activity requests which need to be executed, along with the key to their
     /// machine, to enable reporting the request as having been sent.
     local_activity_requests: Vec<(MachineKey, ScheduleActivity)>,
+    /// Seq #s of local activities which we have sent to be executed but have not yet resolved
+    executing_local_activities: HashSet<u32>,
     /// Maps local activity sequence numbers to their resolutions as found when looking ahead at
     /// next WFT
     local_activity_resolutions: HashMap<u32, ResolveDat>,
@@ -227,6 +233,7 @@ impl WorkflowMachines {
             current_wf_task_commands: Default::default(),
             encountered_change_markers: Default::default(),
             local_activity_requests: Default::default(),
+            executing_local_activities: Default::default(),
             local_activity_resolutions: Default::default(),
             have_seen_terminal_event: false,
         }
@@ -274,16 +281,14 @@ impl WorkflowMachines {
                         seq_id
                     )));
                 }
+                self.executing_local_activities.remove(&seq_id);
             }
         }
-        // TODO: If we want to produce the LA resolution as a result of handling record marker
-        //   cmd, we need to do this here. But, I don't like that, so maybe we just don't.
-        // self.prepare_commands()?;
         Ok(())
     }
 
     /// Fetch all queued local activities that need executing, mark them as sent
-    pub(crate) fn drain_queued_local_activities(&mut self) -> Vec<ScheduleActivity> {
+    pub(crate) fn drain_queued_local_activities(&mut self) -> Vec<NewLocalAct> {
         let key_and_act = std::mem::take(&mut self.local_activity_requests);
         key_and_act
             .into_iter()
@@ -292,15 +297,31 @@ impl WorkflowMachines {
                 if let Machines::LocalActivityMachine(ref mut lam) = *mach {
                     lam.mark_sent().expect("works");
                 } else {
+                    // TODO: Needs to be bubbled up
                     // return Err(WFMachinesError::Nondeterminism(format!(
                     //     "Command matching activity with seq num {} existed but was not a \
                     //         local activity!",
                     //     seq_id
                     // )));
                 }
-                act
+                self.executing_local_activities.insert(act.seq);
+                NewLocalAct {
+                    schedule_cmd: act,
+                    // TODO: Get this inside here
+                    workflow_type: "".to_string(),
+                    workflow_exec_info: WorkflowExecution {
+                        workflow_id: self.workflow_id.clone(),
+                        run_id: self.run_id.clone(),
+                    },
+                }
             })
             .collect()
+    }
+
+    /// Returns true if there are any currently pending local activities which should be or are
+    /// executing. Indicates that we might want to delay completing a workflow task.
+    pub(crate) fn has_pending_local_activities(&self) -> bool {
+        !self.executing_local_activities.is_empty()
     }
 
     /// Handle a single event from the workflow history. `has_next_event` should be false if `event`

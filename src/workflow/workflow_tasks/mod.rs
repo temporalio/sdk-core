@@ -11,11 +11,13 @@ use crate::{
     protosext::{ValidPollWFTQResponse, WfActivationExt},
     task_token::TaskToken,
     telemetry::metrics::MetricsContext,
+    worker::NewLocalAct,
     workflow::{
         workflow_tasks::{
             cache_manager::WorkflowCacheManager, concurrency_manager::WorkflowConcurrencyManager,
         },
-        HistoryPaginator, HistoryUpdate, WorkflowCachingPolicy, WorkflowManager, LEGACY_QUERY_ID,
+        HistoryPaginator, HistoryUpdate, LocalResolution, WorkflowCachingPolicy, WorkflowManager,
+        LEGACY_QUERY_ID,
     },
 };
 use crossbeam::queue::SegQueue;
@@ -116,24 +118,29 @@ pub enum FailedActivationOutcome {
 }
 
 #[derive(Debug)]
-pub struct ServerCommandsWithWorkflowInfo {
+pub(crate) struct ServerCommandsWithWorkflowInfo {
     pub task_token: TaskToken,
     pub action: ActivationAction,
 }
 
 #[derive(Debug)]
-pub enum ActivationAction {
+pub(crate) enum ActivationAction {
     /// We should respond that the workflow task is complete
     WftComplete {
         commands: Vec<ProtoCommand>,
         query_responses: Vec<QueryResult>,
+        local_activities: Vec<NewLocalAct>,
+        // TODO: Need a force wft option here
     },
     /// We should respond to a legacy query request
     RespondLegacyQuery { result: QueryResult },
+    /// There are local activities that need to be performed, but no new commands to send. The WFT
+    /// should not be completed yet, but delayed until near the timeout or the LA resolves
+    LocalActivitiesDelayWft { local_activities: Vec<NewLocalAct> },
 }
 
 macro_rules! machine_mut {
-    ($myself:ident, $run_id:ident, $task_token:ident, $clos:expr) => {{
+    ($myself:ident, $run_id:ident, $task_token:expr, $clos:expr) => {{
         $myself
             .workflow_machines
             .access($run_id, $clos)
@@ -141,7 +148,7 @@ macro_rules! machine_mut {
             .map_err(|source| WorkflowUpdateError {
                 source,
                 run_id: $run_id.to_owned(),
-                task_token: Some($task_token.clone()),
+                task_token: $task_token,
             })
     }};
 }
@@ -180,11 +187,11 @@ impl WorkflowTaskManager {
         Ok(maybe_act)
     }
 
-    pub fn next_buffered_poll(&self) -> Option<ValidPollWFTQResponse> {
+    pub(crate) fn next_buffered_poll(&self) -> Option<ValidPollWFTQResponse> {
         self.ready_buffered_wft.pop()
     }
 
-    pub fn outstanding_wft(&self) -> usize {
+    pub(crate) fn outstanding_wft(&self) -> usize {
         self.workflow_machines.outstanding_wft()
     }
 
@@ -192,7 +199,7 @@ impl WorkflowTaskManager {
     /// the lang side. Workflow will not *actually* be evicted until lang replies to that activation
     ///
     /// Returns, if found, the number of attempts on the current workflow task
-    pub fn request_eviction(&self, run_id: &str) -> Option<u32> {
+    pub(crate) fn request_eviction(&self, run_id: &str) -> Option<u32> {
         if self.workflow_machines.exists(run_id) {
             if !self.activation_has_eviction(run_id) {
                 debug!(%run_id, "Eviction requested");
@@ -354,9 +361,13 @@ impl WorkflowTaskManager {
                     if let WFCommand::QueryResponse(qr) = commands.remove(i) {
                         if qr.query_id == LEGACY_QUERY_ID {
                             return Err(WorkflowUpdateError {
-                                source: WFMachinesError::Fatal("Legacy query activation response included other commands, this is not allowed and constitutes an error in the lang SDK".to_string()),
+                                source: WFMachinesError::Fatal(
+                                    "Legacy query activation response included other commands, \
+                                    this is not allowed and constitutes an error in the lang SDK"
+                                        .to_string(),
+                                ),
                                 run_id: run_id.to_string(),
-                                task_token: Some(task_token)
+                                task_token: Some(task_token),
                             });
                         }
                         query_responses.push(qr);
@@ -366,16 +377,20 @@ impl WorkflowTaskManager {
                 }
             }
 
+            // TODO: combine mutable accesses
             // Send commands from lang into the machines
-            machine_mut!(self, run_id, task_token, |wfm: &mut WorkflowManager| {
-                wfm.push_commands(commands).boxed()
-            })?;
+            machine_mut!(
+                self,
+                run_id,
+                Some(task_token.clone()),
+                |wfm: &mut WorkflowManager| { wfm.push_commands(commands).boxed() }
+            )?;
             // Check if the workflow run needs another activation and queue it up if there is one
             // by pushing it into the pending activations list
             let next_activation = machine_mut!(
                 self,
                 run_id,
-                task_token,
+                Some(task_token.clone()),
                 move |mgr: &mut WorkflowManager| mgr.get_next_activation().boxed()
             )?;
             if !next_activation.jobs.is_empty() {
@@ -384,31 +399,51 @@ impl WorkflowTaskManager {
             }
             // We want to fetch the outgoing commands only after any new activation has been queued,
             // as doing so may have altered the outgoing commands.
-            let server_cmds =
-                machine_mut!(self, run_id, task_token, |wfm: &mut WorkflowManager| {
-                    async move { Ok(wfm.get_server_commands()) }.boxed()
-                })?;
-
-            // TODO: This is probably where we transfer LA requests to activity manager / however
-            //   that happens, mark them as sent, and delay sending WFT until we reach WFT heartbeat
-            //   threshold or LA(s) resolve (if there are no other new commands ready to go out)
+            let (server_cmds, local_activities) = machine_mut!(
+                self,
+                run_id,
+                Some(task_token.clone()),
+                |wfm: &mut WorkflowManager| {
+                    async move {
+                        Ok((
+                            wfm.get_server_commands(),
+                            wfm.drain_queued_local_activities(),
+                        ))
+                    }
+                    .boxed()
+                }
+            )?;
 
             // We only actually want to send commands back to the server if there are no more
             // pending activations and we are caught up on replay.
             if !self.pending_activations.has_pending(run_id) && !server_cmds.replaying {
-                Some(ServerCommandsWithWorkflowInfo {
-                    task_token,
-                    action: ActivationAction::WftComplete {
-                        commands: server_cmds.commands,
-                        query_responses,
-                    },
-                })
+                if server_cmds.commands.is_empty() && !local_activities.is_empty() {
+                    Some(ServerCommandsWithWorkflowInfo {
+                        task_token,
+                        action: ActivationAction::LocalActivitiesDelayWft { local_activities },
+                    })
+                } else {
+                    // TODO: Ideally local activities isn't in this branch at all But we need to
+                    //  force new wft if there are incomplete local activities and new commands to
+                    //  send. Force flag does need to appear. Other branch should ideally be only
+                    //  one dealing with LAs
+
+                    Some(ServerCommandsWithWorkflowInfo {
+                        task_token,
+                        action: ActivationAction::WftComplete {
+                            commands: server_cmds.commands,
+                            query_responses,
+                            local_activities,
+                        },
+                    })
+                }
             } else if !query_responses.is_empty() {
                 Some(ServerCommandsWithWorkflowInfo {
                     task_token,
                     action: ActivationAction::WftComplete {
                         commands: vec![],
                         query_responses,
+                        local_activities: vec![],
                     },
                 })
             } else {
@@ -531,9 +566,15 @@ impl WorkflowTaskManager {
             self.evict_run(run_id);
             just_evicted = true;
         };
+
+        let has_pending_las = self
+            .workflow_machines
+            .access_sync(run_id, |wfm| Ok(wfm.has_pending_local_activities()))
+            .unwrap_or_default();
+
         // Workflows with no more pending activations (IE: They have completed a WFT) must be
         // removed from the outstanding tasks map
-        if !self.pending_activations.has_pending(run_id) {
+        if !self.pending_activations.has_pending(run_id) && !has_pending_las {
             if !just_evicted {
                 // Check if there was a legacy query which must be fulfilled, and if there is create
                 // a new pending activation for it.
@@ -576,6 +617,31 @@ impl WorkflowTaskManager {
             let _ = self.pending_activations_notifier.send(true);
         }
         // It's possible the activation is already removed due to completing an eviction
+    }
+
+    /// Let a workflow know that something we've been waiting locally on has resolved, like a local
+    /// activity or side effect
+    #[instrument(level = "debug", skip(self, resolved))]
+    pub(crate) async fn notify_of_local_result(
+        &self,
+        run_id: &str,
+        seq_id: u32,
+        resolved: LocalResolution,
+    ) -> Result<(), WorkflowUpdateError> {
+        let next_activation = machine_mut!(self, run_id, None, |wfm: &mut WorkflowManager| {
+            async move {
+                wfm.notify_of_local_result(seq_id, resolved)?;
+                wfm.get_next_activation().await
+            }
+            .boxed()
+        })?;
+        // TODO: Dedupe
+        if !next_activation.jobs.is_empty() {
+            self.pending_activations.push(next_activation);
+            let _ = self.pending_activations_notifier.send(true);
+        }
+
+        Ok(())
     }
 
     fn make_buffered_poll_ready(&self, buffd: ValidPollWFTQResponse) {

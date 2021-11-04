@@ -87,6 +87,8 @@ pub struct LocalActivityOptions {
     pub activity_id: Option<String>,
     /// Type of activity to schedule
     pub activity_type: String,
+    /// Input to the activity
+    pub input: Payload,
 }
 
 impl IntoWorkflowCommand for LocalActivityOptions {
@@ -100,6 +102,7 @@ impl IntoWorkflowCommand for LocalActivityOptions {
                 Some(aid) => aid,
             },
             activity_type: self.activity_type,
+            arguments: vec![self.input],
             ..Default::default()
         }
     }

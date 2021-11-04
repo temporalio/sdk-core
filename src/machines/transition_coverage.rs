@@ -74,7 +74,8 @@ mod machine_coverage_report {
         child_workflow_state_machine::ChildWorkflowMachine,
         complete_workflow_state_machine::CompleteWorkflowMachine,
         continue_as_new_workflow_state_machine::ContinueAsNewWorkflowMachine,
-        fail_workflow_state_machine::FailWorkflowMachine, patch_state_machine::PatchMachine,
+        fail_workflow_state_machine::FailWorkflowMachine,
+        local_activity_state_machine::LocalActivityMachine, patch_state_machine::PatchMachine,
         signal_external_state_machine::SignalExternalMachine, timer_state_machine::TimerMachine,
         workflow_task_state_machine::WorkflowTaskMachine,
     };
@@ -111,6 +112,7 @@ mod machine_coverage_report {
         let mut version = PatchMachine::visualizer().to_owned();
         let mut signal_ext = SignalExternalMachine::visualizer().to_owned();
         let mut cancel_ext = CancelExternalMachine::visualizer().to_owned();
+        let mut la_mach = LocalActivityMachine::visualizer().to_owned();
 
         // This isn't at all efficient but doesn't need to be.
         // Replace transitions in the vizzes with green color if they are covered.
@@ -130,6 +132,7 @@ mod machine_coverage_report {
                 m @ "PatchMachine" => cover_transitions(m, &mut version, coverage),
                 m @ "SignalExternalMachine" => cover_transitions(m, &mut signal_ext, coverage),
                 m @ "CancelExternalMachine" => cover_transitions(m, &mut cancel_ext, coverage),
+                m @ "LocalActivityMachine" => cover_transitions(m, &mut la_mach, coverage),
                 m => panic!("Unknown machine {}", m),
             }
         }

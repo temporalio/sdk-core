@@ -494,9 +494,9 @@ pub struct ActivityFunction {
     act_func: BoxActFn,
 }
 
-// TODO: This workaround sucks. Figure out a better way. Eventually need a way to handle different
-//   serializers anyway
-//  https://discord.com/channels/442252698964721669/443150878111694848/903795223891701782
+/// TODO: This workaround sucks. Figure out a better way. Eventually need a way to handle different
+///   serializers anyway
+///  https://discord.com/channels/442252698964721669/443150878111694848/903795223891701782
 pub struct TempActFnHolder<A, R, F> {
     input: PhantomData<A>,
     output: PhantomData<R>,

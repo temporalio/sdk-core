@@ -1,4 +1,7 @@
 mod activity_heartbeat_manager;
+mod local_activities;
+
+pub(crate) use local_activities::{LocalActivityManager, NewLocalAct};
 
 use crate::{
     pollers::BoxedActPoller,
@@ -33,12 +36,19 @@ struct PendingActivityCancel {
     reason: ActivityCancelReason,
 }
 
-/// Contains minimal set of details that core needs to store, while activity is running.
+/// Contains minimal set of details that core needs to store while an activity is running.
 #[derive(Debug)]
-struct InflightActivityDetails {
+struct InFlightActInfo {
     pub activity_id: String,
     pub activity_type: String,
     pub workflow_type: String,
+    start_time: Instant,
+}
+
+/// Augments [InFlightActInfo] with details specific to remote activities
+#[derive(Debug)]
+struct RemoteInFlightActInfo {
+    pub base: InFlightActInfo,
     /// Used to calculate aggregation delay between activity heartbeats.
     pub heartbeat_timeout: Option<prost_types::Duration>,
     /// Set to true if we have already issued a cancellation activation to lang for this activity
@@ -47,9 +57,8 @@ struct InflightActivityDetails {
     /// we have learned from heartbeating and issued a cancel task, in which case we may simply
     /// discard the reply.
     pub known_not_found: bool,
-    start_time: Instant,
 }
-impl InflightActivityDetails {
+impl RemoteInFlightActInfo {
     fn new(
         activity_id: String,
         activity_type: String,
@@ -57,13 +66,15 @@ impl InflightActivityDetails {
         heartbeat_timeout: Option<prost_types::Duration>,
     ) -> Self {
         Self {
-            activity_id,
-            activity_type,
-            workflow_type,
+            base: InFlightActInfo {
+                activity_id,
+                activity_type,
+                workflow_type,
+                start_time: Instant::now(),
+            },
             heartbeat_timeout,
             issued_cancel_to_lang: false,
             known_not_found: false,
-            start_time: Instant::now(),
         }
     }
 }
@@ -72,7 +83,7 @@ pub(crate) struct WorkerActivityTasks {
     /// Centralizes management of heartbeat issuing / throttling
     heartbeat_manager: ActivityHeartbeatManager,
     /// Activities that have been issued to lang but not yet completed
-    outstanding_activity_tasks: DashMap<TaskToken, InflightActivityDetails>,
+    outstanding_activity_tasks: DashMap<TaskToken, RemoteInFlightActInfo>,
     /// Buffers activity task polling in the event we need to return a cancellation while a poll is
     /// ongoing.
     poller: BoxedActPoller,
@@ -108,8 +119,9 @@ impl WorkerActivityTasks {
         self.heartbeat_manager.shutdown().await;
     }
 
-    /// Poll for an activity task. Returns `Ok(None)` if no activity is ready and the overall
-    /// polling loop should be retried.
+    /// Wait until not at the outstanding activity limit, and then poll for an activity task.
+    ///
+    /// Returns `Ok(None)` if no activity is ready and the overall polling loop should be retried.
     pub(crate) async fn poll(&self) -> Result<Option<ActivityTask>, PollActivityError> {
         let poll_with_semaphore = async {
             // Acquire and subsequently forget a permit for an outstanding activity. When they are
@@ -145,7 +157,7 @@ impl WorkerActivityTasks {
 
                         self.outstanding_activity_tasks.insert(
                             work.task_token.clone().into(),
-                            InflightActivityDetails::new(
+                            RemoteInFlightActInfo::new(
                                 work.activity_id.clone(),
                                 work.activity_type.clone().unwrap_or_default().name,
                                 work.workflow_type.clone().unwrap_or_default().name,
@@ -173,10 +185,10 @@ impl WorkerActivityTasks {
     ) -> Result<(), CompleteActivityError> {
         if let Some(act_info) = self.outstanding_activity_tasks.get(&task_token) {
             let act_metrics = self.metrics.with_new_attrs([
-                activity_type(act_info.activity_type.clone()),
-                workflow_type(act_info.workflow_type.clone()),
+                activity_type(act_info.base.activity_type.clone()),
+                workflow_type(act_info.base.workflow_type.clone()),
             ]);
-            act_metrics.act_execution_latency(act_info.start_time.elapsed());
+            act_metrics.act_execution_latency(act_info.base.start_time.elapsed());
 
             // No need to report activities which we already know the server doesn't care about
             let should_remove = if !act_info.known_not_found {
@@ -292,7 +304,7 @@ impl WorkerActivityTasks {
                 }
                 Ok(Some(ActivityTask::cancel_from_ids(
                     task_token.0,
-                    details.activity_id.clone(),
+                    details.base.activity_id.clone(),
                     reason,
                 )))
             } else {
