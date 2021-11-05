@@ -130,7 +130,7 @@ pub(crate) enum ActivationAction {
         commands: Vec<ProtoCommand>,
         query_responses: Vec<QueryResult>,
         local_activities: Vec<NewLocalAct>,
-        // TODO: Need a force wft option here
+        force_new_wft: bool,
     },
     /// We should respond to a legacy query request
     RespondLegacyQuery { result: QueryResult },
@@ -415,7 +415,8 @@ impl WorkflowTaskManager {
             )?;
 
             // We only actually want to send commands back to the server if there are no more
-            // pending activations and we are caught up on replay.
+            // pending activations and we are caught up on replay. We don't want to complete a wft
+            // if already saw the final event in the workflow.
             if !self.pending_activations.has_pending(run_id) && !server_cmds.replaying {
                 if server_cmds.commands.is_empty() && !local_activities.is_empty() {
                     Some(ServerCommandsWithWorkflowInfo {
@@ -433,6 +434,7 @@ impl WorkflowTaskManager {
                         action: ActivationAction::WftComplete {
                             commands: server_cmds.commands,
                             query_responses,
+                            force_new_wft: !local_activities.is_empty(),
                             local_activities,
                         },
                     })
@@ -444,6 +446,7 @@ impl WorkflowTaskManager {
                         commands: vec![],
                         query_responses,
                         local_activities: vec![],
+                        force_new_wft: false,
                     },
                 })
             } else {
@@ -555,8 +558,12 @@ impl WorkflowTaskManager {
     /// reporting a successful WFT to server, as some replies (task not found) may require an
     /// eviction, which could be avoided if this is called too early.
     ///
-    /// Returns true if WFT is complete
-    pub(crate) fn after_wft_report(&self, run_id: &str) -> Result<bool, WorkflowUpdateError> {
+    /// Returns true if WFT was marked completed internally
+    pub(crate) fn after_wft_report(
+        &self,
+        run_id: &str,
+        did_complete_wft: bool,
+    ) -> Result<bool, WorkflowUpdateError> {
         let mut just_evicted = false;
 
         if let Some(OutstandingActivation::Normal {
@@ -567,14 +574,9 @@ impl WorkflowTaskManager {
             just_evicted = true;
         };
 
-        let has_pending_las = self
-            .workflow_machines
-            .access_sync(run_id, |wfm| Ok(wfm.has_pending_local_activities()))
-            .unwrap_or_default();
-
         // Workflows with no more pending activations (IE: They have completed a WFT) must be
         // removed from the outstanding tasks map
-        if !self.pending_activations.has_pending(run_id) && !has_pending_las {
+        if !self.pending_activations.has_pending(run_id) {
             if !just_evicted {
                 // Check if there was a legacy query which must be fulfilled, and if there is create
                 // a new pending activation for it.
@@ -602,7 +604,10 @@ impl WorkflowTaskManager {
 
             // The evict may or may not have already done this, but even when we aren't evicting
             // we want to clear the outstanding workflow task since it's now complete.
-            return Ok(self.workflow_machines.complete_wft(run_id).is_some());
+            return Ok(self
+                .workflow_machines
+                .complete_wft(run_id, did_complete_wft)
+                .is_some());
         }
         Ok(false)
     }

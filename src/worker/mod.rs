@@ -362,7 +362,7 @@ impl Worker {
         completion: WfActivationCompletion,
     ) -> Result<(), CompleteWfError> {
         let wfstatus = completion.status;
-        let r = match wfstatus {
+        let did_complete_wft = match wfstatus {
             Some(wf_activation_completion::Status::Successful(success)) => {
                 self.wf_activation_success(&completion.run_id, success)
                     .await
@@ -374,9 +374,9 @@ impl Worker {
                 reason: "Workflow completion had empty status field".to_owned(),
                 completion: None,
             }),
-        };
-        self.after_workflow_activation(&completion.run_id)?;
-        r
+        }?;
+        self.after_workflow_activation(&completion.run_id, did_complete_wft)?;
+        Ok(())
     }
 
     fn maybe_notify_wtfs_drained(&self) {
@@ -519,12 +519,14 @@ impl Worker {
         Ok(res)
     }
 
-    /// Handle a successful workflow completion
+    /// Handle a successful workflow activation
+    ///
+    /// Returns true if we actually reported WFT completion to server (success or failure)
     async fn wf_activation_success(
         &self,
         run_id: &str,
         success: workflow_completion::Success,
-    ) -> Result<(), CompleteWfError> {
+    ) -> Result<bool, CompleteWfError> {
         // Convert to wf commands
         let cmds = success
             .commands
@@ -546,8 +548,11 @@ impl Worker {
                         commands,
                         query_responses,
                         local_activities,
+                        force_new_wft,
                     },
             })) => {
+                self.local_act_mgr.write().enqueue(local_activities);
+
                 debug!("Sending commands to server: {:?}", &commands);
                 if !query_responses.is_empty() {
                     debug!("Sending query responses to server: {:?}", &query_responses);
@@ -558,7 +563,7 @@ impl Worker {
                     query_responses,
                     sticky_attributes: None,
                     return_new_workflow_task: false,
-                    force_create_new_workflow_task: false,
+                    force_create_new_workflow_task: force_new_wft,
                 };
                 let sticky_attrs = self.get_sticky_attrs();
                 completion.sticky_attributes = sticky_attrs;
@@ -569,13 +574,14 @@ impl Worker {
                         .await
                 })
                 .await?;
+                Ok(true)
             }
             Ok(Some(ServerCommandsWithWorkflowInfo {
                 action: ActivationAction::LocalActivitiesDelayWft { local_activities },
                 ..
             })) => {
-                debug!("Queuing local activities: {:?}", &local_activities);
                 self.local_act_mgr.write().enqueue(local_activities);
+                Ok(false)
             }
             Ok(Some(ServerCommandsWithWorkflowInfo {
                 task_token,
@@ -585,8 +591,9 @@ impl Worker {
                 self.server_gateway
                     .respond_legacy_query(task_token, result)
                     .await?;
+                Ok(true)
             }
-            Ok(None) => {}
+            Ok(None) => Ok(false),
             Err(update_err) => {
                 // Automatically fail the workflow task in the event we couldn't update machines
                 let fail_cause = if matches!(&update_err.source, WFMachinesError::Nondeterminism(_))
@@ -611,20 +618,22 @@ impl Worker {
                     })
                     .await?;
                 }
-                return Err(update_err.into());
+                // TODO: Here we could've completed WFT but that's not known because we return err
+                //  -- but maybe doesn't matter b/c we'll evict
+                Err(update_err.into())
             }
         }
-
-        Ok(())
     }
 
     /// Handle a failed workflow completion
+    ///
+    /// Returns true if we actually reported WFT completion to server
     async fn wf_activation_failed(
         &self,
         run_id: &str,
         failure: workflow_completion::Failure,
-    ) -> Result<(), CompleteWfError> {
-        match self.wft_manager.failed_activation(run_id) {
+    ) -> Result<bool, CompleteWfError> {
+        Ok(match self.wft_manager.failed_activation(run_id) {
             FailedActivationOutcome::Report(tt) => {
                 self.handle_wft_reporting_errs(run_id, || async {
                     self.server_gateway
@@ -636,20 +645,27 @@ impl Worker {
                         .await
                 })
                 .await?;
+                true
             }
             FailedActivationOutcome::ReportLegacyQueryFailure(task_token) => {
                 self.server_gateway
                     .respond_legacy_query(task_token, legacy_query_failure(failure))
                     .await?;
+                true
             }
-            _ => {}
-        }
-
-        Ok(())
+            FailedActivationOutcome::NoReport => false,
+        })
     }
 
-    fn after_workflow_activation(&self, run_id: &str) -> Result<(), WorkflowUpdateError> {
-        if self.wft_manager.after_wft_report(run_id)? {
+    fn after_workflow_activation(
+        &self,
+        run_id: &str,
+        did_complete_wft: bool,
+    ) -> Result<(), WorkflowUpdateError> {
+        if self
+            .wft_manager
+            .after_wft_report(run_id, did_complete_wft)?
+        {
             self.return_workflow_task_permit();
         };
         // TODO: merge into after_wft_report

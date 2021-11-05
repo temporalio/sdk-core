@@ -1,5 +1,6 @@
 use crate::task_token::TaskToken;
 use std::collections::{HashMap, VecDeque};
+use std::fmt::Debug;
 use temporal_sdk_core_protos::coresdk::{
     activity_task::{activity_task, ActivityTask, Start},
     common::WorkflowExecution,
@@ -36,7 +37,8 @@ impl LocalActivityManager {
         }
     }
 
-    pub(crate) fn enqueue(&mut self, acts: impl IntoIterator<Item = NewLocalAct>) {
+    pub(crate) fn enqueue(&mut self, acts: impl IntoIterator<Item = NewLocalAct> + Debug) {
+        debug!("Queuing local activities: {:?}", &acts);
         self.poll_queue.extend(acts);
     }
 

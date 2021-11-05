@@ -103,18 +103,18 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
             return RetryPolicy::ForwardError(e);
         }
 
-        if current_attempt == 1 {
-            debug!(error=?e, "gRPC call {} failed on first attempt", self.call_name)
-        } else if self.should_log_retry_warning(current_attempt) {
-            warn!(error=?e, "gRPC call {} retried {} times", self.call_name, current_attempt)
-        }
-
         // Long polls are OK with being cancelled or running into the timeout because there's
         // nothing to do but retry anyway
         let long_poll_allowed = self.call_type == CallType::LongPoll
             && [Code::Cancelled, Code::DeadlineExceeded].contains(&e.code());
 
         if RETRYABLE_ERROR_CODES.contains(&e.code()) || long_poll_allowed {
+            if current_attempt == 1 {
+                debug!(error=?e, "gRPC call {} failed on first attempt", self.call_name)
+            } else if self.should_log_retry_warning(current_attempt) {
+                warn!(error=?e, "gRPC call {} retried {} times", self.call_name, current_attempt)
+            }
+
             match self.backoff.next_backoff() {
                 None => RetryPolicy::ForwardError(e), // None is returned when we've ran out of time
                 Some(backoff) => {

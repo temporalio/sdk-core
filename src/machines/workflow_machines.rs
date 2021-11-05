@@ -22,10 +22,9 @@ use crate::{
 };
 use prost_types::TimestampOutOfSystemRangeError;
 use slotmap::SlotMap;
-use std::collections::HashSet;
 use std::{
     borrow::{Borrow, BorrowMut},
-    collections::{hash_map::DefaultHasher, HashMap, VecDeque},
+    collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque},
     convert::TryInto,
     hash::{Hash, Hasher},
     time::{Duration, Instant, SystemTime},
@@ -120,7 +119,7 @@ pub(crate) struct WorkflowMachines {
 
     /// Is set to true once we've seen the final event in workflow history, to avoid accidentally
     /// re-applying the final workflow task.
-    have_seen_terminal_event: bool,
+    pub have_seen_terminal_event: bool,
 
     /// Metrics context
     pub metrics: MetricsContext,
@@ -316,12 +315,6 @@ impl WorkflowMachines {
                 }
             })
             .collect()
-    }
-
-    /// Returns true if there are any currently pending local activities which should be or are
-    /// executing. Indicates that we might want to delay completing a workflow task.
-    pub(crate) fn has_pending_local_activities(&self) -> bool {
-        !self.executing_local_activities.is_empty()
     }
 
     /// Handle a single event from the workflow history. `has_next_event` should be false if `event`
