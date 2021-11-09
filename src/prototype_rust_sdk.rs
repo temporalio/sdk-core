@@ -264,10 +264,12 @@ impl TestRustWorker {
         // TODO: Trap errors and report activity failures, handle cancels, etc.
         match activity.variant {
             Some(activity_task::Variant::Start(start)) => {
-                let act_fn = self.activity_fns.get(&start.activity_type).ok_or(anyhow!(
-                    "No function registered for activity type {}",
-                    start.activity_type
-                ))?;
+                let act_fn = self.activity_fns.get(&start.activity_type).ok_or_else(|| {
+                    anyhow!(
+                        "No function registered for activity type {}",
+                        start.activity_type
+                    )
+                })?;
                 let mut inputs = start.input;
                 let arg = inputs.pop().unwrap_or_default();
                 let output = (&act_fn.act_func)(arg)?;
@@ -526,7 +528,7 @@ where
     fn into_box(self) -> BoxActFn {
         let wrapper = move |input: Payload| -> Result<Payload, anyhow::Error> {
             let deser = A::from_json_payload(&input)?;
-            Ok((self.fun)(deser).as_json_payload()?)
+            (self.fun)(deser).as_json_payload()
         };
         Box::new(wrapper)
     }

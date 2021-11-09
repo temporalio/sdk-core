@@ -40,7 +40,8 @@ fsm! {
     //   and remove if so
     RequestPrepared --(MarkAsSent) --> RequestSent;
 
-    RequestSent --(NonReplayWorkflowTaskStarted) --> RequestSent;
+    // TODO: Unclear if this is needed for core. Address while implementing WFT heartbeats
+    // RequestSent --(NonReplayWorkflowTaskStarted) --> RequestSent;
     RequestSent --(HandleResult(ResolveDat), on_handle_result) --> MarkerCommandCreated;
 
     MarkerCommandCreated --(CommandRecordMarker, on_command_record_marker) --> ResultNotified;
@@ -48,8 +49,8 @@ fsm! {
     ResultNotified --(MarkerRecorded(CompleteLocalActivityData), on_marker_recorded) --> MarkerCommandRecorded;
 
     // Replay path ================================================================================
-    WaitingMarkerEvent --(NonReplayWorkflowTaskStarted, on_non_replay_workflow_task_started)
-      --> RequestPrepared;
+    // WaitingMarkerEvent --(NonReplayWorkflowTaskStarted, on_non_replay_workflow_task_started)
+    //   --> RequestPrepared;
 
     WaitingMarkerEvent --(HandleResult(ResolveDat), on_handle_result)
       --> WaitingMarkerEvent;
@@ -255,11 +256,6 @@ impl WaitingMarkerEvent {
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
         TransitionResult::default()
     }
-    pub(super) fn on_non_replay_workflow_task_started(
-        self,
-    ) -> LocalActivityMachineTransition<RequestPrepared> {
-        unimplemented!()
-    }
 }
 
 impl From<Replaying> for WaitingMarkerEvent {
@@ -375,10 +371,7 @@ impl TryFrom<HistoryEvent> for LocalActivityMachineEvents {
 
         match e.into_local_activity_marker_details() {
             Some(marker_dat) => Ok(LocalActivityMachineEvents::MarkerRecorded(marker_dat)),
-            _ => Err(WFMachinesError::Nondeterminism(format!(
-                // TODO: Use check method to return with well formed error first
-                "Local activity machine encountered an unparsable marker",
-            ))),
+            _ => Err(WFMachinesError::Nondeterminism("Local activity machine encountered an unparsable marker".to_string())),
         }
     }
 }
@@ -437,7 +430,6 @@ mod tests {
         // Now the next activation will unblock the local activity
         wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().await.commands;
-        dbg!(&commands);
         if replay {
             assert_eq!(commands.len(), 1);
             assert_eq!(

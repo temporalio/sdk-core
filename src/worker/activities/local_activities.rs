@@ -1,6 +1,8 @@
 use crate::task_token::TaskToken;
-use std::collections::{HashMap, VecDeque};
-use std::fmt::Debug;
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt::Debug,
+};
 use temporal_sdk_core_protos::coresdk::{
     activity_task::{activity_task, ActivityTask, Start},
     common::WorkflowExecution,

@@ -26,8 +26,7 @@ use parking_lot::Mutex;
 use std::{fmt::Debug, ops::DerefMut, time::Instant};
 use temporal_sdk_core_protos::coresdk::{
     workflow_activation::{
-        create_evict_activation, create_query_activation, wf_activation_job, QueryWorkflow,
-        WfActivation,
+        create_query_activation, wf_activation_job, QueryWorkflow, WfActivation,
     },
     workflow_commands::QueryResult,
     FromPayloadsExt,
@@ -45,6 +44,9 @@ pub struct WorkflowTaskManager {
     /// when cancelling an activity in try-cancel/abandon mode), or for other reasons such as a
     /// requested eviction. They queue here.
     pending_activations: PendingActivations,
+    /// Holds activations which are purely query activations needed to respond to legacy queries.
+    /// Activations may only be added here for runs which do not have other pending activations.
+    pending_legacy_queries: SegQueue<WfActivation>,
     /// Holds poll wft responses from the server that need to be applied
     ready_buffered_wft: SegQueue<ValidPollWFTQResponse>,
     /// Used to wake blocked workflow task polling
@@ -162,6 +164,7 @@ impl WorkflowTaskManager {
         Self {
             workflow_machines: WorkflowConcurrencyManager::new(),
             pending_activations: Default::default(),
+            pending_legacy_queries: Default::default(),
             ready_buffered_wft: Default::default(),
             pending_activations_notifier,
             cache_manager: Mutex::new(WorkflowCacheManager::new(eviction_policy, metrics.clone())),
@@ -172,6 +175,10 @@ impl WorkflowTaskManager {
     pub(crate) fn next_pending_activation(
         &self,
     ) -> Result<Option<WfActivation>, WorkflowUpdateError> {
+        // Dispatch pending legacy queries first
+        if let leg_q @ Some(_) = self.pending_legacy_queries.pop() {
+            return Ok(leg_q);
+        }
         // It is important that we do not issue pending activations for any workflows which already
         // have an outstanding activation. If we did, it can result in races where an in-progress
         // completion may appear to be the last in a task (no more pending activations) because
@@ -180,11 +187,22 @@ impl WorkflowTaskManager {
         let maybe_act = self
             .pending_activations
             .pop_first_matching(|rid| self.workflow_machines.get_activation(rid).is_none());
-        if let Some(act) = maybe_act.as_ref() {
-            self.insert_outstanding_activation(act)?;
+        Ok(if let Some(pending_info) = maybe_act.as_ref() {
+            let mut act = self
+                .workflow_machines
+                .access_sync(&pending_info.run_id, |wfm| {
+                    Ok(wfm.machines.get_wf_activation())
+                })
+                .expect("Machine must exist");
+            if pending_info.needs_eviction {
+                act.append_evict_job();
+            }
+            self.insert_outstanding_activation(&act)?;
             self.cache_manager.lock().touch(&act.run_id);
-        }
-        Ok(maybe_act)
+            Some(act)
+        } else {
+            None
+        })
     }
 
     pub(crate) fn next_buffered_poll(&self) -> Option<ValidPollWFTQResponse> {
@@ -204,8 +222,7 @@ impl WorkflowTaskManager {
             if !self.activation_has_eviction(run_id) {
                 debug!(%run_id, "Eviction requested");
                 // Queue up an eviction activation
-                self.pending_activations
-                    .push(create_evict_activation(run_id.to_string()));
+                self.pending_activations.notify_needs_eviction(run_id);
                 let _ = self.pending_activations_notifier.send(true);
             }
             self.workflow_machines
@@ -377,42 +394,29 @@ impl WorkflowTaskManager {
                 }
             }
 
-            // TODO: combine mutable accesses
-            // Send commands from lang into the machines
-            machine_mut!(
+            let (are_pending, server_cmds, local_activities) = machine_mut!(
                 self,
                 run_id,
                 Some(task_token.clone()),
-                |wfm: &mut WorkflowManager| { wfm.push_commands(commands).boxed() }
-            )?;
-            // Check if the workflow run needs another activation and queue it up if there is one
-            // by pushing it into the pending activations list
-            let next_activation = machine_mut!(
-                self,
-                run_id,
-                Some(task_token.clone()),
-                move |mgr: &mut WorkflowManager| mgr.get_next_activation().boxed()
-            )?;
-            if !next_activation.jobs.is_empty() {
-                self.pending_activations.push(next_activation);
-                let _ = self.pending_activations_notifier.send(true);
-            }
-            // We want to fetch the outgoing commands only after any new activation has been queued,
-            // as doing so may have altered the outgoing commands.
-            let (server_cmds, local_activities) = machine_mut!(
-                self,
-                run_id,
-                Some(task_token.clone()),
-                |wfm: &mut WorkflowManager| {
-                    async move {
-                        Ok((
-                            wfm.get_server_commands(),
-                            wfm.drain_queued_local_activities(),
-                        ))
-                    }
-                    .boxed()
+                |wfm: &mut WorkflowManager| async move {
+                    // Send commands from lang into the machines then check if the workflow run needs
+                    // another activation and mark it if so
+                    wfm.push_commands(commands).await?;
+                    let are_pending = wfm.apply_next_task_if_ready().await?;
+                    // We want to fetch the outgoing commands only after a next WFT may have been
+                    // applied, as outgoing server commands may be affected.
+                    Ok((
+                        are_pending,
+                        wfm.get_server_commands(),
+                        wfm.drain_queued_local_activities(),
+                    ))
                 }
+                .boxed()
             )?;
+
+            if are_pending {
+                self.needs_activation(run_id);
+            }
 
             // We only actually want to send commands back to the server if there are no more
             // pending activations and we are caught up on replay. We don't want to complete a wft
@@ -583,7 +587,7 @@ impl WorkflowTaskManager {
                 if let Some(ref mut ot) = self.workflow_machines.get_task_mut(run_id)?.deref_mut() {
                     if let Some(query) = ot.legacy_query.take() {
                         let na = create_query_activation(run_id.to_string(), [query]);
-                        self.pending_activations.push(na);
+                        self.pending_legacy_queries.push(na);
                         let _ = self.pending_activations_notifier.send(true);
                         return Ok(false);
                     }
@@ -633,19 +637,17 @@ impl WorkflowTaskManager {
         seq_id: u32,
         resolved: LocalResolution,
     ) -> Result<(), WorkflowUpdateError> {
-        let next_activation = machine_mut!(self, run_id, None, |wfm: &mut WorkflowManager| {
-            async move {
-                wfm.notify_of_local_result(seq_id, resolved)?;
-                wfm.get_next_activation().await
-            }
-            .boxed()
-        })?;
-        // TODO: Dedupe
-        if !next_activation.jobs.is_empty() {
-            self.pending_activations.push(next_activation);
-            let _ = self.pending_activations_notifier.send(true);
-        }
+        self.workflow_machines
+            .access_sync(run_id, |wfm: &mut WorkflowManager| {
+                wfm.notify_of_local_result(seq_id, resolved)
+            })
+            .map_err(|wfme| WorkflowUpdateError {
+                source: wfme,
+                run_id: run_id.to_string(),
+                task_token: None,
+            })?;
 
+        self.needs_activation(run_id);
         Ok(())
     }
 
@@ -681,5 +683,10 @@ impl WorkflowTaskManager {
             .get_activation(run_id)
             .map(|oa| oa.has_eviction())
             .unwrap_or_default()
+    }
+
+    fn needs_activation(&self, run_id: &str) {
+        self.pending_activations.notify_needs_activation(run_id);
+        let _ = self.pending_activations_notifier.send(true);
     }
 }

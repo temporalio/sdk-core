@@ -297,9 +297,7 @@ impl WorkflowConcurrencyManager {
             .get(run_id)
             .ok_or_else(|| WFMachinesError::Fatal("Missing workflow machines".to_string()))?;
         let mut wfm_mutex = m.wfm.lock();
-        let res = mutator(&mut wfm_mutex);
-
-        res
+        mutator(&mut wfm_mutex)
     }
 
     /// Remove the workflow with the provided run id from management

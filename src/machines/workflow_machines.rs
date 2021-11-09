@@ -565,6 +565,10 @@ impl WorkflowMachines {
         }
     }
 
+    pub(crate) fn has_pending_jobs(&self) -> bool {
+        self.drive_me.has_pending_jobs()
+    }
+
     fn set_current_time(&mut self, time: SystemTime) -> SystemTime {
         if self.current_wf_time.map(|t| t < time).unwrap_or(true) {
             self.current_wf_time = Some(time);

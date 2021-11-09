@@ -259,6 +259,21 @@ pub mod coresdk {
             pub fn is_only_eviction(&self) -> bool {
                 self.jobs.len() == 1 && self.eviction_index().is_some()
             }
+
+            /// Append an eviction job to the joblist
+            pub fn append_evict_job(&mut self) {
+                if let Some(last_job) = self.jobs.last() {
+                    if matches!(
+                        last_job.variant,
+                        Some(wf_activation_job::Variant::RemoveFromCache(_))
+                    ) {
+                        return;
+                    }
+                }
+                let evict_job =
+                    WfActivationJob::from(wf_activation_job::Variant::RemoveFromCache(true));
+                self.jobs.push(evict_job);
+            }
         }
 
         impl Display for WfActivation {

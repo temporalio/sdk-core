@@ -167,12 +167,11 @@ impl HistoryEventExt for HistoryEvent {
 
     fn is_local_activity_marker(&self) -> bool {
         if self.event_type() == EventType::MarkerRecorded {
-            return match &self.attributes {
+            return matches!(&self.attributes,
                 Some(history_event::Attributes::MarkerRecordedEventAttributes(
                     MarkerRecordedEventAttributes { marker_name, .. },
-                )) if marker_name == LOCAL_ACTIVITY_MARKER_NAME => true,
-                _ => false,
-            };
+                )) if marker_name == LOCAL_ACTIVITY_MARKER_NAME
+            );
         }
         false
     }
