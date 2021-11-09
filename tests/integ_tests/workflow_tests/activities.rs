@@ -37,7 +37,7 @@ async fn one_activity() {
     let mut starter = CoreWfStarter::new(wf_name);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), one_activity_wf);
-    worker.register_activity("echo_activity", |echo_me: String| echo_me);
+    worker.register_activity("echo_activity", |echo_me: String| async move { echo_me });
 
     worker
         .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])

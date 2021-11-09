@@ -21,7 +21,6 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     future::Future,
-    marker::PhantomData,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -127,20 +126,15 @@ impl TestRustWorker {
 
     /// Register an Activity function to invoke when the Worker is asked to run an activity of
     /// `activity_type`
-    pub fn register_activity<A, R, F>(
+    pub fn register_activity<A, R>(
         &mut self,
         activity_type: impl Into<String>,
-        act_function: impl Into<TempActFnHolder<A, R, F>>,
-    ) where
-        F: (Fn(A) -> R) + 'static,
-        A: FromJsonPayloadExt + 'static,
-        R: AsJsonPayloadExt + 'static,
-    {
-        let tmp: TempActFnHolder<A, R, F> = act_function.into();
+        act_function: impl IntoActivityFunc<A, R>,
+    ) {
         self.activity_fns.insert(
             activity_type.into(),
             ActivityFunction {
-                act_func: tmp.into_box(),
+                act_func: act_function.into_activity_fn(),
             },
         );
     }
@@ -272,7 +266,7 @@ impl TestRustWorker {
                 })?;
                 let mut inputs = start.input;
                 let arg = inputs.pop().unwrap_or_default();
-                let output = (&act_fn.act_func)(arg)?;
+                let output = (&act_fn.act_func)(arg).await?;
                 self.core
                     .complete_activity_task(ActivityTaskCompletion {
                         task_token: activity.task_token,
@@ -489,46 +483,32 @@ pub enum WfExitValue<T: Debug> {
     Normal(T),
 }
 
-type BoxActFn = Box<dyn Fn(Payload) -> Result<Payload, anyhow::Error>>;
+type BoxActFn = Box<dyn Fn(Payload) -> BoxFuture<'static, Result<Payload, anyhow::Error>>>;
 /// Container for user-defined activity functions
 pub struct ActivityFunction {
-    // TODO: Probably needs to return a future
     act_func: BoxActFn,
 }
 
-/// TODO: This workaround sucks. Figure out a better way. Eventually need a way to handle different
-///   serializers anyway
-///  https://discord.com/channels/442252698964721669/443150878111694848/903795223891701782
-pub struct TempActFnHolder<A, R, F> {
-    input: PhantomData<A>,
-    output: PhantomData<R>,
-    fun: F,
-}
-impl<A, R, F> From<F> for TempActFnHolder<A, R, F>
-where
-    F: (Fn(A) -> R) + 'static,
-    A: FromJsonPayloadExt,
-    R: AsJsonPayloadExt,
-{
-    fn from(func: F) -> Self {
-        Self {
-            input: PhantomData::<A>::default(),
-            output: PhantomData::<R>::default(),
-            fun: func,
-        }
-    }
+/// Closures / functions which can be turned into activity functions implement this trait
+pub trait IntoActivityFunc<Args, Res> {
+    /// Consume the closure or fn pointer and turned it into a boxed activity function
+    fn into_activity_fn(self) -> BoxActFn;
 }
 
-impl<A, R, F> TempActFnHolder<A, R, F>
+impl<A, Rf, R, F> IntoActivityFunc<A, Rf> for F
 where
-    F: (Fn(A) -> R) + 'static,
-    A: FromJsonPayloadExt + 'static,
-    R: AsJsonPayloadExt + 'static,
+    F: (Fn(A) -> Rf) + Sync + Send + 'static,
+    A: FromJsonPayloadExt + Send,
+    Rf: Future<Output = R> + Send + 'static,
+    R: AsJsonPayloadExt,
 {
-    fn into_box(self) -> BoxActFn {
-        let wrapper = move |input: Payload| -> Result<Payload, anyhow::Error> {
-            let deser = A::from_json_payload(&input)?;
-            (self.fun)(deser).as_json_payload()
+    fn into_activity_fn(self) -> BoxActFn {
+        let wrapper = move |input: Payload| {
+            // Some minor gymnastics are required to avoid needing to clone the function
+            match A::from_json_payload(&input) {
+                Ok(deser) => (self)(deser).map(|r| r.as_json_payload()).boxed(),
+                Err(e) => async move { Err(e.into()) }.boxed(),
+            }
         };
         Box::new(wrapper)
     }
