@@ -1,5 +1,5 @@
 use crate::{
-    errors::WorkflowUpdateError,
+    errors::WorkflowMissingError,
     protosext::ValidPollWFTQResponse,
     telemetry::metrics::{workflow_type, MetricsContext},
     workflow::{
@@ -89,7 +89,7 @@ impl WorkflowConcurrencyManager {
     pub(crate) fn get_task_mut(
         &self,
         run_id: &str,
-    ) -> Result<impl DerefMut<Target = Option<OutstandingTask>> + '_, WorkflowUpdateError> {
+    ) -> Result<impl DerefMut<Target = Option<OutstandingTask>> + '_, WorkflowMissingError> {
         let writelock = self.runs.write();
         if writelock.contains_key(run_id) {
             Ok(RwLockWriteGuard::map(writelock, |hm| {
@@ -97,10 +97,8 @@ impl WorkflowConcurrencyManager {
                 &mut hm.get_mut(run_id).unwrap().wft
             }))
         } else {
-            Err(WorkflowUpdateError {
-                source: WFMachinesError::Fatal("Workflow machines not found".to_string()),
+            Err(WorkflowMissingError {
                 run_id: run_id.to_owned(),
-                task_token: None,
             })
         }
     }
@@ -146,7 +144,7 @@ impl WorkflowConcurrencyManager {
         &self,
         run_id: &str,
         task: OutstandingTask,
-    ) -> Result<(), WorkflowUpdateError> {
+    ) -> Result<(), WorkflowMissingError> {
         let mut dereffer = self.get_task_mut(run_id)?;
         *dereffer = Some(task);
         Ok(())
@@ -164,7 +162,7 @@ impl WorkflowConcurrencyManager {
         // would never really exist. The server wouldn't send a workflow task with nothing to do,
         // but they are very useful for testing complete replay.
         let saw_final = self
-            .access_sync(run_id, |wfm| Ok(wfm.machines.have_seen_terminal_event))
+            .access_sync(run_id, |wfm| wfm.machines.have_seen_terminal_event)
             .unwrap_or_default();
         if !saw_final && !send_wft_complete_to_srv {
             return None;
@@ -187,16 +185,14 @@ impl WorkflowConcurrencyManager {
         &self,
         run_id: &str,
         activation: OutstandingActivation,
-    ) -> Result<Option<OutstandingActivation>, WorkflowUpdateError> {
+    ) -> Result<Option<OutstandingActivation>, WorkflowMissingError> {
         let mut writelock = self.runs.write();
         let machine_ref = writelock.get_mut(run_id);
         if let Some(run) = machine_ref {
             Ok(run.activation.replace(activation))
         } else {
-            Err(WorkflowUpdateError {
-                source: WFMachinesError::Fatal("Workflow machines not found".to_string()),
+            Err(WorkflowMissingError {
                 run_id: run_id.to_owned(),
-                task_token: None,
             })
         }
     }
@@ -287,17 +283,21 @@ impl WorkflowConcurrencyManager {
         res
     }
 
-    pub fn access_sync<F, Fout>(&self, run_id: &str, mutator: F) -> Result<Fout>
+    pub fn access_sync<F, Fout>(
+        &self,
+        run_id: &str,
+        mutator: F,
+    ) -> Result<Fout, WorkflowMissingError>
     where
-        F: for<'a> FnOnce(&'a mut WorkflowManager) -> Result<Fout>,
+        F: for<'a> FnOnce(&'a mut WorkflowManager) -> Fout,
         Fout: Send + Debug,
     {
         let readlock = self.runs.read();
-        let m = readlock
-            .get(run_id)
-            .ok_or_else(|| WFMachinesError::Fatal("Missing workflow machines".to_string()))?;
+        let m = readlock.get(run_id).ok_or_else(|| WorkflowMissingError {
+            run_id: run_id.to_string(),
+        })?;
         let mut wfm_mutex = m.wfm.lock();
-        mutator(&mut wfm_mutex)
+        Ok(mutator(&mut wfm_mutex))
     }
 
     /// Remove the workflow with the provided run id from management

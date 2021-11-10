@@ -323,6 +323,7 @@ pub mod managed_wf {
             // Send an eviction to ensure wf exits if it has not finished (ex: feeding partial hist)
             let _ = self.activation_tx.send(create_evict_activation(
                 "not actually important".to_string(),
+                "force shutdown".to_string(),
             ));
             self.future_handle.take().unwrap().await.unwrap()
         }

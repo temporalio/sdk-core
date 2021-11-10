@@ -371,7 +371,9 @@ impl TryFrom<HistoryEvent> for LocalActivityMachineEvents {
 
         match e.into_local_activity_marker_details() {
             Some(marker_dat) => Ok(LocalActivityMachineEvents::MarkerRecorded(marker_dat)),
-            _ => Err(WFMachinesError::Nondeterminism("Local activity machine encountered an unparsable marker".to_string())),
+            _ => Err(WFMachinesError::Nondeterminism(
+                "Local activity machine encountered an unparsable marker".to_string(),
+            )),
         }
     }
 }

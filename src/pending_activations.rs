@@ -20,7 +20,8 @@ struct PaInner {
 }
 
 pub struct PendingActInfo {
-    pub needs_eviction: bool,
+    /// The value is the eviciton reason, if present
+    pub needs_eviction: Option<String>,
     pub run_id: String,
 }
 
@@ -31,14 +32,14 @@ impl PendingActivations {
 
         if inner.by_run_id.get(run_id).is_none() {
             let key = inner.activations.insert(PendingActInfo {
-                needs_eviction: false,
+                needs_eviction: None,
                 run_id: run_id.to_string(),
             });
             inner.by_run_id.insert(run_id.to_string(), key);
             inner.queue.push_back(key);
         };
     }
-    pub fn notify_needs_eviction(&self, run_id: &str) {
+    pub fn notify_needs_eviction(&self, run_id: &str, reason: String) {
         let mut inner = self.inner.write();
 
         if let Some(key) = inner.by_run_id.get(run_id).copied() {
@@ -46,10 +47,10 @@ impl PendingActivations {
                 .activations
                 .get_mut(key)
                 .expect("PA run id mapping is always in sync with slot map");
-            act.needs_eviction = true;
+            act.needs_eviction = Some(reason);
         } else {
             let key = inner.activations.insert(PendingActInfo {
-                needs_eviction: true,
+                needs_eviction: Some(reason),
                 run_id: run_id.to_string(),
             });
             inner.by_run_id.insert(run_id.to_string(), key);
@@ -113,8 +114,8 @@ mod tests {
         let rid1 = "1";
         let rid2 = "2";
         pas.notify_needs_activation(rid1);
-        pas.notify_needs_eviction(rid1);
-        pas.notify_needs_eviction(rid2);
+        pas.notify_needs_eviction(rid1, "whatever".to_string());
+        pas.notify_needs_eviction(rid2, "whatever".to_string());
         pas.notify_needs_activation(rid2);
         assert!(pas.has_pending(rid1));
         assert!(pas.has_pending(rid2));

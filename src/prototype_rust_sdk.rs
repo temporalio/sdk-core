@@ -476,7 +476,7 @@ pub enum WfExitValue<T: Debug> {
     /// Confirm the workflow was cancelled (can be automatic in a more advanced iteration)
     #[from(ignore)]
     Cancelled,
-    /// TODO: Will go away once we have eviction confirmation
+    /// The run was evicted
     #[from(ignore)]
     Evicted,
     /// Finish with a result

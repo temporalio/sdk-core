@@ -59,9 +59,8 @@ message WFActivationJob {
         /// after performing the activation.
         ///
         /// If other job variant are present in the list, this variant will be the last job in the
-        /// job list. The boolean value is irrelevant, since the variant type is what matters. It
-        /// will be set to true if this is the variant.
-        bool remove_from_cache = 50;
+        /// job list. The string value is a reason for eviction.
+        RemoveFromCache remove_from_cache = 50;
     }
 }
 
@@ -186,4 +185,8 @@ message ResolveRequestCancelExternalWorkflow {
     /// If populated, this signal either failed to be sent or was cancelled depending on failure
     /// type / info.
     temporal.api.failure.v1.Failure failure = 2;
+}
+
+message RemoveFromCache {
+    string reason = 1;
 }

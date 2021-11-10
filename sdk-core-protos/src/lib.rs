@@ -215,13 +215,13 @@ pub mod coresdk {
         use std::fmt::{Display, Formatter};
 
         tonic::include_proto!("coresdk.workflow_activation");
-        pub fn create_evict_activation(run_id: String) -> WfActivation {
+        pub fn create_evict_activation(run_id: String, reason: String) -> WfActivation {
             WfActivation {
                 timestamp: None,
                 run_id,
                 is_replaying: false,
                 jobs: vec![WfActivationJob::from(
-                    wf_activation_job::Variant::RemoveFromCache(true),
+                    wf_activation_job::Variant::RemoveFromCache(RemoveFromCache { reason }),
                 )],
             }
         }
@@ -261,7 +261,7 @@ pub mod coresdk {
             }
 
             /// Append an eviction job to the joblist
-            pub fn append_evict_job(&mut self) {
+            pub fn append_evict_job(&mut self, reason: impl Into<String>) {
                 if let Some(last_job) = self.jobs.last() {
                     if matches!(
                         last_job.variant,
@@ -270,8 +270,11 @@ pub mod coresdk {
                         return;
                     }
                 }
-                let evict_job =
-                    WfActivationJob::from(wf_activation_job::Variant::RemoveFromCache(true));
+                let evict_job = WfActivationJob::from(wf_activation_job::Variant::RemoveFromCache(
+                    RemoveFromCache {
+                        reason: reason.into(),
+                    },
+                ));
                 self.jobs.push(evict_job);
             }
         }

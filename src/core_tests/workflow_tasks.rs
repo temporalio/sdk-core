@@ -6,7 +6,7 @@ use crate::{
         build_fake_core, build_mock_pollers, build_multihist_mock_sg, canned_histories,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_core, poll_and_reply,
         poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, FakeWfResponses,
-        MockPollCfg, MocksHolder, ResponseType, TestHistoryBuilder, TEST_Q,
+        MockPollCfg, MocksHolder, ResponseType, TestHistoryBuilder, NO_MORE_WORK_ERROR_MSG, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
     Core, CoreSDK, WfActivationCompletion,
@@ -30,7 +30,7 @@ use temporal_sdk_core_protos::{
         },
     },
     temporal::api::{
-        enums::v1::EventType,
+        enums::v1::{EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
         history::v1::{history_event, TimerFiredEventAttributes},
         workflowservice::v1::RespondWorkflowTaskCompletedResponse,
@@ -1390,4 +1390,105 @@ async fn buffering_tasks_doesnt_count_toward_outstanding_max() {
         core.poll_workflow_activation(TEST_Q).await.unwrap_err(),
         PollWfError::TonicError(_)
     );
+}
+
+#[tokio::test]
+async fn fail_wft_then_recover() {
+    let t = canned_histories::long_sequential_timers(1);
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        // We need to deliver all of history twice because of eviction
+        [ResponseType::AllHistory, ResponseType::AllHistory],
+        MockServerGatewayApis::new(),
+    );
+    mh.num_expected_fails = Some(1);
+    mh.expect_fail_wft_matcher =
+        Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::NonDeterministicError));
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(TEST_Q, |wc| {
+        wc.max_cached_workflows = 2;
+    });
+    let core = mock_core(mock);
+
+    let act = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    // Start an activity instead of a timer, triggering nondeterminism error
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        TEST_Q,
+        act.run_id.clone(),
+        vec![ScheduleActivity {
+            activity_id: "fake_activity".to_string(),
+            ..Default::default()
+        }
+        .into()],
+    ))
+    .await
+    .unwrap();
+    // We must handle an eviction now
+    let evict_act = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    assert_eq!(evict_act.run_id, act.run_id);
+    assert_matches!(
+        evict_act.jobs.as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+        }]
+    );
+    core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, evict_act.run_id))
+        .await
+        .unwrap();
+
+    // Workflow starting over, this time issue the right command
+    let act = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        TEST_Q,
+        act.run_id,
+        vec![StartTimer {
+            seq: 1,
+            ..Default::default()
+        }
+        .into()],
+    ))
+    .await
+    .unwrap();
+    let act = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    assert_matches!(
+        act.jobs.as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::FireTimer(_)),
+        },]
+    );
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        TEST_Q,
+        act.run_id,
+        vec![CompleteWorkflowExecution { result: None }.into()],
+    ))
+    .await
+    .unwrap();
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn poll_response_triggers_wf_error() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    // Add this nonsense event here to make applying the poll response fail
+    t.add_external_signal_completed(100);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::AllHistory],
+        MockServerGatewayApis::new(),
+    );
+    // Since applying the poll response immediately generates an error core will start polling again
+    // Rather than panic on bad expectation we want to return the magic "no more work" error
+    mh.enforce_correct_number_of_polls = false;
+    let mock = build_mock_pollers(mh);
+    let core = mock_core(mock);
+    // Poll for first WFT, which is immediately an eviction
+    let act = core.poll_workflow_activation(TEST_Q).await;
+    assert_matches!(act, Err(PollWfError::TonicError(err))
+                    if err.message() == NO_MORE_WORK_ERROR_MSG);
 }
