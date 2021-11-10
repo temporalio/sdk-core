@@ -179,7 +179,7 @@ async fn after_shutdown_of_worker_get_shutdown_err() {
         let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
         assert_matches!(
             res.jobs[0].variant,
-            Some(wf_activation_job::Variant::RemoveFromCache(true))
+            Some(wf_activation_job::Variant::RemoveFromCache(_))
         );
         core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, run_id.clone()))
             .await

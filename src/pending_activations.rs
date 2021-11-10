@@ -167,8 +167,14 @@ mod tests {
             run_id: rid1.clone(),
             ..Default::default()
         });
-        pas.push(create_evict_activation(rid1.clone()));
-        pas.push(create_evict_activation(rid2.clone()));
+        pas.push(create_evict_activation(
+            rid1.clone(),
+            "whatever".to_string(),
+        ));
+        pas.push(create_evict_activation(
+            rid2.clone(),
+            "whatever".to_string(),
+        ));
         pas.push(WfActivation {
             run_id: rid2.clone(),
             ..Default::default()

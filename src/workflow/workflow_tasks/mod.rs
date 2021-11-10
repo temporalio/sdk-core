@@ -192,13 +192,13 @@ impl WorkflowTaskManager {
     /// the lang side. Workflow will not *actually* be evicted until lang replies to that activation
     ///
     /// Returns, if found, the number of attempts on the current workflow task
-    pub fn request_eviction(&self, run_id: &str) -> Option<u32> {
+    pub fn request_eviction(&self, run_id: &str, reason: impl Into<String>) -> Option<u32> {
         if self.workflow_machines.exists(run_id) {
             if !self.activation_has_eviction(run_id) {
                 debug!(%run_id, "Eviction requested");
                 // Queue up an eviction activation
                 self.pending_activations
-                    .push(create_evict_activation(run_id.to_string()));
+                    .push(create_evict_activation(run_id.to_string(), reason.into()));
                 let _ = self.pending_activations_notifier.send(true);
             }
             self.workflow_machines
@@ -441,12 +441,13 @@ impl WorkflowTaskManager {
             FailedActivationOutcome::ReportLegacyQueryFailure(tt)
         } else {
             // Blow up any cached data associated with the workflow
-            let should_report = if let Some(attempt) = self.request_eviction(run_id) {
-                // Only report to server if the last task wasn't also a failure (avoid spam)
-                attempt <= 1
-            } else {
-                true
-            };
+            let should_report =
+                if let Some(attempt) = self.request_eviction(run_id, "Activation failed by lang") {
+                    // Only report to server if the last task wasn't also a failure (avoid spam)
+                    attempt <= 1
+                } else {
+                    true
+                };
             if should_report {
                 FailedActivationOutcome::Report(tt)
             } else {
@@ -551,7 +552,7 @@ impl WorkflowTaskManager {
                 // Evict run id if cache is full. Non-sticky will always evict.
                 let maybe_evicted = self.cache_manager.lock().insert(run_id);
                 if let Some(evicted_run_id) = maybe_evicted {
-                    self.request_eviction(&evicted_run_id);
+                    self.request_eviction(&evicted_run_id, "Workflow cache full");
                 }
 
                 // If there was a buffered poll response from the server, it is now ready to
@@ -607,7 +608,10 @@ impl WorkflowTaskManager {
                 );
             }
             Err(WorkflowMissingError { run_id }) => {
-                self.request_eviction(&run_id);
+                self.request_eviction(
+                    &run_id,
+                    "Workflow machines were missing while creating an activation",
+                );
             }
         }
     }

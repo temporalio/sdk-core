@@ -358,8 +358,8 @@ impl Worker {
         self.workflows_semaphore.add_permits(1)
     }
 
-    pub(crate) fn request_wf_eviction(&self, run_id: &str) {
-        self.wft_manager.request_eviction(run_id);
+    pub(crate) fn request_wf_eviction(&self, run_id: &str, reason: impl Into<String>) {
+        self.wft_manager.request_eviction(run_id, reason);
     }
 
     /// Resolves with WFT poll response or `PollWfError::ShutDown` if WFTs have been drained
@@ -483,7 +483,10 @@ impl Worker {
             }
             NewWfTaskOutcome::Evict(e) => {
                 warn!(error=?e, run_id=%we.run_id, "Error while applying poll response to workflow");
-                self.request_wf_eviction(&we.run_id);
+                self.request_wf_eviction(
+                    &we.run_id,
+                    format!("Error while applying poll response to workflow: {:?}", e),
+                );
             }
         };
         Ok(res)
@@ -561,21 +564,22 @@ impl Worker {
                 warn!(run_id, error=?update_err, "Failing workflow task");
 
                 if let Some(ref tt) = update_err.task_token {
+                    let wft_fail_str = format!("{:?}", update_err);
                     self.handle_wft_reporting_errs(run_id, || async {
                         self.server_gateway
                             .fail_workflow_task(
                                 tt.clone(),
                                 fail_cause,
-                                Some(Failure::application_failure(
-                                    format!("{:?}", update_err),
-                                    false,
-                                )),
+                                Some(Failure::application_failure(wft_fail_str.clone(), false)),
                             )
                             .await
                     })
                     .await?;
                     // We must evict the workflow since we've failed a WFT
-                    self.request_wf_eviction(run_id);
+                    self.request_wf_eviction(
+                        run_id,
+                        format!("Workflow task failure: {}", wft_fail_str),
+                    );
                 }
             }
         }
@@ -636,12 +640,12 @@ impl Worker {
                     // Silence unhandled command errors since the lang SDK cannot do anything about
                     // them besides poll again, which it will do anyway.
                     tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
-                        warn!("Unhandled command response when completing: {}", err);
+                        warn!(error = %err, "Unhandled command response when completing");
                         should_evict = true;
                         Ok(())
                     }
                     tonic::Code::NotFound => {
-                        warn!("Task not found when completing: {}", err);
+                        warn!(error = %err, "Task not found when completing");
                         should_evict = true;
                         Ok(())
                     }
@@ -651,7 +655,8 @@ impl Worker {
             _ => Ok(()),
         };
         if should_evict {
-            self.wft_manager.request_eviction(run_id);
+            self.wft_manager
+                .request_eviction(run_id, "Error reporting WFT to server");
         }
         res.map_err(Into::into)
     }
