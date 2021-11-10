@@ -8,7 +8,7 @@ use crate::{
 };
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
     time::Duration,
@@ -64,7 +64,13 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let t = canned_histories::single_timer_wf_completes("1");
     let mock = MockServerGatewayApis::new();
-    let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::AllHistory], mock);
+    let mut mh = MockPollCfg::from_resp_batches(
+        wf_id,
+        t,
+        // Two polls are needed, since the first will fail
+        [ResponseType::AllHistory, ResponseType::AllHistory],
+        mock,
+    );
     // We should see one wft failure which has nondeterminism cause
     mh.num_expected_fails = Some(1);
     mh.expect_fail_wft_matcher =
@@ -78,10 +84,13 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
     let core = mock_core(mock);
     let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
-    // The workflow is replaying all of history, so the when it schedules an extra timer it should
-    // not have, it causes a nondeterminism error.
-    worker.register_wf(wf_type.to_owned(), |mut ctx: WfContext| async move {
-        ctx.timer(Duration::from_secs(1)).await;
+    let run_ct: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
+    worker.register_wf(wf_type.to_owned(), move |mut ctx: WfContext| async move {
+        // The workflow is replaying all of history, so the when it schedules an extra timer it
+        // should not have, it causes a nondeterminism error.
+        if run_ct.fetch_add(1, Ordering::Relaxed) == 0 {
+            ctx.timer(Duration::from_secs(1)).await;
+        }
         ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())
     });
@@ -90,7 +99,6 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
         .submit_wf(wf_id.to_owned(), wf_type.to_owned(), vec![])
         .await
         .unwrap();
-    // TODO: Shouldn't return error, should just queue eviction per
-    //  https://github.com/temporalio/sdk-core/issues/171
-    assert!(worker.run_until_done().await.is_err());
+    worker.run_until_done().await.unwrap();
+    assert_eq!(2, run_ct.load(Ordering::Relaxed));
 }

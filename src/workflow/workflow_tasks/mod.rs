@@ -516,7 +516,7 @@ impl WorkflowTaskManager {
     /// if this is called too early.
     ///
     /// Returns true if WFT is complete
-    pub(crate) fn after_wft_report(&self, run_id: &str) -> Result<bool, WorkflowUpdateError> {
+    pub(crate) fn after_wft_report(&self, run_id: &str) -> bool {
         let mut just_evicted = false;
 
         if let Some(OutstandingActivation::Normal {
@@ -532,12 +532,17 @@ impl WorkflowTaskManager {
             if !just_evicted {
                 // Check if there was a legacy query which must be fulfilled, and if there is create
                 // a new pending activation for it.
-                if let Some(ref mut ot) = self.workflow_machines.get_task_mut(run_id)?.deref_mut() {
+                if let Some(ref mut ot) = self
+                    .workflow_machines
+                    .get_task_mut(run_id)
+                    .expect("Machine must exist")
+                    .deref_mut()
+                {
                     if let Some(query) = ot.legacy_query.take() {
                         let na = create_query_activation(run_id.to_string(), [query]);
                         self.pending_activations.push(na);
                         let _ = self.pending_activations_notifier.send(true);
-                        return Ok(false);
+                        return false;
                     }
                 }
 
@@ -556,9 +561,9 @@ impl WorkflowTaskManager {
 
             // The evict may or may not have already done this, but even when we aren't evicting
             // we want to clear the outstanding workflow task since it's now complete.
-            return Ok(self.workflow_machines.complete_wft(run_id).is_some());
+            return self.workflow_machines.complete_wft(run_id).is_some();
         }
-        Ok(false)
+        false
     }
 
     /// Must be called after *every* activation is replied to, regardless of whether or not we

@@ -116,15 +116,6 @@ pub enum CompleteWfError {
         /// The completion, which may not be included to avoid unnecessary copies.
         completion: Option<WfActivationCompletion>,
     },
-    /// There was an error specific to a workflow instance. The cached workflow should be deleted
-    /// from lang side.
-    #[error("There was an error with the workflow instance with run id ({run_id}): {source:?}")]
-    WorkflowUpdateError {
-        /// Underlying workflow error
-        source: anyhow::Error,
-        /// The run id of the erring workflow
-        run_id: String,
-    },
     /// There is no worker registered for the queue being polled
     #[error("No worker registered for queue: {0}")]
     NoWorkerForQueue(String),
@@ -132,15 +123,6 @@ pub enum CompleteWfError {
     /// errors, so lang should consider this fatal.
     #[error("Unhandled grpc error when completing workflow task: {0:?}")]
     TonicError(#[from] tonic::Status),
-}
-
-impl From<WorkflowUpdateError> for CompleteWfError {
-    fn from(e: WorkflowUpdateError) -> Self {
-        Self::WorkflowUpdateError {
-            source: e.source.into(),
-            run_id: e.run_id,
-        }
-    }
 }
 
 impl From<WorkerLookupErr> for CompleteWfError {

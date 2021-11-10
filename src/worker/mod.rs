@@ -6,7 +6,7 @@ pub use crate::worker::config::{WorkerConfig, WorkerConfigBuilder};
 pub(crate) use dispatcher::WorkerDispatcher;
 
 use crate::{
-    errors::{CompleteWfError, WorkflowUpdateError},
+    errors::CompleteWfError,
     machines::{EmptyWorkflowCommandErr, WFMachinesError},
     pollers::{
         new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, BoxedWFPoller,
@@ -339,7 +339,7 @@ impl Worker {
                 completion: None,
             }),
         };
-        self.after_wft_report(&completion.run_id)?;
+        self.after_wft_report(&completion.run_id);
         self.wft_manager.on_activation_done(&completion.run_id);
         self.maybe_notify_wtfs_drained();
         r
@@ -554,6 +554,8 @@ impl Worker {
                     WorkflowTaskFailedCause::Unspecified
                 };
 
+                warn!(run_id, error=?update_err, "Failing workflow task");
+
                 if let Some(ref tt) = update_err.task_token {
                     self.handle_wft_reporting_errs(run_id, || async {
                         self.server_gateway
@@ -568,8 +570,9 @@ impl Worker {
                             .await
                     })
                     .await?;
+                    // We must evict the workflow since we've failed a WFT
+                    self.request_wf_eviction(run_id);
                 }
-                return Err(update_err.into());
             }
         }
 
@@ -606,11 +609,10 @@ impl Worker {
         Ok(())
     }
 
-    fn after_wft_report(&self, run_id: &str) -> Result<(), WorkflowUpdateError> {
-        if self.wft_manager.after_wft_report(run_id)? {
+    fn after_wft_report(&self, run_id: &str) {
+        if self.wft_manager.after_wft_report(run_id) {
             self.return_workflow_task_permit();
         };
-        Ok(())
     }
 
     /// Handle server errors from either completing or failing a workflow task. Returns any errors

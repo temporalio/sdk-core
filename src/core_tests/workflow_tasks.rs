@@ -30,7 +30,7 @@ use temporal_sdk_core_protos::{
         },
     },
     temporal::api::{
-        enums::v1::EventType,
+        enums::v1::{EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
         history::v1::{history_event, TimerFiredEventAttributes},
         workflowservice::v1::RespondWorkflowTaskCompletedResponse,
@@ -1390,4 +1390,77 @@ async fn buffering_tasks_doesnt_count_toward_outstanding_max() {
         core.poll_workflow_activation(TEST_Q).await.unwrap_err(),
         PollWfError::TonicError(_)
     );
+}
+
+#[tokio::test]
+async fn fail_wft_then_recover() {
+    let t = canned_histories::long_sequential_timers(1);
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::AllHistory, ResponseType::AllHistory],
+        MockServerGatewayApis::new(),
+    );
+    mh.num_expected_fails = Some(1);
+    mh.expect_fail_wft_matcher =
+        Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::NonDeterministicError));
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(TEST_Q, |wc| {
+        wc.max_cached_workflows = 2;
+    });
+    let core = mock_core(mock);
+
+    let act = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    // Start an activity instead of a timer, triggering nondeterminism error
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        TEST_Q,
+        act.run_id,
+        vec![ScheduleActivity {
+            activity_id: "fake_activity".to_string(),
+            ..Default::default()
+        }
+        .into()],
+    ))
+    .await
+    .unwrap();
+    // We must handle an eviction now
+    let evict_act = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    assert_matches!(
+        evict_act.jobs.as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+        }]
+    );
+    core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, evict_act.run_id))
+        .await
+        .unwrap();
+
+    // Workflow starting over, this time issue the right command
+    let act = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        TEST_Q,
+        act.run_id,
+        vec![StartTimer {
+            seq: 1,
+            ..Default::default()
+        }
+        .into()],
+    ))
+    .await
+    .unwrap();
+    let act = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    assert_matches!(
+        act.jobs.as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::FireTimer(_)),
+        },]
+    );
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        TEST_Q,
+        act.run_id,
+        vec![CompleteWorkflowExecution { result: None }.into()],
+    ))
+    .await
+    .unwrap();
+    core.shutdown().await;
 }

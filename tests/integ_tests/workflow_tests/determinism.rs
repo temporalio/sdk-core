@@ -1,0 +1,47 @@
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
+};
+use temporal_sdk_core::prototype_rust_sdk::{ActivityOptions, WfContext, WorkflowResult};
+use test_utils::CoreWfStarter;
+
+static RUN_CT: AtomicUsize = AtomicUsize::new(1);
+pub async fn timer_wf_nondeterministic(mut ctx: WfContext) -> WorkflowResult<()> {
+    let run_ct = RUN_CT.fetch_add(1, Ordering::Relaxed);
+
+    match run_ct {
+        1 | 3 => {
+            // If we have not run yet or are on the third attempt, schedule a timer
+            ctx.timer(Duration::from_secs(1)).await;
+            if run_ct == 1 {
+                // on first attempt we need to blow up after the timer fires so we will replay
+                panic!("dying on purpose");
+            }
+        }
+        2 => {
+            // On the second attempt we should cause a nondeterminism error
+            ctx.activity(ActivityOptions {
+                activity_type: "whatever".to_string(),
+                ..Default::default()
+            })
+            .await;
+        }
+        _ => panic!("Ran too many times"),
+    }
+    Ok(().into())
+}
+
+#[tokio::test]
+async fn test_determinism_error_then_recovers() {
+    let wf_name = "test_determinism_error_then_recovers";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+
+    worker.register_wf(wf_name.to_owned(), timer_wf_nondeterministic);
+    worker
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    starter.shutdown().await;
+}
