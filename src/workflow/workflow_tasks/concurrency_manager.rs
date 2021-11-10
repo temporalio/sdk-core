@@ -1,5 +1,5 @@
 use crate::{
-    errors::WorkflowUpdateError,
+    errors::WorkflowMissingError,
     protosext::ValidPollWFTQResponse,
     telemetry::metrics::{workflow_type, MetricsContext},
     workflow::{
@@ -89,7 +89,7 @@ impl WorkflowConcurrencyManager {
     pub(crate) fn get_task_mut(
         &self,
         run_id: &str,
-    ) -> Result<impl DerefMut<Target = Option<OutstandingTask>> + '_, WorkflowUpdateError> {
+    ) -> Result<impl DerefMut<Target = Option<OutstandingTask>> + '_, WorkflowMissingError> {
         let writelock = self.runs.write();
         if writelock.contains_key(run_id) {
             Ok(RwLockWriteGuard::map(writelock, |hm| {
@@ -97,10 +97,8 @@ impl WorkflowConcurrencyManager {
                 &mut hm.get_mut(run_id).unwrap().wft
             }))
         } else {
-            Err(WorkflowUpdateError {
-                source: WFMachinesError::Fatal("Workflow machines not found".to_string()),
+            Err(WorkflowMissingError {
                 run_id: run_id.to_owned(),
-                task_token: None,
             })
         }
     }
@@ -146,7 +144,7 @@ impl WorkflowConcurrencyManager {
         &self,
         run_id: &str,
         task: OutstandingTask,
-    ) -> Result<(), WorkflowUpdateError> {
+    ) -> Result<(), WorkflowMissingError> {
         let mut dereffer = self.get_task_mut(run_id)?;
         *dereffer = Some(task);
         Ok(())
@@ -171,16 +169,14 @@ impl WorkflowConcurrencyManager {
         &self,
         run_id: &str,
         activation: OutstandingActivation,
-    ) -> Result<Option<OutstandingActivation>, WorkflowUpdateError> {
+    ) -> Result<Option<OutstandingActivation>, WorkflowMissingError> {
         let mut writelock = self.runs.write();
         let machine_ref = writelock.get_mut(run_id);
         if let Some(run) = machine_ref {
             Ok(run.activation.replace(activation))
         } else {
-            Err(WorkflowUpdateError {
-                source: WFMachinesError::Fatal("Workflow machines not found".to_string()),
+            Err(WorkflowMissingError {
                 run_id: run_id.to_owned(),
-                task_token: None,
             })
         }
     }

@@ -16,6 +16,13 @@ pub(crate) struct WorkflowUpdateError {
     pub task_token: Option<TaskToken>,
 }
 
+/// The workflow machines were expected to be in the cache but were not
+#[derive(Debug)]
+pub(crate) struct WorkflowMissingError {
+    /// The run id of the erring workflow
+    pub run_id: String,
+}
+
 /// Errors thrown during initialization of [crate::Core]
 #[derive(thiserror::Error, Debug)]
 pub enum CoreInitError {
@@ -33,15 +40,6 @@ pub enum CoreInitError {
 /// Errors thrown by [crate::Core::poll_workflow_activation]
 #[derive(thiserror::Error, Debug)]
 pub enum PollWfError {
-    /// There was an error specific to a workflow instance. The cached workflow should be deleted
-    /// from lang side.
-    #[error("There was an error with the workflow instance with run id ({run_id}): {source:?}")]
-    WorkflowUpdateError {
-        /// Underlying workflow error
-        source: anyhow::Error,
-        /// The run id of the erring workflow
-        run_id: String,
-    },
     /// [crate::Core::shutdown] was called, and there are no more replay tasks to be handled. Lang
     /// must call [crate::Core::complete_workflow_activation] for any remaining tasks, and then may
     /// exit.
@@ -59,15 +57,6 @@ pub enum PollWfError {
     /// There is no worker registered for the queue being polled
     #[error("No worker registered for queue: {0}")]
     NoWorkerForQueue(String),
-}
-
-impl From<WorkflowUpdateError> for PollWfError {
-    fn from(e: WorkflowUpdateError) -> Self {
-        Self::WorkflowUpdateError {
-            source: e.source.into(),
-            run_id: e.run_id,
-        }
-    }
 }
 
 impl From<WorkerLookupErr> for PollWfError {

@@ -4,7 +4,7 @@ mod cache_manager;
 mod concurrency_manager;
 
 use crate::{
-    errors::WorkflowUpdateError,
+    errors::{WorkflowMissingError, WorkflowUpdateError},
     machines::{ProtoCommand, WFCommand, WFMachinesError},
     pending_activations::PendingActivations,
     pollers::GatewayRef,
@@ -96,7 +96,7 @@ pub struct WorkflowTaskInfo {
 }
 
 #[derive(Debug, derive_more::From)]
-pub enum NewWfTaskOutcome {
+pub(crate) enum NewWfTaskOutcome {
     /// A new activation for the workflow should be issued to lang
     IssueActivation(WfActivation),
     /// The poll loop should be restarted, there is nothing to do
@@ -106,6 +106,8 @@ pub enum NewWfTaskOutcome {
     Autocomplete,
     /// Workflow task had partial history and workflow was not present in the cache.
     CacheMiss,
+    /// The workflow task ran into problems while being applied and we must now evict the workflow
+    Evict(WorkflowUpdateError),
 }
 
 #[derive(Debug)]
@@ -162,9 +164,7 @@ impl WorkflowTaskManager {
         }
     }
 
-    pub(crate) fn next_pending_activation(
-        &self,
-    ) -> Result<Option<WfActivation>, WorkflowUpdateError> {
+    pub(crate) fn next_pending_activation(&self) -> Option<WfActivation> {
         // It is important that we do not issue pending activations for any workflows which already
         // have an outstanding activation. If we did, it can result in races where an in-progress
         // completion may appear to be the last in a task (no more pending activations) because
@@ -174,10 +174,10 @@ impl WorkflowTaskManager {
             .pending_activations
             .pop_first_matching(|rid| self.workflow_machines.get_activation(rid).is_none());
         if let Some(act) = maybe_act.as_ref() {
-            self.insert_outstanding_activation(act)?;
+            self.insert_outstanding_activation(act);
             self.cache_manager.lock().touch(&act.run_id);
         }
-        Ok(maybe_act)
+        maybe_act
     }
 
     pub fn next_buffered_poll(&self) -> Option<ValidPollWFTQResponse> {
@@ -241,12 +241,12 @@ impl WorkflowTaskManager {
         &self,
         work: ValidPollWFTQResponse,
         gateway: &GatewayRef,
-    ) -> Result<NewWfTaskOutcome, WorkflowUpdateError> {
+    ) -> NewWfTaskOutcome {
         let mut work = if let Some(w) = self.workflow_machines.buffer_resp_if_outstanding_work(work)
         {
             w
         } else {
-            return Ok(NewWfTaskOutcome::TaskBuffered);
+            return NewWfTaskOutcome::TaskBuffered;
         };
 
         debug!(
@@ -269,9 +269,9 @@ impl WorkflowTaskManager {
                 Ok((info, next_activation)) => (info, next_activation),
                 Err(e) => {
                     if let WFMachinesError::CacheMiss = e.source {
-                        return Ok(NewWfTaskOutcome::CacheMiss);
+                        return NewWfTaskOutcome::CacheMiss;
                     }
-                    return Err(e);
+                    return NewWfTaskOutcome::Evict(e);
                 }
             };
 
@@ -288,20 +288,22 @@ impl WorkflowTaskManager {
             legacy_query
         };
 
-        self.workflow_machines.insert_wft(
-            &next_activation.run_id,
-            OutstandingTask {
-                info,
-                legacy_query,
-                start_time: task_start_time,
-            },
-        )?;
+        self.workflow_machines
+            .insert_wft(
+                &next_activation.run_id,
+                OutstandingTask {
+                    info,
+                    legacy_query,
+                    start_time: task_start_time,
+                },
+            )
+            .expect("Workflow machines must exist, we just created/updated them");
 
         if !next_activation.jobs.is_empty() {
-            self.insert_outstanding_activation(&next_activation)?;
-            Ok(NewWfTaskOutcome::IssueActivation(next_activation))
+            self.insert_outstanding_activation(&next_activation);
+            NewWfTaskOutcome::IssueActivation(next_activation)
         } else {
-            Ok(NewWfTaskOutcome::Autocomplete)
+            NewWfTaskOutcome::Autocomplete
         }
     }
 
@@ -582,7 +584,7 @@ impl WorkflowTaskManager {
         self.ready_buffered_wft.push(buffd);
     }
 
-    fn insert_outstanding_activation(&self, act: &WfActivation) -> Result<(), WorkflowUpdateError> {
+    fn insert_outstanding_activation(&self, act: &WfActivation) {
         let act_type = if act.is_legacy_query() {
             OutstandingActivation::LegacyQuery
         } else {
@@ -590,19 +592,24 @@ impl WorkflowTaskManager {
                 contains_eviction: act.eviction_index().is_some(),
             }
         };
-        let previous = self
+        match self
             .workflow_machines
-            .insert_activation(&act.run_id, act_type)?;
-        if let Some(previous) = previous {
-            // This isn't a panic because we have screwed up core logic if this is violated. It
-            // must be upheld.
-            panic!(
-                "Attempted to insert a new outstanding activation {}, but there already was one \
-                 outstanding: {:?}",
-                act, previous
-            );
+            .insert_activation(&act.run_id, act_type)
+        {
+            Ok(None) => {}
+            Ok(Some(previous)) => {
+                // This is a panic because we have screwed up core logic if this is violated. It
+                // must be upheld.
+                panic!(
+                    "Attempted to insert a new outstanding activation {}, but there already was \
+                     one outstanding: {:?}",
+                    act, previous
+                );
+            }
+            Err(WorkflowMissingError { run_id }) => {
+                self.request_eviction(&run_id);
+            }
         }
-        Ok(())
     }
 
     fn activation_has_eviction(&self, run_id: &str) -> bool {

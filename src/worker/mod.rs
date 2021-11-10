@@ -275,7 +275,7 @@ impl Worker {
             // We must first check if there are pending workflow activations for workflows that are
             // currently replaying or otherwise need immediate jobs, and issue those before
             // bothering the server.
-            if let Some(pa) = self.wft_manager.next_pending_activation()? {
+            if let Some(pa) = self.wft_manager.next_pending_activation() {
                 debug!(activation=%pa, "Sending pending activation to lang");
                 return Ok(pa);
             }
@@ -449,7 +449,7 @@ impl Worker {
         let res = self
             .wft_manager
             .apply_new_poll_resp(work, &self.server_gateway)
-            .await?;
+            .await;
         match &res {
             NewWfTaskOutcome::IssueActivation(a) => {
                 debug!(activation=%a, "Sending activation to lang");
@@ -480,6 +480,10 @@ impl Worker {
                         }),
                     )
                     .await?;
+            }
+            NewWfTaskOutcome::Evict(e) => {
+                warn!(error=?e, run_id=%we.run_id, "Error while applying poll response to workflow");
+                self.request_wf_eviction(&we.run_id);
             }
         };
         Ok(res)
