@@ -16,6 +16,16 @@ pub(crate) struct WorkflowUpdateError {
     pub task_token: Option<TaskToken>,
 }
 
+impl From<WorkflowMissingError> for WorkflowUpdateError {
+    fn from(wme: WorkflowMissingError) -> Self {
+        WorkflowUpdateError {
+            source: WFMachinesError::Fatal("Workflow machines missing".to_string()),
+            run_id: wme.run_id,
+            task_token: None,
+        }
+    }
+}
+
 /// The workflow machines were expected to be in the cache but were not
 #[derive(Debug)]
 pub(crate) struct WorkflowMissingError {

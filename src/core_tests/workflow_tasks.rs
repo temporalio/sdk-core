@@ -6,7 +6,7 @@ use crate::{
         build_fake_core, build_mock_pollers, build_multihist_mock_sg, canned_histories,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_core, poll_and_reply,
         poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, FakeWfResponses,
-        MockPollCfg, MocksHolder, ResponseType, TestHistoryBuilder, TEST_Q,
+        MockPollCfg, MocksHolder, ResponseType, TestHistoryBuilder, NO_MORE_WORK_ERROR_MSG, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
     Core, CoreSDK, WfActivationCompletion,
@@ -1465,4 +1465,30 @@ async fn fail_wft_then_recover() {
     .await
     .unwrap();
     core.shutdown().await;
+}
+
+#[tokio::test]
+async fn poll_response_triggers_wf_error() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    // Add this nonsense event here to make applying the poll response fail
+    t.add_external_signal_completed(100);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::AllHistory],
+        MockServerGatewayApis::new(),
+    );
+    // Since applying the poll response immediately generates an error core will start polling again
+    // Rather than panic on bad expectation we want to return the magic "no more work" error
+    mh.enforce_correct_number_of_polls = false;
+    let mock = build_mock_pollers(mh);
+    let core = mock_core(mock);
+    // Poll for first WFT, which is immediately an eviction
+    let act = core.poll_workflow_activation(TEST_Q).await;
+    assert_matches!(act, Err(PollWfError::TonicError(err))
+                    if err.message() == NO_MORE_WORK_ERROR_MSG);
 }

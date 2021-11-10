@@ -47,6 +47,7 @@ use temporal_sdk_core_protos::{
 
 pub type Result<T, E = anyhow::Error> = std::result::Result<T, E>;
 pub const TEST_Q: &str = "q";
+pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";
 
 /// When constructing responses for mocks, indicates how a given response should be built
 #[derive(derive_more::From, Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -458,7 +459,7 @@ pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockServerGateway
                         }
                     }
                 }
-                Some(Err(tonic::Status::cancelled("No more work to do")))
+                Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG)))
             });
         let mw = MockWorker::new(&task_q, Box::from(mock_poller));
         mock_pollers.insert(task_q, mw);

@@ -174,7 +174,11 @@ impl WorkflowTaskManager {
             .pending_activations
             .pop_first_matching(|rid| self.workflow_machines.get_activation(rid).is_none());
         if let Some(act) = maybe_act.as_ref() {
-            self.insert_outstanding_activation(act);
+            if let Err(WorkflowMissingError { run_id }) = self.insert_outstanding_activation(act) {
+                self.request_eviction(&run_id, "Pending activation present for missing run");
+                // Continue trying to return a valid pending activation
+                return self.next_pending_activation();
+            }
             self.cache_manager.lock().touch(&act.run_id);
         }
         maybe_act
@@ -300,7 +304,9 @@ impl WorkflowTaskManager {
             .expect("Workflow machines must exist, we just created/updated them");
 
         if !next_activation.jobs.is_empty() {
-            self.insert_outstanding_activation(&next_activation);
+            if let Err(wme) = self.insert_outstanding_activation(&next_activation) {
+                return NewWfTaskOutcome::Evict(wme.into());
+            }
             NewWfTaskOutcome::IssueActivation(next_activation)
         } else {
             NewWfTaskOutcome::Autocomplete
@@ -585,7 +591,10 @@ impl WorkflowTaskManager {
         self.ready_buffered_wft.push(buffd);
     }
 
-    fn insert_outstanding_activation(&self, act: &WfActivation) {
+    fn insert_outstanding_activation(
+        &self,
+        act: &WfActivation,
+    ) -> Result<(), WorkflowMissingError> {
         let act_type = if act.is_legacy_query() {
             OutstandingActivation::LegacyQuery
         } else {
@@ -597,7 +606,7 @@ impl WorkflowTaskManager {
             .workflow_machines
             .insert_activation(&act.run_id, act_type)
         {
-            Ok(None) => {}
+            Ok(None) => Ok(()),
             Ok(Some(previous)) => {
                 // This is a panic because we have screwed up core logic if this is violated. It
                 // must be upheld.
@@ -607,12 +616,7 @@ impl WorkflowTaskManager {
                     act, previous
                 );
             }
-            Err(WorkflowMissingError { run_id }) => {
-                self.request_eviction(
-                    &run_id,
-                    "Workflow machines were missing while creating an activation",
-                );
-            }
+            Err(e) => Err(e),
         }
     }
 
