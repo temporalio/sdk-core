@@ -308,7 +308,7 @@ impl Core for CoreSDK {
 
     fn request_workflow_eviction(&self, task_queue: &str, run_id: &str) {
         if let Ok(w) = self.worker(task_queue) {
-            w.request_wf_eviction(run_id);
+            w.request_wf_eviction(run_id, "Eviction explicitly requested by lang");
         }
     }
 

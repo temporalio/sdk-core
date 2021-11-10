@@ -139,13 +139,13 @@ pub mod coresdk {
         use std::fmt::{Display, Formatter};
 
         tonic::include_proto!("coresdk.workflow_activation");
-        pub fn create_evict_activation(run_id: String) -> WfActivation {
+        pub fn create_evict_activation(run_id: String, reason: String) -> WfActivation {
             WfActivation {
                 timestamp: None,
                 run_id,
                 is_replaying: false,
                 jobs: vec![WfActivationJob::from(
-                    wf_activation_job::Variant::RemoveFromCache(true),
+                    wf_activation_job::Variant::RemoveFromCache(RemoveFromCache { reason }),
                 )],
             }
         }

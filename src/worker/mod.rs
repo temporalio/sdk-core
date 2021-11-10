@@ -6,7 +6,7 @@ pub use crate::worker::config::{WorkerConfig, WorkerConfigBuilder};
 pub(crate) use dispatcher::WorkerDispatcher;
 
 use crate::{
-    errors::{CompleteWfError, WorkflowUpdateError},
+    errors::CompleteWfError,
     machines::{EmptyWorkflowCommandErr, WFMachinesError},
     pollers::{
         new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, BoxedWFPoller,
@@ -275,7 +275,7 @@ impl Worker {
             // We must first check if there are pending workflow activations for workflows that are
             // currently replaying or otherwise need immediate jobs, and issue those before
             // bothering the server.
-            if let Some(pa) = self.wft_manager.next_pending_activation()? {
+            if let Some(pa) = self.wft_manager.next_pending_activation() {
                 debug!(activation=%pa, "Sending pending activation to lang");
                 return Ok(pa);
             }
@@ -284,7 +284,7 @@ impl Worker {
             // activations, since there may be an eviction etc for whatever run is popped here.
             if let Some(buff_wft) = self.wft_manager.next_buffered_poll() {
                 match self.apply_server_work(buff_wft).await? {
-                    NewWfTaskOutcome::IssueActivation(a) => return Ok(a),
+                    Some(a) => return Ok(a),
                     _ => continue,
                 }
             }
@@ -304,14 +304,8 @@ impl Worker {
 
             if let Some(work) = selected_f {
                 self.metrics.wf_tq_poll_ok();
-                match self.apply_server_work(work).await? {
-                    NewWfTaskOutcome::IssueActivation(a) => return Ok(a),
-                    NewWfTaskOutcome::TaskBuffered => {
-                        // If the task was buffered, it's not actually outstanding, so we can
-                        // immediately return a permit.
-                        self.return_workflow_task_permit();
-                    }
-                    _ => {}
+                if let Some(a) = self.apply_server_work(work).await? {
+                    return Ok(a);
                 }
             }
 
@@ -339,7 +333,7 @@ impl Worker {
                 completion: None,
             }),
         };
-        self.after_wft_report(&completion.run_id)?;
+        self.after_wft_report(&completion.run_id);
         self.wft_manager.on_activation_done(&completion.run_id);
         self.maybe_notify_wtfs_drained();
         r
@@ -358,8 +352,8 @@ impl Worker {
         self.workflows_semaphore.add_permits(1)
     }
 
-    pub(crate) fn request_wf_eviction(&self, run_id: &str) {
-        self.wft_manager.request_eviction(run_id);
+    pub(crate) fn request_wf_eviction(&self, run_id: &str, reason: impl Into<String>) {
+        self.wft_manager.request_eviction(run_id, reason);
     }
 
     /// Resolves with WFT poll response or `PollWfError::ShutDown` if WFTs have been drained
@@ -443,18 +437,24 @@ impl Worker {
     async fn apply_server_work(
         &self,
         work: ValidPollWFTQResponse,
-    ) -> Result<NewWfTaskOutcome, PollWfError> {
+    ) -> Result<Option<WfActivation>, PollWfError> {
         let we = work.workflow_execution.clone();
         let tt = work.task_token.clone();
         let res = self
             .wft_manager
             .apply_new_poll_resp(work, &self.server_gateway)
-            .await?;
-        match &res {
+            .await;
+        Ok(match res {
             NewWfTaskOutcome::IssueActivation(a) => {
                 debug!(activation=%a, "Sending activation to lang");
+                Some(a)
             }
-            NewWfTaskOutcome::TaskBuffered => {}
+            NewWfTaskOutcome::TaskBuffered => {
+                // If the task was buffered, it's not actually outstanding, so we can
+                // immediately return a permit.
+                self.return_workflow_task_permit();
+                None
+            }
             NewWfTaskOutcome::Autocomplete => {
                 debug!(workflow_execution=?we,
                        "No work for lang to perform after polling server. Sending autocomplete.");
@@ -464,6 +464,7 @@ impl Worker {
                     status: Some(workflow_completion::Success::from_variants(vec![]).into()),
                 })
                 .await?;
+                None
             }
             NewWfTaskOutcome::CacheMiss => {
                 debug!(workflow_execution=?we, "Unable to process workflow task with partial \
@@ -480,9 +481,17 @@ impl Worker {
                         }),
                     )
                     .await?;
+                None
             }
-        };
-        Ok(res)
+            NewWfTaskOutcome::Evict(e) => {
+                warn!(error=?e, run_id=%we.run_id, "Error while applying poll response to workflow");
+                self.request_wf_eviction(
+                    &we.run_id,
+                    format!("Error while applying poll response to workflow: {:?}", e),
+                );
+                None
+            }
+        })
     }
 
     /// Handle a successful workflow completion
@@ -554,22 +563,26 @@ impl Worker {
                     WorkflowTaskFailedCause::Unspecified
                 };
 
+                warn!(run_id, error=?update_err, "Failing workflow task");
+
                 if let Some(ref tt) = update_err.task_token {
+                    let wft_fail_str = format!("{:?}", update_err);
                     self.handle_wft_reporting_errs(run_id, || async {
                         self.server_gateway
                             .fail_workflow_task(
                                 tt.clone(),
                                 fail_cause,
-                                Some(Failure::application_failure(
-                                    format!("{:?}", update_err),
-                                    false,
-                                )),
+                                Some(Failure::application_failure(wft_fail_str.clone(), false)),
                             )
                             .await
                     })
                     .await?;
+                    // We must evict the workflow since we've failed a WFT
+                    self.request_wf_eviction(
+                        run_id,
+                        format!("Workflow task failure: {}", wft_fail_str),
+                    );
                 }
-                return Err(update_err.into());
             }
         }
 
@@ -606,11 +619,10 @@ impl Worker {
         Ok(())
     }
 
-    fn after_wft_report(&self, run_id: &str) -> Result<(), WorkflowUpdateError> {
-        if self.wft_manager.after_wft_report(run_id)? {
+    fn after_wft_report(&self, run_id: &str) {
+        if self.wft_manager.after_wft_report(run_id) {
             self.return_workflow_task_permit();
         };
-        Ok(())
     }
 
     /// Handle server errors from either completing or failing a workflow task. Returns any errors
@@ -630,12 +642,12 @@ impl Worker {
                     // Silence unhandled command errors since the lang SDK cannot do anything about
                     // them besides poll again, which it will do anyway.
                     tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
-                        warn!("Unhandled command response when completing: {}", err);
+                        warn!(error = %err, "Unhandled command response when completing");
                         should_evict = true;
                         Ok(())
                     }
                     tonic::Code::NotFound => {
-                        warn!("Task not found when completing: {}", err);
+                        warn!(error = %err, "Task not found when completing");
                         should_evict = true;
                         Ok(())
                     }
@@ -645,7 +657,7 @@ impl Worker {
             _ => Ok(()),
         };
         if should_evict {
-            self.wft_manager.request_eviction(run_id);
+            self.request_wf_eviction(run_id, "Error reporting WFT to server");
         }
         res.map_err(Into::into)
     }

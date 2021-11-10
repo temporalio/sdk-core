@@ -947,6 +947,7 @@ pub fn two_signals(sig_1_id: &str, sig_2_id: &str) -> TestHistoryBuilder {
 ///  x: EVENT_TYPE_TIMER_FIRED
 ///  x: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
 ///  x: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  x: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
 /// --- End repeat ---
 /// 4 + (num tasks - 1) * 4 + 1: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
 pub fn long_sequential_timers(num_tasks: usize) -> TestHistoryBuilder {
