@@ -84,11 +84,11 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
     let core = mock_core(mock);
     let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
-    let run_ct: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
+    let started_count: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
     worker.register_wf(wf_type.to_owned(), move |mut ctx: WfContext| async move {
         // The workflow is replaying all of history, so the when it schedules an extra timer it
         // should not have, it causes a nondeterminism error.
-        if run_ct.fetch_add(1, Ordering::Relaxed) == 0 {
+        if started_count.fetch_add(1, Ordering::Relaxed) == 0 {
             ctx.timer(Duration::from_secs(1)).await;
         }
         ctx.timer(Duration::from_secs(1)).await;
@@ -100,5 +100,7 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    assert_eq!(2, run_ct.load(Ordering::Relaxed));
+    // Started count is two since we start, restart once due to error, then we unblock the real
+    // timer and proceed without restarting
+    assert_eq!(2, started_count.load(Ordering::Relaxed));
 }

@@ -1398,6 +1398,7 @@ async fn fail_wft_then_recover() {
     let mut mh = MockPollCfg::from_resp_batches(
         "fake_wf_id",
         t,
+        // We need to deliver all of history twice because of eviction
         [ResponseType::AllHistory, ResponseType::AllHistory],
         MockServerGatewayApis::new(),
     );
@@ -1414,7 +1415,7 @@ async fn fail_wft_then_recover() {
     // Start an activity instead of a timer, triggering nondeterminism error
     core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         TEST_Q,
-        act.run_id,
+        act.run_id.clone(),
         vec![ScheduleActivity {
             activity_id: "fake_activity".to_string(),
             ..Default::default()
@@ -1425,6 +1426,7 @@ async fn fail_wft_then_recover() {
     .unwrap();
     // We must handle an eviction now
     let evict_act = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    assert_eq!(evict_act.run_id, act.run_id);
     assert_matches!(
         evict_act.jobs.as_slice(),
         [WfActivationJob {

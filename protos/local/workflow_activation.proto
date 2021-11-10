@@ -60,7 +60,7 @@ message WFActivationJob {
         ///
         /// If other job variant are present in the list, this variant will be the last job in the
         /// job list. The string value is a reason for eviction.
-        string remove_from_cache = 50;
+        RemoveFromCache remove_from_cache = 50;
     }
 }
 
@@ -185,4 +185,8 @@ message ResolveRequestCancelExternalWorkflow {
     /// If populated, this signal either failed to be sent or was cancelled depending on failure
     /// type / info.
     temporal.api.failure.v1.Failure failure = 2;
+}
+
+message RemoveFromCache {
+    string reason = 1;
 }

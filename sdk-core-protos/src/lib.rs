@@ -145,7 +145,7 @@ pub mod coresdk {
                 run_id,
                 is_replaying: false,
                 jobs: vec![WfActivationJob::from(
-                    wf_activation_job::Variant::RemoveFromCache(reason),
+                    wf_activation_job::Variant::RemoveFromCache(RemoveFromCache { reason }),
                 )],
             }
         }

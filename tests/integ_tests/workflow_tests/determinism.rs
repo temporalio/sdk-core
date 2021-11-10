@@ -44,4 +44,6 @@ async fn test_determinism_error_then_recovers() {
         .unwrap();
     worker.run_until_done().await.unwrap();
     starter.shutdown().await;
+    // 4 because we still add on the 3rd and final attempt
+    assert_eq!(RUN_CT.load(Ordering::Relaxed), 4);
 }
