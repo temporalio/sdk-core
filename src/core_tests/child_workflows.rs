@@ -44,13 +44,13 @@ async fn signal_child_workflow(#[case] serial: bool) {
             .into_started()
             .expect("Child should get started");
         let (sigres, res) = if serial {
-            let sigfut = start_res.signal(&mut ctx, SIGNAME, b"Hi!");
-            let resfut = start_res.result();
-            join!(sigfut, resfut)
-        } else {
             let sigres = start_res.signal(&mut ctx, SIGNAME, b"Hi!").await;
             let res = start_res.result().await;
             (sigres, res)
+        } else {
+            let sigfut = start_res.signal(&mut ctx, SIGNAME, b"Hi!");
+            let resfut = start_res.result();
+            join!(sigfut, resfut)
         };
         sigres.expect("signal result is ok");
         res.status.expect("child wf result is ok");
