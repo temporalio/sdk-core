@@ -5,7 +5,7 @@ use crate::{
     },
     workflow::CommandID,
 };
-use anyhow::{bail, Context as AnyhowContext, Error};
+use anyhow::{anyhow, bail, Context as AnyhowContext, Error};
 use crossbeam::channel::Receiver;
 use futures::{future::BoxFuture, FutureExt};
 use parking_lot::RwLock;
@@ -113,7 +113,7 @@ pub struct WorkflowFuture {
 }
 
 impl WorkflowFuture {
-    fn unblock(&mut self, event: UnblockEvent) {
+    fn unblock(&mut self, event: UnblockEvent) -> Result<(), Error> {
         let cmd_id = match event {
             UnblockEvent::Timer(seq) => CommandID::Timer(seq),
             UnblockEvent::Activity(seq, _) => CommandID::Activity(seq),
@@ -124,10 +124,11 @@ impl WorkflowFuture {
         };
         let unblocker = self.command_status.remove(&cmd_id);
         unblocker
-            .expect("Command not found")
+            .ok_or_else(|| anyhow!("Command {:?} not found to unblock!", cmd_id))?
             .unblocker
             .send(event)
-            .unwrap();
+            .expect("Receive half of unblock channel must exist");
+        Ok(())
     }
 
     fn fail_wft(&self, run_id: String, fail: Error) {
@@ -163,26 +164,26 @@ impl WorkflowFuture {
                 Variant::StartWorkflow(_) => {
                     // TODO: Can assign randomness seed whenever needed
                 }
-                Variant::FireTimer(FireTimer { seq }) => self.unblock(UnblockEvent::Timer(seq)),
+                Variant::FireTimer(FireTimer { seq }) => self.unblock(UnblockEvent::Timer(seq))?,
                 Variant::ResolveActivity(ResolveActivity { seq, result }) => {
                     self.unblock(UnblockEvent::Activity(
                         seq,
                         Box::new(result.context("Activity must have result")?),
-                    ))
+                    ))?
                 }
                 Variant::ResolveChildWorkflowExecutionStart(
                     ResolveChildWorkflowExecutionStart { seq, status },
                 ) => self.unblock(UnblockEvent::WorkflowStart(
                     seq,
                     Box::new(status.context("Workflow start must have status")?),
-                )),
+                ))?,
                 Variant::ResolveChildWorkflowExecution(ResolveChildWorkflowExecution {
                     seq,
                     result,
                 }) => self.unblock(UnblockEvent::WorkflowComplete(
                     seq,
                     Box::new(result.context("Child Workflow execution must have a result")?),
-                )),
+                ))?,
                 Variant::UpdateRandomSeed(_) => {}
                 Variant::QueryWorkflow(_) => {
                     todo!()
@@ -208,10 +209,10 @@ impl WorkflowFuture {
                     self.ctx_shared.write().changes.insert(patch_id, true);
                 }
                 Variant::ResolveSignalExternalWorkflow(attrs) => {
-                    self.unblock(UnblockEvent::SignalExternal(attrs.seq, attrs.failure))
+                    self.unblock(UnblockEvent::SignalExternal(attrs.seq, attrs.failure))?
                 }
                 Variant::ResolveRequestCancelExternalWorkflow(attrs) => {
-                    self.unblock(UnblockEvent::CancelExternal(attrs.seq, attrs.failure))
+                    self.unblock(UnblockEvent::CancelExternal(attrs.seq, attrs.failure))?
                 }
 
                 Variant::RemoveFromCache(_) => {
@@ -301,7 +302,7 @@ impl Future for WorkflowFuture {
                                 ));
                                 // TODO: cancelled timer should not simply be unblocked, in the
                                 //   other SDKs this returns an error
-                                self.unblock(UnblockEvent::Timer(seq));
+                                self.unblock(UnblockEvent::Timer(seq))?;
                                 // Re-poll wf future since a timer is now unblocked
                                 res = self.inner.poll_unpin(cx);
                             }

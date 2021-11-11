@@ -272,7 +272,8 @@ impl Core for CoreSDK {
         }
     }
 
-    #[instrument(level = "debug", skip(self, completion), fields(completion=%&completion))]
+    #[instrument(level = "debug", skip(self, completion), 
+      fields(completion=%&completion, run_id=%completion.run_id))]
     async fn complete_workflow_activation(
         &self,
         completion: WfActivationCompletion,
