@@ -1492,3 +1492,68 @@ async fn poll_response_triggers_wf_error() {
     assert_matches!(act, Err(PollWfError::TonicError(err))
                     if err.message() == NO_MORE_WORK_ERROR_MSG);
 }
+
+// Verifies we can handle multiple wft timeouts in a row if lang is being very slow in responding
+#[tokio::test]
+async fn lang_slower_than_wft_timeouts() {
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_workflow_task_scheduled_and_started();
+    t.add_workflow_task_timed_out();
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let tasks = [
+        hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
+        hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
+        hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
+    ];
+    let mut mock = MockServerGatewayApis::new();
+    mock.expect_complete_workflow_task()
+        .times(1)
+        .returning(|_| Err(tonic::Status::not_found("Workflow task not found.")));
+    mock.expect_complete_workflow_task()
+        .times(1)
+        .returning(|_| Ok(Default::default()));
+    let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, []);
+    mock.worker_cfg(TEST_Q, |wc| {
+        wc.max_cached_workflows = 2;
+    });
+    let core = mock_core(mock);
+
+    let wf_task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let poll_until_no_work = core.poll_workflow_activation(TEST_Q).await;
+    assert_matches!(poll_until_no_work, Err(PollWfError::TonicError(err))
+                    if err.message() == NO_MORE_WORK_ERROR_MSG);
+    // This completion runs into a workflow task not found error, since it's completing a stale
+    // task.
+    core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, wf_task.run_id))
+        .await
+        .unwrap();
+    // Now we should get an eviction
+    let wf_task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    assert_matches!(
+        wf_task.jobs.as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+        }]
+    );
+    core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, wf_task.run_id))
+        .await
+        .unwrap();
+    // The last WFT buffered should be applied now
+    let start_again = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    assert_matches!(
+        start_again.jobs[0].variant,
+        Some(wf_activation_job::Variant::StartWorkflow(_))
+    );
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        TEST_Q,
+        start_again.run_id,
+        vec![CompleteWorkflowExecution { result: None }.into()],
+    ))
+    .await
+    .unwrap();
+    core.shutdown().await;
+}
