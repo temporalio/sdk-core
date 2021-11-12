@@ -14,7 +14,10 @@ pub use workflow_context::{
     WfContext,
 };
 
-use crate::{prototype_rust_sdk::workflow_context::PendingChildWorkflow, Core};
+use crate::{
+    prototype_rust_sdk::workflow_context::{ChildWfCommon, PendingChildWorkflow},
+    Core,
+};
 use anyhow::{anyhow, bail};
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use std::{
@@ -310,12 +313,12 @@ pub type CancelExternalWfResult = Result<CancelExternalOk, Failure>;
 trait Unblockable {
     type OtherDat;
 
-    fn unblock(ue: UnblockEvent, od: &Self::OtherDat) -> Self;
+    fn unblock(ue: UnblockEvent, od: Self::OtherDat) -> Self;
 }
 
 impl Unblockable for TimerResult {
     type OtherDat = ();
-    fn unblock(ue: UnblockEvent, _: &Self::OtherDat) -> Self {
+    fn unblock(ue: UnblockEvent, _: Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::Timer(_) => TimerResult,
             _ => panic!("Invalid unblock event for timer"),
@@ -325,7 +328,7 @@ impl Unblockable for TimerResult {
 
 impl Unblockable for ActivityResult {
     type OtherDat = ();
-    fn unblock(ue: UnblockEvent, _: &Self::OtherDat) -> Self {
+    fn unblock(ue: UnblockEvent, _: Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::Activity(_, result) => *result,
             _ => panic!("Invalid unblock event for activity"),
@@ -335,13 +338,12 @@ impl Unblockable for ActivityResult {
 
 impl Unblockable for PendingChildWorkflow {
     // Other data here is workflow id
-    type OtherDat = String;
-    fn unblock(ue: UnblockEvent, od: &Self::OtherDat) -> Self {
+    type OtherDat = ChildWfCommon;
+    fn unblock(ue: UnblockEvent, od: Self::OtherDat) -> Self {
         match ue {
-            UnblockEvent::WorkflowStart(seq, result) => PendingChildWorkflow {
-                child_wf_cmd_seq_num: seq,
+            UnblockEvent::WorkflowStart(_, result) => PendingChildWorkflow {
                 status: *result,
-                wfid: od.clone(),
+                common: od,
             },
             _ => panic!("Invalid unblock event for child workflow start"),
         }
@@ -350,7 +352,7 @@ impl Unblockable for PendingChildWorkflow {
 
 impl Unblockable for ChildWorkflowResult {
     type OtherDat = ();
-    fn unblock(ue: UnblockEvent, _: &Self::OtherDat) -> Self {
+    fn unblock(ue: UnblockEvent, _: Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::WorkflowComplete(_, result) => *result,
             _ => panic!("Invalid unblock event for child workflow complete"),
@@ -360,7 +362,7 @@ impl Unblockable for ChildWorkflowResult {
 
 impl Unblockable for SignalExternalWfResult {
     type OtherDat = ();
-    fn unblock(ue: UnblockEvent, _: &Self::OtherDat) -> Self {
+    fn unblock(ue: UnblockEvent, _: Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::SignalExternal(_, maybefail) => {
                 if let Some(f) = maybefail {
@@ -376,7 +378,7 @@ impl Unblockable for SignalExternalWfResult {
 
 impl Unblockable for CancelExternalWfResult {
     type OtherDat = ();
-    fn unblock(ue: UnblockEvent, _: &Self::OtherDat) -> Self {
+    fn unblock(ue: UnblockEvent, _: Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::CancelExternal(_, maybefail) => {
                 if let Some(f) = maybefail {

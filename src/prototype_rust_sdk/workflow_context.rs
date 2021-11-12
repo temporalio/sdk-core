@@ -311,7 +311,7 @@ pub trait CancellableFuture<T>: Future<Output = T> {
 struct WFCommandFut<T, D> {
     _unused: PhantomData<T>,
     result_rx: oneshot::Receiver<UnblockEvent>,
-    other_dat: D,
+    other_dat: Option<D>,
 }
 impl<T> WFCommandFut<T, ()> {
     fn new() -> (Self, oneshot::Sender<UnblockEvent>) {
@@ -326,7 +326,7 @@ impl<T, D> WFCommandFut<T, D> {
             Self {
                 _unused: PhantomData,
                 result_rx: rx,
-                other_dat,
+                other_dat: Some(other_dat),
             },
             tx,
         )
@@ -341,9 +341,15 @@ where
     type Output = T;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.result_rx
-            .poll_unpin(cx)
-            .map(|x| Unblockable::unblock(x.unwrap(), &self.other_dat))
+        self.result_rx.poll_unpin(cx).map(|x| {
+            // SAFETY: Because we can only enter this section once the future has resolved, we
+            // know it will never be polled again, therefore consuming the option is OK.
+            let od = self
+                .other_dat
+                .take()
+                .expect("Other data must exist when resolving command future");
+            Unblockable::unblock(x.unwrap(), od)
+        })
     }
 }
 
@@ -379,10 +385,7 @@ where
     type Output = T;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.cmd_fut
-            .result_rx
-            .poll_unpin(cx)
-            .map(|x| Unblockable::unblock(x.unwrap(), &self.cmd_fut.other_dat))
+        self.cmd_fut.poll_unpin(cx)
     }
 }
 
@@ -401,21 +404,24 @@ pub struct ChildWorkflow {
     opts: ChildWorkflowOptions,
 }
 
+pub struct ChildWfCommon {
+    workflow_id: String,
+    result_future: CancellableWFCommandFut<ChildWorkflowResult, ()>,
+}
+
 pub struct PendingChildWorkflow {
-    pub(crate) child_wf_cmd_seq_num: u32,
     pub status: ChildWorkflowStartStatus,
-    pub wfid: String,
+    pub common: ChildWfCommon,
 }
 
 impl PendingChildWorkflow {
     /// Returns `None` if the child did not start successfully. The returned [StartedChildWorkflow]
     /// can be used to wait on, signal, or cancel the child workflow.
-    pub fn as_started(&self) -> Option<StartedChildWorkflow> {
-        match &self.status {
+    pub fn into_started(self) -> Option<StartedChildWorkflow> {
+        match self.status {
             ChildWorkflowStartStatus::Succeeded(s) => Some(StartedChildWorkflow {
-                child_wf_cmd_seq_num: self.child_wf_cmd_seq_num,
-                run_id: s.run_id.clone(),
-                workflow_id: self.wfid.clone(),
+                run_id: s.run_id,
+                common: self.common,
             }),
             _ => None,
         }
@@ -423,9 +429,8 @@ impl PendingChildWorkflow {
 }
 
 pub struct StartedChildWorkflow {
-    pub(crate) child_wf_cmd_seq_num: u32,
     pub run_id: String,
-    pub workflow_id: String,
+    common: ChildWfCommon,
 }
 
 impl ChildWorkflow {
@@ -433,10 +438,35 @@ impl ChildWorkflow {
     pub fn start(self, cx: &mut WfContext) -> impl CancellableFuture<PendingChildWorkflow> {
         let child_seq = cx.next_child_workflow_sequence_number;
         cx.next_child_workflow_sequence_number += 1;
-        let (cmd, unblocker) = CancellableWFCommandFut::new_with_dat(
-            CancellableID::ChildWorkflow(child_seq),
-            self.opts.workflow_id.clone(),
+        // Immediately create the command/future for the result, otherwise if the user does
+        // not await the result until *after* we receive an activation for it, there will be nothing
+        // to match when unblocking.
+        let cancel_seq = cx.next_cancel_external_wf_sequence_number;
+        cx.next_cancel_external_wf_sequence_number += 1;
+        let (result_cmd, unblocker) =
+            CancellableWFCommandFut::new(CancellableID::ExternalWorkflow {
+                seqnum: cancel_seq,
+                execution: NamespacedWorkflowExecution {
+                    workflow_id: self.opts.workflow_id.clone(),
+                    ..Default::default()
+                },
+                only_child: true,
+            });
+        cx.send(
+            CommandSubscribeChildWorkflowCompletion {
+                seq: child_seq,
+                unblocker,
+            }
+            .into(),
         );
+
+        let common = ChildWfCommon {
+            workflow_id: self.opts.workflow_id.clone(),
+            result_future: result_cmd,
+        };
+
+        let (cmd, unblocker) =
+            CancellableWFCommandFut::new_with_dat(CancellableID::ChildWorkflow(child_seq), common);
         cx.send(
             CommandCreateRequest {
                 cmd: self.opts.into_command(child_seq).into(),
@@ -444,38 +474,23 @@ impl ChildWorkflow {
             }
             .into(),
         );
+
         cmd
     }
 }
 
 impl StartedChildWorkflow {
-    /// Create a future that will wait until completion of this child workflow execution
-    pub fn result(&self, cx: &mut WfContext) -> impl CancellableFuture<ChildWorkflowResult> {
-        let cancel_seq = cx.next_cancel_external_wf_sequence_number;
-        cx.next_cancel_external_wf_sequence_number += 1;
-        let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::ExternalWorkflow {
-            seqnum: cancel_seq,
-            execution: NamespacedWorkflowExecution {
-                workflow_id: self.workflow_id.clone(),
-                ..Default::default()
-            },
-            only_child: true,
-        });
-        cx.send(
-            CommandSubscribeChildWorkflowCompletion {
-                seq: self.child_wf_cmd_seq_num,
-                unblocker,
-            }
-            .into(),
-        );
-        cmd
+    /// Consumes self and returns a future that will wait until completion of this child workflow
+    /// execution
+    pub fn result(self) -> impl CancellableFuture<ChildWorkflowResult> {
+        self.common.result_future
     }
 
     /// Cancel the child workflow
     pub fn cancel(&self, cx: &mut WfContext) -> impl Future<Output = CancelExternalWfResult> {
         let target = NamespacedWorkflowExecution {
             namespace: cx.namespace().to_string(),
-            workflow_id: self.workflow_id.clone(),
+            workflow_id: self.common.workflow_id.clone(),
             ..Default::default()
         };
         cx.cancel_external(target)
@@ -488,7 +503,7 @@ impl StartedChildWorkflow {
         signal_name: impl Into<String>,
         payload: impl Into<Payload>,
     ) -> impl CancellableFuture<SignalExternalWfResult> {
-        let target = sig_we::Target::ChildWorkflowId(self.workflow_id.clone());
+        let target = sig_we::Target::ChildWorkflowId(self.common.workflow_id.clone());
         cx.send_signal_wf(signal_name, payload, target)
     }
 }
