@@ -255,9 +255,7 @@ where
         if let Some(t) = tasks.next() {
             Some(Ok(t))
         } else {
-            Some(Err(tonic::Status::out_of_range(
-                "Ran out of mock responses!",
-            )))
+            Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG)))
         }
     });
     Box::new(mock_poller) as BoxedPoller<T>
