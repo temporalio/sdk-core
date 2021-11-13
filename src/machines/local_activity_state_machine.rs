@@ -17,7 +17,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         command::v1::{Command, RecordMarkerCommandAttributes},
-        enums::v1::CommandType,
+        enums::v1::{CommandType, EventType},
         history::v1::HistoryEvent,
     },
 };
@@ -34,6 +34,7 @@ fsm! {
     // transitions to the command created state (creating the command in the process)
     Executing --(Schedule, shared on_schedule) --> RequestPrepared;
     Replaying --(Schedule, on_schedule) --> WaitingMarkerEvent;
+    ReplayingPreResolved --(Schedule, on_schedule) --> WaitingMarkerEvent;
 
     // Execution path =============================================================================
     // TODO: I don't think we really need this. Timeouts etc should be handled up higher. Verify
@@ -58,7 +59,7 @@ fsm! {
       --> MarkerCommandRecorded;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct ResolveDat {
     pub(super) seq: u32,
     pub(super) result: ActivityResult,
@@ -90,10 +91,18 @@ impl From<CompleteLocalActivityData> for ResolveDat {
 pub(super) fn new_local_activity(
     attrs: ScheduleActivity,
     replaying_when_invoked: bool,
+    maybe_pre_resolved: Option<ResolveDat>,
 ) -> (LocalActivityMachine, Vec<MachineResponse>) {
     let initial_state = if replaying_when_invoked {
-        Replaying {}.into()
+        if let Some(dat) = maybe_pre_resolved {
+            ReplayingPreResolved { dat }.into()
+        } else {
+            Replaying {}.into()
+        }
     } else {
+        if maybe_pre_resolved.is_some() {
+            todo!("Needs to return error here")
+        }
         Executing {}.into()
     };
 
@@ -118,6 +127,11 @@ pub(super) fn new_local_activity(
 }
 
 impl LocalActivityMachine {
+    pub(super) fn marker_should_get_special_handling(&self) -> bool {
+        // TODO: Should probably error in all states that don't make sense
+        !matches!(self.state, LocalActivityMachineState::ResultNotified(_))
+    }
+
     pub(super) fn try_resolve(
         &mut self,
         result: ActivityResult,
@@ -201,7 +215,28 @@ pub(super) struct MarkerCommandRecorded {}
 pub(super) struct Replaying {}
 impl Replaying {
     pub(super) fn on_schedule(self) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
-        TransitionResult::commands([LocalActivityCommand::FakeMarker])
+        TransitionResult::ok(
+            [],
+            WaitingMarkerEvent {
+                pre_resolved: false,
+            },
+        )
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct ReplayingPreResolved {
+    dat: ResolveDat,
+}
+impl ReplayingPreResolved {
+    pub(super) fn on_schedule(self) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
+        TransitionResult::ok(
+            [
+                LocalActivityCommand::FakeMarker,
+                LocalActivityCommand::Resolved(self.dat),
+            ],
+            WaitingMarkerEvent { pre_resolved: true },
+        )
     }
 }
 
@@ -239,28 +274,30 @@ impl ResultNotified {
     }
 }
 
-#[derive(Default, Clone)]
-pub(super) struct WaitingMarkerEvent {}
+#[derive(Clone)]
+pub(super) struct WaitingMarkerEvent {
+    pre_resolved: bool,
+}
 
 impl WaitingMarkerEvent {
     pub(super) fn on_handle_result(
         self,
         dat: ResolveDat,
     ) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
-        TransitionResult::commands([LocalActivityCommand::Resolved(dat)])
+        if self.pre_resolved {
+            return TransitionResult::ok([], self);
+        }
+        TransitionResult::ok([LocalActivityCommand::Resolved(dat)], self)
     }
 
     pub(super) fn on_marker_recorded(
         self,
-        _: CompleteLocalActivityData,
+        dat: CompleteLocalActivityData,
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
-        TransitionResult::default()
-    }
-}
-
-impl From<Replaying> for WaitingMarkerEvent {
-    fn from(_: Replaying) -> Self {
-        Self::default()
+        if self.pre_resolved {
+            return TransitionResult::default();
+        }
+        TransitionResult::commands([LocalActivityCommand::Resolved(dat.into())])
     }
 }
 
@@ -363,11 +400,12 @@ impl TryFrom<HistoryEvent> for LocalActivityMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
-        // TODO: Use check method to return with well formed error first
-        // _ => Err(WFMachinesError::Nondeterminism(format!(
-        // "Local activity machine cannot handle this event: {}",
-        // e
-        // ))),
+        if e.event_type() != EventType::MarkerRecorded {
+            return Err(WFMachinesError::Nondeterminism(format!(
+                "Local activity machine cannot handle this event: {}",
+                e
+            )));
+        }
 
         match e.into_local_activity_marker_details() {
             Some(marker_dat) => Ok(LocalActivityMachineEvents::MarkerRecorded(marker_dat)),

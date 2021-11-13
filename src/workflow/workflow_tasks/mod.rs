@@ -229,10 +229,11 @@ impl WorkflowTaskManager {
     pub(crate) fn request_eviction(&self, run_id: &str, reason: impl Into<String>) -> Option<u32> {
         if self.workflow_machines.exists(run_id) {
             if !self.activation_has_eviction(run_id) {
-                debug!(%run_id, "Eviction requested");
+                let reason = reason.into();
+                debug!(%run_id, %reason, "Eviction requested");
                 // Queue up an eviction activation
                 self.pending_activations
-                    .notify_needs_eviction(run_id, reason.into());
+                    .notify_needs_eviction(run_id, reason);
                 let _ = self.pending_activations_notifier.send(true);
             }
             self.workflow_machines

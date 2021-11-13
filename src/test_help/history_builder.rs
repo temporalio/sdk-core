@@ -178,6 +178,16 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowTaskFailed, attrs.into());
     }
 
+    pub fn add_timer_fired(&mut self, timer_started_evt_id: i64, timer_id: String) {
+        self.add(
+            EventType::TimerFired,
+            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                started_event_id: timer_started_evt_id,
+                timer_id,
+            }),
+        );
+    }
+
     pub fn add_we_signaled(&mut self, signal_name: &str, payloads: Vec<Payload>) {
         let attrs = WorkflowExecutionSignaledEventAttributes {
             signal_name: signal_name.to_string(),

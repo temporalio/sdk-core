@@ -53,8 +53,9 @@ pub mod coresdk {
     pub mod activity_result {
         tonic::include_proto!("coresdk.activity_result");
         use super::{
-            super::temporal::api::failure::v1::{
-                failure, CanceledFailureInfo, Failure as APIFailure,
+            super::temporal::api::{
+                common::v1::Payload as APIPayload,
+                failure::v1::{failure, CanceledFailureInfo, Failure as APIFailure},
             },
             common::Payload,
         };
@@ -81,6 +82,21 @@ pub mod coresdk {
                     status: Some(activity_result::Status::WillCompleteAsync(
                         WillCompleteAsync {},
                     )),
+                }
+            }
+        }
+
+        impl From<Result<APIPayload, APIFailure>> for ActivityResult {
+            fn from(r: Result<APIPayload, APIFailure>) -> Self {
+                Self {
+                    status: match r {
+                        Ok(p) => Some(activity_result::Status::Completed(Success {
+                            result: Some(p.into()),
+                        })),
+                        Err(f) => Some(activity_result::Status::Failed(Failure {
+                            failure: Some(f),
+                        })),
+                    },
                 }
             }
         }

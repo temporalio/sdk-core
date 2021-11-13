@@ -128,7 +128,16 @@ impl WorkflowManager {
         if self.machines.has_pending_jobs() {
             return Ok(true);
         }
-        self.machines.apply_next_wft_from_history().await?;
+        loop {
+            let consumed_events = self.machines.apply_next_wft_from_history().await?;
+
+            if consumed_events == 0 || !self.machines.replaying || self.machines.has_pending_jobs()
+            {
+                // Keep applying tasks while there are events, we are still replaying, and there are
+                // no jobs
+                break;
+            }
+        }
         Ok(self.machines.has_pending_jobs())
     }
 

@@ -399,6 +399,26 @@ impl WorkflowMachines {
     /// with a state machine, which is then notified about the event and the command is removed from
     /// the commands queue.
     fn handle_command_event(&mut self, event: &HistoryEvent) -> Result<()> {
+        // TODO: Issue here is this needs to clear out the fakemarker command if one existed,
+        //   it should only do anything if there *wasn't* the fake marker
+        if event.is_local_activity_marker() {
+            // TODO: Extract w/o clone
+            let deets = event
+                .clone()
+                .into_local_activity_marker_details()
+                .expect("TODO");
+            let cmdid = CommandID::LocalActivity(deets.marker_dat.seq);
+            let mkey = self.get_machine_key(cmdid)?;
+            if let Machines::LocalActivityMachine(lam) = self.machine(mkey) {
+                if lam.marker_should_get_special_handling() {
+                    self.submachine_handle_event(mkey, event, false)?;
+                    return Ok(());
+                }
+            } else {
+                todo!("bail with error")
+            }
+        }
+
         let consumed_cmd = loop {
             if let Some(peek_machine) = self.commands.front() {
                 let mach = self.machine(peek_machine.machine);
@@ -602,7 +622,7 @@ impl WorkflowMachines {
 
     /// Apply the next (unapplied) entire workflow task from history to these machines. Will replay
     /// any events that need to be replayed until caught up to the newest WFT.
-    pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<()> {
+    pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<usize> {
         // A much higher-up span (ex: poll) may want this field filled
         tracing::Span::current().record("run_id", &self.run_id.as_str());
 
@@ -610,7 +630,7 @@ impl WorkflowMachines {
         // then we don't need to do anything here, and in fact we need to avoid re-applying the
         // final WFT.
         if self.have_seen_terminal_event {
-            return Ok(());
+            return Ok(0);
         }
 
         let last_handled_wft_started_id = self.current_started_event_id;
@@ -619,6 +639,7 @@ impl WorkflowMachines {
             .take_next_wft_sequence(last_handled_wft_started_id)
             .await
             .map_err(WFMachinesError::HistoryFetchingError)?;
+        let num_consumed_events = events.len();
 
         // We're caught up on reply if there are no new events to process
         // TODO: Probably this is unneeded if we evict whenever history is from non-sticky queue
@@ -687,7 +708,7 @@ impl WorkflowMachines {
             self.metrics.wf_task_replay_latency(replay_start.elapsed());
         }
 
-        Ok(())
+        Ok(num_consumed_events)
     }
 
     /// Wrapper for calling [TemporalStateMachine::handle_event] which appropriately takes action
@@ -770,36 +791,10 @@ impl WorkflowMachines {
                     })
                 }
                 MachineResponse::IssueFakeLocalActivityMarker(seq) => {
-                    let resolve_dat =
-                        if let Some(res) = self.local_activity_resolutions.remove(&seq) {
-                            res
-                        } else {
-                            return Err(WFMachinesError::Nondeterminism(format!(
-                                "Local activity machine with id {} expected to have resolve \
-                                data from history but it was missing!",
-                                seq
-                            )));
-                        };
-
-                    let mut more_responses = vec![];
-                    if let Machines::LocalActivityMachine(ref mut lam) = self.machine_mut(smk) {
-                        warn!("Issuing fake LA marker {}", seq);
-
-                        let resp = lam.try_resolve(resolve_dat.result, resolve_dat.seq)?;
-                        warn!("Got resp from la mach {:?}", resp);
-                        more_responses.extend(resp);
-
-                        self.current_wf_task_commands.push_back(CommandAndMachine {
-                            command: MachineAssociatedCommand::FakeLocalActivityMarker(seq),
-                            machine: smk,
-                        })
-                    } else {
-                        return Err(WFMachinesError::Fatal(
-                            "Non local-activity machine returned fake LA marker".to_string(),
-                        ));
-                    };
-
-                    self.process_machine_responses(smk, more_responses)?;
+                    self.current_wf_task_commands.push_back(CommandAndMachine {
+                        command: MachineAssociatedCommand::FakeLocalActivityMarker(seq),
+                        machine: smk,
+                    });
                 }
                 MachineResponse::QueueLocalActivity(act) => {
                     self.local_activity_requests.push((smk, act));
@@ -835,7 +830,11 @@ impl WorkflowMachines {
                 WFCommand::AddActivity(attrs) => {
                     let seq = attrs.seq;
                     if attrs.local {
-                        let (la, mach_resp) = new_local_activity(attrs, self.replaying);
+                        let (la, mach_resp) = new_local_activity(
+                            attrs,
+                            self.replaying,
+                            self.local_activity_resolutions.remove(&seq),
+                        );
                         let machkey = self.all_machines.insert(la.into());
                         self.id_to_machine
                             .insert(CommandID::LocalActivity(seq), machkey);

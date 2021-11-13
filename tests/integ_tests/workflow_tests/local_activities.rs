@@ -4,6 +4,10 @@ use temporal_sdk_core::prototype_rust_sdk::{LocalActivityOptions, WfContext, Wor
 use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
 use test_utils::CoreWfStarter;
 
+pub async fn echo(e: String) -> String {
+    e
+}
+
 pub async fn one_local_activity_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     ctx.local_activity(LocalActivityOptions {
         activity_type: "echo_activity".to_string(),
@@ -20,7 +24,7 @@ async fn one_local_activity() {
     let mut starter = CoreWfStarter::new(wf_name);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), one_local_activity_wf);
-    worker.register_activity("echo_activity", |echo_me: String| async move { echo_me });
+    worker.register_activity("echo_activity", echo);
 
     worker
         .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
@@ -47,7 +51,7 @@ async fn local_act_concurrent_with_timer() {
     let mut starter = CoreWfStarter::new(wf_name);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_concurrent_with_timer_wf);
-    worker.register_activity("echo_activity", |echo_me: String| async move { echo_me });
+    worker.register_activity("echo_activity", echo);
 
     worker
         .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
@@ -74,7 +78,7 @@ async fn local_act_then_timer_then_wait_result() {
     let mut starter = CoreWfStarter::new(wf_name);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
-    worker.register_activity("echo_activity", |echo_me: String| async move { echo_me });
+    worker.register_activity("echo_activity", echo);
 
     worker
         .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
@@ -107,7 +111,7 @@ async fn local_act_fanout() {
     let mut starter = CoreWfStarter::new(wf_name);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_fanout_wf);
-    worker.register_activity("echo_activity", |echo_me: String| async move { echo_me });
+    worker.register_activity("echo_activity", echo);
 
     worker
         .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
