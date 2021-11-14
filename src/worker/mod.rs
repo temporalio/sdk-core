@@ -246,7 +246,7 @@ impl Worker {
         if let Some(at_mgr) = self.at_task_mgr.as_ref() {
             let tt = details.task_token.clone();
             if let Err(e) = at_mgr.record_heartbeat(details) {
-                warn!(task_token = ?tt, details = ?e, "Activity heartbeat failed.")
+                warn!(task_token = ?tt, details = ?e, "Activity heartbeat failed.");
             }
         }
     }
@@ -349,7 +349,7 @@ impl Worker {
 
     /// Tell the worker a workflow task has completed, for tracking max outstanding WFTs
     pub(crate) fn return_workflow_task_permit(&self) {
-        self.workflows_semaphore.add_permits(1)
+        self.workflows_semaphore.add_permits(1);
     }
 
     pub(crate) fn request_wf_eviction(&self, run_id: &str, reason: impl Into<String>) {
@@ -613,7 +613,7 @@ impl Worker {
                     .respond_legacy_query(task_token, legacy_query_failure(failure))
                     .await?;
             }
-            _ => {}
+            FailedActivationOutcome::NoReport => (),
         }
 
         Ok(())
@@ -716,7 +716,7 @@ mod tests {
 
         let cfg = WorkerConfigBuilder::default()
             .task_queue("whatever")
-            .max_outstanding_activities(5usize)
+            .max_outstanding_activities(5_usize)
             .build()
             .unwrap();
         let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
@@ -734,7 +734,7 @@ mod tests {
 
         let cfg = WorkerConfigBuilder::default()
             .task_queue("whatever")
-            .max_outstanding_workflow_tasks(5usize)
+            .max_outstanding_workflow_tasks(5_usize)
             .build()
             .unwrap();
         let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
@@ -752,7 +752,7 @@ mod tests {
 
         let cfg = WorkerConfigBuilder::default()
             .task_queue("whatever")
-            .max_outstanding_activities(5usize)
+            .max_outstanding_activities(5_usize)
             .build()
             .unwrap();
         let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
@@ -770,7 +770,7 @@ mod tests {
 
         let cfg = WorkerConfigBuilder::default()
             .task_queue("whatever")
-            .max_outstanding_workflow_tasks(5usize)
+            .max_outstanding_workflow_tasks(5_usize)
             .build()
             .unwrap();
         let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());

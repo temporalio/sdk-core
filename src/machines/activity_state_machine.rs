@@ -128,7 +128,7 @@ impl ActivityMachine {
         {
             r.push(MachineResponse::PushWFJob(
                 self.create_cancelation_resolve(None).into(),
-            ))
+            ));
         }
         r
     }
@@ -665,7 +665,7 @@ fn notify_lang_activity_cancelled(
 ) -> ActivityMachineTransition<Canceled> {
     ActivityMachineTransition::ok_shared(
         vec![ActivityMachineCommand::Cancel(
-            canceled_event.map(|e| e.details).flatten(),
+            canceled_event.and_then(|e| e.details),
         )],
         Canceled::default(),
         dat,

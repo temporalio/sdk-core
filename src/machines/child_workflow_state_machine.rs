@@ -643,7 +643,7 @@ mod test {
     }
 
     impl Expectation {
-        fn try_from_u8(x: u8) -> Option<Self> {
+        const fn try_from_u8(x: u8) -> Option<Self> {
             Some(match x {
                 0 => Expectation::Success,
                 1 => Expectation::Failure,

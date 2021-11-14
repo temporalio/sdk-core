@@ -262,7 +262,7 @@ impl Cancellable for SignalExternalMachine {
                         ..Default::default()
                     }),
                 }
-                .into()]
+                .into()];
             }
             Some(_) => panic!("Signal external machine cancel produced unexpected result"),
             None => (),

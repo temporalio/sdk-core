@@ -309,7 +309,7 @@ impl TestHistoryBuilder {
             },
         )) = &evt.attributes
         {
-            self.original_run_id = original_execution_run_id.to_owned();
+            self.original_run_id = original_execution_run_id.clone();
         };
         self.events.push(evt);
     }

@@ -27,7 +27,7 @@ pub struct RetryGateway<SG> {
 
 impl<SG> RetryGateway<SG> {
     /// Use the provided retry config with the provided gateway
-    pub fn new(gateway: SG, retry_config: RetryConfig) -> Self {
+    pub const fn new(gateway: SG, retry_config: RetryConfig) -> Self {
         Self {
             gateway,
             retry_config,
@@ -76,7 +76,7 @@ impl TonicErrorHandler {
         }
     }
 
-    fn should_log_retry_warning(&self, cur_attempt: usize) -> bool {
+    const fn should_log_retry_warning(&self, cur_attempt: usize) -> bool {
         // Warn on more than 5 retries for unlimited retrying
         if self.max_retries == 0 && cur_attempt > 5 {
             return true;
@@ -104,9 +104,9 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
         }
 
         if current_attempt == 1 {
-            debug!(error=?e, "gRPC call {} failed on first attempt", self.call_name)
+            debug!(error=?e, "gRPC call {} failed on first attempt", self.call_name);
         } else if self.should_log_retry_warning(current_attempt) {
-            warn!(error=?e, "gRPC call {} retried {} times", self.call_name, current_attempt)
+            warn!(error=?e, "gRPC call {} retried {} times", self.call_name, current_attempt);
         }
 
         // Long polls are OK with being cancelled or running into the timeout because there's

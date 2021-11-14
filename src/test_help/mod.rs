@@ -58,12 +58,12 @@ pub enum ResponseType {
 
 impl From<&usize> for ResponseType {
     fn from(u: &usize) -> Self {
-        ResponseType::ToTaskNum(*u)
+        Self::ToTaskNum(*u)
     }
 }
 // :shrug:
-impl From<&ResponseType> for ResponseType {
-    fn from(r: &ResponseType) -> Self {
+impl From<&Self> for ResponseType {
+    fn from(r: &Self) -> Self {
         *r
     }
 }
@@ -165,7 +165,7 @@ pub struct MockWorker {
 
 impl Default for MockWorker {
     fn default() -> Self {
-        MockWorker {
+        Self {
             wf_poller: Box::from(mock_poller()),
             act_poller: None,
             config: WorkerConfig::default_test_q(),
@@ -175,14 +175,14 @@ impl Default for MockWorker {
 
 impl MockWorker {
     pub fn new(q: &str, wf_poller: BoxedWFPoller) -> Self {
-        MockWorker {
+        Self {
             wf_poller,
             act_poller: None,
             config: WorkerConfig::default(q),
         }
     }
     pub fn for_queue(q: &str) -> Self {
-        MockWorker {
+        Self {
             wf_poller: Box::from(mock_poller()),
             act_poller: None,
             config: WorkerConfig::default(q),
@@ -194,15 +194,12 @@ impl<SG> MocksHolder<SG>
 where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
-    pub fn from_mock_workers(
-        sg: SG,
-        mock_workers: impl IntoIterator<Item = MockWorker>,
-    ) -> MocksHolder<SG> {
+    pub fn from_mock_workers(sg: SG, mock_workers: impl IntoIterator<Item = MockWorker>) -> Self {
         let mock_pollers = mock_workers
             .into_iter()
             .map(|w| (w.config.task_queue.clone(), w))
             .collect();
-        MocksHolder {
+        Self {
             sg,
             mock_pollers,
             outstanding_task_map: None,
@@ -210,11 +207,7 @@ where
     }
 
     /// Uses the provided list of tasks to create a mock poller for the `TEST_Q`
-    pub fn from_gateway_with_responses<WFT, ACT>(
-        sg: SG,
-        wf_tasks: WFT,
-        act_tasks: ACT,
-    ) -> MocksHolder<SG>
+    pub fn from_gateway_with_responses<WFT, ACT>(sg: SG, wf_tasks: WFT, act_tasks: ACT) -> Self
     where
         WFT: IntoIterator<Item = PollWorkflowTaskQueueResponse>,
         ACT: IntoIterator<Item = PollActivityTaskQueueResponse>,
@@ -235,7 +228,7 @@ where
                     .unwrap(),
             },
         );
-        MocksHolder {
+        Self {
             sg,
             mock_pollers,
             outstanding_task_map: None,
@@ -411,7 +404,7 @@ pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockServerGateway
                 let cur_attempt = attempts_at_task_num.entry(to_task_num).or_insert(1);
                 let mut r = hist_to_poll_resp(
                     &hist.hist,
-                    hist.wf_id.to_owned(),
+                    hist.wf_id.clone(),
                     *to_task_num,
                     hist.task_q.clone(),
                 );
@@ -429,7 +422,7 @@ pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockServerGateway
     }
 
     let mut mock_pollers = HashMap::new();
-    for (task_q, mut queue_tasks) in task_queues_to_resps.into_iter() {
+    for (task_q, mut queue_tasks) in task_queues_to_resps {
         let mut mock_poller = mock_poller();
 
         // The poller will return history from any workflow runs that do not have currently
@@ -437,11 +430,7 @@ pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockServerGateway
         let outstanding = outstanding_wf_task_tokens.clone();
         mock_poller
             .expect_poll()
-            .times(
-                correct_num_polls
-                    .map::<TimesRange, _>(Into::into)
-                    .unwrap_or_else(|| RangeFull.into()),
-            )
+            .times(correct_num_polls.map_or_else(|| RangeFull.into(), Into::<TimesRange>::into))
             .returning(move || {
                 for (_, tasks) in queue_tasks.iter_mut() {
                     // Must extract run id from a workflow task associated with this workflow
@@ -476,8 +465,7 @@ pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockServerGateway
         .withf(cfg.expect_fail_wft_matcher)
         .times(
             cfg.num_expected_fails
-                .map::<TimesRange, _>(Into::into)
-                .unwrap_or_else(|| RangeFull.into()),
+                .map_or_else(|| RangeFull.into(), Into::<TimesRange>::into),
         )
         .returning(move |tt, _, _| {
             outstanding.write().remove_by_right(&tt);
@@ -556,7 +544,7 @@ pub(crate) async fn poll_and_reply<'a>(
     eviction_mode: WorkflowCachingPolicy,
     expect_and_reply: &'a [AsserterWithReply<'a>],
 ) {
-    poll_and_reply_clears_outstanding_evicts(core, None, eviction_mode, expect_and_reply).await
+    poll_and_reply_clears_outstanding_evicts(core, None, eviction_mode, expect_and_reply).await;
 }
 
 pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(

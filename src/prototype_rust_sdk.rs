@@ -250,7 +250,7 @@ impl Unblockable for PendingChildWorkflow {
     type OtherDat = ChildWfCommon;
     fn unblock(ue: UnblockEvent, od: Self::OtherDat) -> Self {
         match ue {
-            UnblockEvent::WorkflowStart(_, result) => PendingChildWorkflow {
+            UnblockEvent::WorkflowStart(_, result) => Self {
                 status: *result,
                 common: od,
             },
@@ -274,11 +274,7 @@ impl Unblockable for SignalExternalWfResult {
     fn unblock(ue: UnblockEvent, _: Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::SignalExternal(_, maybefail) => {
-                if let Some(f) = maybefail {
-                    Err(f)
-                } else {
-                    Ok(SignalExternalOk)
-                }
+                maybefail.map_or(Ok(SignalExternalOk), Err)
             }
             _ => panic!("Invalid unblock event for signal external workflow result"),
         }
@@ -290,11 +286,7 @@ impl Unblockable for CancelExternalWfResult {
     fn unblock(ue: UnblockEvent, _: Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::CancelExternal(_, maybefail) => {
-                if let Some(f) = maybefail {
-                    Err(f)
-                } else {
-                    Ok(CancelExternalOk)
-                }
+                maybefail.map_or(Ok(CancelExternalOk), Err)
             }
             _ => panic!("Invalid unblock event for signal external workflow result"),
         }

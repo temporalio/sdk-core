@@ -230,7 +230,7 @@ impl ActivityHeartbeatManager {
                                 .expect("Receive half of heartbeat cancels not blocked");
                         }
                         Err(e) => {
-                            warn!("Error when recording heartbeat: {:?}", e)
+                            warn!("Error when recording heartbeat: {:?}", e);
                         }
                     }
                 }
@@ -271,7 +271,7 @@ mod test {
         // Sending heartbeat requests for 600ms, this should send first heartbeat right away, and
         // all other requests should be aggregated and last one should be sent to the server in
         // 500ms (1/2 of heartbeat timeout).
-        for i in 0u8..60 {
+        for i in 0_u8..60 {
             record_heartbeat(&hm, fake_task_token.clone(), i, Duration::from_millis(1000));
             sleep(Duration::from_millis(10)).await;
         }
@@ -290,7 +290,7 @@ mod test {
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
         let fake_task_token = vec![1, 2, 3];
         // Send a whole bunch of heartbeats very fast. We should still only send one total.
-        for i in 0u8..u8::MAX {
+        for i in 0_u8..u8::MAX {
             record_heartbeat(&hm, fake_task_token.clone(), i, Duration::from_millis(1000));
         }
         // Let it propagate
@@ -356,7 +356,7 @@ mod test {
             Duration::from_millis(1000),
         ) {
             Ok(_) => {
-                unreachable!("heartbeat should not be recorded after the shutdown")
+                unreachable!("heartbeat should not be recorded after the shutdown");
             }
             Err(e) => {
                 matches!(e, ActivityHeartbeatError::ShuttingDown);

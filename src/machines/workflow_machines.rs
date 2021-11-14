@@ -150,7 +150,7 @@ where
     T: Into<wf_activation_job::Variant>,
 {
     fn from(v: T) -> Self {
-        MachineResponse::PushWFJob(v.into())
+        Self::PushWFJob(v.into())
     }
 }
 
@@ -171,7 +171,7 @@ pub(crate) enum WFMachinesError {
 
 impl From<TimestampOutOfSystemRangeError> for WFMachinesError {
     fn from(_: TimestampOutOfSystemRangeError) -> Self {
-        WFMachinesError::Fatal("Could not decode timestamp".to_string())
+        Self::Fatal("Could not decode timestamp".to_string())
     }
 }
 
@@ -210,7 +210,7 @@ impl WorkflowMachines {
     }
 
     /// Returns true if workflow has seen a terminal command
-    pub(crate) fn workflow_is_finished(&self) -> bool {
+    pub(crate) const fn workflow_is_finished(&self) -> bool {
         self.workflow_end_time.is_some()
     }
 
@@ -459,13 +459,7 @@ impl WorkflowMachines {
     pub(crate) fn get_commands(&self) -> Vec<ProtoCommand> {
         self.commands
             .iter()
-            .filter_map(|c| {
-                if !self.machine(c.machine).is_final_state() {
-                    Some(c.command.clone())
-                } else {
-                    None
-                }
-            })
+            .filter_map(|c| (!self.machine(c.machine).is_final_state()).then(|| c.command.clone()))
             .collect()
     }
 
@@ -486,7 +480,7 @@ impl WorkflowMachines {
     }
 
     fn set_current_time(&mut self, time: SystemTime) -> SystemTime {
-        if self.current_wf_time.map(|t| t < time).unwrap_or(true) {
+        if self.current_wf_time.map_or(true, |t| t < time) {
             self.current_wf_time = Some(time);
         }
         self.current_wf_time
@@ -503,7 +497,7 @@ impl WorkflowMachines {
         let results = self.drive_me.fetch_workflow_iteration_output().await;
         let jobs = self.handle_driven_results(results)?;
         let has_new_lang_jobs = !jobs.is_empty();
-        for job in jobs.into_iter() {
+        for job in jobs {
             self.drive_me.send_job(job);
         }
         self.prepare_commands()?;
@@ -695,7 +689,7 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(timer);
                 }
                 WFCommand::CancelTimer(attrs) => {
-                    jobs.extend(self.process_cancellation(CommandID::Timer(attrs.seq))?)
+                    jobs.extend(self.process_cancellation(CommandID::Timer(attrs.seq))?);
                 }
                 WFCommand::AddActivity(attrs) => {
                     let seq = attrs.seq;
@@ -705,7 +699,7 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(activity);
                 }
                 WFCommand::RequestCancelActivity(attrs) => {
-                    jobs.extend(self.process_cancellation(CommandID::Activity(attrs.seq))?)
+                    jobs.extend(self.process_cancellation(CommandID::Activity(attrs.seq))?);
                 }
                 WFCommand::CompleteWorkflow(attrs) => {
                     self.metrics.wf_completed();
@@ -815,7 +809,7 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(sigm);
                 }
                 WFCommand::CancelSignalWorkflow(attrs) => {
-                    jobs.extend(self.process_cancellation(CommandID::SignalExternal(attrs.seq))?)
+                    jobs.extend(self.process_cancellation(CommandID::SignalExternal(attrs.seq))?);
                 }
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level
@@ -840,7 +834,7 @@ impl WorkflowMachines {
                     self.current_wf_task_commands.push_back(CommandAndMachine {
                         command: c,
                         machine: m_key,
-                    })
+                    });
                 }
                 MachineResponse::PushWFJob(j) => {
                     jobs.push(j);

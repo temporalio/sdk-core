@@ -17,7 +17,7 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::WithExportConfig;
 use parking_lot::{const_mutex, Mutex};
-use std::{collections::VecDeque, net::SocketAddr, ops::Deref, time::Duration};
+use std::{collections::VecDeque, net::SocketAddr, time::Duration};
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter};
 use url::Url;
 
@@ -112,7 +112,7 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<(), anyhow::Erro
     std::thread::spawn(move || {
         let res = GLOBAL_TELEM_DAT.get_or_try_init::<_, anyhow::Error>(move || {
             // Ensure closure captures the mutex guard
-            let _ = guard.deref();
+            let _ = &*guard;
 
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .thread_name("telemetry")
@@ -120,13 +120,12 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<(), anyhow::Erro
                 .enable_all()
                 .build()?;
             let mut globaldat = GlobalTelemDat::default();
-            let mut am_forwarding_logs = false;
+            let am_forwarding_logs = opts.log_forwarding_level != LevelFilter::Off;
 
-            if opts.log_forwarding_level != LevelFilter::Off {
+            if am_forwarding_logs {
                 log::set_max_level(opts.log_forwarding_level);
                 globaldat.core_export_logger =
                     Some(CoreExportLogger::new(opts.log_forwarding_level));
-                am_forwarding_logs = true;
             }
 
             let filter_layer = EnvFilter::try_from_env(LOG_FILTER_ENV_VAR).or_else(|_| {
@@ -232,7 +231,7 @@ pub(crate) fn test_telem_console() {
         log_forwarding_level: LevelFilter::Off,
         prometheus_export_bind_address: None,
     })
-    .unwrap()
+    .unwrap();
 }
 
 #[allow(dead_code)] // Not always used, called to enable for debugging when needed
@@ -244,7 +243,7 @@ pub(crate) fn test_telem_collector() {
         log_forwarding_level: LevelFilter::Off,
         prometheus_export_bind_address: None,
     })
-    .unwrap()
+    .unwrap();
 }
 
 /// A trait for using [Display] on the contents of vecs, etc, which don't implement it.

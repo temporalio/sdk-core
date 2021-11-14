@@ -955,7 +955,7 @@ pub fn long_sequential_timers(num_tasks: usize) -> TestHistoryBuilder {
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
 
-    for i in 1..num_tasks + 1 {
+    for i in 1..=num_tasks {
         let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
         t.add(
             EventType::TimerFired,
@@ -1202,13 +1202,16 @@ pub fn timer_then_continue_as_new(timer_id: &str) -> TestHistoryBuilder {
 /// 10: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
 /// 11: EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED
 pub fn timer_wf_cancel_req_cancelled(timer_id: &str) -> TestHistoryBuilder {
-    timer_cancel_req_then(timer_id, |t| t.add_cancelled())
+    timer_cancel_req_then(timer_id, TestHistoryBuilder::add_cancelled)
 }
 pub fn timer_wf_cancel_req_completed(timer_id: &str) -> TestHistoryBuilder {
-    timer_cancel_req_then(timer_id, |t| t.add_workflow_execution_completed())
+    timer_cancel_req_then(
+        timer_id,
+        TestHistoryBuilder::add_workflow_execution_completed,
+    )
 }
 pub fn timer_wf_cancel_req_failed(timer_id: &str) -> TestHistoryBuilder {
-    timer_cancel_req_then(timer_id, |t| t.add_workflow_execution_failed())
+    timer_cancel_req_then(timer_id, TestHistoryBuilder::add_workflow_execution_failed)
 }
 
 ///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
@@ -1238,7 +1241,7 @@ pub fn timer_wf_cancel_req_do_another_timer_then_cancelled() -> TestHistoryBuild
             }),
         );
         t.add_full_wf_task();
-        t.add_cancelled()
+        t.add_cancelled();
     })
 }
 

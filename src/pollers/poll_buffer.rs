@@ -152,7 +152,7 @@ where
 
     async fn shutdown_box(self: Box<Self>) {
         let this = *self;
-        this.shutdown().await
+        this.shutdown().await;
     }
 }
 
@@ -192,7 +192,7 @@ impl Poller<PollWorkflowTaskQueueResponse> for WorkflowTaskPoller {
 
     async fn shutdown_box(self: Box<Self>) {
         let this = *self;
-        this.shutdown().await
+        this.shutdown().await;
     }
 }
 

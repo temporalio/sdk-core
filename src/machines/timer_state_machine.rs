@@ -195,13 +195,13 @@ impl StartCommandRecorded {
         dat: SharedState,
         attrs: TimerFiredEventAttributes,
     ) -> TimerMachineTransition<Fired> {
-        if dat.attrs.seq.to_string() != attrs.timer_id {
+        if dat.attrs.seq.to_string() == attrs.timer_id {
+            TransitionResult::ok(vec![TimerMachineCommand::Complete], Fired::default())
+        } else {
             TransitionResult::Err(WFMachinesError::Fatal(format!(
                 "Timer fired event did not have expected timer id {}, it was {}!",
                 dat.attrs.seq, attrs.timer_id
             )))
-        } else {
-            TransitionResult::ok(vec![TimerMachineCommand::Complete], Fired::default())
         }
     }
 
