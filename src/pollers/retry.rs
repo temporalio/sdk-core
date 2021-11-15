@@ -165,12 +165,14 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     async fn poll_workflow_task(
         &self,
         task_queue: String,
+        is_sticky: bool,
     ) -> Result<PollWorkflowTaskQueueResponse> {
         retry_call!(
             self,
             CallType::LongPoll,
             poll_workflow_task,
-            task_queue.clone()
+            task_queue.clone(),
+            is_sticky
         )
     }
 

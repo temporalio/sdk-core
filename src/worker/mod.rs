@@ -104,6 +104,7 @@ impl Worker {
         let mut wf_task_poll_buffer = new_workflow_task_buffer(
             sg.gw.clone(),
             config.task_queue.clone(),
+            false,
             max_nonsticky_polls,
             max_nonsticky_polls * 2,
         );
@@ -113,6 +114,7 @@ impl Worker {
             let mut sp = new_workflow_task_buffer(
                 sg.gw.clone(),
                 sqn.clone(),
+                true,
                 max_sticky_polls,
                 max_sticky_polls * 2,
             );
@@ -787,7 +789,7 @@ mod tests {
         let mut mock_gateway = MockServerGatewayApis::new();
         mock_gateway
             .expect_poll_workflow_task()
-            .returning(|_| Ok(PollWorkflowTaskQueueResponse::default()));
+            .returning(|_, _| Ok(PollWorkflowTaskQueueResponse::default()));
         let gwref = GatewayRef::new(Arc::new(mock_gateway), fake_sg_opts());
 
         let cfg = WorkerConfigBuilder::default()
@@ -823,7 +825,7 @@ mod tests {
         let mut mock_gateway = MockServerGatewayApis::new();
         mock_gateway
             .expect_poll_workflow_task()
-            .returning(|_| Err(tonic::Status::internal("ahhh")));
+            .returning(|_, _| Err(tonic::Status::internal("ahhh")));
         let gwref = GatewayRef::new(Arc::new(mock_gateway), fake_sg_opts());
 
         let cfg = WorkerConfigBuilder::default()

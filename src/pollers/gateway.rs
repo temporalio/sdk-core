@@ -355,8 +355,11 @@ pub trait ServerGatewayApis {
 
     /// Fetch new workflow tasks from the provided queue. Should block indefinitely if there is no
     /// work.
-    async fn poll_workflow_task(&self, task_queue: String)
-        -> Result<PollWorkflowTaskQueueResponse>;
+    async fn poll_workflow_task(
+        &self,
+        task_queue: String,
+        is_sticky: bool,
+    ) -> Result<PollWorkflowTaskQueueResponse>;
 
     /// Fetch new activity tasks from the provided queue. Should block indefinitely if there is no
     /// work.
@@ -516,12 +519,17 @@ impl ServerGatewayApis for ServerGateway {
     async fn poll_workflow_task(
         &self,
         task_queue: String,
+        is_sticky: bool,
     ) -> Result<PollWorkflowTaskQueueResponse> {
         let mut request = PollWorkflowTaskQueueRequest {
             namespace: self.opts.namespace.clone(),
             task_queue: Some(TaskQueue {
                 name: task_queue,
-                kind: TaskQueueKind::Unspecified as i32,
+                kind: if is_sticky {
+                    TaskQueueKind::Sticky
+                } else {
+                    TaskQueueKind::Normal
+                } as i32,
             }),
             identity: self.opts.identity.clone(),
             binary_checksum: self.opts.worker_binary_id.clone(),
@@ -894,7 +902,7 @@ mockall::mock! {
         ) -> impl Future<Output = Result<StartWorkflowExecutionResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
-        fn poll_workflow_task<'a, 'b>(&'a self, task_queue: String)
+        fn poll_workflow_task<'a, 'b>(&'a self, task_queue: String, is_sticky: bool)
             -> impl Future<Output = Result<PollWorkflowTaskQueueResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 

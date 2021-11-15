@@ -66,7 +66,7 @@ async fn shutdown_interrupts_both_polls() {
     mock_gateway
         .expect_poll_workflow_task()
         .times(1)
-        .returning(move |_| {
+        .returning(move |_, _| {
             async move {
                 BARR.wait().await;
                 sleep(Duration::from_secs(1)).await;
