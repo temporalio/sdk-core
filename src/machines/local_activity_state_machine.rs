@@ -452,7 +452,7 @@ mod tests {
         // First activation will have no server commands. Activity will be put into the activity
         // queue locally
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
 
         let ready_to_execute_las = wfm.drain_queued_local_activities();
@@ -469,7 +469,7 @@ mod tests {
 
         // Now the next activation will unblock the local activity
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         if replay {
             assert_eq!(commands.len(), 1);
             assert_eq!(
@@ -491,7 +491,7 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(wfm.get_next_activation().await.unwrap().jobs.len(), 0);
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
 
         wfm.shutdown().await.unwrap();
@@ -520,7 +520,7 @@ mod tests {
         // First activation will have no server commands. Activity will be put into the activity
         // queue locally
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
         let ready_to_execute_las = wfm.drain_queued_local_activities();
         let num_queued = if !replay { 1 } else { 0 };
@@ -557,7 +557,7 @@ mod tests {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(ra))
             }] => assert_eq!(ra.seq, 2)
         );
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         if replay {
             assert_eq!(commands.len(), 1);
             assert_eq!(
@@ -580,7 +580,7 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(wfm.get_next_activation().await.unwrap().jobs.len(), 0);
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
 
         wfm.shutdown().await.unwrap();
@@ -611,7 +611,7 @@ mod tests {
         // First activation will have no server commands. Activity(ies) will be put into the queue
         // for execution
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
         let ready_to_execute_las = wfm.drain_queued_local_activities();
         let num_queued = if !replay { 2 } else { 0 };
@@ -637,7 +637,7 @@ mod tests {
         let ready_to_execute_las = wfm.drain_queued_local_activities();
         assert_eq!(ready_to_execute_las.len(), 0);
 
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         if replay {
             assert_eq!(commands.len(), 1);
             assert_eq!(
@@ -660,7 +660,7 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(wfm.get_next_activation().await.unwrap().jobs.len(), 0);
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
 
         wfm.shutdown().await.unwrap();
@@ -688,7 +688,7 @@ mod tests {
         let mut wfm = ManagedWFFunc::new_from_update(histinfo, func, vec![]);
 
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
         let ready_to_execute_las = wfm.drain_queued_local_activities();
         let num_queued = if !replay { 1 } else { 0 };
@@ -709,7 +709,7 @@ mod tests {
         let ready_to_execute_las = wfm.drain_queued_local_activities();
         assert_eq!(ready_to_execute_las.len(), 0);
 
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         if replay {
             assert_eq!(commands.len(), 1);
             assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
@@ -748,7 +748,7 @@ mod tests {
             }] => assert_eq!(ra.seq, 2)
         );
 
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         if replay {
             assert_eq!(commands.len(), 1);
             assert_eq!(

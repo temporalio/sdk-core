@@ -292,6 +292,7 @@ impl WorkflowMachines {
         key_and_act
             .into_iter()
             .map(|(k, act)| {
+                // TODO: Could possibly avoid extra machine mutation if eliminate prepared state
                 let mach = self.machine_mut(k);
                 if let Machines::LocalActivityMachine(ref mut lam) = *mach {
                     lam.mark_sent().expect("works");

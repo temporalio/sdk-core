@@ -789,7 +789,7 @@ mod test {
     #[tokio::test]
     async fn single_activity_inc(mut wfm: ManagedWFFunc) {
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -797,7 +797,7 @@ mod test {
         );
 
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -814,7 +814,7 @@ mod test {
     #[tokio::test]
     async fn single_activity_full(mut wfm: ManagedWFFunc) {
         wfm.process_all_activations().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -840,7 +840,7 @@ mod test {
         let mut wfm = ManagedWFFunc::new(t, func, vec![]);
 
         let activation = wfm.process_all_activations().await.unwrap();
-        wfm.get_server_commands().await;
+        wfm.get_server_commands();
         assert_matches!(
             activation.jobs.as_slice(),
             [WfActivationJob {

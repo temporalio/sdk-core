@@ -275,14 +275,14 @@ mod tests {
         let wff = WorkflowFunction::new(cancel_sender);
         let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
         wfm.get_next_activation().await.unwrap();
-        let cmds = wfm.get_server_commands().await.commands;
+        let cmds = wfm.get_server_commands().commands;
         assert_eq!(cmds.len(), 1);
         assert_eq!(
             cmds[0].command_type(),
             CommandType::RequestCancelExternalWorkflowExecution
         );
         wfm.get_next_activation().await.unwrap();
-        let cmds = wfm.get_server_commands().await.commands;
+        let cmds = wfm.get_server_commands().commands;
         assert_eq!(cmds.len(), 1);
         if fails {
             assert_eq!(cmds[0].command_type(), CommandType::FailWorkflowExecution);

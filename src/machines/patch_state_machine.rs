@@ -418,7 +418,7 @@ mod tests {
         let mut wfm = patch_setup(replaying, marker_type, wf_version);
         // Start workflow activation
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -490,7 +490,7 @@ mod tests {
         } else {
             assert_eq!(act.jobs.len(), 1);
         }
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 2);
         let dep_flag_expected = wf_version != 2;
         assert_matches!(

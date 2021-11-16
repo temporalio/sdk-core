@@ -150,7 +150,8 @@ impl WorkflowManager {
         }
     }
 
-    /// TODO: This may not be needed at all if the prepared state can be eliminated in the machine
+    /// Remove and return all queued local activities. Once this is called, they need to be
+    /// dispatched for execution.
     pub fn drain_queued_local_activities(&mut self) -> Vec<NewLocalAct> {
         self.machines.drain_queued_local_activities()
     }
@@ -287,8 +288,7 @@ pub mod managed_wf {
         }
 
         /// Return outgoing server commands as of the last iteration
-        // TODO: De-async-ify in own commit
-        pub(crate) async fn get_server_commands(&mut self) -> OutgoingServerCommands {
+        pub(crate) fn get_server_commands(&mut self) -> OutgoingServerCommands {
             self.mgr.get_server_commands()
         }
 

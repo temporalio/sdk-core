@@ -716,7 +716,7 @@ mod test {
     #[tokio::test]
     async fn single_child_workflow_until_completion(mut wfm: ManagedWFFunc) {
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -724,13 +724,13 @@ mod test {
         );
 
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         // Workflow is activated because the child WF has started.
         // It does not generate any commands, just waits for completion.
         assert_eq!(commands.len(), 0);
 
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -743,7 +743,7 @@ mod test {
     #[tokio::test]
     async fn single_child_workflow_start_fail(mut wfm: ManagedWFFunc) {
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -751,7 +751,7 @@ mod test {
         );
 
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -790,12 +790,12 @@ mod test {
     #[tokio::test]
     async fn single_child_workflow_cancel_before_sent(mut wfm: ManagedWFFunc) {
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         // Workflow starts and cancels the child workflow, no commands should be sent to server.
         assert_eq!(commands.len(), 0);
 
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
