@@ -221,6 +221,11 @@ impl Worker {
         self.wft_manager.outstanding_wft()
     }
 
+    #[cfg(test)]
+    pub(crate) fn available_wft_permits(&self) -> usize {
+        self.workflows_semaphore.available_permits()
+    }
+
     /// Wait until not at the outstanding activity limit, and then poll this worker's task queue for
     /// new activities.
     ///
@@ -322,7 +327,7 @@ impl Worker {
         completion: WfActivationCompletion,
     ) -> Result<(), CompleteWfError> {
         let wfstatus = completion.status;
-        let r = match wfstatus {
+        let did_complete_wft = match wfstatus {
             Some(wf_activation_completion::Status::Successful(success)) => {
                 self.wf_activation_success(&completion.run_id, success)
                     .await
@@ -334,11 +339,9 @@ impl Worker {
                 reason: "Workflow completion had empty status field".to_owned(),
                 completion: None,
             }),
-        };
-        self.after_wft_report(&completion.run_id);
-        self.wft_manager.on_activation_done(&completion.run_id);
-        self.maybe_notify_wtfs_drained();
-        r
+        }?;
+        self.after_workflow_activation(&completion.run_id, did_complete_wft);
+        Ok(())
     }
 
     fn maybe_notify_wtfs_drained(&self) {
@@ -496,12 +499,14 @@ impl Worker {
         })
     }
 
-    /// Handle a successful workflow completion
+    /// Handle a successful workflow activation
+    ///
+    /// Returns true if we actually reported WFT completion to server (success or failure)
     async fn wf_activation_success(
         &self,
         run_id: &str,
         success: workflow_completion::Success,
-    ) -> Result<(), CompleteWfError> {
+    ) -> Result<bool, CompleteWfError> {
         // Convert to wf commands
         let cmds = success
             .commands
@@ -545,6 +550,7 @@ impl Worker {
                         .await
                 })
                 .await?;
+                Ok(true)
             }
             Ok(Some(ServerCommandsWithWorkflowInfo {
                 task_token,
@@ -554,8 +560,9 @@ impl Worker {
                 self.server_gateway
                     .respond_legacy_query(task_token, result)
                     .await?;
+                Ok(true)
             }
-            Ok(None) => {}
+            Ok(None) => Ok(false),
             Err(update_err) => {
                 // Automatically fail the workflow task in the event we couldn't update machines
                 let fail_cause = if matches!(&update_err.source, WFMachinesError::Nondeterminism(_))
@@ -584,20 +591,23 @@ impl Worker {
                         run_id,
                         format!("Workflow task failure: {}", wft_fail_str),
                     );
+                    Ok(true)
+                } else {
+                    Ok(false)
                 }
             }
         }
-
-        Ok(())
     }
 
     /// Handle a failed workflow completion
+    ///
+    /// Returns true if we actually reported WFT completion to server
     async fn wf_activation_failed(
         &self,
         run_id: &str,
         failure: workflow_completion::Failure,
-    ) -> Result<(), CompleteWfError> {
-        match self.wft_manager.failed_activation(run_id) {
+    ) -> Result<bool, CompleteWfError> {
+        Ok(match self.wft_manager.failed_activation(run_id) {
             FailedActivationOutcome::Report(tt) => {
                 self.handle_wft_reporting_errs(run_id, || async {
                     self.server_gateway
@@ -609,22 +619,25 @@ impl Worker {
                         .await
                 })
                 .await?;
+                true
             }
             FailedActivationOutcome::ReportLegacyQueryFailure(task_token) => {
                 self.server_gateway
                     .respond_legacy_query(task_token, legacy_query_failure(failure))
                     .await?;
+                true
             }
-            _ => {}
-        }
-
-        Ok(())
+            FailedActivationOutcome::NoReport => false,
+        })
     }
 
-    fn after_wft_report(&self, run_id: &str) {
-        if self.wft_manager.after_wft_report(run_id) {
+    fn after_workflow_activation(&self, run_id: &str, did_complete_wft: bool) {
+        self.wft_manager.after_wft_report(run_id);
+        if did_complete_wft {
             self.return_workflow_task_permit();
-        };
+        }
+        self.wft_manager.on_activation_done(run_id);
+        self.maybe_notify_wtfs_drained();
     }
 
     /// Handle server errors from either completing or failing a workflow task. Returns any errors
