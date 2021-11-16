@@ -326,7 +326,7 @@ pub mod coresdk {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 match self {
                     wf_activation_job::Variant::StartWorkflow(_) => write!(f, "StartWorkflow"),
-                    wf_activation_job::Variant::FireTimer(_) => write!(f, "FireTimer"),
+                    wf_activation_job::Variant::FireTimer(t) => write!(f, "FireTimer({})", t.seq),
                     wf_activation_job::Variant::UpdateRandomSeed(_) => {
                         write!(f, "UpdateRandomSeed")
                     }
@@ -337,8 +337,8 @@ pub mod coresdk {
                     wf_activation_job::Variant::SignalWorkflow(_) => {
                         write!(f, "SignalWorkflow")
                     }
-                    wf_activation_job::Variant::ResolveActivity(_) => {
-                        write!(f, "ResolveActivity")
+                    wf_activation_job::Variant::ResolveActivity(r) => {
+                        write!(f, "ResolveActivity({})", r.seq)
                     }
                     wf_activation_job::Variant::NotifyHasPatch(_) => {
                         write!(f, "NotifyHasPatch")
@@ -406,48 +406,106 @@ pub mod coresdk {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 match &self.variant {
                     None => write!(f, "Empty"),
-                    Some(v) => match v {
-                        workflow_command::Variant::StartTimer(_) => write!(f, "StartTimer"),
-                        workflow_command::Variant::ScheduleActivity(_) => {
-                            write!(f, "ScheduleActivity")
-                        }
-                        workflow_command::Variant::RespondToQuery(_) => write!(f, "RespondToQuery"),
-                        workflow_command::Variant::RequestCancelActivity(_) => {
-                            write!(f, "RequestCancelActivity")
-                        }
-                        workflow_command::Variant::CancelTimer(_) => write!(f, "CancelTimer"),
-                        workflow_command::Variant::CompleteWorkflowExecution(_) => {
-                            write!(f, "CompleteWorkflowExecution")
-                        }
-                        workflow_command::Variant::FailWorkflowExecution(_) => {
-                            write!(f, "FailWorkflowExecution")
-                        }
-                        workflow_command::Variant::ContinueAsNewWorkflowExecution(_) => {
-                            write!(f, "ContinueAsNewWorkflowExecution")
-                        }
-                        workflow_command::Variant::CancelWorkflowExecution(_) => {
-                            write!(f, "CancelWorkflowExecution")
-                        }
-                        workflow_command::Variant::SetPatchMarker(_) => {
-                            write!(f, "SetPatchMarker")
-                        }
-                        workflow_command::Variant::StartChildWorkflowExecution(_) => {
-                            write!(f, "StartChildWorkflowExecution")
-                        }
-                        workflow_command::Variant::RequestCancelExternalWorkflowExecution(_) => {
-                            write!(f, "RequestCancelExternalWorkflowExecution")
-                        }
-                        workflow_command::Variant::SignalExternalWorkflowExecution(_) => {
-                            write!(f, "SignalExternalWorkflowExecution")
-                        }
-                        workflow_command::Variant::CancelSignalWorkflow(_) => {
-                            write!(f, "CancelSignalWorkflow")
-                        }
-                        workflow_command::Variant::CancelUnstartedChildWorkflowExecution(_) => {
-                            write!(f, "CancelUnstartedChildWorkflowExecution")
-                        }
-                    },
+                    Some(v) => write!(f, "{}", v),
                 }
+            }
+        }
+
+        impl Display for StartTimer {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "StartTimer({})", self.seq)
+            }
+        }
+
+        impl Display for ScheduleActivity {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "ScheduleActivity({}, {})", self.seq, self.activity_type)
+            }
+        }
+
+        impl Display for QueryResult {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "RespondToQuery({})", self.query_id)
+            }
+        }
+
+        impl Display for RequestCancelActivity {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "RequestCancelActivity({})", self.seq)
+            }
+        }
+
+        impl Display for CancelTimer {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "CancelTimer({})", self.seq)
+            }
+        }
+
+        impl Display for CompleteWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "CompleteWorkflowExecution")
+            }
+        }
+
+        impl Display for FailWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "FailWorkflowExecution")
+            }
+        }
+
+        impl Display for ContinueAsNewWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "ContinueAsNewWorkflowExecution")
+            }
+        }
+
+        impl Display for CancelWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "CancelWorkflowExecution")
+            }
+        }
+
+        impl Display for SetPatchMarker {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "SetPatchMarker({})", self.patch_id)
+            }
+        }
+
+        impl Display for StartChildWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(
+                    f,
+                    "StartChildWorkflowExecution({}, {})",
+                    self.seq, self.workflow_type
+                )
+            }
+        }
+
+        impl Display for RequestCancelExternalWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "RequestCancelExternalWorkflowExecution({})", self.seq)
+            }
+        }
+
+        impl Display for SignalExternalWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "SignalExternalWorkflowExecution({})", self.seq)
+            }
+        }
+
+        impl Display for CancelSignalWorkflow {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "CancelSignalWorkflow({})", self.seq)
+            }
+        }
+
+        impl Display for CancelUnstartedChildWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(
+                    f,
+                    "CancelUnstartedChildWorkflowExecution({})",
+                    self.child_workflow_seq
+                )
             }
         }
 
@@ -478,12 +536,6 @@ pub mod coresdk {
                         "Query response was empty".to_string(),
                     ),
                 }
-            }
-        }
-
-        impl Display for ScheduleActivity {
-            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                write!(f, "ScheduleActivity({})", self.activity_id)
             }
         }
     }

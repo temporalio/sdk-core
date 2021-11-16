@@ -109,6 +109,7 @@ pub async fn local_act_fanout_wf(mut ctx: WfContext) -> WorkflowResult<()> {
 async fn local_act_fanout() {
     let wf_name = "local_act_fanout";
     let mut starter = CoreWfStarter::new(wf_name);
+    starter.max_local_at(1);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_fanout_wf);
     worker.register_activity("echo_activity", echo);

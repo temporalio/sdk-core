@@ -112,6 +112,8 @@ pub(crate) enum NewWfTaskOutcome {
     CacheMiss,
     /// The workflow task ran into problems while being applied and we must now evict the workflow
     Evict(WorkflowUpdateError),
+    /// No action should be taken. Possibly we are waiting for local activities to complete
+    DoNothing,
 }
 
 #[derive(Debug)]
@@ -340,7 +342,21 @@ impl WorkflowTaskManager {
             }
             NewWfTaskOutcome::IssueActivation(next_activation)
         } else {
-            NewWfTaskOutcome::Autocomplete
+            let outstanding_las = self
+                .workflow_machines
+                .access_sync(&next_activation.run_id, |wfm| {
+                    wfm.machines.outstanding_local_activity_count()
+                })
+                .expect("Workflow machines must exist, we just created/updated them");
+            if outstanding_las > 0 {
+                // If there are outstanding local activities, we don't want to complete the workflow
+                // task just yet. We want to give them a chance to complete. If they take longer
+                // than the WFT timeout, we will force a new WFT just before the timeout.
+                // TODO: Implement that
+                NewWfTaskOutcome::DoNothing
+            } else {
+                NewWfTaskOutcome::Autocomplete
+            }
         }
     }
 

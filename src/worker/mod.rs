@@ -31,7 +31,6 @@ use crate::{
 };
 use activities::WorkerActivityTasks;
 use futures::{Future, TryFutureExt};
-use parking_lot::RwLock;
 use std::{convert::TryInto, sync::Arc};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -68,7 +67,7 @@ pub struct Worker {
     /// Manages activity tasks for this worker/task queue
     at_task_mgr: Option<WorkerActivityTasks>,
     /// Manages local activities
-    local_act_mgr: RwLock<LocalActivityManager>,
+    local_act_mgr: LocalActivityManager,
     /// Ensures we stay at or below this worker's maximum concurrent workflow limit
     workflows_semaphore: Semaphore,
     /// Used to wake blocked workflow task polling when there is some change to workflow activations
@@ -182,7 +181,7 @@ impl Worker {
                     metrics.clone(),
                 )
             }),
-            local_act_mgr: RwLock::new(LocalActivityManager::new()),
+            local_act_mgr: LocalActivityManager::new(config.max_outstanding_local_activities),
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             config,
             shutdown_requested: shut_rx,
@@ -234,22 +233,24 @@ impl Worker {
     /// Returns `Ok(None)` in the event of a poll timeout or if the polling loop should otherwise
     /// be restarted
     pub(crate) async fn activity_poll(&self) -> Result<Option<ActivityTask>, PollActivityError> {
-        if let Some(at) = self.local_act_mgr.write().next_pending() {
-            return Ok(Some(at));
-        }
+        if let Some(ref act_mgr) = self.at_task_mgr {
+            tokio::select! {
+                biased;
 
-        // No activity polling is allowed if this worker said it only handles local activities
-        let act_mgr = self
-            .at_task_mgr
-            .as_ref()
-            .ok_or_else(|| PollActivityError::NoWorkerForQueue(self.config.task_queue.clone()))?;
+                r = self.local_act_mgr.next_pending() => Ok(r),
+                r = act_mgr.poll() => r,
+                _ = self.shutdown_notifier() => {
+                    Err(PollActivityError::ShutDown)
+                }
+            }
+        } else {
+            tokio::select! {
+                biased;
 
-        tokio::select! {
-            biased;
-
-            r = act_mgr.poll() => r,
-            _ = self.shutdown_notifier() => {
-                Err(PollActivityError::ShutDown)
+                r = self.local_act_mgr.next_pending() => Ok(r),
+                _ = self.shutdown_notifier() => {
+                    Err(PollActivityError::ShutDown)
+                }
             }
         }
     }
@@ -270,7 +271,7 @@ impl Worker {
         status: activity_result::Status,
     ) -> Result<(), CompleteActivityError> {
         if task_token.is_local_activity_task() {
-            if let Some(la_info) = self.local_act_mgr.write().complete(&task_token) {
+            if let Some(la_info) = self.local_act_mgr.complete(&task_token).await {
                 if let Err(e) = self
                     .wft_manager
                     .notify_of_local_result(
@@ -530,6 +531,7 @@ impl Worker {
                 );
                 None
             }
+            NewWfTaskOutcome::DoNothing => None,
         })
     }
 
@@ -565,7 +567,7 @@ impl Worker {
                         force_new_wft,
                     },
             })) => {
-                self.local_act_mgr.write().enqueue(local_activities);
+                self.local_act_mgr.enqueue(local_activities);
 
                 debug!("Sending commands to server: {:?}", &commands);
                 if !query_responses.is_empty() {
@@ -594,7 +596,7 @@ impl Worker {
                 action: ActivationAction::LocalActivitiesDelayWft { local_activities },
                 ..
             })) => {
-                self.local_act_mgr.write().enqueue(local_activities);
+                self.local_act_mgr.enqueue(local_activities);
                 Ok(false)
             }
             Ok(Some(ServerCommandsWithWorkflowInfo {

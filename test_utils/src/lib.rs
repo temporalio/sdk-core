@@ -123,6 +123,11 @@ impl CoreWfStarter {
         self
     }
 
+    pub fn max_local_at(&mut self, max: usize) -> &mut Self {
+        self.worker_config.max_outstanding_local_activities = max;
+        self
+    }
+
     pub fn max_at_polls(&mut self, max: usize) -> &mut Self {
         self.worker_config.max_concurrent_at_polls = max;
         self

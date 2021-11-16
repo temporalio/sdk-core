@@ -317,6 +317,11 @@ impl WorkflowMachines {
             .collect()
     }
 
+    /// Returns the number of local activities we know we need to execute but have not yet finished
+    pub(crate) fn outstanding_local_activity_count(&self) -> usize {
+        self.executing_local_activities.len() + self.local_activity_requests.len()
+    }
+
     /// Handle a single event from the workflow history. `has_next_event` should be false if `event`
     /// is the last event in the history.
     ///

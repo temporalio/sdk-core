@@ -1,4 +1,4 @@
-use crate::{machines::WFCommand, workflow::WorkflowFetcher};
+use crate::{machines::WFCommand, telemetry::VecDisplayer, workflow::WorkflowFetcher};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 /// The [DrivenWorkflow] trait expects to be called to make progress, but the [CoreSDKService]
@@ -28,7 +28,7 @@ impl WorkflowFetcher for WorkflowBridge {
         let in_cmds = self.incoming_commands.try_recv();
 
         let in_cmds = in_cmds.unwrap_or_else(|_| vec![WFCommand::NoCommandsFromLang]);
-        debug!(in_cmds = ?in_cmds, "wf bridge iteration fetch");
+        debug!(in_cmds = %in_cmds.display(), "wf bridge iteration fetch");
         in_cmds
     }
 }

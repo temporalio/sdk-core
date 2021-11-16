@@ -58,7 +58,7 @@ pub(crate) type ProtoCommand = Command;
 
 /// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
 /// EX: Create a new timer, complete the workflow, etc.
-#[derive(Debug, derive_more::From)]
+#[derive(Debug, derive_more::From, derive_more::Display)]
 #[allow(clippy::large_enum_variant)]
 pub enum WFCommand {
     /// Returned when we need to wait for the lang sdk to send us something

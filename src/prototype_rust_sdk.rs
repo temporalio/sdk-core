@@ -170,6 +170,7 @@ impl TestRustWorker {
                             .await?;
                         }
                         activity = self.core.poll_activity_task(&self.task_queue) => {
+                            warn!("Activity task!!!");
                             // This blocks polling until activity completion. Obviously that needs
                             // to change at some point.
                             self.activity_task_handler(activity?).await?;
