@@ -54,6 +54,12 @@ fsm! {
     Started --(ChildWorkflowExecutionTimedOut(i32), shared on_child_workflow_execution_timed_out) --> TimedOut;
     Started --(ChildWorkflowExecutionCancelled, shared on_child_workflow_execution_cancelled) --> Cancelled;
     Started --(ChildWorkflowExecutionTerminated, shared on_child_workflow_execution_terminated) --> Terminated;
+
+    // Ignore any spurious cancellations after resolution
+    Cancelled --(Cancel) --> Cancelled;
+    Failed --(Cancel) --> Failed;
+    TimedOut --(Cancel) --> TimedOut;
+    Completed --(Cancel) --> Completed;
 }
 
 pub struct ChildWorkflowExecutionStartedEvent {
@@ -288,7 +294,7 @@ pub(super) struct Terminated {}
 #[derive(Default, Clone)]
 pub(super) struct TimedOut {}
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub(super) struct SharedState {
     initiated_event_id: i64,
     started_event_id: i64,
@@ -630,6 +636,7 @@ mod test {
     };
     use anyhow::anyhow;
     use rstest::{fixture, rstest};
+    use std::mem::discriminant;
     use temporal_sdk_core_protos::coresdk::{
         child_workflow::child_workflow_result,
         workflow_activation::resolve_child_workflow_execution_start::Status as StartStatus,
@@ -797,5 +804,23 @@ mod test {
             CommandType::CompleteWorkflowExecution as i32
         );
         wfm.shutdown().await.unwrap();
+    }
+
+    #[test]
+    fn cancels_ignored_terminal() {
+        for state in [
+            ChildWorkflowMachineState::Cancelled(Cancelled {}),
+            Failed {}.into(),
+            TimedOut {}.into(),
+            Completed {}.into(),
+        ] {
+            let mut s = ChildWorkflowMachine {
+                state: state.clone(),
+                shared_state: Default::default(),
+            };
+            let cmds = s.cancel().unwrap();
+            assert_eq!(cmds.len(), 0);
+            assert_eq!(discriminant(&state), discriminant(&s.state))
+        }
     }
 }

@@ -620,15 +620,15 @@ impl WorkflowMachines {
                     .machine_mut(c.machine)
                     .handle_command(c.command.command_type())?;
                 self.process_machine_responses(c.machine, machine_responses)?;
+                self.commands.push_back(c);
             }
-            self.commands.push_back(c);
         }
         debug!(commands = %self.commands.display(), "prepared commands");
         Ok(())
     }
 
     /// After a machine handles either an event or a command, it produces [MachineResponses] which
-    /// this function uses to drive sending jobs to lang, trigging new workflow tasks, etc.
+    /// this function uses to drive sending jobs to lang, triggering new workflow tasks, etc.
     fn process_machine_responses(
         &mut self,
         sm: MachineKey,

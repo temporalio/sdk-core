@@ -42,6 +42,10 @@ fsm! {
     SignalExternalCommandRecorded
       --(SignalExternalWorkflowExecutionFailed(SignalExternalWorkflowExecutionFailedCause),
          on_signal_external_workflow_execution_failed) --> Failed;
+
+    // Ignore any spurious cancellations after resolution
+    Cancelled --(Cancel) --> Cancelled;
+    Signaled --(Cancel) --> Signaled;
 }
 
 #[derive(Default, Clone)]
@@ -285,6 +289,7 @@ mod tests {
         test_help::TestHistoryBuilder,
         workflow::managed_wf::ManagedWFFunc,
     };
+    use std::mem::discriminant;
     use temporal_sdk_core_protos::coresdk::workflow_activation::{
         wf_activation_job, WfActivationJob,
     };
@@ -381,5 +386,21 @@ mod tests {
             CommandType::CompleteWorkflowExecution
         );
         wfm.shutdown().await.unwrap();
+    }
+
+    #[test]
+    fn cancels_ignored_terminal() {
+        for state in [
+            SignalExternalMachineState::Cancelled(Cancelled {}),
+            Signaled {}.into(),
+        ] {
+            let mut s = SignalExternalMachine {
+                state: state.clone(),
+                shared_state: Default::default(),
+            };
+            let cmds = s.cancel().unwrap();
+            assert_eq!(cmds.len(), 0);
+            assert_eq!(discriminant(&state), discriminant(&s.state))
+        }
     }
 }

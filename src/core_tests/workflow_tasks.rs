@@ -1557,3 +1557,111 @@ async fn lang_slower_than_wft_timeouts() {
     .unwrap();
     core.shutdown().await;
 }
+
+#[tokio::test]
+async fn tries_cancel_of_completed_activity() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let scheduled_event_id = t.add_activity_task_scheduled("1");
+    t.add_we_signaled("sig", vec![]);
+    let started_event_id = t.add_activity_task_started(scheduled_event_id);
+    t.add_activity_task_completed(scheduled_event_id, started_event_id, Default::default());
+    t.add_workflow_task_scheduled_and_started();
+
+    let mock = MockServerGatewayApis::new();
+    let mut mock = single_hist_mock_sg("fake_wf_id", t, &[1, 2], mock, true);
+    mock.worker_cfg(TEST_Q, |cfg| cfg.max_cached_workflows = 1);
+    let core = mock_core(mock);
+
+    let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+        TEST_Q,
+        activation.run_id,
+        ScheduleActivity {
+            seq: 1,
+            activity_id: "1".to_string(),
+            ..Default::default()
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
+    let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    assert_matches!(
+        activation.jobs.as_slice(),
+        [
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+            },
+            WfActivationJob {
+                variant: Some(wf_activation_job::Variant::ResolveActivity(_)),
+            }
+        ]
+    );
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        TEST_Q,
+        activation.run_id,
+        vec![
+            RequestCancelActivity { seq: 1 }.into(),
+            CompleteWorkflowExecution { result: None }.into(),
+        ],
+    ))
+    .await
+    .unwrap();
+
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn failing_wft_doesnt_eat_permit_forever() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_workflow_task_scheduled_and_started();
+
+    let failures = 5;
+    // One extra response for when we stop failing
+    let resps = (1..=(failures + 1)).map(|_| 1);
+    let mock = MockServerGatewayApis::new();
+    let mut mock = single_hist_mock_sg("fake_wf_id", t, resps, mock, true);
+    mock.worker_cfg(TEST_Q, |cfg| {
+        cfg.max_cached_workflows = 2;
+        cfg.max_outstanding_workflow_tasks = 2;
+    });
+    let core = mock_core(mock);
+
+    // Spin failing the WFT to verify that we don't get stuck
+    for _ in 1..=failures {
+        let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        // Issue a nonsense completion that will trigger a WFT failure
+        core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+            TEST_Q,
+            activation.run_id,
+            RequestCancelActivity { seq: 1 }.into(),
+        ))
+        .await
+        .unwrap();
+        let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        assert_matches!(
+            activation.jobs.as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+            },]
+        );
+        core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, activation.run_id))
+            .await
+            .unwrap();
+        assert_eq!(core.outstanding_wfts(TEST_Q), 0);
+        assert_eq!(core.available_wft_permits(TEST_Q), 2);
+    }
+    let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+        TEST_Q,
+        activation.run_id,
+        CompleteWorkflowExecution { result: None }.into(),
+    ))
+    .await
+    .unwrap();
+
+    core.shutdown().await;
+}
