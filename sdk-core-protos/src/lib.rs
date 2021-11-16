@@ -958,6 +958,8 @@ pub mod coresdk {
         DeserializeErr(#[from] anyhow::Error),
     }
 
+    // TODO: Once the prototype SDK is un-prototyped this serialization will need to be compat with
+    //   other SDKs (given they might execute an activity).
     pub trait AsJsonPayloadExt {
         fn as_json_payload(&self) -> anyhow::Result<Payload>;
     }

@@ -13,7 +13,7 @@ use tokio::sync::{
     Mutex, Semaphore,
 };
 
-pub(crate) struct InFlightLocalActInfo {
+pub(crate) struct LocalInFlightActInfo {
     pub seq: u32,
     pub workflow_execution: WorkflowExecution,
 }
@@ -47,7 +47,7 @@ struct LAMData {
     /// Activities that need to be executed by lang
     act_req_rx: UnboundedReceiver<NewLocalAct>,
     /// Activities that have been issued to lang but not yet completed
-    outstanding_activity_tasks: HashMap<TaskToken, InFlightLocalActInfo>,
+    outstanding_activity_tasks: HashMap<TaskToken, LocalInFlightActInfo>,
     next_tt_num: u32,
 }
 
@@ -87,7 +87,7 @@ impl LocalActivityManager {
             let tt = TaskToken::new_local_activity_token(dat.next_tt_num.to_le_bytes());
             dat.outstanding_activity_tasks.insert(
                 tt.clone(),
-                InFlightLocalActInfo {
+                LocalInFlightActInfo {
                     seq: sa.seq,
                     workflow_execution: new_la.workflow_exec_info.clone(),
                 },
@@ -126,7 +126,7 @@ impl LocalActivityManager {
 
     /// Mark a local activity as having completed. Returns the information about the local activity
     /// so the appropriate workflow instance can be notified of completion.
-    pub(crate) async fn complete(&self, task_token: &TaskToken) -> Option<InFlightLocalActInfo> {
+    pub(crate) async fn complete(&self, task_token: &TaskToken) -> Option<LocalInFlightActInfo> {
         let info = self
             .dat
             .lock()
