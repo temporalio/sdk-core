@@ -367,6 +367,15 @@ impl CoreSDK {
         self.workers.set_worker_for_task_queue(tq, worker).unwrap();
     }
 
+    #[cfg(test)]
+    pub(crate) fn outstanding_wfts(&self, tq: &str) -> usize {
+        self.worker(tq).unwrap().outstanding_workflow_tasks()
+    }
+    #[cfg(test)]
+    pub(crate) fn available_wft_permits(&self, tq: &str) -> usize {
+        self.worker(tq).unwrap().available_wft_permits()
+    }
+
     fn get_sticky_q_name_for_worker(&self, config: &WorkerConfig) -> Option<String> {
         if config.max_cached_workflows > 0 {
             Some(format!(

@@ -39,6 +39,10 @@ fsm! {
         --(CommandCancelTimer, on_command_cancel_timer) --> CancelTimerCommandSent;
 
     CancelTimerCommandSent --(TimerCanceled) --> Canceled;
+
+    // Ignore any spurious cancellations after resolution
+    Canceled --(Cancel) --> Canceled;
+    Fired --(Cancel) --> Fired;
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -275,7 +279,7 @@ mod test {
         workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::{fixture, rstest};
-    use std::time::Duration;
+    use std::{mem::discriminant, time::Duration};
 
     #[fixture]
     fn happy_wfm() -> ManagedWFFunc {
@@ -419,5 +423,18 @@ mod test {
         let commands = wfm.get_server_commands().await.commands;
         assert_eq!(commands.len(), 0);
         wfm.shutdown().await.unwrap();
+    }
+
+    #[test]
+    fn cancels_ignored_terminal() {
+        for state in [TimerMachineState::Canceled(Canceled {}), Fired {}.into()] {
+            let mut s = TimerMachine {
+                state: state.clone(),
+                shared_state: Default::default(),
+            };
+            let cmds = s.cancel().unwrap();
+            assert_eq!(cmds.len(), 0);
+            assert_eq!(discriminant(&state), discriminant(&s.state))
+        }
     }
 }

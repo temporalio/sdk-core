@@ -279,7 +279,8 @@ where
         let res = self.cancel();
         res.map_err(|e| match e {
             MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
-                "Invalid transition while attempting to cancel in {}",
+                "Invalid transition while attempting to cancel {} in {}",
+                self.name(),
                 self.state(),
             )),
             MachineError::Underlying(e) => e.into(),

@@ -227,6 +227,11 @@ impl Worker {
         self.wft_manager.outstanding_wft()
     }
 
+    #[cfg(test)]
+    pub(crate) fn available_wft_permits(&self) -> usize {
+        self.workflows_semaphore.available_permits()
+    }
+
     /// Get new activity tasks (may be local or nonlocal). Local activities are returned first
     /// before polling the server if there are any.
     ///
@@ -679,9 +684,12 @@ impl Worker {
     }
 
     fn after_workflow_activation(&self, run_id: &str, did_complete_wft: bool) {
-        if self.wft_manager.after_wft_report(run_id, did_complete_wft) {
+        self.wft_manager.after_wft_report(run_id, did_complete_wft);
+        if did_complete_wft {
             self.return_workflow_task_permit();
-        };
+        }
+        self.wft_manager.on_activation_done(run_id);
+        self.maybe_notify_wtfs_drained();
         // TODO: merge into after_wft_report
         self.wft_manager.on_activation_done(run_id);
         self.maybe_notify_wtfs_drained();

@@ -748,8 +748,8 @@ impl WorkflowMachines {
                     }
                     MachineAssociatedCommand::FakeLocalActivityMarker(_) => {}
                 }
+                self.commands.push_back(c);
             }
-            self.commands.push_back(c);
         }
         debug!(commands = %self.commands.display(), "prepared commands");
         Ok(())
