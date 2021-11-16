@@ -370,7 +370,7 @@ pub mod coresdk {
 
     impl From<wf_activation_job::Variant> for WfActivationJob {
         fn from(a: wf_activation_job::Variant) -> Self {
-            WfActivationJob { variant: Some(a) }
+            Self { variant: Some(a) }
         }
     }
 
@@ -382,7 +382,7 @@ pub mod coresdk {
 
     impl From<workflow_command::Variant> for WorkflowCommand {
         fn from(v: workflow_command::Variant) -> Self {
-            WorkflowCommand { variant: Some(v) }
+            Self { variant: Some(v) }
         }
     }
 
@@ -591,7 +591,7 @@ pub mod coresdk {
     }
 
     impl ActivityResult {
-        pub fn ok(result: Payload) -> Self {
+        pub const fn ok(result: Payload) -> Self {
             Self {
                 status: Some(activity_result::activity_result::Status::Completed(
                     activity_result::Success {
@@ -615,24 +615,18 @@ pub mod coresdk {
                 .workflow_execution
                 .map(|we| (we.workflow_id, we.run_id))
                 .unwrap_or_default();
-            ActivityTask {
+            Self {
                 task_token: r.task_token,
                 activity_id: r.activity_id,
                 variant: Some(activity_task::activity_task::Variant::Start(
                     activity_task::Start {
                         workflow_namespace: r.workflow_namespace,
-                        workflow_type: r
-                            .workflow_type
-                            .map(|wt| wt.name)
-                            .unwrap_or_else(|| "".to_string()),
+                        workflow_type: r.workflow_type.map_or_else(|| "".to_string(), |wt| wt.name),
                         workflow_execution: Some(common::WorkflowExecution {
                             workflow_id,
                             run_id,
                         }),
-                        activity_type: r
-                            .activity_type
-                            .map(|at| at.name)
-                            .unwrap_or_else(|| "".to_string()),
+                        activity_type: r.activity_type.map_or_else(|| "".to_string(), |at| at.name),
                         header_fields: r.header.map(Into::into).unwrap_or_default(),
                         input: Vec::from_payloads(r.input),
                         heartbeat_details: Vec::from_payloads(r.heartbeat_details),
@@ -664,7 +658,7 @@ pub mod coresdk {
 
     impl From<common::WorkflowExecution> for WorkflowExecution {
         fn from(exc: common::WorkflowExecution) -> Self {
-            WorkflowExecution {
+            Self {
                 workflow_id: exc.workflow_id,
                 run_id: exc.run_id,
             }
@@ -786,10 +780,10 @@ pub mod coresdk {
             match v.payloads.pop() {
                 None => Err(PayloadsToPayloadError::NoPayload),
                 Some(p) => {
-                    if !v.payloads.is_empty() {
-                        Err(PayloadsToPayloadError::MoreThanOnePayload)
-                    } else {
+                    if v.payloads.is_empty() {
                         Ok(p.into())
+                    } else {
+                        Err(PayloadsToPayloadError::MoreThanOnePayload)
                     }
                 }
             }
@@ -1091,26 +1085,22 @@ pub mod temporal {
                 impl HistoryEvent {
                     /// Returns true if this is an event created to mirror a command
                     pub fn is_command_event(&self) -> bool {
-                        if let Some(et) = EventType::from_i32(self.event_type) {
-                            match et {
-                                EventType::ActivityTaskScheduled
-                                | EventType::ActivityTaskCancelRequested
-                                | EventType::MarkerRecorded
-                                | EventType::RequestCancelExternalWorkflowExecutionInitiated
-                                | EventType::SignalExternalWorkflowExecutionInitiated
-                                | EventType::StartChildWorkflowExecutionInitiated
-                                | EventType::TimerCanceled
-                                | EventType::TimerStarted
-                                | EventType::UpsertWorkflowSearchAttributes
-                                | EventType::WorkflowExecutionCanceled
-                                | EventType::WorkflowExecutionCompleted
-                                | EventType::WorkflowExecutionContinuedAsNew
-                                | EventType::WorkflowExecutionFailed => true,
-                                _ => false,
-                            }
-                        } else {
-                            false
-                        }
+                        EventType::from_i32(self.event_type).map_or(false, |et| match et {
+                            EventType::ActivityTaskScheduled
+                            | EventType::ActivityTaskCancelRequested
+                            | EventType::MarkerRecorded
+                            | EventType::RequestCancelExternalWorkflowExecutionInitiated
+                            | EventType::SignalExternalWorkflowExecutionInitiated
+                            | EventType::StartChildWorkflowExecutionInitiated
+                            | EventType::TimerCanceled
+                            | EventType::TimerStarted
+                            | EventType::UpsertWorkflowSearchAttributes
+                            | EventType::WorkflowExecutionCanceled
+                            | EventType::WorkflowExecutionCompleted
+                            | EventType::WorkflowExecutionContinuedAsNew
+                            | EventType::WorkflowExecutionFailed => true,
+                            _ => false,
+                        })
                     }
 
                     /// Returns the command's initiating event id, if present. This is the id of the
@@ -1262,16 +1252,14 @@ pub mod temporal {
                         let last_event = self
                             .history
                             .as_ref()
-                            .map(|h| h.events.last().map(|he| he.event_id))
-                            .flatten()
+                            .and_then(|h| h.events.last().map(|he| he.event_id))
                             .unwrap_or(0);
                         write!(
                             f,
                             "PollWFTQResp(run_id: {}, attempt: {}, last_event: {})",
                             self.workflow_execution
                                 .as_ref()
-                                .map(|we| we.run_id.as_str())
-                                .unwrap_or(""),
+                                .map_or("", |we| we.run_id.as_str()),
                             self.attempt,
                             last_event
                         )
