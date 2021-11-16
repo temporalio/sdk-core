@@ -688,10 +688,6 @@ impl Worker {
         if did_complete_wft {
             self.return_workflow_task_permit();
         }
-        self.wft_manager.on_activation_done(run_id);
-        self.maybe_notify_wtfs_drained();
-        // TODO: merge into after_wft_report
-        self.wft_manager.on_activation_done(run_id);
         self.maybe_notify_wtfs_drained();
     }
 

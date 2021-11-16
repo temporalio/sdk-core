@@ -608,7 +608,7 @@ impl WorkflowTaskManager {
 
         // Workflows with no more pending activations (IE: They have completed a WFT) must be
         // removed from the outstanding tasks map
-        if !self.pending_activations.has_pending(run_id) {
+        let retme = if !self.pending_activations.has_pending(run_id) {
             if !just_evicted {
                 // Check if there was a legacy query which must be fulfilled, and if there is create
                 // a new pending activation for it.
@@ -641,12 +641,14 @@ impl WorkflowTaskManager {
 
             // The evict may or may not have already done this, but even when we aren't evicting
             // we want to clear the outstanding workflow task since it's now complete.
-            return self
-                .workflow_machines
+            self.workflow_machines
                 .complete_wft(run_id, did_complete_wft)
-                .is_some();
-        }
-        false
+                .is_some()
+        } else {
+            false
+        };
+        self.on_activation_done(run_id);
+        retme
     }
 
     /// Must be called after *every* activation is replied to, regardless of whether or not we
@@ -654,7 +656,7 @@ impl WorkflowTaskManager {
     /// every activation we issue to lang has exactly one reply.
     ///
     /// Any subsequent action that needs to be taken will be created as a new activation
-    pub(crate) fn on_activation_done(&self, run_id: &str) {
+    fn on_activation_done(&self, run_id: &str) {
         if self.workflow_machines.delete_activation(run_id).is_some() {
             let _ = self.pending_activations_notifier.send(true);
         }
