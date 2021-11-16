@@ -305,10 +305,16 @@ impl TryFrom<CommandType> for ActivityMachineEvents {
 
 impl Cancellable for ActivityMachine {
     fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
-        if matches!(self.state(), ActivityMachineState::Completed(_)) {
-            // Ignore attempted cancels in the complete state
+        if matches!(
+            self.state(),
+            ActivityMachineState::Completed(_)
+                | ActivityMachineState::Canceled(_)
+                | ActivityMachineState::Failed(_)
+                | ActivityMachineState::TimedOut(_)
+        ) {
+            // Ignore attempted cancels in terminal states
             debug!(
-                "Attempted to cancel already completed activity (seq {})",
+                "Attempted to cancel already resolved activity (seq {})",
                 self.shared_state.attrs.seq
             );
             return Ok(vec![]);
@@ -749,6 +755,7 @@ mod test {
         workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::{fixture, rstest};
+    use std::mem::discriminant;
     use temporal_sdk_core_protos::coresdk::workflow_activation::{
         wf_activation_job, WfActivationJob,
     };
@@ -848,5 +855,23 @@ mod test {
             },]
         );
         wfm.shutdown().await.unwrap();
+    }
+
+    #[test]
+    fn cancels_ignored_terminal() {
+        for state in [
+            ActivityMachineState::Canceled(Canceled {}),
+            Failed {}.into(),
+            TimedOut {}.into(),
+            Completed {}.into(),
+        ] {
+            let mut s = ActivityMachine {
+                state: state.clone(),
+                shared_state: Default::default(),
+            };
+            let cmds = s.cancel().unwrap();
+            assert_eq!(cmds.len(), 0);
+            assert_eq!(discriminant(&state), discriminant(&s.state))
+        }
     }
 }
