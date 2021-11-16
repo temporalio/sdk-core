@@ -32,15 +32,11 @@ fsm! {
 
     // Machine is created in either executing or replaying, and then immediately scheduled and
     // transitions to the command created state (creating the command in the process)
-    Executing --(Schedule, shared on_schedule) --> RequestPrepared;
+    Executing --(Schedule, shared on_schedule) --> RequestSent;
     Replaying --(Schedule, on_schedule) --> WaitingMarkerEvent;
     ReplayingPreResolved --(Schedule, on_schedule) --> WaitingMarkerEvent;
 
     // Execution path =============================================================================
-    // TODO: I don't think we really need this. Timeouts etc should be handled up higher. Verify
-    //   and remove if so
-    RequestPrepared --(MarkAsSent) --> RequestSent;
-
     // TODO: Unclear if this is needed for core. Address while implementing WFT heartbeats
     // RequestSent --(NonReplayWorkflowTaskStarted) --> RequestSent;
     RequestSent --(HandleResult(ResolveDat), on_handle_result) --> MarkerCommandCreated;
@@ -157,19 +153,6 @@ impl LocalActivityMachine {
         };
         Ok(mr)
     }
-
-    pub(super) fn mark_sent(&mut self) -> Result<(), WFMachinesError> {
-        OnEventWrapper::on_event_mut(self, LocalActivityMachineEvents::MarkAsSent).map_err(
-            |e| match e {
-                MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
-                    "Invalid transition while attempting to resolve local activity in {}",
-                    self.state(),
-                )),
-                MachineError::Underlying(e) => e,
-            },
-        )?;
-        Ok(())
-    }
 }
 
 #[derive(Clone)]
@@ -194,7 +177,7 @@ impl Executing {
     pub(super) fn on_schedule(
         self,
         dat: SharedState,
-    ) -> LocalActivityMachineTransition<RequestPrepared> {
+    ) -> LocalActivityMachineTransition<RequestSent> {
         TransitionResult::commands([LocalActivityCommand::RequestActivityExecution(dat.attrs)])
     }
 }
@@ -241,9 +224,6 @@ impl ReplayingPreResolved {
 }
 
 #[derive(Default, Clone)]
-pub(super) struct RequestPrepared {}
-
-#[derive(Default, Clone)]
 pub(super) struct RequestSent {}
 
 impl RequestSent {
@@ -252,12 +232,6 @@ impl RequestSent {
         dat: ResolveDat,
     ) -> LocalActivityMachineTransition<MarkerCommandCreated> {
         TransitionResult::commands([LocalActivityCommand::Resolved(dat)])
-    }
-}
-
-impl From<RequestPrepared> for RequestSent {
-    fn from(_: RequestPrepared) -> Self {
-        Self::default()
     }
 }
 
@@ -303,7 +277,7 @@ impl WaitingMarkerEvent {
 
 impl Cancellable for LocalActivityMachine {
     fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
-        todo!()
+        todo!("Cancellation of local activities not yet implemented")
     }
 
     fn was_cancelled_before_sent_to_server(&self) -> bool {

@@ -105,9 +105,8 @@ pub(crate) struct WorkflowMachines {
     /// Information about patch markers we have already seen while replaying history
     encountered_change_markers: HashMap<String, ChangeInfo>,
 
-    /// Queued local activity requests which need to be executed, along with the key to their
-    /// machine, to enable reporting the request as having been sent.
-    local_activity_requests: Vec<(MachineKey, ScheduleActivity)>,
+    /// Queued local activity requests which need to be executed
+    local_activity_requests: Vec<ScheduleActivity>,
     /// Seq #s of local activities which we have sent to be executed but have not yet resolved
     executing_local_activities: HashSet<u32>,
     /// Maps local activity sequence numbers to their resolutions as found when looking ahead at
@@ -291,19 +290,7 @@ impl WorkflowMachines {
         let key_and_act = std::mem::take(&mut self.local_activity_requests);
         key_and_act
             .into_iter()
-            .map(|(k, act)| {
-                // TODO: Could possibly avoid extra machine mutation if eliminate prepared state
-                let mach = self.machine_mut(k);
-                if let Machines::LocalActivityMachine(ref mut lam) = *mach {
-                    lam.mark_sent().expect("works");
-                } else {
-                    // TODO: Needs to be bubbled up
-                    // return Err(WFMachinesError::Nondeterminism(format!(
-                    //     "Command matching activity with seq num {} existed but was not a \
-                    //         local activity!",
-                    //     seq_id
-                    // )));
-                }
+            .map(|act| {
                 self.executing_local_activities.insert(act.seq);
                 NewLocalAct {
                     schedule_cmd: act,
@@ -803,7 +790,7 @@ impl WorkflowMachines {
                     });
                 }
                 MachineResponse::QueueLocalActivity(act) => {
-                    self.local_activity_requests.push((smk, act));
+                    self.local_activity_requests.push(act);
                 }
             }
         }
