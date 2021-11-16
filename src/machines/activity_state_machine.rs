@@ -305,6 +305,14 @@ impl TryFrom<CommandType> for ActivityMachineEvents {
 
 impl Cancellable for ActivityMachine {
     fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
+        if matches!(self.state(), ActivityMachineState::Completed(_)) {
+            // Ignore attempted cancels in the complete state
+            debug!(
+                "Attempted to cancel already completed activity (seq {})",
+                self.shared_state.attrs.seq
+            );
+            return Ok(vec![]);
+        }
         let event = match self.shared_state.cancellation_type {
             ActivityCancellationType::Abandon => ActivityMachineEvents::Abandon,
             _ => ActivityMachineEvents::Cancel,
@@ -316,9 +324,15 @@ impl Cancellable for ActivityMachine {
                 ActivityMachineCommand::RequestCancellation(cmd) => {
                     self.machine_responses_from_cancel_request(cmd)
                 }
-                ActivityMachineCommand::Cancel(_details) => {
-                    // TODO: Convert payloads
-                    vec![self.create_cancelation_resolve(None).into()]
+                ActivityMachineCommand::Cancel(details) => {
+                    vec![self
+                        .create_cancelation_resolve(
+                            details
+                                .map(TryInto::try_into)
+                                .transpose()
+                                .unwrap_or_default(),
+                        )
+                        .into()]
                 }
                 x => panic!("Invalid cancel event response {:?}", x),
             })

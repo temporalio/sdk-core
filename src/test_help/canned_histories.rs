@@ -228,39 +228,9 @@ pub fn single_activity(activity_id: &str) -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let scheduled_event_id = t.add_get_event_id(
-        EventType::ActivityTaskScheduled,
-        Some(
-            history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                ActivityTaskScheduledEventAttributes {
-                    activity_id: activity_id.to_string(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
-    let started_event_id = t.add_get_event_id(
-        EventType::ActivityTaskStarted,
-        Some(
-            history_event::Attributes::ActivityTaskStartedEventAttributes(
-                ActivityTaskStartedEventAttributes {
-                    scheduled_event_id,
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
-    t.add(
-        EventType::ActivityTaskCompleted,
-        history_event::Attributes::ActivityTaskCompletedEventAttributes(
-            ActivityTaskCompletedEventAttributes {
-                scheduled_event_id,
-                started_event_id,
-                // todo add the result payload
-                ..Default::default()
-            },
-        ),
-    );
+    let scheduled_event_id = t.add_activity_task_scheduled(activity_id);
+    let started_event_id = t.add_activity_task_started(scheduled_event_id);
+    t.add_activity_task_completed(scheduled_event_id, started_event_id, Default::default());
     t.add_workflow_task_scheduled_and_started();
     t
 }
@@ -278,28 +248,8 @@ pub fn single_failed_activity(activity_id: &str) -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let scheduled_event_id = t.add_get_event_id(
-        EventType::ActivityTaskScheduled,
-        Some(
-            history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                ActivityTaskScheduledEventAttributes {
-                    activity_id: activity_id.to_string(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
-    let started_event_id = t.add_get_event_id(
-        EventType::ActivityTaskStarted,
-        Some(
-            history_event::Attributes::ActivityTaskStartedEventAttributes(
-                ActivityTaskStartedEventAttributes {
-                    scheduled_event_id,
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
+    let scheduled_event_id = t.add_activity_task_scheduled(activity_id);
+    let started_event_id = t.add_activity_task_started(scheduled_event_id);
     t.add(
         EventType::ActivityTaskFailed,
         history_event::Attributes::ActivityTaskFailedEventAttributes(
@@ -329,17 +279,7 @@ pub fn cancel_scheduled_activity(activity_id: &str, signal_id: &str) -> TestHist
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let scheduled_event_id = t.add_get_event_id(
-        EventType::ActivityTaskScheduled,
-        Some(
-            history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                ActivityTaskScheduledEventAttributes {
-                    activity_id: activity_id.to_string(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
+    let scheduled_event_id = t.add_activity_task_scheduled(activity_id);
     t.add_we_signaled(
         signal_id,
         vec![Payload {
@@ -375,17 +315,7 @@ pub fn scheduled_activity_timeout(activity_id: &str) -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let scheduled_event_id = t.add_get_event_id(
-        EventType::ActivityTaskScheduled,
-        Some(
-            history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                ActivityTaskScheduledEventAttributes {
-                    activity_id: activity_id.to_string(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
+    let scheduled_event_id = t.add_activity_task_scheduled(activity_id);
     t.add(
         EventType::ActivityTaskTimedOut,
         history_event::Attributes::ActivityTaskTimedOutEventAttributes(
@@ -422,17 +352,7 @@ pub fn scheduled_cancelled_activity_timeout(
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let scheduled_event_id = t.add_get_event_id(
-        EventType::ActivityTaskScheduled,
-        Some(
-            history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                ActivityTaskScheduledEventAttributes {
-                    activity_id: activity_id.to_string(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
+    let scheduled_event_id = t.add_activity_task_scheduled(activity_id);
     t.add_we_signaled(
         signal_id,
         vec![Payload {

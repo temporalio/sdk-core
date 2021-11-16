@@ -9,7 +9,10 @@ use crate::{
 use anyhow::bail;
 use std::time::SystemTime;
 use temporal_sdk_core_protos::{
-    coresdk::common::{build_has_change_marker_details, NamespacedWorkflowExecution},
+    coresdk::common::{
+        build_has_change_marker_details, NamespacedWorkflowExecution, Payload as CorePayload,
+    },
+    coresdk::IntoPayloadsExt,
     temporal::api::{
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{EventType, WorkflowTaskFailedCause},
@@ -134,6 +137,52 @@ impl TestHistoryBuilder {
     pub fn add_cancelled(&mut self) {
         let attrs = WorkflowExecutionCanceledEventAttributes::default();
         self.build_and_push_event(EventType::WorkflowExecutionCanceled, attrs.into());
+    }
+
+    pub fn add_activity_task_scheduled(&mut self, activity_id: impl Into<String>) -> i64 {
+        self.add_get_event_id(
+            EventType::ActivityTaskScheduled,
+            Some(
+                history_event::Attributes::ActivityTaskScheduledEventAttributes(
+                    ActivityTaskScheduledEventAttributes {
+                        activity_id: activity_id.into(),
+                        ..Default::default()
+                    },
+                ),
+            ),
+        )
+    }
+    pub fn add_activity_task_started(&mut self, scheduled_event_id: i64) -> i64 {
+        self.add_get_event_id(
+            EventType::ActivityTaskStarted,
+            Some(
+                history_event::Attributes::ActivityTaskStartedEventAttributes(
+                    ActivityTaskStartedEventAttributes {
+                        scheduled_event_id,
+                        ..Default::default()
+                    },
+                ),
+            ),
+        )
+    }
+
+    pub fn add_activity_task_completed(
+        &mut self,
+        scheduled_event_id: i64,
+        started_event_id: i64,
+        payload: CorePayload,
+    ) {
+        self.add(
+            EventType::ActivityTaskCompleted,
+            history_event::Attributes::ActivityTaskCompletedEventAttributes(
+                ActivityTaskCompletedEventAttributes {
+                    scheduled_event_id,
+                    started_event_id,
+                    result: vec![payload].into_payloads(),
+                    ..Default::default()
+                },
+            ),
+        )
     }
 
     pub fn add_activity_task_cancel_requested(&mut self, scheduled_event_id: i64) {
