@@ -4,6 +4,7 @@ use crate::{
     workflow::LEGACY_QUERY_ID,
 };
 use std::convert::TryFrom;
+use temporal_sdk_core_protos::coresdk::common::extract_local_activity_marker_data;
 use temporal_sdk_core_protos::{
     coresdk::{
         common::{decode_change_marker_details, extract_local_activity_marker_details},
@@ -140,8 +141,11 @@ pub(crate) trait HistoryEventExt {
     fn get_patch_marker_details(&self) -> Option<(String, bool)>;
     /// If this history event represents a local activity marker, return true.
     fn is_local_activity_marker(&self) -> bool;
-    /// If this history event represents a local activity marker, return the info about
-    /// it. Returns `None` if it is any other kind of event or marker.
+    /// If this history event represents a local activity marker, return the marker id info.
+    /// Returns `None` if it is any other kind of event or marker or the data is invalid.
+    fn extract_local_activity_marker_data(&self) -> Option<LocalActivityMarkerData>;
+    /// If this history event represents a local activity marker, return all the contained data.
+    /// Returns `None` if it is any other kind of event or marker or the data is invalid.
     fn into_local_activity_marker_details(self) -> Option<CompleteLocalActivityData>;
 }
 
@@ -176,18 +180,37 @@ impl HistoryEventExt for HistoryEvent {
         false
     }
 
+    fn extract_local_activity_marker_data(&self) -> Option<LocalActivityMarkerData> {
+        if self.event_type() == EventType::MarkerRecorded {
+            match &self.attributes {
+                Some(history_event::Attributes::MarkerRecordedEventAttributes(
+                    MarkerRecordedEventAttributes {
+                        marker_name,
+                        details,
+                        ..
+                    },
+                )) if marker_name == LOCAL_ACTIVITY_MARKER_NAME => {
+                    extract_local_activity_marker_data(details)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
     fn into_local_activity_marker_details(self) -> Option<CompleteLocalActivityData> {
         if self.event_type() == EventType::MarkerRecorded {
             match self.attributes {
                 Some(history_event::Attributes::MarkerRecordedEventAttributes(
                     MarkerRecordedEventAttributes {
                         marker_name,
-                        details,
+                        mut details,
                         failure,
                         ..
                     },
                 )) if marker_name == LOCAL_ACTIVITY_MARKER_NAME => {
-                    let (data, ok_res) = extract_local_activity_marker_details(details);
+                    let (data, ok_res) = extract_local_activity_marker_details(&mut details);
                     let data = data?;
                     let result = if let Some(r) = ok_res {
                         Ok(r)

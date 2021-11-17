@@ -244,6 +244,7 @@ impl WorkflowConcurrencyManager {
                 history,
                 namespace.to_owned(),
                 workflow_id.to_owned(),
+                wf_type.to_owned(),
                 run_id.to_owned(),
                 metrics.clone(),
             );

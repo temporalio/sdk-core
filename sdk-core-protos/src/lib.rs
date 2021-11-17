@@ -154,8 +154,8 @@ pub mod coresdk {
             result: Option<Payload>,
         ) -> HashMap<String, Payloads> {
             let mut hm = HashMap::new();
-            // TODO: It is more efficient for this to be proto binary, but then it shows up
-            //   as meaningless in the Temporal UI...
+            // It would be more efficient for this to be proto binary, but then it shows up as
+            // meaningless in the Temporal UI...
             if let Some(jsonified) = metadata.as_json_payload().into_payloads() {
                 hm.insert("data".to_string(), jsonified);
             }
@@ -165,16 +165,24 @@ pub mod coresdk {
             hm
         }
 
-        /// Given a marker detail map, returns the local activity info and the result payload
-        /// if they are found and the marker data is well-formed.
-        pub fn extract_local_activity_marker_details(
-            mut details: HashMap<String, Payloads>,
-        ) -> (Option<LocalActivityMarkerData>, Option<ApiPayload>) {
-            let data = details
+        /// Given a marker detail map, returns just the local activity info, but not the payload.
+        /// This is fairly inexpensive. Deserializing the whole payload may not be.
+        pub fn extract_local_activity_marker_data(
+            details: &HashMap<String, Payloads>,
+        ) -> Option<LocalActivityMarkerData> {
+            details
                 .get("data")
                 .and_then(|p| p.payloads.get(0))
                 .and_then(|p| std::str::from_utf8(&p.data).ok())
-                .and_then(|s| serde_json::from_str(s).ok());
+                .and_then(|s| serde_json::from_str(s).ok())
+        }
+
+        /// Given a marker detail map, returns the local activity info and the result payload
+        /// if they are found and the marker data is well-formed.
+        pub fn extract_local_activity_marker_details(
+            details: &mut HashMap<String, Payloads>,
+        ) -> (Option<LocalActivityMarkerData>, Option<ApiPayload>) {
+            let data = extract_local_activity_marker_data(details);
             let result = details.remove("result").and_then(|mut p| p.payloads.pop());
             (data, result)
         }

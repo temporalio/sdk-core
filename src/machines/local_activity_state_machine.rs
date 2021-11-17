@@ -350,8 +350,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
     }
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
-        // TODO: Avoid clone, make just is method
-        event.clone().into_local_activity_marker_details().is_some()
+        event.is_local_activity_marker()
     }
 
     fn kind(&self) -> MachineKind {

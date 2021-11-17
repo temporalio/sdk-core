@@ -47,6 +47,7 @@ impl WorkflowManager {
         history: HistoryUpdate,
         namespace: String,
         workflow_id: String,
+        workflow_type: String,
         run_id: String,
         metrics: MetricsContext,
     ) -> Self {
@@ -54,6 +55,7 @@ impl WorkflowManager {
         let state_machines = WorkflowMachines::new(
             namespace,
             workflow_id,
+            workflow_type,
             run_id,
             history,
             Box::new(wfb).into(),
@@ -265,6 +267,7 @@ pub mod managed_wf {
             let state_machines = WorkflowMachines::new(
                 "test_namespace".to_string(),
                 "wfid".to_string(),
+                "wftype".to_string(),
                 "runid".to_string(),
                 hist,
                 Box::new(driver).into(),

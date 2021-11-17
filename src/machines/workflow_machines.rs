@@ -73,6 +73,8 @@ pub(crate) struct WorkflowMachines {
     pub namespace: String,
     /// Workflow identifier
     pub workflow_id: String,
+    /// Workflow type identifier. (Function name, class, etc)
+    pub workflow_type: String,
     /// Identifies the current run
     pub run_id: String,
     /// The time the workflow execution began, as told by the WEStarted event
@@ -204,6 +206,7 @@ impl WorkflowMachines {
     pub(crate) fn new(
         namespace: String,
         workflow_id: String,
+        workflow_type: String,
         run_id: String,
         history: HistoryUpdate,
         driven_wf: DrivenWorkflow,
@@ -214,6 +217,7 @@ impl WorkflowMachines {
             last_history_from_server: history,
             namespace,
             workflow_id,
+            workflow_type,
             run_id,
             drive_me: driven_wf,
             replaying,
@@ -294,8 +298,7 @@ impl WorkflowMachines {
                 self.executing_local_activities.insert(act.seq);
                 NewLocalAct {
                     schedule_cmd: act,
-                    // TODO: Get this inside here
-                    workflow_type: "".to_string(),
+                    workflow_type: self.workflow_type.clone(),
                     workflow_exec_info: WorkflowExecution {
                         workflow_id: self.workflow_id.clone(),
                         run_id: self.run_id.clone(),
@@ -392,15 +395,14 @@ impl WorkflowMachines {
     /// with a state machine, which is then notified about the event and the command is removed from
     /// the commands queue.
     fn handle_command_event(&mut self, event: &HistoryEvent) -> Result<()> {
-        // TODO: Issue here is this needs to clear out the fakemarker command if one existed,
-        //   it should only do anything if there *wasn't* the fake marker
         if event.is_local_activity_marker() {
-            // TODO: Extract w/o clone
-            let deets = event
-                .clone()
-                .into_local_activity_marker_details()
-                .expect("TODO");
-            let cmdid = CommandID::LocalActivity(deets.marker_dat.seq);
+            let deets = event.extract_local_activity_marker_data().ok_or_else(|| {
+                WFMachinesError::Fatal(format!(
+                    "Local activity marker was unparseable: {:?}",
+                    event
+                ))
+            })?;
+            let cmdid = CommandID::LocalActivity(deets.seq);
             let mkey = self.get_machine_key(cmdid)?;
             if let Machines::LocalActivityMachine(lam) = self.machine(mkey) {
                 if lam.marker_should_get_special_handling() {
@@ -408,7 +410,11 @@ impl WorkflowMachines {
                     return Ok(());
                 }
             } else {
-                todo!("bail with error")
+                return Err(WFMachinesError::Fatal(format!(
+                    "Encountered local activity marker but the associated machine was of the \
+                     wrong type! {:?}",
+                    event
+                )));
             }
         }
 
@@ -663,14 +669,10 @@ impl WorkflowMachines {
 
         while let Some(event) = history.next() {
             let next_event = history.peek();
-
-            // TODO: use only one handle_event call in this loop
+            self.handle_event(event, next_event.is_some())?;
             if event.event_type == EventType::WorkflowTaskStarted as i32 && next_event.is_none() {
-                self.handle_event(event, false)?;
                 break;
             }
-
-            self.handle_event(event, next_event.is_some())?;
         }
 
         // Scan through to the next WFT, searching for any patch markers, so that we can
@@ -693,7 +695,12 @@ impl WorkflowMachines {
                 if let Some(la_dat) = e.clone().into_local_activity_marker_details() {
                     self.local_activity_resolutions
                         .insert(la_dat.marker_dat.seq, la_dat.into());
-                } // todo: else blow up
+                } else {
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Local activity marker was unparseable: {:?}",
+                        e
+                    )));
+                }
             }
         }
 
@@ -777,7 +784,6 @@ impl WorkflowMachines {
                         ));
                 }
                 MachineResponse::IssueNewCommand(c) => {
-                    // TODO: Dedupe
                     self.current_wf_task_commands.push_back(CommandAndMachine {
                         command: MachineAssociatedCommand::Real(c),
                         machine: smk,
