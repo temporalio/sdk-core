@@ -254,11 +254,12 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::MarkerRecorded, attrs.into());
     }
 
-    pub(crate) fn add_local_activity_result_marker(
+    fn add_local_activity_marker(
         &mut self,
         seq: u32,
         activity_id: &str,
-        payload: CorePayload,
+        payload: Option<CorePayload>,
+        failure: Option<Failure>,
     ) {
         let attrs = MarkerRecordedEventAttributes {
             marker_name: LOCAL_ACTIVITY_MARKER_NAME.to_string(),
@@ -269,12 +270,31 @@ impl TestHistoryBuilder {
                     activity_type: "some_act_type".to_string(),
                     time: None,
                 },
-                Some(payload),
+                payload,
             ),
             workflow_task_completed_event_id: self.previous_task_completed_id,
+            failure,
             ..Default::default()
         };
         self.build_and_push_event(EventType::MarkerRecorded, attrs.into());
+    }
+
+    pub(crate) fn add_local_activity_result_marker(
+        &mut self,
+        seq: u32,
+        activity_id: &str,
+        payload: CorePayload,
+    ) {
+        self.add_local_activity_marker(seq, activity_id, Some(payload), None);
+    }
+
+    pub(crate) fn add_local_activity_fail_marker(
+        &mut self,
+        seq: u32,
+        activity_id: &str,
+        failure: Failure,
+    ) {
+        self.add_local_activity_marker(seq, activity_id, None, Some(failure));
     }
 
     pub(crate) fn add_signal_wf(

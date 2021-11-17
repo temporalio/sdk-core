@@ -4,10 +4,12 @@ use crate::{
     workflow::LEGACY_QUERY_ID,
 };
 use std::convert::TryFrom;
-use temporal_sdk_core_protos::coresdk::common::extract_local_activity_marker_data;
 use temporal_sdk_core_protos::{
     coresdk::{
-        common::{decode_change_marker_details, extract_local_activity_marker_details},
+        common::{
+            decode_change_marker_details, extract_local_activity_marker_data,
+            extract_local_activity_marker_details,
+        },
         external_data::LocalActivityMarkerData,
         workflow_activation::{wf_activation_job, QueryWorkflow, WfActivation, WfActivationJob},
         workflow_commands::{query_result, QueryResult},

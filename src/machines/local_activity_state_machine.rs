@@ -298,13 +298,28 @@ impl WFMachinesAdapter for LocalActivityMachine {
                 Ok(vec![MachineResponse::QueueLocalActivity(act)])
             }
             LocalActivityCommand::Resolved(ResolveDat { seq, result }) => {
-                let ok_res = result.status.clone().and_then(|s| {
-                    if let activity_result::Status::Completed(suc) = s {
-                        suc.result
-                    } else {
-                        None
+                let mut maybe_ok_result = None;
+                let mut maybe_failure = None;
+                if let Some(s) = result.status.clone() {
+                    match s {
+                        activity_result::Status::Completed(suc) => {
+                            maybe_ok_result = suc.result;
+                        }
+                        activity_result::Status::Failed(fail) => {
+                            maybe_failure = fail.failure;
+                        }
+                        activity_result::Status::Cancelled(_) => {
+                            todo!("Local activity cancellation not implemented yet")
+                        }
+                        activity_result::Status::WillCompleteAsync(_) => {
+                            return Err(WFMachinesError::Fatal(
+                                "Local activities cannot be completed async. \
+                                 This is a lang SDK bug."
+                                    .to_string(),
+                            ))
+                        }
                     }
-                });
+                };
                 let marker_data = RecordMarkerCommandAttributes {
                     marker_name: LOCAL_ACTIVITY_MARKER_NAME.to_string(),
                     details: build_local_activity_marker_details(
@@ -315,11 +330,10 @@ impl WFMachinesAdapter for LocalActivityMachine {
                             // TODO: populate
                             time: None,
                         },
-                        ok_res,
+                        maybe_ok_result,
                     ),
                     header: None,
-                    // TODO: Fill in
-                    failure: None,
+                    failure: maybe_failure,
                 };
                 let mut responses = vec![MachineResponse::PushWFJob(
                     ResolveActivity {
@@ -394,13 +408,14 @@ mod tests {
     use super::*;
     use crate::{
         prototype_rust_sdk::{LocalActivityOptions, WfContext, WorkflowFunction, WorkflowResult},
-        test_help::canned_histories,
+        test_help::{canned_histories, TestHistoryBuilder},
         workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::rstest;
     use std::time::Duration;
-    use temporal_sdk_core_protos::coresdk::workflow_activation::{
-        wf_activation_job, WfActivationJob,
+    use temporal_sdk_core_protos::{
+        coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
+        temporal::api::{command::v1::command, failure::v1::Failure},
     };
 
     async fn la_wf(mut ctx: WfContext) -> WorkflowResult<()> {
@@ -409,12 +424,28 @@ mod tests {
     }
 
     #[rstest]
-    #[case::incremental(false)]
-    #[case::replay(true)]
+    #[case::incremental(false, true)]
+    #[case::replay(true, true)]
+    #[case::incremental_fail(false, false)]
+    #[case::replay_fail(true, false)]
     #[tokio::test]
-    async fn one_la_success(#[case] replay: bool) {
+    async fn one_la_success(#[case] replay: bool, #[case] completes_ok: bool) {
         let func = WorkflowFunction::new(la_wf);
-        let t = canned_histories::single_local_activity("activity-id-1");
+        let activity_id = "1";
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        if completes_ok {
+            t.add_local_activity_result_marker(1, activity_id, b"hi".into());
+        } else {
+            t.add_local_activity_fail_marker(
+                1,
+                activity_id,
+                Failure::application_failure("I failed".to_string(), false),
+            );
+        }
+        t.add_workflow_execution_completed();
+
         let histinfo = if replay {
             t.get_full_history_info().unwrap().into()
         } else {
@@ -436,8 +467,19 @@ mod tests {
         }
 
         if !replay {
-            wfm.complete_local_activity(1, ActivityResult::ok(b"Resolved".into()))
+            if completes_ok {
+                wfm.complete_local_activity(1, ActivityResult::ok(b"hi".into()))
+                    .unwrap();
+            } else {
+                wfm.complete_local_activity(
+                    1,
+                    ActivityResult::fail(Failure {
+                        message: "I failed".to_string(),
+                        ..Default::default()
+                    }),
+                )
                 .unwrap();
+            }
         }
 
         // Now the next activation will unblock the local activity
@@ -452,6 +494,24 @@ mod tests {
         } else {
             assert_eq!(commands.len(), 2);
             assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
+            if completes_ok {
+                assert_matches!(
+                    commands[0].attributes.as_ref().unwrap(),
+                    command::Attributes::RecordMarkerCommandAttributes(
+                        RecordMarkerCommandAttributes { failure: None, .. }
+                    )
+                );
+            } else {
+                assert_matches!(
+                    commands[0].attributes.as_ref().unwrap(),
+                    command::Attributes::RecordMarkerCommandAttributes(
+                        RecordMarkerCommandAttributes {
+                            failure: Some(_),
+                            ..
+                        }
+                    )
+                );
+            }
             assert_eq!(
                 commands[1].command_type,
                 CommandType::CompleteWorkflowExecution as i32

@@ -783,6 +783,16 @@ pub mod coresdk {
             }
         }
 
+        pub fn fail(fail: Failure) -> Self {
+            Self {
+                status: Some(activity_result::activity_result::Status::Failed(
+                    activity_result::Failure {
+                        failure: Some(fail),
+                    },
+                )),
+            }
+        }
+
         pub fn unwrap_ok_payload(self) -> Payload {
             match self.status.unwrap() {
                 activity_result::activity_result::Status::Completed(c) => c.result.unwrap(),
