@@ -182,7 +182,7 @@ impl TestHistoryBuilder {
                     ..Default::default()
                 },
             ),
-        )
+        );
     }
 
     pub fn add_activity_task_cancel_requested(&mut self, scheduled_event_id: i64) {

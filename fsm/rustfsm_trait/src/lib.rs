@@ -109,7 +109,6 @@ where
     M: StateMachine,
 {
     /// Unwraps the machine update, panicking if the transition was invalid.
-    #[must_use]
     pub fn unwrap(self) -> Vec<M::Command> {
         match self {
             Self::Ok { commands } => commands,
@@ -205,7 +204,6 @@ where
 
     /// Produce a transition with no commands relying on [Default] for the destination state's
     /// value
-    #[must_use]
     pub fn default() -> Self {
         Self::OkNoShare {
             commands: vec![],

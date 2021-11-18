@@ -38,7 +38,7 @@ pub mod coresdk {
                 activity_id: String,
                 reason: ActivityCancelReason,
             ) -> Self {
-                ActivityTask {
+                Self {
                     task_token,
                     activity_id,
                     variant: Some(activity_task::Variant::Cancel(Cancel {
@@ -75,7 +75,7 @@ pub mod coresdk {
                     })),
                 }
             }
-            pub fn will_complete_async() -> Self {
+            pub const fn will_complete_async() -> Self {
                 Self {
                     status: Some(activity_result::Status::WillCompleteAsync(
                         WillCompleteAsync {},
@@ -195,7 +195,7 @@ pub mod coresdk {
                     "jobs: {})",
                     self.jobs
                         .iter()
-                        .map(|j| j.to_string())
+                        .map(ToString::to_string)
                         .collect::<Vec<_>>()
                         .as_slice()
                         .join(", ")
@@ -264,18 +264,18 @@ pub mod coresdk {
     }
 
     pub mod workflow_completion {
-        use crate::coresdk::workflow_completion::wf_activation_completion::Status;
         tonic::include_proto!("coresdk.workflow_completion");
 
         impl wf_activation_completion::Status {
-            pub fn is_success(&self) -> bool {
+            pub const fn is_success(&self) -> bool {
                 match &self {
-                    Status::Successful(_) => true,
-                    Status::Failed(_) => false,
+                    Self::Successful(_) => true,
+                    Self::Failed(_) => false,
                 }
             }
         }
     }
+
     pub mod child_workflow {
         tonic::include_proto!("coresdk.child_workflow");
     }
@@ -761,7 +761,7 @@ pub mod coresdk {
         T: AsRef<[u8]>,
     {
         fn from(v: T) -> Self {
-            Payloads {
+            Self {
                 payloads: vec![v.into()],
             }
         }

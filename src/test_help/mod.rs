@@ -211,8 +211,8 @@ where
     where
         WFT: IntoIterator<Item = PollWorkflowTaskQueueResponse>,
         ACT: IntoIterator<Item = PollActivityTaskQueueResponse>,
-        <WFT as IntoIterator>::IntoIter: std::marker::Send + 'static,
-        <ACT as IntoIterator>::IntoIter: std::marker::Send + 'static,
+        <WFT as IntoIterator>::IntoIter: Send + 'static,
+        <ACT as IntoIterator>::IntoIter: Send + 'static,
     {
         let mut mock_pollers = HashMap::new();
         let mock_poller = mock_poller_from_resps(wf_tasks);
@@ -240,7 +240,7 @@ pub fn mock_poller_from_resps<T, I>(tasks: I) -> BoxedPoller<T>
 where
     T: Send + Sync + 'static,
     I: IntoIterator<Item = T>,
-    <I as IntoIterator>::IntoIter: std::marker::Send + 'static,
+    <I as IntoIterator>::IntoIter: Send + 'static,
 {
     let mut mock_poller = mock_poller();
     let mut tasks = tasks.into_iter();

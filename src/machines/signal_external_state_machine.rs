@@ -400,7 +400,7 @@ mod tests {
             };
             let cmds = s.cancel().unwrap();
             assert_eq!(cmds.len(), 0);
-            assert_eq!(discriminant(&state), discriminant(&s.state))
+            assert_eq!(discriminant(&state), discriminant(&s.state));
         }
     }
 }
