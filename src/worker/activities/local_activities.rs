@@ -11,7 +11,7 @@ use temporal_sdk_core_protos::coresdk::{
 };
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    Semaphore,
+    Notify, Semaphore,
 };
 
 pub(crate) struct LocalInFlightActInfo {
@@ -42,6 +42,9 @@ pub(crate) struct LocalActivityManager {
     act_req_tx: UnboundedSender<NewLocalAct>,
     /// Activities that need to be executed by lang
     act_req_rx: tokio::sync::Mutex<UnboundedReceiver<NewLocalAct>>,
+    /// Wakes every time a complete is processed
+    complete_notify: Notify,
+
     dat: Mutex<LAMData>,
 }
 
@@ -58,6 +61,7 @@ impl LocalActivityManager {
             semaphore: Semaphore::new(max_concurrent),
             act_req_tx,
             act_req_rx: tokio::sync::Mutex::new(act_req_rx),
+            complete_notify: Notify::new(),
             dat: Mutex::new(LAMData {
                 outstanding_activity_tasks: Default::default(),
                 next_tt_num: 0,
@@ -92,7 +96,6 @@ impl LocalActivityManager {
                     workflow_execution: new_la.workflow_exec_info.clone(),
                 },
             );
-            warn!("Delivering new act");
 
             // Forget the permit. Permits are removed until a completion.
             permit.forget();
@@ -135,7 +138,14 @@ impl LocalActivityManager {
             .outstanding_activity_tasks
             .remove(task_token)?;
         self.semaphore.add_permits(1);
+        self.complete_notify.notify_one();
         Some(info)
+    }
+
+    pub(crate) async fn wait_all_finished(&self) {
+        while !self.dat.lock().outstanding_activity_tasks.is_empty() {
+            self.complete_notify.notified().await;
+        }
     }
 }
 

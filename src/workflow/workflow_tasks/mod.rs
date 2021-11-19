@@ -471,7 +471,6 @@ impl WorkflowTaskManager {
             let must_heartbeat = self
                 .wait_for_local_acts_or_heartbeat(run_id, wft_heartbeat_deadline)
                 .await;
-            warn!("Must heartbeat {}", must_heartbeat);
 
             // We only actually want to send commands back to the server if there are no more
             // pending activations and we are caught up on replay. We don't want to complete a wft

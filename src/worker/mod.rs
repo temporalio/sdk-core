@@ -1,6 +1,7 @@
 mod activities;
 mod config;
 mod dispatcher;
+mod wft_delivery;
 
 pub use config::{WorkerConfig, WorkerConfigBuilder};
 
@@ -19,7 +20,7 @@ use crate::{
     telemetry::metrics::{
         activity_poller, workflow_poller, workflow_sticky_poller, MetricsContext,
     },
-    worker::activities::LocalActivityManager,
+    worker::{activities::LocalActivityManager, wft_delivery::WFTSource},
     workflow::{
         workflow_tasks::{
             ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
@@ -58,10 +59,9 @@ pub struct Worker {
     /// Will be populated when this worker should poll on a sticky WFT queue
     sticky_name: Option<String>,
 
-    // TODO: Worth moving inside wf task mgr too?
     /// Buffers workflow task polling in the event we need to return a pending activation while
     /// a poll is ongoing. Sticky and nonsticky polling happens inside of it.
-    wf_task_poll_buffer: BoxedWFPoller,
+    wf_task_source: WFTSource,
     /// Workflow task management
     wft_manager: WorkflowTaskManager,
     /// Manages activity tasks for this worker/task queue
@@ -171,7 +171,7 @@ impl Worker {
         Self {
             server_gateway: sg.clone(),
             sticky_name: sticky_queue_name,
-            wf_task_poll_buffer: wft_poller,
+            wf_task_source: WFTSource::new(wft_poller),
             wft_manager: WorkflowTaskManager::new(pan_tx, cache_policy, metrics.clone()),
             at_task_mgr: act_poller.map(|ap| {
                 WorkerActivityTasks::new(
@@ -197,10 +197,19 @@ impl Worker {
     /// completed
     pub(crate) async fn shutdown(&self) {
         let _ = self.shutdown_sender.send(true);
+        // First, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.notify_shutdown();
         }
-        self.wf_task_poll_buffer.notify_shutdown();
+        self.wf_task_source.stop_pollers();
+        // Next we need to wait for all local activities to finish so no more workflow task
+        // heartbeats will be generated
+        self.local_act_mgr.wait_all_finished().await;
+        // Then we need to wait for any tasks generated as a result of completing WFTs, which
+        // heartbeating generates
+        self.wf_task_source
+            .wait_for_tasks_from_complete_to_drain()
+            .await;
         // Notify in case shutdown was requested while there were no more outstanding WFTs.
         // This is required because the only other place where we notify wfts_drained is on
         // activation completion and activation polling checks for wfts_drained.
@@ -217,7 +226,7 @@ impl Worker {
 
     /// Finish shutting down by consuming the background pollers and freeing all resources
     pub(crate) async fn finalize_shutdown(self) {
-        self.wf_task_poll_buffer.shutdown_box().await;
+        self.wf_task_source.shutdown().await;
         if let Some(b) = self.at_task_mgr {
             b.shutdown().await;
         }
@@ -444,8 +453,8 @@ impl Worker {
             .expect("outstanding workflow tasks semaphore not dropped");
 
         let res = self
-            .wf_task_poll_buffer
-            .poll()
+            .wf_task_source
+            .next_wft()
             .await
             .ok_or(PollWfError::ShutDown)??;
 
@@ -583,17 +592,22 @@ impl Worker {
                     commands,
                     query_responses,
                     sticky_attributes: None,
-                    return_new_workflow_task: false,
+                    return_new_workflow_task: force_new_wft,
                     force_create_new_workflow_task: force_new_wft,
                 };
                 let sticky_attrs = self.get_sticky_attrs();
                 completion.sticky_attributes = sticky_attrs;
 
                 self.handle_wft_reporting_errs(run_id, || async {
-                    self.server_gateway
+                    let maybe_wft = self
+                        .server_gateway
                         .complete_workflow_task(completion)
                         .instrument(span!(tracing::Level::DEBUG, "Complete WFT call"))
-                        .await
+                        .await?;
+                    if let Some(wft) = maybe_wft.workflow_task {
+                        self.wf_task_source.add_wft_from_completion(wft);
+                    }
+                    Ok(())
                 })
                 .await?;
                 Ok(true)
