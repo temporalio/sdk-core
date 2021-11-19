@@ -276,7 +276,7 @@ impl Worker {
         status: activity_result::Status,
     ) -> Result<(), CompleteActivityError> {
         if task_token.is_local_activity_task() {
-            if let Some(la_info) = self.local_act_mgr.complete(&task_token).await {
+            if let Some(la_info) = self.local_act_mgr.complete(&task_token) {
                 if let Err(e) = self
                     .wft_manager
                     .notify_of_local_result(

@@ -1,4 +1,5 @@
 use crate::task_token::TaskToken;
+use parking_lot::Mutex;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
@@ -10,7 +11,7 @@ use temporal_sdk_core_protos::coresdk::{
 };
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    Mutex, Semaphore,
+    Semaphore,
 };
 
 pub(crate) struct LocalInFlightActInfo {
@@ -39,13 +40,12 @@ pub(crate) struct LocalActivityManager {
     semaphore: Semaphore,
     /// Sink for new activity execution requests
     act_req_tx: UnboundedSender<NewLocalAct>,
-
+    /// Activities that need to be executed by lang
+    act_req_rx: tokio::sync::Mutex<UnboundedReceiver<NewLocalAct>>,
     dat: Mutex<LAMData>,
 }
 
 struct LAMData {
-    /// Activities that need to be executed by lang
-    act_req_rx: UnboundedReceiver<NewLocalAct>,
     /// Activities that have been issued to lang but not yet completed
     outstanding_activity_tasks: HashMap<TaskToken, LocalInFlightActInfo>,
     next_tt_num: u32,
@@ -57,8 +57,8 @@ impl LocalActivityManager {
         Self {
             semaphore: Semaphore::new(max_concurrent),
             act_req_tx,
+            act_req_rx: tokio::sync::Mutex::new(act_req_rx),
             dat: Mutex::new(LAMData {
-                act_req_rx,
                 outstanding_activity_tasks: Default::default(),
                 next_tt_num: 0,
             }),
@@ -77,12 +77,12 @@ impl LocalActivityManager {
     pub(crate) async fn next_pending(&self) -> Option<ActivityTask> {
         // Wait for a permit to take a task
         let permit = self.semaphore.acquire().await.expect("is never closed");
-        let mut dat = self.dat.lock().await;
         // It is important that there are no await points after receiving from the channel, as
         // it would mean dropping this future would cause us to drop the activity request.
-        if let Some(new_la) = dat.act_req_rx.recv().await {
+        if let Some(new_la) = self.act_req_rx.lock().await.recv().await {
             let sa = new_la.schedule_cmd;
 
+            let mut dat = self.dat.lock();
             dat.next_tt_num += 1;
             let tt = TaskToken::new_local_activity_token(dat.next_tt_num.to_le_bytes());
             dat.outstanding_activity_tasks.insert(
@@ -126,11 +126,10 @@ impl LocalActivityManager {
 
     /// Mark a local activity as having completed. Returns the information about the local activity
     /// so the appropriate workflow instance can be notified of completion.
-    pub(crate) async fn complete(&self, task_token: &TaskToken) -> Option<LocalInFlightActInfo> {
+    pub(crate) fn complete(&self, task_token: &TaskToken) -> Option<LocalInFlightActInfo> {
         let info = self
             .dat
             .lock()
-            .await
             .outstanding_activity_tasks
             .remove(task_token)?;
         self.semaphore.add_permits(1);
@@ -141,6 +140,7 @@ impl LocalActivityManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::task::yield_now;
 
     #[tokio::test]
     async fn max_concurrent_respected() {
@@ -163,8 +163,38 @@ mod tests {
                 _ = lam.next_pending() => {
                     panic!("Branch must not be selected")
                 }
-                _ = lam.complete(&next_tt) => {}
+                _ = async { lam.complete(&next_tt) } => {}
             }
         }
+    }
+
+    #[tokio::test]
+    async fn no_work_doesnt_deadlock_with_complete() {
+        let lam = LocalActivityManager::new(5);
+        lam.enqueue([NewLocalAct {
+            schedule_cmd: ScheduleActivity {
+                seq: 1,
+                activity_id: 1.to_string(),
+                ..Default::default()
+            },
+            workflow_type: "".to_string(),
+            workflow_exec_info: Default::default(),
+        }]);
+
+        let next = lam.next_pending().await.unwrap();
+        let tt = TaskToken(next.task_token);
+        tokio::select! {
+            biased;
+
+            _ = lam.next_pending() => {
+                panic!("Complete branch must win")
+            }
+            _ = async {
+                // Spin until the receive lock has been grabbed by the call to pending, to ensure
+                // it's advanced enough
+                while lam.act_req_rx.try_lock().is_ok() { yield_now().await; }
+                lam.complete(&tt).unwrap();
+            } => (),
+        };
     }
 }
