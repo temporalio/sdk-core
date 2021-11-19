@@ -23,7 +23,7 @@ use crate::{
 use crossbeam::queue::SegQueue;
 use futures::FutureExt;
 use parking_lot::Mutex;
-use std::{fmt::Debug, ops::DerefMut, time::Instant};
+use std::{fmt::Debug, time::Instant};
 use temporal_sdk_core_protos::coresdk::{
     workflow_activation::{
         create_query_activation, wf_activation_job, QueryWorkflow, WfActivation,
@@ -81,9 +81,9 @@ pub(crate) enum OutstandingActivation {
 }
 
 impl OutstandingActivation {
-    fn has_eviction(&self) -> bool {
+    const fn has_eviction(self) -> bool {
         matches!(
-            &self,
+            self,
             OutstandingActivation::Normal {
                 contains_eviction: true
             }
@@ -336,12 +336,7 @@ impl WorkflowTaskManager {
             )
             .expect("Workflow machines must exist, we just created/updated them");
 
-        if !next_activation.jobs.is_empty() {
-            if let Err(wme) = self.insert_outstanding_activation(&next_activation) {
-                return NewWfTaskOutcome::Evict(wme.into());
-            }
-            NewWfTaskOutcome::IssueActivation(next_activation)
-        } else {
+        if next_activation.jobs.is_empty() {
             let outstanding_las = self
                 .workflow_machines
                 .access_sync(&next_activation.run_id, |wfm| {
@@ -357,6 +352,11 @@ impl WorkflowTaskManager {
             } else {
                 NewWfTaskOutcome::Autocomplete
             }
+        } else {
+            if let Err(wme) = self.insert_outstanding_activation(&next_activation) {
+                return NewWfTaskOutcome::Evict(wme.into());
+            }
+            NewWfTaskOutcome::IssueActivation(next_activation)
         }
     }
 
@@ -474,7 +474,9 @@ impl WorkflowTaskManager {
                         },
                     })
                 }
-            } else if !query_responses.is_empty() {
+            } else if query_responses.is_empty() {
+                None
+            } else {
                 Some(ServerCommandsWithWorkflowInfo {
                     task_token,
                     action: ActivationAction::WftComplete {
@@ -484,8 +486,6 @@ impl WorkflowTaskManager {
                         force_new_wft: false,
                     },
                 })
-            } else {
-                None
             }
         };
         Ok(ret)
@@ -517,13 +517,9 @@ impl WorkflowTaskManager {
             FailedActivationOutcome::ReportLegacyQueryFailure(tt)
         } else {
             // Blow up any cached data associated with the workflow
-            let should_report =
-                if let Some(attempt) = self.request_eviction(run_id, "Activation failed by lang") {
-                    // Only report to server if the last task wasn't also a failure (avoid spam)
-                    attempt <= 1
-                } else {
-                    true
-                };
+            let should_report = self
+                .request_eviction(run_id, "Activation failed by lang")
+                .map_or(true, |attempt| attempt <= 1);
             if should_report {
                 FailedActivationOutcome::Report(tt)
             } else {
@@ -612,11 +608,10 @@ impl WorkflowTaskManager {
             if !just_evicted {
                 // Check if there was a legacy query which must be fulfilled, and if there is create
                 // a new pending activation for it.
-                if let Some(ref mut ot) = self
+                if let Some(ref mut ot) = &mut *self
                     .workflow_machines
                     .get_task_mut(run_id)
                     .expect("Machine must exist")
-                    .deref_mut()
                 {
                     if let Some(query) = ot.legacy_query.take() {
                         let na = create_query_activation(run_id.to_string(), [query]);
@@ -722,7 +717,7 @@ impl WorkflowTaskManager {
     fn activation_has_eviction(&self, run_id: &str) -> bool {
         self.workflow_machines
             .get_activation(run_id)
-            .map(|oa| oa.has_eviction())
+            .map(OutstandingActivation::has_eviction)
             .unwrap_or_default()
     }
 

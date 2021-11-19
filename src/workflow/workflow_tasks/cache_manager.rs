@@ -35,17 +35,13 @@ impl WorkflowCacheManager {
             // Blindly add a record into the cache, since it still has capacity.
             self.cache.put(run_id.to_owned(), ());
             None
-        } else if self.cache.cap() != 0 {
-            let maybe_got_evicted = self.cache.peek_lru().map(|r| r.0.to_owned());
-            let already_existed = self.cache.put(run_id.to_owned(), ()).is_some();
-            if !already_existed {
-                maybe_got_evicted
-            } else {
-                None
-            }
-        } else {
+        } else if self.cache.cap() == 0 {
             // Run id should be evicted right away as cache size is 0.
             Some(run_id.to_owned())
+        } else {
+            let maybe_got_evicted = self.cache.peek_lru().map(|r| r.0.clone());
+            let not_cached = self.cache.put(run_id.to_owned(), ()).is_none();
+            not_cached.then(|| maybe_got_evicted).flatten()
         };
 
         self.metrics.cache_size(self.cache.len() as u64);
@@ -75,7 +71,7 @@ mod tests {
         assert_matches!(wcm.insert("1"), None);
         assert_matches!(wcm.insert("2"), None);
         assert_matches!(wcm.insert("3"), Some(run_id) => {
-            assert_eq!(run_id, "1")
+            assert_eq!(run_id, "1");
         });
     }
 
@@ -88,7 +84,7 @@ mod tests {
         wcm.remove("1");
         assert_matches!(wcm.insert("2"), None);
         assert_matches!(wcm.insert("3"), Some(run_id) => {
-            assert_eq!(run_id, "2")
+            assert_eq!(run_id, "2");
         });
     }
 
@@ -110,7 +106,7 @@ mod tests {
         assert_matches!(wcm.insert("2"), None);
         wcm.touch("1");
         assert_matches!(wcm.insert("3"), Some(run_id) => {
-            assert_eq!(run_id, "2")
+            assert_eq!(run_id, "2");
         });
     }
 
@@ -123,7 +119,7 @@ mod tests {
         assert_matches!(wcm.insert("1"), None);
         assert_matches!(wcm.insert("2"), None);
         assert_matches!(wcm.insert("3"), Some(run_id) => {
-            assert_eq!(run_id, "1")
+            assert_eq!(run_id, "1");
         });
     }
 
@@ -133,10 +129,10 @@ mod tests {
             max_cached_workflows: 0,
         });
         assert_matches!(wcm.insert("1"), Some(run_id) => {
-            assert_eq!(run_id, "1")
+            assert_eq!(run_id, "1");
         });
         assert_matches!(wcm.insert("2"), Some(run_id) => {
-            assert_eq!(run_id, "2")
+            assert_eq!(run_id, "2");
         });
     }
 
@@ -144,10 +140,10 @@ mod tests {
     fn non_sticky_always_pending_eviction() {
         let mut wcm = WorkflowCacheManager::new_test(WorkflowCachingPolicy::NonSticky);
         assert_matches!(wcm.insert("1"), Some(run_id) => {
-            assert_eq!(run_id, "1")
+            assert_eq!(run_id, "1");
         });
         assert_matches!(wcm.insert("2"), Some(run_id) => {
-            assert_eq!(run_id, "2")
+            assert_eq!(run_id, "2");
         });
     }
 }

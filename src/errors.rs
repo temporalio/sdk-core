@@ -18,7 +18,7 @@ pub(crate) struct WorkflowUpdateError {
 
 impl From<WorkflowMissingError> for WorkflowUpdateError {
     fn from(wme: WorkflowMissingError) -> Self {
-        WorkflowUpdateError {
+        Self {
             source: WFMachinesError::Fatal("Workflow machines missing".to_string()),
             run_id: wme.run_id,
             task_token: None,
@@ -72,8 +72,8 @@ pub enum PollWfError {
 impl From<WorkerLookupErr> for PollWfError {
     fn from(e: WorkerLookupErr) -> Self {
         match e {
-            WorkerLookupErr::Shutdown(_) => PollWfError::ShutDown,
-            WorkerLookupErr::NoWorker(s) => PollWfError::NoWorkerForQueue(s),
+            WorkerLookupErr::Shutdown(_) => Self::ShutDown,
+            WorkerLookupErr::NoWorker(s) => Self::NoWorkerForQueue(s),
         }
     }
 }
@@ -97,8 +97,8 @@ pub enum PollActivityError {
 impl From<WorkerLookupErr> for PollActivityError {
     fn from(e: WorkerLookupErr) -> Self {
         match e {
-            WorkerLookupErr::Shutdown(_) => PollActivityError::ShutDown,
-            WorkerLookupErr::NoWorker(s) => PollActivityError::NoWorkerForQueue(s),
+            WorkerLookupErr::Shutdown(_) => Self::ShutDown,
+            WorkerLookupErr::NoWorker(s) => Self::NoWorkerForQueue(s),
         }
     }
 }
@@ -127,8 +127,9 @@ pub enum CompleteWfError {
 impl From<WorkerLookupErr> for CompleteWfError {
     fn from(e: WorkerLookupErr) -> Self {
         match e {
-            WorkerLookupErr::Shutdown(s) => CompleteWfError::NoWorkerForQueue(s),
-            WorkerLookupErr::NoWorker(s) => CompleteWfError::NoWorkerForQueue(s),
+            WorkerLookupErr::Shutdown(s) | WorkerLookupErr::NoWorker(s) => {
+                Self::NoWorkerForQueue(s)
+            }
         }
     }
 }
@@ -156,8 +157,9 @@ pub enum CompleteActivityError {
 impl From<WorkerLookupErr> for CompleteActivityError {
     fn from(e: WorkerLookupErr) -> Self {
         match e {
-            WorkerLookupErr::Shutdown(s) => CompleteActivityError::NoWorkerForQueue(s),
-            WorkerLookupErr::NoWorker(s) => CompleteActivityError::NoWorkerForQueue(s),
+            WorkerLookupErr::Shutdown(s) | WorkerLookupErr::NoWorker(s) => {
+                Self::NoWorkerForQueue(s)
+            }
         }
     }
 }

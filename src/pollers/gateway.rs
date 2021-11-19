@@ -165,7 +165,7 @@ impl Default for RetryConfig {
 }
 
 impl RetryConfig {
-    pub(crate) fn poll_retry_policy() -> Self {
+    pub(crate) const fn poll_retry_policy() -> Self {
         Self {
             initial_interval: Duration::from_millis(200),
             randomization_factor: 0.2,
@@ -179,7 +179,7 @@ impl RetryConfig {
 
 impl From<RetryConfig> for ExponentialBackoff {
     fn from(c: RetryConfig) -> Self {
-        ExponentialBackoff {
+        Self {
             current_interval: c.initial_interval,
             initial_interval: c.initial_interval,
             randomization_factor: c.randomization_factor,
@@ -269,7 +269,7 @@ impl Interceptor for ServiceCallInterceptor {
                 .parse()
                 .unwrap_or_else(|_| MetadataValue::from_static("")),
         );
-        for (k, v) in self.opts.static_headers.iter() {
+        for (k, v) in &self.opts.static_headers {
             if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), MetadataValue::from_str(v)) {
                 metadata.insert(k, v);
             }

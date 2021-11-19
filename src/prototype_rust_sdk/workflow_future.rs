@@ -170,7 +170,7 @@ impl WorkflowFuture {
                     self.unblock(UnblockEvent::Activity(
                         seq,
                         Box::new(result.context("Activity must have result")?),
-                    ))?
+                    ))?;
                 }
                 Variant::ResolveChildWorkflowExecutionStart(
                     ResolveChildWorkflowExecutionStart { seq, status },
@@ -185,7 +185,7 @@ impl WorkflowFuture {
                     seq,
                     Box::new(result.context("Child Workflow execution must have a result")?),
                 ))?,
-                Variant::UpdateRandomSeed(_) => {}
+                Variant::UpdateRandomSeed(_) => (),
                 Variant::QueryWorkflow(_) => {
                     todo!()
                 }
@@ -210,10 +210,10 @@ impl WorkflowFuture {
                     self.ctx_shared.write().changes.insert(patch_id, true);
                 }
                 Variant::ResolveSignalExternalWorkflow(attrs) => {
-                    self.unblock(UnblockEvent::SignalExternal(attrs.seq, attrs.failure))?
+                    self.unblock(UnblockEvent::SignalExternal(attrs.seq, attrs.failure))?;
                 }
                 Variant::ResolveRequestCancelExternalWorkflow(attrs) => {
-                    self.unblock(UnblockEvent::CancelExternal(attrs.seq, attrs.failure))?
+                    self.unblock(UnblockEvent::CancelExternal(attrs.seq, attrs.failure))?;
                 }
 
                 Variant::RemoveFromCache(_) => {

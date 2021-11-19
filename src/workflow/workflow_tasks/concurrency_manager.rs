@@ -200,11 +200,7 @@ impl WorkflowConcurrencyManager {
     pub fn delete_activation(&self, run_id: &str) -> Option<OutstandingActivation> {
         let mut writelock = self.runs.write();
         let machine_ref = writelock.get_mut(run_id);
-        if let Some(run) = machine_ref {
-            run.activation.take()
-        } else {
-            None
-        }
+        machine_ref.and_then(|run| run.activation.take())
     }
 
     pub fn exists(&self, run_id: &str) -> bool {
@@ -304,14 +300,14 @@ impl WorkflowConcurrencyManager {
     /// Remove the workflow with the provided run id from management
     pub fn evict(&self, run_id: &str) -> Option<ValidPollWFTQResponse> {
         let val = self.runs.write().remove(run_id);
-        val.map(|v| v.buffered_resp).flatten()
+        val.and_then(|v| v.buffered_resp)
     }
 
     /// Clear and return any buffered polling response for this run ID
     pub fn take_buffered_poll(&self, run_id: &str) -> Option<ValidPollWFTQResponse> {
         let mut writelock = self.runs.write();
         let val = writelock.get_mut(run_id);
-        val.map(|v| v.buffered_resp.take()).flatten()
+        val.and_then(|v| v.buffered_resp.take())
     }
 
     pub fn outstanding_wft(&self) -> usize {
@@ -345,6 +341,6 @@ mod tests {
             )
             .await;
         // Should whine that the machines have nothing to do (history empty)
-        assert_matches!(res.unwrap_err(), WFMachinesError::Fatal { .. })
+        assert_matches!(res.unwrap_err(), WFMachinesError::Fatal { .. });
     }
 }

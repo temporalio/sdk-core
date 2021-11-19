@@ -202,7 +202,7 @@ pub struct CoreInitOptions {
 
 /// Initializes an instance of the core sdk and establishes a connection to the temporal server.
 ///
-/// Note: Also creates a tokio runtime that will be used for all client-server interactions.  
+/// Note: Also creates a tokio runtime that will be used for all client-server interactions.
 ///
 /// # Panics
 /// * Will panic if called from within an async context, as it will construct a runtime and you
@@ -272,7 +272,7 @@ impl Core for CoreSDK {
         }
     }
 
-    #[instrument(level = "debug", skip(self, completion), 
+    #[instrument(level = "debug", skip(self, completion),
       fields(completion=%&completion, run_id=%completion.run_id))]
     async fn complete_workflow_activation(
         &self,

@@ -92,8 +92,8 @@ async fn shutdown_interrupts_both_polls() {
         WorkerConfigBuilder::default()
             .task_queue(TEST_Q)
             // Need only 1 concurrent pollers for mock expectations to work here
-            .max_concurrent_wft_polls(1usize)
-            .max_concurrent_at_polls(1usize)
+            .max_concurrent_wft_polls(1_usize)
+            .max_concurrent_at_polls(1_usize)
             .build()
             .unwrap(),
     )

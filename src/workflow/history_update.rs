@@ -324,7 +324,7 @@ mod tests {
                 .take_next_wft_sequence(last_started_id)
                 .await
                 .unwrap();
-            for e in seq.iter() {
+            for e in &seq {
                 last_event_id += 1;
                 assert_eq!(e.event_id, last_event_id);
             }

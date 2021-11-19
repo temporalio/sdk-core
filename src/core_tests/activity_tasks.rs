@@ -76,7 +76,7 @@ async fn max_activities_respected() {
     core.register_worker(
         WorkerConfigBuilder::default()
             .task_queue(TEST_Q)
-            .max_outstanding_activities(2usize)
+            .max_outstanding_activities(2_usize)
             .build()
             .unwrap(),
     )
@@ -163,7 +163,7 @@ async fn heartbeats_report_cancels_only_once() {
     core.record_activity_heartbeat(ActivityHeartbeat {
         task_token: act.task_token.clone(),
         task_queue: TEST_Q.to_string(),
-        details: vec![vec![1u8, 2, 3].into()],
+        details: vec![vec![1_u8, 2, 3].into()],
     });
     // We have to wait a beat for the heartbeat to be processed
     sleep(Duration::from_millis(10)).await;
@@ -183,7 +183,7 @@ async fn heartbeats_report_cancels_only_once() {
     core.record_activity_heartbeat(ActivityHeartbeat {
         task_token: act.task_token,
         task_queue: TEST_Q.to_string(),
-        details: vec![vec![1u8, 2, 3].into()],
+        details: vec![vec![1_u8, 2, 3].into()],
     });
     sleep(Duration::from_millis(10)).await;
     // Since cancels always come before new tasks, if we get a new non-cancel task, we did not
@@ -251,7 +251,7 @@ async fn activity_cancel_interrupts_poll() {
             core.record_activity_heartbeat(ActivityHeartbeat {
                 task_token: act.task_token,
                 task_queue: TEST_Q.to_string(),
-                details: vec![vec![1u8, 2, 3].into()],
+                details: vec![vec![1_u8, 2, 3].into()],
             });
             last_finisher.store(1, Ordering::SeqCst);
         },
@@ -358,7 +358,7 @@ async fn many_concurrent_heartbeat_cancels() {
             .task_queue(TEST_Q)
             .max_outstanding_activities(CONCURRENCY_NUM)
             // Only 1 poll at a time to avoid over-polling and running out of responses
-            .max_concurrent_at_polls(1usize)
+            .max_concurrent_at_polls(1_usize)
             .build()
             .unwrap(),
     )

@@ -107,14 +107,14 @@ impl HistoryInfo {
     }
 
     /// Non-test code should *not* rely on just counting workflow tasks b/c of pagination
-    pub(crate) fn wf_task_count(&self) -> usize {
+    pub(crate) const fn wf_task_count(&self) -> usize {
         self.wf_task_count
     }
 }
 
 impl From<HistoryInfo> for HistoryUpdate {
     fn from(v: HistoryInfo) -> Self {
-        HistoryUpdate::new_from_events(v.events, v.previous_started_event_id)
+        Self::new_from_events(v.events, v.previous_started_event_id)
     }
 }
 

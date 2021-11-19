@@ -191,7 +191,9 @@ impl WorkerActivityTasks {
             act_metrics.act_execution_latency(act_info.base.start_time.elapsed());
 
             // No need to report activities which we already know the server doesn't care about
-            let should_remove = if !act_info.known_not_found {
+            let should_remove = if act_info.known_not_found {
+                true
+            } else {
                 drop(act_info); // TODO: Get rid of dashmap. If we hold ref across await, bad stuff.
                 let maybe_net_err = match status {
                     activity_result::Status::WillCompleteAsync(_) => None,
@@ -207,19 +209,17 @@ impl WorkerActivityTasks {
                             .err()
                     }
                     activity_result::Status::Cancelled(ar::Cancellation { failure }) => {
-                        let details = match failure {
-                            Some(Failure {
-                                failure_info:
-                                    Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
-                                        details,
-                                    })),
-                                ..
-                            }) => details,
-                            _ => {
-                                warn!(task_token = ? task_token,
-                                    "Expected activity cancelled status with CanceledFailureInfo");
-                                None
-                            }
+                        let details = if let Some(Failure {
+                            failure_info:
+                                Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo { details })),
+                            ..
+                        }) = failure
+                        {
+                            details
+                        } else {
+                            warn!(task_token = ? task_token,
+                                "Expected activity cancelled status with CanceledFailureInfo");
+                            None
                         };
                         gateway
                             .cancel_activity_task(task_token.clone(), details.map(Into::into))
@@ -237,8 +237,6 @@ impl WorkerActivityTasks {
                     Some(err) => return Err(err.into()),
                     None => true,
                 }
-            } else {
-                true
             };
 
             if should_remove

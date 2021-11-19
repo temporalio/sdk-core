@@ -62,15 +62,14 @@ impl PendingActivations {
         let mut inner = self.inner.write();
         let mut key_queue = inner.queue.iter().copied();
         let maybe_key = key_queue.position(|k| {
-            if let Some(activation) = inner.activations.get(k) {
-                predicate(&activation.run_id)
-            } else {
-                false
-            }
+            inner
+                .activations
+                .get(k)
+                .map_or(false, |activation| predicate(&activation.run_id))
         });
 
         let maybe_key = maybe_key.map(|pos| inner.queue.remove(pos).unwrap());
-        if let Some(key) = maybe_key {
+        maybe_key.and_then(|key| {
             if let Some(pa) = inner.activations.remove(key) {
                 inner.by_run_id.remove(&pa.run_id);
                 Some(pa)
@@ -81,9 +80,7 @@ impl PendingActivations {
                 drop(inner); // Will deadlock when we recurse w/o this
                 self.pop_first_matching(predicate)
             }
-        } else {
-            None
-        }
+        })
     }
 
     #[cfg(test)]

@@ -65,7 +65,7 @@ impl Created {
 
 impl From<ContinueAsNewWorkflowCommandCreated> for ContinueAsNewWorkflowCommandRecorded {
     fn from(_: ContinueAsNewWorkflowCommandCreated) -> Self {
-        Default::default()
+        Self::default()
     }
 }
 

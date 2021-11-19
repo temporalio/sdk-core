@@ -33,7 +33,7 @@ impl DrivenWorkflow {
     /// Start the workflow
     pub fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes) {
         debug!(run_id = %attribs.original_execution_run_id, "Driven WF start");
-        self.started_attrs = Some(attribs)
+        self.started_attrs = Some(attribs);
     }
 
     /// Enqueue a new job to be sent to the driven workflow
@@ -56,12 +56,12 @@ impl DrivenWorkflow {
 
     /// Signal the workflow
     pub fn signal(&mut self, signal: SignalWorkflow) {
-        self.send_job(wf_activation_job::Variant::SignalWorkflow(signal))
+        self.send_job(wf_activation_job::Variant::SignalWorkflow(signal));
     }
 
     /// Cancel the workflow
     pub fn cancel(&mut self, attribs: CancelWorkflow) {
-        self.send_job(wf_activation_job::Variant::CancelWorkflow(attribs))
+        self.send_job(wf_activation_job::Variant::CancelWorkflow(attribs));
     }
 }
 
