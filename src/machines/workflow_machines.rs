@@ -459,7 +459,13 @@ impl WorkflowMachines {
     pub(crate) fn get_commands(&self) -> Vec<ProtoCommand> {
         self.commands
             .iter()
-            .filter_map(|c| (!self.machine(c.machine).is_final_state()).then(|| c.command.clone()))
+            .filter_map(|c| {
+                if !self.machine(c.machine).is_final_state() {
+                    Some(c.command.clone())
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
