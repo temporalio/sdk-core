@@ -500,9 +500,9 @@ impl Worker {
                 self.return_workflow_task_permit();
                 None
             }
-            NewWfTaskOutcome::Autocomplete => {
+            NewWfTaskOutcome::Autocomplete | NewWfTaskOutcome::LocalActsOutstanding => {
                 debug!(workflow_execution=?we,
-                       "No work for lang to perform after polling server. Sending autocomplete.");
+                       "No new work for lang to perform after polling server");
                 self.complete_workflow_activation(WfActivationCompletion {
                     task_queue: self.config.task_queue.clone(),
                     run_id: we.run_id,
@@ -536,7 +536,6 @@ impl Worker {
                 );
                 None
             }
-            NewWfTaskOutcome::DoNothing => None,
         })
     }
 
@@ -561,19 +560,20 @@ impl Worker {
                 completion: None,
             })?;
 
-        match self.wft_manager.successful_activation(run_id, cmds).await {
+        match self
+            .wft_manager
+            .successful_activation(run_id, cmds, |acts| self.local_act_mgr.enqueue(acts))
+            .await
+        {
             Ok(Some(ServerCommandsWithWorkflowInfo {
                 task_token,
                 action:
                     ActivationAction::WftComplete {
                         commands,
                         query_responses,
-                        local_activities,
                         force_new_wft,
                     },
             })) => {
-                self.local_act_mgr.enqueue(local_activities);
-
                 debug!("Sending commands to server: {:?}", &commands);
                 if !query_responses.is_empty() {
                     debug!("Sending query responses to server: {:?}", &query_responses);
@@ -588,6 +588,7 @@ impl Worker {
                 };
                 let sticky_attrs = self.get_sticky_attrs();
                 completion.sticky_attributes = sticky_attrs;
+
                 self.handle_wft_reporting_errs(run_id, || async {
                     self.server_gateway
                         .complete_workflow_task(completion)
@@ -596,13 +597,6 @@ impl Worker {
                 })
                 .await?;
                 Ok(true)
-            }
-            Ok(Some(ServerCommandsWithWorkflowInfo {
-                action: ActivationAction::LocalActivitiesDelayWft { local_activities },
-                ..
-            })) => {
-                self.local_act_mgr.enqueue(local_activities);
-                Ok(false)
             }
             Ok(Some(ServerCommandsWithWorkflowInfo {
                 task_token,

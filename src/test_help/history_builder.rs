@@ -7,7 +7,7 @@ use crate::{
     workflow::HistoryUpdate,
 };
 use anyhow::bail;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use temporal_sdk_core_protos::{
     coresdk::{
         common::{
@@ -425,16 +425,20 @@ pub static DEFAULT_WORKFLOW_TYPE: &str = "not_specified";
 
 fn default_attribs(et: EventType) -> Result<Attributes> {
     Ok(match et {
-        EventType::WorkflowExecutionStarted => WorkflowExecutionStartedEventAttributes {
-            original_execution_run_id: Uuid::new_v4().to_string(),
-            workflow_type: Some(WorkflowType {
-                name: DEFAULT_WORKFLOW_TYPE.to_owned(),
-            }),
-            ..Default::default()
-        }
-        .into(),
+        EventType::WorkflowExecutionStarted => default_wes_attribs().into(),
         EventType::WorkflowTaskScheduled => WorkflowTaskScheduledEventAttributes::default().into(),
         EventType::TimerStarted => TimerStartedEventAttributes::default().into(),
         _ => bail!("Don't know how to construct default attrs for {:?}", et),
     })
+}
+
+pub(crate) fn default_wes_attribs() -> WorkflowExecutionStartedEventAttributes {
+    WorkflowExecutionStartedEventAttributes {
+        original_execution_run_id: Uuid::new_v4().to_string(),
+        workflow_type: Some(WorkflowType {
+            name: DEFAULT_WORKFLOW_TYPE.to_owned(),
+        }),
+        workflow_task_timeout: Some(Duration::from_secs(5).into()),
+        ..Default::default()
+    }
 }

@@ -88,6 +88,26 @@ async fn local_act_then_timer_then_wait_result() {
     starter.shutdown().await;
 }
 
+#[tokio::test]
+async fn long_running_local_act_with_timer() {
+    let wf_name = "long_running_local_act_with_timer";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.wft_timeout(Duration::from_secs(1));
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
+    worker.register_activity("echo_activity", |str: String| async {
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        str
+    });
+
+    worker
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    starter.shutdown().await;
+}
+
 pub async fn local_act_fanout_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     let las: Vec<_> = (1..=50)
         .map(|i| {

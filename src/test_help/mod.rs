@@ -1,6 +1,6 @@
 pub mod canned_histories;
+pub mod history_builder;
 
-mod history_builder;
 mod history_info;
 
 pub(crate) use history_builder::{TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE};

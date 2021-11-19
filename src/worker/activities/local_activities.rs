@@ -92,6 +92,7 @@ impl LocalActivityManager {
                     workflow_execution: new_la.workflow_exec_info.clone(),
                 },
             );
+            warn!("Delivering new act");
 
             // Forget the permit. Permits are removed until a completion.
             permit.forget();
@@ -127,6 +128,7 @@ impl LocalActivityManager {
     /// Mark a local activity as having completed. Returns the information about the local activity
     /// so the appropriate workflow instance can be notified of completion.
     pub(crate) fn complete(&self, task_token: &TaskToken) -> Option<LocalInFlightActInfo> {
+        warn!("Local act completing");
         let info = self
             .dat
             .lock()

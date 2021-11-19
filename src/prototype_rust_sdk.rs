@@ -187,7 +187,6 @@ impl TestRustWorker {
                         )
                         .await?;
                         if wf_half.incomplete_workflows.load(Ordering::SeqCst) == 0 {
-                            warn!("Workflows done!");
                             // Die rebel scum - evict all workflows (which are complete now),
                             // and turn off activity polling.
                             let _ = shutdown_tx.send(true);

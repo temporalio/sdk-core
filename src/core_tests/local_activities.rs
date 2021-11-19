@@ -2,8 +2,8 @@ use crate::{
     pollers::MockServerGatewayApis,
     prototype_rust_sdk::{LocalActivityOptions, TestRustWorker, WfContext, WorkflowResult},
     test_help::{
-        build_mock_pollers, mock_core, MockPollCfg, ResponseType, TestHistoryBuilder,
-        DEFAULT_WORKFLOW_TYPE, TEST_Q,
+        build_mock_pollers, history_builder::default_wes_attribs, mock_core, MockPollCfg,
+        ResponseType, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE, TEST_Q,
     },
 };
 use futures::future::join_all;
@@ -106,6 +106,57 @@ async fn local_act_many_concurrent() {
 
     worker.register_wf(DEFAULT_WORKFLOW_TYPE.to_owned(), local_act_fanout_wf);
     worker.register_activity("echo", |str: String| async move { str });
+    worker
+        .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+/// Verifies that local activities which take more than a workflow task timeout will cause
+/// us to issue additional (empty) WFT completions with the force flag on, thus preventing timeout
+/// of WFT while the local activity continues to execute.
+#[tokio::test]
+async fn local_act_heartbeat() {
+    let mut t = TestHistoryBuilder::default();
+    let wft_timeout = Duration::from_millis(200);
+    let mut wes_short_wft_timeout = default_wes_attribs();
+    wes_short_wft_timeout.workflow_task_timeout = Some(wft_timeout.clone().into());
+    t.add(
+        EventType::WorkflowExecutionStarted,
+        wes_short_wft_timeout.into(),
+    );
+    t.add_full_wf_task();
+    t.add_full_wf_task();
+    t.add_full_wf_task();
+    t.add_local_activity_result_marker(1, "1", b"echo".into());
+    t.add_workflow_execution_completed();
+
+    let wf_id = "fakeid";
+    let mock = MockServerGatewayApis::new();
+    let mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 3], mock);
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 1);
+    let core = mock_core(mock);
+    let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
+
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        |mut ctx: WfContext| async move {
+            ctx.local_activity(LocalActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi".as_json_payload().expect("serializes fine"),
+                ..Default::default()
+            })
+            .await;
+            Ok(().into())
+        },
+    );
+    worker.register_activity("echo", move |str: String| async move {
+        // Take slightly more than two workflow tasks
+        tokio::time::sleep(wft_timeout.mul_f32(2.2)).await;
+        str
+    });
     worker
         .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
         .await
