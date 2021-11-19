@@ -112,7 +112,7 @@ where
     pub fn unwrap(self) -> Vec<M::Command> {
         match self {
             Self::Ok { commands } => commands,
-            _ => panic!("Transition was not successful!"),
+            Self::InvalidTransition => panic!("Transition was not successful!"),
         }
     }
 }

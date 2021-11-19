@@ -360,16 +360,14 @@ impl AggregatorSelector for SDKAggSelector {
         if *descriptor.instrument_kind() == InstrumentKind::ValueRecorder {
             // Some recorders are just gauges
             match descriptor.name() {
-                STICKY_CACHE_SIZE_NAME => return Some(Arc::new(last_value())),
-                NUM_POLLERS_NAME => return Some(Arc::new(last_value())),
+                STICKY_CACHE_SIZE_NAME | NUM_POLLERS_NAME => return Some(Arc::new(last_value())),
                 _ => (),
             }
 
             // Other recorders will select their appropriate buckets
             let buckets = match descriptor.name() {
                 WF_E2E_LATENCY_NAME => WF_LATENCY_MS_BUCKETS,
-                WF_TASK_EXECUTION_LATENCY_NAME => WF_TASK_MS_BUCKETS,
-                WF_TASK_REPLAY_LATENCY_NAME => WF_TASK_MS_BUCKETS,
+                WF_TASK_EXECUTION_LATENCY_NAME | WF_TASK_REPLAY_LATENCY_NAME => WF_TASK_MS_BUCKETS,
                 WF_TASK_SCHED_TO_START_LATENCY_NAME | ACT_SCHED_TO_START_LATENCY_NAME => {
                     TASK_SCHED_TO_START_MS_BUCKETS
                 }

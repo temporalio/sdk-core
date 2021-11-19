@@ -77,38 +77,34 @@ impl TryFrom<WorkflowCommand> for WFCommand {
 
     fn try_from(c: WorkflowCommand) -> Result<Self, Self::Error> {
         match c.variant.ok_or(EmptyWorkflowCommandErr)? {
-            workflow_command::Variant::StartTimer(s) => Ok(WFCommand::AddTimer(s)),
-            workflow_command::Variant::CancelTimer(s) => Ok(WFCommand::CancelTimer(s)),
-            workflow_command::Variant::ScheduleActivity(s) => Ok(WFCommand::AddActivity(s)),
+            workflow_command::Variant::StartTimer(s) => Ok(Self::AddTimer(s)),
+            workflow_command::Variant::CancelTimer(s) => Ok(Self::CancelTimer(s)),
+            workflow_command::Variant::ScheduleActivity(s) => Ok(Self::AddActivity(s)),
             workflow_command::Variant::RequestCancelActivity(s) => {
-                Ok(WFCommand::RequestCancelActivity(s))
+                Ok(Self::RequestCancelActivity(s))
             }
             workflow_command::Variant::CompleteWorkflowExecution(c) => {
-                Ok(WFCommand::CompleteWorkflow(c))
+                Ok(Self::CompleteWorkflow(c))
             }
-            workflow_command::Variant::FailWorkflowExecution(s) => Ok(WFCommand::FailWorkflow(s)),
-            workflow_command::Variant::RespondToQuery(s) => Ok(WFCommand::QueryResponse(s)),
+            workflow_command::Variant::FailWorkflowExecution(s) => Ok(Self::FailWorkflow(s)),
+            workflow_command::Variant::RespondToQuery(s) => Ok(Self::QueryResponse(s)),
             workflow_command::Variant::ContinueAsNewWorkflowExecution(s) => {
-                Ok(WFCommand::ContinueAsNew(s))
+                Ok(Self::ContinueAsNew(s))
             }
-            workflow_command::Variant::CancelWorkflowExecution(s) => {
-                Ok(WFCommand::CancelWorkflow(s))
-            }
-            workflow_command::Variant::SetPatchMarker(s) => Ok(WFCommand::SetPatchMarker(s)),
+            workflow_command::Variant::CancelWorkflowExecution(s) => Ok(Self::CancelWorkflow(s)),
+            workflow_command::Variant::SetPatchMarker(s) => Ok(Self::SetPatchMarker(s)),
             workflow_command::Variant::StartChildWorkflowExecution(s) => {
-                Ok(WFCommand::AddChildWorkflow(s))
+                Ok(Self::AddChildWorkflow(s))
             }
             workflow_command::Variant::RequestCancelExternalWorkflowExecution(s) => {
-                Ok(WFCommand::RequestCancelExternalWorkflow(s))
+                Ok(Self::RequestCancelExternalWorkflow(s))
             }
             workflow_command::Variant::SignalExternalWorkflowExecution(s) => {
-                Ok(WFCommand::SignalExternalWorkflow(s))
+                Ok(Self::SignalExternalWorkflow(s))
             }
-            workflow_command::Variant::CancelSignalWorkflow(s) => {
-                Ok(WFCommand::CancelSignalWorkflow(s))
-            }
+            workflow_command::Variant::CancelSignalWorkflow(s) => Ok(Self::CancelSignalWorkflow(s)),
             workflow_command::Variant::CancelUnstartedChildWorkflowExecution(s) => {
-                Ok(WFCommand::CancelUnstartedChild(s))
+                Ok(Self::CancelUnstartedChild(s))
             }
         }
     }
@@ -170,9 +166,7 @@ where
         + Clone
         + Send
         + 'static,
-    <SM as StateMachine>::Event: TryFrom<HistoryEvent>,
-    <SM as StateMachine>::Event: TryFrom<CommandType>,
-    <SM as StateMachine>::Event: Display,
+    <SM as StateMachine>::Event: TryFrom<HistoryEvent> + TryFrom<CommandType> + Display,
     WFMachinesError: From<<<SM as StateMachine>::Event as TryFrom<HistoryEvent>>::Error>,
     <SM as StateMachine>::Command: Debug + Display,
     <SM as StateMachine>::State: Display,

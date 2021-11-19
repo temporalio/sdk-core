@@ -62,7 +62,7 @@ impl WorkflowManager {
     }
 
     #[cfg(test)]
-    pub fn new_from_machines(workflow_machines: WorkflowMachines) -> Self {
+    pub const fn new_from_machines(workflow_machines: WorkflowMachines) -> Self {
         Self {
             machines: workflow_machines,
             command_sink: None,

@@ -79,7 +79,7 @@ mod machine_coverage_report {
         workflow_task_state_machine::WorkflowTaskMachine,
     };
     use rustfsm::StateMachine;
-    use std::{fs::File, io::Write, ops::Deref};
+    use std::{fs::File, io::Write};
 
     // This "test" needs to exist so that we have a way to join the spawned thread. Otherwise
     // it'll just get abandoned.
@@ -89,7 +89,7 @@ mod machine_coverage_report {
     #[ignore]
     fn reporter() {
         // Make sure thread handle exists
-        let _ = COVERAGE_SENDER.deref();
+        let _ = &*COVERAGE_SENDER;
         // Join it
         THREAD_HANDLE
             .lock()
@@ -124,7 +124,7 @@ mod machine_coverage_report {
                 m @ "WorkflowTaskMachine" => cover_transitions(m, &mut wf_task, coverage),
                 m @ "FailWorkflowMachine" => cover_transitions(m, &mut fail_wf, coverage),
                 m @ "ContinueAsNewWorkflowMachine" => {
-                    cover_transitions(m, &mut cont_as_new, coverage)
+                    cover_transitions(m, &mut cont_as_new, coverage);
                 }
                 m @ "CancelWorkflowMachine" => cover_transitions(m, &mut cancel_wf, coverage),
                 m @ "PatchMachine" => cover_transitions(m, &mut version, coverage),

@@ -99,7 +99,7 @@ impl WfContext {
         self.am_cancelled
             .changed()
             .await
-            .expect("Cancelled send half not dropped")
+            .expect("Cancelled send half not dropped");
     }
 
     /// Request to create a timer
@@ -206,7 +206,7 @@ impl WfContext {
 
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
     pub fn force_task_fail(&self, with: anyhow::Error) {
-        self.send(with.into())
+        self.send(with.into());
     }
 
     /// Request the cancellation of an external workflow. May resolve as a failure if the workflow
@@ -262,7 +262,7 @@ impl WfContext {
 
     /// Cancel any cancellable operation by ID
     fn cancel(&mut self, cancellable_id: CancellableID) {
-        self.send(RustWfCmd::Cancel(cancellable_id))
+        self.send(RustWfCmd::Cancel(cancellable_id));
     }
 
     fn send(&self, c: RustWfCmd) {

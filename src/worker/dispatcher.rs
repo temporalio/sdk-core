@@ -6,7 +6,7 @@ use crate::{
 };
 use arc_swap::ArcSwap;
 use futures::future::join_all;
-use std::{collections::HashMap, ops::Deref, sync::Arc};
+use std::{collections::HashMap, ops::Deref, option::Option, sync::Arc};
 use tokio::sync::Notify;
 
 /// Allows access to workers by task queue name
@@ -40,7 +40,7 @@ impl WorkerDispatcher {
             .workers
             .load()
             .get(&tq)
-            .map(|wo| wo.is_some())
+            .map(Option::is_some)
             .unwrap_or_default()
         {
             return Err(WorkerRegistrationError::WorkerAlreadyRegisteredForQueue(tq));
@@ -77,7 +77,7 @@ impl WorkerDispatcher {
             self.workers.rcu(|map| {
                 let mut map = HashMap::clone(map);
                 if maybe_worker.is_none() {
-                    maybe_worker = map.get_mut(task_queue).and_then(|o| o.take());
+                    maybe_worker = map.get_mut(task_queue).and_then(Option::take);
                 }
                 map
             });
@@ -149,7 +149,7 @@ impl Deref for WorkerRefCt {
     type Target = Worker;
 
     fn deref(&self) -> &Self::Target {
-        self.inner.as_ref().expect("Must exist").deref()
+        self.inner.as_deref().expect("Must exist")
     }
 }
 
@@ -161,7 +161,7 @@ impl Drop for WorkerRefCt {
             Some(arc) => {
                 // We wait until 2 rather than 1 because we ourselves still have an Arc
                 if Arc::strong_count(arc) == 2 {
-                    self.notify.notify_one()
+                    self.notify.notify_one();
                 }
             }
         };

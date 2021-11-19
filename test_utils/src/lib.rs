@@ -46,7 +46,7 @@ impl CoreWfStarter {
                 .unwrap(),
             worker_config: WorkerConfigBuilder::default()
                 .task_queue(task_queue)
-                .max_cached_workflows(1000usize)
+                .max_cached_workflows(1000_usize)
                 .build()
                 .unwrap(),
             wft_timeout: None,
@@ -63,7 +63,7 @@ impl CoreWfStarter {
     }
 
     pub async fn shutdown(&mut self) {
-        self.get_core().await.shutdown().await
+        self.get_core().await.shutdown().await;
     }
 
     pub async fn get_core(&mut self) -> Arc<dyn Core> {

@@ -642,9 +642,9 @@ async fn workflow_update_random_seed_on_workflow_reset() {
                                 UpdateRandomSeed{randomness_seed})),
                         }] => {
                             assert_ne!(randomness_seed_from_start.load(Ordering::SeqCst),
-                                      *randomness_seed)
+                                      *randomness_seed);
                         }
-                    )
+                    );
                 },
                 vec![CompleteWorkflowExecution { result: None }.into()],
             ),

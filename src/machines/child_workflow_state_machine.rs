@@ -650,11 +650,11 @@ mod test {
     }
 
     impl Expectation {
-        fn try_from_u8(x: u8) -> Option<Self> {
+        const fn try_from_u8(x: u8) -> Option<Self> {
             Some(match x {
-                0 => Expectation::Success,
-                1 => Expectation::Failure,
-                2 => Expectation::StartFailure,
+                0 => Self::Success,
+                1 => Self::Failure,
+                2 => Self::StartFailure,
                 _ => return None,
             })
         }
@@ -820,7 +820,7 @@ mod test {
             };
             let cmds = s.cancel().unwrap();
             assert_eq!(cmds.len(), 0);
-            assert_eq!(discriminant(&state), discriminant(&s.state))
+            assert_eq!(discriminant(&state), discriminant(&s.state));
         }
     }
 }

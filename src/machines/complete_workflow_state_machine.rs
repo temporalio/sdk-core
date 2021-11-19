@@ -117,7 +117,7 @@ pub(super) struct CompleteWorkflowCommandRecorded {}
 
 impl From<CompleteWorkflowCommandCreated> for CompleteWorkflowCommandRecorded {
     fn from(_: CompleteWorkflowCommandCreated) -> Self {
-        Default::default()
+        Self::default()
     }
 }
 

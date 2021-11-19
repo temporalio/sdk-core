@@ -1,5 +1,3 @@
-extern crate proc_macro;
-
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
 use std::collections::{hash_map::Entry, HashMap, HashSet};
@@ -82,7 +80,7 @@ use syn::{
 ///                     ReadingCard { card_data: data.clone() }.into(),
 ///                     SharedState { last_id: Some(data) }
 ///                 )
-///             }   
+///             }
 ///         }
 ///     }
 /// }
@@ -200,7 +198,7 @@ impl Parse for StateMachineDefinition {
         // Parse visibility if present
         let visibility = input.parse()?;
         // parse the state machine name, command type, and error type
-        let (name, command_type, error_type, shared_state_type) = parse_machine_types(&input)
+        let (name, command_type, error_type, shared_state_type) = parse_machine_types(input)
             .map_err(|mut e| {
                 e.combine(Error::new(
                     e.span(),
@@ -235,7 +233,7 @@ impl Parse for StateMachineDefinition {
     }
 }
 
-fn parse_machine_types(input: &ParseStream) -> Result<(Ident, Ident, Ident, Option<Type>)> {
+fn parse_machine_types(input: ParseStream) -> Result<(Ident, Ident, Ident, Option<Type>)> {
     let _: kw::name = input.parse()?;
     let name: Ident = input.parse()?;
     input.parse::<Token![;]>()?;
@@ -443,7 +441,7 @@ impl StateMachineDefinition {
                                         },
                             multi_dests => {
                                 let string_dests: Vec<_> = multi_dests.iter()
-                                    .map(|i| i.to_string()).collect();
+                                    .map(ToString::to_string).collect();
                                 let enum_ident = Ident::new(&string_dests.join("Or"),
                                                             multi_dests[0].span());
                                 let multi_dest_enum = quote! {
@@ -558,6 +556,7 @@ impl StateMachineDefinition {
                 fn state(&self) -> &Self::State {
                     &self.state
                 }
+
                 fn set_state(&mut self, new: Self::State) {
                     self.state = new
                 }
@@ -590,7 +589,7 @@ impl StateMachineDefinition {
             #trait_impl
         };
 
-        output.into()
+        TokenStream::from(output)
     }
 
     fn all_states(&self) -> HashSet<Ident> {
@@ -628,7 +627,7 @@ impl StateMachineDefinition {
 /// Merge transition's dest state lists for those with the same from state & handler
 fn merge_transition_dests(transitions: Vec<Transition>) -> Vec<Transition> {
     let mut map = HashMap::<_, Transition>::new();
-    transitions.into_iter().for_each(|t| {
+    for t in transitions {
         // We want to use the transition sans-destinations as the key
         let without_dests = {
             let mut wd = t.clone();
@@ -643,6 +642,6 @@ fn merge_transition_dests(transitions: Vec<Transition>) -> Vec<Transition> {
                 v.insert(t);
             }
         }
-    });
+    }
     map.into_iter().map(|(_, v)| v).collect()
 }

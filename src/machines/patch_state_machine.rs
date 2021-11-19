@@ -107,7 +107,7 @@ impl PatchMachine {
                 .into(),
             ),
         };
-        let mut machine = PatchMachine {
+        let mut machine = Self {
             state: initial_state,
             shared_state: state,
         };
@@ -210,7 +210,7 @@ impl TryFrom<HistoryEvent> for PatchMachineEvents {
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
         match e.get_changed_marker_details() {
-            Some((id, _)) => Ok(PatchMachineEvents::MarkerRecorded(id)),
+            Some((id, _)) => Ok(Self::MarkerRecorded(id)),
             _ => Err(WFMachinesError::Nondeterminism(format!(
                 "Change machine cannot handle this event: {}",
                 e
@@ -422,7 +422,9 @@ mod tests {
             commands[0].command_type,
             CommandType::ScheduleActivityTask as i32
         );
-        let act = if !replaying {
+        let act = if replaying {
+            wfm.get_next_activation().await
+        } else {
             // Feed more history
             wfm.new_history(
                 patch_marker_single_activity(marker_type)
@@ -431,8 +433,6 @@ mod tests {
                     .into(),
             )
             .await
-        } else {
-            wfm.get_next_activation().await
         };
 
         if marker_type == MarkerType::Deprecated {
@@ -514,7 +514,9 @@ mod tests {
             if activity_id == expected_activity_id
         );
 
-        let act = if !replaying {
+        let act = if replaying {
+            wfm.get_next_activation().await
+        } else {
             // Feed more history. Since we are *not* replaying, we *always* "have" the change
             // and the history should have the has-change timer. v3 of course always has the change
             // regardless.
@@ -525,8 +527,6 @@ mod tests {
                     .into(),
             )
             .await
-        } else {
-            wfm.get_next_activation().await
         };
 
         let act = act.unwrap();

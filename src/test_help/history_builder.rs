@@ -182,7 +182,7 @@ impl TestHistoryBuilder {
                     ..Default::default()
                 },
             ),
-        )
+        );
     }
 
     pub fn add_activity_task_cancel_requested(&mut self, scheduled_event_id: i64) {
@@ -358,7 +358,7 @@ impl TestHistoryBuilder {
             },
         )) = &evt.attributes
         {
-            self.original_run_id = original_execution_run_id.to_owned();
+            self.original_run_id = original_execution_run_id.clone();
         };
         self.events.push(evt);
     }
