@@ -178,7 +178,8 @@ pub mod coresdk {
         }
 
         /// Given a marker detail map, returns the local activity info and the result payload
-        /// if they are found and the marker data is well-formed.
+        /// if they are found and the marker data is well-formed. This removes the data from the
+        /// map.
         pub fn extract_local_activity_marker_details(
             details: &mut HashMap<String, Payloads>,
         ) -> (Option<LocalActivityMarkerData>, Option<ApiPayload>) {

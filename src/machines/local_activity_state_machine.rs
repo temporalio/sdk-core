@@ -30,8 +30,9 @@ fsm! {
     error WFMachinesError;
     shared_state SharedState;
 
-    // Machine is created in either executing or replaying, and then immediately scheduled and
-    // transitions to the command created state (creating the command in the process)
+    // Machine is created in either executing or replaying (referring to whether or not the workflow
+    // is replaying), and then immediately scheduled and transitions to either requesting that lang
+    // execute the activity, or waiting for the marker from history.
     Executing --(Schedule, shared on_schedule) --> RequestSent;
     Replaying --(Schedule, on_schedule) --> WaitingMarkerEvent;
     ReplayingPreResolved --(Schedule, on_schedule) --> WaitingMarkerEvent;
@@ -166,6 +167,10 @@ pub(super) enum LocalActivityCommand {
     RequestActivityExecution(ScheduleActivity),
     #[display(fmt = "Resolved")]
     Resolved(ResolveDat),
+    /// The fake marker is used to avoid special casing marker recorded event handling.
+    /// If we didn't have the fake marker, there would be no "outgoing command" to match
+    /// against the event. This way there is, but the command never will be issued to
+    /// server because it is understood to be meaningless.
     #[display(fmt = "FakeMarker")]
     FakeMarker,
 }
@@ -352,10 +357,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
                 Ok(responses)
             }
             LocalActivityCommand::FakeMarker => {
-                // The fake marker is used to avoid special casing marker recorded event handling.
-                // If we didn't have the fake marker, there would be no "outgoing command" to match
-                // against the event. This way there is, but the command never will be issued to
-                // server because it is understood to be meaningless.
+                // See docs for `FakeMarker` for more
                 Ok(vec![MachineResponse::IssueFakeLocalActivityMarker(
                     self.shared_state.attrs.seq,
                 )])
@@ -523,6 +525,7 @@ mod tests {
                 .await
                 .unwrap();
         }
+        assert_eq!(wfm.drain_queued_local_activities().len(), 0);
         assert_eq!(wfm.get_next_activation().await.unwrap().jobs.len(), 0);
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);

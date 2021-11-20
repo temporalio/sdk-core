@@ -68,7 +68,7 @@ pub trait StateMachine: Sized {
     fn shared_state(&self) -> &Self::SharedState;
 
     /// Returns true if the machine's current state is a final one
-    fn on_final_state(&self) -> bool;
+    fn has_reached_final_state(&self) -> bool;
 
     /// Given the shared data and new state, create a new instance.
     fn from_parts(shared: Self::SharedState, state: Self::State) -> Self;

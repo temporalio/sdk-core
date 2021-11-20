@@ -286,7 +286,7 @@ where
     }
 
     fn is_final_state(&self) -> bool {
-        self.on_final_state()
+        self.has_reached_final_state()
     }
 }
 
