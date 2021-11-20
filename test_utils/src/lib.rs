@@ -123,6 +123,11 @@ impl CoreWfStarter {
         self
     }
 
+    pub fn max_local_at(&mut self, max: usize) -> &mut Self {
+        self.worker_config.max_outstanding_local_activities = max;
+        self
+    }
+
     pub fn max_at_polls(&mut self, max: usize) -> &mut Self {
         self.worker_config.max_concurrent_at_polls = max;
         self
@@ -194,7 +199,7 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
     {
         ob.prometheus_export_bind_address(addr);
     }
-    ob.tracing_filter("temporal_sdk_core=INFO".to_string())
+    ob.tracing_filter(env::var("RUST_LOG").unwrap_or_else(|_| "temporal_sdk_core=INFO".to_string()))
         .log_forwarding_level(LevelFilter::Off)
         .build()
         .unwrap()

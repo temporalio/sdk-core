@@ -61,11 +61,11 @@ pub(super) struct SharedState {
 }
 
 /// Creates a new, scheduled, timer as a [CancellableCommand]
-pub(super) fn new_timer(attribs: StartTimer) -> NewMachineWithCommand<TimerMachine> {
+pub(super) fn new_timer(attribs: StartTimer) -> NewMachineWithCommand {
     let (timer, add_cmd) = TimerMachine::new_scheduled(attribs);
     NewMachineWithCommand {
         command: add_cmd,
-        machine: timer,
+        machine: timer.into(),
     }
 }
 
@@ -279,8 +279,7 @@ mod test {
         workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::{fixture, rstest};
-    use std::mem::discriminant;
-    use std::time::Duration;
+    use std::{mem::discriminant, time::Duration};
 
     #[fixture]
     fn happy_wfm() -> ManagedWFFunc {
@@ -309,12 +308,12 @@ mod test {
     #[tokio::test]
     async fn test_fire_happy_path_inc(mut happy_wfm: ManagedWFFunc) {
         happy_wfm.get_next_activation().await.unwrap();
-        let commands = happy_wfm.get_server_commands().await.commands;
+        let commands = happy_wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
 
         happy_wfm.get_next_activation().await.unwrap();
-        let commands = happy_wfm.get_server_commands().await.commands;
+        let commands = happy_wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands.len(), 1);
         assert_eq!(
@@ -328,7 +327,7 @@ mod test {
     #[tokio::test]
     async fn test_fire_happy_path_full(mut happy_wfm: ManagedWFFunc) {
         happy_wfm.process_all_activations().await.unwrap();
-        let commands = happy_wfm.get_server_commands().await.commands;
+        let commands = happy_wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -373,13 +372,13 @@ mod test {
     #[tokio::test]
     async fn incremental_cancellation(#[from(cancellation_setup)] mut wfm: ManagedWFFunc) {
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
         assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
 
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].command_type, CommandType::CancelTimer as i32);
         assert_eq!(
@@ -388,7 +387,7 @@ mod test {
         );
 
         assert!(wfm.get_next_activation().await.unwrap().jobs.is_empty());
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         // There should be no commands - the wf completed at the same time the timer was cancelled
         assert_eq!(commands.len(), 0);
         wfm.shutdown().await.unwrap();
@@ -398,7 +397,7 @@ mod test {
     #[tokio::test]
     async fn full_cancellation(#[from(cancellation_setup)] mut wfm: ManagedWFFunc) {
         wfm.process_all_activations().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         // There should be no commands - the wf completed at the same time the timer was cancelled
         assert_eq!(commands.len(), 0);
         wfm.shutdown().await.unwrap();
@@ -421,7 +420,7 @@ mod test {
         let mut wfm = ManagedWFFunc::new(t, func, vec![]);
 
         wfm.process_all_activations().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
         wfm.shutdown().await.unwrap();
     }

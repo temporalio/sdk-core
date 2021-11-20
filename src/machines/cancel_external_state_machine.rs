@@ -58,7 +58,7 @@ pub(super) fn new_external_cancel(
     seq: u32,
     workflow_execution: NamespacedWorkflowExecution,
     only_child: bool,
-) -> NewMachineWithCommand<CancelExternalMachine> {
+) -> NewMachineWithCommand {
     let mut s = CancelExternalMachine {
         state: Created {}.into(),
         shared_state: SharedState { seq },
@@ -81,7 +81,7 @@ pub(super) fn new_external_cancel(
     };
     NewMachineWithCommand {
         command: cmd,
-        machine: s,
+        machine: s.into(),
     }
 }
 
@@ -275,14 +275,14 @@ mod tests {
         let wff = WorkflowFunction::new(cancel_sender);
         let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
         wfm.get_next_activation().await.unwrap();
-        let cmds = wfm.get_server_commands().await.commands;
+        let cmds = wfm.get_server_commands().commands;
         assert_eq!(cmds.len(), 1);
         assert_eq!(
             cmds[0].command_type(),
             CommandType::RequestCancelExternalWorkflowExecution
         );
         wfm.get_next_activation().await.unwrap();
-        let cmds = wfm.get_server_commands().await.commands;
+        let cmds = wfm.get_server_commands().commands;
         assert_eq!(cmds.len(), 1);
         if fails {
             assert_eq!(cmds[0].command_type(), CommandType::FailWorkflowExecution);

@@ -151,7 +151,23 @@ impl WorkflowConcurrencyManager {
     }
 
     /// Indicate it's finished and remove any outstanding workflow task associated with the run
-    pub fn complete_wft(&self, run_id: &str) -> Option<OutstandingTask> {
+    pub fn complete_wft(
+        &self,
+        run_id: &str,
+        send_wft_complete_to_srv: bool,
+    ) -> Option<OutstandingTask> {
+        // If the WFT completion wasn't sent to the server, but we did see the final event, we still
+        // want to clear the workflow task. This can really only happen in replay testing, where we
+        // will generate poll responses with complete history but no attached query, and such a WFT
+        // would never really exist. The server wouldn't send a workflow task with nothing to do,
+        // but they are very useful for testing complete replay.
+        let saw_final = self
+            .access_sync(run_id, |wfm| wfm.machines.have_seen_terminal_event)
+            .unwrap_or_default();
+        if !saw_final && !send_wft_complete_to_srv {
+            return None;
+        }
+
         let retme = if let Ok(ot) = self.get_task_mut(run_id).as_deref_mut() {
             (*ot).take()
         } else {
@@ -224,6 +240,7 @@ impl WorkflowConcurrencyManager {
                 history,
                 namespace.to_owned(),
                 workflow_id.to_owned(),
+                wf_type.to_owned(),
                 run_id.to_owned(),
                 metrics.clone(),
             );
@@ -261,6 +278,23 @@ impl WorkflowConcurrencyManager {
         let res = mutator(&mut wfm_mutex).await;
 
         res
+    }
+
+    pub fn access_sync<F, Fout>(
+        &self,
+        run_id: &str,
+        mutator: F,
+    ) -> Result<Fout, WorkflowMissingError>
+    where
+        F: for<'a> FnOnce(&'a mut WorkflowManager) -> Fout,
+        Fout: Send + Debug,
+    {
+        let readlock = self.runs.read();
+        let m = readlock.get(run_id).ok_or_else(|| WorkflowMissingError {
+            run_id: run_id.to_string(),
+        })?;
+        let mut wfm_mutex = m.wfm.lock();
+        Ok(mutator(&mut wfm_mutex))
     }
 
     /// Remove the workflow with the provided run id from management

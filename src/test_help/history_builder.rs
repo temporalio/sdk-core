@@ -1,5 +1,5 @@
 use crate::{
-    machines::HAS_CHANGE_MARKER_NAME,
+    machines::{HAS_CHANGE_MARKER_NAME, LOCAL_ACTIVITY_MARKER_NAME},
     test_help::{
         history_info::{HistoryInfo, HistoryInfoError},
         Result,
@@ -9,10 +9,14 @@ use crate::{
 use anyhow::bail;
 use std::time::SystemTime;
 use temporal_sdk_core_protos::{
-    coresdk::common::{
-        build_has_change_marker_details, NamespacedWorkflowExecution, Payload as CorePayload,
+    coresdk::{
+        common::{
+            build_has_change_marker_details, build_local_activity_marker_details,
+            NamespacedWorkflowExecution, Payload as CorePayload,
+        },
+        external_data::LocalActivityMarkerData,
+        IntoPayloadsExt,
     },
-    coresdk::IntoPayloadsExt,
     temporal::api::{
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{EventType, WorkflowTaskFailedCause},
@@ -221,6 +225,16 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowTaskFailed, attrs.into());
     }
 
+    pub fn add_timer_fired(&mut self, timer_started_evt_id: i64, timer_id: String) {
+        self.add(
+            EventType::TimerFired,
+            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+                started_event_id: timer_started_evt_id,
+                timer_id,
+            }),
+        );
+    }
+
     pub fn add_we_signaled(&mut self, signal_name: &str, payloads: Vec<Payload>) {
         let attrs = WorkflowExecutionSignaledEventAttributes {
             signal_name: signal_name.to_string(),
@@ -238,6 +252,49 @@ impl TestHistoryBuilder {
             ..Default::default()
         };
         self.build_and_push_event(EventType::MarkerRecorded, attrs.into());
+    }
+
+    fn add_local_activity_marker(
+        &mut self,
+        seq: u32,
+        activity_id: &str,
+        payload: Option<CorePayload>,
+        failure: Option<Failure>,
+    ) {
+        let attrs = MarkerRecordedEventAttributes {
+            marker_name: LOCAL_ACTIVITY_MARKER_NAME.to_string(),
+            details: build_local_activity_marker_details(
+                LocalActivityMarkerData {
+                    seq,
+                    activity_id: activity_id.to_string(),
+                    activity_type: "some_act_type".to_string(),
+                    time: None,
+                },
+                payload,
+            ),
+            workflow_task_completed_event_id: self.previous_task_completed_id,
+            failure,
+            ..Default::default()
+        };
+        self.build_and_push_event(EventType::MarkerRecorded, attrs.into());
+    }
+
+    pub(crate) fn add_local_activity_result_marker(
+        &mut self,
+        seq: u32,
+        activity_id: &str,
+        payload: CorePayload,
+    ) {
+        self.add_local_activity_marker(seq, activity_id, Some(payload), None);
+    }
+
+    pub(crate) fn add_local_activity_fail_marker(
+        &mut self,
+        seq: u32,
+        activity_id: &str,
+        failure: Failure,
+    ) {
+        self.add_local_activity_marker(seq, activity_id, None, Some(failure));
     }
 
     pub(crate) fn add_signal_wf(

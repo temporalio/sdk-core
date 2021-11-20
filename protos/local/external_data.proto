@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package coresdk.external_data;
+
+import "google/protobuf/timestamp.proto";
+
+// This file defines data that Core might write externally. The first motivating case being
+// storing data in markers in event history. Defining such data as protos provides an easy way
+// for consumers which would like to just depend on the proto package to make sense of marker data.
+
+message LocalActivityMarkerData {
+  uint32 seq = 1;
+  string activity_id = 2;
+  string activity_type = 3;
+  // You can think of this as "perceived time". It is the time the local activity thought it was
+  // when it executed. Which could be different from wall-clock time because of workflow replay.
+  google.protobuf.Timestamp time = 4;
+}

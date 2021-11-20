@@ -5,11 +5,13 @@
 //! Needs lots of love to be production ready but the basis is there
 
 mod conversions;
+mod payload_converter;
 mod workflow_context;
 mod workflow_future;
 
 pub use workflow_context::{
-    ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, WfContext,
+    ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
+    WfContext,
 };
 
 use crate::{
@@ -31,6 +33,7 @@ use std::{
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityResult,
+        activity_task::{activity_task, ActivityTask},
         child_workflow::ChildWorkflowResult,
         common::{NamespacedWorkflowExecution, Payload},
         workflow_activation::{
@@ -38,13 +41,16 @@ use temporal_sdk_core_protos::{
             wf_activation_job::Variant, WfActivation, WfActivationJob,
         },
         workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution},
+        workflow_completion::WfActivationCompletion,
+        ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
     },
     temporal::api::failure::v1::Failure,
 };
 use tokio::{
     sync::{
-        mpsc::{unbounded_channel, UnboundedSender},
+        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
         oneshot, watch,
+        watch::Receiver,
     },
     task::JoinError,
 };
@@ -56,15 +62,16 @@ pub struct TestRustWorker {
     task_timeout: Option<Duration>,
     /// Maps run id to the driver
     workflows: HashMap<String, UnboundedSender<WfActivation>>,
-    /// Maps workflow id to the function for executing workflow runs with that ID
+    /// Maps workflow type to the function for executing workflow runs with that ID
     workflow_fns: HashMap<String, WorkflowFunction>,
+    /// Maps activity type to the function for executing activities of that type
+    activity_fns: HashMap<String, ActivityFunction>,
     /// Number of live workflows
     incomplete_workflows: Arc<AtomicUsize>,
     /// Handles for each spawned workflow run are inserted here to be cleaned up when all runs
     /// are finished
     join_handles: FuturesUnordered<BoxFuture<'static, Result<WorkflowResult<()>, JoinError>>>,
 }
-type WfFunc = dyn Fn(WfContext) -> BoxFuture<'static, WorkflowResult<()>> + Send + Sync + 'static;
 
 impl TestRustWorker {
     /// Create a new rust worker
@@ -75,6 +82,7 @@ impl TestRustWorker {
             task_timeout,
             workflows: Default::default(),
             workflow_fns: Default::default(),
+            activity_fns: Default::default(),
             incomplete_workflows: Arc::new(AtomicUsize::new(0)),
             join_handles: FuturesUnordered::new(),
         }
@@ -108,7 +116,8 @@ impl TestRustWorker {
         Ok(res.run_id)
     }
 
-    /// Register a Workflow function to invoke when Worker is requested to run `workflow_type`
+    /// Register a Workflow function to invoke when the Worker is asked to run a workflow of
+    /// `workflow_type`
     pub fn register_wf<F: Into<WorkflowFunction>>(
         &mut self,
         workflow_type: impl Into<String>,
@@ -116,6 +125,21 @@ impl TestRustWorker {
     ) {
         self.workflow_fns
             .insert(workflow_type.into(), wf_function.into());
+    }
+
+    /// Register an Activity function to invoke when the Worker is asked to run an activity of
+    /// `activity_type`
+    pub fn register_activity<A, R>(
+        &mut self,
+        activity_type: impl Into<String>,
+        act_function: impl IntoActivityFunc<A, R>,
+    ) {
+        self.activity_fns.insert(
+            activity_type.into(),
+            ActivityFunction {
+                act_func: act_function.into_activity_fn(),
+            },
+        );
     }
 
     /// Increment the expected Workflow run count on this Worker. The Worker tracks the run count
@@ -132,55 +156,39 @@ impl TestRustWorker {
         let poller = async move {
             let (completions_tx, mut completions_rx) = unbounded_channel();
             loop {
-                let activation = self.core.poll_workflow_activation(&self.task_queue).await?;
-
-                // If the activation is to start a workflow, create a new workflow driver for it,
-                // using the function associated with that workflow id
-                if let Some(WfActivationJob {
-                    variant: Some(Variant::StartWorkflow(sw)),
-                }) = activation.jobs.get(0)
-                {
-                    let wf_function = self
-                        .workflow_fns
-                        .get(&sw.workflow_type)
-                        .ok_or_else(|| anyhow!("Workflow type not found"))?;
-
-                    let (wff, activations) = wf_function.start_workflow(
-                        self.core.get_init_options().gateway_opts.namespace.clone(),
-                        self.task_queue.clone(),
-                        // NOTE: Don't clone args if this gets ported to be a non-test rust worker
-                        sw.arguments.clone(),
-                        completions_tx.clone(),
-                    );
-                    let mut shutdown_rx = shutdown_rx.clone();
-                    let jh = tokio::spawn(async move {
-                        tokio::select! {
-                            r = wff => r,
-                            _ = shutdown_rx.changed() => Ok(WfExitValue::Evicted)
+                // Only poll on the activity queue if activity functions have been registered. This
+                // makes tests which use mocks dramatically more manageable.
+                if !self.activity_fns.is_empty() {
+                    tokio::select! {
+                        activation = self.core.poll_workflow_activation(&self.task_queue) => {
+                            self.workflow_activation_handler(
+                                &shutdown_rx,
+                                &completions_tx,
+                                &mut completions_rx,
+                                activation?,
+                            )
+                            .await?;
                         }
-                    });
-                    self.workflows
-                        .insert(activation.run_id.clone(), activations);
-                    self.join_handles.push(jh.boxed());
-                }
-
-                // The activation is expected to apply to some workflow we know about. Use it to
-                // unblock things and advance the workflow.
-                if let Some(tx) = self.workflows.get_mut(&activation.run_id) {
-                    tx.send(activation)
-                        .expect("Workflow should exist if we're sending it an activation");
+                        activity = self.core.poll_activity_task(&self.task_queue) => {
+                            warn!("Activity task!!!");
+                            // This blocks polling until activity completion. Obviously that needs
+                            // to change at some point.
+                            self.activity_task_handler(activity?).await?;
+                        }
+                    }
                 } else {
-                    bail!("Got activation for unknown workflow");
-                };
-
-                let completion = completions_rx.recv().await.expect("No workflows left?");
-                if completion.has_execution_ending() {
-                    debug!("Workflow {} says it's finishing", &completion.run_id);
-                    self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
+                    let activation = self.core.poll_workflow_activation(&self.task_queue).await?;
+                    self.workflow_activation_handler(
+                        &shutdown_rx,
+                        &completions_tx,
+                        &mut completions_rx,
+                        activation,
+                    )
+                    .await?;
                 }
-                self.core.complete_workflow_activation(completion).await?;
+
                 if self.incomplete_workflows.load(Ordering::SeqCst) == 0 {
-                    break Ok(self);
+                    break Result::<_, anyhow::Error>::Ok(self);
                 }
             }
         };
@@ -191,6 +199,90 @@ impl TestRustWorker {
         let _ = shutdown_tx.send(true);
         while let Some(h) = myself.join_handles.next().await {
             h??;
+        }
+        Ok(())
+    }
+
+    async fn workflow_activation_handler(
+        &mut self,
+        shutdown_rx: &Receiver<bool>,
+        completions_tx: &UnboundedSender<WfActivationCompletion>,
+        completions_rx: &mut UnboundedReceiver<WfActivationCompletion>,
+        activation: WfActivation,
+    ) -> Result<(), anyhow::Error> {
+        // If the activation is to start a workflow, create a new workflow driver for it,
+        // using the function associated with that workflow id
+        if let Some(WfActivationJob {
+            variant: Some(Variant::StartWorkflow(sw)),
+        }) = activation.jobs.get(0)
+        {
+            let wf_function = self
+                .workflow_fns
+                .get(&sw.workflow_type)
+                .ok_or_else(|| anyhow!("Workflow type not found"))?;
+
+            let (wff, activations) = wf_function.start_workflow(
+                self.core.get_init_options().gateway_opts.namespace.clone(),
+                self.task_queue.clone(),
+                // NOTE: Don't clone args if this gets ported to be a non-test rust worker
+                sw.arguments.clone(),
+                completions_tx.clone(),
+            );
+            let mut shutdown_rx = shutdown_rx.clone();
+            let jh = tokio::spawn(async move {
+                tokio::select! {
+                    r = wff => r,
+                    _ = shutdown_rx.changed() => Ok(WfExitValue::Evicted)
+                }
+            });
+            self.workflows
+                .insert(activation.run_id.clone(), activations);
+            self.join_handles.push(jh.boxed());
+        }
+
+        // The activation is expected to apply to some workflow we know about. Use it to
+        // unblock things and advance the workflow.
+        if let Some(tx) = self.workflows.get_mut(&activation.run_id) {
+            tx.send(activation)
+                .expect("Workflow should exist if we're sending it an activation");
+        } else {
+            bail!("Got activation for unknown workflow");
+        };
+
+        let completion = completions_rx.recv().await.expect("No workflows left?");
+        if completion.has_execution_ending() {
+            debug!("Workflow {} says it's finishing", &completion.run_id);
+            self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
+        }
+        self.core.complete_workflow_activation(completion).await?;
+        Ok(())
+    }
+
+    async fn activity_task_handler(&mut self, activity: ActivityTask) -> Result<(), anyhow::Error> {
+        // TODO: Trap errors and report activity failures, handle cancels, etc.
+        match activity.variant {
+            Some(activity_task::Variant::Start(start)) => {
+                let act_fn = self.activity_fns.get(&start.activity_type).ok_or_else(|| {
+                    anyhow!(
+                        "No function registered for activity type {}",
+                        start.activity_type
+                    )
+                })?;
+                let mut inputs = start.input;
+                let arg = inputs.pop().unwrap_or_default();
+                let output = (&act_fn.act_func)(arg).await?;
+                self.core
+                    .complete_activity_task(ActivityTaskCompletion {
+                        task_token: activity.task_token,
+                        task_queue: self.task_queue.clone(),
+                        result: Some(ActivityResult::ok(output)),
+                    })
+                    .await?;
+            }
+            Some(activity_task::Variant::Cancel(_)) => {
+                unimplemented!("Activity cancels not implemented yet in prototype sdk")
+            }
+            None => bail!("Undefined activity task variant"),
         }
         Ok(())
     }
@@ -337,6 +429,8 @@ struct CommandSubscribeChildWorkflowCompletion {
     unblocker: oneshot::Sender<UnblockEvent>,
 }
 
+type WfFunc = dyn Fn(WfContext) -> BoxFuture<'static, WorkflowResult<()>> + Send + Sync + 'static;
+
 /// The user's async function / workflow code
 pub struct WorkflowFunction {
     wf_func: Box<WfFunc>,
@@ -382,6 +476,37 @@ pub enum WfExitValue<T: Debug> {
     Evicted,
     /// Finish with a result
     Normal(T),
+}
+
+type BoxActFn = Box<dyn Fn(Payload) -> BoxFuture<'static, Result<Payload, anyhow::Error>>>;
+/// Container for user-defined activity functions
+pub struct ActivityFunction {
+    act_func: BoxActFn,
+}
+
+/// Closures / functions which can be turned into activity functions implement this trait
+pub trait IntoActivityFunc<Args, Res> {
+    /// Consume the closure or fn pointer and turned it into a boxed activity function
+    fn into_activity_fn(self) -> BoxActFn;
+}
+
+impl<A, Rf, R, F> IntoActivityFunc<A, Rf> for F
+where
+    F: (Fn(A) -> Rf) + Sync + Send + 'static,
+    A: FromJsonPayloadExt + Send,
+    Rf: Future<Output = R> + Send + 'static,
+    R: AsJsonPayloadExt,
+{
+    fn into_activity_fn(self) -> BoxActFn {
+        let wrapper = move |input: Payload| {
+            // Some minor gymnastics are required to avoid needing to clone the function
+            match A::from_json_payload(&input) {
+                Ok(deser) => (self)(deser).map(|r| r.as_json_payload()).boxed(),
+                Err(e) => async move { Err(e.into()) }.boxed(),
+            }
+        };
+        Box::new(wrapper)
+    }
 }
 
 #[cfg(test)]

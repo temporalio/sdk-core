@@ -4,6 +4,7 @@ mod cancel_wf;
 mod child_workflows;
 mod continue_as_new;
 mod determinism;
+mod local_activities;
 mod patches;
 mod signals;
 mod stickyness;

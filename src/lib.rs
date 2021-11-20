@@ -260,11 +260,11 @@ impl Core for CoreSDK {
         &self,
         task_queue: &str,
     ) -> Result<ActivityTask, PollActivityError> {
+        let worker = self.worker(task_queue)?;
         loop {
             if self.shutdown_requested.load(Ordering::Relaxed) {
                 return Err(PollActivityError::ShutDown);
             }
-            let worker = self.worker(task_queue)?;
             match worker.activity_poll().await.transpose() {
                 Some(r) => break r,
                 None => continue,

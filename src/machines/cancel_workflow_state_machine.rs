@@ -32,9 +32,7 @@ pub(super) enum CancelWorkflowMachineError {}
 #[derive(Debug, derive_more::Display)]
 pub(super) enum CancelWorkflowCommand {}
 
-pub(super) fn cancel_workflow(
-    attribs: CancelWorkflowExecution,
-) -> NewMachineWithCommand<CancelWorkflowMachine> {
+pub(super) fn cancel_workflow(attribs: CancelWorkflowExecution) -> NewMachineWithCommand {
     let mut machine = CancelWorkflowMachine {
         state: Created {}.into(),
         shared_state: (),
@@ -45,7 +43,10 @@ pub(super) fn cancel_workflow(
         command_type: CommandType::CancelWorkflowExecution as i32,
         attributes: Some(attribs.into()),
     };
-    NewMachineWithCommand { command, machine }
+    NewMachineWithCommand {
+        command,
+        machine: machine.into(),
+    }
 }
 
 #[derive(Default, Clone)]
@@ -142,7 +143,7 @@ mod tests {
         let t = canned_histories::timer_wf_cancel_req_cancelled("1");
         let mut wfm = ManagedWFFunc::new(t, func, vec![]);
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
 
@@ -158,7 +159,7 @@ mod tests {
                 }
             ]
         );
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -166,7 +167,7 @@ mod tests {
         );
 
         assert!(wfm.get_next_activation().await.unwrap().jobs.is_empty());
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
         wfm.shutdown().await.unwrap();
     }

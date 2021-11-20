@@ -41,7 +41,6 @@ impl HistoryInfo {
 
         let to_wf_task_num = to_wf_task_num.unwrap_or(usize::MAX);
         let mut workflow_task_started_event_id = 0;
-        let mut previous_started_event_id = 0;
         let mut wf_task_count = 0;
         let mut history = events.iter().peekable();
         let mut events = vec![];
@@ -60,7 +59,7 @@ impl HistoryInfo {
                 });
 
                 if next_event.is_none() || next_is_completed {
-                    previous_started_event_id = workflow_task_started_event_id;
+                    let previous_started_event_id = workflow_task_started_event_id;
                     workflow_task_started_event_id = event.event_id;
                     if workflow_task_started_event_id == previous_started_event_id {
                         return Err(HistoryInfoError::UnexpectedEventId {
@@ -84,8 +83,11 @@ impl HistoryInfo {
 
             if next_event.is_none() {
                 if event.is_final_wf_execution_event() {
+                    // Since this is the end of execution, we are pretending that the SDK is
+                    // replaying *complete* history, which would mean the previously started ID is
+                    // in fact the last task.
                     return Ok(Self {
-                        previous_started_event_id,
+                        previous_started_event_id: workflow_task_started_event_id,
                         workflow_task_started_event_id,
                         events,
                         wf_task_count,
