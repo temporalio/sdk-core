@@ -35,7 +35,7 @@ fsm! {
     // execute the activity, or waiting for the marker from history.
     Executing --(Schedule, shared on_schedule) --> RequestSent;
     Replaying --(Schedule, on_schedule) --> WaitingMarkerEvent;
-    ReplayingPreResolved --(Schedule, on_schedule) --> WaitingMarkerEvent;
+    ReplayingPreResolved --(Schedule, on_schedule) --> WaitingMarkerEventPreResolved;
 
     // Execution path =============================================================================
     // TODO: Unclear if this is needed for core. Address while implementing WFT heartbeats
@@ -53,6 +53,11 @@ fsm! {
     WaitingMarkerEvent --(HandleResult(ResolveDat), on_handle_result)
       --> WaitingMarkerEvent;
     WaitingMarkerEvent --(MarkerRecorded(CompleteLocalActivityData), on_marker_recorded)
+      --> MarkerCommandRecorded;
+
+    // Pre resolved markers should never have handle result explicitly called on them, but do need
+    // to eventually see the marker
+    WaitingMarkerEventPreResolved --(MarkerRecorded(CompleteLocalActivityData), on_marker_recorded)
       --> MarkerCommandRecorded;
 }
 
@@ -203,12 +208,7 @@ pub(super) struct MarkerCommandRecorded {}
 pub(super) struct Replaying {}
 impl Replaying {
     pub(super) fn on_schedule(self) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
-        TransitionResult::ok(
-            [],
-            WaitingMarkerEvent {
-                pre_resolved: false,
-            },
-        )
+        TransitionResult::ok([], WaitingMarkerEvent {})
     }
 }
 
@@ -217,13 +217,15 @@ pub(super) struct ReplayingPreResolved {
     dat: ResolveDat,
 }
 impl ReplayingPreResolved {
-    pub(super) fn on_schedule(self) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
+    pub(super) fn on_schedule(
+        self,
+    ) -> LocalActivityMachineTransition<WaitingMarkerEventPreResolved> {
         TransitionResult::ok(
             [
                 LocalActivityCommand::FakeMarker,
                 LocalActivityCommand::Resolved(self.dat),
             ],
-            WaitingMarkerEvent { pre_resolved: true },
+            WaitingMarkerEventPreResolved {},
         )
     }
 }
@@ -253,19 +255,14 @@ impl ResultNotified {
     }
 }
 
-#[derive(Clone)]
-pub(super) struct WaitingMarkerEvent {
-    pre_resolved: bool,
-}
+#[derive(Default, Clone)]
+pub(super) struct WaitingMarkerEvent {}
 
 impl WaitingMarkerEvent {
     pub(super) fn on_handle_result(
         self,
         dat: ResolveDat,
     ) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
-        if self.pre_resolved {
-            return TransitionResult::ok([], self);
-        }
         TransitionResult::ok([LocalActivityCommand::Resolved(dat)], self)
     }
 
@@ -273,10 +270,18 @@ impl WaitingMarkerEvent {
         self,
         dat: CompleteLocalActivityData,
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
-        if self.pre_resolved {
-            return TransitionResult::default();
-        }
         TransitionResult::commands([LocalActivityCommand::Resolved(dat.into())])
+    }
+}
+
+#[derive(Default, Clone)]
+pub(super) struct WaitingMarkerEventPreResolved {}
+impl WaitingMarkerEventPreResolved {
+    pub(super) fn on_marker_recorded(
+        self,
+        _dat: CompleteLocalActivityData,
+    ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
+        TransitionResult::default()
     }
 }
 
