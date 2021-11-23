@@ -136,13 +136,14 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     );
     t.add_full_wf_task();
     t.add_full_wf_task();
-    t.add_full_wf_task();
-    t.add_local_activity_result_marker(1, "1", b"echo".into());
-    t.add_workflow_execution_completed();
+    t.add_workflow_task_scheduled_and_started();
 
     let wf_id = "fakeid";
     let mock = MockServerGatewayApis::new();
-    let mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 3], mock);
+    // Allow returning incomplete history more than once, as the wft timeout can be timing sensitive
+    // and might poll an extra time
+    let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 2, 2, 2], mock);
+    mh.enforce_correct_number_of_polls = false;
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 1);
     let core = Arc::new(mock_core(mock));
