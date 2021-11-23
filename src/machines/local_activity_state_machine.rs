@@ -38,8 +38,6 @@ fsm! {
     ReplayingPreResolved --(Schedule, on_schedule) --> WaitingMarkerEventPreResolved;
 
     // Execution path =============================================================================
-    // TODO: Unclear if this is needed for core. Address while implementing WFT heartbeats
-    // RequestSent --(NonReplayWorkflowTaskStarted) --> RequestSent;
     RequestSent --(HandleResult(ResolveDat), on_handle_result) --> MarkerCommandCreated;
 
     MarkerCommandCreated --(CommandRecordMarker, on_command_record_marker) --> ResultNotified;
@@ -47,16 +45,10 @@ fsm! {
     ResultNotified --(MarkerRecorded(CompleteLocalActivityData), on_marker_recorded) --> MarkerCommandRecorded;
 
     // Replay path ================================================================================
-    // WaitingMarkerEvent --(NonReplayWorkflowTaskStarted, on_non_replay_workflow_task_started)
-    //   --> RequestPrepared;
-
-    WaitingMarkerEvent --(HandleResult(ResolveDat), on_handle_result)
-      --> WaitingMarkerEvent;
+    // LAs on the replay path should never have handle result explicitly called on them, but do need
+    // to eventually see the marker
     WaitingMarkerEvent --(MarkerRecorded(CompleteLocalActivityData), on_marker_recorded)
       --> MarkerCommandRecorded;
-
-    // Pre resolved markers should never have handle result explicitly called on them, but do need
-    // to eventually see the marker
     WaitingMarkerEventPreResolved --(MarkerRecorded(CompleteLocalActivityData), on_marker_recorded)
       --> MarkerCommandRecorded;
 }
@@ -259,13 +251,6 @@ impl ResultNotified {
 pub(super) struct WaitingMarkerEvent {}
 
 impl WaitingMarkerEvent {
-    pub(super) fn on_handle_result(
-        self,
-        dat: ResolveDat,
-    ) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
-        TransitionResult::ok([LocalActivityCommand::Resolved(dat)], self)
-    }
-
     pub(super) fn on_marker_recorded(
         self,
         dat: CompleteLocalActivityData,
