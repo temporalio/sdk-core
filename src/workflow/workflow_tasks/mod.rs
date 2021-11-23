@@ -26,6 +26,7 @@ use parking_lot::Mutex;
 use std::{
     fmt::Debug,
     ops::Add,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::coresdk::{
@@ -35,7 +36,7 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_commands::QueryResult,
     FromPayloadsExt,
 };
-use tokio::{sync::watch, time::sleep};
+use tokio::{sync::Notify, time::sleep};
 
 /// Centralizes concerns related to applying new workflow tasks and reporting the activations they
 /// produce.
@@ -54,7 +55,7 @@ pub struct WorkflowTaskManager {
     /// Holds poll wft responses from the server that need to be applied
     ready_buffered_wft: SegQueue<ValidPollWFTQResponse>,
     /// Used to wake blocked workflow task polling
-    pending_activations_notifier: watch::Sender<bool>,
+    pending_activations_notifier: Arc<Notify>,
     /// Lock guarded cache manager, which is the authority for limit-based workflow machine eviction
     /// from the cache.
     // TODO: Also should be moved inside concurrency manager, but there is some complexity around
@@ -161,7 +162,7 @@ macro_rules! machine_mut {
 
 impl WorkflowTaskManager {
     pub(crate) fn new(
-        pending_activations_notifier: watch::Sender<bool>,
+        pending_activations_notifier: Arc<Notify>,
         eviction_policy: WorkflowCachingPolicy,
         metrics: MetricsContext,
     ) -> Self {
@@ -236,7 +237,7 @@ impl WorkflowTaskManager {
                 // Queue up an eviction activation
                 self.pending_activations
                     .notify_needs_eviction(run_id, reason);
-                let _ = self.pending_activations_notifier.send(true);
+                self.pending_activations_notifier.notify_waiters();
             }
             self.workflow_machines
                 .get_task(run_id)
@@ -269,8 +270,7 @@ impl WorkflowTaskManager {
     }
 
     /// Given a validated poll response from the server, prepare an activation (if there is one) to
-    /// be sent to lang. If applying the response to the workflow's state does not produce a new
-    /// activation, `None` is returned.
+    /// be sent to lang.
     ///
     /// The new activation is immediately considered to be an outstanding workflow task - so it is
     /// expected that new activations will be dispatched to lang right away.
@@ -626,7 +626,7 @@ impl WorkflowTaskManager {
                     if let Some(query) = ot.legacy_query.take() {
                         let na = create_query_activation(run_id.to_string(), [query]);
                         self.pending_legacy_queries.push(na);
-                        let _ = self.pending_activations_notifier.send(true);
+                        self.pending_activations_notifier.notify_waiters();
                         return false;
                     }
                 }
@@ -663,7 +663,7 @@ impl WorkflowTaskManager {
     /// Any subsequent action that needs to be taken will be created as a new activation
     fn on_activation_done(&self, run_id: &str) {
         if self.workflow_machines.delete_activation(run_id).is_some() {
-            let _ = self.pending_activations_notifier.send(true);
+            self.pending_activations_notifier.notify_waiters();
         }
         // It's possible the activation is already removed due to completing an eviction
     }
@@ -733,7 +733,7 @@ impl WorkflowTaskManager {
 
     fn needs_activation(&self, run_id: &str) {
         self.pending_activations.notify_needs_activation(run_id);
-        let _ = self.pending_activations_notifier.send(true);
+        self.pending_activations_notifier.notify_waiters();
     }
 
     /// Wait for either all local activities to resolve, or for 80% of the WFT timeout, in which

@@ -47,7 +47,7 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::{PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse},
     },
 };
-use tokio::sync::{watch, Mutex, Semaphore};
+use tokio::sync::{watch, Notify, Semaphore};
 use tonic::Code;
 use tracing_futures::Instrument;
 
@@ -72,7 +72,7 @@ pub struct Worker {
     workflows_semaphore: Semaphore,
     /// Used to wake blocked workflow task polling when there is some change to workflow activations
     /// that should cause us to restart the loop
-    pending_activations_notification_receiver: Mutex<watch::Receiver<bool>>,
+    pending_activations_notification: Arc<Notify>,
     /// Watched during shutdown to wait for all WFTs to complete
     wfts_drained: watch::Receiver<bool>,
     /// notifies when all WFTs have been drained after shutdown
@@ -165,14 +165,14 @@ impl Worker {
                 max_cached_workflows: config.max_cached_workflows,
             }
         };
-        let (pan_tx, pan_rx) = watch::channel(true);
+        let pa_notif = Arc::new(Notify::new());
         let (wftd_tx, wftd_rx) = watch::channel(false);
         let (shut_tx, shut_rx) = watch::channel(false);
         Self {
             server_gateway: sg.clone(),
             sticky_name: sticky_queue_name,
             wf_task_source: WFTSource::new(wft_poller),
-            wft_manager: WorkflowTaskManager::new(pan_tx, cache_policy, metrics.clone()),
+            wft_manager: WorkflowTaskManager::new(pa_notif.clone(), cache_policy, metrics.clone()),
             at_task_mgr: act_poller.map(|ap| {
                 WorkerActivityTasks::new(
                     config.max_outstanding_activities,
@@ -188,7 +188,7 @@ impl Worker {
             shutdown_sender: shut_tx,
             wfts_drained: wftd_rx,
             wfts_drained_sender: wftd_tx,
-            pending_activations_notification_receiver: Mutex::new(pan_rx),
+            pending_activations_notification: pa_notif,
             metrics,
         }
     }
@@ -215,9 +215,9 @@ impl Worker {
         // activation completion and activation polling checks for wfts_drained.
         self.maybe_notify_wtfs_drained();
         // wait until all outstanding workflow tasks have been completed before shutting down
-        if !*self.wfts_drained.borrow() {
-            self.wfts_drained
-                .clone()
+        let mut drained = self.wfts_drained.clone();
+        while !*drained.borrow() {
+            drained
                 .changed()
                 .await
                 .expect("wfts_drained should not be dropped");
@@ -344,8 +344,6 @@ impl Worker {
                     _ => continue,
                 }
             }
-            let mut pending_activations_notification =
-                self.pending_activations_notification_receiver.lock().await;
 
             let selected_f = tokio::select! {
                 biased;
@@ -354,7 +352,7 @@ impl Worker {
                 // the loop right away to provide any potential new pending activation.
                 // Continue here means that we unnecessarily add another permit to the poll buffer,
                 // this will go away when polling is done in the background.
-                _ = pending_activations_notification.changed() => continue,
+                _ = self.pending_activations_notification.notified() => continue,
                 r = self.workflow_poll_or_wfts_drained() => r,
             }?;
 
@@ -414,29 +412,16 @@ impl Worker {
     async fn workflow_poll_or_wfts_drained(
         &self,
     ) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
+        let mut shutdown_requested = self.shutdown_requested.clone();
+        let mut wfts_drained = self.wfts_drained.clone();
         loop {
-            if *self.wfts_drained.borrow() {
-                debug!("Returning shutdown error");
-                return Err(PollWfError::ShutDown);
-            } else if *self.shutdown_requested.borrow() {
-                self.wfts_drained
-                    .clone()
-                    .changed()
-                    .await
-                    .expect("wfts_drained should not be dropped");
-            } else {
-                let mut shutdown_requested = self.shutdown_requested.clone();
-                tokio::select! {
-                    biased;
+            tokio::select! {
+                biased;
 
-                    r = self.workflow_poll()
-                        .map_err(Into::into) => match r {
-                         Err(PollWfError::ShutDown) => {},
-                        _ => return r,
-                    },
-                    _ = shutdown_requested.changed() => {},
-                }
-            };
+                r = self.workflow_poll().map_err(Into::into) => return r,
+                _ = shutdown_requested.changed() => {},
+                _ = wfts_drained.changed() => {}
+            }
         }
     }
 
@@ -446,6 +431,10 @@ impl Worker {
     /// Returns `Ok(None)` in the event of a poll timeout, or if there was some gRPC error that
     /// callers can't do anything about.
     async fn workflow_poll(&self) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
+        if *self.wfts_drained.borrow() && self.local_act_mgr.num_outstanding() <= 0 {
+            return Err(PollWfError::ShutDown);
+        }
+
         let sem = self
             .workflows_semaphore
             .acquire()
@@ -498,6 +487,10 @@ impl Worker {
             .wft_manager
             .apply_new_poll_resp(work, &self.server_gateway)
             .await;
+        // If all workflow tasks were previously drained, they no longer are.
+        self.wfts_drained_sender
+            .send(false)
+            .expect("WFT drained channel is not dropped");
         Ok(match res {
             NewWfTaskOutcome::IssueActivation(a) => {
                 debug!(activation=%a, "Sending activation to lang");

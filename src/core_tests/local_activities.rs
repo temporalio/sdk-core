@@ -5,10 +5,12 @@ use crate::{
         build_mock_pollers, history_builder::default_wes_attribs, mock_core, MockPollCfg,
         ResponseType, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE, TEST_Q,
     },
+    Core,
 };
 use futures::future::join_all;
 use std::{sync::Arc, time::Duration};
 use temporal_sdk_core_protos::{coresdk::AsJsonPayloadExt, temporal::api::enums::v1::EventType};
+use tokio::sync::Barrier;
 
 async fn echo(e: String) -> String {
     e
@@ -116,8 +118,14 @@ async fn local_act_many_concurrent() {
 /// Verifies that local activities which take more than a workflow task timeout will cause
 /// us to issue additional (empty) WFT completions with the force flag on, thus preventing timeout
 /// of WFT while the local activity continues to execute.
+///
+/// The test with shutdown verifies if we call shutdown while the local activity is running that
+/// shutdown does not complete until it's finished.
+#[rstest::rstest]
+#[case::with_shutdown(true)]
+#[case::normal_complete(false)]
 #[tokio::test]
-async fn local_act_heartbeat() {
+async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     let mut t = TestHistoryBuilder::default();
     let wft_timeout = Duration::from_millis(200);
     let mut wes_short_wft_timeout = default_wes_attribs();
@@ -137,8 +145,9 @@ async fn local_act_heartbeat() {
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 3], mock);
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 1);
-    let core = mock_core(mock);
-    let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
+    let core = Arc::new(mock_core(mock));
+    let mut worker = TestRustWorker::new(core.clone(), TEST_Q.to_string(), None);
+    let shutdown_barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
 
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
@@ -153,6 +162,9 @@ async fn local_act_heartbeat() {
         },
     );
     worker.register_activity("echo", move |str: String| async move {
+        if shutdown_middle {
+            shutdown_barr.wait().await;
+        }
         // Take slightly more than two workflow tasks
         tokio::time::sleep(wft_timeout.mul_f32(2.2)).await;
         str
@@ -161,5 +173,14 @@ async fn local_act_heartbeat() {
         .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
         .await
         .unwrap();
-    worker.run_until_done().await.unwrap();
+    let (_, runres) = tokio::join!(
+        async {
+            if shutdown_middle {
+                shutdown_barr.wait().await;
+                core.shutdown().await;
+            }
+        },
+        worker.run_until_done()
+    );
+    runres.unwrap();
 }

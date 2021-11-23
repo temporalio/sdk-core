@@ -69,6 +69,10 @@ impl LocalActivityManager {
         }
     }
 
+    pub(crate) fn num_outstanding(&self) -> usize {
+        self.dat.lock().outstanding_activity_tasks.len()
+    }
+
     pub(crate) fn enqueue(&self, acts: impl IntoIterator<Item = NewLocalAct> + Debug) {
         debug!("Queuing local activities: {:?}", &acts);
         for act in acts {
@@ -131,7 +135,6 @@ impl LocalActivityManager {
     /// Mark a local activity as having completed. Returns the information about the local activity
     /// so the appropriate workflow instance can be notified of completion.
     pub(crate) fn complete(&self, task_token: &TaskToken) -> Option<LocalInFlightActInfo> {
-        warn!("Local act completing");
         let info = self
             .dat
             .lock()

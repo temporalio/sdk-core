@@ -16,7 +16,7 @@ pub use workflow_context::{
 
 use crate::{
     prototype_rust_sdk::workflow_context::{ChildWfCommon, PendingChildWorkflow},
-    Core,
+    Core, PollActivityError, PollWfError,
 };
 use anyhow::{anyhow, bail};
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
@@ -175,7 +175,12 @@ impl TestRustWorker {
                 // Workflow polling loop
                 async {
                     loop {
-                        let activation = core.poll_workflow_activation(task_q).await?;
+                        let activation = match core.poll_workflow_activation(task_q).await {
+                            Err(PollWfError::ShutDown) => {
+                                break Result::<_, anyhow::Error>::Ok(());
+                            }
+                            o => o?,
+                        };
                         Self::workflow_activation_handler(
                             core,
                             task_q,
@@ -202,6 +207,9 @@ impl TestRustWorker {
                         loop {
                             tokio::select! {
                                 activity = core.poll_activity_task(task_q) => {
+                                    if matches!(activity, Err(PollActivityError::ShutDown)) {
+                                        break;
+                                    }
                                     Self::activity_task_handler(core, task_q,
                                                                 act_half, activity?).await?;
                                 },
@@ -221,6 +229,7 @@ impl TestRustWorker {
         while let Some(h) = myself.workflow_half.join_handles.next().await {
             h??;
         }
+        myself.core.shutdown().await;
         Ok(())
     }
 
