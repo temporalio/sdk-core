@@ -431,7 +431,10 @@ impl Worker {
     /// Returns `Ok(None)` in the event of a poll timeout, or if there was some gRPC error that
     /// callers can't do anything about.
     async fn workflow_poll(&self) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
-        if *self.wfts_drained.borrow() && self.local_act_mgr.num_outstanding() <= 0 {
+        // We can't say we're shut down if there are outstanding LAs, as they could end up WFT
+        // heartbeating which is a "new" workflow task that we need to accept and process as long
+        // as the LA is outstanding.
+        if *self.wfts_drained.borrow() && self.local_act_mgr.num_outstanding() == 0 {
             return Err(PollWfError::ShutDown);
         }
 

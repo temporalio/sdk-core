@@ -129,7 +129,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     let mut t = TestHistoryBuilder::default();
     let wft_timeout = Duration::from_millis(200);
     let mut wes_short_wft_timeout = default_wes_attribs();
-    wes_short_wft_timeout.workflow_task_timeout = Some(wft_timeout.clone().into());
+    wes_short_wft_timeout.workflow_task_timeout = Some(wft_timeout.into());
     t.add(
         EventType::WorkflowExecutionStarted,
         wes_short_wft_timeout.into(),

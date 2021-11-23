@@ -347,7 +347,6 @@ impl WorkflowTaskManager {
                 // If there are outstanding local activities, we don't want to autocomplete the
                 // workflow task. We want to give them a chance to complete. If they take longer
                 // than the WFT timeout, we will force a new WFT just before the timeout.
-                // TODO: Implement that
                 NewWfTaskOutcome::LocalActsOutstanding
             } else {
                 NewWfTaskOutcome::Autocomplete
@@ -378,9 +377,6 @@ impl WorkflowTaskManager {
             (entry.info.task_token.clone(), entry.start_time)
         } else {
             if !self.activation_has_eviction(run_id) {
-                // TODO: This needs to be fixed by either getting WFT back from completion when
-                //   forcing (almost certainly right way) or special-casing when there are active
-                //   LAs
                 // Don't bother warning if this was an eviction, since it's normal to issue
                 // eviction activations without an associated workflow task in that case.
                 warn!(
@@ -434,29 +430,33 @@ impl WorkflowTaskManager {
                 self,
                 run_id,
                 Some(task_token.clone()),
-                |wfm: &mut WorkflowManager| async move {
-                    // Send commands from lang into the machines then check if the workflow run needs
-                    // another activation and mark it if so
-                    wfm.push_commands(commands).await?;
-                    let are_pending = wfm.apply_next_task_if_ready().await?;
-                    // We want to fetch the outgoing commands only after a next WFT may have been
-                    // applied, as outgoing server commands may be affected.
-                    let outgoing_cmds = wfm.get_server_commands();
-                    let new_local_acts = wfm.drain_queued_local_activities();
+                |wfm: &mut WorkflowManager| {
+                    async move {
+                        // Send commands from lang into the machines then check if the workflow run
+                        // needs another activation and mark it if so
+                        wfm.push_commands(commands).await?;
+                        let are_pending = wfm.apply_next_task_if_ready().await?;
+                        // We want to fetch the outgoing commands only after a next WFT may have
+                        // been applied, as outgoing server commands may be affected.
+                        let outgoing_cmds = wfm.get_server_commands();
+                        let new_local_acts = wfm.drain_queued_local_activities();
 
-                    // TODO: Turn expects into result chain
-                    let wft_timeout: Duration = wfm
-                        .machines
-                        .started_attrs()
-                        .expect("Workflow has started at this point")
-                        .workflow_task_timeout
-                        .clone()
-                        .expect("Workflow has a defined task timeout")
-                        .try_into()
-                        .expect("wft timeout duration is valid");
-                    Ok((are_pending, outgoing_cmds, new_local_acts, wft_timeout))
+                        let wft_timeout: Duration = wfm
+                            .machines
+                            .started_attrs()
+                            .and_then(|attrs| attrs.workflow_task_timeout.clone())
+                            .and_then(|tt| tt.try_into().ok())
+                            .ok_or_else(|| {
+                                WFMachinesError::Fatal(
+                                    "Workflow's start attribs were missing a well formed task timeout"
+                                        .to_string(),
+                                )
+                            })?;
+
+                        Ok((are_pending, outgoing_cmds, new_local_acts, wft_timeout))
+                    }
+                    .boxed()
                 }
-                .boxed()
             )?;
 
             if are_pending {
