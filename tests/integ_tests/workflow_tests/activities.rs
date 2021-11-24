@@ -8,7 +8,7 @@ use temporal_sdk_core_protos::{
         workflow_activation::{wf_activation_job, FireTimer, ResolveActivity, WfActivationJob},
         workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
         workflow_completion::WfActivationCompletion,
-        ActivityTaskCompletion, IntoCompletion,
+        ActivityHeartbeat, ActivityTaskCompletion, IntoCompletion,
     },
     temporal::api::{
         common::v1::{ActivityType, Payloads},
@@ -646,4 +646,64 @@ async fn async_activity_completion_workflow() {
         }
     );
     core.complete_execution(&task_q, &task.run_id).await;
+}
+
+#[tokio::test]
+async fn activity_cancelled_after_heartbeat_times_out() {
+    let test_name = "activity_cancelled_after_heartbeat_times_out";
+    let (core, task_q) = init_core_and_create_wf(test_name).await;
+    let activity_id = "act-1";
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    // Complete workflow task and schedule activity
+    core.complete_workflow_activation(
+        schedule_activity_cmd(
+            0,
+            &task_q,
+            activity_id,
+            ActivityCancellationType::WaitCancellationCompleted,
+            Duration::from_secs(60),
+            Duration::from_secs(1),
+        )
+        .into_completion(task_q.clone(), task.run_id),
+    )
+    .await
+    .unwrap();
+    // Poll activity and verify that it's been scheduled with correct parameters
+    let task = core.poll_activity_task(&task_q).await.unwrap();
+    assert_matches!(
+        task.variant,
+        Some(act_task::Variant::Start(start_activity)) => {
+            assert_eq!(start_activity.activity_type, "test_activity".to_string())
+        }
+    );
+    // Delay the heartbeat
+    sleep(Duration::from_secs(2)).await;
+    core.record_activity_heartbeat(ActivityHeartbeat {
+        task_token: task.task_token.clone(),
+        task_queue: task_q.to_string(),
+        details: vec![],
+    });
+
+    // Verify activity got cancelled
+    let cancel_task = core.poll_activity_task(&task_q).await.unwrap();
+    assert_eq!(cancel_task.task_token, task.task_token.clone());
+    assert_matches!(cancel_task.variant, Some(act_task::Variant::Cancel(_)));
+
+    // Complete activity with cancelled result
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: task.task_token.clone(),
+        task_queue: task_q.to_string(),
+        result: Some(ActivityResult::cancel_from_details(None)),
+    })
+    .await
+    .unwrap();
+
+    // Verify shutdown completes
+    core.shutdown_worker(task_q.as_str()).await;
+    core.shutdown().await;
+    // Cleanup just in case
+    core.server_gateway()
+        .terminate_workflow_execution(test_name.to_string(), None)
+        .await
+        .unwrap();
 }
