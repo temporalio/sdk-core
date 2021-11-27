@@ -2,10 +2,11 @@ use crate::{
     errors::ActivityHeartbeatError, pollers::ServerGatewayApis, task_token::TaskToken,
     worker::activities::PendingActivityCancel,
 };
+use futures::StreamExt;
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     sync::Arc,
-    time::{self, Duration},
+    time::{self, Duration, Instant},
 };
 use temporal_sdk_core_protos::{
     coresdk::{activity_task::ActivityCancelReason, common, ActivityHeartbeat, IntoPayloadsExt},
@@ -14,7 +15,7 @@ use temporal_sdk_core_protos::{
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        watch, Mutex,
+        oneshot, watch, Mutex,
     },
     task::JoinHandle,
 };
@@ -35,6 +36,8 @@ pub(crate) struct ActivityHeartbeatManager {
 enum HBAction {
     HB(ValidActivityHeartbeat),
     Evict(TaskToken),
+    CompleteReport(TaskToken),
+    CompleteThrottle(TaskToken),
 }
 
 #[derive(Debug)]
@@ -42,6 +45,14 @@ pub struct ValidActivityHeartbeat {
     pub task_token: TaskToken,
     pub details: Vec<common::Payload>,
     pub throttle_interval: time::Duration,
+}
+
+#[derive(Debug)]
+enum HBExecutorAction {
+    /// Heartbeats are throttled for this task token, sleep until duration or wait to be cancelled
+    Sleep(TaskToken, Duration, oneshot::Receiver<()>),
+    /// Report heartbeat to the server
+    Report(TaskToken, Vec<common::Payload>),
 }
 
 /// Handle that is used by the core for all interactions with the manager, allows sending new
@@ -75,7 +86,7 @@ impl ActivityHeartbeatManager {
     }
 
     /// Tell the heartbeat manager we are done forever with a certain task, so it may be forgotten.
-    /// Record should *not* be called with the same TaskToken after calling this.
+    /// Record *should* not be called with the same TaskToken after calling this.
     pub(super) fn evict(&self, task_token: TaskToken) {
         let _ = self.heartbeat_tx.send(HBAction::Evict(task_token));
     }
@@ -100,82 +111,120 @@ impl ActivityHeartbeatManager {
 
 #[derive(Debug)]
 struct ActivityHbState {
+    task_token: TaskToken,
     last_recorded_details: Option<Vec<common::Payload>>,
-    shutdown_tx: UnboundedSender<()>,
+    last_send_requested: Instant,
+    throttle_interval: Duration,
+    sleep_cancel_tx: Option<oneshot::Sender<()>>,
 }
 
-async fn send_heartbeat(
-    sg: Arc<impl ServerGatewayApis + Send + Sync + 'static + ?Sized>,
-    cancels_tx: UnboundedSender<PendingActivityCancel>,
-    task_token: TaskToken,
-    details: Vec<common::Payload>,
-) {
-    match sg
-        .record_activity_heartbeat(task_token.clone(), details.into_payloads())
-        .await
-    {
-        Ok(RecordActivityTaskHeartbeatResponse { cancel_requested }) => {
-            if cancel_requested {
-                cancels_tx
-                    .send(PendingActivityCancel {
-                        task_token,
-                        reason: ActivityCancelReason::Cancelled,
-                    })
-                    .expect("Receive half of heartbeat cancels not blocked");
-            }
-        }
-        // Send cancels for any activity that learns its workflow already finished
-        // (which is one thing not found implies - other reasons would seem equally
-        // valid).
-        Err(s) if s.code() == tonic::Code::NotFound => {
-            cancels_tx
-                .send(PendingActivityCancel {
-                    task_token,
-                    reason: ActivityCancelReason::NotFound,
-                })
-                .expect("Receive half of heartbeat cancels not blocked");
-        }
-        Err(e) => {
-            warn!("Error when recording heartbeat: {:?}", e);
-        }
+impl ActivityHbState {
+    /// Get duration to sleep by subtracting `throttle_interval` by elapsed time since
+    /// `last_send_requested`
+    fn get_throttle_sleep_duration(&self) -> Duration {
+        let time_since_last_sent = self.last_send_requested.elapsed();
+
+        return if time_since_last_sent > Duration::ZERO
+            && self.throttle_interval > time_since_last_sent
+        {
+            self.throttle_interval - time_since_last_sent
+        } else {
+            Duration::ZERO
+        };
     }
 }
 
-type HBStateMap = Arc<Mutex<HashMap<TaskToken, ActivityHbState>>>;
-type JoinHandleMap = Arc<Mutex<Option<HashMap<TaskToken, JoinHandle<()>>>>>;
+#[derive(Debug)]
+struct HbStreamState {
+    tt_to_state: HashMap<TaskToken, ActivityHbState>,
+    incoming_hbs: UnboundedReceiver<HBAction>,
+}
 
-async fn activity_heartbeat_loop(
-    tt: TaskToken,
-    throttle_interval: Duration,
-    heartbeat_states: HBStateMap,
-    join_handles: JoinHandleMap,
-    mut shutdown_rx: UnboundedReceiver<()>,
-    sg: Arc<impl ServerGatewayApis + Send + Sync + 'static + ?Sized>,
-    cancels_tx: UnboundedSender<PendingActivityCancel>,
-) {
-    loop {
-        {
-            let mut states = heartbeat_states.lock().await;
-            // state could only be removed in this case by eviction
-            if let Some(state) = states.get_mut(&tt) {
-                // Consume the recorded details, we rely on details being None to break out of the loop
-                if let Some(details) = state.last_recorded_details.take() {
-                    send_heartbeat(sg.clone(), cancels_tx.clone(), tt.clone(), details).await;
+impl HbStreamState {
+    fn new(incoming_hbs: UnboundedReceiver<HBAction>) -> Self {
+        Self {
+            tt_to_state: Default::default(),
+            incoming_hbs,
+        }
+    }
+
+    fn shutdown(self) {
+        for st in self.tt_to_state.into_values() {
+            if let Some(tx) = st.sleep_cancel_tx {
+                let _ = tx.send(());
+            }
+        }
+    }
+
+    /// Record a heartbeat received from lang
+    fn record(&mut self, hb: ValidActivityHeartbeat) -> Option<HBExecutorAction> {
+        match self.tt_to_state.entry(hb.task_token.clone()) {
+            Entry::Vacant(e) => {
+                let state = ActivityHbState {
+                    task_token: hb.task_token.clone(),
+                    throttle_interval: hb.throttle_interval,
+                    last_send_requested: Instant::now(),
+                    last_recorded_details: None,
+                    sleep_cancel_tx: None,
+                };
+                e.insert(state);
+                Some(HBExecutorAction::Report(hb.task_token, hb.details))
+            }
+            Entry::Occupied(mut o) => {
+                let state = o.get_mut();
+                state.last_recorded_details = Some(hb.details);
+                None
+            }
+        }
+    }
+
+    /// Heartbeat report to server completed
+    fn complete_report(&mut self, tt: TaskToken) -> Option<HBExecutorAction> {
+        if let Some(st) = self.tt_to_state.get_mut(&tt) {
+            let (sleep_cancel_tx, sleep_cancel_rx) = oneshot::channel();
+            st.sleep_cancel_tx = Some(sleep_cancel_tx);
+            // Always sleep for simplicity even if the duration is 0
+            Some(HBExecutorAction::Sleep(
+                tt.clone(),
+                st.get_throttle_sleep_duration(),
+                sleep_cancel_rx,
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// Throttling completed, report or stop tracking task token
+    fn complete_throttle(&mut self, tt: TaskToken) -> Option<HBExecutorAction> {
+        match self.tt_to_state.entry(tt.clone()) {
+            Entry::Occupied(mut e) => {
+                let state = e.get_mut();
+                if state.last_recorded_details.is_none() {
+                    // Nothing to report, forget this task token
+                    e.remove();
+                    None
                 } else {
-                    // No heartbeat received in throttle_interval
-                    states.remove(&tt);
-                    break;
+                    // Reset the cancellation channel and schedule another report
+                    state.sleep_cancel_tx = None;
+                    state.last_send_requested = Instant::now();
+                    state
+                        .last_recorded_details
+                        .take() // Delete the recorded details before reporting
+                        .map(|details| HBExecutorAction::Report(tt, details))
                 }
             }
-        }
-
-        tokio::select! {
-            _ = shutdown_rx.recv() => break,
-            _ = tokio::time::sleep(throttle_interval) => continue,
+            Entry::Vacant(_) => None,
         }
     }
-    if let Some(handles) = join_handles.lock().await.as_mut() {
-        handles.remove(&tt);
+
+    /// Activity should not be tracked anymore, cancel throttle timer if running
+    fn evict(&mut self, tt: TaskToken) -> Option<HBExecutorAction> {
+        if let Some(state) = self.tt_to_state.remove(&tt) {
+            if let Some(tx) = state.sleep_cancel_tx {
+                let _ = tx.send(());
+            }
+        };
+        None
     }
 }
 
@@ -183,83 +232,95 @@ impl ActivityHeartbeatManager {
     /// Creates a new instance of an activity heartbeat manager and returns a handle to the user,
     /// which allows to send new heartbeats and initiate the shutdown.
     pub fn new(sg: Arc<impl ServerGatewayApis + Send + Sync + 'static + ?Sized>) -> Self {
-        let (heartbeat_tx, mut heartbeat_rx) = unbounded_channel();
+        let (heartbeat_tx_source, heartbeat_rx) = unbounded_channel();
         let (cancels_tx, cancels_rx) = unbounded_channel();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let heartbeat_states = Arc::new(Mutex::new(HashMap::<TaskToken, ActivityHbState>::new()));
-        let join_handles = Arc::new(Mutex::new(
-            Some(HashMap::<TaskToken, JoinHandle<()>>::new()),
-        ));
+        let heartbeat_tx = heartbeat_tx_source.clone();
 
-        let join_handle = tokio::spawn(async move {
-            let mut shutdown = shutdown_rx.clone();
-            loop {
-                tokio::select! {
-                    biased;
+        let join_handle = tokio::spawn(
+            // The stream of incoming heartbeats uses unfold to carry state across each item in the
+            // stream The closure checks if, for any given activity, we should heartbeat or not
+            // depending on its delay and when we last issued a heartbeat for it.
+            futures::stream::unfold(HbStreamState::new(heartbeat_rx), move |mut hb_states| {
+                let mut shutdown = shutdown_rx.clone();
+                async move {
+                    let hb = tokio::select! {
+                        biased;
 
-                    _ = shutdown.changed() => {
-                        {
-                            let mut states = heartbeat_states.lock().await;
-                            for (_, state) in states.drain().into_iter() {
-                                state.shutdown_tx.send(()).expect("shutdown receiver dropped");
-                            }
+                        _ = shutdown.changed() => {
+                            hb_states.shutdown();
+                            return None
                         }
-                        let maybe_handles = {
-                            // Take the handles and immediately release the lock
-                            join_handles.lock().await.take()
-                        };
-                        if let Some(handles) = maybe_handles {
-                            futures::future::join_all(handles.into_values()).await;
+                        hb = hb_states.incoming_hbs.recv() => match hb {
+                            None => return None,
+                            Some(hb) => hb,
                         }
-                        break;
-                    },
-                    hb = heartbeat_rx.recv() => {
-                        if let Some(hb) = hb {
-                            match hb {
-                                HBAction::HB(hb) => {
-                                    let mut states = heartbeat_states.lock().await;
-                                    let tt = hb.task_token;
-                                    if let Some(state) = states.get_mut(&tt) {
-                                        state.last_recorded_details = Some(hb.details);
-                                    } else {
-                                        let (shutdown_tx, shutdown_rx) = unbounded_channel::<()>();
-                                        let throttle_interval = hb.throttle_interval;
-                                        states.insert(
-                                            tt.clone(),
-                                            ActivityHbState {
-                                                last_recorded_details: Some(hb.details),
-                                                shutdown_tx,
-                                            },
-                                        );
+                    };
 
-                                        let join_handle = tokio::spawn(
-                                            activity_heartbeat_loop(
+                    Some((
+                        match hb {
+                            HBAction::HB(hb) => hb_states.record(hb),
+                            HBAction::CompleteReport(tt) => hb_states.complete_report(tt),
+                            HBAction::CompleteThrottle(tt) => hb_states.complete_throttle(tt),
+                            HBAction::Evict(tt) => hb_states.evict(tt),
+                        },
+                        hb_states,
+                    ))
+                }
+            })
+            .filter_map(|opt| async { opt })
+            .for_each_concurrent(None, move |action| {
+                let heartbeat_tx = heartbeat_tx_source.clone();
+                let sg = sg.clone();
+                let cancels_tx = cancels_tx.clone();
+                async move {
+                    match action {
+                        HBExecutorAction::Sleep(tt, duration, cancel_rx) => {
+                            tokio::select! {
+                                _ = cancel_rx => (),
+                                _ = tokio::time::sleep(duration) => {
+                                    let _ = heartbeat_tx.send(HBAction::CompleteThrottle(tt));
+                                },
+                            };
+                        }
+                        HBExecutorAction::Report(tt, details) => {
+                            match sg
+                                .record_activity_heartbeat(tt.clone(), details.into_payloads())
+                                .await
+                            {
+                                Ok(RecordActivityTaskHeartbeatResponse { cancel_requested }) => {
+                                    if cancel_requested {
+                                        cancels_tx
+                                            .send(PendingActivityCancel::new(
                                                 tt.clone(),
-                                                throttle_interval,
-                                                heartbeat_states.clone(),
-                                                join_handles.clone(),
-                                                shutdown_rx,
-                                                sg.clone(),
-                                                cancels_tx.clone()
-                                            )
-                                        );
-
-                                        if let Some(handles) = join_handles.lock().await.as_mut() {
-                                            handles.insert(tt, join_handle);
-                                        }
+                                                ActivityCancelReason::Cancelled,
+                                            ))
+                                            .expect(
+                                                "Receive half of heartbeat cancels not blocked",
+                                            );
                                     }
-                                },
-                                HBAction::Evict(tt) => {
-                                    if let Some(state) = heartbeat_states.lock().await.remove(&tt) {
-                                        state.shutdown_tx.send(()).expect("shutdown receiver dropped");
-                                    }
-                                },
-                            }
+                                }
+                                // Send cancels for any activity that learns its workflow already finished
+                                // (which is one thing not found implies - other reasons would seem equally
+                                // valid).
+                                Err(s) if s.code() == tonic::Code::NotFound => {
+                                    cancels_tx
+                                        .send(PendingActivityCancel::new(
+                                            tt.clone(),
+                                            ActivityCancelReason::NotFound,
+                                        ))
+                                        .expect("Receive half of heartbeat cancels not blocked");
+                                }
+                                Err(e) => {
+                                    warn!("Error when recording heartbeat: {:?}", e);
+                                }
+                            };
+                            let _ = heartbeat_tx.send(HBAction::CompleteReport(tt));
                         }
                     }
                 }
-            }
-        });
+            }),
+        );
 
         Self {
             incoming_cancels: Mutex::new(cancels_rx),
@@ -305,7 +366,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn send_heartbeats_less_frequently_throttle_interval() {
+    async fn send_heartbeats_less_frequently_than_throttle_interval() {
         let mut mock_gateway = MockServerGatewayApis::new();
         mock_gateway
             .expect_record_activity_heartbeat()
