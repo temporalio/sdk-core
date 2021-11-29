@@ -13,7 +13,6 @@ use activity_heartbeat_manager::ActivityHeartbeatManager;
 use dashmap::DashMap;
 use std::{
     convert::TryInto,
-    ops::Div,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -91,6 +90,9 @@ pub(crate) struct WorkerActivityTasks {
     activities_semaphore: Semaphore,
 
     metrics: MetricsContext,
+
+    max_heartbeat_throttle_interval: Duration,
+    default_heartbeat_throttle_interval: Duration,
 }
 
 impl WorkerActivityTasks {
@@ -99,6 +101,8 @@ impl WorkerActivityTasks {
         poller: BoxedActPoller,
         sg: Arc<impl ServerGatewayApis + Send + Sync + 'static + ?Sized>,
         metrics: MetricsContext,
+        max_heartbeat_throttle_interval: Duration,
+        default_heartbeat_throttle_interval: Duration,
     ) -> Self {
         Self {
             heartbeat_manager: ActivityHeartbeatManager::new(sg),
@@ -106,12 +110,13 @@ impl WorkerActivityTasks {
             poller,
             activities_semaphore: Semaphore::new(max_activity_tasks),
             metrics,
+            max_heartbeat_throttle_interval,
+            default_heartbeat_throttle_interval,
         }
     }
 
     pub(crate) fn notify_shutdown(&self) {
         self.poller.notify_shutdown();
-        self.heartbeat_manager.notify_shutdown();
     }
 
     pub(crate) async fn shutdown(self) {
@@ -254,22 +259,30 @@ impl WorkerActivityTasks {
         details: ActivityHeartbeat,
     ) -> Result<(), ActivityHeartbeatError> {
         // TODO: Propagate these back as cancels. Silent fails is too nonobvious
-        let t: Duration = self
+        let heartbeat_timeout: Duration = self
             .outstanding_activity_tasks
             .get(&TaskToken(details.task_token.clone()))
             .ok_or(ActivityHeartbeatError::UnknownActivity)?
             .heartbeat_timeout
             .clone()
-            .ok_or(ActivityHeartbeatError::HeartbeatTimeoutNotSet)?
+            // We treat None as 0 (even though heartbeat_timeout is never set to None by the server)
+            .unwrap_or_default()
             .try_into()
+            // This technically should never happen since prost duration should be directly mappable
+            // to std::time::Duration.
             .or(Err(ActivityHeartbeatError::InvalidHeartbeatTimeout))?;
+
         // There is a bug in the server that translates non-set heartbeat timeouts into 0 duration.
         // That's why we treat 0 the same way as None, otherwise we wouldn't know which aggregation
         // delay to use, and using 0 is not a good idea as SDK would hammer the server too hard.
-        if t.as_millis() == 0 {
-            return Err(ActivityHeartbeatError::HeartbeatTimeoutNotSet);
-        }
-        self.heartbeat_manager.record(details, t.div(2))
+        let throttle_interval = if heartbeat_timeout.as_millis() == 0 {
+            self.default_heartbeat_throttle_interval
+        } else {
+            heartbeat_timeout.mul_f64(0.8)
+        };
+        let throttle_interval =
+            std::cmp::min(throttle_interval, self.max_heartbeat_throttle_interval);
+        self.heartbeat_manager.record(details, throttle_interval)
     }
 
     async fn next_pending_cancel_task(&self) -> Result<Option<ActivityTask>, PollActivityError> {
