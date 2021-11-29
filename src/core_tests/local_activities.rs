@@ -135,6 +135,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
         wes_short_wft_timeout.into(),
     );
     t.add_full_wf_task();
+    // Task created by WFT heartbeat
     t.add_full_wf_task();
     t.add_workflow_task_scheduled_and_started();
 

@@ -181,16 +181,16 @@ impl TestRustWorker {
                             }
                             o => o?,
                         };
-                        Self::workflow_activation_handler(
-                            core,
-                            task_q,
-                            wf_half,
-                            &shutdown_rx,
-                            &completions_tx,
-                            &mut completions_rx,
-                            activation,
-                        )
-                        .await?;
+                        wf_half
+                            .workflow_activation_handler(
+                                core,
+                                task_q,
+                                &shutdown_rx,
+                                &completions_tx,
+                                &mut completions_rx,
+                                activation,
+                            )
+                            .await?;
                         if wf_half.incomplete_workflows.load(Ordering::SeqCst) == 0 {
                             // Die rebel scum - evict all workflows (which are complete now),
                             // and turn off activity polling.
@@ -210,8 +210,8 @@ impl TestRustWorker {
                                     if matches!(activity, Err(PollActivityError::ShutDown)) {
                                         break;
                                     }
-                                    Self::activity_task_handler(core, task_q,
-                                                                act_half, activity?).await?;
+                                    act_half.activity_task_handler(core, task_q,
+                                                                   activity?).await?;
                                 },
                                 _ = shutdown_rx.changed() => { break }
                             }
@@ -233,12 +233,21 @@ impl TestRustWorker {
         Ok(())
     }
 
+    fn split_apart(&mut self) -> (&dyn Core, &str, &mut WorkflowHalf, &mut ActivityHalf) {
+        (
+            self.core.as_ref(),
+            &self.task_queue,
+            &mut self.workflow_half,
+            &mut self.activity_half,
+        )
+    }
+}
+
+impl WorkflowHalf {
     async fn workflow_activation_handler(
-        // Sadly, this can't just take self b/c we need to avoid double-mutably-borrowing in the run
-        // loop, even though workflow / activation handlers are disjoint
+        &mut self,
         core: &dyn Core,
         task_queue: &str,
-        wfs: &mut WorkflowHalf,
         shutdown_rx: &Receiver<bool>,
         completions_tx: &UnboundedSender<WfActivationCompletion>,
         completions_rx: &mut UnboundedReceiver<WfActivationCompletion>,
@@ -250,7 +259,7 @@ impl TestRustWorker {
             variant: Some(Variant::StartWorkflow(sw)),
         }) = activation.jobs.get(0)
         {
-            let wf_function = wfs
+            let wf_function = self
                 .workflow_fns
                 .get(&sw.workflow_type)
                 .ok_or_else(|| anyhow!("Workflow type not found"))?;
@@ -269,13 +278,14 @@ impl TestRustWorker {
                     _ = shutdown_rx.changed() => Ok(WfExitValue::Evicted)
                 }
             });
-            wfs.workflows.insert(activation.run_id.clone(), activations);
-            wfs.join_handles.push(jh.boxed());
+            self.workflows
+                .insert(activation.run_id.clone(), activations);
+            self.join_handles.push(jh.boxed());
         }
 
         // The activation is expected to apply to some workflow we know about. Use it to
         // unblock things and advance the workflow.
-        if let Some(tx) = wfs.workflows.get_mut(&activation.run_id) {
+        if let Some(tx) = self.workflows.get_mut(&activation.run_id) {
             tx.send(activation)
                 .expect("Workflow should exist if we're sending it an activation");
         } else {
@@ -285,22 +295,24 @@ impl TestRustWorker {
         let completion = completions_rx.recv().await.expect("No workflows left?");
         if completion.has_execution_ending() {
             debug!("Workflow {} says it's finishing", &completion.run_id);
-            wfs.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
+            self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
         }
         core.complete_workflow_activation(completion).await?;
         Ok(())
     }
+}
 
+impl ActivityHalf {
     async fn activity_task_handler(
+        &mut self,
         core: &dyn Core,
         task_queue: &str,
-        acts: &mut ActivityHalf,
         activity: ActivityTask,
     ) -> Result<(), anyhow::Error> {
         // TODO: Trap errors and report activity failures, handle cancels, etc.
         match activity.variant {
             Some(activity_task::Variant::Start(start)) => {
-                let act_fn = acts.activity_fns.get(&start.activity_type).ok_or_else(|| {
+                let act_fn = self.activity_fns.get(&start.activity_type).ok_or_else(|| {
                     anyhow!(
                         "No function registered for activity type {}",
                         start.activity_type
@@ -322,15 +334,6 @@ impl TestRustWorker {
             None => bail!("Undefined activity task variant"),
         }
         Ok(())
-    }
-
-    fn split_apart(&mut self) -> (&dyn Core, &str, &mut WorkflowHalf, &mut ActivityHalf) {
-        (
-            self.core.as_ref(),
-            &self.task_queue,
-            &mut self.workflow_half,
-            &mut self.activity_half,
-        )
     }
 }
 

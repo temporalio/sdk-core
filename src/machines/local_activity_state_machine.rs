@@ -49,6 +49,8 @@ fsm! {
     // to eventually see the marker
     WaitingMarkerEvent --(MarkerRecorded(CompleteLocalActivityData), on_marker_recorded)
       --> MarkerCommandRecorded;
+    // If the activity is pre resolved we still expect to see marker recorded event at some point,
+    // even though we already resolved the activity.
     WaitingMarkerEventPreResolved --(MarkerRecorded(CompleteLocalActivityData), on_marker_recorded)
       --> MarkerCommandRecorded;
 }

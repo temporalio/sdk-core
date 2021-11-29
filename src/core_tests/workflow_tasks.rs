@@ -1666,6 +1666,8 @@ async fn failing_wft_doesnt_eat_permit_forever() {
     core.shutdown().await;
 }
 
+/// This test verifies that WFTs which come as replies to completing a WFT are properly delivered
+/// via activation polling.
 #[tokio::test]
 async fn tasks_from_completion_are_delivered() {
     let wfid = "fake_wf_id";
@@ -1699,9 +1701,7 @@ async fn tasks_from_completion_are_delivered() {
         .times(1)
         .returning(|_| Ok(Default::default()));
     let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, []);
-    mock.worker_cfg(TEST_Q, |wc| {
-        wc.max_cached_workflows = 2;
-    });
+    mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 2);
     let core = mock_core(mock);
 
     let wf_task = core.poll_workflow_activation(TEST_Q).await.unwrap();

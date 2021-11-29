@@ -38,6 +38,10 @@ use temporal_sdk_core_protos::coresdk::{
 };
 use tokio::{sync::Notify, time::sleep};
 
+/// What percentage of a WFT timeout we are willing to wait before sending a WFT heartbeat when
+/// necessary.
+const WFT_HEARTBEAT_TIMEOUT_FRACTION: f32 = 0.8;
+
 /// Centralizes concerns related to applying new workflow tasks and reporting the activations they
 /// produce.
 ///
@@ -465,7 +469,8 @@ impl WorkflowTaskManager {
             local_activity_request_sink(local_activities);
 
             // The heartbeat deadline is 80% of the WFT timeout
-            let wft_heartbeat_deadline = start_time.add(wft_timeout.mul_f32(0.8));
+            let wft_heartbeat_deadline =
+                start_time.add(wft_timeout.mul_f32(WFT_HEARTBEAT_TIMEOUT_FRACTION));
             // Wait on local activities to resolve if there are any, or for the WFT timeout to
             // be about to expire, in which case we will need to send a WFT heartbeat.
             let must_heartbeat = self
