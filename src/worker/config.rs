@@ -51,6 +51,17 @@ pub struct WorkerConfig {
     /// and moved to the non-sticky queue where it may be picked up by any worker.
     #[builder(default = "Duration::from_secs(10)")]
     pub sticky_queue_schedule_to_start_timeout: Duration,
+
+    /// Longest interval for throttling activity heartbeats
+    #[builder(default = "Duration::from_secs(60)")]
+    pub max_heartbeat_throttle_interval: Duration,
+
+    /// Default interval for throttling activity heartbeats in case
+    /// `ActivityOptions.heartbeat_timeout` is unset.
+    /// When the timeout *is* set in the `ActivityOptions`, throttling is set to
+    /// `heartbeat_timeout * 0.8`.
+    #[builder(default = "Duration::from_secs(30)")]
+    pub default_heartbeat_throttle_interval: Duration,
 }
 
 impl WorkerConfigBuilder {
