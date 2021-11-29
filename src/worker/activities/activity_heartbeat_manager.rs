@@ -341,7 +341,7 @@ mod test {
     };
     use tokio::time::sleep;
 
-    /// Ensure that heartbeats that are sent with a small throttleInterval are aggregated and sent roughly once
+    /// Ensure that heartbeats that are sent with a small `throttle_interval` are aggregated and sent roughly once
     /// every 1/2 of the heartbeat timeout.
     #[tokio::test]
     async fn process_heartbeats_and_shutdown() {
