@@ -220,10 +220,12 @@ impl HeartbeatStreamState {
 
     /// Activity should not be tracked anymore, cancel throttle timer if running
     fn evict(&mut self, tt: TaskToken) -> Option<HeartbeatExecutorAction> {
-        if let Some(state) = self.tt_to_state.remove(&tt) {
-            if let Some(tx) = state.throttled_cancellation_token {
-                let _ = tx.cancel();
-            }
+        if let Some(token) = self
+            .tt_to_state
+            .remove(&tt)
+            .and_then(|st| st.throttled_cancellation_token)
+        {
+            let _ = token.cancel();
         };
         None
     }
