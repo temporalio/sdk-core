@@ -15,10 +15,11 @@ use temporal_sdk_core_protos::{
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        oneshot, watch, Mutex,
+        Mutex,
     },
     task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 
 /// Used to supply new heartbeat events to the activity heartbeat manager, or to send a shutdown
 /// request.
@@ -26,15 +27,15 @@ pub(crate) struct ActivityHeartbeatManager {
     /// Cancellations that have been received when heartbeating are queued here and can be consumed
     /// by [fetch_cancellations]
     incoming_cancels: Mutex<UnboundedReceiver<PendingActivityCancel>>,
-    shutting_down: watch::Sender<bool>,
+    cancellation_token: CancellationToken,
     /// Used during `shutdown` to await until all inflight requests are sent.
     join_handle: Mutex<Option<JoinHandle<()>>>,
-    heartbeat_tx: UnboundedSender<HBAction>,
+    heartbeat_tx: UnboundedSender<HeartbeatAction>,
 }
 
 #[derive(Debug)]
-enum HBAction {
-    HB(ValidActivityHeartbeat),
+enum HeartbeatAction {
+    SendHeartbeat(ValidActivityHeartbeat),
     Evict(TaskToken),
     CompleteReport(TaskToken),
     CompleteThrottle(TaskToken),
@@ -48,9 +49,9 @@ pub struct ValidActivityHeartbeat {
 }
 
 #[derive(Debug)]
-enum HBExecutorAction {
+enum HeartbeatExecutorAction {
     /// Heartbeats are throttled for this task token, sleep until duration or wait to be cancelled
-    Sleep(TaskToken, Duration, oneshot::Receiver<()>),
+    Sleep(TaskToken, Duration, CancellationToken),
     /// Report heartbeat to the server
     Report(TaskToken, Vec<common::Payload>),
 }
@@ -71,11 +72,11 @@ impl ActivityHeartbeatManager {
         hb: ActivityHeartbeat,
         throttle_interval: Duration,
     ) -> Result<(), ActivityHeartbeatError> {
-        if *self.shutting_down.borrow() {
+        if self.cancellation_token.is_cancelled() {
             return Err(ActivityHeartbeatError::ShuttingDown);
         }
         self.heartbeat_tx
-            .send(HBAction::HB(ValidActivityHeartbeat {
+            .send(HeartbeatAction::SendHeartbeat(ValidActivityHeartbeat {
                 task_token: TaskToken(hb.task_token),
                 details: hb.details,
                 throttle_interval,
@@ -88,7 +89,7 @@ impl ActivityHeartbeatManager {
     /// Tell the heartbeat manager we are done forever with a certain task, so it may be forgotten.
     /// Record *should* not be called with the same TaskToken after calling this.
     pub(super) fn evict(&self, task_token: TaskToken) {
-        let _ = self.heartbeat_tx.send(HBAction::Evict(task_token));
+        let _ = self.heartbeat_tx.send(HeartbeatAction::Evict(task_token));
     }
 
     /// Returns a future that resolves any time there is a new activity cancel that must be
@@ -98,10 +99,10 @@ impl ActivityHeartbeatManager {
     }
 
     // TODO: Can own self now!
-    /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all heartbeat
-    /// processors to terminate gracefully.
+    /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all in-flight
+    /// heartbeat requests to be flushed to the server.
     pub(super) async fn shutdown(&self) {
-        let _ = self.shutting_down.send(true);
+        let _ = self.cancellation_token.cancel();
         let mut handle = self.join_handle.lock().await;
         if let Some(h) = handle.take() {
             h.await.expect("shutdown should exit cleanly");
@@ -110,15 +111,15 @@ impl ActivityHeartbeatManager {
 }
 
 #[derive(Debug)]
-struct ActivityHbState {
+struct ActivityHeartbeatState {
     task_token: TaskToken,
     last_recorded_details: Option<Vec<common::Payload>>,
     last_send_requested: Instant,
     throttle_interval: Duration,
-    sleep_cancel_tx: Option<oneshot::Sender<()>>,
+    sleep_cancel_tx: Option<CancellationToken>,
 }
 
-impl ActivityHbState {
+impl ActivityHeartbeatState {
     /// Get duration to sleep by subtracting `throttle_interval` by elapsed time since
     /// `last_send_requested`
     fn get_throttle_sleep_duration(&self) -> Duration {
@@ -135,32 +136,32 @@ impl ActivityHbState {
 }
 
 #[derive(Debug)]
-struct HbStreamState {
-    tt_to_state: HashMap<TaskToken, ActivityHbState>,
-    incoming_hbs: UnboundedReceiver<HBAction>,
+struct HeartbeatStreamState {
+    tt_to_state: HashMap<TaskToken, ActivityHeartbeatState>,
+    incoming_hbs: UnboundedReceiver<HeartbeatAction>,
+    /// Token that can be used to cancel the entire stream.
+    /// Requests to the server are not cancelled with this token.
+    pub cancellation_token: CancellationToken,
 }
 
-impl HbStreamState {
-    fn new(incoming_hbs: UnboundedReceiver<HBAction>) -> Self {
-        Self {
-            tt_to_state: Default::default(),
-            incoming_hbs,
-        }
-    }
-
-    fn shutdown(self) {
-        for st in self.tt_to_state.into_values() {
-            if let Some(tx) = st.sleep_cancel_tx {
-                let _ = tx.send(());
-            }
-        }
+impl HeartbeatStreamState {
+    fn new() -> (Self, UnboundedSender<HeartbeatAction>) {
+        let (heartbeat_tx, incoming_hbs) = unbounded_channel();
+        (
+            Self {
+                cancellation_token: Default::default(),
+                tt_to_state: Default::default(),
+                incoming_hbs,
+            },
+            heartbeat_tx,
+        )
     }
 
     /// Record a heartbeat received from lang
-    fn record(&mut self, hb: ValidActivityHeartbeat) -> Option<HBExecutorAction> {
+    fn record(&mut self, hb: ValidActivityHeartbeat) -> Option<HeartbeatExecutorAction> {
         match self.tt_to_state.entry(hb.task_token.clone()) {
             Entry::Vacant(e) => {
-                let state = ActivityHbState {
+                let state = ActivityHeartbeatState {
                     task_token: hb.task_token.clone(),
                     throttle_interval: hb.throttle_interval,
                     last_send_requested: Instant::now(),
@@ -168,7 +169,7 @@ impl HbStreamState {
                     sleep_cancel_tx: None,
                 };
                 e.insert(state);
-                Some(HBExecutorAction::Report(hb.task_token, hb.details))
+                Some(HeartbeatExecutorAction::Report(hb.task_token, hb.details))
             }
             Entry::Occupied(mut o) => {
                 let state = o.get_mut();
@@ -179,15 +180,15 @@ impl HbStreamState {
     }
 
     /// Heartbeat report to server completed
-    fn complete_report(&mut self, tt: TaskToken) -> Option<HBExecutorAction> {
+    fn complete_report(&mut self, tt: TaskToken) -> Option<HeartbeatExecutorAction> {
         if let Some(st) = self.tt_to_state.get_mut(&tt) {
-            let (sleep_cancel_tx, sleep_cancel_rx) = oneshot::channel();
-            st.sleep_cancel_tx = Some(sleep_cancel_tx);
+            let cancellation_token = self.cancellation_token.child_token();
+            st.sleep_cancel_tx = Some(cancellation_token.clone());
             // Always sleep for simplicity even if the duration is 0
-            Some(HBExecutorAction::Sleep(
+            Some(HeartbeatExecutorAction::Sleep(
                 tt.clone(),
                 st.get_throttle_sleep_duration(),
-                sleep_cancel_rx,
+                cancellation_token,
             ))
         } else {
             None
@@ -195,7 +196,7 @@ impl HbStreamState {
     }
 
     /// Throttling completed, report or stop tracking task token
-    fn complete_throttle(&mut self, tt: TaskToken) -> Option<HBExecutorAction> {
+    fn complete_throttle(&mut self, tt: TaskToken) -> Option<HeartbeatExecutorAction> {
         match self.tt_to_state.entry(tt.clone()) {
             Entry::Occupied(mut e) => {
                 let state = e.get_mut();
@@ -210,7 +211,7 @@ impl HbStreamState {
                     state
                         .last_recorded_details
                         .take() // Delete the recorded details before reporting
-                        .map(|details| HBExecutorAction::Report(tt, details))
+                        .map(|details| HeartbeatExecutorAction::Report(tt, details))
                 }
             }
             Entry::Vacant(_) => None,
@@ -218,10 +219,10 @@ impl HbStreamState {
     }
 
     /// Activity should not be tracked anymore, cancel throttle timer if running
-    fn evict(&mut self, tt: TaskToken) -> Option<HBExecutorAction> {
+    fn evict(&mut self, tt: TaskToken) -> Option<HeartbeatExecutorAction> {
         if let Some(state) = self.tt_to_state.remove(&tt) {
             if let Some(tx) = state.sleep_cancel_tx {
-                let _ = tx.send(());
+                let _ = tx.cancel();
             }
         };
         None
@@ -232,23 +233,21 @@ impl ActivityHeartbeatManager {
     /// Creates a new instance of an activity heartbeat manager and returns a handle to the user,
     /// which allows to send new heartbeats and initiate the shutdown.
     pub fn new(sg: Arc<impl ServerGatewayApis + Send + Sync + 'static + ?Sized>) -> Self {
-        let (heartbeat_tx_source, heartbeat_rx) = unbounded_channel();
+        let (heartbeat_stream_state, heartbeat_tx_source) = HeartbeatStreamState::new();
         let (cancels_tx, cancels_rx) = unbounded_channel();
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let heartbeat_tx = heartbeat_tx_source.clone();
+        let cancellation_token = heartbeat_stream_state.cancellation_token.clone();
 
         let join_handle = tokio::spawn(
             // The stream of incoming heartbeats uses unfold to carry state across each item in the
             // stream The closure checks if, for any given activity, we should heartbeat or not
             // depending on its delay and when we last issued a heartbeat for it.
-            futures::stream::unfold(HbStreamState::new(heartbeat_rx), move |mut hb_states| {
-                let mut shutdown = shutdown_rx.clone();
+            futures::stream::unfold(heartbeat_stream_state, move |mut hb_states| {
                 async move {
                     let hb = tokio::select! {
                         biased;
 
-                        _ = shutdown.changed() => {
-                            hb_states.shutdown();
+                        _ = hb_states.cancellation_token.cancelled() => {
                             return None
                         }
                         hb = hb_states.incoming_hbs.recv() => match hb {
@@ -259,10 +258,10 @@ impl ActivityHeartbeatManager {
 
                     Some((
                         match hb {
-                            HBAction::HB(hb) => hb_states.record(hb),
-                            HBAction::CompleteReport(tt) => hb_states.complete_report(tt),
-                            HBAction::CompleteThrottle(tt) => hb_states.complete_throttle(tt),
-                            HBAction::Evict(tt) => hb_states.evict(tt),
+                            HeartbeatAction::SendHeartbeat(hb) => hb_states.record(hb),
+                            HeartbeatAction::CompleteReport(tt) => hb_states.complete_report(tt),
+                            HeartbeatAction::CompleteThrottle(tt) => hb_states.complete_throttle(tt),
+                            HeartbeatAction::Evict(tt) => hb_states.evict(tt),
                         },
                         hb_states,
                     ))
@@ -275,15 +274,15 @@ impl ActivityHeartbeatManager {
                 let cancels_tx = cancels_tx.clone();
                 async move {
                     match action {
-                        HBExecutorAction::Sleep(tt, duration, cancel_rx) => {
+                        HeartbeatExecutorAction::Sleep(tt, duration, cancellation_token) => {
                             tokio::select! {
-                                _ = cancel_rx => (),
+                                _ = cancellation_token.cancelled() => (),
                                 _ = tokio::time::sleep(duration) => {
-                                    let _ = heartbeat_tx.send(HBAction::CompleteThrottle(tt));
+                                    let _ = heartbeat_tx.send(HeartbeatAction::CompleteThrottle(tt));
                                 },
                             };
                         }
-                        HBExecutorAction::Report(tt, details) => {
+                        HeartbeatExecutorAction::Report(tt, details) => {
                             match sg
                                 .record_activity_heartbeat(tt.clone(), details.into_payloads())
                                 .await
@@ -315,7 +314,7 @@ impl ActivityHeartbeatManager {
                                     warn!("Error when recording heartbeat: {:?}", e);
                                 }
                             };
-                            let _ = heartbeat_tx.send(HBAction::CompleteReport(tt));
+                            let _ = heartbeat_tx.send(HeartbeatAction::CompleteReport(tt));
                         }
                     }
                 }
@@ -325,7 +324,7 @@ impl ActivityHeartbeatManager {
         Self {
             incoming_cancels: Mutex::new(cancels_rx),
             join_handle: Mutex::new(Some(join_handle)),
-            shutting_down: shutdown_tx,
+            cancellation_token,
             heartbeat_tx,
         }
     }

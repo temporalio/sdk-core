@@ -254,10 +254,7 @@ impl WorkerActivityTasks {
             .heartbeat_timeout
             .clone()
             // We treat None as 0 (even though heartbeat_timeout is never set to None by the server)
-            .unwrap_or(prost_types::Duration {
-                nanos: 0,
-                seconds: 0,
-            })
+            .unwrap_or(Default::default())
             .try_into()
             // This technically should never happen since prost duration should be directly mappable
             // to std::time::Duration.
