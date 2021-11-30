@@ -42,17 +42,17 @@ fsm! {
 
     MarkerCommandCreated --(CommandRecordMarker, on_command_record_marker) --> ResultNotified;
 
-    ResultNotified --(MarkerRecorded(CompleteLocalActivityData), on_marker_recorded) --> MarkerCommandRecorded;
+    ResultNotified --(MarkerRecorded(CompleteLocalActivityData), shared on_marker_recorded) --> MarkerCommandRecorded;
 
     // Replay path ================================================================================
     // LAs on the replay path should never have handle result explicitly called on them, but do need
     // to eventually see the marker
-    WaitingMarkerEvent --(MarkerRecorded(CompleteLocalActivityData), on_marker_recorded)
+    WaitingMarkerEvent --(MarkerRecorded(CompleteLocalActivityData), shared on_marker_recorded)
       --> MarkerCommandRecorded;
     // If the activity is pre resolved we still expect to see marker recorded event at some point,
     // even though we already resolved the activity.
-    WaitingMarkerEventPreResolved --(MarkerRecorded(CompleteLocalActivityData), on_marker_recorded)
-      --> MarkerCommandRecorded;
+    WaitingMarkerEventPreResolved --(MarkerRecorded(CompleteLocalActivityData),
+                                     shared on_marker_recorded) --> MarkerCommandRecorded;
 }
 
 #[derive(Debug, Clone)]
@@ -88,7 +88,7 @@ pub(super) fn new_local_activity(
     attrs: ScheduleActivity,
     replaying_when_invoked: bool,
     maybe_pre_resolved: Option<ResolveDat>,
-) -> (LocalActivityMachine, Vec<MachineResponse>) {
+) -> Result<(LocalActivityMachine, Vec<MachineResponse>), WFMachinesError> {
     let initial_state = if replaying_when_invoked {
         if let Some(dat) = maybe_pre_resolved {
             ReplayingPreResolved { dat }.into()
@@ -97,7 +97,9 @@ pub(super) fn new_local_activity(
         }
     } else {
         if maybe_pre_resolved.is_some() {
-            todo!("Needs to return error here")
+            return Err(WFMachinesError::Nondeterminism(
+                "Local activity cannot be created as pre-resolved while not replaying".to_string(),
+            ));
         }
         Executing {}.into()
     };
@@ -119,15 +121,31 @@ pub(super) fn new_local_activity(
     } else {
         vec![]
     };
-    (machine, mr)
+    Ok((machine, mr))
 }
 
 impl LocalActivityMachine {
-    pub(super) fn marker_should_get_special_handling(&self) -> bool {
-        // TODO: Should probably error in all states that don't make sense
-        !matches!(self.state, LocalActivityMachineState::ResultNotified(_))
+    /// Is called to check if, while handling the LA marker event, we should avoid doing normal
+    /// command-event processing - instead simply applying the event to this machine and then
+    /// skipping over the rest. If this machine is in the `ResultNotified` state, that means
+    /// command handling should proceed as normal (ie: The command needs to be matched and removed).
+    /// The other valid states to make this check in are the `WaitingMarkerEvent[PreResolved]`
+    /// states, which will return true.
+    ///
+    /// Attempting the check in any other state likely means a bug in the SDK.
+    pub(super) fn marker_should_get_special_handling(&self) -> Result<bool, WFMachinesError> {
+        match &self.state {
+            LocalActivityMachineState::ResultNotified(_) => Ok(false),
+            LocalActivityMachineState::WaitingMarkerEvent(_) => Ok(true),
+            LocalActivityMachineState::WaitingMarkerEventPreResolved(_) => Ok(true),
+            _ => Err(WFMachinesError::Fatal(format!(
+                "Attempted to check for LA marker handling in invalid state {}",
+                self.state
+            ))),
+        }
     }
 
+    /// Attempt to resolve the local activity with a result from execution (not from history)
     pub(super) fn try_resolve(
         &mut self,
         result: ActivityResult,
@@ -236,16 +254,26 @@ impl RequestSent {
     }
 }
 
+macro_rules! verify_marker_dat {
+    ($shared:expr, $dat:expr, $ok_expr:expr) => {
+        if let Err(err) = verify_marker_data_matches($shared, $dat) {
+            TransitionResult::Err(err)
+        } else {
+            $ok_expr
+        }
+    };
+}
+
 #[derive(Default, Clone)]
 pub(super) struct ResultNotified {}
 
 impl ResultNotified {
     pub(super) fn on_marker_recorded(
         self,
-        _: CompleteLocalActivityData,
+        shared: SharedState,
+        dat: CompleteLocalActivityData,
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
-        // TODO: Verify same marker
-        TransitionResult::default()
+        verify_marker_dat!(&shared, &dat, TransitionResult::default())
     }
 }
 
@@ -255,9 +283,14 @@ pub(super) struct WaitingMarkerEvent {}
 impl WaitingMarkerEvent {
     pub(super) fn on_marker_recorded(
         self,
+        shared: SharedState,
         dat: CompleteLocalActivityData,
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
-        TransitionResult::commands([LocalActivityCommand::Resolved(dat.into())])
+        verify_marker_dat!(
+            &shared,
+            &dat,
+            TransitionResult::commands([LocalActivityCommand::Resolved(dat.into())])
+        )
     }
 }
 
@@ -266,9 +299,10 @@ pub(super) struct WaitingMarkerEventPreResolved {}
 impl WaitingMarkerEventPreResolved {
     pub(super) fn on_marker_recorded(
         self,
-        _dat: CompleteLocalActivityData,
+        shared: SharedState,
+        dat: CompleteLocalActivityData,
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
-        TransitionResult::default()
+        verify_marker_dat!(&shared, &dat, TransitionResult::default())
     }
 }
 
@@ -395,6 +429,20 @@ impl TryFrom<HistoryEvent> for LocalActivityMachineEvents {
             )),
         }
     }
+}
+
+fn verify_marker_data_matches(
+    shared: &SharedState,
+    dat: &CompleteLocalActivityData,
+) -> Result<(), WFMachinesError> {
+    if shared.attrs.seq != dat.marker_dat.seq {
+        return Err(WFMachinesError::Nondeterminism(format!(
+            "Local activity marker data has sequence number {} but matched against LA \
+            command with sequence number {}",
+            dat.marker_dat.seq, shared.attrs.seq
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

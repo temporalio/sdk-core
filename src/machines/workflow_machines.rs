@@ -398,7 +398,7 @@ impl WorkflowMachines {
             let cmdid = CommandID::LocalActivity(deets.seq);
             let mkey = self.get_machine_key(cmdid)?;
             if let Machines::LocalActivityMachine(lam) = self.machine(mkey) {
-                if lam.marker_should_get_special_handling() {
+                if lam.marker_should_get_special_handling()? {
                     self.submachine_handle_event(mkey, event, false)?;
                     return Ok(());
                 }
@@ -820,7 +820,7 @@ impl WorkflowMachines {
                             attrs,
                             self.replaying,
                             self.local_activity_resolutions.remove(&seq),
-                        );
+                        )?;
                         let machkey = self.all_machines.insert(la.into());
                         self.id_to_machine
                             .insert(CommandID::LocalActivity(seq), machkey);
