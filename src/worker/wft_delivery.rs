@@ -30,20 +30,29 @@ impl WFTSource {
         self.poll_buffer.poll().await
     }
 
+    /// Add a WFT received from the completion of another WFT
     pub fn add_wft_from_completion(&self, wft: PollWorkflowTaskQueueResponse) {
         self.from_completions.push(wft);
     }
 
+    /// Notifies the pollers to stop polling
     pub fn stop_pollers(&self) {
         self.poll_buffer.notify_shutdown();
     }
 
+    /// Returns true if there are tasks from completion buffered which need to be handled
+    pub fn has_tasks_from_complete(&self) -> bool {
+        !self.from_completions.is_empty()
+    }
+
+    /// Returns a future which resolves when all tasks from completions have been taken
     pub async fn wait_for_tasks_from_complete_to_drain(&self) {
         while !self.from_completions.is_empty() {
             self.task_taken_notifier.notified().await;
         }
     }
 
+    /// Wait for poll shutdown to complete
     pub async fn shutdown(self) {
         self.poll_buffer.shutdown_box().await;
     }
