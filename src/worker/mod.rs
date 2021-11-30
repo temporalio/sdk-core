@@ -226,10 +226,11 @@ impl Worker {
 
     /// Finish shutting down by consuming the background pollers and freeing all resources
     pub(crate) async fn finalize_shutdown(self) {
-        self.wf_task_source.shutdown().await;
-        if let Some(b) = self.at_task_mgr {
-            b.shutdown().await;
-        }
+        tokio::join!(self.wf_task_source.shutdown(), async {
+            if let Some(b) = self.at_task_mgr {
+                b.shutdown().await;
+            }
+        });
     }
 
     pub(crate) fn outstanding_workflow_tasks(&self) -> usize {
