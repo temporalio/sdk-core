@@ -3,6 +3,7 @@ name = "temporal-sdk-core-protos"
 version = "0.1.0"
 edition = "2021"
 authors = ["Spencer Judge <spencer@temporal.io>"]
+license = "MIT"
 license-file = "LICENSE.txt"
 description = "Protobuf definitions for Temporal SDKs Core/Lang interface"
 homepage = "https://temporal.io/"

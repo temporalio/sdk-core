@@ -1,6 +1,7 @@
 [package]
 name = "test_utils"
 version = "0.1.0"
+license = "MIT"
 authors = ["Spencer Judge <spencer@temporal.io>"]
 edition = "2021"
 resolver = "2"
