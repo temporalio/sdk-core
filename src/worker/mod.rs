@@ -179,6 +179,8 @@ impl Worker {
                     ap,
                     sg.gw.clone(),
                     metrics.clone(),
+                    config.max_heartbeat_throttle_interval,
+                    config.default_heartbeat_throttle_interval,
                 )
             }),
             local_act_mgr: LocalActivityManager::new(config.max_outstanding_local_activities),
