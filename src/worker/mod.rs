@@ -174,6 +174,8 @@ impl Worker {
                     ap,
                     sg.gw.clone(),
                     metrics.clone(),
+                    config.max_heartbeat_throttle_interval,
+                    config.default_heartbeat_throttle_interval,
                 )
             }),
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),

@@ -1665,3 +1665,56 @@ async fn failing_wft_doesnt_eat_permit_forever() {
 
     core.shutdown().await;
 }
+
+#[tokio::test]
+async fn cache_miss_doesnt_eat_permit_forever() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_workflow_task_scheduled_and_started();
+
+    let failures = 5;
+    // One extra response for when we stop failing
+    let resps = (1..=(failures + 1)).map(|_| 1);
+    let mock = MockServerGatewayApis::new();
+    let mut mock = single_hist_mock_sg("fake_wf_id", t, resps, mock, true);
+    mock.worker_cfg(TEST_Q, |cfg| {
+        cfg.max_cached_workflows = 2;
+        cfg.max_outstanding_workflow_tasks = 2;
+    });
+    let core = mock_core(mock);
+
+    // Spin failing the WFT to verify that we don't get stuck
+    for _ in 1..=failures {
+        let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        // Issue a nonsense completion that will trigger a WFT failure
+        core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+            TEST_Q,
+            activation.run_id,
+            RequestCancelActivity { seq: 1 }.into(),
+        ))
+        .await
+        .unwrap();
+        let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        assert_matches!(
+            activation.jobs.as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+            },]
+        );
+        core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, activation.run_id))
+            .await
+            .unwrap();
+        assert_eq!(core.outstanding_wfts(TEST_Q), 0);
+        assert_eq!(core.available_wft_permits(TEST_Q), 2);
+    }
+    let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+        TEST_Q,
+        activation.run_id,
+        CompleteWorkflowExecution { result: None }.into(),
+    ))
+    .await
+    .unwrap();
+
+    core.shutdown().await;
+}
