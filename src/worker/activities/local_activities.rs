@@ -1,5 +1,6 @@
 use crate::task_token::TaskToken;
 use parking_lot::Mutex;
+use std::time::SystemTime;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
@@ -23,6 +24,7 @@ pub(crate) struct NewLocalAct {
     pub schedule_cmd: ScheduleActivity,
     pub workflow_type: String,
     pub workflow_exec_info: WorkflowExecution,
+    pub schedule_time: SystemTime,
 }
 
 impl Debug for NewLocalAct {
@@ -115,10 +117,9 @@ impl LocalActivityManager {
                     header_fields: sa.header_fields,
                     input: sa.arguments,
                     heartbeat_details: vec![],
-                    // TODO: Get these times somehow
-                    scheduled_time: None,
-                    current_attempt_scheduled_time: None,
-                    started_time: None,
+                    scheduled_time: Some(new_la.schedule_time.into()),
+                    current_attempt_scheduled_time: Some(new_la.schedule_time.into()),
+                    started_time: Some(SystemTime::now().into()),
                     attempt: 0,
                     schedule_to_close_timeout: sa.schedule_to_close_timeout,
                     start_to_close_timeout: sa.start_to_close_timeout,
@@ -168,6 +169,7 @@ mod tests {
             },
             workflow_type: "".to_string(),
             workflow_exec_info: Default::default(),
+            schedule_time: SystemTime::now(),
         }));
         for i in 1..=50 {
             let next = lam.next_pending().await.unwrap();
@@ -194,6 +196,7 @@ mod tests {
             },
             workflow_type: "".to_string(),
             workflow_exec_info: Default::default(),
+            schedule_time: SystemTime::now(),
         }]);
 
         let next = lam.next_pending().await.unwrap();

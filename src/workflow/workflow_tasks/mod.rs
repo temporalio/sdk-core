@@ -36,7 +36,8 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_commands::QueryResult,
     FromPayloadsExt,
 };
-use tokio::{sync::Notify, time::sleep};
+use tokio::sync::Notify;
+use tokio::time::timeout_at;
 
 /// What percentage of a WFT timeout we are willing to wait before sending a WFT heartbeat when
 /// necessary.
@@ -750,7 +751,6 @@ impl WorkflowTaskManager {
         run_id: &str,
         wft_heartbeat_deadline: Instant,
     ) -> bool {
-        // TODO: Avoid spinning and use a notifier on `notify_of_local_result`
         loop {
             let la_count = self
                 .workflow_machines
@@ -764,7 +764,13 @@ impl WorkflowTaskManager {
                 // We must heartbeat b/c there are still pending local activities
                 return true;
             }
-            sleep(Duration::from_millis(100)).await
+            // Since an LA resolution always results in a new pending activation, we can wait on
+            // notifications of that to re-check if they're all resolved.
+            let _ = timeout_at(
+                wft_heartbeat_deadline.into(),
+                self.pending_activations_notifier.notified(),
+            )
+            .await;
         }
     }
 }

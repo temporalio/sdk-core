@@ -300,6 +300,7 @@ impl WorkflowMachines {
                         workflow_id: self.workflow_id.clone(),
                         run_id: self.run_id.clone(),
                     },
+                    schedule_time: SystemTime::now(),
                 }
             })
             .collect()
@@ -371,16 +372,6 @@ impl WorkflowMachines {
     fn task_started(&mut self, task_started_event_id: i64, time: SystemTime) -> Result<()> {
         let s = span!(Level::DEBUG, "Task started trigger");
         let _enter = s.enter();
-
-        // TODO: Local activity machines
-        // // Give local activities a chance to recreate their requests if they were lost due
-        // // to the last workflow task failure. The loss could happen only the last workflow task
-        // // was forcibly created by setting forceCreate on RespondWorkflowTaskCompletedRequest.
-        // if (nonProcessedWorkflowTask) {
-        //     for (LocalActivityStateMachine value : localActivityMap.values()) {
-        //         value.nonReplayWorkflowTaskStarted();
-        //     }
-        // }
 
         self.current_started_event_id = task_started_event_id;
         self.set_current_time(time);
@@ -600,15 +591,9 @@ impl WorkflowMachines {
 
     /// Iterate the state machines, which consists of grabbing any pending outgoing commands from
     /// the workflow code, handling them, and preparing them to be sent off to the server.
-    ///
-    /// Returns a boolean flag which indicates whether or not new activations were produced by the
-    /// state machine. If true, pending activation should be created by the caller making jobs
-    /// available to the lang side.
-    /// TODO: Return value of this fn never used
-    pub(crate) async fn iterate_machines(&mut self) -> Result<bool> {
+    pub(crate) async fn iterate_machines(&mut self) -> Result<()> {
         let results = self.drive_me.fetch_workflow_iteration_output().await;
         let jobs = self.handle_driven_results(results)?;
-        let has_new_lang_jobs = !jobs.is_empty();
         for job in jobs {
             self.drive_me.send_job(job);
         }
@@ -618,7 +603,7 @@ impl WorkflowMachines {
                 self.metrics.wf_e2e_latency(rt);
             }
         }
-        Ok(has_new_lang_jobs)
+        Ok(())
     }
 
     /// Apply the next (unapplied) entire workflow task from history to these machines. Will replay
