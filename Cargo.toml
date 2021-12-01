@@ -9,6 +9,7 @@ homepage = "https://temporal.io/"
 repository = "https://github.com/temporalio/sdk-core"
 keywords = ["temporal", "workflow"]
 categories = ["development-tools"]
+resolver = "2"
 
 [lib]
 
@@ -22,6 +23,7 @@ crossbeam = "0.8"
 dashmap = "4.0"
 derive_builder = "0.10"
 derive_more = "0.99"
+enum_dispatch = "0.3"
 futures = "0.3"
 futures-retry = "0.6.0"
 http = "0.2"
@@ -40,6 +42,7 @@ prost = "0.9"
 prost-types = "0.9"
 rand = "0.8.3"
 ringbuf = "0.2"
+serde = "1.0"
 slotmap = "1.0"
 thiserror = "1.0"
 tokio = { version = "1.1", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs"] }

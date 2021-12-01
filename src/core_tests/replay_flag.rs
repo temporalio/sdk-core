@@ -30,20 +30,19 @@ fn fire_happy_hist(num_timers: u32) -> ManagedWFFunc {
 #[tokio::test]
 async fn replay_flag_is_correct(#[case] mut wfm: ManagedWFFunc, #[case] num_timers: usize) {
     // Verify replay flag is correct by constructing a workflow manager that already has a complete
-    // history fed into it. The first (few, depending on test a params) activation(s) will be under
-    // replay while the last should not
+    // history fed into it. It should always be replaying, because history is complete.
 
     for _ in 1..=num_timers {
         let act = wfm.get_next_activation().await.unwrap();
         assert!(act.is_replaying);
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
     }
 
     let act = wfm.get_next_activation().await.unwrap();
-    assert!(!act.is_replaying);
-    let commands = wfm.get_server_commands().await.commands;
+    assert!(act.is_replaying);
+    let commands = wfm.get_server_commands().commands;
     assert_eq!(commands.len(), 1);
     assert_eq!(
         commands[0].command_type,
@@ -62,7 +61,7 @@ async fn replay_flag_is_correct_partial_history() {
 
     let act = wfm.get_next_activation().await.unwrap();
     assert!(!act.is_replaying);
-    let commands = wfm.get_server_commands().await.commands;
+    let commands = wfm.get_server_commands().commands;
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
     wfm.shutdown().await.unwrap();

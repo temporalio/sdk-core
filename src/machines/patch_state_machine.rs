@@ -78,10 +78,13 @@ pub(super) fn has_change(
     patch_id: String,
     replaying_when_invoked: bool,
     deprecated: bool,
-) -> NewMachineWithCommand<PatchMachine> {
+) -> NewMachineWithCommand {
     let (machine, command) =
         PatchMachine::new_scheduled(SharedState { patch_id }, replaying_when_invoked, deprecated);
-    NewMachineWithCommand { command, machine }
+    NewMachineWithCommand {
+        command,
+        machine: machine.into(),
+    }
 }
 
 impl PatchMachine {
@@ -184,11 +187,11 @@ impl WFMachinesAdapter for PatchMachine {
     }
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
-        event.get_changed_marker_details().is_some()
+        event.get_patch_marker_details().is_some()
     }
 
     fn kind(&self) -> MachineKind {
-        MachineKind::Version
+        MachineKind::Patch
     }
 }
 
@@ -209,7 +212,7 @@ impl TryFrom<HistoryEvent> for PatchMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
-        match e.get_changed_marker_details() {
+        match e.get_patch_marker_details() {
             Some((id, _)) => Ok(Self::MarkerRecorded(id)),
             _ => Err(WFMachinesError::Nondeterminism(format!(
                 "Change machine cannot handle this event: {}",
@@ -415,8 +418,7 @@ mod tests {
         let mut wfm = patch_setup(replaying, marker_type, wf_version);
         // Start workflow activation
         wfm.get_next_activation().await.unwrap();
-        // Just starts timer
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -488,7 +490,7 @@ mod tests {
         } else {
             assert_eq!(act.jobs.len(), 1);
         }
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 2);
         let dep_flag_expected = wf_version != 2;
         assert_matches!(

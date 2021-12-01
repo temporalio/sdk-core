@@ -29,9 +29,7 @@ fsm! {
 #[derive(Debug, derive_more::Display)]
 pub(super) enum ContinueAsNewWorkflowCommand {}
 
-pub(super) fn continue_as_new(
-    attribs: ContinueAsNewWorkflowExecution,
-) -> NewMachineWithCommand<ContinueAsNewWorkflowMachine> {
+pub(super) fn continue_as_new(attribs: ContinueAsNewWorkflowExecution) -> NewMachineWithCommand {
     let mut machine = ContinueAsNewWorkflowMachine {
         state: Created {}.into(),
         shared_state: (),
@@ -42,7 +40,10 @@ pub(super) fn continue_as_new(
         command_type: CommandType::ContinueAsNewWorkflowExecution as i32,
         attributes: Some(attribs.into()),
     };
-    NewMachineWithCommand { command, machine }
+    NewMachineWithCommand {
+        command,
+        machine: machine.into(),
+    }
 }
 
 #[derive(Default, Clone)]
@@ -141,12 +142,12 @@ mod tests {
         let t = canned_histories::timer_then_continue_as_new("1");
         let mut wfm = ManagedWFFunc::new(t, func, vec![]);
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
 
         wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
@@ -154,7 +155,7 @@ mod tests {
         );
 
         assert!(wfm.get_next_activation().await.unwrap().jobs.is_empty());
-        let commands = wfm.get_server_commands().await.commands;
+        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
         wfm.shutdown().await.unwrap();
     }

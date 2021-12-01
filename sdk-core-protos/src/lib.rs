@@ -18,6 +18,7 @@ pub mod coresdk {
     use activity_result::ActivityResult;
     use activity_task::ActivityTask;
     use common::Payload;
+    use serde::{Deserialize, Serialize};
     use std::{
         collections::HashMap,
         convert::TryFrom,
@@ -52,8 +53,9 @@ pub mod coresdk {
     pub mod activity_result {
         tonic::include_proto!("coresdk.activity_result");
         use super::{
-            super::temporal::api::failure::v1::{
-                failure, CanceledFailureInfo, Failure as APIFailure,
+            super::temporal::api::{
+                common::v1::Payload as APIPayload,
+                failure::v1::{failure, CanceledFailureInfo, Failure as APIFailure},
             },
             common::Payload,
         };
@@ -83,10 +85,30 @@ pub mod coresdk {
                 }
             }
         }
+
+        impl From<Result<APIPayload, APIFailure>> for ActivityResult {
+            fn from(r: Result<APIPayload, APIFailure>) -> Self {
+                Self {
+                    status: match r {
+                        Ok(p) => Some(activity_result::Status::Completed(Success {
+                            result: Some(p.into()),
+                        })),
+                        Err(f) => Some(activity_result::Status::Failed(Failure {
+                            failure: Some(f),
+                        })),
+                    },
+                }
+            }
+        }
     }
+
     pub mod common {
         tonic::include_proto!("coresdk.common");
-        use crate::temporal::api::common::v1::Payloads;
+        use super::external_data::LocalActivityMarkerData;
+        use crate::{
+            coresdk::{AsJsonPayloadExt, IntoPayloadsExt},
+            temporal::api::common::v1::{Payload as ApiPayload, Payloads},
+        };
         use std::collections::HashMap;
 
         impl<T> From<T> for Payload
@@ -125,6 +147,85 @@ pub mod coresdk {
             let name = std::str::from_utf8(&details.get("patch_id")?.payloads.get(0)?.data).ok()?;
             let deprecated = *details.get("deprecated")?.payloads.get(0)?.data.get(0)? != 0;
             Some((name.to_string(), deprecated))
+        }
+
+        pub fn build_local_activity_marker_details(
+            metadata: LocalActivityMarkerData,
+            result: Option<Payload>,
+        ) -> HashMap<String, Payloads> {
+            let mut hm = HashMap::new();
+            // It would be more efficient for this to be proto binary, but then it shows up as
+            // meaningless in the Temporal UI...
+            if let Some(jsonified) = metadata.as_json_payload().into_payloads() {
+                hm.insert("data".to_string(), jsonified);
+            }
+            if let Some(res) = result {
+                hm.insert("result".to_string(), res.into());
+            }
+            hm
+        }
+
+        /// Given a marker detail map, returns just the local activity info, but not the payload.
+        /// This is fairly inexpensive. Deserializing the whole payload may not be.
+        pub fn extract_local_activity_marker_data(
+            details: &HashMap<String, Payloads>,
+        ) -> Option<LocalActivityMarkerData> {
+            details
+                .get("data")
+                .and_then(|p| p.payloads.get(0))
+                .and_then(|p| std::str::from_utf8(&p.data).ok())
+                .and_then(|s| serde_json::from_str(s).ok())
+        }
+
+        /// Given a marker detail map, returns the local activity info and the result payload
+        /// if they are found and the marker data is well-formed. This removes the data from the
+        /// map.
+        pub fn extract_local_activity_marker_details(
+            details: &mut HashMap<String, Payloads>,
+        ) -> (Option<LocalActivityMarkerData>, Option<ApiPayload>) {
+            let data = extract_local_activity_marker_data(details);
+            let result = details.remove("result").and_then(|mut p| p.payloads.pop());
+            (data, result)
+        }
+    }
+
+    pub mod external_data {
+        use prost_types::Timestamp;
+        use serde::{Deserialize, Deserializer, Serialize, Serializer};
+        tonic::include_proto!("coresdk.external_data");
+
+        #[derive(Serialize, Deserialize)]
+        #[serde(remote = "Timestamp")]
+        struct TimestampDef {
+            pub seconds: i64,
+            pub nanos: i32,
+        }
+
+        // Buncha hullaballoo because prost types aren't serde compat.
+        // See https://github.com/tokio-rs/prost/issues/75 which hilariously Chad opened ages ago
+        mod opt_timestamp {
+            use super::*;
+
+            pub fn serialize<S>(value: &Option<Timestamp>, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                #[derive(Serialize)]
+                struct Helper<'a>(#[serde(with = "TimestampDef")] &'a Timestamp);
+
+                value.as_ref().map(Helper).serialize(serializer)
+            }
+
+            pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Timestamp>, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                #[derive(Deserialize)]
+                struct Helper(#[serde(with = "TimestampDef")] Timestamp);
+
+                let helper = Option::deserialize(deserializer)?;
+                Ok(helper.map(|Helper(external)| external))
+            }
         }
     }
 
@@ -183,6 +284,24 @@ pub mod coresdk {
             pub fn is_only_eviction(&self) -> bool {
                 self.jobs.len() == 1 && self.eviction_index().is_some()
             }
+
+            /// Append an eviction job to the joblist
+            pub fn append_evict_job(&mut self, reason: impl Into<String>) {
+                if let Some(last_job) = self.jobs.last() {
+                    if matches!(
+                        last_job.variant,
+                        Some(wf_activation_job::Variant::RemoveFromCache(_))
+                    ) {
+                        return;
+                    }
+                }
+                let evict_job = WfActivationJob::from(wf_activation_job::Variant::RemoveFromCache(
+                    RemoveFromCache {
+                        reason: reason.into(),
+                    },
+                ));
+                self.jobs.push(evict_job);
+            }
         }
 
         impl Display for WfActivation {
@@ -206,42 +325,48 @@ pub mod coresdk {
         impl Display for WfActivationJob {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 match &self.variant {
-                    None => write!(f, "Empty"),
-                    Some(v) => match v {
-                        wf_activation_job::Variant::StartWorkflow(_) => write!(f, "StartWorkflow"),
-                        wf_activation_job::Variant::FireTimer(_) => write!(f, "FireTimer"),
-                        wf_activation_job::Variant::UpdateRandomSeed(_) => {
-                            write!(f, "UpdateRandomSeed")
-                        }
-                        wf_activation_job::Variant::QueryWorkflow(_) => write!(f, "QueryWorkflow"),
-                        wf_activation_job::Variant::CancelWorkflow(_) => {
-                            write!(f, "CancelWorkflow")
-                        }
-                        wf_activation_job::Variant::SignalWorkflow(_) => {
-                            write!(f, "SignalWorkflow")
-                        }
-                        wf_activation_job::Variant::ResolveActivity(_) => {
-                            write!(f, "ResolveActivity")
-                        }
-                        wf_activation_job::Variant::NotifyHasPatch(_) => {
-                            write!(f, "NotifyHasPatch")
-                        }
-                        wf_activation_job::Variant::ResolveChildWorkflowExecutionStart(_) => {
-                            write!(f, "ResolveChildWorkflowExecutionStart")
-                        }
-                        wf_activation_job::Variant::ResolveChildWorkflowExecution(_) => {
-                            write!(f, "ResolveChildWorkflowExecution")
-                        }
-                        wf_activation_job::Variant::ResolveSignalExternalWorkflow(_) => {
-                            write!(f, "ResolveSignalExternalWorkflow")
-                        }
-                        wf_activation_job::Variant::RemoveFromCache(_) => {
-                            write!(f, "RemoveFromCache")
-                        }
-                        wf_activation_job::Variant::ResolveRequestCancelExternalWorkflow(_) => {
-                            write!(f, "ResolveRequestCancelExternalWorkflow")
-                        }
-                    },
+                    None => write!(f, "empty"),
+                    Some(v) => write!(f, "{}", v),
+                }
+            }
+        }
+
+        impl Display for wf_activation_job::Variant {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    wf_activation_job::Variant::StartWorkflow(_) => write!(f, "StartWorkflow"),
+                    wf_activation_job::Variant::FireTimer(t) => write!(f, "FireTimer({})", t.seq),
+                    wf_activation_job::Variant::UpdateRandomSeed(_) => {
+                        write!(f, "UpdateRandomSeed")
+                    }
+                    wf_activation_job::Variant::QueryWorkflow(_) => write!(f, "QueryWorkflow"),
+                    wf_activation_job::Variant::CancelWorkflow(_) => {
+                        write!(f, "CancelWorkflow")
+                    }
+                    wf_activation_job::Variant::SignalWorkflow(_) => {
+                        write!(f, "SignalWorkflow")
+                    }
+                    wf_activation_job::Variant::ResolveActivity(r) => {
+                        write!(f, "ResolveActivity({})", r.seq)
+                    }
+                    wf_activation_job::Variant::NotifyHasPatch(_) => {
+                        write!(f, "NotifyHasPatch")
+                    }
+                    wf_activation_job::Variant::ResolveChildWorkflowExecutionStart(_) => {
+                        write!(f, "ResolveChildWorkflowExecutionStart")
+                    }
+                    wf_activation_job::Variant::ResolveChildWorkflowExecution(_) => {
+                        write!(f, "ResolveChildWorkflowExecution")
+                    }
+                    wf_activation_job::Variant::ResolveSignalExternalWorkflow(_) => {
+                        write!(f, "ResolveSignalExternalWorkflow")
+                    }
+                    wf_activation_job::Variant::RemoveFromCache(_) => {
+                        write!(f, "RemoveFromCache")
+                    }
+                    wf_activation_job::Variant::ResolveRequestCancelExternalWorkflow(_) => {
+                        write!(f, "ResolveRequestCancelExternalWorkflow")
+                    }
                 }
             }
         }
@@ -290,48 +415,106 @@ pub mod coresdk {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 match &self.variant {
                     None => write!(f, "Empty"),
-                    Some(v) => match v {
-                        workflow_command::Variant::StartTimer(_) => write!(f, "StartTimer"),
-                        workflow_command::Variant::ScheduleActivity(_) => {
-                            write!(f, "ScheduleActivity")
-                        }
-                        workflow_command::Variant::RespondToQuery(_) => write!(f, "RespondToQuery"),
-                        workflow_command::Variant::RequestCancelActivity(_) => {
-                            write!(f, "RequestCancelActivity")
-                        }
-                        workflow_command::Variant::CancelTimer(_) => write!(f, "CancelTimer"),
-                        workflow_command::Variant::CompleteWorkflowExecution(_) => {
-                            write!(f, "CompleteWorkflowExecution")
-                        }
-                        workflow_command::Variant::FailWorkflowExecution(_) => {
-                            write!(f, "FailWorkflowExecution")
-                        }
-                        workflow_command::Variant::ContinueAsNewWorkflowExecution(_) => {
-                            write!(f, "ContinueAsNewWorkflowExecution")
-                        }
-                        workflow_command::Variant::CancelWorkflowExecution(_) => {
-                            write!(f, "CancelWorkflowExecution")
-                        }
-                        workflow_command::Variant::SetPatchMarker(_) => {
-                            write!(f, "SetPatchMarker")
-                        }
-                        workflow_command::Variant::StartChildWorkflowExecution(_) => {
-                            write!(f, "StartChildWorkflowExecution")
-                        }
-                        workflow_command::Variant::RequestCancelExternalWorkflowExecution(_) => {
-                            write!(f, "RequestCancelExternalWorkflowExecution")
-                        }
-                        workflow_command::Variant::SignalExternalWorkflowExecution(_) => {
-                            write!(f, "SignalExternalWorkflowExecution")
-                        }
-                        workflow_command::Variant::CancelSignalWorkflow(_) => {
-                            write!(f, "CancelSignalWorkflow")
-                        }
-                        workflow_command::Variant::CancelUnstartedChildWorkflowExecution(_) => {
-                            write!(f, "CancelUnstartedChildWorkflowExecution")
-                        }
-                    },
+                    Some(v) => write!(f, "{}", v),
                 }
+            }
+        }
+
+        impl Display for StartTimer {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "StartTimer({})", self.seq)
+            }
+        }
+
+        impl Display for ScheduleActivity {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "ScheduleActivity({}, {})", self.seq, self.activity_type)
+            }
+        }
+
+        impl Display for QueryResult {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "RespondToQuery({})", self.query_id)
+            }
+        }
+
+        impl Display for RequestCancelActivity {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "RequestCancelActivity({})", self.seq)
+            }
+        }
+
+        impl Display for CancelTimer {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "CancelTimer({})", self.seq)
+            }
+        }
+
+        impl Display for CompleteWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "CompleteWorkflowExecution")
+            }
+        }
+
+        impl Display for FailWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "FailWorkflowExecution")
+            }
+        }
+
+        impl Display for ContinueAsNewWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "ContinueAsNewWorkflowExecution")
+            }
+        }
+
+        impl Display for CancelWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "CancelWorkflowExecution")
+            }
+        }
+
+        impl Display for SetPatchMarker {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "SetPatchMarker({})", self.patch_id)
+            }
+        }
+
+        impl Display for StartChildWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(
+                    f,
+                    "StartChildWorkflowExecution({}, {})",
+                    self.seq, self.workflow_type
+                )
+            }
+        }
+
+        impl Display for RequestCancelExternalWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "RequestCancelExternalWorkflowExecution({})", self.seq)
+            }
+        }
+
+        impl Display for SignalExternalWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "SignalExternalWorkflowExecution({})", self.seq)
+            }
+        }
+
+        impl Display for CancelSignalWorkflow {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "CancelSignalWorkflow({})", self.seq)
+            }
+        }
+
+        impl Display for CancelUnstartedChildWorkflowExecution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(
+                    f,
+                    "CancelUnstartedChildWorkflowExecution({})",
+                    self.child_workflow_seq
+                )
             }
         }
 
@@ -601,6 +784,16 @@ pub mod coresdk {
             }
         }
 
+        pub fn fail(fail: Failure) -> Self {
+            Self {
+                status: Some(activity_result::activity_result::Status::Failed(
+                    activity_result::Failure {
+                        failure: Some(fail),
+                    },
+                )),
+            }
+        }
+
         pub fn unwrap_ok_payload(self) -> Payload {
             match self.status.unwrap() {
                 activity_result::activity_result::Status::Completed(c) => c.result.unwrap(),
@@ -638,6 +831,7 @@ pub mod coresdk {
                         start_to_close_timeout: r.start_to_close_timeout,
                         heartbeat_timeout: r.heartbeat_timeout,
                         retry_policy: r.retry_policy.map(Into::into),
+                        is_local: false,
                     },
                 )),
             }
@@ -764,6 +958,55 @@ pub mod coresdk {
             Self {
                 payloads: vec![v.into()],
             }
+        }
+    }
+
+    #[derive(thiserror::Error, Debug)]
+    pub enum PayloadDeserializeErr {
+        /// This deserializer does not handle this type of payload. Allows composing multiple
+        /// deserializers.
+        #[error("This deserializer does not understand this payload")]
+        DeserializerDoesNotHandle,
+        #[error("Error during deserialization: {0}")]
+        DeserializeErr(#[from] anyhow::Error),
+    }
+
+    // TODO: Once the prototype SDK is un-prototyped this serialization will need to be compat with
+    //   other SDKs (given they might execute an activity).
+    pub trait AsJsonPayloadExt {
+        fn as_json_payload(&self) -> anyhow::Result<Payload>;
+    }
+    impl<T> AsJsonPayloadExt for T
+    where
+        T: Serialize,
+    {
+        fn as_json_payload(&self) -> anyhow::Result<Payload> {
+            let as_json = serde_json::to_string(self)?;
+            let mut metadata = HashMap::new();
+            metadata.insert("encoding".to_string(), b"json/plain".to_vec());
+            Ok(Payload {
+                metadata,
+                data: as_json.into_bytes(),
+            })
+        }
+    }
+
+    pub trait FromJsonPayloadExt: Sized {
+        fn from_json_payload(payload: &Payload) -> Result<Self, PayloadDeserializeErr>;
+    }
+    impl<T> FromJsonPayloadExt for T
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        fn from_json_payload(payload: &Payload) -> Result<Self, PayloadDeserializeErr> {
+            if !matches!(
+                payload.metadata.get("encoding").map(|v| v.as_slice()),
+                Some(b"json/plain")
+            ) {
+                return Err(PayloadDeserializeErr::DeserializerDoesNotHandle);
+            }
+            let payload_str = std::str::from_utf8(&payload.data).map_err(anyhow::Error::from)?;
+            Ok(serde_json::from_str(payload_str).map_err(anyhow::Error::from)?)
         }
     }
 

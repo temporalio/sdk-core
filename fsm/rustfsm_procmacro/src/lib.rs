@@ -565,7 +565,7 @@ impl StateMachineDefinition {
                     &self.shared_state
                 }
 
-                fn on_final_state(&self) -> bool {
+                fn has_reached_final_state(&self) -> bool {
                     self.state.is_final()
                 }
 

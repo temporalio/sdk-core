@@ -1,38 +1,44 @@
 use crate::{
     machines::{
-        activity_state_machine::new_activity, cancel_external_state_machine::new_external_cancel,
+        activity_state_machine::new_activity,
+        cancel_external_state_machine::new_external_cancel,
         cancel_workflow_state_machine::cancel_workflow,
         child_workflow_state_machine::new_child_workflow,
         complete_workflow_state_machine::complete_workflow,
         continue_as_new_workflow_state_machine::continue_as_new,
-        fail_workflow_state_machine::fail_workflow, patch_state_machine::has_change,
-        signal_external_state_machine::new_external_signal, timer_state_machine::new_timer,
-        workflow_task_state_machine::WorkflowTaskMachine, MachineKind, NewMachineWithCommand,
-        ProtoCommand, TemporalStateMachine, WFCommand,
+        fail_workflow_state_machine::fail_workflow,
+        local_activity_state_machine::{new_local_activity, ResolveDat},
+        patch_state_machine::has_change,
+        signal_external_state_machine::new_external_signal,
+        timer_state_machine::new_timer,
+        workflow_task_state_machine::WorkflowTaskMachine,
+        MachineKind, Machines, NewMachineWithCommand, ProtoCommand, TemporalStateMachine,
+        WFCommand,
     },
     protosext::HistoryEventExt,
     telemetry::{metrics::MetricsContext, VecDisplayer},
-    workflow::{CommandID, DrivenWorkflow, HistoryUpdate, WorkflowFetcher},
+    worker::NewLocalAct,
+    workflow::{CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WorkflowFetcher},
 };
 use prost_types::TimestampOutOfSystemRangeError;
 use slotmap::SlotMap;
 use std::{
     borrow::{Borrow, BorrowMut},
-    collections::{hash_map::DefaultHasher, HashMap, VecDeque},
+    collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque},
     convert::TryInto,
     hash::{Hash, Hasher},
     time::{Duration, Instant, SystemTime},
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        common::{NamespacedWorkflowExecution, Payload},
+        common::{NamespacedWorkflowExecution, Payload, WorkflowExecution},
         workflow_activation::{
             wf_activation_job::{self, Variant},
             NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WfActivation,
         },
         workflow_commands::{
             request_cancel_external_workflow_execution as cancel_we,
-            signal_external_workflow_execution as sig_we,
+            signal_external_workflow_execution as sig_we, ScheduleActivity,
         },
         FromPayloadsExt,
     },
@@ -67,6 +73,8 @@ pub(crate) struct WorkflowMachines {
     pub namespace: String,
     /// Workflow identifier
     pub workflow_id: String,
+    /// Workflow type identifier. (Function name, class, etc)
+    pub workflow_type: String,
     /// Identifies the current run
     pub run_id: String,
     /// The time the workflow execution began, as told by the WEStarted event
@@ -77,14 +85,12 @@ pub(crate) struct WorkflowMachines {
     /// The current workflow time if it has been established
     current_wf_time: Option<SystemTime>,
 
-    // TODO: Nothing gets deleted from here
-    all_machines: SlotMap<MachineKey, Box<dyn TemporalStateMachine + 'static>>,
+    all_machines: SlotMap<MachineKey, Machines>,
 
     /// A mapping for accessing machines associated to a particular event, where the key is the id
     /// of the initiating event for that machine.
     machines_by_event_id: HashMap<i64, MachineKey>,
 
-    // TODO: Nothing gets deleted from here
     /// Maps command ids as created by workflow authors to their associated machines.
     id_to_machine: HashMap<CommandID, MachineKey>,
 
@@ -97,15 +103,24 @@ pub(crate) struct WorkflowMachines {
     /// Old note: It is a queue as commands can be added (due to marker based commands) while
     /// iterating over already added commands.
     current_wf_task_commands: VecDeque<CommandAndMachine>,
+
     /// Information about patch markers we have already seen while replaying history
     encountered_change_markers: HashMap<String, ChangeInfo>,
+
+    /// Queued local activity requests which need to be executed
+    local_activity_requests: Vec<ScheduleActivity>,
+    /// Seq #s of local activities which we have sent to be executed but have not yet resolved
+    executing_local_activities: HashSet<u32>,
+    /// Maps local activity sequence numbers to their resolutions as found when looking ahead at
+    /// next WFT
+    local_activity_resolutions: HashMap<u32, ResolveDat>,
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: DrivenWorkflow,
 
     /// Is set to true once we've seen the final event in workflow history, to avoid accidentally
     /// re-applying the final workflow task.
-    have_seen_terminal_event: bool,
+    pub have_seen_terminal_event: bool,
 
     /// Metrics context
     pub metrics: MetricsContext,
@@ -114,8 +129,15 @@ pub(crate) struct WorkflowMachines {
 #[derive(Debug, derive_more::Display)]
 #[display(fmt = "Cmd&Machine({})", "command")]
 struct CommandAndMachine {
-    command: ProtoCommand,
+    command: MachineAssociatedCommand,
     machine: MachineKey,
+}
+
+#[derive(Debug, derive_more::Display)]
+enum MachineAssociatedCommand {
+    Real(ProtoCommand),
+    #[display(fmt = "FakeLocalActivityMarker({})", "_0")]
+    FakeLocalActivityMarker(u32),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -129,10 +151,12 @@ struct ChangeInfo {
 #[must_use]
 #[allow(clippy::large_enum_variant)]
 pub enum MachineResponse {
-    #[display(fmt = "PushWFJob")]
+    #[display(fmt = "PushWFJob({})", "_0")]
     PushWFJob(wf_activation_job::Variant),
 
     IssueNewCommand(ProtoCommand),
+    #[display(fmt = "IssueFakeLocalActivityMarker({})", "_0")]
+    IssueFakeLocalActivityMarker(u32),
     #[display(fmt = "TriggerWFTaskStarted")]
     TriggerWFTaskStarted {
         task_started_event_id: i64,
@@ -142,9 +166,12 @@ pub enum MachineResponse {
     UpdateRunIdOnWorkflowReset {
         run_id: String,
     },
+
+    /// Queue a local activity to be processed by the worker
+    #[display(fmt = "QueueLocalActivity")]
+    QueueLocalActivity(ScheduleActivity),
 }
 
-// Must use `From` b/c ofZZ
 impl<T> From<T> for MachineResponse
 where
     T: Into<wf_activation_job::Variant>,
@@ -179,6 +206,7 @@ impl WorkflowMachines {
     pub(crate) fn new(
         namespace: String,
         workflow_id: String,
+        workflow_type: String,
         run_id: String,
         history: HistoryUpdate,
         driven_wf: DrivenWorkflow,
@@ -189,6 +217,7 @@ impl WorkflowMachines {
             last_history_from_server: history,
             namespace,
             workflow_id,
+            workflow_type,
             run_id,
             drive_me: driven_wf,
             replaying,
@@ -205,6 +234,9 @@ impl WorkflowMachines {
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
             encountered_change_markers: Default::default(),
+            local_activity_requests: Default::default(),
+            executing_local_activities: Default::default(),
+            local_activity_resolutions: Default::default(),
             have_seen_terminal_event: false,
         }
     }
@@ -229,16 +261,64 @@ impl WorkflowMachines {
         Ok(())
     }
 
+    /// Let this workflow know that something we've been waiting locally on has resolved, like a
+    /// local activity or side effect
+    pub(crate) fn local_resolution(
+        &mut self,
+        seq_id: u32,
+        resolution: LocalResolution,
+    ) -> Result<()> {
+        match resolution {
+            LocalResolution::LocalActivity(res) => {
+                let act_id = CommandID::LocalActivity(seq_id);
+                let mk = self.get_machine_key(act_id)?;
+                let mach = self.machine_mut(mk);
+                if let Machines::LocalActivityMachine(ref mut lam) = *mach {
+                    let resps = lam.try_resolve(res, seq_id)?;
+                    self.process_machine_responses(mk, resps)?;
+                } else {
+                    return Err(WFMachinesError::Nondeterminism(format!(
+                        "Command matching activity with seq num {} existed but was not a \
+                        local activity!",
+                        seq_id
+                    )));
+                }
+                self.executing_local_activities.remove(&seq_id);
+            }
+        }
+        Ok(())
+    }
+
+    /// Fetch all queued local activities that need executing, mark them as sent
+    pub(crate) fn drain_queued_local_activities(&mut self) -> Vec<NewLocalAct> {
+        let key_and_act = std::mem::take(&mut self.local_activity_requests);
+        key_and_act
+            .into_iter()
+            .map(|act| {
+                self.executing_local_activities.insert(act.seq);
+                NewLocalAct {
+                    schedule_cmd: act,
+                    workflow_type: self.workflow_type.clone(),
+                    workflow_exec_info: WorkflowExecution {
+                        workflow_id: self.workflow_id.clone(),
+                        run_id: self.run_id.clone(),
+                    },
+                }
+            })
+            .collect()
+    }
+
+    /// Returns the number of local activities we know we need to execute but have not yet finished
+    pub(crate) fn outstanding_local_activity_count(&self) -> usize {
+        self.executing_local_activities.len() + self.local_activity_requests.len()
+    }
+
     /// Handle a single event from the workflow history. `has_next_event` should be false if `event`
     /// is the last event in the history.
     ///
     /// TODO: Describe what actually happens in here
     #[instrument(level = "debug", skip(self, event), fields(event=%event))]
-    pub(crate) fn handle_event(
-        &mut self,
-        event: &HistoryEvent,
-        has_next_event: bool,
-    ) -> Result<()> {
+    fn handle_event(&mut self, event: &HistoryEvent, has_next_event: bool) -> Result<()> {
         if event.is_final_wf_execution_event() {
             self.have_seen_terminal_event = true;
         }
@@ -315,10 +395,28 @@ impl WorkflowMachines {
     /// with a state machine, which is then notified about the event and the command is removed from
     /// the commands queue.
     fn handle_command_event(&mut self, event: &HistoryEvent) -> Result<()> {
-        // TODO: Local activity handling stuff
-        //     if (handleLocalActivityMarker(event)) {
-        //       return;
-        //     }
+        if event.is_local_activity_marker() {
+            let deets = event.extract_local_activity_marker_data().ok_or_else(|| {
+                WFMachinesError::Fatal(format!(
+                    "Local activity marker was unparseable: {:?}",
+                    event
+                ))
+            })?;
+            let cmdid = CommandID::LocalActivity(deets.seq);
+            let mkey = self.get_machine_key(cmdid)?;
+            if let Machines::LocalActivityMachine(lam) = self.machine(mkey) {
+                if lam.marker_should_get_special_handling() {
+                    self.submachine_handle_event(mkey, event, false)?;
+                    return Ok(());
+                }
+            } else {
+                return Err(WFMachinesError::Fatal(format!(
+                    "Encountered local activity marker but the associated machine was of the \
+                     wrong type! {:?}",
+                    event
+                )));
+            }
+        }
 
         let consumed_cmd = loop {
             if let Some(peek_machine) = self.commands.front() {
@@ -353,8 +451,6 @@ impl WorkflowMachines {
                 break command;
             }
         };
-
-        // TODO: validate command
 
         if !self.machine(consumed_cmd.machine).is_final_state() {
             self.machines_by_event_id
@@ -417,7 +513,7 @@ impl WorkflowMachines {
             }
             Some(EventType::WorkflowTaskScheduled) => {
                 let wf_task_sm = WorkflowTaskMachine::new(self.next_started_event_id);
-                let key = self.all_machines.insert(Box::new(wf_task_sm));
+                let key = self.all_machines.insert(wf_task_sm.into());
                 self.submachine_handle_event(key, event, has_next_event)?;
                 self.machines_by_event_id.insert(event.event_id, key);
             }
@@ -461,7 +557,10 @@ impl WorkflowMachines {
             .iter()
             .filter_map(|c| {
                 if !self.machine(c.machine).is_final_state() {
-                    Some(c.command.clone())
+                    match &c.command {
+                        MachineAssociatedCommand::Real(cmd) => Some(cmd.clone()),
+                        MachineAssociatedCommand::FakeLocalActivityMarker(_) => None,
+                    }
                 } else {
                     None
                 }
@@ -485,6 +584,10 @@ impl WorkflowMachines {
         }
     }
 
+    pub(crate) fn has_pending_jobs(&self) -> bool {
+        self.drive_me.has_pending_jobs()
+    }
+
     fn set_current_time(&mut self, time: SystemTime) -> SystemTime {
         if self.current_wf_time.map_or(true, |t| t < time) {
             self.current_wf_time = Some(time);
@@ -499,6 +602,7 @@ impl WorkflowMachines {
     /// Returns a boolean flag which indicates whether or not new activations were produced by the
     /// state machine. If true, pending activation should be created by the caller making jobs
     /// available to the lang side.
+    /// TODO: Return value of this fn never used
     pub(crate) async fn iterate_machines(&mut self) -> Result<bool> {
         let results = self.drive_me.fetch_workflow_iteration_output().await;
         let jobs = self.handle_driven_results(results)?;
@@ -517,7 +621,7 @@ impl WorkflowMachines {
 
     /// Apply the next (unapplied) entire workflow task from history to these machines. Will replay
     /// any events that need to be replayed until caught up to the newest WFT.
-    pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<()> {
+    pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<usize> {
         // A much higher-up span (ex: poll) may want this field filled
         tracing::Span::current().record("run_id", &self.run_id.as_str());
 
@@ -525,7 +629,7 @@ impl WorkflowMachines {
         // then we don't need to do anything here, and in fact we need to avoid re-applying the
         // final WFT.
         if self.have_seen_terminal_event {
-            return Ok(());
+            return Ok(0);
         }
 
         let last_handled_wft_started_id = self.current_started_event_id;
@@ -534,6 +638,7 @@ impl WorkflowMachines {
             .take_next_wft_sequence(last_handled_wft_started_id)
             .await
             .map_err(WFMachinesError::HistoryFetchingError)?;
+        let num_consumed_events = events.len();
 
         // We're caught up on reply if there are no new events to process
         // TODO: Probably this is unneeded if we evict whenever history is from non-sticky queue
@@ -564,19 +669,16 @@ impl WorkflowMachines {
 
         while let Some(event) = history.next() {
             let next_event = history.peek();
-
+            self.handle_event(event, next_event.is_some())?;
             if event.event_type == EventType::WorkflowTaskStarted as i32 && next_event.is_none() {
-                self.handle_event(event, false)?;
                 break;
             }
-
-            self.handle_event(event, next_event.is_some())?;
         }
 
         // Scan through to the next WFT, searching for any patch markers, so that we can
         // pre-resolve them.
         for e in self.last_history_from_server.peek_next_wft_sequence() {
-            if let Some((patch_id, deprecated)) = e.get_changed_marker_details() {
+            if let Some((patch_id, deprecated)) = e.get_patch_marker_details() {
                 self.encountered_change_markers.insert(
                     patch_id.clone(),
                     ChangeInfo {
@@ -589,6 +691,16 @@ impl WorkflowMachines {
                     .send_job(wf_activation_job::Variant::NotifyHasPatch(NotifyHasPatch {
                         patch_id,
                     }));
+            } else if e.is_local_activity_marker() {
+                if let Some(la_dat) = e.clone().into_local_activity_marker_details() {
+                    self.local_activity_resolutions
+                        .insert(la_dat.marker_dat.seq, la_dat.into());
+                } else {
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Local activity marker was unparseable: {:?}",
+                        e
+                    )));
+                }
             }
         }
 
@@ -596,7 +708,7 @@ impl WorkflowMachines {
             self.metrics.wf_task_replay_latency(replay_start.elapsed());
         }
 
-        Ok(())
+        Ok(num_consumed_events)
     }
 
     /// Wrapper for calling [TemporalStateMachine::handle_event] which appropriately takes action
@@ -622,10 +734,15 @@ impl WorkflowMachines {
                 .machine(c.machine)
                 .was_cancelled_before_sent_to_server()
             {
-                let machine_responses = self
-                    .machine_mut(c.machine)
-                    .handle_command(c.command.command_type())?;
-                self.process_machine_responses(c.machine, machine_responses)?;
+                match &c.command {
+                    MachineAssociatedCommand::Real(cmd) => {
+                        let machine_responses = self
+                            .machine_mut(c.machine)
+                            .handle_command(cmd.command_type())?;
+                        self.process_machine_responses(c.machine, machine_responses)?;
+                    }
+                    MachineAssociatedCommand::FakeLocalActivityMarker(_) => {}
+                }
                 self.commands.push_back(c);
             }
         }
@@ -637,10 +754,10 @@ impl WorkflowMachines {
     /// this function uses to drive sending jobs to lang, triggering new workflow tasks, etc.
     fn process_machine_responses(
         &mut self,
-        sm: MachineKey,
+        smk: MachineKey,
         machine_responses: Vec<MachineResponse>,
     ) -> Result<()> {
-        let sm = self.machine_mut(sm);
+        let sm = self.machine(smk);
         if !machine_responses.is_empty() {
             debug!(responses = %machine_responses.display(), machine_name = %sm.kind(),
                    "Machine produced responses");
@@ -666,8 +783,20 @@ impl WorkflowMachines {
                             },
                         ));
                 }
-                MachineResponse::IssueNewCommand(_) => {
-                    panic!("Issue new command machine response not expected here")
+                MachineResponse::IssueNewCommand(c) => {
+                    self.current_wf_task_commands.push_back(CommandAndMachine {
+                        command: MachineAssociatedCommand::Real(c),
+                        machine: smk,
+                    })
+                }
+                MachineResponse::IssueFakeLocalActivityMarker(seq) => {
+                    self.current_wf_task_commands.push_back(CommandAndMachine {
+                        command: MachineAssociatedCommand::FakeLocalActivityMarker(seq),
+                        machine: smk,
+                    });
+                }
+                MachineResponse::QueueLocalActivity(act) => {
+                    self.local_activity_requests.push(act);
                 }
             }
         }
@@ -699,10 +828,22 @@ impl WorkflowMachines {
                 }
                 WFCommand::AddActivity(attrs) => {
                     let seq = attrs.seq;
-                    let activity = self.add_new_command_machine(new_activity(attrs));
-                    self.id_to_machine
-                        .insert(CommandID::Activity(seq), activity.machine);
-                    self.current_wf_task_commands.push_back(activity);
+                    if attrs.local {
+                        let (la, mach_resp) = new_local_activity(
+                            attrs,
+                            self.replaying,
+                            self.local_activity_resolutions.remove(&seq),
+                        );
+                        let machkey = self.all_machines.insert(la.into());
+                        self.id_to_machine
+                            .insert(CommandID::LocalActivity(seq), machkey);
+                        self.process_machine_responses(machkey, mach_resp)?;
+                    } else {
+                        let activity = self.add_new_command_machine(new_activity(attrs));
+                        self.id_to_machine
+                            .insert(CommandID::Activity(seq), activity.machine);
+                        self.current_wf_task_commands.push_back(activity);
+                    };
                 }
                 WFCommand::RequestCancelActivity(attrs) => {
                     jobs.extend(self.process_cancellation(CommandID::Activity(attrs.seq))?);
@@ -838,7 +979,7 @@ impl WorkflowMachines {
             match r {
                 MachineResponse::IssueNewCommand(c) => {
                     self.current_wf_task_commands.push_back(CommandAndMachine {
-                        command: c,
+                        command: MachineAssociatedCommand::Real(c),
                         machine: m_key,
                     });
                 }
@@ -862,34 +1003,28 @@ impl WorkflowMachines {
         })?)
     }
 
-    fn add_terminal_command<T: TemporalStateMachine + 'static>(
-        &mut self,
-        machine: NewMachineWithCommand<T>,
-    ) {
+    fn add_terminal_command(&mut self, machine: NewMachineWithCommand) {
         let cwfm = self.add_new_command_machine(machine);
         self.workflow_end_time = Some(SystemTime::now());
         self.current_wf_task_commands.push_back(cwfm);
     }
 
-    fn add_new_command_machine<T: TemporalStateMachine + 'static>(
-        &mut self,
-        machine: NewMachineWithCommand<T>,
-    ) -> CommandAndMachine {
-        let k = self.all_machines.insert(Box::new(machine.machine));
+    fn add_new_command_machine(&mut self, machine: NewMachineWithCommand) -> CommandAndMachine {
+        let k = self.all_machines.insert(machine.machine);
         CommandAndMachine {
-            command: machine.command,
+            command: MachineAssociatedCommand::Real(machine.command),
             machine: k,
         }
     }
 
-    fn machine(&self, m: MachineKey) -> &dyn TemporalStateMachine {
+    fn machine(&self, m: MachineKey) -> &Machines {
         self.all_machines
             .get(m)
             .expect("Machine must exist")
             .borrow()
     }
 
-    fn machine_mut(&mut self, m: MachineKey) -> &mut (dyn TemporalStateMachine + 'static) {
+    fn machine_mut(&mut self, m: MachineKey) -> &mut Machines {
         self.all_machines
             .get_mut(m)
             .expect("Machine must exist")
@@ -917,7 +1052,7 @@ fn change_marker_handling(
 ) -> Result<ChangeMarkerOutcome> {
     if !mach.matches_event(event) {
         // Version markers can be skipped in the event they are deprecated
-        if let Some(changed_info) = event.get_changed_marker_details() {
+        if let Some(changed_info) = event.get_patch_marker_details() {
             // Is deprecated. We can simply ignore this event, as deprecated change
             // markers are allowed without matching changed calls.
             if changed_info.1 {
@@ -933,7 +1068,7 @@ fn change_marker_handling(
         // Version machines themselves may also not *have* matching markers, where non-deprecated
         // calls take the old path, and deprecated calls assume history is produced by a new-code
         // worker.
-        if mach.kind() == MachineKind::Version {
+        if mach.kind() == MachineKind::Patch {
             debug!("Skipping non-matching event against version machine");
             return Ok(ChangeMarkerOutcome::SkipCommand);
         }

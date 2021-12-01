@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .type_attribute(
             "coresdk.workflow_commands.WorkflowCommand.variant",
-            "#[derive(::derive_more::From)]",
+            "#[derive(::derive_more::From, ::derive_more::Display)]",
         )
         .type_attribute(
             "coresdk.workflow_commands.QueryResult.variant",
@@ -66,6 +66,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[derive(::derive_more::Display)]",
         )
         .type_attribute("coresdk.Task.variant", "#[derive(::derive_more::From)]")
+        // All external data is useful to be able to JSON serialize, so it can render in web UI
+        .type_attribute(
+            ".coresdk.external_data",
+            "#[derive(::serde::Serialize, ::serde::Deserialize)]",
+        )
+        .field_attribute(
+            "coresdk.external_data.LocalActivityMarkerData.time",
+            "#[serde(with = \"opt_timestamp\")]",
+        )
         .compile(
             &[
                 "../protos/local/core_interface.proto",

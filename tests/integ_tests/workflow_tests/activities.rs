@@ -1,5 +1,6 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
+use temporal_sdk_core::prototype_rust_sdk::{ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self, activity_result as act_res, ActivityResult},
@@ -8,7 +9,7 @@ use temporal_sdk_core_protos::{
         workflow_activation::{wf_activation_job, FireTimer, ResolveActivity, WfActivationJob},
         workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
         workflow_completion::WfActivationCompletion,
-        ActivityHeartbeat, ActivityTaskCompletion, IntoCompletion,
+        ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
     },
     temporal::api::{
         common::v1::{ActivityType, Payloads},
@@ -16,8 +17,35 @@ use temporal_sdk_core_protos::{
         failure::v1::{failure::FailureInfo, ActivityFailureInfo, Failure},
     },
 };
-use test_utils::{init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers};
+use test_utils::{init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers, CoreWfStarter};
 use tokio::time::sleep;
+
+pub async fn one_activity_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+    ctx.activity(ActivityOptions {
+        activity_type: "echo_activity".to_string(),
+        start_to_close_timeout: Some(Duration::from_secs(5)),
+        input: "hi!".as_json_payload().expect("serializes fine"),
+        ..Default::default()
+    })
+    .await;
+    Ok(().into())
+}
+
+#[tokio::test]
+async fn one_activity() {
+    let wf_name = "one_activity";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), one_activity_wf);
+    worker.register_activity("echo_activity", |echo_me: String| async move { echo_me });
+
+    worker
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    starter.shutdown().await;
+}
 
 #[tokio::test]
 async fn activity_workflow() {

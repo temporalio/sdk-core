@@ -67,7 +67,7 @@ pub(super) fn new_external_signal(
     signal_name: String,
     payloads: impl IntoIterator<Item = Payload>,
     only_child: bool,
-) -> NewMachineWithCommand<SignalExternalMachine> {
+) -> NewMachineWithCommand {
     let mut s = SignalExternalMachine {
         state: Created {}.into(),
         shared_state: SharedState { seq },
@@ -94,7 +94,7 @@ pub(super) fn new_external_signal(
     };
     NewMachineWithCommand {
         command: cmd,
-        machine: s,
+        machine: s.into(),
     }
 }
 
@@ -327,14 +327,14 @@ mod tests {
         let wff = WorkflowFunction::new(signal_sender);
         let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
         wfm.get_next_activation().await.unwrap();
-        let cmds = wfm.get_server_commands().await.commands;
+        let cmds = wfm.get_server_commands().commands;
         assert_eq!(cmds.len(), 1);
         assert_eq!(
             cmds[0].command_type(),
             CommandType::SignalExternalWorkflowExecution
         );
         wfm.get_next_activation().await.unwrap();
-        let cmds = wfm.get_server_commands().await.commands;
+        let cmds = wfm.get_server_commands().commands;
         assert_eq!(cmds.len(), 1);
         if fails {
             assert_eq!(cmds[0].command_type(), CommandType::FailWorkflowExecution);
@@ -365,7 +365,7 @@ mod tests {
 
         wfm.get_next_activation().await.unwrap();
         // No commands b/c we're waiting on the signal which is immediately going to be cancelled
-        let cmds = wfm.get_server_commands().await.commands;
+        let cmds = wfm.get_server_commands().commands;
         assert_eq!(cmds.len(), 0);
         let act = wfm.get_next_activation().await.unwrap();
         assert_matches!(
@@ -379,7 +379,7 @@ mod tests {
                 ))
             } => c.message == SIG_CANCEL_MSG
         );
-        let cmds = wfm.get_server_commands().await.commands;
+        let cmds = wfm.get_server_commands().commands;
         assert_eq!(cmds.len(), 1);
         assert_eq!(
             cmds[0].command_type(),

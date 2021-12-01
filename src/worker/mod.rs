@@ -2,7 +2,9 @@ mod activities;
 mod config;
 mod dispatcher;
 
-pub use crate::worker::config::{WorkerConfig, WorkerConfigBuilder};
+pub use config::{WorkerConfig, WorkerConfigBuilder};
+
+pub(crate) use activities::NewLocalAct;
 pub(crate) use dispatcher::WorkerDispatcher;
 
 use crate::{
@@ -17,12 +19,13 @@ use crate::{
     telemetry::metrics::{
         activity_poller, workflow_poller, workflow_sticky_poller, MetricsContext,
     },
+    worker::activities::LocalActivityManager,
     workflow::{
         workflow_tasks::{
             ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
             ServerCommandsWithWorkflowInfo, WorkflowTaskManager,
         },
-        WorkflowCachingPolicy,
+        LocalResolution, WorkflowCachingPolicy,
     },
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError,
 };
@@ -31,7 +34,7 @@ use futures::{Future, TryFutureExt};
 use std::{convert::TryInto, sync::Arc};
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::activity_result,
+        activity_result::{activity_result, ActivityResult},
         activity_task::ActivityTask,
         workflow_activation::WfActivation,
         workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
@@ -63,6 +66,8 @@ pub struct Worker {
     wft_manager: WorkflowTaskManager,
     /// Manages activity tasks for this worker/task queue
     at_task_mgr: Option<WorkerActivityTasks>,
+    /// Manages local activities
+    local_act_mgr: LocalActivityManager,
     /// Ensures we stay at or below this worker's maximum concurrent workflow limit
     workflows_semaphore: Semaphore,
     /// Used to wake blocked workflow task polling when there is some change to workflow activations
@@ -178,6 +183,7 @@ impl Worker {
                     config.default_heartbeat_throttle_interval,
                 )
             }),
+            local_act_mgr: LocalActivityManager::new(config.max_outstanding_local_activities),
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             config,
             shutdown_requested: shut_rx,
@@ -228,24 +234,30 @@ impl Worker {
         self.workflows_semaphore.available_permits()
     }
 
-    /// Wait until not at the outstanding activity limit, and then poll this worker's task queue for
-    /// new activities.
+    /// Get new activity tasks (may be local or nonlocal). Local activities are returned first
+    /// before polling the server if there are any.
     ///
     /// Returns `Ok(None)` in the event of a poll timeout or if the polling loop should otherwise
     /// be restarted
     pub(crate) async fn activity_poll(&self) -> Result<Option<ActivityTask>, PollActivityError> {
-        // No activity polling is allowed if this worker said it only handles local activities
-        let act_mgr = self
-            .at_task_mgr
-            .as_ref()
-            .ok_or_else(|| PollActivityError::NoWorkerForQueue(self.config.task_queue.clone()))?;
+        if let Some(ref act_mgr) = self.at_task_mgr {
+            tokio::select! {
+                biased;
 
-        tokio::select! {
-            biased;
+                r = self.local_act_mgr.next_pending() => Ok(r),
+                r = act_mgr.poll() => r,
+                _ = self.shutdown_notifier() => {
+                    Err(PollActivityError::ShutDown)
+                }
+            }
+        } else {
+            tokio::select! {
+                biased;
 
-            r = act_mgr.poll() => r,
-            _ = self.shutdown_notifier() => {
-                Err(PollActivityError::ShutDown)
+                r = self.local_act_mgr.next_pending() => Ok(r),
+                _ = self.shutdown_notifier() => {
+                    Err(PollActivityError::ShutDown)
+                }
             }
         }
     }
@@ -265,6 +277,34 @@ impl Worker {
         task_token: TaskToken,
         status: activity_result::Status,
     ) -> Result<(), CompleteActivityError> {
+        if task_token.is_local_activity_task() {
+            if let Some(la_info) = self.local_act_mgr.complete(&task_token) {
+                if let Err(e) = self
+                    .wft_manager
+                    .notify_of_local_result(
+                        &la_info.workflow_execution.run_id,
+                        la_info.seq,
+                        LocalResolution::LocalActivity(ActivityResult {
+                            status: Some(status),
+                        }),
+                    )
+                    .await
+                {
+                    error!(
+                        "Problem completing local activity {}: {:?} -- will evict the workflow",
+                        task_token, e
+                    );
+                    self.request_wf_eviction(
+                        &la_info.workflow_execution.run_id,
+                        "Issue while completing local activity",
+                    );
+                }
+            } else {
+                error!("Tried to complete untracked local activity {}", task_token);
+            }
+            return Ok(());
+        }
+
         if let Some(atm) = &self.at_task_mgr {
             atm.complete(task_token, status, self.server_gateway.gw.as_ref())
                 .await
@@ -499,6 +539,7 @@ impl Worker {
                 );
                 None
             }
+            NewWfTaskOutcome::DoNothing => None,
         })
     }
 
@@ -530,8 +571,12 @@ impl Worker {
                     ActivationAction::WftComplete {
                         commands,
                         query_responses,
+                        local_activities,
+                        force_new_wft,
                     },
             })) => {
+                self.local_act_mgr.enqueue(local_activities);
+
                 debug!("Sending commands to server: {:?}", &commands);
                 if !query_responses.is_empty() {
                     debug!("Sending query responses to server: {:?}", &query_responses);
@@ -542,7 +587,7 @@ impl Worker {
                     query_responses,
                     sticky_attributes: None,
                     return_new_workflow_task: false,
-                    force_create_new_workflow_task: false,
+                    force_create_new_workflow_task: force_new_wft,
                 };
                 let sticky_attrs = self.get_sticky_attrs();
                 completion.sticky_attributes = sticky_attrs;
@@ -554,6 +599,13 @@ impl Worker {
                 })
                 .await?;
                 Ok(true)
+            }
+            Ok(Some(ServerCommandsWithWorkflowInfo {
+                action: ActivationAction::LocalActivitiesDelayWft { local_activities },
+                ..
+            })) => {
+                self.local_act_mgr.enqueue(local_activities);
+                Ok(false)
             }
             Ok(Some(ServerCommandsWithWorkflowInfo {
                 task_token,
@@ -635,11 +687,10 @@ impl Worker {
     }
 
     fn after_workflow_activation(&self, run_id: &str, did_complete_wft: bool) {
-        self.wft_manager.after_wft_report(run_id);
+        self.wft_manager.after_wft_report(run_id, did_complete_wft);
         if did_complete_wft {
             self.return_workflow_task_permit();
         }
-        self.wft_manager.on_activation_done(run_id);
         self.maybe_notify_wtfs_drained();
     }
 
@@ -660,12 +711,12 @@ impl Worker {
                     // Silence unhandled command errors since the lang SDK cannot do anything about
                     // them besides poll again, which it will do anyway.
                     tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
-                        warn!(error = %err, "Unhandled command response when completing");
+                        warn!(error = %err, run_id, "Unhandled command response when completing");
                         should_evict = true;
                         Ok(())
                     }
                     tonic::Code::NotFound => {
-                        warn!(error = %err, "Task not found when completing");
+                        warn!(error = %err, run_id, "Task not found when completing");
                         should_evict = true;
                         Ok(())
                     }

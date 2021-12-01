@@ -41,6 +41,11 @@ impl DrivenWorkflow {
         self.outgoing_wf_activation_jobs.push_back(job);
     }
 
+    /// Check if there are pending jobs
+    pub fn has_pending_jobs(&self) -> bool {
+        !self.outgoing_wf_activation_jobs.is_empty()
+    }
+
     /// Drain all pending jobs, so that they may be sent to the driven workflow
     pub fn drain_jobs(&mut self) -> Vec<WfActivationJob> {
         self.outgoing_wf_activation_jobs
