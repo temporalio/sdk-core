@@ -342,6 +342,16 @@ impl TestHistoryBuilder {
         HistoryInfo::new_from_history(&self.events.clone().into(), None)
     }
 
+    pub(crate) fn get_one_wft(
+        &self,
+        from_wft_number: usize,
+    ) -> Result<HistoryInfo, HistoryInfoError> {
+        let mut histinfo =
+            HistoryInfo::new_from_history(&self.events.clone().into(), Some(from_wft_number))?;
+        histinfo.make_incremental();
+        Ok(histinfo)
+    }
+
     fn build_and_push_event(&mut self, event_type: EventType, attribs: Attributes) {
         self.current_event_id += 1;
         let evt = HistoryEvent {

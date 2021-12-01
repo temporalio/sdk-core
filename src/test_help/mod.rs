@@ -53,6 +53,10 @@ pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";
 #[derive(derive_more::From, Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum ResponseType {
     ToTaskNum(usize),
+    /// Returns just the history after the WFT completed of the provided task number - 1, through to
+    /// the next WFT started. Simulating the incremental history for just the provided task number
+    #[from(ignore)]
+    OneTask(usize),
     AllHistory,
 }
 
@@ -495,6 +499,7 @@ pub fn hist_to_poll_resp(
     };
     let hist_info = match response_type {
         ResponseType::ToTaskNum(tn) => t.get_history_info(tn).unwrap(),
+        ResponseType::OneTask(tn) => t.get_one_wft(tn).unwrap(),
         ResponseType::AllHistory => t.get_full_history_info().unwrap(),
     };
     let batch = hist_info.events().to_vec();
