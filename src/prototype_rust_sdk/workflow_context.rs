@@ -10,10 +10,14 @@ use crate::prototype_rust_sdk::{
 use crossbeam::channel::{Receiver, Sender};
 use futures::{task::Context, FutureExt, Stream};
 use parking_lot::RwLock;
-use std::time::SystemTime;
 use std::{
-    collections::HashMap, future::Future, marker::PhantomData, pin::Pin, sync::Arc, task::Poll,
-    time::Duration,
+    collections::HashMap,
+    future::Future,
+    marker::PhantomData,
+    pin::Pin,
+    sync::Arc,
+    task::Poll,
+    time::{Duration, SystemTime},
 };
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityResult,

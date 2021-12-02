@@ -48,7 +48,6 @@ use temporal_sdk_core_protos::{
         history::v1::{history_event, HistoryEvent, WorkflowExecutionStartedEventAttributes},
     },
 };
-use tracing::Level;
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
@@ -377,12 +376,24 @@ impl WorkflowMachines {
     /// Called when a workflow task started event has triggered. Ensures we are tracking the ID
     /// of the current started event as well as workflow time properly.
     fn task_started(&mut self, task_started_event_id: i64, time: SystemTime) -> Result<()> {
-        let s = span!(Level::DEBUG, "Task started trigger");
-        let _enter = s.enter();
-
         self.current_started_event_id = task_started_event_id;
         self.wft_start_time = Some(time);
         self.set_current_time(time);
+
+        // Notify local activity machines that we started a non-replay WFT, which will allow any
+        // which were waiting for a marker to instead decide to execute the LA since it clearly
+        // will not be resolved via marker.
+        if !self.replaying {
+            let mut resps = vec![];
+            for (k, mach) in self.all_machines.iter_mut() {
+                if let Machines::LocalActivityMachine(lam) = mach {
+                    resps.push((k, lam.encountered_non_replay_wft()?));
+                }
+            }
+            for (mkey, resp_set) in resps {
+                self.process_machine_responses(mkey, resp_set)?;
+            }
+        }
         Ok(())
     }
 

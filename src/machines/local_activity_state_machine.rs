@@ -52,6 +52,12 @@ fsm! {
     // to eventually see the marker
     WaitingMarkerEvent --(MarkerRecorded(CompleteLocalActivityData), shared on_marker_recorded)
       --> MarkerCommandRecorded;
+    // It is entirely possible to have started the LA while replaying, only to find that we have
+    // reached a new WFT and there still was no marker. In such cases we need to execute the LA.
+    // This can easily happen if upon first execution, the worker does WFT heartbeating but then
+    // dies for some reason.
+    WaitingMarkerEvent --(StartedNonReplayWFT, shared on_started_non_replay_wft) --> RequestSent;
+
     // If the activity is pre resolved we still expect to see marker recorded event at some point,
     // even though we already resolved the activity.
     WaitingMarkerEventPreResolved --(MarkerRecorded(CompleteLocalActivityData),
@@ -158,6 +164,35 @@ impl LocalActivityMachine {
         }
     }
 
+    /// Must be called if the workflow encounters a non-replay workflow task
+    pub(super) fn encountered_non_replay_wft(
+        &mut self,
+    ) -> Result<Vec<MachineResponse>, WFMachinesError> {
+        // This only applies to the waiting-for-marker state. It can safely be ignored in the others
+        if !matches!(
+            self.state(),
+            LocalActivityMachineState::WaitingMarkerEvent(_)
+        ) {
+            return Ok(vec![]);
+        }
+
+        let mut res =
+            OnEventWrapper::on_event_mut(self, LocalActivityMachineEvents::StartedNonReplayWFT)
+                .map_err(|e| match e {
+                    MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
+                        "Invalid transition while notifying local activity (seq {})\
+                         of non-replay-wft-started in {}",
+                        self.shared_state.attrs.seq,
+                        self.state(),
+                    )),
+                    MachineError::Underlying(e) => e,
+                })?;
+        let res = res.pop().expect("Always produces one response");
+        Ok(self
+            .adapt_response(res, None)
+            .expect("Adapting LA wft-non-replay response doesn't fail"))
+    }
+
     /// Attempt to resolve the local activity with a result from execution (not from history)
     pub(super) fn try_resolve(
         &mut self,
@@ -181,13 +216,10 @@ impl LocalActivityMachine {
             )),
             MachineError::Underlying(e) => e,
         })?;
-        let mr = if let Some(res) = res.pop() {
-            self.adapt_response(res, None)
-                .expect("Adapting LA resolve response doesn't fail")
-        } else {
-            vec![]
-        };
-        Ok(mr)
+        let res = res.pop().expect("Always produces one response");
+        Ok(self
+            .adapt_response(res, None)
+            .expect("Adapting LA resolve response doesn't fail"))
     }
 }
 
@@ -310,6 +342,12 @@ impl WaitingMarkerEvent {
             &dat,
             TransitionResult::commands([LocalActivityCommand::Resolved(dat.into())])
         )
+    }
+    pub(super) fn on_started_non_replay_wft(
+        self,
+        dat: SharedState,
+    ) -> LocalActivityMachineTransition<RequestSent> {
+        TransitionResult::commands([LocalActivityCommand::RequestActivityExecution(dat.attrs)])
     }
 }
 
@@ -482,7 +520,9 @@ mod tests {
     use std::time::Duration;
     use temporal_sdk_core_protos::{
         coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
-        temporal::api::{command::v1::command, failure::v1::Failure},
+        temporal::api::{
+            command::v1::command, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
+        },
     };
 
     async fn la_wf(mut ctx: WfContext) -> WorkflowResult<()> {
@@ -873,6 +913,43 @@ mod tests {
                 CommandType::CompleteWorkflowExecution as i32
             );
         }
+
+        wfm.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn one_la_heartbeating_wft_failure_still_executes() {
+        let func = WorkflowFunction::new(la_wf);
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        // Heartbeats
+        t.add_full_wf_task();
+        // fails a wft for some reason
+        t.add_workflow_task_scheduled_and_started();
+        t.add_workflow_task_failed_with_failure(
+            WorkflowTaskFailedCause::NonDeterministicError,
+            Default::default(),
+        );
+        t.add_workflow_task_scheduled_and_started();
+
+        let histinfo = t.get_full_history_info().unwrap().into();
+        let mut wfm = ManagedWFFunc::new_from_update(histinfo, func, vec![]);
+
+        // First activation will request to run the LA, but it will *not* be queued for execution
+        // yet as we're still replaying.
+        wfm.get_next_activation().await.unwrap();
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 0);
+        let ready_to_execute_las = wfm.drain_queued_local_activities();
+        assert_eq!(ready_to_execute_las.len(), 0);
+
+        // On the *next* activation, we are no longer replaying and the activity should be queued
+        wfm.get_next_activation().await.unwrap();
+        let ready_to_execute_las = wfm.drain_queued_local_activities();
+        assert_eq!(ready_to_execute_las.len(), 1);
+        // We can happily complete it now
+        wfm.complete_local_activity(1, ActivityResult::ok(b"hi".into()))
+            .unwrap();
 
         wfm.shutdown().await.unwrap();
     }
