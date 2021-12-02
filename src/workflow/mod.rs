@@ -290,7 +290,7 @@ pub mod managed_wf {
             let res = self.mgr.get_next_activation().await?;
             debug!("Managed wf next activation: {}", &res);
             self.push_activation_to_wf(&res).await?;
-            Ok(dbg!(res))
+            Ok(res)
         }
 
         /// Return outgoing server commands as of the last iteration

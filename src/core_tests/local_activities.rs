@@ -19,10 +19,12 @@ async fn echo(e: String) -> String {
 /// This test verifies that when replaying we are able to resolve local activities whose data we
 /// don't see until after the workflow issues the command
 #[rstest::rstest]
-#[case::replay(true)]
-#[case::not_replay(false)]
+#[case::replay(true, true)]
+#[case::not_replay(false, true)]
+#[case::replay_cache_off(true, false)]
+#[case::not_replay_cache_off(false, false)]
 #[tokio::test]
-async fn local_act_two_wfts_before_marker(#[case] replay: bool) {
+async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: bool) {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
@@ -42,7 +44,9 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool) {
     };
     let mh = MockPollCfg::from_resp_batches(wf_id, t, resps, mock);
     let mut mock = build_mock_pollers(mh);
-    mock.worker_cfg(TEST_Q, |cfg| cfg.max_cached_workflows = 2);
+    if cached {
+        mock.worker_cfg(TEST_Q, |cfg| cfg.max_cached_workflows = 1);
+    }
     let core = mock_core(mock);
     let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
@@ -101,8 +105,7 @@ async fn local_act_many_concurrent() {
     let wf_id = "fakeid";
     let mock = MockServerGatewayApis::new();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 3], mock);
-    let mut mock = build_mock_pollers(mh);
-    mock.worker_cfg(TEST_Q, |wc| wc.max_outstanding_local_activities = 1);
+    let mock = build_mock_pollers(mh);
     let core = mock_core(mock);
     let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
