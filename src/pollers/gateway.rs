@@ -299,21 +299,17 @@ impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
     }
 
     fn call(&mut self, req: http::Request<BoxBody>) -> Self::Future {
-        let metrics = req
-            .uri()
-            .to_string()
-            .rsplitn(2, '/')
-            .next()
-            .map(|method_name| {
-                let mut metrics = self
-                    .metrics
-                    .with_new_attrs([svc_operation(method_name.to_string())]);
-                if LONG_POLL_METHOD_NAMES.contains(&method_name) {
-                    metrics.set_is_long_poll();
-                }
-                metrics.svc_request();
-                metrics
-            });
+        let metrics = req.uri().to_string().rsplit_once('/').map(|split_tup| {
+            let method_name = split_tup.1;
+            let mut metrics = self
+                .metrics
+                .with_new_attrs([svc_operation(method_name.to_string())]);
+            if LONG_POLL_METHOD_NAMES.contains(&method_name) {
+                metrics.set_is_long_poll();
+            }
+            metrics.svc_request();
+            metrics
+        });
         let callfut = self.inner.call(req);
         async move {
             let started = Instant::now();

@@ -12,7 +12,8 @@ message LocalActivityMarkerData {
   uint32 seq = 1;
   string activity_id = 2;
   string activity_type = 3;
-  // You can think of this as "perceived time". It is the time the local activity thought it was
-  // when it executed. Which could be different from wall-clock time because of workflow replay.
-  google.protobuf.Timestamp time = 4;
+  // You can think of this as "perceived completion time". It is the time the local activity thought
+  // it was when it completed. Which could be different from wall-clock time because of workflow
+  // replay. It's the WFT start time + the LA's runtime
+  google.protobuf.Timestamp complete_time = 4;
 }

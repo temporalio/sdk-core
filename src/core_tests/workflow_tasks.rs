@@ -1734,3 +1734,62 @@ async fn cache_miss_doesnt_eat_permit_forever() {
 
     core.shutdown().await;
 }
+
+/// This test verifies that WFTs which come as replies to completing a WFT are properly delivered
+/// via activation polling.
+#[tokio::test]
+async fn tasks_from_completion_are_delivered() {
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_we_signaled("sig", vec![]);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let tasks = [hist_to_poll_resp(
+        &t,
+        wfid.to_owned(),
+        1.into(),
+        TEST_Q.to_string(),
+    )];
+    let mut mock = MockServerGatewayApis::new();
+    mock.expect_complete_workflow_task()
+        .times(1)
+        .returning(move |_| {
+            Ok(RespondWorkflowTaskCompletedResponse {
+                workflow_task: Some(hist_to_poll_resp(
+                    &t,
+                    wfid.to_owned(),
+                    2.into(),
+                    TEST_Q.to_string(),
+                )),
+            })
+        });
+    mock.expect_complete_workflow_task()
+        .times(1)
+        .returning(|_| Ok(Default::default()));
+    let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, []);
+    mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 2);
+    let core = mock_core(mock);
+
+    let wf_task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, wf_task.run_id))
+        .await
+        .unwrap();
+    let wf_task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    assert_matches!(
+        wf_task.jobs.as_slice(),
+        [WfActivationJob {
+            variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+        },]
+    );
+    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        TEST_Q,
+        wf_task.run_id,
+        vec![CompleteWorkflowExecution { result: None }.into()],
+    ))
+    .await
+    .unwrap();
+    core.shutdown().await;
+}

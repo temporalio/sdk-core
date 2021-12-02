@@ -9,12 +9,15 @@ pub async fn echo(e: String) -> String {
 }
 
 pub async fn one_local_activity_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+    let initial_workflow_time = ctx.workflow_time().expect("Workflow time should be set");
     ctx.local_activity(LocalActivityOptions {
         activity_type: "echo_activity".to_string(),
         input: "hi!".as_json_payload().expect("serializes fine"),
         ..Default::default()
     })
     .await;
+    // Verify LA execution advances the clock
+    assert!(initial_workflow_time < ctx.workflow_time().unwrap());
     Ok(().into())
 }
 
@@ -79,6 +82,26 @@ async fn local_act_then_timer_then_wait_result() {
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
     worker.register_activity("echo_activity", echo);
+
+    worker
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    starter.shutdown().await;
+}
+
+#[tokio::test]
+async fn long_running_local_act_with_timer() {
+    let wf_name = "long_running_local_act_with_timer";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.wft_timeout(Duration::from_secs(1));
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
+    worker.register_activity("echo_activity", |str: String| async {
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        str
+    });
 
     worker
         .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])

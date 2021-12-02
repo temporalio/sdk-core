@@ -23,7 +23,12 @@ use crate::{
 use crossbeam::queue::SegQueue;
 use futures::FutureExt;
 use parking_lot::Mutex;
-use std::{fmt::Debug, time::Instant};
+use std::{
+    fmt::Debug,
+    ops::Add,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use temporal_sdk_core_protos::coresdk::{
     workflow_activation::{
         create_query_activation, wf_activation_job, QueryWorkflow, WfActivation,
@@ -31,7 +36,11 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_commands::QueryResult,
     FromPayloadsExt,
 };
-use tokio::sync::watch;
+use tokio::{sync::Notify, time::timeout_at};
+
+/// What percentage of a WFT timeout we are willing to wait before sending a WFT heartbeat when
+/// necessary.
+const WFT_HEARTBEAT_TIMEOUT_FRACTION: f32 = 0.8;
 
 /// Centralizes concerns related to applying new workflow tasks and reporting the activations they
 /// produce.
@@ -50,7 +59,7 @@ pub struct WorkflowTaskManager {
     /// Holds poll wft responses from the server that need to be applied
     ready_buffered_wft: SegQueue<ValidPollWFTQResponse>,
     /// Used to wake blocked workflow task polling
-    pending_activations_notifier: watch::Sender<bool>,
+    pending_activations_notifier: Arc<Notify>,
     /// Lock guarded cache manager, which is the authority for limit-based workflow machine eviction
     /// from the cache.
     // TODO: Also should be moved inside concurrency manager, but there is some complexity around
@@ -113,7 +122,7 @@ pub(crate) enum NewWfTaskOutcome {
     /// The workflow task ran into problems while being applied and we must now evict the workflow
     Evict(WorkflowUpdateError),
     /// No action should be taken. Possibly we are waiting for local activities to complete
-    DoNothing,
+    LocalActsOutstanding,
 }
 
 #[derive(Debug)]
@@ -135,14 +144,10 @@ pub(crate) enum ActivationAction {
     WftComplete {
         commands: Vec<ProtoCommand>,
         query_responses: Vec<QueryResult>,
-        local_activities: Vec<NewLocalAct>,
         force_new_wft: bool,
     },
     /// We should respond to a legacy query request
     RespondLegacyQuery { result: QueryResult },
-    /// There are local activities that need to be performed, but no new commands to send. The WFT
-    /// should not be completed yet, but delayed until near the timeout or the LA resolves
-    LocalActivitiesDelayWft { local_activities: Vec<NewLocalAct> },
 }
 
 macro_rules! machine_mut {
@@ -161,7 +166,7 @@ macro_rules! machine_mut {
 
 impl WorkflowTaskManager {
     pub(crate) fn new(
-        pending_activations_notifier: watch::Sender<bool>,
+        pending_activations_notifier: Arc<Notify>,
         eviction_policy: WorkflowCachingPolicy,
         metrics: MetricsContext,
     ) -> Self {
@@ -236,7 +241,7 @@ impl WorkflowTaskManager {
                 // Queue up an eviction activation
                 self.pending_activations
                     .notify_needs_eviction(run_id, reason);
-                let _ = self.pending_activations_notifier.send(true);
+                self.pending_activations_notifier.notify_waiters();
             }
             self.workflow_machines
                 .get_task(run_id)
@@ -269,8 +274,7 @@ impl WorkflowTaskManager {
     }
 
     /// Given a validated poll response from the server, prepare an activation (if there is one) to
-    /// be sent to lang. If applying the response to the workflow's state does not produce a new
-    /// activation, `None` is returned.
+    /// be sent to lang.
     ///
     /// The new activation is immediately considered to be an outstanding workflow task - so it is
     /// expected that new activations will be dispatched to lang right away.
@@ -344,11 +348,10 @@ impl WorkflowTaskManager {
                 })
                 .expect("Workflow machines must exist, we just created/updated them");
             if outstanding_las > 0 {
-                // If there are outstanding local activities, we don't want to complete the workflow
-                // task just yet. We want to give them a chance to complete. If they take longer
+                // If there are outstanding local activities, we don't want to autocomplete the
+                // workflow task. We want to give them a chance to complete. If they take longer
                 // than the WFT timeout, we will force a new WFT just before the timeout.
-                // TODO: Implement that
-                NewWfTaskOutcome::DoNothing
+                NewWfTaskOutcome::LocalActsOutstanding
             } else {
                 NewWfTaskOutcome::Autocomplete
             }
@@ -366,21 +369,23 @@ impl WorkflowTaskManager {
         &self,
         run_id: &str,
         mut commands: Vec<WFCommand>,
+        local_activity_request_sink: impl FnOnce(Vec<NewLocalAct>),
     ) -> Result<Option<ServerCommandsWithWorkflowInfo>, WorkflowUpdateError> {
         // No-command replies to evictions can simply skip everything
         if commands.is_empty() && self.activation_has_eviction(run_id) {
             return Ok(None);
         }
 
-        let task_token = if let Some(entry) = self.workflow_machines.get_task(run_id) {
-            entry.info.task_token.clone()
+        let (task_token, start_time) = if let Some(entry) = self.workflow_machines.get_task(run_id)
+        {
+            (entry.info.task_token.clone(), entry.start_time)
         } else {
             if !self.activation_has_eviction(run_id) {
                 // Don't bother warning if this was an eviction, since it's normal to issue
                 // eviction activations without an associated workflow task in that case.
                 warn!(
                     run_id,
-                    "Attempted to complete activation for nonexistent run"
+                    "Attempted to complete activation for run without associated workflow task"
                 );
             }
             return Ok(None);
@@ -425,55 +430,66 @@ impl WorkflowTaskManager {
                 }
             }
 
-            let (are_pending, server_cmds, local_activities) = machine_mut!(
+            let (are_pending, server_cmds, local_activities, wft_timeout) = machine_mut!(
                 self,
                 run_id,
                 Some(task_token.clone()),
-                |wfm: &mut WorkflowManager| async move {
-                    // Send commands from lang into the machines then check if the workflow run needs
-                    // another activation and mark it if so
-                    wfm.push_commands(commands).await?;
-                    let are_pending = wfm.apply_next_task_if_ready().await?;
-                    // We want to fetch the outgoing commands only after a next WFT may have been
-                    // applied, as outgoing server commands may be affected.
-                    Ok((
-                        are_pending,
-                        wfm.get_server_commands(),
-                        wfm.drain_queued_local_activities(),
-                    ))
+                |wfm: &mut WorkflowManager| {
+                    async move {
+                        // Send commands from lang into the machines then check if the workflow run
+                        // needs another activation and mark it if so
+                        wfm.push_commands(commands).await?;
+                        let are_pending = wfm.apply_next_task_if_ready().await?;
+                        // We want to fetch the outgoing commands only after a next WFT may have
+                        // been applied, as outgoing server commands may be affected.
+                        let outgoing_cmds = wfm.get_server_commands();
+                        let new_local_acts = wfm.drain_queued_local_activities();
+
+                        let wft_timeout: Duration = wfm
+                            .machines
+                            .started_attrs()
+                            .and_then(|attrs| attrs.workflow_task_timeout.clone())
+                            .and_then(|tt| tt.try_into().ok())
+                            .ok_or_else(|| {
+                                WFMachinesError::Fatal(
+                                    "Workflow's start attribs were missing a well formed task timeout"
+                                        .to_string(),
+                                )
+                            })?;
+
+                        Ok((are_pending, outgoing_cmds, new_local_acts, wft_timeout))
+                    }
+                    .boxed()
                 }
-                .boxed()
             )?;
 
             if are_pending {
                 self.needs_activation(run_id);
             }
+            local_activity_request_sink(local_activities);
+
+            // The heartbeat deadline is 80% of the WFT timeout
+            let wft_heartbeat_deadline =
+                start_time.add(wft_timeout.mul_f32(WFT_HEARTBEAT_TIMEOUT_FRACTION));
+            // Wait on local activities to resolve if there are any, or for the WFT timeout to
+            // be about to expire, in which case we will need to send a WFT heartbeat.
+            let must_heartbeat = self
+                .wait_for_local_acts_or_heartbeat(run_id, wft_heartbeat_deadline)
+                .await;
 
             // We only actually want to send commands back to the server if there are no more
             // pending activations and we are caught up on replay. We don't want to complete a wft
             // if already saw the final event in the workflow.
             if !self.pending_activations.has_pending(run_id) && !server_cmds.replaying {
-                if server_cmds.commands.is_empty() && !local_activities.is_empty() {
-                    Some(ServerCommandsWithWorkflowInfo {
-                        task_token,
-                        action: ActivationAction::LocalActivitiesDelayWft { local_activities },
-                    })
-                } else {
-                    // TODO: Ideally local activities isn't in this branch at all But we need to
-                    //  force new wft if there are incomplete local activities and new commands to
-                    //  send. Force flag does need to appear. Other branch should ideally be only
-                    //  one dealing with LAs
-
-                    Some(ServerCommandsWithWorkflowInfo {
-                        task_token,
-                        action: ActivationAction::WftComplete {
-                            commands: server_cmds.commands,
-                            query_responses,
-                            force_new_wft: !local_activities.is_empty(),
-                            local_activities,
-                        },
-                    })
-                }
+                Some(ServerCommandsWithWorkflowInfo {
+                    task_token,
+                    action: ActivationAction::WftComplete {
+                        // TODO: Don't force if also sending complete execution cmd
+                        force_new_wft: must_heartbeat,
+                        commands: server_cmds.commands,
+                        query_responses,
+                    },
+                })
             } else if query_responses.is_empty() {
                 None
             } else {
@@ -482,7 +498,6 @@ impl WorkflowTaskManager {
                     action: ActivationAction::WftComplete {
                         commands: vec![],
                         query_responses,
-                        local_activities: vec![],
                         force_new_wft: false,
                     },
                 })
@@ -616,7 +631,7 @@ impl WorkflowTaskManager {
                     if let Some(query) = ot.legacy_query.take() {
                         let na = create_query_activation(run_id.to_string(), [query]);
                         self.pending_legacy_queries.push(na);
-                        let _ = self.pending_activations_notifier.send(true);
+                        self.pending_activations_notifier.notify_waiters();
                         return false;
                     }
                 }
@@ -653,7 +668,7 @@ impl WorkflowTaskManager {
     /// Any subsequent action that needs to be taken will be created as a new activation
     fn on_activation_done(&self, run_id: &str) {
         if self.workflow_machines.delete_activation(run_id).is_some() {
-            let _ = self.pending_activations_notifier.send(true);
+            self.pending_activations_notifier.notify_waiters();
         }
         // It's possible the activation is already removed due to completing an eviction
     }
@@ -723,6 +738,38 @@ impl WorkflowTaskManager {
 
     fn needs_activation(&self, run_id: &str) {
         self.pending_activations.notify_needs_activation(run_id);
-        let _ = self.pending_activations_notifier.send(true);
+        self.pending_activations_notifier.notify_waiters();
+    }
+
+    /// Wait for either all local activities to resolve, or for 80% of the WFT timeout, in which
+    /// case we will "heartbeat" by completing the WFT, even if there are no commands to send.
+    ///
+    /// Returns true if we must heartbeat
+    async fn wait_for_local_acts_or_heartbeat(
+        &self,
+        run_id: &str,
+        wft_heartbeat_deadline: Instant,
+    ) -> bool {
+        loop {
+            let la_count = self
+                .workflow_machines
+                .access_sync(run_id, |wfm| {
+                    wfm.machines.outstanding_local_activity_count()
+                })
+                .expect("Workflow cannot go missing while we are waiting on LAs");
+            if la_count == 0 {
+                return false;
+            } else if Instant::now() >= wft_heartbeat_deadline {
+                // We must heartbeat b/c there are still pending local activities
+                return true;
+            }
+            // Since an LA resolution always results in a new pending activation, we can wait on
+            // notifications of that to re-check if they're all resolved.
+            let _ = timeout_at(
+                wft_heartbeat_deadline.into(),
+                self.pending_activations_notifier.notified(),
+            )
+            .await;
+        }
     }
 }

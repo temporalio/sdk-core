@@ -16,7 +16,7 @@ pub use workflow_context::{
 
 use crate::{
     prototype_rust_sdk::workflow_context::{ChildWfCommon, PendingChildWorkflow},
-    Core,
+    Core, PollActivityError, PollWfError,
 };
 use anyhow::{anyhow, bail};
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
@@ -60,17 +60,25 @@ pub struct TestRustWorker {
     core: Arc<dyn Core>,
     task_queue: String,
     task_timeout: Option<Duration>,
+    workflow_half: WorkflowHalf,
+    activity_half: ActivityHalf,
+}
+
+struct WorkflowHalf {
     /// Maps run id to the driver
     workflows: HashMap<String, UnboundedSender<WfActivation>>,
     /// Maps workflow type to the function for executing workflow runs with that ID
     workflow_fns: HashMap<String, WorkflowFunction>,
-    /// Maps activity type to the function for executing activities of that type
-    activity_fns: HashMap<String, ActivityFunction>,
     /// Number of live workflows
     incomplete_workflows: Arc<AtomicUsize>,
     /// Handles for each spawned workflow run are inserted here to be cleaned up when all runs
     /// are finished
     join_handles: FuturesUnordered<BoxFuture<'static, Result<WorkflowResult<()>, JoinError>>>,
+}
+
+struct ActivityHalf {
+    /// Maps activity type to the function for executing activities of that type
+    activity_fns: HashMap<String, ActivityFunction>,
 }
 
 impl TestRustWorker {
@@ -80,11 +88,15 @@ impl TestRustWorker {
             core,
             task_queue,
             task_timeout,
-            workflows: Default::default(),
-            workflow_fns: Default::default(),
-            activity_fns: Default::default(),
-            incomplete_workflows: Arc::new(AtomicUsize::new(0)),
-            join_handles: FuturesUnordered::new(),
+            workflow_half: WorkflowHalf {
+                workflows: Default::default(),
+                workflow_fns: Default::default(),
+                incomplete_workflows: Arc::new(AtomicUsize::new(0)),
+                join_handles: FuturesUnordered::new(),
+            },
+            activity_half: ActivityHalf {
+                activity_fns: Default::default(),
+            },
         }
     }
 
@@ -123,7 +135,8 @@ impl TestRustWorker {
         workflow_type: impl Into<String>,
         wf_function: F,
     ) {
-        self.workflow_fns
+        self.workflow_half
+            .workflow_fns
             .insert(workflow_type.into(), wf_function.into());
     }
 
@@ -134,7 +147,7 @@ impl TestRustWorker {
         activity_type: impl Into<String>,
         act_function: impl IntoActivityFunc<A, R>,
     ) {
-        self.activity_fns.insert(
+        self.activity_half.activity_fns.insert(
             activity_type.into(),
             ActivityFunction {
                 act_func: act_function.into_activity_fn(),
@@ -146,65 +159,95 @@ impl TestRustWorker {
     /// and will resolve `run_until_done` when it goes down to 0.
     /// You do not have to increment if scheduled a Workflow with `submit_wf`.
     pub fn incr_expected_run_count(&self, count: usize) {
-        self.incomplete_workflows.fetch_add(count, Ordering::SeqCst);
+        self.workflow_half
+            .incomplete_workflows
+            .fetch_add(count, Ordering::SeqCst);
     }
 
-    /// Drives all workflows until they have all finished, repeatedly polls server to fetch work
-    /// for them.
+    /// Drives all workflows & activities until they have all finished, repeatedly polls server to
+    /// fetch work for them.
     pub async fn run_until_done(mut self) -> Result<(), anyhow::Error> {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let poller = async move {
+        let pollers = async move {
+            let (core, task_q, wf_half, act_half) = self.split_apart();
             let (completions_tx, mut completions_rx) = unbounded_channel();
-            loop {
-                // Only poll on the activity queue if activity functions have been registered. This
-                // makes tests which use mocks dramatically more manageable.
-                if !self.activity_fns.is_empty() {
-                    tokio::select! {
-                        activation = self.core.poll_workflow_activation(&self.task_queue) => {
-                            self.workflow_activation_handler(
+            let (wf_poll_res, act_poll_res) = tokio::join!(
+                // Workflow polling loop
+                async {
+                    loop {
+                        let activation = match core.poll_workflow_activation(task_q).await {
+                            Err(PollWfError::ShutDown) => {
+                                break Result::<_, anyhow::Error>::Ok(());
+                            }
+                            o => o?,
+                        };
+                        wf_half
+                            .workflow_activation_handler(
+                                core,
+                                task_q,
                                 &shutdown_rx,
                                 &completions_tx,
                                 &mut completions_rx,
-                                activation?,
+                                activation,
                             )
                             .await?;
-                        }
-                        activity = self.core.poll_activity_task(&self.task_queue) => {
-                            warn!("Activity task!!!");
-                            // This blocks polling until activity completion. Obviously that needs
-                            // to change at some point.
-                            self.activity_task_handler(activity?).await?;
+                        if wf_half.incomplete_workflows.load(Ordering::SeqCst) == 0 {
+                            // Die rebel scum - evict all workflows (which are complete now),
+                            // and turn off activity polling.
+                            let _ = shutdown_tx.send(true);
+                            break Result::<_, anyhow::Error>::Ok(());
                         }
                     }
-                } else {
-                    let activation = self.core.poll_workflow_activation(&self.task_queue).await?;
-                    self.workflow_activation_handler(
-                        &shutdown_rx,
-                        &completions_tx,
-                        &mut completions_rx,
-                        activation,
-                    )
-                    .await?;
+                },
+                // Only poll on the activity queue if activity functions have been registered. This
+                // makes tests which use mocks dramatically more manageable.
+                async {
+                    let mut shutdown_rx = shutdown_rx.clone();
+                    if !act_half.activity_fns.is_empty() {
+                        loop {
+                            tokio::select! {
+                                activity = core.poll_activity_task(task_q) => {
+                                    if matches!(activity, Err(PollActivityError::ShutDown)) {
+                                        break;
+                                    }
+                                    act_half.activity_task_handler(core, task_q,
+                                                                   activity?).await?;
+                                },
+                                _ = shutdown_rx.changed() => { break }
+                            }
+                        }
+                    };
+                    Result::<_, anyhow::Error>::Ok(())
                 }
-
-                if self.incomplete_workflows.load(Ordering::SeqCst) == 0 {
-                    break Result::<_, anyhow::Error>::Ok(self);
-                }
-            }
+            );
+            wf_poll_res?;
+            act_poll_res?;
+            Result::<_, anyhow::Error>::Ok(self)
         };
 
-        let mut myself = poller.await?;
-
-        // Die rebel scum
-        let _ = shutdown_tx.send(true);
-        while let Some(h) = myself.join_handles.next().await {
+        let mut myself = pollers.await?;
+        while let Some(h) = myself.workflow_half.join_handles.next().await {
             h??;
         }
+        myself.core.shutdown().await;
         Ok(())
     }
 
+    fn split_apart(&mut self) -> (&dyn Core, &str, &mut WorkflowHalf, &mut ActivityHalf) {
+        (
+            self.core.as_ref(),
+            &self.task_queue,
+            &mut self.workflow_half,
+            &mut self.activity_half,
+        )
+    }
+}
+
+impl WorkflowHalf {
     async fn workflow_activation_handler(
         &mut self,
+        core: &dyn Core,
+        task_queue: &str,
         shutdown_rx: &Receiver<bool>,
         completions_tx: &UnboundedSender<WfActivationCompletion>,
         completions_rx: &mut UnboundedReceiver<WfActivationCompletion>,
@@ -222,8 +265,8 @@ impl TestRustWorker {
                 .ok_or_else(|| anyhow!("Workflow type not found"))?;
 
             let (wff, activations) = wf_function.start_workflow(
-                self.core.get_init_options().gateway_opts.namespace.clone(),
-                self.task_queue.clone(),
+                core.get_init_options().gateway_opts.namespace.clone(),
+                task_queue.to_string(),
                 // NOTE: Don't clone args if this gets ported to be a non-test rust worker
                 sw.arguments.clone(),
                 completions_tx.clone(),
@@ -254,11 +297,18 @@ impl TestRustWorker {
             debug!("Workflow {} says it's finishing", &completion.run_id);
             self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
         }
-        self.core.complete_workflow_activation(completion).await?;
+        core.complete_workflow_activation(completion).await?;
         Ok(())
     }
+}
 
-    async fn activity_task_handler(&mut self, activity: ActivityTask) -> Result<(), anyhow::Error> {
+impl ActivityHalf {
+    async fn activity_task_handler(
+        &mut self,
+        core: &dyn Core,
+        task_queue: &str,
+        activity: ActivityTask,
+    ) -> Result<(), anyhow::Error> {
         // TODO: Trap errors and report activity failures, handle cancels, etc.
         match activity.variant {
             Some(activity_task::Variant::Start(start)) => {
@@ -271,13 +321,12 @@ impl TestRustWorker {
                 let mut inputs = start.input;
                 let arg = inputs.pop().unwrap_or_default();
                 let output = (&act_fn.act_func)(arg).await?;
-                self.core
-                    .complete_activity_task(ActivityTaskCompletion {
-                        task_token: activity.task_token,
-                        task_queue: self.task_queue.clone(),
-                        result: Some(ActivityResult::ok(output)),
-                    })
-                    .await?;
+                core.complete_activity_task(ActivityTaskCompletion {
+                    task_token: activity.task_token,
+                    task_queue: task_queue.to_string(),
+                    result: Some(ActivityResult::ok(output)),
+                })
+                .await?;
             }
             Some(activity_task::Variant::Cancel(_)) => {
                 unimplemented!("Activity cancels not implemented yet in prototype sdk")

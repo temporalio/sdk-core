@@ -3,6 +3,7 @@ use parking_lot::Mutex;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
+    time::{Instant, SystemTime},
 };
 use temporal_sdk_core_protos::coresdk::{
     activity_task::{activity_task, ActivityTask, Start},
@@ -11,18 +12,20 @@ use temporal_sdk_core_protos::coresdk::{
 };
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    Semaphore,
+    Notify, Semaphore,
 };
 
 pub(crate) struct LocalInFlightActInfo {
     pub seq: u32,
     pub workflow_execution: WorkflowExecution,
+    pub dispatch_time: Instant,
 }
 
 pub(crate) struct NewLocalAct {
     pub schedule_cmd: ScheduleActivity,
     pub workflow_type: String,
     pub workflow_exec_info: WorkflowExecution,
+    pub schedule_time: SystemTime,
 }
 
 impl Debug for NewLocalAct {
@@ -42,6 +45,9 @@ pub(crate) struct LocalActivityManager {
     act_req_tx: UnboundedSender<NewLocalAct>,
     /// Activities that need to be executed by lang
     act_req_rx: tokio::sync::Mutex<UnboundedReceiver<NewLocalAct>>,
+    /// Wakes every time a complete is processed
+    complete_notify: Notify,
+
     dat: Mutex<LAMData>,
 }
 
@@ -58,11 +64,16 @@ impl LocalActivityManager {
             semaphore: Semaphore::new(max_concurrent),
             act_req_tx,
             act_req_rx: tokio::sync::Mutex::new(act_req_rx),
+            complete_notify: Notify::new(),
             dat: Mutex::new(LAMData {
                 outstanding_activity_tasks: Default::default(),
                 next_tt_num: 0,
             }),
         }
+    }
+
+    pub(crate) fn num_outstanding(&self) -> usize {
+        self.dat.lock().outstanding_activity_tasks.len()
     }
 
     pub(crate) fn enqueue(&self, acts: impl IntoIterator<Item = NewLocalAct> + Debug) {
@@ -90,6 +101,7 @@ impl LocalActivityManager {
                 LocalInFlightActInfo {
                     seq: sa.seq,
                     workflow_execution: new_la.workflow_exec_info.clone(),
+                    dispatch_time: Instant::now(),
                 },
             );
 
@@ -107,10 +119,9 @@ impl LocalActivityManager {
                     header_fields: sa.header_fields,
                     input: sa.arguments,
                     heartbeat_details: vec![],
-                    // TODO: Get these times somehow
-                    scheduled_time: None,
-                    current_attempt_scheduled_time: None,
-                    started_time: None,
+                    scheduled_time: Some(new_la.schedule_time.into()),
+                    current_attempt_scheduled_time: Some(new_la.schedule_time.into()),
+                    started_time: Some(SystemTime::now().into()),
                     attempt: 0,
                     schedule_to_close_timeout: sa.schedule_to_close_timeout,
                     start_to_close_timeout: sa.start_to_close_timeout,
@@ -133,7 +144,14 @@ impl LocalActivityManager {
             .outstanding_activity_tasks
             .remove(task_token)?;
         self.semaphore.add_permits(1);
+        self.complete_notify.notify_one();
         Some(info)
+    }
+
+    pub(crate) async fn wait_all_finished(&self) {
+        while !self.dat.lock().outstanding_activity_tasks.is_empty() {
+            self.complete_notify.notified().await;
+        }
     }
 }
 
@@ -153,6 +171,7 @@ mod tests {
             },
             workflow_type: "".to_string(),
             workflow_exec_info: Default::default(),
+            schedule_time: SystemTime::now(),
         }));
         for i in 1..=50 {
             let next = lam.next_pending().await.unwrap();
@@ -179,6 +198,7 @@ mod tests {
             },
             workflow_type: "".to_string(),
             workflow_exec_info: Default::default(),
+            schedule_time: SystemTime::now(),
         }]);
 
         let next = lam.next_pending().await.unwrap();

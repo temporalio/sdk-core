@@ -72,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[derive(::serde::Serialize, ::serde::Deserialize)]",
         )
         .field_attribute(
-            "coresdk.external_data.LocalActivityMarkerData.time",
+            "coresdk.external_data.LocalActivityMarkerData.complete_time",
             "#[serde(with = \"opt_timestamp\")]",
         )
         .compile(

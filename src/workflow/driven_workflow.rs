@@ -36,6 +36,11 @@ impl DrivenWorkflow {
         self.started_attrs = Some(attribs);
     }
 
+    /// Return the attributes from the workflow execution started event if this workflow has started
+    pub fn get_started_attrs(&self) -> Option<&WorkflowExecutionStartedEventAttributes> {
+        self.started_attrs.as_ref()
+    }
+
     /// Enqueue a new job to be sent to the driven workflow
     pub fn send_job(&mut self, job: wf_activation_job::Variant) {
         self.outgoing_wf_activation_jobs.push_back(job);

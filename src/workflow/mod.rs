@@ -12,7 +12,7 @@ use crate::{
     telemetry::metrics::MetricsContext,
     worker::NewLocalAct,
 };
-use std::sync::mpsc::Sender;
+use std::{sync::mpsc::Sender, time::Duration};
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityResult, workflow_activation::WfActivation,
 };
@@ -84,7 +84,10 @@ pub struct OutgoingServerCommands {
 
 #[derive(Debug)]
 pub(crate) enum LocalResolution {
-    LocalActivity(ActivityResult),
+    LocalActivity {
+        result: ActivityResult,
+        runtime: Duration,
+    },
 }
 
 impl WorkflowManager {
@@ -307,14 +310,19 @@ pub mod managed_wf {
             Ok(res)
         }
 
-        /// Say a local activity completed
+        /// Say a local activity completed (they always take 1 second in these tests)
         pub(crate) fn complete_local_activity(
             &mut self,
             seq_num: u32,
             result: ActivityResult,
         ) -> Result<()> {
-            self.mgr
-                .notify_of_local_result(seq_num, LocalResolution::LocalActivity(result))
+            self.mgr.notify_of_local_result(
+                seq_num,
+                LocalResolution::LocalActivity {
+                    result,
+                    runtime: Duration::from_secs(1),
+                },
+            )
         }
 
         /// During testing it can be useful to run through all activations to simulate replay
