@@ -1665,3 +1665,72 @@ async fn failing_wft_doesnt_eat_permit_forever() {
 
     core.shutdown().await;
 }
+
+#[tokio::test]
+async fn cache_miss_doesnt_eat_permit_forever() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_we_signaled("sig", vec![]);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [
+            ResponseType::ToTaskNum(1),
+            ResponseType::OneTask(2),
+            ResponseType::ToTaskNum(1),
+            ResponseType::OneTask(2),
+            ResponseType::ToTaskNum(1),
+            ResponseType::OneTask(2),
+            // Last one to complete successfully
+            ResponseType::ToTaskNum(1),
+        ],
+        MockServerGatewayApis::new(),
+    );
+    mh.num_expected_fails = Some(3);
+    mh.expect_fail_wft_matcher =
+        Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::ResetStickyTaskQueue));
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(TEST_Q, |cfg| {
+        cfg.max_outstanding_workflow_tasks = 2;
+    });
+    let core = mock_core(mock);
+
+    // Spin missing the cache to verify that we don't get stuck
+    for _ in 1..=3 {
+        // Start
+        let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, activation.run_id))
+            .await
+            .unwrap();
+        // Evict
+        let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        assert_matches!(
+            activation.jobs.as_slice(),
+            [WfActivationJob {
+                variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+            },]
+        );
+        core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, activation.run_id))
+            .await
+            .unwrap();
+        assert_eq!(core.outstanding_wfts(TEST_Q), 0);
+        assert_eq!(core.available_wft_permits(TEST_Q), 2);
+        // When we loop back up, the poll will trigger a cache miss, which we should immediately
+        // reply to WFT with failure, and then poll again, which will deliver the from-the-start
+        // history
+    }
+    let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+        TEST_Q,
+        activation.run_id,
+        CompleteWorkflowExecution { result: None }.into(),
+    ))
+    .await
+    .unwrap();
+
+    core.shutdown().await;
+}
