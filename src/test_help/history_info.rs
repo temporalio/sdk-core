@@ -154,6 +154,7 @@ mod tests {
     fn incremental_works() {
         let t = canned_histories::single_timer("timer1");
         let hi = t.get_one_wft(2).unwrap();
-        dbg!(hi.events);
+        assert_eq!(hi.events.len(), 4);
+        assert_eq!(hi.events[0].event_id, 5);
     }
 }
