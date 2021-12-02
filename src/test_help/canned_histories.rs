@@ -1519,12 +1519,17 @@ pub fn single_child_workflow_start_fail(child_wf_id: &str) -> TestHistoryBuilder
 ///  5: EVENT_TYPE_MARKER_RECORDED (la result)
 ///  7: EVENT_TYPE_MARKER_RECORDED (la result)
 ///  8: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
-pub fn two_local_activities_one_wft() -> TestHistoryBuilder {
+pub fn two_local_activities_one_wft(parallel: bool) -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    t.add_local_activity_result_marker(1, "1", b"hi".into());
-    t.add_local_activity_result_marker(2, "2", b"hi2".into());
+    let mut start_time = t.wft_start_time();
+    start_time.seconds += 1;
+    t.add_local_activity_result_marker_with_time(1, "1", b"hi".into(), start_time.clone());
+    if !parallel {
+        start_time.seconds += 1;
+    }
+    t.add_local_activity_result_marker_with_time(2, "2", b"hi2".into(), start_time);
     t.add_workflow_execution_completed();
     t
 }

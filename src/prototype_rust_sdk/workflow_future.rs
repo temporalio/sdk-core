@@ -241,7 +241,16 @@ impl Future for WorkflowFuture {
 
             let is_only_eviction = activation.is_only_eviction();
             let run_id = activation.run_id;
-            self.ctx_shared.write().is_replaying = activation.is_replaying;
+            {
+                let mut wlock = self.ctx_shared.write();
+                wlock.is_replaying = activation.is_replaying;
+                wlock.wf_time = activation
+                    .timestamp
+                    .map(TryInto::try_into)
+                    .transpose()
+                    .ok()
+                    .flatten();
+            }
 
             let mut die_of_eviction_when_done = false;
             for WfActivationJob { variant } in activation.jobs {

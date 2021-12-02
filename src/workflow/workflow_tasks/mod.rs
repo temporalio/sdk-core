@@ -36,8 +36,7 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_commands::QueryResult,
     FromPayloadsExt,
 };
-use tokio::sync::Notify;
-use tokio::time::timeout_at;
+use tokio::{sync::Notify, time::timeout_at};
 
 /// What percentage of a WFT timeout we are willing to wait before sending a WFT heartbeat when
 /// necessary.

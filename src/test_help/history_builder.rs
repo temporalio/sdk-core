@@ -7,6 +7,7 @@ use crate::{
     workflow::HistoryUpdate,
 };
 use anyhow::bail;
+use prost_types::Timestamp;
 use std::time::{Duration, SystemTime};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -34,7 +35,6 @@ pub struct TestHistoryBuilder {
     current_event_id: i64,
     workflow_task_scheduled_event_id: i64,
     final_workflow_task_started_event_id: i64,
-    previous_started_event_id: i64,
     previous_task_completed_id: i64,
     original_run_id: String,
 }
@@ -80,8 +80,6 @@ impl TestHistoryBuilder {
     }
 
     pub fn add_workflow_task_scheduled(&mut self) {
-        // WFStarted always immediately follows WFScheduled
-        self.previous_started_event_id = self.workflow_task_scheduled_event_id + 1;
         self.workflow_task_scheduled_event_id =
             self.add_get_event_id(EventType::WorkflowTaskScheduled, None);
     }
@@ -260,6 +258,7 @@ impl TestHistoryBuilder {
         activity_id: &str,
         payload: Option<CorePayload>,
         failure: Option<Failure>,
+        complete_time: Option<Timestamp>,
     ) {
         let attrs = MarkerRecordedEventAttributes {
             marker_name: LOCAL_ACTIVITY_MARKER_NAME.to_string(),
@@ -268,7 +267,7 @@ impl TestHistoryBuilder {
                     seq,
                     activity_id: activity_id.to_string(),
                     activity_type: "some_act_type".to_string(),
-                    time: None,
+                    complete_time,
                 },
                 payload,
             ),
@@ -285,7 +284,17 @@ impl TestHistoryBuilder {
         activity_id: &str,
         payload: CorePayload,
     ) {
-        self.add_local_activity_marker(seq, activity_id, Some(payload), None);
+        self.add_local_activity_marker(seq, activity_id, Some(payload), None, None);
+    }
+
+    pub(crate) fn add_local_activity_result_marker_with_time(
+        &mut self,
+        seq: u32,
+        activity_id: &str,
+        payload: CorePayload,
+        complete_time: Timestamp,
+    ) {
+        self.add_local_activity_marker(seq, activity_id, Some(payload), None, Some(complete_time));
     }
 
     pub(crate) fn add_local_activity_fail_marker(
@@ -294,7 +303,7 @@ impl TestHistoryBuilder {
         activity_id: &str,
         failure: Failure,
     ) {
-        self.add_local_activity_marker(seq, activity_id, None, Some(failure));
+        self.add_local_activity_marker(seq, activity_id, None, Some(failure), None);
     }
 
     pub(crate) fn add_signal_wf(
@@ -407,6 +416,14 @@ impl TestHistoryBuilder {
             HistoryInfo::new_from_history(&self.events.clone().into(), Some(from_wft_number))?;
         histinfo.make_incremental();
         Ok(histinfo)
+    }
+
+    /// Return most recent wft start time or panic if unset
+    pub(crate) fn wft_start_time(&self) -> prost_types::Timestamp {
+        self.events[(self.workflow_task_scheduled_event_id + 1) as usize]
+            .event_time
+            .clone()
+            .unwrap()
     }
 
     fn build_and_push_event(&mut self, event_type: EventType, attribs: Attributes) {

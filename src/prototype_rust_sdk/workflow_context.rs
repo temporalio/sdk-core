@@ -10,6 +10,7 @@ use crate::prototype_rust_sdk::{
 use crossbeam::channel::{Receiver, Sender};
 use futures::{task::Context, FutureExt, Stream};
 use parking_lot::RwLock;
+use std::time::SystemTime;
 use std::{
     collections::HashMap, future::Future, marker::PhantomData, pin::Pin, sync::Arc, task::Poll,
     time::Duration,
@@ -51,6 +52,7 @@ pub struct WfContextSharedData {
     /// Maps change ids -> resolved status
     pub changes: HashMap<String, bool>,
     pub is_replaying: bool,
+    pub wf_time: Option<SystemTime>,
 }
 
 // TODO: Dataconverter type interface to replace Payloads here. Possibly just use serde
@@ -92,6 +94,11 @@ impl WfContext {
     /// Get the arguments provided to the workflow upon execution start
     pub fn get_args(&self) -> &[Payload] {
         self.args.as_slice()
+    }
+
+    /// Return the current time according to the workflow (which is not wall-clock time).
+    pub fn workflow_time(&self) -> Option<SystemTime> {
+        self.shared.read().wf_time
     }
 
     pub(crate) fn get_shared_data(&self) -> Arc<RwLock<WfContextSharedData>> {

@@ -1,9 +1,9 @@
 use crate::task_token::TaskToken;
 use parking_lot::Mutex;
-use std::time::SystemTime;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
+    time::{Instant, SystemTime},
 };
 use temporal_sdk_core_protos::coresdk::{
     activity_task::{activity_task, ActivityTask, Start},
@@ -18,6 +18,7 @@ use tokio::sync::{
 pub(crate) struct LocalInFlightActInfo {
     pub seq: u32,
     pub workflow_execution: WorkflowExecution,
+    pub dispatch_time: Instant,
 }
 
 pub(crate) struct NewLocalAct {
@@ -100,6 +101,7 @@ impl LocalActivityManager {
                 LocalInFlightActInfo {
                     seq: sa.seq,
                     workflow_execution: new_la.workflow_exec_info.clone(),
+                    dispatch_time: Instant::now(),
                 },
             );
 

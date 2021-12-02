@@ -82,7 +82,10 @@ pub(crate) struct WorkflowMachines {
     /// The time the workflow execution finished, as determined by when the machines handled
     /// a terminal workflow command. If this is `Some`, you know the workflow is ended.
     workflow_end_time: Option<SystemTime>,
-    /// The current workflow time if it has been established
+    /// The WFT start time if it has been established
+    wft_start_time: Option<SystemTime>,
+    /// The current workflow time if it has been established. This may differ from the WFT start
+    /// time since local activities may advance the clock
     current_wf_time: Option<SystemTime>,
 
     all_machines: SlotMap<MachineKey, Machines>,
@@ -167,6 +170,9 @@ pub enum MachineResponse {
     /// Queue a local activity to be processed by the worker
     #[display(fmt = "QueueLocalActivity")]
     QueueLocalActivity(ScheduleActivity),
+    /// Set the workflow time to the provided time
+    #[display(fmt = "UpdateWFTime({:?})", "_0")]
+    UpdateWFTime(Option<SystemTime>),
 }
 
 impl<T> From<T> for MachineResponse
@@ -224,6 +230,7 @@ impl WorkflowMachines {
             next_started_event_id: 0,
             workflow_start_time: None,
             workflow_end_time: None,
+            wft_start_time: None,
             current_wf_time: None,
             all_machines: Default::default(),
             machines_by_event_id: Default::default(),
@@ -266,12 +273,12 @@ impl WorkflowMachines {
         resolution: LocalResolution,
     ) -> Result<()> {
         match resolution {
-            LocalResolution::LocalActivity(res) => {
+            LocalResolution::LocalActivity { result, runtime } => {
                 let act_id = CommandID::LocalActivity(seq_id);
                 let mk = self.get_machine_key(act_id)?;
                 let mach = self.machine_mut(mk);
                 if let Machines::LocalActivityMachine(ref mut lam) = *mach {
-                    let resps = lam.try_resolve(res, seq_id)?;
+                    let resps = lam.try_resolve(seq_id, result, runtime)?;
                     self.process_machine_responses(mk, resps)?;
                 } else {
                     return Err(WFMachinesError::Nondeterminism(format!(
@@ -374,6 +381,7 @@ impl WorkflowMachines {
         let _enter = s.enter();
 
         self.current_started_event_id = task_started_event_id;
+        self.wft_start_time = Some(time);
         self.set_current_time(time);
         Ok(())
     }
@@ -785,6 +793,11 @@ impl WorkflowMachines {
                 MachineResponse::QueueLocalActivity(act) => {
                     self.local_activity_requests.push(act);
                 }
+                MachineResponse::UpdateWFTime(t) => {
+                    if let Some(t) = t {
+                        self.set_current_time(t);
+                    }
+                }
             }
         }
         Ok(())
@@ -820,6 +833,7 @@ impl WorkflowMachines {
                             attrs,
                             self.replaying,
                             self.local_activity_resolutions.remove(&seq),
+                            self.current_wf_time,
                         )?;
                         let machkey = self.all_machines.insert(la.into());
                         self.id_to_machine

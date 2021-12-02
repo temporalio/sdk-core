@@ -9,12 +9,15 @@ pub async fn echo(e: String) -> String {
 }
 
 pub async fn one_local_activity_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+    let initial_workflow_time = ctx.workflow_time().expect("Workflow time should be set");
     ctx.local_activity(LocalActivityOptions {
         activity_type: "echo_activity".to_string(),
         input: "hi!".as_json_payload().expect("serializes fine"),
         ..Default::default()
     })
     .await;
+    // Verify LA execution advances the clock
+    assert!(initial_workflow_time < ctx.workflow_time().unwrap());
     Ok(().into())
 }
 

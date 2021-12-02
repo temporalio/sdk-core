@@ -284,9 +284,12 @@ impl Worker {
                     .notify_of_local_result(
                         &la_info.workflow_execution.run_id,
                         la_info.seq,
-                        LocalResolution::LocalActivity(ActivityResult {
-                            status: Some(status),
-                        }),
+                        LocalResolution::LocalActivity {
+                            result: ActivityResult {
+                                status: Some(status),
+                            },
+                            runtime: la_info.dispatch_time.elapsed(),
+                        },
                     )
                     .await
                 {

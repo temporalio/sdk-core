@@ -6,7 +6,10 @@ use crate::{
     protosext::{CompleteLocalActivityData, HistoryEventExt},
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
-use std::convert::TryFrom;
+use std::{
+    convert::TryFrom,
+    time::{Duration, SystemTime},
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{activity_result, ActivityResult, Failure as ActFail, Success},
@@ -59,6 +62,7 @@ fsm! {
 pub(super) struct ResolveDat {
     pub(super) seq: u32,
     pub(super) result: ActivityResult,
+    pub(super) complete_time: Option<SystemTime>,
 }
 
 impl From<CompleteLocalActivityData> for ResolveDat {
@@ -76,6 +80,13 @@ impl From<CompleteLocalActivityData> for ResolveDat {
             result: ActivityResult {
                 status: Some(status),
             },
+            complete_time: d
+                .marker_dat
+                .complete_time
+                .map(TryInto::try_into)
+                .transpose()
+                .ok()
+                .flatten(),
         }
     }
 }
@@ -88,6 +99,7 @@ pub(super) fn new_local_activity(
     attrs: ScheduleActivity,
     replaying_when_invoked: bool,
     maybe_pre_resolved: Option<ResolveDat>,
+    wf_time: Option<SystemTime>,
 ) -> Result<(LocalActivityMachine, Vec<MachineResponse>), WFMachinesError> {
     let initial_state = if replaying_when_invoked {
         if let Some(dat) = maybe_pre_resolved {
@@ -109,6 +121,7 @@ pub(super) fn new_local_activity(
         shared_state: SharedState {
             attrs,
             replaying_when_invoked,
+            wf_time_when_started: wf_time,
         },
     };
 
@@ -148,12 +161,17 @@ impl LocalActivityMachine {
     /// Attempt to resolve the local activity with a result from execution (not from history)
     pub(super) fn try_resolve(
         &mut self,
-        result: ActivityResult,
         seq: u32,
+        result: ActivityResult,
+        runtime: Duration,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         let mut res = OnEventWrapper::on_event_mut(
             self,
-            LocalActivityMachineEvents::HandleResult(ResolveDat { seq, result }),
+            LocalActivityMachineEvents::HandleResult(ResolveDat {
+                seq,
+                result,
+                complete_time: self.shared_state.wf_time_when_started.map(|t| t + runtime),
+            }),
         )
         .map_err(|e| match e {
             MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
@@ -177,6 +195,7 @@ impl LocalActivityMachine {
 pub(super) struct SharedState {
     attrs: ScheduleActivity,
     replaying_when_invoked: bool,
+    wf_time_when_started: Option<SystemTime>,
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -328,7 +347,11 @@ impl WFMachinesAdapter for LocalActivityMachine {
             LocalActivityCommand::RequestActivityExecution(act) => {
                 Ok(vec![MachineResponse::QueueLocalActivity(act)])
             }
-            LocalActivityCommand::Resolved(ResolveDat { seq, result }) => {
+            LocalActivityCommand::Resolved(ResolveDat {
+                seq,
+                result,
+                complete_time,
+            }) => {
                 let mut maybe_ok_result = None;
                 let mut maybe_failure = None;
                 if let Some(s) = result.status.clone() {
@@ -351,30 +374,32 @@ impl WFMachinesAdapter for LocalActivityMachine {
                         }
                     }
                 };
-                let marker_data = RecordMarkerCommandAttributes {
-                    marker_name: LOCAL_ACTIVITY_MARKER_NAME.to_string(),
-                    details: build_local_activity_marker_details(
-                        LocalActivityMarkerData {
-                            seq,
-                            activity_id: self.shared_state.attrs.activity_id.clone(),
-                            activity_type: self.shared_state.attrs.activity_type.clone(),
-                            // TODO: populate
-                            time: None,
-                        },
-                        maybe_ok_result,
+                let mut responses = vec![
+                    MachineResponse::PushWFJob(
+                        ResolveActivity {
+                            seq: self.shared_state.attrs.seq,
+                            result: Some(result),
+                        }
+                        .into(),
                     ),
-                    header: None,
-                    failure: maybe_failure,
-                };
-                let mut responses = vec![MachineResponse::PushWFJob(
-                    ResolveActivity {
-                        seq: self.shared_state.attrs.seq,
-                        result: Some(result),
-                    }
-                    .into(),
-                )];
+                    MachineResponse::UpdateWFTime(complete_time),
+                ];
                 // Only issue record marker commands if we weren't replaying
                 if !self.shared_state.replaying_when_invoked {
+                    let marker_data = RecordMarkerCommandAttributes {
+                        marker_name: LOCAL_ACTIVITY_MARKER_NAME.to_string(),
+                        details: build_local_activity_marker_details(
+                            LocalActivityMarkerData {
+                                seq,
+                                activity_id: self.shared_state.attrs.activity_id.clone(),
+                                activity_type: self.shared_state.attrs.activity_type.clone(),
+                                complete_time: complete_time.map(Into::into),
+                            },
+                            maybe_ok_result,
+                        ),
+                        header: None,
+                        failure: maybe_failure,
+                    };
                     responses.push(MachineResponse::IssueNewCommand(Command {
                         command_type: CommandType::RecordMarker as i32,
                         attributes: Some(marker_data.into()),
@@ -585,7 +610,7 @@ mod tests {
     #[tokio::test]
     async fn two_sequential_las(#[case] replay: bool) {
         let func = WorkflowFunction::new(two_la_wf);
-        let t = canned_histories::two_local_activities_one_wft();
+        let t = canned_histories::two_local_activities_one_wft(false);
         let histinfo = if replay {
             t.get_full_history_info().unwrap().into()
         } else {
@@ -595,7 +620,8 @@ mod tests {
 
         // First activation will have no server commands. Activity will be put into the activity
         // queue locally
-        wfm.get_next_activation().await.unwrap();
+        let act = wfm.get_next_activation().await.unwrap();
+        let first_act_ts = act.timestamp.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
         let ready_to_execute_las = wfm.drain_queued_local_activities();
@@ -608,6 +634,8 @@ mod tests {
         }
 
         let act = wfm.get_next_activation().await.unwrap();
+        // Verify LAs advance time (they take 1s in this test)
+        assert_eq!(act.timestamp.unwrap().seconds, first_act_ts.seconds + 1);
         assert_matches!(
             act.jobs.as_slice(),
             [WfActivationJob {
@@ -627,6 +655,7 @@ mod tests {
         }
 
         let act = wfm.get_next_activation().await.unwrap();
+        assert_eq!(act.timestamp.unwrap().seconds, first_act_ts.seconds + 2);
         assert_matches!(
             act.jobs.as_slice(),
             [WfActivationJob {
@@ -676,7 +705,7 @@ mod tests {
     #[tokio::test]
     async fn two_parallel_las(#[case] replay: bool) {
         let func = WorkflowFunction::new(two_la_wf_parallel);
-        let t = canned_histories::two_local_activities_one_wft();
+        let t = canned_histories::two_local_activities_one_wft(true);
         let histinfo = if replay {
             t.get_full_history_info().unwrap().into()
         } else {
@@ -686,7 +715,8 @@ mod tests {
 
         // First activation will have no server commands. Activity(ies) will be put into the queue
         // for execution
-        wfm.get_next_activation().await.unwrap();
+        let act = wfm.get_next_activation().await.unwrap();
+        let first_act_ts = act.timestamp.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
         let ready_to_execute_las = wfm.drain_queued_local_activities();
@@ -701,6 +731,7 @@ mod tests {
         }
 
         let act = wfm.get_next_activation().await.unwrap();
+        assert_eq!(act.timestamp.unwrap().seconds, first_act_ts.seconds + 1);
         assert_matches!(
             act.jobs.as_slice(),
             [WfActivationJob {
@@ -735,7 +766,10 @@ mod tests {
                 .await
                 .unwrap();
         }
-        assert_eq!(wfm.get_next_activation().await.unwrap().jobs.len(), 0);
+        let act = wfm.get_next_activation().await.unwrap();
+        // Still only 1s ahead b/c parallel
+        assert_eq!(act.timestamp.unwrap().seconds, first_act_ts.seconds + 1);
+        assert_eq!(act.jobs.len(), 0);
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
 
