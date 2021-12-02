@@ -102,6 +102,18 @@ impl HistoryInfo {
         unreachable!()
     }
 
+    /// Remove events from the beginning of this history such that it looks like what would've been
+    /// delivered on a sticky queue where the previously started task was the one before the last
+    /// task in this history.
+    pub(crate) fn make_incremental(&mut self) {
+        let last_complete_ix = self
+            .events
+            .iter()
+            .rposition(|he| he.event_type() == EventType::WorkflowTaskCompleted)
+            .expect("Must be a WFT completed event in history");
+        self.events.drain(0..=last_complete_ix);
+    }
+
     pub(crate) fn events(&self) -> &[HistoryEvent] {
         &self.events
     }
@@ -136,5 +148,13 @@ mod tests {
         assert_eq!(3, history_info.events.len());
         let history_info = t.get_history_info(2).unwrap();
         assert_eq!(8, history_info.events.len());
+    }
+
+    #[test]
+    fn incremental_works() {
+        let t = canned_histories::single_timer("timer1");
+        let hi = t.get_one_wft(2).unwrap();
+        assert_eq!(hi.events.len(), 4);
+        assert_eq!(hi.events[0].event_id, 5);
     }
 }

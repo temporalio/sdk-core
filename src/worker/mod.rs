@@ -514,6 +514,7 @@ impl Worker {
                         }),
                     )
                     .await?;
+                self.return_workflow_task_permit();
                 None
             }
             NewWfTaskOutcome::Evict(e) => {

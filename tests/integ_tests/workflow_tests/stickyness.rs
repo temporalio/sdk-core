@@ -5,6 +5,7 @@ use std::{
 };
 use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
 use test_utils::CoreWfStarter;
+use tokio::sync::Barrier;
 
 #[tokio::test]
 async fn timer_workflow_not_sticky() {
@@ -53,4 +54,34 @@ async fn timer_workflow_timeout_on_sticky() {
     starter.shutdown().await;
     // If it didn't run twice it didn't time out
     assert_eq!(RUN_CT.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn cache_miss_ok() {
+    let wf_name = "cache_miss_ok";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.max_wft(1);
+    let mut worker = starter.worker().await;
+
+    let barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
+    worker.register_wf(wf_name.to_owned(), move |mut ctx: WfContext| async move {
+        barr.wait().await;
+        ctx.timer(Duration::from_secs(1)).await;
+        Ok(().into())
+    });
+
+    let run_id = worker
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .await
+        .unwrap();
+    let core = starter.get_core().await;
+    let tq = starter.get_task_queue();
+    let (r1, _) = tokio::join!(worker.run_until_done(), async move {
+        barr.wait().await;
+        core.request_workflow_eviction(tq, &run_id);
+        // We need to signal the barrier again since the wf gets evicted and will hit it again
+        barr.wait().await;
+    });
+    r1.unwrap();
+    starter.shutdown().await;
 }
