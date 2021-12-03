@@ -1035,8 +1035,12 @@ pub mod coresdk {
 }
 
 // No need to lint these
-#[allow(clippy::all)]
-#[allow(missing_docs)]
+#[allow(
+    clippy::all,
+    missing_docs,
+    rustdoc::broken_intra_doc_links,
+    rustdoc::bare_urls
+)]
 // This is disgusting, but unclear to me how to avoid it. TODO: Discuss w/ prost maintainer
 pub mod temporal {
     pub mod api {
