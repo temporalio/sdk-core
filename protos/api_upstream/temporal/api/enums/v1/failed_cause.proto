@@ -31,8 +31,13 @@ option java_outer_classname = "FailedCauseProto";
 option ruby_package = "Temporal::Api::Enums::V1";
 option csharp_namespace = "Temporal.Api.Enums.V1";
 
+// Workflow tasks can fail for various reasons. Note that some of these reasons can only originate
+// from the server, and some of them can only originate from the SDK/worker.
 enum WorkflowTaskFailedCause {
     WORKFLOW_TASK_FAILED_CAUSE_UNSPECIFIED = 0;
+    // Between starting and completing the workflow task (with a workflow completion command), some
+    // new command (like a signal) was processed into workflow history. The outstanding task will be
+    // failed with this reason, and a worker must pick up a new task.
     WORKFLOW_TASK_FAILED_CAUSE_UNHANDLED_COMMAND = 1;
     WORKFLOW_TASK_FAILED_CAUSE_BAD_SCHEDULE_ACTIVITY_ATTRIBUTES = 2;
     WORKFLOW_TASK_FAILED_CAUSE_BAD_REQUEST_CANCEL_ACTIVITY_ATTRIBUTES = 3;
@@ -45,6 +50,8 @@ enum WorkflowTaskFailedCause {
     WORKFLOW_TASK_FAILED_CAUSE_BAD_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_ATTRIBUTES = 10;
     WORKFLOW_TASK_FAILED_CAUSE_BAD_CONTINUE_AS_NEW_ATTRIBUTES = 11;
     WORKFLOW_TASK_FAILED_CAUSE_START_TIMER_DUPLICATE_ID = 12;
+    // The worker wishes to fail the task and have the next one be generated on a normal, not sticky
+    // queue. Generally workers should prefer to use the explicit `ResetStickyTaskQueue` RPC call.
     WORKFLOW_TASK_FAILED_CAUSE_RESET_STICKY_TASK_QUEUE = 13;
     WORKFLOW_TASK_FAILED_CAUSE_WORKFLOW_WORKER_UNHANDLED_FAILURE = 14;
     WORKFLOW_TASK_FAILED_CAUSE_BAD_SIGNAL_WORKFLOW_EXECUTION_ATTRIBUTES = 15;
@@ -56,6 +63,8 @@ enum WorkflowTaskFailedCause {
     WORKFLOW_TASK_FAILED_CAUSE_BAD_BINARY = 21;
     WORKFLOW_TASK_FAILED_CAUSE_SCHEDULE_ACTIVITY_DUPLICATE_ID = 22;
     WORKFLOW_TASK_FAILED_CAUSE_BAD_SEARCH_ATTRIBUTES = 23;
+    // The worker encountered a mismatch while replaying history between what was expected, and
+    // what the workflow code actually did.
     WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR = 24;
 }
 

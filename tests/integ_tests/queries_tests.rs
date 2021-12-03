@@ -44,6 +44,7 @@ async fn simple_query_legacy() {
             WorkflowQuery {
                 query_type: "myquery".to_string(),
                 query_args: Some(b"hi".into()),
+                header: None,
             },
         )
         .await
@@ -191,6 +192,7 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
                     WorkflowQuery {
                         query_type: "myquery".to_string(),
                         query_args: Some(b"hi".into()),
+                        header: None,
                     },
                 )
                 .await
@@ -245,6 +247,7 @@ async fn repros_query_dropped_on_floor() {
                 WorkflowQuery {
                     query_type: "query_1".to_string(),
                     query_args: Some(b"hi 1".into()),
+                    header: None,
                 },
             )
             .await
@@ -260,6 +263,7 @@ async fn repros_query_dropped_on_floor() {
                 WorkflowQuery {
                     query_type: "query_2".to_string(),
                     query_args: Some(b"hi 2".into()),
+                    header: None,
                 },
             )
             .await
@@ -366,6 +370,7 @@ async fn fail_legacy_query() {
             WorkflowQuery {
                 query_type: "myquery".to_string(),
                 query_args: Some(b"hi".into()),
+                header: None,
             },
         )
         .await

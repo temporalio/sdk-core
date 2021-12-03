@@ -75,4 +75,10 @@ message UpdateNamespaceInfo {
     string owner_email = 2;
     // A key-value map for any customized purpose.
     map<string, string> data = 3;
+    // New namespace state, server will reject if transition is not allowed.
+    // Allowed transitions are:
+    //  Registered -> [ Deleted | Deprecated | Handover ]
+    //  Handover -> [ Registered ]
+    // Default is NAMESPACE_STATE_UNSPECIFIED which is do not change state.
+    temporal.api.enums.v1.NamespaceState state = 4;
 }

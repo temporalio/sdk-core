@@ -37,6 +37,7 @@ async fn legacy_query(#[case] include_history: bool) {
             pr.query = Some(WorkflowQuery {
                 query_type: "query-type".to_string(),
                 query_args: Some(b"hi".into()),
+                header: None,
             });
             if !include_history {
                 pr.history = Some(History { events: vec![] });
@@ -155,6 +156,7 @@ async fn new_queries(#[case] num_queries: usize) {
                     WorkflowQuery {
                         query_type: "query-type".to_string(),
                         query_args: Some(b"hi".into()),
+                        header: None,
                     },
                 );
             }
@@ -235,6 +237,7 @@ async fn legacy_query_failure_on_wft_failure() {
             pr.query = Some(WorkflowQuery {
                 query_type: "query-type".to_string(),
                 query_args: Some(b"hi".into()),
+                header: None,
             });
             pr.history = Some(History { events: vec![] });
             pr
@@ -304,6 +307,7 @@ async fn legacy_query_with_full_history_after_complete() {
         pr.query = Some(WorkflowQuery {
             query_type: "query-type".to_string(),
             query_args: Some(b"hi".into()),
+            header: None,
         });
         pr
     };

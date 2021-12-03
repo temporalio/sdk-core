@@ -437,7 +437,7 @@ impl Future for WorkflowFuture {
                                 ),
                             );
                         }
-                        WfExitValue::ContinueAsNew(cmd) => activation_cmds.push(cmd.into()),
+                        WfExitValue::ContinueAsNew(cmd) => activation_cmds.push((*cmd).into()),
                         WfExitValue::Cancelled => {
                             activation_cmds.push(
                                 workflow_command::Variant::CancelWorkflowExecution(

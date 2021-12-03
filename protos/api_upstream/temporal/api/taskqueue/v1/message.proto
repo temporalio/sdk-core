@@ -39,13 +39,16 @@ import "dependencies/gogoproto/gogo.proto";
 
 import "temporal/api/enums/v1/task_queue.proto";
 
+// See https://docs.temporal.io/docs/concepts/task-queues/
 message TaskQueue {
     string name = 1;
     // Default: TASK_QUEUE_KIND_NORMAL.
     temporal.api.enums.v1.TaskQueueKind kind = 2;
 }
 
+// Only applies to activity task queues
 message TaskQueueMetadata {
+    // Allows throttling dispatch of tasks from this queue
     google.protobuf.DoubleValue max_tasks_per_second = 1;
 }
 

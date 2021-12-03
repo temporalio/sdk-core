@@ -42,40 +42,57 @@ message DataBlob {
     bytes data = 2;
 }
 
+// See `Payload`
 message Payloads {
     repeated Payload payloads = 1;
 }
 
+// Represents some binary (byte array) data (ex: activity input parameters or workflow result) with
+// metadata which describes this binary data (format, encoding, encryption, etc). Serialization
+// of the data may be user-defined.
 message Payload {
     map<string,bytes> metadata = 1;
     bytes data = 2;
 }
 
+// A user-defined set of *indexed* fields that are used/exposed when listing/searching workflows.
+// The payload is not serialized in a user-defined way.
 message SearchAttributes {
     map<string, Payload> indexed_fields = 1;
 }
 
+// A user-defined set of *unindexed* fields that are exposed when listing/searching workflows
 message Memo {
     map<string, Payload> fields = 1;
 }
 
+// Contains metadata that can be attached to a variety of requests, like starting a workflow, and
+// can be propagated between, for example, workflows and activities.
 message Header {
     map<string, Payload> fields = 1;
 }
 
+// Identifies a specific workflow within a namespace. Practically speaking, because run_id is a
+// uuid, a workflow execution is globally unique. Note that many commands allow specifying an empty
+// run id as a way of saying "target the latest run of the workflow".
 message WorkflowExecution {
     string workflow_id = 1;
     string run_id = 2;
 }
 
+// Represents the identifier used by a workflow author to define the workflow. Typically, the
+// name of a function. This is sometimes referred to as the workflow's "name"
 message WorkflowType {
     string name = 1;
 }
 
+// Represents the identifier used by a activity author to define the activity. Typically, the
+// name of a function. This is sometimes referred to as the activity's "name"
 message ActivityType {
     string name = 1;
 }
 
+// How retries ought to be handled, usable by both workflows and activities
 message RetryPolicy {
     // Interval of the first retry. If retryBackoffCoefficient is 1.0 then it is used for all retries.
     google.protobuf.Duration initial_interval = 1 [(gogoproto.stdduration) = true];
@@ -89,6 +106,7 @@ message RetryPolicy {
     // Maximum number of attempts. When exceeded the retries stop even if not expired yet.
     // 1 disables retries. 0 means unlimited (up to the timeouts)
     int32 maximum_attempts = 4;
-    // Non-Retryable errors types. Will stop retrying if error type matches this list.
+    // Non-Retryable errors types. Will stop retrying if the error type matches this list. Note that
+    // this is not a substring match, the error *type* (not message) must match exactly.
     repeated string non_retryable_error_types = 5;
 }

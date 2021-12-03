@@ -7,7 +7,7 @@ async fn continue_as_new_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     let run_ct = ctx.get_args()[0].data[0];
     ctx.timer(Duration::from_millis(500)).await;
     Ok(if run_ct < 5 {
-        WfExitValue::ContinueAsNew(ContinueAsNewWorkflowExecution {
+        WfExitValue::continue_as_new(ContinueAsNewWorkflowExecution {
             arguments: vec![[run_ct + 1].into()],
             ..Default::default()
         })

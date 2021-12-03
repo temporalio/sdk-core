@@ -516,7 +516,7 @@ pub type WorkflowResult<T> = Result<WfExitValue<T>, anyhow::Error>;
 pub enum WfExitValue<T: Debug> {
     /// Continue the workflow as a new execution
     #[from(ignore)]
-    ContinueAsNew(ContinueAsNewWorkflowExecution),
+    ContinueAsNew(Box<ContinueAsNewWorkflowExecution>),
     /// Confirm the workflow was cancelled (can be automatic in a more advanced iteration)
     #[from(ignore)]
     Cancelled,
@@ -525,6 +525,13 @@ pub enum WfExitValue<T: Debug> {
     Evicted,
     /// Finish with a result
     Normal(T),
+}
+
+impl<T: Debug> WfExitValue<T> {
+    /// Construct a [WfExitValue::ContinueAsNew] variant (handles boxing)
+    pub fn continue_as_new(can: ContinueAsNewWorkflowExecution) -> Self {
+        Self::ContinueAsNew(Box::new(can))
+    }
 }
 
 type BoxActFn = Box<dyn Fn(Payload) -> BoxFuture<'static, Result<Payload, anyhow::Error>>>;

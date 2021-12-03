@@ -35,13 +35,24 @@ import "temporal/api/enums/v1/query.proto";
 import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/common/v1/message.proto";
 
+// See https://docs.temporal.io/docs/concepts/queries/
 message WorkflowQuery {
+    // The workflow-author-defined identifier of the query. Typically a function name.
     string query_type = 1;
+    // Serialized arguments that will be provided to the query handler.
     temporal.api.common.v1.Payloads query_args = 2;
+    // Headers that were passed by the caller of the query and copied by temporal 
+    // server into the workflow task.
+    temporal.api.common.v1.Header header = 3;
 }
+
+// Answer to a `WorkflowQuery`
 message WorkflowQueryResult {
+    // Did the query succeed or fail?
     temporal.api.enums.v1.QueryResultType result_type = 1;
+    // Set when the query succeeds with the results
     temporal.api.common.v1.Payloads answer = 2;
+    // Mutually exclusive with `answer`. Set when the query fails.
     string error_message = 3;
 }
 

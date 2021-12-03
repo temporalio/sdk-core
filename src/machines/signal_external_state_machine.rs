@@ -81,9 +81,10 @@ pub(super) fn new_external_signal(
                 workflow_id: workflow_execution.workflow_id,
                 run_id: workflow_execution.run_id,
             }),
+            header: None,
             signal_name,
             input: payloads.into_payloads(),
-            // Apparently this is effectively deprecated at this point
+            // Is deprecated
             control: "".to_string(),
             child_workflow_only: only_child,
         },

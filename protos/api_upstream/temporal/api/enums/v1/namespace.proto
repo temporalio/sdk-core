@@ -36,6 +36,7 @@ enum NamespaceState {
     NAMESPACE_STATE_REGISTERED = 1;
     NAMESPACE_STATE_DEPRECATED = 2;
     NAMESPACE_STATE_DELETED = 3;
+    NAMESPACE_STATE_HANDOVER = 4;
 }
 
 enum ArchivalState {

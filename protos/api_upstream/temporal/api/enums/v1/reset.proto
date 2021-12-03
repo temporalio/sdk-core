@@ -31,6 +31,7 @@ option java_outer_classname = "ResetProto";
 option ruby_package = "Temporal::Api::Enums::V1";
 option csharp_namespace = "Temporal.Api.Enums.V1";
 
+// TODO: What is this?
 enum ResetReapplyType {
     RESET_REAPPLY_TYPE_UNSPECIFIED = 0;
     RESET_REAPPLY_TYPE_SIGNAL = 1;
