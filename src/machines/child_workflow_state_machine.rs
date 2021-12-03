@@ -7,8 +7,7 @@ use std::convert::{TryFrom, TryInto};
 use temporal_sdk_core_protos::{
     coresdk::{
         child_workflow::{
-            self as wfr, child_workflow_result::Status as ChildWorkflowStatus,
-            ChildWorkflowCancellationType, ChildWorkflowResult,
+            self as wfr, child_workflow_result::Status as ChildWorkflowStatus, ChildWorkflowResult,
         },
         common::Payload,
         workflow_activation::{
@@ -115,7 +114,6 @@ impl StartCommandCreated {
             StartEventRecorded::default(),
             SharedState {
                 initiated_event_id,
-                attrs: None, // Drop the attributes to avoid holding large payloads in memory
                 ..state
             },
         )
@@ -303,9 +301,7 @@ pub(super) struct SharedState {
     workflow_id: String,
     run_id: String,
     workflow_type: String,
-    cancellation_type: ChildWorkflowCancellationType,
     cancelled_before_sent: bool,
-    attrs: Option<StartChildWorkflowExecution>,
 }
 
 /// Creates a new child workflow state machine and a command to start it on the server.
@@ -327,11 +323,6 @@ impl ChildWorkflowMachine {
                 workflow_id: attribs.workflow_id.clone(),
                 workflow_type: attribs.workflow_type.clone(),
                 namespace: attribs.namespace.clone(),
-                cancellation_type: ChildWorkflowCancellationType::from_i32(
-                    attribs.cancellation_type,
-                )
-                .unwrap(),
-                attrs: Some(attribs.clone()),
                 ..Default::default()
             },
         };

@@ -141,7 +141,6 @@ enum MachineAssociatedCommand {
 
 #[derive(Debug, Clone, Copy)]
 struct ChangeInfo {
-    deprecated: bool,
     created_command: bool,
 }
 
@@ -684,11 +683,10 @@ impl WorkflowMachines {
         // Scan through to the next WFT, searching for any patch markers, so that we can
         // pre-resolve them.
         for e in self.last_history_from_server.peek_next_wft_sequence() {
-            if let Some((patch_id, deprecated)) = e.get_patch_marker_details() {
+            if let Some((patch_id, _)) = e.get_patch_marker_details() {
                 self.encountered_change_markers.insert(
                     patch_id.clone(),
                     ChangeInfo {
-                        deprecated,
                         created_command: false,
                     },
                 );
@@ -880,7 +878,7 @@ impl WorkflowMachines {
                     // Do not create commands for change IDs that we have already created commands
                     // for.
                     if !matches!(self.encountered_change_markers.get(&attrs.patch_id),
-                                Some(ChangeInfo {created_command, ..})
+                                Some(ChangeInfo {created_command})
                                     if *created_command)
                     {
                         let verm = self.add_new_command_machine(has_change(
@@ -896,7 +894,6 @@ impl WorkflowMachines {
                             self.encountered_change_markers.insert(
                                 attrs.patch_id,
                                 ChangeInfo {
-                                    deprecated: attrs.deprecated,
                                     created_command: true,
                                 },
                             );
@@ -1064,17 +1061,17 @@ fn change_marker_handling(
 ) -> Result<ChangeMarkerOutcome> {
     if !mach.matches_event(event) {
         // Version markers can be skipped in the event they are deprecated
-        if let Some(changed_info) = event.get_patch_marker_details() {
+        if let Some((patch_name, deprecated)) = event.get_patch_marker_details() {
             // Is deprecated. We can simply ignore this event, as deprecated change
             // markers are allowed without matching changed calls.
-            if changed_info.1 {
+            if deprecated {
                 debug!("Deprecated patch marker tried against wrong machine, skipping.");
                 return Ok(ChangeMarkerOutcome::SkipEvent);
             }
             return Err(WFMachinesError::Nondeterminism(format!(
                 "Non-deprecated patch marker encountered for change {}, \
                             but there is no corresponding change command!",
-                changed_info.0
+                patch_name
             )));
         }
         // Version machines themselves may also not *have* matching markers, where non-deprecated

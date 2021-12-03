@@ -11,6 +11,7 @@ pub(crate) struct WorkflowUpdateError {
     /// Underlying workflow error
     pub source: WFMachinesError,
     /// The run id of the erring workflow
+    #[allow(dead_code)] // Useful in debug output
     pub run_id: String,
     /// The task token associated with this update, if one existed yet.
     pub task_token: Option<TaskToken>,
