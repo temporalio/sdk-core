@@ -130,10 +130,12 @@ mod tests {
 
     async fn wf_with_timer(mut ctx: WfContext) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(500)).await;
-        Ok(WfExitValue::ContinueAsNew(ContinueAsNewWorkflowExecution {
-            arguments: vec![[1].into()],
-            ..Default::default()
-        }))
+        Ok(WfExitValue::continue_as_new(
+            ContinueAsNewWorkflowExecution {
+                arguments: vec![[1].into()],
+                ..Default::default()
+            },
+        ))
     }
 
     #[tokio::test]

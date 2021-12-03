@@ -139,7 +139,7 @@ enum MachineKind {
 }
 
 #[enum_dispatch::enum_dispatch]
-#[allow(clippy::enum_variant_names)]
+#[allow(clippy::enum_variant_names, clippy::large_enum_variant)]
 enum Machines {
     ActivityMachine,
     CancelExternalMachine,

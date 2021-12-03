@@ -134,7 +134,7 @@ struct CommandAndMachine {
 
 #[derive(Debug, derive_more::Display)]
 enum MachineAssociatedCommand {
-    Real(ProtoCommand),
+    Real(Box<ProtoCommand>),
     #[display(fmt = "FakeLocalActivityMarker({})", "_0")]
     FakeLocalActivityMarker(u32),
 }
@@ -569,7 +569,7 @@ impl WorkflowMachines {
             .filter_map(|c| {
                 if !self.machine(c.machine).is_final_state() {
                     match &c.command {
-                        MachineAssociatedCommand::Real(cmd) => Some(cmd.clone()),
+                        MachineAssociatedCommand::Real(cmd) => Some((**cmd).clone()),
                         MachineAssociatedCommand::FakeLocalActivityMarker(_) => None,
                     }
                 } else {
@@ -789,7 +789,7 @@ impl WorkflowMachines {
                 }
                 MachineResponse::IssueNewCommand(c) => {
                     self.current_wf_task_commands.push_back(CommandAndMachine {
-                        command: MachineAssociatedCommand::Real(c),
+                        command: MachineAssociatedCommand::Real(Box::new(c)),
                         machine: smk,
                     })
                 }
@@ -988,7 +988,7 @@ impl WorkflowMachines {
             match r {
                 MachineResponse::IssueNewCommand(c) => {
                     self.current_wf_task_commands.push_back(CommandAndMachine {
-                        command: MachineAssociatedCommand::Real(c),
+                        command: MachineAssociatedCommand::Real(Box::new(c)),
                         machine: m_key,
                     });
                 }
@@ -1021,7 +1021,7 @@ impl WorkflowMachines {
     fn add_new_command_machine(&mut self, machine: NewMachineWithCommand) -> CommandAndMachine {
         let k = self.all_machines.insert(machine.machine);
         CommandAndMachine {
-            command: MachineAssociatedCommand::Real(machine.command),
+            command: MachineAssociatedCommand::Real(Box::new(machine.command)),
             machine: k,
         }
     }
