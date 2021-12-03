@@ -1,0 +1,55 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.enums.v1;
+
+option go_package = "go.temporal.io/api/enums/v1;enums";
+option java_package = "io.temporal.api.enums.v1";
+option java_multiple_files = true;
+option java_outer_classname = "CommonProto";
+option ruby_package = "Temporal::Api::Enums::V1";
+option csharp_namespace = "Temporal.Api.Enums.V1";
+
+enum EncodingType {
+    ENCODING_TYPE_UNSPECIFIED = 0;
+    ENCODING_TYPE_PROTO3 = 1;
+    ENCODING_TYPE_JSON = 2;
+}
+
+enum IndexedValueType {
+    INDEXED_VALUE_TYPE_UNSPECIFIED = 0;
+    INDEXED_VALUE_TYPE_TEXT = 1;
+    INDEXED_VALUE_TYPE_KEYWORD = 2;
+    INDEXED_VALUE_TYPE_INT = 3;
+    INDEXED_VALUE_TYPE_DOUBLE = 4;
+    INDEXED_VALUE_TYPE_BOOL = 5;
+    INDEXED_VALUE_TYPE_DATETIME = 6;
+}
+
+enum Severity {
+    SEVERITY_UNSPECIFIED = 0;
+    SEVERITY_HIGH = 1;
+    SEVERITY_MEDIUM = 2;
+    SEVERITY_LOW = 3;
+}

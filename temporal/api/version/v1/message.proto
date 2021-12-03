@@ -1,0 +1,59 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.version.v1;
+
+option go_package = "go.temporal.io/api/version/v1;version";
+option java_package = "io.temporal.api.version.v1";
+option java_multiple_files = true;
+option java_outer_classname = "MessageProto";
+option ruby_package = "Temporal::Api::Version::V1";
+option csharp_namespace = "Temporal.Api.Version.V1";
+
+import "google/protobuf/timestamp.proto";
+import "dependencies/gogoproto/gogo.proto";
+import "temporal/api/enums/v1/common.proto";
+
+// ReleaseInfo contains information about specific version of temporal.
+message ReleaseInfo {
+    string version = 1;
+    google.protobuf.Timestamp release_time = 2 [(gogoproto.stdtime) = true];
+    string notes = 3;
+}
+
+// Alert contains notification and severity.
+message Alert {
+    string message = 1;
+    temporal.api.enums.v1.Severity severity = 2;
+}
+
+// VersionInfo contains details about current and recommended release versions as well as alerts and upgrade instructions.
+message VersionInfo {
+    ReleaseInfo current = 1;
+    ReleaseInfo recommended = 2;
+    string instructions = 3;
+    repeated Alert alerts = 4;
+    google.protobuf.Timestamp last_update_time = 5 [(gogoproto.stdtime) = true];
+}
+
