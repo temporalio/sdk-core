@@ -874,6 +874,12 @@ pub mod coresdk {
         }
     }
 
+    impl From<anyhow::Error> for Failure {
+        fn from(ae: anyhow::Error) -> Self {
+            Failure::application_failure(ae.to_string(), false)
+        }
+    }
+
     impl From<common::Payload> for super::temporal::api::common::v1::Payload {
         fn from(p: Payload) -> Self {
             Self {

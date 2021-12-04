@@ -1,19 +1,21 @@
 use crate::{
     pollers::MockServerGatewayApis,
     prototype_rust_sdk::{LocalActivityOptions, TestRustWorker, WfContext, WorkflowResult},
+    telemetry::test_telem_console,
     test_help::{
         build_mock_pollers, history_builder::default_wes_attribs, mock_core, MockPollCfg,
         ResponseType, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE, TEST_Q,
     },
     Core,
 };
+use anyhow::anyhow;
 use futures::future::join_all;
 use std::{sync::Arc, time::Duration};
 use temporal_sdk_core_protos::{coresdk::AsJsonPayloadExt, temporal::api::enums::v1::EventType};
 use tokio::sync::Barrier;
 
-async fn echo(e: String) -> String {
-    e
+async fn echo(e: String) -> anyhow::Result<String> {
+    Ok(e)
 }
 
 /// This test verifies that when replaying we are able to resolve local activities whose data we
@@ -110,7 +112,7 @@ async fn local_act_many_concurrent() {
     let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
     worker.register_wf(DEFAULT_WORKFLOW_TYPE.to_owned(), local_act_fanout_wf);
-    worker.register_activity("echo", |str: String| async move { str });
+    worker.register_activity("echo", |str: String| async move { Ok(str) });
     worker
         .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
         .await
@@ -172,7 +174,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
         }
         // Take slightly more than two workflow tasks
         tokio::time::sleep(wft_timeout.mul_f32(2.2)).await;
-        str
+        Ok(str)
     });
     worker
         .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
@@ -188,4 +190,40 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
         worker.run_until_done()
     );
     runres.unwrap();
+}
+
+#[tokio::test]
+async fn local_act_fail_and_retry_until_pass() {
+    test_telem_console();
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_workflow_task_scheduled_and_started();
+
+    let wf_id = "fakeid";
+    let mock = MockServerGatewayApis::new();
+    let mh = MockPollCfg::from_resp_batches(wf_id, t, [1], mock);
+    let mock = build_mock_pollers(mh);
+    let core = mock_core(mock);
+    let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
+
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        |mut ctx: WfContext| async move {
+            ctx.local_activity(LocalActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi".as_json_payload().expect("serializes fine"),
+                ..Default::default()
+            })
+            .await;
+            Ok(().into())
+        },
+    );
+    worker.register_activity("echo", |_: String| async move {
+        anyhow::Result::<()>::Err(anyhow!("Oh no I failed!"))
+    });
+    worker
+        .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
 }

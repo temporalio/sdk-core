@@ -20,7 +20,10 @@ use crate::{
     telemetry::metrics::{
         activity_poller, workflow_poller, workflow_sticky_poller, MetricsContext,
     },
-    worker::{activities::LocalActivityManager, wft_delivery::WFTSource},
+    worker::{
+        activities::{LACompleteAction, LocalActivityManager},
+        wft_delivery::WFTSource,
+    },
     workflow::{
         workflow_tasks::{
             ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
@@ -30,7 +33,7 @@ use crate::{
     },
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError,
 };
-use activities::WorkerActivityTasks;
+use activities::{LocalInFlightActInfo, WorkerActivityTasks};
 use futures::{Future, TryFutureExt};
 use std::{convert::TryInto, sync::Arc};
 use temporal_sdk_core_protos::{
@@ -278,32 +281,42 @@ impl Worker {
         status: activity_result::Status,
     ) -> Result<(), CompleteActivityError> {
         if task_token.is_local_activity_task() {
-            if let Some(la_info) = self.local_act_mgr.complete(&task_token) {
-                if let Err(e) = self
-                    .wft_manager
-                    .notify_of_local_result(
-                        &la_info.workflow_execution.run_id,
-                        la_info.seq,
-                        LocalResolution::LocalActivity {
-                            result: ActivityResult {
-                                status: Some(status),
+            match self.local_act_mgr.complete(&task_token, &status) {
+                LACompleteAction::Report(LocalInFlightActInfo {
+                    la_info,
+                    dispatch_time,
+                    ..
+                }) => {
+                    if let Err(e) = self
+                        .wft_manager
+                        .notify_of_local_result(
+                            &la_info.workflow_exec_info.run_id,
+                            la_info.schedule_cmd.seq,
+                            LocalResolution::LocalActivity {
+                                result: ActivityResult {
+                                    status: Some(status),
+                                },
+                                runtime: dispatch_time.elapsed(),
                             },
-                            runtime: la_info.dispatch_time.elapsed(),
-                        },
-                    )
-                    .await
-                {
-                    error!(
-                        "Problem completing local activity {}: {:?} -- will evict the workflow",
-                        task_token, e
-                    );
-                    self.request_wf_eviction(
-                        &la_info.workflow_execution.run_id,
-                        "Issue while completing local activity",
-                    );
+                        )
+                        .await
+                    {
+                        error!(
+                            "Problem completing local activity {}: {:?} -- will evict the workflow",
+                            task_token, e
+                        );
+                        self.request_wf_eviction(
+                            &la_info.workflow_exec_info.run_id,
+                            "Issue while completing local activity",
+                        );
+                    }
                 }
-            } else {
-                error!("Tried to complete untracked local activity {}", task_token);
+                LACompleteAction::WillBeRetried => {
+                    warn!("LA will be retried");
+                }
+                LACompleteAction::Untracked => {
+                    error!("Tried to complete untracked local activity {}", task_token);
+                }
             }
             return Ok(());
         }

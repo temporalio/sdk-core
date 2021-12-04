@@ -45,7 +45,8 @@ fsm! {
 
     MarkerCommandCreated --(CommandRecordMarker, on_command_record_marker) --> ResultNotified;
 
-    ResultNotified --(MarkerRecorded(CompleteLocalActivityData), shared on_marker_recorded) --> MarkerCommandRecorded;
+    ResultNotified --(MarkerRecorded(CompleteLocalActivityData), shared on_marker_recorded)
+      --> MarkerCommandRecorded;
 
     // Replay path ================================================================================
     // LAs on the replay path should never have handle result explicitly called on them, but do need
@@ -255,12 +256,27 @@ impl Executing {
     }
 }
 
-#[derive(Default, Clone)]
-pub(super) struct MarkerCommandCreated {}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ResultType {
+    Completed,
+    Cancelled,
+    Failed,
+}
+#[derive(Clone)]
+pub(super) struct MarkerCommandCreated {
+    result_type: ResultType,
+}
+impl From<MarkerCommandCreated> for ResultNotified {
+    fn from(mc: MarkerCommandCreated) -> Self {
+        Self {
+            result_type: mc.result_type,
+        }
+    }
+}
 
 impl MarkerCommandCreated {
     pub(super) fn on_command_record_marker(self) -> LocalActivityMachineTransition<ResultNotified> {
-        TransitionResult::default()
+        TransitionResult::from(self)
     }
 }
 
@@ -301,7 +317,23 @@ impl RequestSent {
         self,
         dat: ResolveDat,
     ) -> LocalActivityMachineTransition<MarkerCommandCreated> {
-        TransitionResult::commands([LocalActivityCommand::Resolved(dat)])
+        let result_type = match &dat.result.status {
+            Some(activity_result::Status::Completed(_)) => ResultType::Completed,
+            Some(activity_result::Status::Cancelled(_)) => ResultType::Cancelled,
+            Some(activity_result::Status::Failed(_)) => ResultType::Failed,
+            Some(activity_result::Status::WillCompleteAsync(_)) => {
+                return TransitionResult::Err(WFMachinesError::Fatal(
+                    "Local activities cannot be completed async".to_string(),
+                ))
+            }
+            None => {
+                return TransitionResult::Err(WFMachinesError::Fatal(
+                    "Local activity result field was empty!".to_string(),
+                ))
+            }
+        };
+        let new_state = MarkerCommandCreated { result_type };
+        TransitionResult::ok([LocalActivityCommand::Resolved(dat)], new_state)
     }
 }
 
@@ -315,8 +347,10 @@ macro_rules! verify_marker_dat {
     };
 }
 
-#[derive(Default, Clone)]
-pub(super) struct ResultNotified {}
+#[derive(Clone)]
+pub(super) struct ResultNotified {
+    result_type: ResultType,
+}
 
 impl ResultNotified {
     pub(super) fn on_marker_recorded(
@@ -324,6 +358,18 @@ impl ResultNotified {
         shared: SharedState,
         dat: CompleteLocalActivityData,
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
+        if self.result_type == ResultType::Completed && dat.result.is_err() {
+            return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                "Local activity (seq {}) completed successfully locally, but history said \
+                 it failed!",
+                shared.attrs.seq
+            )));
+        } else if self.result_type == ResultType::Failed && dat.result.is_ok() {
+            return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                "Local activity (seq {}) failed locally, but history said it completed!",
+                shared.attrs.seq
+            )));
+        }
         verify_marker_dat!(&shared, &dat, TransitionResult::default())
     }
 }
@@ -505,6 +551,7 @@ fn verify_marker_data_matches(
             dat.marker_dat.seq, shared.attrs.seq
         )));
     }
+
     Ok(())
 }
 
@@ -951,6 +998,49 @@ mod tests {
         wfm.complete_local_activity(1, ActivityResult::ok(b"hi".into()))
             .unwrap();
 
+        wfm.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn exec_passes_but_history_has_fail() {
+        let func = WorkflowFunction::new(la_wf);
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_local_activity_fail_marker(
+            1,
+            "1",
+            Failure::application_failure("I failed".to_string(), false),
+        );
+        t.add_workflow_execution_completed();
+
+        let histinfo = t.get_history_info(1).unwrap().into();
+        let mut wfm = ManagedWFFunc::new_from_update(histinfo, func, vec![]);
+
+        wfm.get_next_activation().await.unwrap();
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 0);
+        let ready_to_execute_las = wfm.drain_queued_local_activities();
+        assert_eq!(ready_to_execute_las.len(), 1);
+        // Completes OK
+        wfm.complete_local_activity(1, ActivityResult::ok(b"hi".into()))
+            .unwrap();
+
+        // next activation unblocks LA
+        wfm.get_next_activation().await.unwrap();
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
+        assert_eq!(
+            commands[1].command_type,
+            CommandType::CompleteWorkflowExecution as i32
+        );
+
+        let err = wfm
+            .new_history(t.get_full_history_info().unwrap().into())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Nondeterminism"));
         wfm.shutdown().await.unwrap();
     }
 }

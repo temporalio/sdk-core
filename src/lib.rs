@@ -18,6 +18,7 @@ mod machines;
 mod pending_activations;
 mod pollers;
 mod protosext;
+pub(crate) mod retry_logic;
 pub(crate) mod task_token;
 pub(crate) mod telemetry;
 mod worker;

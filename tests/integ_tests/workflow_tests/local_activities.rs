@@ -4,8 +4,8 @@ use temporal_sdk_core::prototype_rust_sdk::{LocalActivityOptions, WfContext, Wor
 use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
 use test_utils::CoreWfStarter;
 
-pub async fn echo(e: String) -> String {
-    e
+pub async fn echo(e: String) -> anyhow::Result<String> {
+    Ok(e)
 }
 
 pub async fn one_local_activity_wf(mut ctx: WfContext) -> WorkflowResult<()> {
@@ -100,7 +100,7 @@ async fn long_running_local_act_with_timer() {
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
     worker.register_activity("echo_activity", |str: String| async {
         tokio::time::sleep(Duration::from_secs(4)).await;
-        str
+        Ok(str)
     });
 
     worker

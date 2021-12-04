@@ -1,7 +1,9 @@
 mod activity_heartbeat_manager;
 mod local_activities;
 
-pub(crate) use local_activities::{LocalActivityManager, NewLocalAct};
+pub(crate) use local_activities::{
+    LACompleteAction, LocalActivityManager, LocalInFlightActInfo, NewLocalAct,
+};
 
 use crate::{
     pollers::BoxedActPoller,

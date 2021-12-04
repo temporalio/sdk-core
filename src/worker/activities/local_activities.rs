@@ -1,3 +1,4 @@
+use crate::retry_logic::RetryPolicyExt;
 use crate::task_token::TaskToken;
 use parking_lot::Mutex;
 use std::{
@@ -6,6 +7,7 @@ use std::{
     time::{Instant, SystemTime},
 };
 use temporal_sdk_core_protos::coresdk::{
+    activity_result::activity_result,
     activity_task::{activity_task, ActivityTask, Start},
     common::WorkflowExecution,
     workflow_commands::ScheduleActivity,
@@ -16,11 +18,12 @@ use tokio::sync::{
 };
 
 pub(crate) struct LocalInFlightActInfo {
-    pub seq: u32,
-    pub workflow_execution: WorkflowExecution,
+    pub la_info: NewLocalAct,
     pub dispatch_time: Instant,
+    pub attempt: i32,
 }
 
+#[derive(Clone)]
 pub(crate) struct NewLocalAct {
     pub schedule_cmd: ScheduleActivity,
     pub workflow_type: String,
@@ -38,13 +41,22 @@ impl Debug for NewLocalAct {
     }
 }
 
+#[derive(Debug)]
+enum NewOrRetry {
+    New(NewLocalAct),
+    Retry {
+        in_flight: NewLocalAct,
+        attempt: i32,
+    },
+}
+
 pub(crate) struct LocalActivityManager {
     /// Constrains number of currently executing local activities
     semaphore: Semaphore,
     /// Sink for new activity execution requests
-    act_req_tx: UnboundedSender<NewLocalAct>,
+    act_req_tx: UnboundedSender<NewOrRetry>,
     /// Activities that need to be executed by lang
-    act_req_rx: tokio::sync::Mutex<UnboundedReceiver<NewLocalAct>>,
+    act_req_rx: tokio::sync::Mutex<UnboundedReceiver<NewOrRetry>>,
     /// Wakes every time a complete is processed
     complete_notify: Notify,
 
@@ -80,7 +92,7 @@ impl LocalActivityManager {
         debug!("Queuing local activities: {:?}", &acts);
         for act in acts {
             self.act_req_tx
-                .send(act)
+                .send(NewOrRetry::New(act))
                 .expect("Receive half of LA request channel cannot be dropped");
         }
     }
@@ -90,7 +102,12 @@ impl LocalActivityManager {
         let permit = self.semaphore.acquire().await.expect("is never closed");
         // It is important that there are no await points after receiving from the channel, as
         // it would mean dropping this future would cause us to drop the activity request.
-        if let Some(new_la) = self.act_req_rx.lock().await.recv().await {
+        if let Some(new_or_retry) = self.act_req_rx.lock().await.recv().await {
+            let (new_la, attempt) = match new_or_retry {
+                NewOrRetry::New(n) => (n, 0),
+                NewOrRetry::Retry { in_flight, attempt } => (in_flight, attempt),
+            };
+            let orig = new_la.clone();
             let sa = new_la.schedule_cmd;
 
             let mut dat = self.dat.lock();
@@ -99,9 +116,9 @@ impl LocalActivityManager {
             dat.outstanding_activity_tasks.insert(
                 tt.clone(),
                 LocalInFlightActInfo {
-                    seq: sa.seq,
-                    workflow_execution: new_la.workflow_exec_info.clone(),
+                    la_info: orig,
                     dispatch_time: Instant::now(),
+                    attempt,
                 },
             );
 
@@ -122,7 +139,7 @@ impl LocalActivityManager {
                     scheduled_time: Some(new_la.schedule_time.into()),
                     current_attempt_scheduled_time: Some(new_la.schedule_time.into()),
                     started_time: Some(SystemTime::now().into()),
-                    attempt: 0,
+                    attempt,
                     schedule_to_close_timeout: sa.schedule_to_close_timeout,
                     start_to_close_timeout: sa.start_to_close_timeout,
                     heartbeat_timeout: None,
@@ -135,17 +152,59 @@ impl LocalActivityManager {
         }
     }
 
-    /// Mark a local activity as having completed. Returns the information about the local activity
-    /// so the appropriate workflow instance can be notified of completion.
-    pub(crate) fn complete(&self, task_token: &TaskToken) -> Option<LocalInFlightActInfo> {
-        let info = self
+    /// Mark a local activity as having completed (pass or fail)
+    pub(crate) fn complete(
+        &self,
+        task_token: &TaskToken,
+        status: &activity_result::Status,
+    ) -> LACompleteAction {
+        if let Some(info) = self
             .dat
             .lock()
             .outstanding_activity_tasks
-            .remove(task_token)?;
-        self.semaphore.add_permits(1);
-        self.complete_notify.notify_one();
-        Some(info)
+            .remove(task_token)
+        {
+            self.semaphore.add_permits(1);
+
+            match status {
+                activity_result::Status::Completed(_) => {
+                    self.complete_notify.notify_one();
+                    LACompleteAction::Report(info)
+                }
+                activity_result::Status::Failed(_) => {
+                    match &info.la_info.schedule_cmd.retry_policy {
+                        None => {
+                            // If there's no retry policy... don't retry
+                            LACompleteAction::Report(info)
+                        }
+                        Some(rp) => {
+                            if let Some(backoff_dur) =
+                                rp.should_retry(info.attempt as usize, "TODO")
+                            {
+                                self.act_req_tx
+                                    .send(NewOrRetry::Retry {
+                                        in_flight: info.la_info,
+                                        attempt: info.attempt + 1,
+                                    })
+                                    .expect("Receive half of LA request channel cannot be dropped");
+
+                                LACompleteAction::WillBeRetried
+                            } else {
+                                LACompleteAction::Report(info)
+                            }
+                        }
+                    }
+                }
+                activity_result::Status::Cancelled(_) => {
+                    todo!("Local activity cancellation not yet implemented")
+                }
+                activity_result::Status::WillCompleteAsync(_) => {
+                    panic!("Local activities cannot be completed async, this is a lang SDK bug")
+                }
+            }
+        } else {
+            LACompleteAction::Untracked
+        }
     }
 
     pub(crate) async fn wait_all_finished(&self) {
@@ -153,6 +212,16 @@ impl LocalActivityManager {
             self.complete_notify.notified().await;
         }
     }
+}
+
+pub(crate) enum LACompleteAction {
+    /// Caller should report the status to the workflow
+    Report(LocalInFlightActInfo),
+    /// The activity will be re-enqueued for another attempt (and so status should not be reported
+    /// to the workflow)
+    WillBeRetried,
+    /// The activity was unknown
+    Untracked,
 }
 
 #[cfg(test)]
@@ -177,12 +246,18 @@ mod tests {
             let next = lam.next_pending().await.unwrap();
             assert_eq!(next.activity_id, i.to_string());
             let next_tt = TaskToken(next.task_token);
+            let complete_branch = async {
+                lam.complete(
+                    &next_tt,
+                    &activity_result::Status::Completed(Default::default()),
+                )
+            };
             tokio::select! {
                 // Next call will not resolve until we complete the first
                 _ = lam.next_pending() => {
                     panic!("Branch must not be selected")
                 }
-                _ = async { lam.complete(&next_tt) } => {}
+                _ = complete_branch => {}
             }
         }
     }
@@ -213,7 +288,7 @@ mod tests {
                 // Spin until the receive lock has been grabbed by the call to pending, to ensure
                 // it's advanced enough
                 while lam.act_req_rx.try_lock().is_ok() { yield_now().await; }
-                lam.complete(&tt).unwrap();
+                lam.complete(&tt, &activity_result::Status::Completed(Default::default()));
             } => (),
         };
     }
