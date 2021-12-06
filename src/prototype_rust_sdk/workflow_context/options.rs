@@ -1,7 +1,7 @@
 use std::time::Duration;
 use temporal_sdk_core_protos::coresdk::{
     child_workflow::ChildWorkflowCancellationType,
-    common::Payload,
+    common::{Payload, RetryPolicy},
     workflow_commands::{ActivityCancellationType, ScheduleActivity, StartChildWorkflowExecution},
 };
 
@@ -89,6 +89,8 @@ pub struct LocalActivityOptions {
     pub activity_type: String,
     /// Input to the activity
     pub input: Payload,
+    /// Retry policy
+    pub retry_policy: RetryPolicy,
 }
 
 impl IntoWorkflowCommand for LocalActivityOptions {
@@ -103,6 +105,7 @@ impl IntoWorkflowCommand for LocalActivityOptions {
             },
             activity_type: self.activity_type,
             arguments: vec![self.input],
+            retry_policy: Some(self.retry_policy),
             ..Default::default()
         }
     }

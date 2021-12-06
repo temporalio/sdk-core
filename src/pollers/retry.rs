@@ -61,8 +61,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
 
 #[derive(Debug)]
 struct TonicErrorHandler {
-    // TODO: We really don't need this crate since we aren't using it for future retry, just backoff
-    //   calc. Remove and use own implementation.
     backoff: ExponentialBackoff,
     max_retries: usize,
     call_type: CallType,

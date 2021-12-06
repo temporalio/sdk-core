@@ -1,7 +1,6 @@
 use crate::{
     pollers::MockServerGatewayApis,
     prototype_rust_sdk::{LocalActivityOptions, TestRustWorker, WfContext, WorkflowResult},
-    telemetry::test_telem_console,
     test_help::{
         build_mock_pollers, history_builder::default_wes_attribs, mock_core, MockPollCfg,
         ResponseType, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE, TEST_Q,
@@ -10,8 +9,17 @@ use crate::{
 };
 use anyhow::anyhow;
 use futures::future::join_all;
-use std::{sync::Arc, time::Duration};
-use temporal_sdk_core_protos::{coresdk::AsJsonPayloadExt, temporal::api::enums::v1::EventType};
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use temporal_sdk_core_protos::{
+    coresdk::{common::RetryPolicy, AsJsonPayloadExt},
+    temporal::api::enums::v1::EventType,
+};
 use tokio::sync::Barrier;
 
 async fn echo(e: String) -> anyhow::Result<String> {
@@ -194,7 +202,6 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
 
 #[tokio::test]
 async fn local_act_fail_and_retry_until_pass() {
-    test_telem_console();
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_workflow_task_scheduled_and_started();
@@ -212,18 +219,32 @@ async fn local_act_fail_and_retry_until_pass() {
             ctx.local_activity(LocalActivityOptions {
                 activity_type: "echo".to_string(),
                 input: "hi".as_json_payload().expect("serializes fine"),
+                retry_policy: RetryPolicy {
+                    initial_interval: Some(Duration::from_millis(50).into()),
+                    backoff_coefficient: 1.2,
+                    maximum_interval: None,
+                    maximum_attempts: 10,
+                    non_retryable_error_types: vec![],
+                },
                 ..Default::default()
             })
             .await;
             Ok(().into())
         },
     );
-    worker.register_activity("echo", |_: String| async move {
-        anyhow::Result::<()>::Err(anyhow!("Oh no I failed!"))
+    let attempts: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
+    worker.register_activity("echo", move |_: String| async move {
+        // Succeed on 3rd attempt
+        if 2 == attempts.fetch_add(1, Ordering::Relaxed) {
+            Ok(())
+        } else {
+            Err(anyhow!("Oh no I failed!"))
+        }
     });
     worker
         .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
+    assert_eq!(3, attempts.load(Ordering::Relaxed));
 }

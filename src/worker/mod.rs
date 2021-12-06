@@ -312,7 +312,7 @@ impl Worker {
                     }
                 }
                 LACompleteAction::WillBeRetried => {
-                    warn!("LA will be retried");
+                    // Nothing to do here
                 }
                 LACompleteAction::Untracked => {
                     error!("Tried to complete untracked local activity {}", task_token);

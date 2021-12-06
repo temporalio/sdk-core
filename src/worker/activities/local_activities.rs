@@ -1,5 +1,4 @@
-use crate::retry_logic::RetryPolicyExt;
-use crate::task_token::TaskToken;
+use crate::{retry_logic::RetryPolicyExt, task_token::TaskToken};
 use parking_lot::Mutex;
 use std::{
     collections::HashMap,
@@ -181,12 +180,20 @@ impl LocalActivityManager {
                             if let Some(backoff_dur) =
                                 rp.should_retry(info.attempt as usize, "TODO")
                             {
-                                self.act_req_tx
-                                    .send(NewOrRetry::Retry {
-                                        in_flight: info.la_info,
-                                        attempt: info.attempt + 1,
-                                    })
-                                    .expect("Receive half of LA request channel cannot be dropped");
+                                // Send the retry request after waiting the backoff duration
+                                let send_chan = self.act_req_tx.clone();
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(backoff_dur).await;
+
+                                    send_chan
+                                        .send(NewOrRetry::Retry {
+                                            in_flight: info.la_info,
+                                            attempt: info.attempt + 1,
+                                        })
+                                        .expect(
+                                            "Receive half of LA request channel cannot be dropped",
+                                        );
+                                });
 
                                 LACompleteAction::WillBeRetried
                             } else {
@@ -214,6 +221,7 @@ impl LocalActivityManager {
     }
 }
 
+#[allow(clippy::large_enum_variant)] // Most will be reported
 pub(crate) enum LACompleteAction {
     /// Caller should report the status to the workflow
     Report(LocalInFlightActInfo),
