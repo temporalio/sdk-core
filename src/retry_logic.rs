@@ -12,8 +12,6 @@ pub(crate) trait RetryPolicyExt {
 
 impl RetryPolicyExt for RetryPolicy {
     fn should_retry(&self, attempt_number: usize, err_str: &str) -> Option<Duration> {
-        // TODO: Non-retryable errs
-
         if attempt_number >= self.maximum_attempts.max(0) as usize {
             return None;
         }
