@@ -5,11 +5,14 @@ use crate::{
     },
     Core,
 };
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    time::Duration,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{wf_activation_job, WfActivationJob},
-        workflow_commands::{CompleteWorkflowExecution, QueryResult, QuerySuccess, StartTimer},
+        workflow_commands::{CompleteWorkflowExecution, QueryResult, QuerySuccess},
         workflow_completion::WfActivationCompletion,
     },
     temporal::api::{
@@ -21,6 +24,7 @@ use temporal_sdk_core_protos::{
         },
     },
 };
+use test_utils::start_timer_cmd;
 
 #[rstest::rstest]
 #[case::with_history(true)]
@@ -66,11 +70,7 @@ async fn legacy_query(#[case] include_history: bool) {
         core.complete_workflow_activation(WfActivationCompletion::from_cmd(
             TEST_Q,
             task.run_id,
-            StartTimer {
-                seq: 1,
-                ..Default::default()
-            }
-            .into(),
+            start_timer_cmd(1, Duration::from_secs(1)),
         ))
         .await
         .unwrap();
@@ -177,11 +177,7 @@ async fn new_queries(#[case] num_queries: usize) {
     core.complete_workflow_activation(WfActivationCompletion::from_cmd(
         TEST_Q,
         task.run_id,
-        StartTimer {
-            seq: 1,
-            ..Default::default()
-        }
-        .into(),
+        start_timer_cmd(1, Duration::from_secs(1)),
     ))
     .await
     .unwrap();
@@ -261,11 +257,7 @@ async fn legacy_query_failure_on_wft_failure() {
     core.complete_workflow_activation(WfActivationCompletion::from_cmd(
         TEST_Q,
         task.run_id,
-        StartTimer {
-            seq: 1,
-            ..Default::default()
-        }
-        .into(),
+        start_timer_cmd(1, Duration::from_secs(1)),
     ))
     .await
     .unwrap();
@@ -338,11 +330,7 @@ async fn legacy_query_with_full_history_after_complete() {
     core.complete_workflow_activation(WfActivationCompletion::from_cmd(
         TEST_Q,
         task.run_id,
-        StartTimer {
-            seq: 1,
-            ..Default::default()
-        }
-        .into(),
+        start_timer_cmd(1, Duration::from_secs(1)),
     ))
     .await
     .unwrap();

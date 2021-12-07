@@ -25,7 +25,7 @@ use temporal_sdk_core_protos::{
         workflow_activation::{wf_activation_job, ResolveActivity, WfActivationJob},
         workflow_commands::{
             ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity,
-            ScheduleActivity, StartTimer,
+            ScheduleActivity,
         },
         ActivityTaskCompletion,
     },
@@ -34,7 +34,7 @@ use temporal_sdk_core_protos::{
         RespondActivityTaskCompletedResponse,
     },
 };
-use test_utils::fanout_tasks;
+use test_utils::{fanout_tasks, start_timer_cmd};
 use tokio::{sync::Notify, time::sleep};
 
 #[tokio::test]
@@ -431,11 +431,7 @@ async fn activity_timeout_no_double_resolve() {
                 &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
                 vec![
                     RequestCancelActivity { seq: activity_id }.into(),
-                    StartTimer {
-                        seq: 2,
-                        ..Default::default()
-                    }
-                    .into(),
+                    start_timer_cmd(2, Duration::from_secs(1)),
                 ],
             ),
             gen_assert_and_reply(

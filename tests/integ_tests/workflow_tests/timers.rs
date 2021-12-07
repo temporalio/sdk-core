@@ -89,11 +89,7 @@ async fn timer_immediate_cancel_workflow() {
         &task_q,
         task.run_id,
         vec![
-            StartTimer {
-                seq: 0,
-                ..Default::default()
-            }
-            .into(),
+            start_timer_cmd(0, Duration::from_secs(1)),
             CancelTimer { seq: 0 }.into(),
             CompleteWorkflowExecution { result: None }.into(),
         ],

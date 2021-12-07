@@ -21,6 +21,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::workflowservice::v1::RespondWorkflowTaskCompletedResponse,
 };
+use test_utils::start_timer_cmd;
 use tokio::sync::watch;
 
 #[tokio::test]
@@ -223,11 +224,7 @@ async fn shutdown_worker_can_complete_pending_activation() {
     core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         TEST_Q,
         res.run_id,
-        vec![StartTimer {
-            seq: 1,
-            ..Default::default()
-        }
-        .into()],
+        vec![start_timer_cmd(1, Duration::from_secs(1))],
     ))
     .await
     .unwrap();

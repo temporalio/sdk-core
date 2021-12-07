@@ -22,13 +22,7 @@ pub fn single_timer(timer_id: &str) -> TestHistoryBuilder {
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
     let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-    t.add(
-        EventType::TimerFired,
-        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-            started_event_id: timer_started_event_id,
-            timer_id: timer_id.to_string(),
-        }),
-    );
+    t.add_timer_fired(timer_started_event_id, timer_id.to_string());
     t.add_workflow_task_scheduled_and_started();
     t
 }
@@ -58,13 +52,7 @@ pub fn cancel_timer(wait_timer_id: &str, cancel_timer_id: &str) -> TestHistoryBu
     t.add_full_wf_task();
     let cancel_timer_started_id = t.add_get_event_id(EventType::TimerStarted, None);
     let wait_timer_started_id = t.add_get_event_id(EventType::TimerStarted, None);
-    t.add(
-        EventType::TimerFired,
-        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-            started_event_id: wait_timer_started_id,
-            timer_id: wait_timer_id.to_string(),
-        }),
-    );
+    t.add_timer_fired(wait_timer_started_id, wait_timer_id.to_string());
     // 8
     t.add_full_wf_task();
     // 11
@@ -97,20 +85,8 @@ pub fn parallel_timer(timer1: &str, timer2: &str) -> TestHistoryBuilder {
     t.add_full_wf_task();
     let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
     let timer_2_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-    t.add(
-        EventType::TimerFired,
-        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-            started_event_id: timer_started_event_id,
-            timer_id: timer1.to_string(),
-        }),
-    );
-    t.add(
-        EventType::TimerFired,
-        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-            started_event_id: timer_2_started_event_id,
-            timer_id: timer2.to_string(),
-        }),
-    );
+    t.add_timer_fired(timer_started_event_id, timer1.to_string());
+    t.add_timer_fired(timer_2_started_event_id, timer2.to_string());
     t.add_workflow_task_scheduled_and_started();
     t
 }
@@ -195,13 +171,7 @@ pub fn workflow_fails_with_failure_two_different_points(
     );
     t.add_full_wf_task();
     let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-    t.add(
-        EventType::TimerFired,
-        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-            started_event_id: timer_started_event_id,
-            timer_id: timer_2.to_string(),
-        }),
-    );
+    t.add_timer_fired(timer_started_event_id, timer_2.to_string());
     t.add_workflow_task_scheduled_and_started();
     t.add_workflow_task_failed_with_failure(
         WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure,
@@ -877,13 +847,7 @@ pub fn long_sequential_timers(num_tasks: usize) -> TestHistoryBuilder {
 
     for i in 1..=num_tasks {
         let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-        t.add(
-            EventType::TimerFired,
-            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: timer_started_event_id,
-                timer_id: i.to_string(),
-            }),
-        );
+        t.add_timer_fired(timer_started_event_id, i.to_string());
         t.add_full_wf_task();
     }
 
@@ -922,13 +886,7 @@ pub fn unsent_at_cancel_repro() -> TestHistoryBuilder {
         ),
     );
     let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-    t.add(
-        EventType::TimerFired,
-        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-            started_event_id: timer_started_event_id,
-            timer_id: 1.to_string(),
-        }),
-    );
+    t.add_timer_fired(timer_started_event_id, 1.to_string());
 
     t.add_full_wf_task();
     t.add_activity_task_cancel_requested(scheduled_event_id);
@@ -1098,13 +1056,7 @@ pub fn timer_then_continue_as_new(timer_id: &str) -> TestHistoryBuilder {
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
     let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-    t.add(
-        EventType::TimerFired,
-        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-            started_event_id: timer_started_event_id,
-            timer_id: timer_id.to_string(),
-        }),
-    );
+    t.add_timer_fired(timer_started_event_id, timer_id.to_string());
     t.add_full_wf_task();
     t.add_continued_as_new();
     t
@@ -1153,13 +1105,7 @@ pub fn timer_wf_cancel_req_failed(timer_id: &str) -> TestHistoryBuilder {
 pub fn timer_wf_cancel_req_do_another_timer_then_cancelled() -> TestHistoryBuilder {
     timer_cancel_req_then("1", |t| {
         let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-        t.add(
-            EventType::TimerFired,
-            history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-                started_event_id: timer_started_event_id,
-                timer_id: "2".to_string(),
-            }),
-        );
+        t.add_timer_fired(timer_started_event_id, "2".to_string());
         t.add_full_wf_task();
         t.add_cancelled();
     })
@@ -1184,13 +1130,7 @@ fn timer_cancel_req_then(
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
     let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-    t.add(
-        EventType::TimerFired,
-        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-            started_event_id: timer_started_event_id,
-            timer_id: timer_id.to_string(),
-        }),
-    );
+    t.add_timer_fired(timer_started_event_id, timer_id.to_string());
     t.add_cancel_requested();
     t.add_full_wf_task();
     end_action(&mut t);
@@ -1277,13 +1217,7 @@ pub fn activity_double_resolve_repro() -> TestHistoryBuilder {
     t.add_we_signaled("sig2", vec![]);
     t.add_workflow_task_started();
     t.add_workflow_task_timed_out();
-    t.add(
-        EventType::TimerFired,
-        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-            started_event_id: timer_started_event_id,
-            timer_id: "2".to_string(),
-        }),
-    );
+    t.add_timer_fired(timer_started_event_id, "2".to_string());
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
@@ -1552,13 +1486,7 @@ pub fn two_local_activities_separated_by_timer() -> TestHistoryBuilder {
     t.add_full_wf_task();
     t.add_local_activity_result_marker(1, "1", b"hi".into());
     let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-    t.add(
-        EventType::TimerFired,
-        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
-            started_event_id: timer_started_event_id,
-            timer_id: "1".to_string(),
-        }),
-    );
+    t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_full_wf_task();
     t.add_local_activity_result_marker(2, "2", b"hi2".into());
     t.add_workflow_execution_completed();
