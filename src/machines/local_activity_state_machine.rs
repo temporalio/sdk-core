@@ -13,7 +13,7 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::{ActivityResolution, Failure as ActFail, Success},
+        activity_result::{ActivityResolution, DoBackoff, Failure as ActFail, Success},
         common::build_local_activity_marker_details,
         external_data::LocalActivityMarkerData,
         workflow_activation::ResolveActivity,
@@ -71,6 +71,8 @@ pub(super) struct ResolveDat {
     pub(super) seq: u32,
     pub(super) result: LocalActivityExecutionResult,
     pub(super) complete_time: Option<SystemTime>,
+    pub(super) attempt: u32,
+    pub(super) backoff: Option<prost_types::Duration>,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +94,8 @@ impl From<CompleteLocalActivityData> for ResolveDat {
                 }),
             },
             complete_time: d.marker_dat.complete_time.try_into_or_none(),
+            attempt: d.marker_dat.attempt,
+            backoff: d.marker_dat.backoff,
         }
     }
 }
@@ -198,6 +202,8 @@ impl LocalActivityMachine {
         seq: u32,
         result: LocalActivityExecutionResult,
         runtime: Duration,
+        attempt: u32,
+        backoff: Option<prost_types::Duration>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         let mut res = OnEventWrapper::on_event_mut(
             self,
@@ -205,6 +211,8 @@ impl LocalActivityMachine {
                 seq,
                 result,
                 complete_time: self.shared_state.wf_time_when_started.map(|t| t + runtime),
+                attempt,
+                backoff,
             }),
         )
         .map_err(|e| match e {
@@ -422,6 +430,8 @@ impl WFMachinesAdapter for LocalActivityMachine {
                 seq,
                 result,
                 complete_time,
+                attempt,
+                backoff,
             }) => {
                 let mut maybe_ok_result = None;
                 let mut maybe_failure = None;
@@ -433,11 +443,24 @@ impl WFMachinesAdapter for LocalActivityMachine {
                         maybe_failure = fail.failure;
                     }
                 };
+                let resolution = if let Some(b) = backoff.as_ref() {
+                    ActivityResolution {
+                        status: Some(
+                            DoBackoff {
+                                attempt,
+                                backoff_duration: Some(b.clone()),
+                            }
+                            .into(),
+                        ),
+                    }
+                } else {
+                    result.into()
+                };
                 let mut responses = vec![
                     MachineResponse::PushWFJob(
                         ResolveActivity {
                             seq: self.shared_state.attrs.seq,
-                            result: Some(result.into()),
+                            result: Some(resolution),
                         }
                         .into(),
                     ),
@@ -450,9 +473,11 @@ impl WFMachinesAdapter for LocalActivityMachine {
                         details: build_local_activity_marker_details(
                             LocalActivityMarkerData {
                                 seq,
+                                attempt,
                                 activity_id: self.shared_state.attrs.activity_id.clone(),
                                 activity_type: self.shared_state.attrs.activity_type.clone(),
                                 complete_time: complete_time.map(Into::into),
+                                backoff,
                             },
                             maybe_ok_result,
                         ),

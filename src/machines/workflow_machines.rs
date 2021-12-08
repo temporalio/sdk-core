@@ -271,12 +271,17 @@ impl WorkflowMachines {
         resolution: LocalResolution,
     ) -> Result<()> {
         match resolution {
-            LocalResolution::LocalActivity { result, runtime } => {
+            LocalResolution::LocalActivity {
+                result,
+                runtime,
+                attempt,
+                backoff,
+            } => {
                 let act_id = CommandID::LocalActivity(seq_id);
                 let mk = self.get_machine_key(act_id)?;
                 let mach = self.machine_mut(mk);
                 if let Machines::LocalActivityMachine(ref mut lam) = *mach {
-                    let resps = lam.try_resolve(seq_id, result, runtime)?;
+                    let resps = lam.try_resolve(seq_id, result, runtime, attempt, backoff)?;
                     self.process_machine_responses(mk, resps)?;
                 } else {
                     return Err(WFMachinesError::Nondeterminism(format!(

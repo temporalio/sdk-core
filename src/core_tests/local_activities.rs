@@ -17,8 +17,8 @@ use std::{
     time::Duration,
 };
 use temporal_sdk_core_protos::{
-    coresdk::{common::RetryPolicy, AsJsonPayloadExt},
-    temporal::api::enums::v1::EventType,
+    coresdk::{activity_result::activity_resolution, common::RetryPolicy, AsJsonPayloadExt},
+    temporal::api::{enums::v1::EventType, failure::v1::Failure},
 };
 use tokio::sync::Barrier;
 
@@ -244,7 +244,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
     let attempts: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
     worker.register_activity("echo", move |_: String| async move {
         // Succeed on 3rd attempt
-        if 2 == attempts.fetch_add(1, Ordering::Relaxed) && eventually_pass {
+        if 3 == attempts.fetch_add(1, Ordering::Relaxed) && eventually_pass {
             Ok(())
         } else {
             Err(anyhow!("Oh no I failed!"))
@@ -257,4 +257,77 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
     worker.run_until_done().await.unwrap();
     let expected_attempts = if eventually_pass { 3 } else { 4 };
     assert_eq!(expected_attempts, attempts.load(Ordering::Relaxed));
+}
+
+#[tokio::test]
+async fn local_act_retry_long_backoff_uses_timer() {
+    let mut t = TestHistoryBuilder::default();
+    let mut wes_short_wft_timeout = default_wes_attribs();
+    wes_short_wft_timeout.workflow_task_timeout = Some(Duration::from_millis(500).into());
+    t.add(
+        EventType::WorkflowExecutionStarted,
+        wes_short_wft_timeout.into(),
+    );
+    t.add_full_wf_task();
+    t.add_local_activity_fail_marker(
+        1,
+        "1",
+        Failure::application_failure("la failed".to_string(), false),
+    );
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add_timer_fired(timer_started_event_id, "1".to_string());
+    t.add_full_wf_task();
+    // t.add_local_activity_result_marker(1, "1", b"echo".into());
+    t.add_workflow_execution_completed();
+
+    let wf_id = "fakeid";
+    let mock = MockServerGatewayApis::new();
+    let mh = MockPollCfg::from_resp_batches(wf_id, t, [1.into(), ResponseType::AllHistory], mock);
+    let mut mock = build_mock_pollers(mh);
+    // TODO: Probably test w/o cache too -
+    mock.worker_cfg(TEST_Q, |w| w.max_cached_workflows = 1);
+    let core = mock_core(mock);
+    let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
+
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        |mut ctx: WfContext| async move {
+            let la_res = ctx
+                .local_activity(LocalActivityOptions {
+                    activity_type: "echo".to_string(),
+                    input: "hi".as_json_payload().expect("serializes fine"),
+                    retry_policy: RetryPolicy {
+                        initial_interval: Some(Duration::from_millis(65).into()),
+                        // This will make the second backoff 65 seconds, plenty to use timer
+                        backoff_coefficient: 1_000.,
+                        maximum_interval: Some(Duration::from_secs(600).into()),
+                        maximum_attempts: 3,
+                        non_retryable_error_types: vec![],
+                    },
+                    ..Default::default()
+                })
+                .await;
+            if let Some(activity_resolution::Status::Backoff(b)) = la_res.status {
+                ctx.timer(
+                    b.backoff_duration
+                        .expect("Duration is set")
+                        .try_into()
+                        .expect("duration converts ok"),
+                )
+                .await;
+            } else {
+                panic!("LA must resolve with backoff result");
+            }
+            Ok(().into())
+        },
+    );
+    worker.register_activity("echo", move |_: String| async move {
+        // Activity just always fails since our workflow doesn't *actually* retry it after timer
+        Result::<(), _>::Err(anyhow!("Oh no I failed!"))
+    });
+    worker
+        .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
 }

@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
-    time::{Instant, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use temporal_sdk_core_protos::coresdk::{
     activity_task::{activity_task, ActivityTask, Start},
@@ -171,16 +171,35 @@ impl LocalActivityManager {
                     self.complete_notify.notify_one();
                     LACompleteAction::Report(info)
                 }
-                LocalActivityExecutionResult::Failed(_) => {
+                LocalActivityExecutionResult::Failed(f) => {
                     match &info.la_info.schedule_cmd.retry_policy {
                         None => {
                             // If there's no retry policy... don't retry
                             LACompleteAction::Report(info)
                         }
                         Some(rp) => {
-                            if let Some(backoff_dur) =
-                                rp.should_retry(info.attempt as usize, "TODO")
-                            {
+                            if let Some(backoff_dur) = rp.should_retry(
+                                info.attempt as usize,
+                                &f.failure
+                                    .as_ref()
+                                    .map(|f| format!("{:?}", f))
+                                    .unwrap_or_else(|| "".to_string()),
+                            ) {
+                                warn!(
+                                    "Local activity failed on attempt {}, will retry after \
+                                     backing off for {:?}",
+                                    info.attempt, backoff_dur
+                                );
+                                // TODO: Make configurable
+                                if backoff_dur > Duration::from_secs(60) {
+                                    warn!("Backoff is past local retry threshold");
+                                    // We want this to be reported, as the workflow will mark this
+                                    // failure down, then start a timer for backoff.
+                                    return LACompleteAction::LangDoesTimerBackoff(
+                                        backoff_dur.into(),
+                                        info,
+                                    );
+                                }
                                 // Send the retry request after waiting the backoff duration
                                 let send_chan = self.act_req_tx.clone();
                                 tokio::spawn(async move {
@@ -220,6 +239,8 @@ impl LocalActivityManager {
 pub(crate) enum LACompleteAction {
     /// Caller should report the status to the workflow
     Report(LocalInFlightActInfo),
+    /// Lang needs to be told to do the schedule-a-timer-then-rerun hack
+    LangDoesTimerBackoff(prost_types::Duration, LocalInFlightActInfo),
     /// The activity will be re-enqueued for another attempt (and so status should not be reported
     /// to the workflow)
     WillBeRetried,
