@@ -20,7 +20,7 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::{activity_result, ActivityResult},
+        activity_result::{activity_resolution, ActivityExecutionResult, ActivityResolution},
         activity_task::activity_task,
         workflow_activation::{wf_activation_job, ResolveActivity, WfActivationJob},
         workflow_commands::{
@@ -93,7 +93,7 @@ async fn max_activities_respected() {
             core.complete_activity_task(ActivityTaskCompletion {
                 task_token: r1.task_token,
                 task_queue: TEST_Q.to_string(),
-                result: Some(ActivityResult::ok(vec![1].into()))
+                result: Some(ActivityExecutionResult::ok(vec![1].into()))
             }).await.unwrap();
             last_finisher.store(1, Ordering::SeqCst);
         },
@@ -121,7 +121,7 @@ async fn activity_not_found_returns_ok() {
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: vec![1],
         task_queue: TEST_Q.to_string(),
-        result: Some(ActivityResult::ok(vec![1].into())),
+        result: Some(ActivityExecutionResult::ok(vec![1].into())),
     })
     .await
     .unwrap();
@@ -397,7 +397,7 @@ async fn many_concurrent_heartbeat_cancels() {
         core.complete_activity_task(ActivityTaskCompletion {
             task_token: r.task_token.clone(),
             task_queue: TEST_Q.to_string(),
-            result: Some(ActivityResult::cancel_from_details(None)),
+            result: Some(ActivityExecutionResult::cancel_from_details(None)),
         })
         .await
         .unwrap();
@@ -437,8 +437,8 @@ async fn activity_timeout_no_double_resolve() {
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Cancelled(..)),
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Cancelled(..)),
                         }),
                         ..
                     }

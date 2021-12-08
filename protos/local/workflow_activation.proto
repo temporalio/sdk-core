@@ -92,7 +92,7 @@ message FireTimer {
 message ResolveActivity {
     /// Sequence number as provided by lang in the corresponding ScheduleActivity command
     uint32 seq = 1;
-    activity_result.ActivityResult result = 2;
+    activity_result.ActivityResolution result = 2;
 }
 
 /// Notify a workflow that a start child workflow execution request has succeeded, failed or was

@@ -10,7 +10,7 @@ pub(crate) use dispatcher::WorkerDispatcher;
 
 use crate::{
     errors::CompleteWfError,
-    machines::{EmptyWorkflowCommandErr, WFMachinesError},
+    machines::{EmptyWorkflowCommandErr, LocalActivityExecutionResult, WFMachinesError},
     pollers::{
         new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, BoxedWFPoller,
         GatewayRef, Poller, WorkflowTaskPoller,
@@ -38,7 +38,7 @@ use futures::{Future, TryFutureExt};
 use std::{convert::TryInto, sync::Arc};
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::{activity_result, ActivityResult},
+        activity_result::activity_execution_result,
         activity_task::ActivityTask,
         workflow_activation::WfActivation,
         workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
@@ -278,10 +278,11 @@ impl Worker {
     pub(crate) async fn complete_activity(
         &self,
         task_token: TaskToken,
-        status: activity_result::Status,
+        status: activity_execution_result::Status,
     ) -> Result<(), CompleteActivityError> {
         if task_token.is_local_activity_task() {
-            match self.local_act_mgr.complete(&task_token, &status) {
+            let as_la_res: LocalActivityExecutionResult = status.try_into()?;
+            match self.local_act_mgr.complete(&task_token, &as_la_res) {
                 LACompleteAction::Report(LocalInFlightActInfo {
                     la_info,
                     dispatch_time,
@@ -293,9 +294,7 @@ impl Worker {
                             &la_info.workflow_exec_info.run_id,
                             la_info.schedule_cmd.seq,
                             LocalResolution::LocalActivity {
-                                result: ActivityResult {
-                                    status: Some(status),
-                                },
+                                result: as_la_res,
                                 runtime: dispatch_time.elapsed(),
                             },
                         )

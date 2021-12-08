@@ -30,5 +30,5 @@ message ActivityTaskCompletion {
     bytes task_token = 1;
     // The task queue / worker this task is associated with
     string task_queue = 2;
-    activity_result.ActivityResult result = 3;
+    activity_result.ActivityExecutionResult result = 3;
 }

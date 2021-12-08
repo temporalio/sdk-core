@@ -23,7 +23,9 @@ mod workflow_task_state_machine;
 #[cfg(test)]
 mod transition_coverage;
 
-pub use local_activity_state_machine::LOCAL_ACTIVITY_MARKER_NAME;
+pub(crate) use local_activity_state_machine::{
+    LocalActivityExecutionResult, LOCAL_ACTIVITY_MARKER_NAME,
+};
 pub use patch_state_machine::HAS_CHANGE_MARKER_NAME;
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 

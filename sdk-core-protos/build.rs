@@ -58,7 +58,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[derive(::derive_more::From)]",
         )
         .type_attribute(
-            "coresdk.activity_result.ActivityResult.status",
+            "coresdk.activity_result.ActivityExecutionResult.status",
+            "#[derive(::derive_more::From)]",
+        )
+        .type_attribute(
+            "coresdk.activity_result.ActivityResolution.status",
             "#[derive(::derive_more::From)]",
         )
         .type_attribute(

@@ -1,4 +1,6 @@
-use crate::{retry_logic::RetryPolicyExt, task_token::TaskToken};
+use crate::{
+    machines::LocalActivityExecutionResult, retry_logic::RetryPolicyExt, task_token::TaskToken,
+};
 use parking_lot::Mutex;
 use std::{
     collections::HashMap,
@@ -6,7 +8,6 @@ use std::{
     time::{Instant, SystemTime},
 };
 use temporal_sdk_core_protos::coresdk::{
-    activity_result::activity_result,
     activity_task::{activity_task, ActivityTask, Start},
     common::WorkflowExecution,
     workflow_commands::ScheduleActivity,
@@ -19,7 +20,7 @@ use tokio::sync::{
 pub(crate) struct LocalInFlightActInfo {
     pub la_info: NewLocalAct,
     pub dispatch_time: Instant,
-    pub attempt: i32,
+    pub attempt: u32,
 }
 
 #[derive(Clone)]
@@ -45,7 +46,7 @@ enum NewOrRetry {
     New(NewLocalAct),
     Retry {
         in_flight: NewLocalAct,
-        attempt: i32,
+        attempt: u32,
     },
 }
 
@@ -103,7 +104,7 @@ impl LocalActivityManager {
         // it would mean dropping this future would cause us to drop the activity request.
         if let Some(new_or_retry) = self.act_req_rx.lock().await.recv().await {
             let (new_la, attempt) = match new_or_retry {
-                NewOrRetry::New(n) => (n, 0),
+                NewOrRetry::New(n) => (n, 1),
                 NewOrRetry::Retry { in_flight, attempt } => (in_flight, attempt),
             };
             let orig = new_la.clone();
@@ -155,7 +156,7 @@ impl LocalActivityManager {
     pub(crate) fn complete(
         &self,
         task_token: &TaskToken,
-        status: &activity_result::Status,
+        status: &LocalActivityExecutionResult,
     ) -> LACompleteAction {
         if let Some(info) = self
             .dat
@@ -166,11 +167,11 @@ impl LocalActivityManager {
             self.semaphore.add_permits(1);
 
             match status {
-                activity_result::Status::Completed(_) => {
+                LocalActivityExecutionResult::Completed(_) => {
                     self.complete_notify.notify_one();
                     LACompleteAction::Report(info)
                 }
-                activity_result::Status::Failed(_) => {
+                LocalActivityExecutionResult::Failed(_) => {
                     match &info.la_info.schedule_cmd.retry_policy {
                         None => {
                             // If there's no retry policy... don't retry
@@ -201,12 +202,6 @@ impl LocalActivityManager {
                             }
                         }
                     }
-                }
-                activity_result::Status::Cancelled(_) => {
-                    todo!("Local activity cancellation not yet implemented")
-                }
-                activity_result::Status::WillCompleteAsync(_) => {
-                    panic!("Local activities cannot be completed async, this is a lang SDK bug")
                 }
             }
         } else {
@@ -257,7 +252,7 @@ mod tests {
             let complete_branch = async {
                 lam.complete(
                     &next_tt,
-                    &activity_result::Status::Completed(Default::default()),
+                    &LocalActivityExecutionResult::Completed(Default::default()),
                 )
             };
             tokio::select! {
@@ -296,7 +291,7 @@ mod tests {
                 // Spin until the receive lock has been grabbed by the call to pending, to ensure
                 // it's advanced enough
                 while lam.act_req_rx.try_lock().is_ok() { yield_now().await; }
-                lam.complete(&tt, &activity_result::Status::Completed(Default::default()));
+                lam.complete(&tt, &LocalActivityExecutionResult::Completed(Default::default()));
             } => (),
         };
     }

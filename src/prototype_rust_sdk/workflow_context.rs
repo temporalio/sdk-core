@@ -20,7 +20,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use temporal_sdk_core_protos::coresdk::{
-    activity_result::ActivityResult,
+    activity_result::ActivityResolution,
     child_workflow::ChildWorkflowResult,
     common::{NamespacedWorkflowExecution, Payload},
     workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
@@ -143,7 +143,7 @@ impl WfContext {
     pub fn activity(
         &mut self,
         mut opts: ActivityOptions,
-    ) -> impl CancellableFuture<ActivityResult> {
+    ) -> impl CancellableFuture<ActivityResolution> {
         if opts.task_queue.is_empty() {
             opts.task_queue = self.task_queue.clone()
         }
@@ -164,7 +164,7 @@ impl WfContext {
     pub fn local_activity(
         &mut self,
         opts: LocalActivityOptions,
-    ) -> impl CancellableFuture<ActivityResult> {
+    ) -> impl CancellableFuture<ActivityResolution> {
         let seq = self.next_activity_sequence_number;
         self.next_activity_sequence_number += 1;
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));

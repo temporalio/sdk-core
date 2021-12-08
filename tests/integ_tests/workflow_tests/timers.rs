@@ -4,7 +4,7 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_commands::{CancelTimer, CompleteWorkflowExecution, StartTimer},
     workflow_completion::WfActivationCompletion,
 };
-use test_utils::{init_core_and_create_wf, CoreTestHelpers, CoreWfStarter};
+use test_utils::{init_core_and_create_wf, start_timer_cmd, CoreTestHelpers, CoreWfStarter};
 
 pub async fn timer_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
     command_sink.timer(Duration::from_secs(1)).await;

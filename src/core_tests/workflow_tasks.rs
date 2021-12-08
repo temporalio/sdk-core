@@ -19,7 +19,7 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::{self as ar, activity_result, ActivityResult},
+        activity_result::{self as ar, activity_resolution, ActivityResolution},
         workflow_activation::{
             wf_activation_job, FireTimer, ResolveActivity, StartWorkflow, UpdateRandomSeed,
             WfActivationJob,
@@ -277,8 +277,8 @@ async fn scheduled_activity_timeout(hist_batches: &'static [usize]) {
                             variant: Some(wf_activation_job::Variant::ResolveActivity(
                                 ResolveActivity {
                                     seq,
-                                    result: Some(ActivityResult {
-                                        status: Some(activity_result::Status::Failed(ar::Failure {
+                                    result: Some(ActivityResolution {
+                                        status: Some(activity_resolution::Status::Failed(ar::Failure {
                                             failure: Some(failure)
                                         })),
                                     })
@@ -323,26 +323,26 @@ async fn started_activity_timeout(hist_batches: &'static [usize]) {
             // Activity is getting resolved right away as it has been timed out.
             gen_assert_and_reply(
                 &|res| {
-                    assert_matches!(
-                                res.jobs.as_slice(),
-                                [
-                                    WfActivationJob {
-                                        variant: Some(wf_activation_job::Variant::ResolveActivity(
-                                            ResolveActivity {
-                                                seq,
-                                                result: Some(ActivityResult {
-                                                    status: Some(activity_result::Status::Failed(ar::Failure {
-                                                        failure: Some(failure)
-                                                    })),
-                                                })
-                                            }
-                                        )),
-                                    }
-                                ] => {
-                                    assert_eq!(failure.message, "Activity task timed out".to_string());
-                                    assert_eq!(*seq, activity_seq);
+                assert_matches!(
+                    res.jobs.as_slice(),
+                    [
+                        WfActivationJob {
+                            variant: Some(wf_activation_job::Variant::ResolveActivity(
+                                ResolveActivity {
+                                    seq,
+                                    result: Some(ActivityResolution {
+                                        status: Some(activity_resolution::Status::Failed(ar::Failure {
+                                            failure: Some(failure)
+                                        })),
+                                    })
                                 }
-                            );
+                            )),
+                        }
+                    ] => {
+                        assert_eq!(failure.message, "Activity task timed out".to_string());
+                        assert_eq!(*seq, activity_seq);
+                    }
+                );
                 },
                 vec![CompleteWorkflowExecution { result: None }.into()],
             ),
@@ -384,8 +384,8 @@ async fn cancelled_activity_timeout(hist_batches: &'static [usize]) {
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         seq: _,
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Cancelled(..)),
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Cancelled(..)),
                         })
                     }
                 )),
@@ -489,8 +489,8 @@ async fn verify_activity_cancellation(
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         seq: _,
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Cancelled(..)),
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Cancelled(..)),
                         })
                     }
                 )),
@@ -562,8 +562,8 @@ async fn verify_activity_cancellation_wait_for_cancellation(activity_id: u32, co
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         seq: _,
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Cancelled(..)),
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Cancelled(..)),
                         })
                     }
                 )),
@@ -952,8 +952,8 @@ async fn activity_not_canceled_on_replay_repro(hist_batches: &'static [usize]) {
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Cancelled(..)),
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Cancelled(..)),
                         }),
                         ..
                     }
@@ -997,8 +997,8 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static 
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Cancelled(..)),
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Cancelled(..)),
                         }),
                         ..
                     }
@@ -1087,8 +1087,8 @@ async fn wft_timeout_repro(hist_batches: &'static [usize]) {
                     wf_activation_job::Variant::SignalWorkflow(_),
                     wf_activation_job::Variant::SignalWorkflow(_),
                     wf_activation_job::Variant::ResolveActivity(ResolveActivity {
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Completed(..)),
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Completed(..)),
                         }),
                         ..
                     })

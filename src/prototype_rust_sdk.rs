@@ -32,7 +32,7 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::ActivityResult,
+        activity_result::{ActivityExecutionResult, ActivityResolution},
         activity_task::{activity_task, ActivityTask},
         child_workflow::ChildWorkflowResult,
         common::{NamespacedWorkflowExecution, Payload},
@@ -322,8 +322,8 @@ impl ActivityHalf {
                 let arg = inputs.pop().unwrap_or_default();
                 let output = (&act_fn.act_func)(arg).await;
                 let result = match output {
-                    Ok(res) => ActivityResult::ok(res),
-                    Err(err) => ActivityResult::fail(err.into()),
+                    Ok(res) => ActivityExecutionResult::ok(res),
+                    Err(err) => ActivityExecutionResult::fail(err.into()),
                 };
                 core.complete_activity_task(ActivityTaskCompletion {
                     task_token: activity.task_token,
@@ -344,7 +344,7 @@ impl ActivityHalf {
 #[derive(Debug)]
 enum UnblockEvent {
     Timer(u32),
-    Activity(u32, Box<ActivityResult>),
+    Activity(u32, Box<ActivityResolution>),
     WorkflowStart(u32, Box<ChildWorkflowStartStatus>),
     WorkflowComplete(u32, Box<ChildWorkflowResult>),
     SignalExternal(u32, Option<Failure>),
@@ -380,7 +380,7 @@ impl Unblockable for TimerResult {
     }
 }
 
-impl Unblockable for ActivityResult {
+impl Unblockable for ActivityResolution {
     type OtherDat = ();
     fn unblock(ue: UnblockEvent, _: Self::OtherDat) -> Self {
         match ue {

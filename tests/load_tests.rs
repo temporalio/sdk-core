@@ -3,7 +3,7 @@ use futures::future::join_all;
 use std::time::{Duration, Instant};
 use temporal_sdk_core::prototype_rust_sdk::{ActivityOptions, WfContext};
 use temporal_sdk_core_protos::coresdk::{
-    activity_result::ActivityResult, activity_task::activity_task as act_task,
+    activity_result::ActivityExecutionResult, activity_task::activity_task as act_task,
     workflow_commands::ActivityCancellationType, ActivityTaskCompletion,
 };
 use test_utils::CoreWfStarter;
@@ -87,7 +87,7 @@ async fn activity_load() {
                 core.complete_activity_task(ActivityTaskCompletion {
                     task_token: task.task_token,
                     task_queue: task_q,
-                    result: Some(ActivityResult::ok(pd.into())),
+                    result: Some(ActivityExecutionResult::ok(pd.into())),
                 })
                 .await
                 .unwrap()

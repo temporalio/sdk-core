@@ -1,7 +1,9 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_sdk_core_protos::coresdk::{
-    activity_result::{self, activity_result as act_res, ActivityResult},
+    activity_result::{
+        self, activity_resolution as act_res, ActivityExecutionResult, ActivityResolution,
+    },
     activity_task::activity_task as act_task,
     common::Payload,
     workflow_activation::{wf_activation_job, ResolveActivity, WfActivationJob},
@@ -58,7 +60,7 @@ async fn activity_heartbeat() {
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
         task_queue: task_q.to_string(),
-        result: Some(ActivityResult::ok(response_payload.clone())),
+        result: Some(ActivityExecutionResult::ok(response_payload.clone())),
     })
     .await
     .unwrap();
@@ -69,7 +71,7 @@ async fn activity_heartbeat() {
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
-                    ResolveActivity {seq, result: Some(ActivityResult{
+                    ResolveActivity {seq, result: Some(ActivityResolution {
                     status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)})),
                      ..})}
                 )),

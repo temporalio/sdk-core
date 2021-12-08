@@ -8,14 +8,14 @@ pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
 pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
 
 use crate::{
-    machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
+    machines::{
+        LocalActivityExecutionResult, ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines,
+    },
     telemetry::metrics::MetricsContext,
     worker::NewLocalAct,
 };
 use std::{sync::mpsc::Sender, time::Duration};
-use temporal_sdk_core_protos::coresdk::{
-    activity_result::ActivityResult, workflow_activation::WfActivation,
-};
+use temporal_sdk_core_protos::coresdk::workflow_activation::WfActivation;
 
 pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
@@ -85,7 +85,7 @@ pub struct OutgoingServerCommands {
 #[derive(Debug)]
 pub(crate) enum LocalResolution {
     LocalActivity {
-        result: ActivityResult,
+        result: LocalActivityExecutionResult,
         runtime: Duration,
     },
 }
@@ -205,6 +205,7 @@ pub mod managed_wf {
     };
     use std::convert::TryInto;
     use temporal_sdk_core_protos::coresdk::{
+        activity_result::ActivityExecutionResult,
         common::Payload,
         workflow_activation::create_evict_activation,
         workflow_completion::{wf_activation_completion::Status, WfActivationCompletion},
@@ -315,12 +316,18 @@ pub mod managed_wf {
         pub(crate) fn complete_local_activity(
             &mut self,
             seq_num: u32,
-            result: ActivityResult,
+            result: ActivityExecutionResult,
         ) -> Result<()> {
             self.mgr.notify_of_local_result(
                 seq_num,
                 LocalResolution::LocalActivity {
-                    result,
+                    // We accept normal execution results and do this conversion because there
+                    // are more helpers for constructing them.
+                    result: result
+                        .status
+                        .expect("LA result must have a status")
+                        .try_into()
+                        .expect("LA execution result must be a valid LA result"),
                     runtime: Duration::from_secs(1),
                 },
             )
