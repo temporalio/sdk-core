@@ -8,7 +8,7 @@ use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::convert::{TryFrom, TryInto};
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::{self as ar, activity_result, ActivityResult, Cancellation},
+        activity_result::{self as ar, activity_resolution, ActivityResolution, Cancellation},
         common::Payload,
         workflow_activation::ResolveActivity,
         workflow_commands::{ActivityCancellationType, ScheduleActivity},
@@ -136,8 +136,8 @@ impl ActivityMachine {
     fn create_cancelation_resolve(&self, details: Option<Payload>) -> ResolveActivity {
         ResolveActivity {
             seq: self.shared_state.attrs.seq,
-            result: Some(ActivityResult {
-                status: Some(activity_result::Status::Cancelled(Cancellation {
+            result: Some(ActivityResolution {
+                status: Some(activity_resolution::Status::Cancelled(Cancellation {
                     failure: Some(Failure {
                         message: "Activity cancelled".to_string(),
                         cause: Some(Box::from(Failure {
@@ -243,8 +243,8 @@ impl WFMachinesAdapter for ActivityMachine {
             ActivityMachineCommand::Complete(result) => {
                 vec![ResolveActivity {
                     seq: self.shared_state.attrs.seq,
-                    result: Some(ActivityResult {
-                        status: Some(activity_result::Status::Completed(ar::Success {
+                    result: Some(ActivityResolution {
+                        status: Some(activity_resolution::Status::Completed(ar::Success {
                             result: convert_payloads(event_info, result)?,
                         })),
                     }),
@@ -254,8 +254,8 @@ impl WFMachinesAdapter for ActivityMachine {
             ActivityMachineCommand::Fail(failure) => {
                 vec![ResolveActivity {
                     seq: self.shared_state.attrs.seq,
-                    result: Some(ActivityResult {
-                        status: Some(activity_result::Status::Failed(ar::Failure {
+                    result: Some(ActivityResolution {
+                        status: Some(activity_resolution::Status::Failed(ar::Failure {
                             failure: Some(failure),
                         })),
                     }),
@@ -846,8 +846,8 @@ mod test {
             [WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Cancelled(_))
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Cancelled(_))
                         }),
                         ..
                     }

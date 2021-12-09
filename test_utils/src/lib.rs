@@ -229,6 +229,14 @@ pub fn schedule_activity_cmd(
     .into()
 }
 
+pub fn start_timer_cmd(seq: u32, duration: Duration) -> workflow_command::Variant {
+    StartTimer {
+        seq,
+        start_to_fire_timeout: Some(duration.into()),
+    }
+    .into()
+}
+
 /// Given a desired number of concurrent executions and a provided function that produces a future,
 /// run that many instances of the future concurrently.
 ///

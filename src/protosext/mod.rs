@@ -1,11 +1,16 @@
 use crate::{
-    machines::{ProtoCommand, HAS_CHANGE_MARKER_NAME, LOCAL_ACTIVITY_MARKER_NAME},
+    machines::{
+        LocalActivityExecutionResult, ProtoCommand, HAS_CHANGE_MARKER_NAME,
+        LOCAL_ACTIVITY_MARKER_NAME,
+    },
     task_token::TaskToken,
     workflow::LEGACY_QUERY_ID,
+    CompleteActivityError,
 };
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::{
+        activity_result::{activity_execution_result, activity_execution_result::Status},
         common::{
             decode_change_marker_details, extract_local_activity_marker_data,
             extract_local_activity_marker_details,
@@ -236,4 +241,40 @@ impl HistoryEventExt for HistoryEvent {
 pub(crate) struct CompleteLocalActivityData {
     pub marker_dat: LocalActivityMarkerData,
     pub result: Result<Payload, Failure>,
+}
+
+impl TryFrom<activity_execution_result::Status> for LocalActivityExecutionResult {
+    type Error = CompleteActivityError;
+
+    fn try_from(s: activity_execution_result::Status) -> Result<Self, Self::Error> {
+        match s {
+            Status::Completed(c) => Ok(LocalActivityExecutionResult::Completed(c)),
+            Status::Failed(f) => Ok(LocalActivityExecutionResult::Failed(f)),
+            Status::Cancelled(_) => Err(CompleteActivityError::MalformedActivityCompletion {
+                reason: "Cancellation not yet implemented for local activities".to_string(),
+                completion: None,
+            }),
+            Status::WillCompleteAsync(_) => {
+                Err(CompleteActivityError::MalformedActivityCompletion {
+                    reason: "Local activities cannot be completed async".to_string(),
+                    completion: None,
+                })
+            }
+        }
+    }
+}
+
+pub trait TryIntoOrNone<F, T> {
+    /// Turn an option of something into an option of another thing, trying to convert along the way
+    /// and returning `None` if that conversion fails
+    fn try_into_or_none(self) -> Option<T>;
+}
+
+impl<F, T> TryIntoOrNone<F, T> for Option<F>
+where
+    F: TryInto<T>,
+{
+    fn try_into_or_none(self) -> Option<T> {
+        self.map(TryInto::try_into).transpose().ok().flatten()
+    }
 }

@@ -3,7 +3,10 @@ use std::time::Duration;
 use temporal_sdk_core::prototype_rust_sdk::{ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::{self, activity_result as act_res, ActivityResult},
+        activity_result::{
+            self, activity_resolution, activity_resolution as act_res, ActivityExecutionResult,
+            ActivityResolution,
+        },
         activity_task::activity_task as act_task,
         common::Payload,
         workflow_activation::{wf_activation_job, FireTimer, ResolveActivity, WfActivationJob},
@@ -37,7 +40,10 @@ async fn one_activity() {
     let mut starter = CoreWfStarter::new(wf_name);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), one_activity_wf);
-    worker.register_activity("echo_activity", |echo_me: String| async move { echo_me });
+    worker.register_activity(
+        "echo_activity",
+        |echo_me: String| async move { Ok(echo_me) },
+    );
 
     worker
         .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
@@ -82,7 +88,7 @@ async fn activity_workflow() {
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
         task_queue: task_q.to_string(),
-        result: Some(ActivityResult::ok(response_payload.clone())),
+        result: Some(ActivityExecutionResult::ok(response_payload.clone())),
     })
     .await
     .unwrap();
@@ -93,9 +99,11 @@ async fn activity_workflow() {
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
-                    ResolveActivity {seq, result: Some(ActivityResult{
-                    status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)})),
-                     ..})}
+                    ResolveActivity {seq, result: Some(ActivityResolution{
+                      status: Some(
+                        act_res::Status::Completed(activity_result::Success{result: Some(r)})),
+                        ..
+                    })}
                 )),
             },
         ] => {
@@ -138,13 +146,7 @@ async fn activity_non_retryable_failure() {
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
         task_queue: task_q.to_string(),
-        result: Some(ActivityResult {
-            status: Some(activity_result::activity_result::Status::Failed(
-                activity_result::Failure {
-                    failure: Some(failure.clone()),
-                },
-            )),
-        }),
+        result: Some(ActivityExecutionResult::fail(failure.clone())),
     })
     .await
     .unwrap();
@@ -155,7 +157,7 @@ async fn activity_non_retryable_failure() {
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
-                    ResolveActivity {seq, result: Some(ActivityResult{
+                    ResolveActivity {seq, result: Some(ActivityResolution{
                     status: Some(act_res::Status::Failed(activity_result::Failure{
                         failure: Some(f),
                     }))})}
@@ -215,13 +217,7 @@ async fn activity_retry() {
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
         task_queue: task_q.to_string(),
-        result: Some(ActivityResult {
-            status: Some(activity_result::activity_result::Status::Failed(
-                activity_result::Failure {
-                    failure: Some(failure),
-                },
-            )),
-        }),
+        result: Some(ActivityExecutionResult::fail(failure)),
     })
     .await
     .unwrap();
@@ -241,7 +237,7 @@ async fn activity_retry() {
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
         task_queue: task_q.to_string(),
-        result: Some(ActivityResult::ok(response_payload.clone())),
+        result: Some(ActivityExecutionResult::ok(response_payload.clone())),
     })
     .await
     .unwrap();
@@ -252,7 +248,7 @@ async fn activity_retry() {
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
-                    ResolveActivity {seq, result: Some(ActivityResult{
+                    ResolveActivity {seq, result: Some(ActivityResolution{
                     status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)}))})}
                 )),
             },
@@ -374,8 +370,8 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
         [WfActivationJob {
             variant: Some(wf_activation_job::Variant::ResolveActivity(
                 ResolveActivity {
-                    result: Some(ActivityResult {
-                        status: Some(activity_result::activity_result::Status::Cancelled(_))
+                    result: Some(ActivityResolution {
+                        status: Some(activity_resolution::Status::Cancelled(_))
                     }),
                     ..
                 }
@@ -399,14 +395,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: activity_task.task_token,
         task_queue: task_q.to_string(),
-        result: Some(ActivityResult {
-            status: Some(
-                activity_result::Success {
-                    result: Some(vec![1].into()),
-                }
-                .into(),
-            ),
-        }),
+        result: Some(ActivityExecutionResult::ok([1].into())),
     })
     .await
     .unwrap();
@@ -459,7 +448,7 @@ async fn started_activity_timeout() {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         seq,
-                        result: Some(ActivityResult{
+                        result: Some(ActivityResolution{
                             status: Some(
                                 act_res::Status::Failed(
                                     activity_result::Failure{failure: Some(_)}
@@ -537,7 +526,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: activity_task.task_token,
         task_queue: task_q.to_string(),
-        result: Some(ActivityResult::cancel_from_details(None)),
+        result: Some(ActivityExecutionResult::cancel_from_details(None)),
     })
     .await
     .unwrap();
@@ -642,7 +631,7 @@ async fn async_activity_completion_workflow() {
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token.clone(),
         task_queue: task_q.to_string(),
-        result: Some(ActivityResult::will_complete_async()),
+        result: Some(ActivityExecutionResult::will_complete_async()),
     })
     .await
     .unwrap();
@@ -663,7 +652,7 @@ async fn async_activity_completion_workflow() {
         [
             WfActivationJob {
                 variant: Some(wf_activation_job::Variant::ResolveActivity(
-                    ResolveActivity {seq, result: Some(ActivityResult{
+                    ResolveActivity {seq, result: Some(ActivityResolution {
                     status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)})),
                      ..})}
                 )),
@@ -721,7 +710,7 @@ async fn activity_cancelled_after_heartbeat_times_out() {
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token.clone(),
         task_queue: task_q.to_string(),
-        result: Some(ActivityResult::cancel_from_details(None)),
+        result: Some(ActivityExecutionResult::cancel_from_details(None)),
     })
     .await
     .unwrap();

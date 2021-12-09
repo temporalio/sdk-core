@@ -32,7 +32,7 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::ActivityResult,
+        activity_result::{ActivityExecutionResult, ActivityResolution},
         activity_task::{activity_task, ActivityTask},
         child_workflow::ChildWorkflowResult,
         common::{NamespacedWorkflowExecution, Payload},
@@ -309,7 +309,7 @@ impl ActivityHalf {
         task_queue: &str,
         activity: ActivityTask,
     ) -> Result<(), anyhow::Error> {
-        // TODO: Trap errors and report activity failures, handle cancels, etc.
+        // TODO: handle cancels, etc.
         match activity.variant {
             Some(activity_task::Variant::Start(start)) => {
                 let act_fn = self.activity_fns.get(&start.activity_type).ok_or_else(|| {
@@ -320,11 +320,15 @@ impl ActivityHalf {
                 })?;
                 let mut inputs = start.input;
                 let arg = inputs.pop().unwrap_or_default();
-                let output = (&act_fn.act_func)(arg).await?;
+                let output = (&act_fn.act_func)(arg).await;
+                let result = match output {
+                    Ok(res) => ActivityExecutionResult::ok(res),
+                    Err(err) => ActivityExecutionResult::fail(err.into()),
+                };
                 core.complete_activity_task(ActivityTaskCompletion {
                     task_token: activity.task_token,
                     task_queue: task_queue.to_string(),
-                    result: Some(ActivityResult::ok(output)),
+                    result: Some(result),
                 })
                 .await?;
             }
@@ -340,7 +344,7 @@ impl ActivityHalf {
 #[derive(Debug)]
 enum UnblockEvent {
     Timer(u32),
-    Activity(u32, Box<ActivityResult>),
+    Activity(u32, Box<ActivityResolution>),
     WorkflowStart(u32, Box<ChildWorkflowStartStatus>),
     WorkflowComplete(u32, Box<ChildWorkflowResult>),
     SignalExternal(u32, Option<Failure>),
@@ -376,7 +380,7 @@ impl Unblockable for TimerResult {
     }
 }
 
-impl Unblockable for ActivityResult {
+impl Unblockable for ActivityResolution {
     type OtherDat = ();
     fn unblock(ue: UnblockEvent, _: Self::OtherDat) -> Self {
         match ue {
@@ -550,14 +554,16 @@ impl<A, Rf, R, F> IntoActivityFunc<A, Rf> for F
 where
     F: (Fn(A) -> Rf) + Sync + Send + 'static,
     A: FromJsonPayloadExt + Send,
-    Rf: Future<Output = R> + Send + 'static,
+    Rf: Future<Output = Result<R, anyhow::Error>> + Send + 'static,
     R: AsJsonPayloadExt,
 {
     fn into_activity_fn(self) -> BoxActFn {
         let wrapper = move |input: Payload| {
             // Some minor gymnastics are required to avoid needing to clone the function
             match A::from_json_payload(&input) {
-                Ok(deser) => (self)(deser).map(|r| r.as_json_payload()).boxed(),
+                Ok(deser) => (self)(deser)
+                    .map(|r| r.map(|r| r.as_json_payload())?)
+                    .boxed(),
                 Err(e) => async move { Err(e.into()) }.boxed(),
             }
         };

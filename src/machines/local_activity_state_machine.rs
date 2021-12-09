@@ -1,3 +1,4 @@
+use crate::protosext::TryIntoOrNone;
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, OnEventWrapper,
@@ -12,7 +13,7 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::{activity_result, ActivityResult, Failure as ActFail, Success},
+        activity_result::{ActivityResolution, Failure as ActFail, Success},
         common::build_local_activity_marker_details,
         external_data::LocalActivityMarkerData,
         workflow_activation::ResolveActivity,
@@ -45,7 +46,8 @@ fsm! {
 
     MarkerCommandCreated --(CommandRecordMarker, on_command_record_marker) --> ResultNotified;
 
-    ResultNotified --(MarkerRecorded(CompleteLocalActivityData), shared on_marker_recorded) --> MarkerCommandRecorded;
+    ResultNotified --(MarkerRecorded(CompleteLocalActivityData), shared on_marker_recorded)
+      --> MarkerCommandRecorded;
 
     // Replay path ================================================================================
     // LAs on the replay path should never have handle result explicitly called on them, but do need
@@ -67,32 +69,29 @@ fsm! {
 #[derive(Debug, Clone)]
 pub(super) struct ResolveDat {
     pub(super) seq: u32,
-    pub(super) result: ActivityResult,
+    pub(super) result: LocalActivityExecutionResult,
     pub(super) complete_time: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum LocalActivityExecutionResult {
+    Completed(Success),
+    Failed(ActFail),
 }
 
 impl From<CompleteLocalActivityData> for ResolveDat {
     fn from(d: CompleteLocalActivityData) -> Self {
-        let status = match d.result {
-            Ok(res) => activity_result::Status::Completed(Success {
-                result: Some(res.into()),
-            }),
-            Err(fail) => activity_result::Status::Failed(ActFail {
-                failure: Some(fail),
-            }),
-        };
         ResolveDat {
             seq: d.marker_dat.seq,
-            result: ActivityResult {
-                status: Some(status),
+            result: match d.result {
+                Ok(res) => LocalActivityExecutionResult::Completed(Success {
+                    result: Some(res.into()),
+                }),
+                Err(fail) => LocalActivityExecutionResult::Failed(ActFail {
+                    failure: Some(fail),
+                }),
             },
-            complete_time: d
-                .marker_dat
-                .complete_time
-                .map(TryInto::try_into)
-                .transpose()
-                .ok()
-                .flatten(),
+            complete_time: d.marker_dat.complete_time.try_into_or_none(),
         }
     }
 }
@@ -197,7 +196,7 @@ impl LocalActivityMachine {
     pub(super) fn try_resolve(
         &mut self,
         seq: u32,
-        result: ActivityResult,
+        result: LocalActivityExecutionResult,
         runtime: Duration,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         let mut res = OnEventWrapper::on_event_mut(
@@ -255,12 +254,27 @@ impl Executing {
     }
 }
 
-#[derive(Default, Clone)]
-pub(super) struct MarkerCommandCreated {}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ResultType {
+    Completed,
+    // TODO: Cancelled,
+    Failed,
+}
+#[derive(Clone)]
+pub(super) struct MarkerCommandCreated {
+    result_type: ResultType,
+}
+impl From<MarkerCommandCreated> for ResultNotified {
+    fn from(mc: MarkerCommandCreated) -> Self {
+        Self {
+            result_type: mc.result_type,
+        }
+    }
+}
 
 impl MarkerCommandCreated {
     pub(super) fn on_command_record_marker(self) -> LocalActivityMachineTransition<ResultNotified> {
-        TransitionResult::default()
+        TransitionResult::from(self)
     }
 }
 
@@ -301,7 +315,12 @@ impl RequestSent {
         self,
         dat: ResolveDat,
     ) -> LocalActivityMachineTransition<MarkerCommandCreated> {
-        TransitionResult::commands([LocalActivityCommand::Resolved(dat)])
+        let result_type = match &dat.result {
+            LocalActivityExecutionResult::Completed(_) => ResultType::Completed,
+            LocalActivityExecutionResult::Failed(_) => ResultType::Failed,
+        };
+        let new_state = MarkerCommandCreated { result_type };
+        TransitionResult::ok([LocalActivityCommand::Resolved(dat)], new_state)
     }
 }
 
@@ -315,8 +334,10 @@ macro_rules! verify_marker_dat {
     };
 }
 
-#[derive(Default, Clone)]
-pub(super) struct ResultNotified {}
+#[derive(Clone)]
+pub(super) struct ResultNotified {
+    result_type: ResultType,
+}
 
 impl ResultNotified {
     pub(super) fn on_marker_recorded(
@@ -324,6 +345,18 @@ impl ResultNotified {
         shared: SharedState,
         dat: CompleteLocalActivityData,
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
+        if self.result_type == ResultType::Completed && dat.result.is_err() {
+            return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                "Local activity (seq {}) completed successfully locally, but history said \
+                 it failed!",
+                shared.attrs.seq
+            )));
+        } else if self.result_type == ResultType::Failed && dat.result.is_ok() {
+            return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                "Local activity (seq {}) failed locally, but history said it completed!",
+                shared.attrs.seq
+            )));
+        }
         verify_marker_dat!(&shared, &dat, TransitionResult::default())
     }
 }
@@ -392,31 +425,19 @@ impl WFMachinesAdapter for LocalActivityMachine {
             }) => {
                 let mut maybe_ok_result = None;
                 let mut maybe_failure = None;
-                if let Some(s) = result.status.clone() {
-                    match s {
-                        activity_result::Status::Completed(suc) => {
-                            maybe_ok_result = suc.result;
-                        }
-                        activity_result::Status::Failed(fail) => {
-                            maybe_failure = fail.failure;
-                        }
-                        activity_result::Status::Cancelled(_) => {
-                            todo!("Local activity cancellation not implemented yet")
-                        }
-                        activity_result::Status::WillCompleteAsync(_) => {
-                            return Err(WFMachinesError::Fatal(
-                                "Local activities cannot be completed async. \
-                                 This is a lang SDK bug."
-                                    .to_string(),
-                            ))
-                        }
+                match result.clone() {
+                    LocalActivityExecutionResult::Completed(suc) => {
+                        maybe_ok_result = suc.result;
+                    }
+                    LocalActivityExecutionResult::Failed(fail) => {
+                        maybe_failure = fail.failure;
                     }
                 };
                 let mut responses = vec![
                     MachineResponse::PushWFJob(
                         ResolveActivity {
                             seq: self.shared_state.attrs.seq,
-                            result: Some(result),
+                            result: Some(result.into()),
                         }
                         .into(),
                     ),
@@ -505,7 +526,21 @@ fn verify_marker_data_matches(
             dat.marker_dat.seq, shared.attrs.seq
         )));
     }
+
     Ok(())
+}
+
+impl From<LocalActivityExecutionResult> for ActivityResolution {
+    fn from(lar: LocalActivityExecutionResult) -> Self {
+        match lar {
+            LocalActivityExecutionResult::Completed(c) => ActivityResolution {
+                status: Some(c.into()),
+            },
+            LocalActivityExecutionResult::Failed(f) => ActivityResolution {
+                status: Some(f.into()),
+            },
+        }
+    }
 }
 
 #[cfg(test)]
@@ -519,7 +554,10 @@ mod tests {
     use rstest::rstest;
     use std::time::Duration;
     use temporal_sdk_core_protos::{
-        coresdk::workflow_activation::{wf_activation_job, WfActivationJob},
+        coresdk::{
+            activity_result::ActivityExecutionResult,
+            workflow_activation::{wf_activation_job, WfActivationJob},
+        },
         temporal::api::{
             command::v1::command, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
         },
@@ -575,12 +613,12 @@ mod tests {
 
         if !replay {
             if completes_ok {
-                wfm.complete_local_activity(1, ActivityResult::ok(b"hi".into()))
+                wfm.complete_local_activity(1, ActivityExecutionResult::ok(b"hi".into()))
                     .unwrap();
             } else {
                 wfm.complete_local_activity(
                     1,
-                    ActivityResult::fail(Failure {
+                    ActivityExecutionResult::fail(Failure {
                         message: "I failed".to_string(),
                         ..Default::default()
                     }),
@@ -669,7 +707,7 @@ mod tests {
         assert_eq!(ready_to_execute_las.len(), num_queued);
 
         if !replay {
-            wfm.complete_local_activity(1, ActivityResult::ok(b"Resolved".into()))
+            wfm.complete_local_activity(1, ActivityExecutionResult::ok(b"Resolved".into()))
                 .unwrap();
         }
 
@@ -690,7 +728,7 @@ mod tests {
         }
 
         if !replay {
-            wfm.complete_local_activity(2, ActivityResult::ok(b"Resolved".into()))
+            wfm.complete_local_activity(2, ActivityExecutionResult::ok(b"Resolved".into()))
                 .unwrap();
         }
 
@@ -764,9 +802,9 @@ mod tests {
         assert_eq!(ready_to_execute_las.len(), num_queued);
 
         if !replay {
-            wfm.complete_local_activity(1, ActivityResult::ok(b"Resolved".into()))
+            wfm.complete_local_activity(1, ActivityExecutionResult::ok(b"Resolved".into()))
                 .unwrap();
-            wfm.complete_local_activity(2, ActivityResult::ok(b"Resolved".into()))
+            wfm.complete_local_activity(2, ActivityExecutionResult::ok(b"Resolved".into()))
                 .unwrap();
         }
 
@@ -845,7 +883,7 @@ mod tests {
         assert_eq!(ready_to_execute_las.len(), num_queued);
 
         if !replay {
-            wfm.complete_local_activity(1, ActivityResult::ok(b"Resolved".into()))
+            wfm.complete_local_activity(1, ActivityExecutionResult::ok(b"Resolved".into()))
                 .unwrap();
         }
 
@@ -886,7 +924,7 @@ mod tests {
         let num_queued = if !replay { 1 } else { 0 };
         assert_eq!(ready_to_execute_las.len(), num_queued);
         if !replay {
-            wfm.complete_local_activity(2, ActivityResult::ok(b"Resolved".into()))
+            wfm.complete_local_activity(2, ActivityExecutionResult::ok(b"Resolved".into()))
                 .unwrap();
         }
 
@@ -948,9 +986,55 @@ mod tests {
         let ready_to_execute_las = wfm.drain_queued_local_activities();
         assert_eq!(ready_to_execute_las.len(), 1);
         // We can happily complete it now
-        wfm.complete_local_activity(1, ActivityResult::ok(b"hi".into()))
+        wfm.complete_local_activity(1, ActivityExecutionResult::ok(b"hi".into()))
             .unwrap();
 
+        wfm.shutdown().await.unwrap();
+    }
+
+    /// This test verifies something that technically shouldn't really be possible but is worth
+    /// checking anyway. What happens if in memory we think an LA passed but then the next history
+    /// chunk comes back with it failing? We should fail with a mismatch.
+    #[tokio::test]
+    async fn exec_passes_but_history_has_fail() {
+        let func = WorkflowFunction::new(la_wf);
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_local_activity_fail_marker(
+            1,
+            "1",
+            Failure::application_failure("I failed".to_string(), false),
+        );
+        t.add_workflow_execution_completed();
+
+        let histinfo = t.get_history_info(1).unwrap().into();
+        let mut wfm = ManagedWFFunc::new_from_update(histinfo, func, vec![]);
+
+        wfm.get_next_activation().await.unwrap();
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 0);
+        let ready_to_execute_las = wfm.drain_queued_local_activities();
+        assert_eq!(ready_to_execute_las.len(), 1);
+        // Completes OK
+        wfm.complete_local_activity(1, ActivityExecutionResult::ok(b"hi".into()))
+            .unwrap();
+
+        // next activation unblocks LA
+        wfm.get_next_activation().await.unwrap();
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
+        assert_eq!(
+            commands[1].command_type,
+            CommandType::CompleteWorkflowExecution as i32
+        );
+
+        let err = wfm
+            .new_history(t.get_full_history_info().unwrap().into())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Nondeterminism"));
         wfm.shutdown().await.unwrap();
     }
 }

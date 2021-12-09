@@ -827,10 +827,7 @@ impl WorkflowMachines {
             match cmd {
                 WFCommand::AddTimer(attrs) => {
                     let seq = attrs.seq;
-                    let timer = self.add_new_command_machine(new_timer(attrs));
-                    self.id_to_machine
-                        .insert(CommandID::Timer(seq), timer.machine);
-                    self.current_wf_task_commands.push_back(timer);
+                    self.add_cmd_to_wf_task(new_timer(attrs), Some(CommandID::Timer(seq)));
                 }
                 WFCommand::CancelTimer(attrs) => {
                     jobs.extend(self.process_cancellation(CommandID::Timer(attrs.seq))?);
@@ -849,10 +846,10 @@ impl WorkflowMachines {
                             .insert(CommandID::LocalActivity(seq), machkey);
                         self.process_machine_responses(machkey, mach_resp)?;
                     } else {
-                        let activity = self.add_new_command_machine(new_activity(attrs));
-                        self.id_to_machine
-                            .insert(CommandID::Activity(seq), activity.machine);
-                        self.current_wf_task_commands.push_back(activity);
+                        self.add_cmd_to_wf_task(
+                            new_activity(attrs),
+                            Some(CommandID::Activity(seq)),
+                        );
                     };
                 }
                 WFCommand::RequestCancelActivity(attrs) => {
@@ -878,15 +875,12 @@ impl WorkflowMachines {
                     // Do not create commands for change IDs that we have already created commands
                     // for.
                     if !matches!(self.encountered_change_markers.get(&attrs.patch_id),
-                                Some(ChangeInfo {created_command})
-                                    if *created_command)
+                                 Some(ChangeInfo {created_command}) if *created_command)
                     {
-                        let verm = self.add_new_command_machine(has_change(
-                            attrs.patch_id.clone(),
-                            self.replaying,
-                            attrs.deprecated,
-                        ));
-                        self.current_wf_task_commands.push_back(verm);
+                        self.add_cmd_to_wf_task(
+                            has_change(attrs.patch_id.clone(), self.replaying, attrs.deprecated),
+                            None,
+                        );
 
                         if let Some(ci) = self.encountered_change_markers.get_mut(&attrs.patch_id) {
                             ci.created_command = true;
@@ -902,10 +896,10 @@ impl WorkflowMachines {
                 }
                 WFCommand::AddChildWorkflow(attrs) => {
                     let seq = attrs.seq;
-                    let child_workflow = self.add_new_command_machine(new_child_workflow(attrs));
-                    self.id_to_machine
-                        .insert(CommandID::ChildWorkflowStart(seq), child_workflow.machine);
-                    self.current_wf_task_commands.push_back(child_workflow);
+                    self.add_cmd_to_wf_task(
+                        new_child_workflow(attrs),
+                        Some(CommandID::ChildWorkflowStart(seq)),
+                    );
                 }
                 WFCommand::CancelUnstartedChild(attrs) => jobs.extend(self.process_cancellation(
                     CommandID::ChildWorkflowStart(attrs.child_workflow_seq),
@@ -928,11 +922,10 @@ impl WorkflowMachines {
                         ),
                         Some(cancel_we::Target::WorkflowExecution(we)) => (we, false),
                     };
-                    let mach = self
-                        .add_new_command_machine(new_external_cancel(attrs.seq, we, only_child));
-                    self.id_to_machine
-                        .insert(CommandID::CancelExternal(attrs.seq), mach.machine);
-                    self.current_wf_task_commands.push_back(mach);
+                    self.add_cmd_to_wf_task(
+                        new_external_cancel(attrs.seq, we, only_child),
+                        Some(CommandID::CancelExternal(attrs.seq)),
+                    );
                 }
                 WFCommand::SignalExternalWorkflow(attrs) => {
                     let (we, only_child) = match attrs.target {
@@ -953,16 +946,16 @@ impl WorkflowMachines {
                         Some(sig_we::Target::WorkflowExecution(we)) => (we, false),
                     };
 
-                    let sigm = self.add_new_command_machine(new_external_signal(
-                        attrs.seq,
-                        we,
-                        attrs.signal_name,
-                        attrs.args,
-                        only_child,
-                    ));
-                    self.id_to_machine
-                        .insert(CommandID::SignalExternal(attrs.seq), sigm.machine);
-                    self.current_wf_task_commands.push_back(sigm);
+                    self.add_cmd_to_wf_task(
+                        new_external_signal(
+                            attrs.seq,
+                            we,
+                            attrs.signal_name,
+                            attrs.args,
+                            only_child,
+                        ),
+                        Some(CommandID::SignalExternal(attrs.seq)),
+                    );
                 }
                 WFCommand::CancelSignalWorkflow(attrs) => {
                     jobs.extend(self.process_cancellation(CommandID::SignalExternal(attrs.seq))?);
@@ -1016,6 +1009,15 @@ impl WorkflowMachines {
         let cwfm = self.add_new_command_machine(machine);
         self.workflow_end_time = Some(SystemTime::now());
         self.current_wf_task_commands.push_back(cwfm);
+    }
+
+    /// Add a new command/machines for that command to the current workflow task
+    fn add_cmd_to_wf_task(&mut self, machine: NewMachineWithCommand, id: Option<CommandID>) {
+        let mach = self.add_new_command_machine(machine);
+        if let Some(id) = id {
+            self.id_to_machine.insert(id, mach.machine);
+        }
+        self.current_wf_task_commands.push_back(mach);
     }
 
     fn add_new_command_machine(&mut self, machine: NewMachineWithCommand) -> CommandAndMachine {

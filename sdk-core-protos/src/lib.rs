@@ -15,7 +15,6 @@ pub mod coresdk {
         failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
         workflowservice::v1::PollActivityTaskQueueResponse,
     };
-    use activity_result::ActivityResult;
     use activity_task::ActivityTask;
     use common::Payload;
     use serde::{Deserialize, Serialize};
@@ -59,11 +58,28 @@ pub mod coresdk {
             },
             common::Payload,
         };
+        use activity_execution_result as aer;
 
-        impl ActivityResult {
+        impl ActivityExecutionResult {
+            pub const fn ok(result: Payload) -> Self {
+                Self {
+                    status: Some(aer::Status::Completed(Success {
+                        result: Some(result),
+                    })),
+                }
+            }
+
+            pub fn fail(fail: APIFailure) -> Self {
+                Self {
+                    status: Some(aer::Status::Failed(Failure {
+                        failure: Some(fail),
+                    })),
+                }
+            }
+
             pub fn cancel_from_details(payload: Option<Payload>) -> Self {
                 Self {
-                    status: Some(activity_result::Status::Cancelled(Cancellation {
+                    status: Some(aer::Status::Cancelled(Cancellation {
                         failure: Some(APIFailure {
                             // CanceledFailure
                             message: "Activity cancelled".to_string(),
@@ -77,27 +93,41 @@ pub mod coresdk {
                     })),
                 }
             }
+
             pub const fn will_complete_async() -> Self {
                 Self {
-                    status: Some(activity_result::Status::WillCompleteAsync(
-                        WillCompleteAsync {},
-                    )),
+                    status: Some(aer::Status::WillCompleteAsync(WillCompleteAsync {})),
                 }
             }
         }
 
-        impl From<Result<APIPayload, APIFailure>> for ActivityResult {
+        impl From<Result<APIPayload, APIFailure>> for ActivityExecutionResult {
             fn from(r: Result<APIPayload, APIFailure>) -> Self {
                 Self {
                     status: match r {
-                        Ok(p) => Some(activity_result::Status::Completed(Success {
+                        Ok(p) => Some(aer::Status::Completed(Success {
                             result: Some(p.into()),
                         })),
-                        Err(f) => Some(activity_result::Status::Failed(Failure {
-                            failure: Some(f),
-                        })),
+                        Err(f) => Some(aer::Status::Failed(Failure { failure: Some(f) })),
                     },
                 }
+            }
+        }
+
+        impl ActivityResolution {
+            pub fn unwrap_ok_payload(self) -> Payload {
+                match self.status.unwrap() {
+                    activity_resolution::Status::Completed(c) => c.result.unwrap(),
+                    _ => panic!("Activity was not successful"),
+                }
+            }
+
+            pub fn completed_ok(&self) -> bool {
+                matches!(self.status, Some(activity_resolution::Status::Completed(_)))
+            }
+
+            pub fn failed(&self) -> bool {
+                matches!(self.status, Some(activity_resolution::Status::Failed(_)))
             }
         }
     }
@@ -773,35 +803,6 @@ pub mod coresdk {
         }
     }
 
-    impl ActivityResult {
-        pub const fn ok(result: Payload) -> Self {
-            Self {
-                status: Some(activity_result::activity_result::Status::Completed(
-                    activity_result::Success {
-                        result: Some(result),
-                    },
-                )),
-            }
-        }
-
-        pub fn fail(fail: Failure) -> Self {
-            Self {
-                status: Some(activity_result::activity_result::Status::Failed(
-                    activity_result::Failure {
-                        failure: Some(fail),
-                    },
-                )),
-            }
-        }
-
-        pub fn unwrap_ok_payload(self) -> Payload {
-            match self.status.unwrap() {
-                activity_result::activity_result::Status::Completed(c) => c.result.unwrap(),
-                _ => panic!("Activity was not successful"),
-            }
-        }
-    }
-
     impl ActivityTask {
         pub fn start_from_poll_resp(r: PollActivityTaskQueueResponse) -> Self {
             let (workflow_id, run_id) = r
@@ -826,7 +827,7 @@ pub mod coresdk {
                         scheduled_time: r.scheduled_time,
                         current_attempt_scheduled_time: r.current_attempt_scheduled_time,
                         started_time: r.started_time,
-                        attempt: r.attempt,
+                        attempt: r.attempt as u32,
                         schedule_to_close_timeout: r.schedule_to_close_timeout,
                         start_to_close_timeout: r.start_to_close_timeout,
                         heartbeat_timeout: r.heartbeat_timeout,
@@ -871,6 +872,12 @@ pub mod coresdk {
                 )),
                 ..Default::default()
             }
+        }
+    }
+
+    impl From<anyhow::Error> for Failure {
+        fn from(ae: anyhow::Error) -> Self {
+            Failure::application_failure(ae.to_string(), false)
         }
     }
 

@@ -44,7 +44,7 @@ message Start {
     google.protobuf.Timestamp current_attempt_scheduled_time = 9;
     // When this attempt was started, which is to say when core received it by polling.
     google.protobuf.Timestamp started_time = 10;
-    int32 attempt = 11;
+    uint32 attempt = 11;
 
     // Timeout from the first schedule time to completion
     google.protobuf.Duration schedule_to_close_timeout = 12;

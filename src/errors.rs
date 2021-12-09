@@ -2,7 +2,7 @@
 
 use crate::{machines::WFMachinesError, task_token::TaskToken, WorkerLookupErr};
 use temporal_sdk_core_protos::coresdk::{
-    activity_result::ActivityResult, workflow_completion::WfActivationCompletion,
+    activity_result::ActivityExecutionResult, workflow_completion::WfActivationCompletion,
 };
 use tonic::codegen::http::uri::InvalidUri;
 
@@ -144,7 +144,7 @@ pub enum CompleteActivityError {
         /// Reason the completion was malformed
         reason: String,
         /// The completion, which may not be included to avoid unnecessary copies.
-        completion: Option<ActivityResult>,
+        completion: Option<ActivityExecutionResult>,
     },
     /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
     /// errors, so lang should consider this fatal.

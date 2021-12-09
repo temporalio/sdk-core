@@ -7,13 +7,23 @@ use crate::{
     },
     Core,
 };
+use anyhow::anyhow;
 use futures::future::join_all;
-use std::{sync::Arc, time::Duration};
-use temporal_sdk_core_protos::{coresdk::AsJsonPayloadExt, temporal::api::enums::v1::EventType};
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use temporal_sdk_core_protos::{
+    coresdk::{common::RetryPolicy, AsJsonPayloadExt},
+    temporal::api::enums::v1::EventType,
+};
 use tokio::sync::Barrier;
 
-async fn echo(e: String) -> String {
-    e
+async fn echo(e: String) -> anyhow::Result<String> {
+    Ok(e)
 }
 
 /// This test verifies that when replaying we are able to resolve local activities whose data we
@@ -110,7 +120,7 @@ async fn local_act_many_concurrent() {
     let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
     worker.register_wf(DEFAULT_WORKFLOW_TYPE.to_owned(), local_act_fanout_wf);
-    worker.register_activity("echo", |str: String| async move { str });
+    worker.register_activity("echo", |str: String| async move { Ok(str) });
     worker
         .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
         .await
@@ -172,7 +182,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
         }
         // Take slightly more than two workflow tasks
         tokio::time::sleep(wft_timeout.mul_f32(2.2)).await;
-        str
+        Ok(str)
     });
     worker
         .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
@@ -188,4 +198,63 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
         worker.run_until_done()
     );
     runres.unwrap();
+}
+
+#[rstest::rstest]
+#[case::retry_then_pass(true)]
+#[case::retry_until_fail(false)]
+#[tokio::test]
+async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_workflow_task_scheduled_and_started();
+
+    let wf_id = "fakeid";
+    let mock = MockServerGatewayApis::new();
+    let mh = MockPollCfg::from_resp_batches(wf_id, t, [1], mock);
+    let mock = build_mock_pollers(mh);
+    let core = mock_core(mock);
+    let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
+
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        move |mut ctx: WfContext| async move {
+            let la_res = ctx
+                .local_activity(LocalActivityOptions {
+                    activity_type: "echo".to_string(),
+                    input: "hi".as_json_payload().expect("serializes fine"),
+                    retry_policy: RetryPolicy {
+                        initial_interval: Some(Duration::from_millis(50).into()),
+                        backoff_coefficient: 1.2,
+                        maximum_interval: None,
+                        maximum_attempts: 4,
+                        non_retryable_error_types: vec![],
+                    },
+                    ..Default::default()
+                })
+                .await;
+            if eventually_pass {
+                assert!(la_res.completed_ok())
+            } else {
+                assert!(la_res.failed())
+            }
+            Ok(().into())
+        },
+    );
+    let attempts: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
+    worker.register_activity("echo", move |_: String| async move {
+        // Succeed on 3rd attempt
+        if 2 == attempts.fetch_add(1, Ordering::Relaxed) && eventually_pass {
+            Ok(())
+        } else {
+            Err(anyhow!("Oh no I failed!"))
+        }
+    });
+    worker
+        .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    let expected_attempts = if eventually_pass { 3 } else { 4 };
+    assert_eq!(expected_attempts, attempts.load(Ordering::Relaxed));
 }

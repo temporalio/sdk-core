@@ -1,7 +1,9 @@
 mod activity_heartbeat_manager;
 mod local_activities;
 
-pub(crate) use local_activities::{LocalActivityManager, NewLocalAct};
+pub(crate) use local_activities::{
+    LACompleteAction, LocalActivityManager, LocalInFlightActInfo, NewLocalAct,
+};
 
 use crate::{
     pollers::BoxedActPoller,
@@ -18,7 +20,7 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::{self as ar, activity_result},
+        activity_result::{self as ar, activity_execution_result as aer},
         activity_task::{ActivityCancelReason, ActivityTask},
         ActivityHeartbeat,
     },
@@ -185,7 +187,7 @@ impl WorkerActivityTasks {
     pub(crate) async fn complete(
         &self,
         task_token: TaskToken,
-        status: activity_result::Status,
+        status: aer::Status,
         gateway: &(dyn ServerGatewayApis + Send + Sync),
     ) -> Result<(), CompleteActivityError> {
         if let Some((_, act_info)) = self.outstanding_activity_tasks.remove(&task_token) {
@@ -202,19 +204,19 @@ impl WorkerActivityTasks {
             // No need to report activities which we already know the server doesn't care about
             if !known_not_found {
                 let maybe_net_err = match status {
-                    activity_result::Status::WillCompleteAsync(_) => None,
-                    activity_result::Status::Completed(ar::Success { result }) => gateway
+                    aer::Status::WillCompleteAsync(_) => None,
+                    aer::Status::Completed(ar::Success { result }) => gateway
                         .complete_activity_task(task_token.clone(), result.map(Into::into))
                         .await
                         .err(),
-                    activity_result::Status::Failed(ar::Failure { failure }) => {
+                    aer::Status::Failed(ar::Failure { failure }) => {
                         act_metrics.act_execution_failed();
                         gateway
                             .fail_activity_task(task_token.clone(), failure.map(Into::into))
                             .await
                             .err()
                     }
-                    activity_result::Status::Cancelled(ar::Cancellation { failure }) => {
+                    aer::Status::Cancelled(ar::Cancellation { failure }) => {
                         let details = if let Some(Failure {
                             failure_info:
                                 Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo { details })),

@@ -27,7 +27,7 @@ use temporal_sdk_core::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::ActivityResult,
+        activity_result::ActivityExecutionResult,
         workflow_activation::{wf_activation_job, WfActivation, WfActivationJob},
         workflow_commands::{ActivityCancellationType, FailWorkflowExecution, StartTimer},
         workflow_completion::WfActivationCompletion,
@@ -460,7 +460,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: ac_task.task_token,
         task_queue: task_q.to_string(),
-        result: Some(ActivityResult::ok(Default::default())),
+        result: Some(ActivityExecutionResult::ok(Default::default())),
     })
     .await
     .unwrap();

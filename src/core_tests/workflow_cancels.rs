@@ -6,12 +6,14 @@ use crate::{
     workflow::WorkflowCachingPolicy::NonSticky,
 };
 use rstest::rstest;
+use std::time::Duration;
 use temporal_sdk_core_protos::coresdk::{
     workflow_activation::{wf_activation_job, WfActivationJob},
     workflow_commands::{
-        CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution, StartTimer,
+        CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
     },
 };
+use test_utils::start_timer_cmd;
 
 enum CompletionType {
     Complete,
@@ -57,11 +59,7 @@ async fn timer_then_cancel_req(
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
-                vec![StartTimer {
-                    seq: timer_seq,
-                    ..Default::default()
-                }
-                .into()],
+                vec![start_timer_cmd(timer_seq, Duration::from_secs(1))],
             ),
             gen_assert_and_reply(
                 &job_assert!(
@@ -87,22 +85,14 @@ async fn timer_then_cancel_req_then_timer_then_cancelled() {
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
-                vec![StartTimer {
-                    seq: 1,
-                    ..Default::default()
-                }
-                .into()],
+                vec![start_timer_cmd(1, Duration::from_secs(1))],
             ),
             gen_assert_and_reply(
                 &job_assert!(
                     wf_activation_job::Variant::FireTimer(_),
                     wf_activation_job::Variant::CancelWorkflow(_)
                 ),
-                vec![StartTimer {
-                    seq: 2,
-                    ..Default::default()
-                }
-                .into()],
+                vec![start_timer_cmd(2, Duration::from_secs(1))],
             ),
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::FireTimer(_)),

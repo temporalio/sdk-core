@@ -19,14 +19,14 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::{self as ar, activity_result, ActivityResult},
+        activity_result::{self as ar, activity_resolution, ActivityResolution},
         workflow_activation::{
             wf_activation_job, FireTimer, ResolveActivity, StartWorkflow, UpdateRandomSeed,
             WfActivationJob,
         },
         workflow_commands::{
             ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
-            FailWorkflowExecution, RequestCancelActivity, ScheduleActivity, StartTimer,
+            FailWorkflowExecution, RequestCancelActivity, ScheduleActivity,
         },
     },
     temporal::api::{
@@ -36,7 +36,7 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::RespondWorkflowTaskCompletedResponse,
     },
 };
-use test_utils::fanout_tasks;
+use test_utils::{fanout_tasks, start_timer_cmd};
 
 #[fixture(hist_batches = &[])]
 fn single_timer_setup(hist_batches: &'static [usize]) -> CoreSDK {
@@ -75,11 +75,7 @@ async fn single_timer(#[case] core: CoreSDK, #[case] evict: WorkflowCachingPolic
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
-                vec![StartTimer {
-                    seq: 1,
-                    ..Default::default()
-                }
-                .into()],
+                vec![start_timer_cmd(1, Duration::from_secs(1))],
             ),
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::FireTimer(_)),
@@ -139,16 +135,8 @@ async fn parallel_timer_test_across_wf_bridge(hist_batches: &'static [usize]) {
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![
-                    StartTimer {
-                        seq: timer_1_id,
-                        ..Default::default()
-                    }
-                    .into(),
-                    StartTimer {
-                        seq: timer_2_id,
-                        ..Default::default()
-                    }
-                    .into(),
+                    start_timer_cmd(timer_1_id, Duration::from_secs(1)),
+                    start_timer_cmd(timer_2_id, Duration::from_secs(1)),
                 ],
             ),
             gen_assert_and_reply(
@@ -199,16 +187,8 @@ async fn timer_cancel(hist_batches: &'static [usize]) {
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
                 vec![
-                    StartTimer {
-                        seq: cancel_timer_id,
-                        ..Default::default()
-                    }
-                    .into(),
-                    StartTimer {
-                        seq: timer_id,
-                        ..Default::default()
-                    }
-                    .into(),
+                    start_timer_cmd(cancel_timer_id, Duration::from_secs(1)),
+                    start_timer_cmd(timer_id, Duration::from_secs(1)),
                 ],
             ),
             gen_assert_and_reply(
@@ -297,8 +277,8 @@ async fn scheduled_activity_timeout(hist_batches: &'static [usize]) {
                             variant: Some(wf_activation_job::Variant::ResolveActivity(
                                 ResolveActivity {
                                     seq,
-                                    result: Some(ActivityResult {
-                                        status: Some(activity_result::Status::Failed(ar::Failure {
+                                    result: Some(ActivityResolution {
+                                        status: Some(activity_resolution::Status::Failed(ar::Failure {
                                             failure: Some(failure)
                                         })),
                                     })
@@ -343,26 +323,26 @@ async fn started_activity_timeout(hist_batches: &'static [usize]) {
             // Activity is getting resolved right away as it has been timed out.
             gen_assert_and_reply(
                 &|res| {
-                    assert_matches!(
-                                res.jobs.as_slice(),
-                                [
-                                    WfActivationJob {
-                                        variant: Some(wf_activation_job::Variant::ResolveActivity(
-                                            ResolveActivity {
-                                                seq,
-                                                result: Some(ActivityResult {
-                                                    status: Some(activity_result::Status::Failed(ar::Failure {
-                                                        failure: Some(failure)
-                                                    })),
-                                                })
-                                            }
-                                        )),
-                                    }
-                                ] => {
-                                    assert_eq!(failure.message, "Activity task timed out".to_string());
-                                    assert_eq!(*seq, activity_seq);
+                assert_matches!(
+                    res.jobs.as_slice(),
+                    [
+                        WfActivationJob {
+                            variant: Some(wf_activation_job::Variant::ResolveActivity(
+                                ResolveActivity {
+                                    seq,
+                                    result: Some(ActivityResolution {
+                                        status: Some(activity_resolution::Status::Failed(ar::Failure {
+                                            failure: Some(failure)
+                                        })),
+                                    })
                                 }
-                            );
+                            )),
+                        }
+                    ] => {
+                        assert_eq!(failure.message, "Activity task timed out".to_string());
+                        assert_eq!(*seq, activity_seq);
+                    }
+                );
                 },
                 vec![CompleteWorkflowExecution { result: None }.into()],
             ),
@@ -404,8 +384,8 @@ async fn cancelled_activity_timeout(hist_batches: &'static [usize]) {
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         seq: _,
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Cancelled(..)),
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Cancelled(..)),
                         })
                     }
                 )),
@@ -509,8 +489,8 @@ async fn verify_activity_cancellation(
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         seq: _,
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Cancelled(..)),
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Cancelled(..)),
                         })
                     }
                 )),
@@ -582,8 +562,8 @@ async fn verify_activity_cancellation_wait_for_cancellation(activity_id: u32, co
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         seq: _,
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Cancelled(..)),
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Cancelled(..)),
                         })
                     }
                 )),
@@ -624,11 +604,7 @@ async fn workflow_update_random_seed_on_workflow_reset() {
                         }
                     );
                 },
-                vec![StartTimer {
-                    seq: timer_1_id,
-                    ..Default::default()
-                }
-                .into()],
+                vec![start_timer_cmd(timer_1_id, Duration::from_secs(1))],
             ),
             gen_assert_and_reply(
                 &|res| {
@@ -671,11 +647,7 @@ async fn cancel_timer_before_sent_wf_bridge() {
         &[gen_assert_and_reply(
             &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
             vec![
-                StartTimer {
-                    seq: cancel_timer_id,
-                    ..Default::default()
-                }
-                .into(),
+                start_timer_cmd(cancel_timer_id, Duration::from_secs(1)),
                 CancelTimer {
                     seq: cancel_timer_id,
                 }
@@ -718,11 +690,7 @@ async fn complete_activation_with_failure(
         &[
             gen_assert_and_reply(
                 &|_| {},
-                vec![StartTimer {
-                    seq: timer_id,
-                    ..Default::default()
-                }
-                .into()],
+                vec![start_timer_cmd(timer_id, Duration::from_secs(1))],
             ),
             gen_assert_and_fail(&|_| {}),
             gen_assert_and_reply(
@@ -750,11 +718,7 @@ async fn simple_timer_fail_wf_execution(hist_batches: &'static [usize]) {
         &[
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
-                vec![StartTimer {
-                    seq: timer_id,
-                    ..Default::default()
-                }
-                .into()],
+                vec![start_timer_cmd(timer_id, Duration::from_secs(1))],
             ),
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::FireTimer(_)),
@@ -837,11 +801,7 @@ async fn workflow_failures_only_reported_once() {
         &[
             gen_assert_and_reply(
                 &|_| {},
-                vec![StartTimer {
-                    seq: timer_1,
-                    ..Default::default()
-                }
-                .into()],
+                vec![start_timer_cmd(timer_1, Duration::from_secs(1))],
             ),
             // Fail a few times in a row (only one of which should be reported)
             gen_assert_and_fail(&|_| {}),
@@ -849,11 +809,7 @@ async fn workflow_failures_only_reported_once() {
             gen_assert_and_fail(&|_| {}),
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::FireTimer(_)),
-                vec![StartTimer {
-                    seq: timer_2,
-                    ..Default::default()
-                }
-                .into()],
+                vec![start_timer_cmd(timer_2, Duration::from_secs(1))],
             ),
             // Again (a new fail should be reported here)
             gen_assert_and_fail(&|_| {}),
@@ -911,11 +867,7 @@ async fn max_concurrent_wft_respected() {
             core.complete_workflow_activation(WfActivationCompletion::from_cmd(
                 TEST_Q,
                 r1.run_id,
-                StartTimer {
-                    seq: 1,
-                    ..Default::default()
-                }
-                .into())
+                start_timer_cmd(1, Duration::from_secs(1)))
             ).await.unwrap();
             last_finisher.store(1, Ordering::SeqCst);
         },
@@ -933,11 +885,7 @@ async fn max_concurrent_wft_respected() {
         core.complete_workflow_activation(WfActivationCompletion::from_cmd(
             TEST_Q,
             r1.run_id,
-            StartTimer {
-                seq: i,
-                ..Default::default()
-            }
-            .into(),
+            start_timer_cmd(i, Duration::from_secs(1)),
         ))
         .await
         .unwrap();
@@ -960,11 +908,7 @@ async fn max_concurrent_wft_respected() {
         .complete_workflow_activation(WfActivationCompletion::from_cmd(
             TEST_Q,
             r2.run_id,
-            StartTimer {
-                seq: 1,
-                ..Default::default()
-            }
-            .into(),
+            start_timer_cmd(1, Duration::from_secs(1)),
         ))
         .await;
     // Get and complete eviction
@@ -998,11 +942,7 @@ async fn activity_not_canceled_on_replay_repro(hist_batches: &'static [usize]) {
                         ..Default::default()
                     }
                     .into(),
-                    StartTimer {
-                        seq: 1,
-                        ..Default::default()
-                    }
-                    .into(),
+                    start_timer_cmd(1, Duration::from_secs(1)),
                 ],
             ),
             gen_assert_and_reply(
@@ -1012,17 +952,13 @@ async fn activity_not_canceled_on_replay_repro(hist_batches: &'static [usize]) {
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Cancelled(..)),
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Cancelled(..)),
                         }),
                         ..
                     }
                 )),
-                vec![StartTimer {
-                    seq: 2,
-                    ..Default::default()
-                }
-                .into()],
+                vec![start_timer_cmd(2, Duration::from_secs(1))],
             ),
         ],
     )
@@ -1055,18 +991,14 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static 
                 &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
                 vec![
                     RequestCancelActivity { seq: activity_id }.into(),
-                    StartTimer {
-                        seq: 2,
-                        ..Default::default()
-                    }
-                    .into(),
+                    start_timer_cmd(2, Duration::from_secs(1)),
                 ],
             ),
             gen_assert_and_reply(
                 &job_assert!(wf_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Cancelled(..)),
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Cancelled(..)),
                         }),
                         ..
                     }
@@ -1097,11 +1029,9 @@ async fn lots_of_workflows() {
         while let Ok(wft) = core.poll_workflow_activation(TEST_Q).await {
             let job = &wft.jobs[0];
             let reply = match job.variant {
-                Some(wf_activation_job::Variant::StartWorkflow(_)) => StartTimer {
-                    seq: 1,
-                    ..Default::default()
+                Some(wf_activation_job::Variant::StartWorkflow(_)) => {
+                    start_timer_cmd(1, Duration::from_secs(1))
                 }
-                .into(),
                 Some(wf_activation_job::Variant::RemoveFromCache(_)) => {
                     core.complete_workflow_activation(WfActivationCompletion::empty(
                         TEST_Q, wft.run_id,
@@ -1157,8 +1087,8 @@ async fn wft_timeout_repro(hist_batches: &'static [usize]) {
                     wf_activation_job::Variant::SignalWorkflow(_),
                     wf_activation_job::Variant::SignalWorkflow(_),
                     wf_activation_job::Variant::ResolveActivity(ResolveActivity {
-                        result: Some(ActivityResult {
-                            status: Some(activity_result::Status::Completed(..)),
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Completed(..)),
                         }),
                         ..
                     })
@@ -1186,11 +1116,7 @@ async fn complete_after_eviction() {
     core.complete_workflow_activation(WfActivationCompletion::from_cmd(
         TEST_Q,
         activation.run_id,
-        StartTimer {
-            seq: 1,
-            ..Default::default()
-        }
-        .into(),
+        start_timer_cmd(1, Duration::from_secs(1)),
     ))
     .await
     .unwrap();
@@ -1237,11 +1163,7 @@ async fn sends_appropriate_sticky_task_queue_responses() {
     core.complete_workflow_activation(WfActivationCompletion::from_cmd(
         TEST_Q,
         activation.run_id,
-        StartTimer {
-            seq: 1,
-            ..Default::default()
-        }
-        .into(),
+        start_timer_cmd(1, Duration::from_secs(1)),
     ))
     .await
     .unwrap();
@@ -1262,11 +1184,7 @@ async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation(
     core.complete_workflow_activation(WfActivationCompletion::from_cmd(
         TEST_Q,
         activation.run_id,
-        StartTimer {
-            seq: 1,
-            ..Default::default()
-        }
-        .into(),
+        start_timer_cmd(1, Duration::from_secs(1)),
     ))
     .await
     .unwrap();
@@ -1344,11 +1262,7 @@ async fn buffered_work_drained_on_shutdown() {
         core.complete_workflow_activation(WfActivationCompletion::from_cmd(
             TEST_Q,
             act1.run_id,
-            StartTimer {
-                seq: 1,
-                ..Default::default()
-            }
-            .into(),
+            start_timer_cmd(1, Duration::from_secs(1)),
         ))
         .await
         .unwrap();
@@ -1442,11 +1356,7 @@ async fn fail_wft_then_recover() {
     core.complete_workflow_activation(WfActivationCompletion::from_cmds(
         TEST_Q,
         act.run_id,
-        vec![StartTimer {
-            seq: 1,
-            ..Default::default()
-        }
-        .into()],
+        vec![start_timer_cmd(1, Duration::from_secs(1))],
     ))
     .await
     .unwrap();
