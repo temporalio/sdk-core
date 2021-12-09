@@ -1,3 +1,4 @@
+use crate::protosext::TryIntoOrNone;
 use std::time::Duration;
 use temporal_sdk_core_protos::coresdk::common::RetryPolicy;
 
@@ -7,28 +8,22 @@ pub(crate) trait RetryPolicyExt {
     ///
     /// Returns `None` if it should not, otherwise a duration indicating how long to wait before
     /// performing the retry.
-    fn should_retry(&self, attempt_number: usize, err_str: &str) -> Option<Duration>;
+    fn should_retry(&self, attempt_number: usize, err_type_str: &str) -> Option<Duration>;
 }
 
 impl RetryPolicyExt for RetryPolicy {
-    fn should_retry(&self, attempt_number: usize, err_str: &str) -> Option<Duration> {
+    fn should_retry(&self, attempt_number: usize, err_type_str: &str) -> Option<Duration> {
         if attempt_number >= self.maximum_attempts.max(0) as usize {
             return None;
         }
 
         for pat in &self.non_retryable_error_types {
-            if err_str.contains(pat.as_str()) {
+            if err_type_str.to_lowercase() == pat.to_lowercase() {
                 return None;
             }
         }
 
-        let converted_interval = self
-            .initial_interval
-            .clone()
-            .map(TryInto::try_into)
-            .transpose()
-            .ok()
-            .flatten();
+        let converted_interval = self.initial_interval.clone().try_into_or_none();
         if attempt_number == 1 {
             return converted_interval;
         }
@@ -42,10 +37,7 @@ impl RetryPolicyExt for RetryPolicy {
             let max_iv = self
                 .maximum_interval
                 .clone()
-                .map(TryInto::try_into)
-                .transpose()
-                .ok()
-                .flatten()
+                .try_into_or_none()
                 .unwrap_or_else(|| interval * 100);
             Some((interval.mul_f64(coeff.powi(attempt_number as i32 - 1))).min(max_iv))
         } else {
@@ -105,6 +97,6 @@ mod tests {
             maximum_attempts: 10,
             non_retryable_error_types: vec!["no retry".to_string()],
         };
-        assert!(rp.should_retry(1, "i have no retry match").is_none());
+        assert!(rp.should_retry(1, "no retry").is_none());
     }
 }

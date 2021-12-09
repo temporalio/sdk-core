@@ -1,3 +1,4 @@
+use crate::protosext::TryIntoOrNone;
 use crate::{
     prototype_rust_sdk::{
         conversions::anyhow_to_fail, workflow_context::WfContextSharedData, CancellableID,
@@ -244,12 +245,7 @@ impl Future for WorkflowFuture {
             {
                 let mut wlock = self.ctx_shared.write();
                 wlock.is_replaying = activation.is_replaying;
-                wlock.wf_time = activation
-                    .timestamp
-                    .map(TryInto::try_into)
-                    .transpose()
-                    .ok()
-                    .flatten();
+                wlock.wf_time = activation.timestamp.try_into_or_none();
             }
 
             let mut die_of_eviction_when_done = false;

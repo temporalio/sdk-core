@@ -1,3 +1,4 @@
+use crate::protosext::TryIntoOrNone;
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, OnEventWrapper,
@@ -90,13 +91,7 @@ impl From<CompleteLocalActivityData> for ResolveDat {
                     failure: Some(fail),
                 }),
             },
-            complete_time: d
-                .marker_dat
-                .complete_time
-                .map(TryInto::try_into)
-                .transpose()
-                .ok()
-                .flatten(),
+            complete_time: d.marker_dat.complete_time.try_into_or_none(),
         }
     }
 }
@@ -997,6 +992,9 @@ mod tests {
         wfm.shutdown().await.unwrap();
     }
 
+    /// This test verifies something that technically shouldn't really be possible but is worth
+    /// checking anyway. What happens if in memory we think an LA passed but then the next history
+    /// chunk comes back with it failing? We should fail with a mismatch.
     #[tokio::test]
     async fn exec_passes_but_history_has_fail() {
         let func = WorkflowFunction::new(la_wf);

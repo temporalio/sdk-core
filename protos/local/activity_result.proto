@@ -61,6 +61,9 @@ message WillCompleteAsync {
  * reasonable to WFT heartbeat for. Lang is expected to schedule a timer for the duration
  * and then start a local activity of the same type & same inputs with the provided attempt number
  * after the timer has elapsed.
+ *
+ * This exists because Core does not have a concept of starting commands by itself, they originate
+ * from lang. So expecting lang to start the timer / next pass of the activity fits more smoothly.
  */
 message DoBackoff {
     uint32 attempt = 1;
