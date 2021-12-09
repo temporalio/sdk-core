@@ -200,8 +200,11 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     runres.unwrap();
 }
 
+#[rstest::rstest]
+#[case::retry_then_pass(true)]
+#[case::retry_until_fail(false)]
 #[tokio::test]
-async fn local_act_fail_and_retry_until_pass() {
+async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_workflow_task_scheduled_and_started();
@@ -215,27 +218,33 @@ async fn local_act_fail_and_retry_until_pass() {
 
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
-        |mut ctx: WfContext| async move {
-            ctx.local_activity(LocalActivityOptions {
-                activity_type: "echo".to_string(),
-                input: "hi".as_json_payload().expect("serializes fine"),
-                retry_policy: RetryPolicy {
-                    initial_interval: Some(Duration::from_millis(50).into()),
-                    backoff_coefficient: 1.2,
-                    maximum_interval: None,
-                    maximum_attempts: 10,
-                    non_retryable_error_types: vec![],
-                },
-                ..Default::default()
-            })
-            .await;
+        move |mut ctx: WfContext| async move {
+            let la_res = ctx
+                .local_activity(LocalActivityOptions {
+                    activity_type: "echo".to_string(),
+                    input: "hi".as_json_payload().expect("serializes fine"),
+                    retry_policy: RetryPolicy {
+                        initial_interval: Some(Duration::from_millis(50).into()),
+                        backoff_coefficient: 1.2,
+                        maximum_interval: None,
+                        maximum_attempts: 4,
+                        non_retryable_error_types: vec![],
+                    },
+                    ..Default::default()
+                })
+                .await;
+            if eventually_pass {
+                assert!(la_res.completed_ok())
+            } else {
+                assert!(la_res.failed())
+            }
             Ok(().into())
         },
     );
     let attempts: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
     worker.register_activity("echo", move |_: String| async move {
         // Succeed on 3rd attempt
-        if 2 == attempts.fetch_add(1, Ordering::Relaxed) {
+        if 2 == attempts.fetch_add(1, Ordering::Relaxed) && eventually_pass {
             Ok(())
         } else {
             Err(anyhow!("Oh no I failed!"))
@@ -246,5 +255,6 @@ async fn local_act_fail_and_retry_until_pass() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    assert_eq!(3, attempts.load(Ordering::Relaxed));
+    let expected_attempts = if eventually_pass { 3 } else { 4 };
+    assert_eq!(expected_attempts, attempts.load(Ordering::Relaxed));
 }

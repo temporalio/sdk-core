@@ -121,6 +121,14 @@ pub mod coresdk {
                     _ => panic!("Activity was not successful"),
                 }
             }
+
+            pub fn completed_ok(&self) -> bool {
+                matches!(self.status, Some(activity_resolution::Status::Completed(_)))
+            }
+
+            pub fn failed(&self) -> bool {
+                matches!(self.status, Some(activity_resolution::Status::Failed(_)))
+            }
         }
     }
 
