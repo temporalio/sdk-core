@@ -446,7 +446,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
                     ActivityResolution {
                         status: Some(
                             DoBackoff {
-                                attempt,
+                                attempt: attempt + 1,
                                 backoff_duration: Some(b.clone()),
                             }
                             .into(),

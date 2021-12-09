@@ -80,7 +80,7 @@ impl IntoWorkflowCommand for ActivityOptions {
 }
 
 /// Options for scheduling a local activity
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct LocalActivityOptions {
     /// Identifier to use for tracking the activity in Workflow history.
     /// The `activityId` can be accessed by the activity function.
@@ -94,6 +94,9 @@ pub struct LocalActivityOptions {
     pub input: Payload,
     /// Retry policy
     pub retry_policy: RetryPolicy,
+    /// Override attempt number rather than using 1.
+    /// Ideally we would not expose this in a released Rust SDK, but it's needed for test.
+    pub attempt: Option<u32>,
 }
 
 impl IntoWorkflowCommand for LocalActivityOptions {
@@ -101,6 +104,7 @@ impl IntoWorkflowCommand for LocalActivityOptions {
     fn into_command(self, seq: u32) -> ScheduleLocalActivity {
         ScheduleLocalActivity {
             seq,
+            attempt: self.attempt.unwrap_or(1),
             activity_id: match self.activity_id {
                 None => seq.to_string(),
                 Some(aid) => aid,

@@ -16,6 +16,7 @@ use std::{
     },
     time::Duration,
 };
+use temporal_sdk_core_protos::coresdk::activity_result::ActivityResolution;
 use temporal_sdk_core_protos::{
     coresdk::{activity_result::activity_resolution, common::RetryPolicy, AsJsonPayloadExt},
     temporal::api::{enums::v1::EventType, failure::v1::Failure},
@@ -277,11 +278,24 @@ async fn local_act_retry_long_backoff_uses_timer() {
     let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
     t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_full_wf_task();
+    t.add_local_activity_fail_marker(
+        2,
+        "2",
+        Failure::application_failure("la failed".to_string(), false),
+    );
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add_timer_fired(timer_started_event_id, "2".to_string());
+    t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
     let wf_id = "fakeid";
     let mock = MockServerGatewayApis::new();
-    let mh = MockPollCfg::from_resp_batches(wf_id, t, [1.into(), ResponseType::AllHistory], mock);
+    let mh = MockPollCfg::from_resp_batches(
+        wf_id,
+        t,
+        [1.into(), 2.into(), ResponseType::AllHistory],
+        mock,
+    );
     let mut mock = build_mock_pollers(mh);
     // TODO: Probably test w/o cache too -
     mock.worker_cfg(TEST_Q, |w| w.max_cached_workflows = 1);
@@ -291,21 +305,21 @@ async fn local_act_retry_long_backoff_uses_timer() {
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         |mut ctx: WfContext| async move {
-            let la_res = ctx
-                .local_activity(LocalActivityOptions {
-                    activity_type: "echo".to_string(),
-                    input: "hi".as_json_payload().expect("serializes fine"),
-                    retry_policy: RetryPolicy {
-                        initial_interval: Some(Duration::from_millis(65).into()),
-                        // This will make the second backoff 65 seconds, plenty to use timer
-                        backoff_coefficient: 1_000.,
-                        maximum_interval: Some(Duration::from_secs(600).into()),
-                        maximum_attempts: 3,
-                        non_retryable_error_types: vec![],
-                    },
-                    ..Default::default()
-                })
-                .await;
+            let mut la_opts = LocalActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi".as_json_payload().expect("serializes fine"),
+                retry_policy: RetryPolicy {
+                    initial_interval: Some(Duration::from_millis(65).into()),
+                    // This will make the second backoff 65 seconds, plenty to use timer
+                    backoff_coefficient: 1_000.,
+                    maximum_interval: Some(Duration::from_secs(600).into()),
+                    maximum_attempts: 4,
+                    non_retryable_error_types: vec![],
+                },
+                ..Default::default()
+            };
+
+            let la_res = ctx.local_activity(la_opts.clone()).await;
             if let Some(activity_resolution::Status::Backoff(b)) = la_res.status {
                 ctx.timer(
                     b.backoff_duration
@@ -314,14 +328,23 @@ async fn local_act_retry_long_backoff_uses_timer() {
                         .expect("duration converts ok"),
                 )
                 .await;
+                // Attempt # is 3 because we wanted to use timer backoff after failing the 2nd time
+                assert_eq!(b.attempt, 3);
+                // Explicitly schedule the next attempt
+                la_opts.attempt = Some(b.attempt);
+                let la_res = ctx.local_activity(la_opts).await;
+                assert_matches!(la_res, ActivityResolution {
+                    status: Some(activity_resolution::Status::Backoff(b))} if b.attempt == 4);
             } else {
                 panic!("LA must resolve with backoff result");
             }
+            // Extra timer just to have an extra workflow task which we can return full history for
+            ctx.timer(Duration::from_secs(1)).await;
             Ok(().into())
         },
     );
     worker.register_activity("echo", move |_: String| async move {
-        // Activity just always fails since our workflow doesn't *actually* retry it after timer
+        // Activity always fails since our workflow doesn't *actually* retry it after timer
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
     worker

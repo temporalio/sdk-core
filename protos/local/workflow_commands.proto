@@ -87,24 +87,28 @@ message ScheduleLocalActivity {
     uint32 seq = 1;
     string activity_id = 2;
     string activity_type = 3;
-    map<string, common.Payload> header_fields = 4;
+    /// Local activities can start with a non-1 attempt, if lang has been told to backoff using
+    /// a timer before retrying. It should pass the attempt number from a `DoBackoff` activity
+    /// resolution.
+    uint32 attempt = 4;
+    map<string, common.Payload> header_fields = 5;
     /// Arguments/input to the activity.
-    repeated common.Payload arguments = 7;
+    repeated common.Payload arguments = 6;
     /// Indicates how long the caller is willing to wait for local activity completion. Limits how
     /// long retries will be attempted. Either this or start_to_close_timeout_seconds must be
     /// specified. When not specified defaults to the workflow execution timeout.
-    google.protobuf.Duration schedule_to_close_timeout = 8;
+    google.protobuf.Duration schedule_to_close_timeout = 7;
     /// Limits time the local activity can idle internally before being executed. That can happen if
     /// the worker is currently at max concurrent local activity executions. This timeout is always
     /// non retryable as all a retry would achieve is to put it back into the same queue. Defaults
     /// to schedule_to_close_timeout or workflow execution timeout if not specified.
-    google.protobuf.Duration schedule_to_start_timeout = 9;
+    google.protobuf.Duration schedule_to_start_timeout = 8;
     /// Maximum time the local activity is allowed to execute after the task is dispatched. This
     /// timeout is always retryable. Either this or schedule_to_close_timeout must be specified.
-    google.protobuf.Duration start_to_close_timeout = 10;
+    google.protobuf.Duration start_to_close_timeout = 9;
     /// Specify a retry policy for the local activity. By default local activities will be retried
     /// indefinitely.
-    common.RetryPolicy retry_policy = 12;
+    common.RetryPolicy retry_policy = 10;
 }
 
 enum ActivityCancellationType {

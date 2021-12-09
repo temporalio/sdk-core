@@ -107,7 +107,10 @@ impl LocalActivityManager {
         // it would mean dropping this future would cause us to drop the activity request.
         if let Some(new_or_retry) = self.act_req_rx.lock().await.recv().await {
             let (new_la, attempt) = match new_or_retry {
-                NewOrRetry::New(n) => (n, 1),
+                NewOrRetry::New(n) => {
+                    let explicit_attempt_num_or_1 = n.schedule_cmd.attempt.max(1);
+                    (n, explicit_attempt_num_or_1)
+                }
                 NewOrRetry::Retry { in_flight, attempt } => (in_flight, attempt),
             };
             let orig = new_la.clone();
@@ -189,9 +192,9 @@ impl LocalActivityManager {
                                     .unwrap_or_else(|| "".to_string()),
                             ) {
                                 warn!(
-                                    "Local activity failed on attempt {}, will retry after \
+                                    "Local activity {} failed on attempt {}, will retry after \
                                      backing off for {:?}",
-                                    info.attempt, backoff_dur
+                                    info.la_info.schedule_cmd.seq, info.attempt, backoff_dur
                                 );
                                 // TODO: Make configurable
                                 if backoff_dur > Duration::from_secs(60) {
