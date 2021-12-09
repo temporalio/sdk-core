@@ -1,3 +1,4 @@
+use crate::protosext::TryIntoOrNone;
 use crate::{
     machines::LocalActivityExecutionResult, retry_logic::RetryPolicyExt, task_token::TaskToken,
 };
@@ -17,6 +18,7 @@ use tokio::sync::{
     Notify, Semaphore,
 };
 
+#[derive(Debug)]
 pub(crate) struct LocalInFlightActInfo {
     pub la_info: NewLocalAct,
     pub dispatch_time: Instant,
@@ -196,8 +198,15 @@ impl LocalActivityManager {
                                      backing off for {:?}",
                                     info.la_info.schedule_cmd.seq, info.attempt, backoff_dur
                                 );
-                                // TODO: Make configurable
-                                if backoff_dur > Duration::from_secs(60) {
+                                if backoff_dur
+                                    > info
+                                        .la_info
+                                        .schedule_cmd
+                                        .local_retry_threshold
+                                        .clone()
+                                        .try_into_or_none()
+                                        .unwrap_or_else(|| Duration::from_secs(60))
+                                {
                                     warn!("Backoff is past local retry threshold");
                                     // We want this to be reported, as the workflow will mark this
                                     // failure down, then start a timer for backoff.
@@ -241,6 +250,7 @@ impl LocalActivityManager {
     }
 }
 
+#[derive(Debug)]
 #[allow(clippy::large_enum_variant)] // Most will be reported
 pub(crate) enum LACompleteAction {
     /// Caller should report the status to the workflow
@@ -257,6 +267,7 @@ pub(crate) enum LACompleteAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use temporal_sdk_core_protos::coresdk::common::RetryPolicy;
     use tokio::task::yield_now;
 
     #[tokio::test]
@@ -321,5 +332,39 @@ mod tests {
                 lam.complete(&tt, &LocalActivityExecutionResult::Completed(Default::default()));
             } => (),
         };
+    }
+
+    #[tokio::test]
+    async fn respects_timer_backoff_threshold() {
+        let lam = LocalActivityManager::new(1, "whatever".to_string());
+        lam.enqueue([NewLocalAct {
+            schedule_cmd: ScheduleLocalActivity {
+                seq: 1,
+                activity_id: 1.to_string(),
+                attempt: 5,
+                retry_policy: Some(RetryPolicy {
+                    initial_interval: Some(Duration::from_secs(1).into()),
+                    backoff_coefficient: 10.0,
+                    maximum_interval: Some(Duration::from_secs(10).into()),
+                    maximum_attempts: 10,
+                    non_retryable_error_types: vec![],
+                }),
+                local_retry_threshold: Some(Duration::from_secs(5).into()),
+                ..Default::default()
+            },
+            workflow_type: "".to_string(),
+            workflow_exec_info: Default::default(),
+            schedule_time: SystemTime::now(),
+        }]);
+
+        let next = lam.next_pending().await.unwrap();
+        let tt = TaskToken(next.task_token);
+        let res = lam.complete(
+            &tt,
+            &LocalActivityExecutionResult::Failed(Default::default()),
+        );
+        assert_matches!(res, LACompleteAction::LangDoesTimerBackoff(dur, info)
+            if dur.seconds == 10 && info.attempt == 5
+        )
     }
 }

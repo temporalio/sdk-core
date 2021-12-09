@@ -263,12 +263,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
 #[tokio::test]
 async fn local_act_retry_long_backoff_uses_timer() {
     let mut t = TestHistoryBuilder::default();
-    let mut wes_short_wft_timeout = default_wes_attribs();
-    wes_short_wft_timeout.workflow_task_timeout = Some(Duration::from_millis(500).into());
-    t.add(
-        EventType::WorkflowExecutionStarted,
-        wes_short_wft_timeout.into(),
-    );
+    t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
     t.add_local_activity_fail_marker(
         1,

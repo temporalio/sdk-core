@@ -109,6 +109,10 @@ message ScheduleLocalActivity {
     /// Specify a retry policy for the local activity. By default local activities will be retried
     /// indefinitely.
     common.RetryPolicy retry_policy = 10;
+    /// If the activity is retrying and backoff would exceed this value, lang will be told to
+    /// schedule a timer and retry the activity after. Otherwise, backoff will happen internally in
+    /// core.
+    google.protobuf.Duration local_retry_threshold = 11;
 }
 
 enum ActivityCancellationType {
