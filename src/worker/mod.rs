@@ -185,7 +185,10 @@ impl Worker {
                     config.default_heartbeat_throttle_interval,
                 )
             }),
-            local_act_mgr: LocalActivityManager::new(config.max_outstanding_local_activities),
+            local_act_mgr: LocalActivityManager::new(
+                config.max_outstanding_local_activities,
+                sg.options.namespace.clone(),
+            ),
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             config,
             shutdown_requested: shut_rx,

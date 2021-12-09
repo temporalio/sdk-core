@@ -2,7 +2,10 @@ use std::time::Duration;
 use temporal_sdk_core_protos::coresdk::{
     child_workflow::ChildWorkflowCancellationType,
     common::{Payload, RetryPolicy},
-    workflow_commands::{ActivityCancellationType, ScheduleActivity, StartChildWorkflowExecution},
+    workflow_commands::{
+        ActivityCancellationType, ScheduleActivity, ScheduleLocalActivity,
+        StartChildWorkflowExecution,
+    },
 };
 
 pub trait IntoWorkflowCommand {
@@ -94,10 +97,9 @@ pub struct LocalActivityOptions {
 }
 
 impl IntoWorkflowCommand for LocalActivityOptions {
-    type WFCommandType = ScheduleActivity;
-    fn into_command(self, seq: u32) -> ScheduleActivity {
-        ScheduleActivity {
-            local: true,
+    type WFCommandType = ScheduleLocalActivity;
+    fn into_command(self, seq: u32) -> ScheduleLocalActivity {
+        ScheduleLocalActivity {
             seq,
             activity_id: match self.activity_id {
                 None => seq.to_string(),

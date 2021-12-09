@@ -494,6 +494,16 @@ pub mod coresdk {
             }
         }
 
+        impl Display for ScheduleLocalActivity {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(
+                    f,
+                    "ScheduleLocalActivity({}, {})",
+                    self.seq, self.activity_type
+                )
+            }
+        }
+
         impl Display for QueryResult {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(f, "RespondToQuery({})", self.query_id)

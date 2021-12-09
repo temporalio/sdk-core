@@ -227,7 +227,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
                         initial_interval: Some(Duration::from_millis(50).into()),
                         backoff_coefficient: 1.2,
                         maximum_interval: None,
-                        maximum_attempts: 4,
+                        maximum_attempts: 5,
                         non_retryable_error_types: vec![],
                     },
                     ..Default::default()
@@ -243,8 +243,8 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
     );
     let attempts: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
     worker.register_activity("echo", move |_: String| async move {
-        // Succeed on 3rd attempt
-        if 3 == attempts.fetch_add(1, Ordering::Relaxed) && eventually_pass {
+        // Succeed on 3rd attempt (which is ==2 since fetch_add returns prev val)
+        if 2 == attempts.fetch_add(1, Ordering::Relaxed) && eventually_pass {
             Ok(())
         } else {
             Err(anyhow!("Oh no I failed!"))
@@ -255,7 +255,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let expected_attempts = if eventually_pass { 3 } else { 4 };
+    let expected_attempts = if eventually_pass { 3 } else { 5 };
     assert_eq!(expected_attempts, attempts.load(Ordering::Relaxed));
 }
 
@@ -277,7 +277,6 @@ async fn local_act_retry_long_backoff_uses_timer() {
     let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
     t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_full_wf_task();
-    // t.add_local_activity_result_marker(1, "1", b"echo".into());
     t.add_workflow_execution_completed();
 
     let wf_id = "fakeid";

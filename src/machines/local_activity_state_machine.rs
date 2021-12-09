@@ -1,10 +1,9 @@
-use crate::protosext::TryIntoOrNone;
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, OnEventWrapper,
         WFMachinesAdapter, WFMachinesError,
     },
-    protosext::{CompleteLocalActivityData, HistoryEventExt},
+    protosext::{CompleteLocalActivityData, HistoryEventExt, TryIntoOrNone},
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::{
@@ -17,7 +16,7 @@ use temporal_sdk_core_protos::{
         common::build_local_activity_marker_details,
         external_data::LocalActivityMarkerData,
         workflow_activation::ResolveActivity,
-        workflow_commands::ScheduleActivity,
+        workflow_commands::ScheduleLocalActivity,
     },
     temporal::api::{
         command::v1::{Command, RecordMarkerCommandAttributes},
@@ -105,7 +104,7 @@ impl From<CompleteLocalActivityData> for ResolveDat {
 /// must resolve before we send a record marker command. A [MachineResponse] may be produced,
 /// to queue the LA for execution if it needs to be.
 pub(super) fn new_local_activity(
-    attrs: ScheduleActivity,
+    attrs: ScheduleLocalActivity,
     replaying_when_invoked: bool,
     maybe_pre_resolved: Option<ResolveDat>,
     wf_time: Option<SystemTime>,
@@ -232,14 +231,14 @@ impl LocalActivityMachine {
 
 #[derive(Clone)]
 pub(super) struct SharedState {
-    attrs: ScheduleActivity,
+    attrs: ScheduleLocalActivity,
     replaying_when_invoked: bool,
     wf_time_when_started: Option<SystemTime>,
 }
 
 #[derive(Debug, derive_more::Display)]
 pub(super) enum LocalActivityCommand {
-    RequestActivityExecution(ScheduleActivity),
+    RequestActivityExecution(ScheduleLocalActivity),
     #[display(fmt = "Resolved")]
     Resolved(ResolveDat),
     /// The fake marker is used to avoid special casing marker recorded event handling.

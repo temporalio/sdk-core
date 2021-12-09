@@ -10,7 +10,7 @@ use std::{
 use temporal_sdk_core_protos::coresdk::{
     activity_task::{activity_task, ActivityTask, Start},
     common::WorkflowExecution,
-    workflow_commands::ScheduleActivity,
+    workflow_commands::ScheduleLocalActivity,
 };
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -25,7 +25,7 @@ pub(crate) struct LocalInFlightActInfo {
 
 #[derive(Clone)]
 pub(crate) struct NewLocalAct {
-    pub schedule_cmd: ScheduleActivity,
+    pub schedule_cmd: ScheduleLocalActivity,
     pub workflow_type: String,
     pub workflow_exec_info: WorkflowExecution,
     pub schedule_time: SystemTime,
@@ -51,6 +51,8 @@ enum NewOrRetry {
 }
 
 pub(crate) struct LocalActivityManager {
+    /// Just so we can provide activity tasks the same namespace as the worker
+    namespace: String,
     /// Constrains number of currently executing local activities
     semaphore: Semaphore,
     /// Sink for new activity execution requests
@@ -70,9 +72,10 @@ struct LAMData {
 }
 
 impl LocalActivityManager {
-    pub(crate) fn new(max_concurrent: usize) -> Self {
+    pub(crate) fn new(max_concurrent: usize, namespace: String) -> Self {
         let (act_req_tx, act_req_rx) = unbounded_channel();
         Self {
+            namespace,
             semaphore: Semaphore::new(max_concurrent),
             act_req_tx,
             act_req_rx: tokio::sync::Mutex::new(act_req_rx),
@@ -129,7 +132,7 @@ impl LocalActivityManager {
                 task_token: tt.0,
                 activity_id: sa.activity_id,
                 variant: Some(activity_task::Variant::Start(Start {
-                    workflow_namespace: sa.namespace,
+                    workflow_namespace: self.namespace.clone(),
                     workflow_type: new_la.workflow_type,
                     workflow_execution: Some(new_la.workflow_exec_info),
                     activity_type: sa.activity_type,
@@ -255,9 +258,9 @@ mod tests {
 
     #[tokio::test]
     async fn max_concurrent_respected() {
-        let lam = LocalActivityManager::new(1);
+        let lam = LocalActivityManager::new(1, "whatever".to_string());
         lam.enqueue((1..=50).map(|i| NewLocalAct {
-            schedule_cmd: ScheduleActivity {
+            schedule_cmd: ScheduleLocalActivity {
                 seq: i,
                 activity_id: i.to_string(),
                 ..Default::default()
@@ -288,9 +291,9 @@ mod tests {
 
     #[tokio::test]
     async fn no_work_doesnt_deadlock_with_complete() {
-        let lam = LocalActivityManager::new(5);
+        let lam = LocalActivityManager::new(5, "whatever".to_string());
         lam.enqueue([NewLocalAct {
-            schedule_cmd: ScheduleActivity {
+            schedule_cmd: ScheduleLocalActivity {
                 seq: 1,
                 activity_id: 1.to_string(),
                 ..Default::default()
