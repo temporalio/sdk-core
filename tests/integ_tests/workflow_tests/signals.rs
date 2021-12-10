@@ -6,7 +6,7 @@ use uuid::Uuid;
 const SIGNAME: &str = "signame";
 const RECEIVER_WFID: &str = "sends-signal-signal-receiver";
 
-async fn signal_sender(mut ctx: WfContext) -> WorkflowResult<()> {
+async fn signal_sender(ctx: WfContext) -> WorkflowResult<()> {
     let run_id = std::str::from_utf8(&ctx.get_args()[0].data)
         .unwrap()
         .to_owned();
@@ -41,7 +41,7 @@ async fn sends_signal_to_missing_wf() {
     starter.shutdown().await;
 }
 
-async fn signal_receiver(mut ctx: WfContext) -> WorkflowResult<()> {
+async fn signal_receiver(ctx: WfContext) -> WorkflowResult<()> {
     ctx.make_signal_channel(SIGNAME).next().await.unwrap();
     Ok(().into())
 }
@@ -69,21 +69,18 @@ async fn sends_signal_to_other_wf() {
     starter.shutdown().await;
 }
 
-async fn signals_child(mut ctx: WfContext) -> WorkflowResult<()> {
+async fn signals_child(ctx: WfContext) -> WorkflowResult<()> {
     let started_child = ctx
         .child_workflow(ChildWorkflowOptions {
             workflow_id: "my_precious_child".to_string(),
             workflow_type: "child_receiver".to_string(),
             ..Default::default()
         })
-        .start(&mut ctx)
+        .start(&ctx)
         .await
         .into_started()
         .expect("Must start ok");
-    started_child
-        .signal(&mut ctx, SIGNAME, b"hiya!")
-        .await
-        .unwrap();
+    started_child.signal(&ctx, SIGNAME, b"hiya!").await.unwrap();
     started_child.result().await.status.unwrap();
     Ok(().into())
 }

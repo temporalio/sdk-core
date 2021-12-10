@@ -552,7 +552,7 @@ mod tests {
     // history that then suddenly doesn't have the marker.
     #[tokio::test]
     async fn same_change_multiple_spots(#[case] have_marker_in_hist: bool, #[case] replay: bool) {
-        let wfn = WorkflowFunction::new(move |mut ctx: WfContext| async move {
+        let wfn = WorkflowFunction::new(move |ctx: WfContext| async move {
             if ctx.patched(MY_PATCH_ID) {
                 ctx.activity(ActivityOptions::default()).await;
             } else {

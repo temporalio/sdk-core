@@ -97,6 +97,8 @@ pub struct LocalActivityOptions {
     /// Override attempt number rather than using 1.
     /// Ideally we would not expose this in a released Rust SDK, but it's needed for test.
     pub attempt: Option<u32>,
+    /// Retry backoffs over this amount will use a timer rather than a local retry
+    pub timer_backoff_threshold: Option<Duration>,
 }
 
 impl IntoWorkflowCommand for LocalActivityOptions {
@@ -112,6 +114,7 @@ impl IntoWorkflowCommand for LocalActivityOptions {
             activity_type: self.activity_type,
             arguments: vec![self.input],
             retry_policy: Some(self.retry_policy),
+            local_retry_threshold: self.timer_backoff_threshold.map(Into::into),
             ..Default::default()
         }
     }

@@ -673,7 +673,7 @@ mod test {
         ManagedWFFunc::new(t, func, vec![[Expectation::StartFailure as u8].into()])
     }
 
-    async fn parent_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+    async fn parent_wf(ctx: WfContext) -> WorkflowResult<()> {
         let expectation = Expectation::try_from_u8(ctx.get_args()[0].data[0]).unwrap();
         let child = ctx.child_workflow(ChildWorkflowOptions {
             workflow_id: "child-id-1".to_string(),
@@ -681,7 +681,7 @@ mod test {
             ..Default::default()
         });
 
-        let start_res = child.start(&mut ctx).await;
+        let start_res = child.start(&ctx).await;
         match (expectation, &start_res.status) {
             (Expectation::Success | Expectation::Failure, StartStatus::Succeeded(_)) => {}
             (Expectation::StartFailure, StartStatus::Failed(_)) => return Ok(().into()),
@@ -751,15 +751,15 @@ mod test {
         wfm.shutdown().await.unwrap();
     }
 
-    async fn cancel_before_send_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+    async fn cancel_before_send_wf(ctx: WfContext) -> WorkflowResult<()> {
         let workflow_id = "child-id-1";
         let child = ctx.child_workflow(ChildWorkflowOptions {
             workflow_id: workflow_id.to_string(),
             workflow_type: "child".to_string(),
             ..Default::default()
         });
-        let start = child.start(&mut ctx);
-        start.cancel(&mut ctx);
+        let start = child.start(&ctx);
+        start.cancel(&ctx);
         match start.await.status {
             StartStatus::Cancelled(_) => Ok(().into()),
             _ => Err(anyhow!("Unexpected start status")),

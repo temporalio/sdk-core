@@ -94,7 +94,7 @@ async fn out_of_order_completion_doesnt_hang() {
     jh.await.unwrap();
 }
 
-pub async fn many_parallel_timers_longhist(mut ctx: WfContext) -> WorkflowResult<()> {
+pub async fn many_parallel_timers_longhist(ctx: WfContext) -> WorkflowResult<()> {
     for _ in 0..20 {
         let mut futs = vec![];
         for _ in 0..1000 {

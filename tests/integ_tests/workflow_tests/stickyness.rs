@@ -25,7 +25,7 @@ async fn timer_workflow_not_sticky() {
 
 static TIMED_OUT_ONCE: AtomicBool = AtomicBool::new(false);
 static RUN_CT: AtomicUsize = AtomicUsize::new(0);
-async fn timer_timeout_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+async fn timer_timeout_wf(ctx: WfContext) -> WorkflowResult<()> {
     RUN_CT.fetch_add(1, Ordering::SeqCst);
     let t = ctx.timer(Duration::from_secs(1));
     if !TIMED_OUT_ONCE.load(Ordering::SeqCst) {
@@ -64,7 +64,7 @@ async fn cache_miss_ok() {
     let mut worker = starter.worker().await;
 
     let barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
-    worker.register_wf(wf_name.to_owned(), move |mut ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
         barr.wait().await;
         ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())

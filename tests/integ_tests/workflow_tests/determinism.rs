@@ -6,7 +6,7 @@ use temporal_sdk_core::prototype_rust_sdk::{ActivityOptions, WfContext, Workflow
 use test_utils::CoreWfStarter;
 
 static RUN_CT: AtomicUsize = AtomicUsize::new(1);
-pub async fn timer_wf_nondeterministic(mut ctx: WfContext) -> WorkflowResult<()> {
+pub async fn timer_wf_nondeterministic(ctx: WfContext) -> WorkflowResult<()> {
     let run_ct = RUN_CT.fetch_add(1, Ordering::Relaxed);
 
     match run_ct {

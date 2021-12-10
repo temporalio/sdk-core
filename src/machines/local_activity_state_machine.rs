@@ -587,7 +587,7 @@ mod tests {
         },
     };
 
-    async fn la_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+    async fn la_wf(ctx: WfContext) -> WorkflowResult<()> {
         ctx.local_activity(LocalActivityOptions::default()).await;
         Ok(().into())
     }
@@ -700,7 +700,7 @@ mod tests {
         wfm.shutdown().await.unwrap();
     }
 
-    async fn two_la_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+    async fn two_la_wf(ctx: WfContext) -> WorkflowResult<()> {
         ctx.local_activity(LocalActivityOptions::default()).await;
         ctx.local_activity(LocalActivityOptions::default()).await;
         Ok(().into())
@@ -793,7 +793,7 @@ mod tests {
         wfm.shutdown().await.unwrap();
     }
 
-    async fn two_la_wf_parallel(mut ctx: WfContext) -> WorkflowResult<()> {
+    async fn two_la_wf_parallel(ctx: WfContext) -> WorkflowResult<()> {
         tokio::join!(
             ctx.local_activity(LocalActivityOptions::default()),
             ctx.local_activity(LocalActivityOptions::default())
@@ -878,7 +878,7 @@ mod tests {
         wfm.shutdown().await.unwrap();
     }
 
-    async fn la_timer_la(mut ctx: WfContext) -> WorkflowResult<()> {
+    async fn la_timer_la(ctx: WfContext) -> WorkflowResult<()> {
         ctx.local_activity(LocalActivityOptions::default()).await;
         ctx.timer(Duration::from_secs(5)).await;
         ctx.local_activity(LocalActivityOptions::default()).await;

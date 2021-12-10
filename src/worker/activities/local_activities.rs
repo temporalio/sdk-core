@@ -1,6 +1,6 @@
-use crate::protosext::TryIntoOrNone;
 use crate::{
-    machines::LocalActivityExecutionResult, retry_logic::RetryPolicyExt, task_token::TaskToken,
+    machines::LocalActivityExecutionResult, protosext::TryIntoOrNone, retry_logic::RetryPolicyExt,
+    task_token::TaskToken,
 };
 use parking_lot::Mutex;
 use std::{

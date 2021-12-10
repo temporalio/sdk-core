@@ -576,7 +576,7 @@ mod tests {
     use super::*;
     use crate::test_help::{build_fake_core, canned_histories, DEFAULT_WORKFLOW_TYPE, TEST_Q};
 
-    pub async fn timer_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+    pub async fn timer_wf(ctx: WfContext) -> WorkflowResult<()> {
         ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())
     }

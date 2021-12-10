@@ -236,7 +236,7 @@ mod tests {
         workflow::managed_wf::ManagedWFFunc,
     };
 
-    async fn cancel_sender(mut ctx: WfContext) -> WorkflowResult<()> {
+    async fn cancel_sender(ctx: WfContext) -> WorkflowResult<()> {
         let res = ctx
             .cancel_external(NamespacedWorkflowExecution {
                 namespace: "some_namespace".to_string(),

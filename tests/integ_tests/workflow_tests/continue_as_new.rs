@@ -3,7 +3,7 @@ use temporal_sdk_core::prototype_rust_sdk::{WfContext, WfExitValue, WorkflowResu
 use temporal_sdk_core_protos::coresdk::workflow_commands::ContinueAsNewWorkflowExecution;
 use test_utils::CoreWfStarter;
 
-async fn continue_as_new_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+async fn continue_as_new_wf(ctx: WfContext) -> WorkflowResult<()> {
     let run_ct = ctx.get_args()[0].data[0];
     ctx.timer(Duration::from_millis(500)).await;
     Ok(if run_ct < 5 {

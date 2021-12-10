@@ -10,7 +10,7 @@ async fn child_wf(_ctx: WfContext) -> WorkflowResult<()> {
     Ok(().into())
 }
 
-async fn parent_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+async fn parent_wf(ctx: WfContext) -> WorkflowResult<()> {
     let child = ctx.child_workflow(ChildWorkflowOptions {
         workflow_id: "child-1".to_owned(),
         workflow_type: CHILD_WF_TYPE.to_owned(),
@@ -18,7 +18,7 @@ async fn parent_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     });
 
     let started = child
-        .start(&mut ctx)
+        .start(&ctx)
         .await
         .into_started()
         .expect("Child chould start OK");

@@ -4,7 +4,7 @@ use test_utils::CoreWfStarter;
 
 const RECEIVER_WFID: &str = "sends-cancel-receiver";
 
-async fn cancel_sender(mut ctx: WfContext) -> WorkflowResult<()> {
+async fn cancel_sender(ctx: WfContext) -> WorkflowResult<()> {
     let run_id = std::str::from_utf8(&ctx.get_args()[0].data)
         .unwrap()
         .to_owned();

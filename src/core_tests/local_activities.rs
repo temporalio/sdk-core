@@ -16,9 +16,12 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_protos::coresdk::activity_result::ActivityResolution;
 use temporal_sdk_core_protos::{
-    coresdk::{activity_result::activity_resolution, common::RetryPolicy, AsJsonPayloadExt},
+    coresdk::{
+        activity_result::{activity_resolution, ActivityResolution},
+        common::RetryPolicy,
+        AsJsonPayloadExt,
+    },
     temporal::api::{enums::v1::EventType, failure::v1::Failure},
 };
 use tokio::sync::Barrier;
@@ -63,7 +66,7 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: 
 
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
-        |mut ctx: WfContext| async move {
+        |ctx: WfContext| async move {
             let la = ctx.local_activity(LocalActivityOptions {
                 activity_type: "echo".to_string(),
                 input: "hi".as_json_payload().expect("serializes fine"),
@@ -82,7 +85,7 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: 
     worker.run_until_done().await.unwrap();
 }
 
-pub async fn local_act_fanout_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+pub async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
     let las: Vec<_> = (1..=50)
         .map(|i| {
             ctx.local_activity(LocalActivityOptions {
@@ -167,7 +170,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
 
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
-        |mut ctx: WfContext| async move {
+        |ctx: WfContext| async move {
             ctx.local_activity(LocalActivityOptions {
                 activity_type: "echo".to_string(),
                 input: "hi".as_json_payload().expect("serializes fine"),
@@ -219,7 +222,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
 
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
-        move |mut ctx: WfContext| async move {
+        move |ctx: WfContext| async move {
             let la_res = ctx
                 .local_activity(LocalActivityOptions {
                     activity_type: "echo".to_string(),
@@ -299,7 +302,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
 
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
-        |mut ctx: WfContext| async move {
+        |ctx: WfContext| async move {
             let mut la_opts = LocalActivityOptions {
                 activity_type: "echo".to_string(),
                 input: "hi".as_json_payload().expect("serializes fine"),
@@ -314,7 +317,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
                 ..Default::default()
             };
 
-            let la_res = ctx.local_activity(la_opts.clone()).await;
+            let la_res = ctx.local_activity_no_timer_retry(la_opts.clone()).await;
             if let Some(activity_resolution::Status::Backoff(b)) = la_res.status {
                 ctx.timer(
                     b.backoff_duration
@@ -327,7 +330,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
                 assert_eq!(b.attempt, 3);
                 // Explicitly schedule the next attempt
                 la_opts.attempt = Some(b.attempt);
-                let la_res = ctx.local_activity(la_opts).await;
+                let la_res = ctx.local_activity_no_timer_retry(la_opts).await;
                 assert_matches!(la_res, ActivityResolution {
                     status: Some(activity_resolution::Status::Backoff(b))} if b.attempt == 4);
             } else {

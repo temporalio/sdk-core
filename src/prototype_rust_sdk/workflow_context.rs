@@ -8,7 +8,7 @@ use crate::prototype_rust_sdk::{
     SignalExternalWfResult, TimerResult, UnblockEvent, Unblockable,
 };
 use crossbeam::channel::{Receiver, Sender};
-use futures::{task::Context, FutureExt, Stream};
+use futures::{future::BoxFuture, task::Context, FutureExt, Stream};
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
@@ -20,7 +20,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use temporal_sdk_core_protos::coresdk::{
-    activity_result::ActivityResolution,
+    activity_result::{activity_resolution, ActivityResolution},
     child_workflow::ChildWorkflowResult,
     common::{NamespacedWorkflowExecution, Payload},
     workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
@@ -33,6 +33,7 @@ use temporal_sdk_core_protos::coresdk::{
 };
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_util::sync::CancellationToken;
 
 /// Used within workflows to issue commands, get info, etc.
 pub struct WfContext {
@@ -44,11 +45,43 @@ pub struct WfContext {
     am_cancelled: watch::Receiver<bool>,
     shared: Arc<RwLock<WfContextSharedData>>,
 
+    seq_nums: RwLock<WfCtxProtectedDat>,
+}
+
+struct WfCtxProtectedDat {
     next_timer_sequence_number: u32,
     next_activity_sequence_number: u32,
     next_child_workflow_sequence_number: u32,
     next_cancel_external_wf_sequence_number: u32,
     next_signal_external_wf_sequence_number: u32,
+}
+
+impl WfCtxProtectedDat {
+    fn next_timer_seq(&mut self) -> u32 {
+        let seq = self.next_timer_sequence_number;
+        self.next_timer_sequence_number += 1;
+        seq
+    }
+    fn next_activity_seq(&mut self) -> u32 {
+        let seq = self.next_activity_sequence_number;
+        self.next_activity_sequence_number += 1;
+        seq
+    }
+    fn next_child_workflow_seq(&mut self) -> u32 {
+        let seq = self.next_child_workflow_sequence_number;
+        self.next_child_workflow_sequence_number += 1;
+        seq
+    }
+    fn next_cancel_external_wf_seq(&mut self) -> u32 {
+        let seq = self.next_cancel_external_wf_sequence_number;
+        self.next_cancel_external_wf_sequence_number += 1;
+        seq
+    }
+    fn next_signal_external_wf_seq(&mut self) -> u32 {
+        let seq = self.next_signal_external_wf_sequence_number;
+        self.next_signal_external_wf_sequence_number += 1;
+        seq
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -80,11 +113,13 @@ impl WfContext {
                 chan,
                 am_cancelled,
                 shared: Arc::new(RwLock::new(Default::default())),
-                next_timer_sequence_number: 1,
-                next_activity_sequence_number: 1,
-                next_child_workflow_sequence_number: 1,
-                next_cancel_external_wf_sequence_number: 1,
-                next_signal_external_wf_sequence_number: 1,
+                seq_nums: RwLock::new(WfCtxProtectedDat {
+                    next_timer_sequence_number: 1,
+                    next_activity_sequence_number: 1,
+                    next_child_workflow_sequence_number: 1,
+                    next_cancel_external_wf_sequence_number: 1,
+                    next_signal_external_wf_sequence_number: 1,
+                }),
             },
             rx,
         )
@@ -121,9 +156,8 @@ impl WfContext {
     }
 
     /// Request to create a timer
-    pub fn timer(&mut self, duration: Duration) -> impl CancellableFuture<TimerResult> {
-        let seq = self.next_timer_sequence_number;
-        self.next_timer_sequence_number += 1;
+    pub fn timer(&self, duration: Duration) -> impl CancellableFuture<TimerResult> {
+        let seq = self.seq_nums.write().next_timer_seq();
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Timer(seq));
         self.send(
             CommandCreateRequest {
@@ -141,14 +175,13 @@ impl WfContext {
 
     /// Request to run an activity
     pub fn activity(
-        &mut self,
+        &self,
         mut opts: ActivityOptions,
     ) -> impl CancellableFuture<ActivityResolution> {
         if opts.task_queue.is_empty() {
             opts.task_queue = self.task_queue.clone()
         }
-        let seq = self.next_activity_sequence_number;
-        self.next_activity_sequence_number += 1;
+        let seq = self.seq_nums.write().next_activity_seq();
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));
         self.send(
             CommandCreateRequest {
@@ -162,11 +195,38 @@ impl WfContext {
 
     /// Request to run a local activity
     pub fn local_activity(
-        &mut self,
+        &self,
+        opts: LocalActivityOptions,
+    ) -> impl CancellableFuture<ActivityResolution> + '_ {
+        // We need to immediately create the first LA future to be consistent with the behavior
+        // of other functions where the command is scheduled before being awaited on.
+        let first_la_fut = self.local_activity_no_timer_retry(opts.clone());
+        ManualCancellableFuture::new(|_ct| async move {
+            let mut last_resolution = first_la_fut.await;
+
+            while let Some(activity_resolution::Status::Backoff(b)) = last_resolution.status {
+                self.timer(
+                    b.backoff_duration
+                        .expect("Duration is set")
+                        .try_into()
+                        .expect("duration converts ok"),
+                )
+                .await;
+                let mut opts = opts.clone();
+                opts.attempt = Some(b.attempt);
+                last_resolution = self.local_activity_no_timer_retry(opts.clone()).await;
+            }
+            last_resolution
+        })
+    }
+
+    /// Request to run a local activity with no implementation of timer-backoff based retrying.
+    /// TODO: Should not be public in non-prototype SDK
+    pub(crate) fn local_activity_no_timer_retry(
+        &self,
         opts: LocalActivityOptions,
     ) -> impl CancellableFuture<ActivityResolution> {
-        let seq = self.next_activity_sequence_number;
-        self.next_activity_sequence_number += 1;
+        let seq = self.seq_nums.write().next_activity_seq();
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));
         self.send(
             CommandCreateRequest {
@@ -178,8 +238,8 @@ impl WfContext {
         cmd
     }
 
-    /// Request to start a child workflow, Returned future resolves when the child has been started.
-    pub fn child_workflow(&mut self, opts: ChildWorkflowOptions) -> ChildWorkflow {
+    /// Creates a child workflow stub with the provided options
+    pub fn child_workflow(&self, opts: ChildWorkflowOptions) -> ChildWorkflow {
         ChildWorkflow { opts }
     }
 
@@ -222,7 +282,7 @@ impl WfContext {
     /// Send a signal to an external workflow. May resolve as a failure if the signal didn't work
     /// or was cancelled.
     pub fn signal_workflow(
-        &mut self,
+        &self,
         workflow_id: impl Into<String>,
         run_id: impl Into<String>,
         signal_name: impl Into<String>,
@@ -238,7 +298,7 @@ impl WfContext {
 
     /// Return a stream that produces values when the named signal is sent to this workflow
     pub fn make_signal_channel(
-        &mut self,
+        &self,
         signal_name: impl Into<String>,
     ) -> impl Stream<Item = Vec<Payload>> {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -253,14 +313,12 @@ impl WfContext {
 
     /// Request the cancellation of an external workflow. May resolve as a failure if the workflow
     /// was not found or the cancel was otherwise unsendable.
-    /// TODO: Own result type
     pub fn cancel_external(
-        &mut self,
+        &self,
         target: NamespacedWorkflowExecution,
     ) -> impl Future<Output = CancelExternalWfResult> {
         let target = cancel_we::Target::WorkflowExecution(target);
-        let seq = self.next_cancel_external_wf_sequence_number;
-        self.next_cancel_external_wf_sequence_number += 1;
+        let seq = self.seq_nums.write().next_cancel_external_wf_seq();
         let (cmd, unblocker) = WFCommandFut::new();
         self.send(
             CommandCreateRequest {
@@ -277,13 +335,12 @@ impl WfContext {
     }
 
     fn send_signal_wf(
-        &mut self,
+        &self,
         signal_name: impl Into<String>,
         payload: impl Into<Payload>,
         target: sig_we::Target,
     ) -> impl CancellableFuture<SignalExternalWfResult> {
-        let seq = self.next_signal_external_wf_sequence_number;
-        self.next_signal_external_wf_sequence_number += 1;
+        let seq = self.seq_nums.write().next_signal_external_wf_seq();
         let (cmd, unblocker) =
             CancellableWFCommandFut::new(CancellableID::SignalExternalWorkflow(seq));
         self.send(
@@ -303,7 +360,7 @@ impl WfContext {
     }
 
     /// Cancel any cancellable operation by ID
-    fn cancel(&mut self, cancellable_id: CancellableID) {
+    fn cancel(&self, cancellable_id: CancellableID) {
         self.send(RustWfCmd::Cancel(cancellable_id));
     }
 
@@ -316,7 +373,7 @@ impl WfContext {
 /// Used in the prototype SDK for cancelling operations like timers and activities.
 pub trait CancellableFuture<T>: Future<Output = T> {
     /// Cancel this Future
-    fn cancel(&self, cx: &mut WfContext);
+    fn cancel(&self, cx: &WfContext);
 }
 
 struct WFCommandFut<T, D> {
@@ -404,8 +461,41 @@ impl<T, D> CancellableFuture<T> for CancellableWFCommandFut<T, D>
 where
     T: Unblockable<OtherDat = D>,
 {
-    fn cancel(&self, cx: &mut WfContext) {
+    fn cancel(&self, cx: &WfContext) {
         cx.cancel(self.cancellable_id.clone());
+    }
+}
+
+/// Allows composing [CancellableWFCommandFut]s into one future and manually managing the cancel
+/// request
+struct ManualCancellableFuture<'a, T> {
+    inner_fut: BoxFuture<'a, T>,
+    cancel_tok: CancellationToken,
+}
+impl<'a, T> ManualCancellableFuture<'a, T> {
+    pub(crate) fn new<F, OF>(fun: F) -> Self
+    where
+        F: FnOnce(&CancellationToken) -> OF,
+        OF: Future<Output = T> + 'a + Send,
+    {
+        let cancel_tok = CancellationToken::new();
+        Self {
+            inner_fut: fun(&cancel_tok).boxed(),
+            cancel_tok,
+        }
+    }
+}
+impl<'a, T> Unpin for ManualCancellableFuture<'a, T> {}
+impl<'a, T> Future for ManualCancellableFuture<'a, T> {
+    type Output = T;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.inner_fut.poll_unpin(cx)
+    }
+}
+impl<'a, T> CancellableFuture<T> for ManualCancellableFuture<'a, T> {
+    fn cancel(&self, _: &WfContext) {
+        self.cancel_tok.cancel()
     }
 }
 
@@ -446,14 +536,12 @@ pub struct StartedChildWorkflow {
 
 impl ChildWorkflow {
     /// Start the child workflow, the returned Future is cancellable.
-    pub fn start(self, cx: &mut WfContext) -> impl CancellableFuture<PendingChildWorkflow> {
-        let child_seq = cx.next_child_workflow_sequence_number;
-        cx.next_child_workflow_sequence_number += 1;
+    pub fn start(self, cx: &WfContext) -> impl CancellableFuture<PendingChildWorkflow> {
+        let child_seq = cx.seq_nums.write().next_child_workflow_seq();
         // Immediately create the command/future for the result, otherwise if the user does
         // not await the result until *after* we receive an activation for it, there will be nothing
         // to match when unblocking.
-        let cancel_seq = cx.next_cancel_external_wf_sequence_number;
-        cx.next_cancel_external_wf_sequence_number += 1;
+        let cancel_seq = cx.seq_nums.write().next_cancel_external_wf_seq();
         let (result_cmd, unblocker) =
             CancellableWFCommandFut::new(CancellableID::ExternalWorkflow {
                 seqnum: cancel_seq,
@@ -498,7 +586,7 @@ impl StartedChildWorkflow {
     }
 
     /// Cancel the child workflow
-    pub fn cancel(&self, cx: &mut WfContext) -> impl Future<Output = CancelExternalWfResult> {
+    pub fn cancel(&self, cx: &WfContext) -> impl Future<Output = CancelExternalWfResult> {
         let target = NamespacedWorkflowExecution {
             namespace: cx.namespace().to_string(),
             workflow_id: self.common.workflow_id.clone(),
@@ -510,7 +598,7 @@ impl StartedChildWorkflow {
     /// Signal the child workflow
     pub fn signal(
         &self,
-        cx: &mut WfContext,
+        cx: &WfContext,
         signal_name: impl Into<String>,
         payload: impl Into<Payload>,
     ) -> impl CancellableFuture<SignalExternalWfResult> {
