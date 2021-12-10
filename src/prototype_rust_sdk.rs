@@ -445,6 +445,8 @@ pub enum CancellableID {
     Timer(u32),
     /// Activity sequence number
     Activity(u32),
+    /// Activity sequence number
+    LocalActivity(u32),
     /// Start child sequence number
     ChildWorkflow(u32),
     /// Signal workflow

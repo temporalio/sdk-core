@@ -168,6 +168,9 @@ pub enum MachineResponse {
     /// Queue a local activity to be processed by the worker
     #[display(fmt = "QueueLocalActivity")]
     QueueLocalActivity(ScheduleLocalActivity),
+    /// Request cancellation of an executing local activity
+    #[display(fmt = "RequestCancelLocalActivity")]
+    RequestCancelLocalActivity(u32),
     /// Set the workflow time to the provided time
     #[display(fmt = "UpdateWFTime({:?})", "_0")]
     UpdateWFTime(Option<SystemTime>),
@@ -807,6 +810,12 @@ impl WorkflowMachines {
                 MachineResponse::QueueLocalActivity(act) => {
                     self.local_activity_requests.push(act);
                 }
+                MachineResponse::RequestCancelLocalActivity(_) => {
+                    panic!(
+                        "Request cancel local activity should not be returned from \
+                         anything other than explicit cancellation"
+                    )
+                }
                 MachineResponse::UpdateWFTime(t) => {
                     if let Some(t) = t {
                         self.set_current_time(t);
@@ -856,6 +865,9 @@ impl WorkflowMachines {
                 }
                 WFCommand::RequestCancelActivity(attrs) => {
                     jobs.extend(self.process_cancellation(CommandID::Activity(attrs.seq))?);
+                }
+                WFCommand::RequestCancelLocalActivity(attrs) => {
+                    jobs.extend(self.process_cancellation(CommandID::LocalActivity(attrs.seq))?);
                 }
                 WFCommand::CompleteWorkflow(attrs) => {
                     self.metrics.wf_completed();
@@ -977,9 +989,9 @@ impl WorkflowMachines {
     fn process_cancellation(&mut self, id: CommandID) -> Result<Vec<Variant>> {
         let mut jobs = vec![];
         let m_key = self.get_machine_key(id)?;
-        let res = self.machine_mut(m_key).cancel()?;
-        debug!(machine_responses = ?res, cmd_id = ?id, "Cancel request responses");
-        for r in res {
+        let machine_resps = self.machine_mut(m_key).cancel()?;
+        debug!(machine_responses = ?machine_resps, cmd_id = ?id, "Cancel request responses");
+        for r in machine_resps {
             match r {
                 MachineResponse::IssueNewCommand(c) => {
                     self.current_wf_task_commands.push_back(CommandAndMachine {
@@ -989,6 +1001,22 @@ impl WorkflowMachines {
                 }
                 MachineResponse::PushWFJob(j) => {
                     jobs.push(j);
+                }
+                MachineResponse::RequestCancelLocalActivity(seq) => {
+                    // If it's in the request queue, just rip it out.
+                    let orig_len = self.local_activity_requests.len();
+                    self.local_activity_requests.retain(|req| req.seq != seq);
+                    if self.local_activity_requests.len() != orig_len {
+                        // We removed it. Notify the machine that the activity cancelled.
+                        if let Machines::LocalActivityMachine(lam) = self.machine_mut(m_key) {
+                            let more_responses = lam.try_resolve_cancelled()?;
+                            self.process_machine_responses(m_key, more_responses)?;
+                        } else {
+                            panic!("A non local-activity machine returned a request cancel LA response");
+                        }
+                    }
+
+                    // TODO: MORE
                 }
                 v => {
                     return Err(WFMachinesError::Fatal(format!(

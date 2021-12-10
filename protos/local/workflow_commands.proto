@@ -30,6 +30,7 @@ message WorkflowCommand {
         SignalExternalWorkflowExecution signal_external_workflow_execution = 14;
         CancelSignalWorkflow cancel_signal_workflow = 15;
         ScheduleLocalActivity schedule_local_activity = 16;
+        RequestCancelLocalActivity request_cancel_local_activity = 17;
 
         // To be added as/if needed:
         //  UpsertWorkflowSearchAttributes upsert_workflow_search_attributes_command_attributes = 14;
@@ -129,6 +130,11 @@ enum ActivityCancellationType {
 
 message RequestCancelActivity {
     /// Lang's incremental sequence number as passed to `ScheduleActivity`
+    uint32 seq = 1;
+}
+
+message RequestCancelLocalActivity {
+    /// Lang's incremental sequence number as passed to `ScheduleLocalActivity`
     uint32 seq = 1;
 }
 

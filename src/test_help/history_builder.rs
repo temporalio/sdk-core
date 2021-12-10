@@ -9,6 +9,7 @@ use crate::{
 use anyhow::bail;
 use prost_types::Timestamp;
 use std::time::{Duration, SystemTime};
+use temporal_sdk_core_protos::temporal::api::failure::v1::{failure, CanceledFailureInfo};
 use temporal_sdk_core_protos::{
     coresdk::{
         common::{
@@ -306,6 +307,24 @@ impl TestHistoryBuilder {
         failure: Failure,
     ) {
         self.add_local_activity_marker(seq, activity_id, None, Some(failure), None);
+    }
+
+    pub(crate) fn add_local_activity_cancel_marker(&mut self, seq: u32, activity_id: &str) {
+        self.add_local_activity_marker(
+            seq,
+            activity_id,
+            None,
+            Some(Failure {
+                message: "cancelled bro".to_string(),
+                source: "".to_string(),
+                stack_trace: "".to_string(),
+                cause: None,
+                failure_info: Some(failure::FailureInfo::CanceledFailureInfo(
+                    CanceledFailureInfo { details: None },
+                )),
+            }),
+            None,
+        );
     }
 
     pub(crate) fn add_signal_wf(

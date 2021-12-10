@@ -18,6 +18,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+use temporal_sdk_core_protos::coresdk::workflow_commands::RequestCancelLocalActivity;
 use temporal_sdk_core_protos::{
     coresdk::{
         common::Payload,
@@ -316,6 +317,13 @@ impl Future for WorkflowFuture {
                                 activation_cmds.push(
                                     workflow_command::Variant::RequestCancelActivity(
                                         RequestCancelActivity { seq },
+                                    ),
+                                );
+                            }
+                            CancellableID::LocalActivity(seq) => {
+                                activation_cmds.push(
+                                    workflow_command::Variant::RequestCancelLocalActivity(
+                                        RequestCancelLocalActivity { seq },
                                     ),
                                 );
                             }

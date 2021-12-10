@@ -523,6 +523,12 @@ pub mod coresdk {
             }
         }
 
+        impl Display for RequestCancelLocalActivity {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "RequestCancelLocalActivity({})", self.seq)
+            }
+        }
+
         impl Display for CancelTimer {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(f, "CancelTimer({})", self.seq)

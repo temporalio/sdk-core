@@ -68,6 +68,7 @@ pub enum WFCommand {
     AddActivity(ScheduleActivity),
     AddLocalActivity(ScheduleLocalActivity),
     RequestCancelActivity(RequestCancelActivity),
+    RequestCancelLocalActivity(RequestCancelLocalActivity),
     AddTimer(StartTimer),
     CancelTimer(CancelTimer),
     CompleteWorkflow(CompleteWorkflowExecution),
@@ -122,6 +123,9 @@ impl TryFrom<WorkflowCommand> for WFCommand {
                 Ok(Self::CancelUnstartedChild(s))
             }
             workflow_command::Variant::ScheduleLocalActivity(s) => Ok(Self::AddLocalActivity(s)),
+            workflow_command::Variant::RequestCancelLocalActivity(s) => {
+                Ok(Self::RequestCancelLocalActivity(s))
+            }
         }
     }
 }

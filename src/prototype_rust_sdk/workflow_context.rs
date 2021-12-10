@@ -198,25 +198,40 @@ impl WfContext {
         &self,
         opts: LocalActivityOptions,
     ) -> impl CancellableFuture<ActivityResolution> + '_ {
-        // We need to immediately create the first LA future to be consistent with the behavior
-        // of other functions where the command is scheduled before being awaited on.
-        let first_la_fut = self.local_activity_no_timer_retry(opts.clone());
-        ManualCancellableFuture::new(|_ct| async move {
-            let mut last_resolution = first_la_fut.await;
+        ManualCancellableFuture::new(move |ct| {
+            // We need to immediately create the first LA future to be consistent with the behavior
+            // of other functions where the command is scheduled before being awaited on.
+            let first_la_fut = with_cancel_token(
+                self.local_activity_no_timer_retry(opts.clone()),
+                ct.clone(),
+                self,
+            );
+            async move {
+                let mut last_resolution = first_la_fut.await;
 
-            while let Some(activity_resolution::Status::Backoff(b)) = last_resolution.status {
-                self.timer(
-                    b.backoff_duration
-                        .expect("Duration is set")
-                        .try_into()
-                        .expect("duration converts ok"),
-                )
-                .await;
-                let mut opts = opts.clone();
-                opts.attempt = Some(b.attempt);
-                last_resolution = self.local_activity_no_timer_retry(opts.clone()).await;
+                while let Some(activity_resolution::Status::Backoff(b)) = last_resolution.status {
+                    with_cancel_token(
+                        self.timer(
+                            b.backoff_duration
+                                .expect("Duration is set")
+                                .try_into()
+                                .expect("duration converts ok"),
+                        ),
+                        ct.clone(),
+                        self,
+                    )
+                    .await;
+                    let mut opts = opts.clone();
+                    opts.attempt = Some(b.attempt);
+                    last_resolution = with_cancel_token(
+                        self.local_activity_no_timer_retry(opts.clone()),
+                        ct.clone(),
+                        self,
+                    )
+                    .await;
+                }
+                last_resolution
             }
-            last_resolution
         })
     }
 
@@ -226,7 +241,7 @@ impl WfContext {
         opts: LocalActivityOptions,
     ) -> impl CancellableFuture<ActivityResolution> {
         let seq = self.seq_nums.write().next_activity_seq();
-        let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));
+        let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::LocalActivity(seq));
         self.send(
             CommandCreateRequest {
                 cmd: opts.into_command(seq).into(),
@@ -375,6 +390,26 @@ pub trait CancellableFuture<T>: Future<Output = T> {
     fn cancel(&self, cx: &WfContext);
 }
 
+/// Turn this command future into one that is cancelled via the provided token rather than
+/// an explicit cancel call.
+fn with_cancel_token<'a, T>(
+    mut fut: impl CancellableFuture<T> + Unpin + 'a,
+    ct: CancellationToken,
+    ctx: &'a WfContext,
+) -> impl Future<Output = T> + 'a {
+    // Ideally this would be a method on `CancellableFuture` but because of no `impl Trait` in
+    // traits, that's very hard. Potentially just replace normal cancel with this anyway.
+    async move {
+        tokio::select! {
+            _ = ct.cancelled() => {
+                fut.cancel(ctx);
+                fut.await
+            },
+            r = &mut fut=> r
+        }
+    }
+}
+
 struct WFCommandFut<T, D> {
     _unused: PhantomData<T>,
     result_rx: oneshot::Receiver<UnblockEvent>,
@@ -474,12 +509,12 @@ struct ManualCancellableFuture<'a, T> {
 impl<'a, T> ManualCancellableFuture<'a, T> {
     pub(crate) fn new<F, OF>(fun: F) -> Self
     where
-        F: FnOnce(&CancellationToken) -> OF,
+        F: FnOnce(CancellationToken) -> OF,
         OF: Future<Output = T> + 'a + Send,
     {
         let cancel_tok = CancellationToken::new();
         Self {
-            inner_fut: fun(&cancel_tok).boxed(),
+            inner_fut: fun(cancel_tok.clone()).boxed(),
             cancel_tok,
         }
     }
