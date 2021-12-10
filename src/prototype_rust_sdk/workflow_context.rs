@@ -221,8 +221,7 @@ impl WfContext {
     }
 
     /// Request to run a local activity with no implementation of timer-backoff based retrying.
-    /// TODO: Should not be public in non-prototype SDK
-    pub(crate) fn local_activity_no_timer_retry(
+    fn local_activity_no_timer_retry(
         &self,
         opts: LocalActivityOptions,
     ) -> impl CancellableFuture<ActivityResolution> {

@@ -17,11 +17,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk_core_protos::{
-    coresdk::{
-        activity_result::{activity_resolution, ActivityResolution},
-        common::RetryPolicy,
-        AsJsonPayloadExt,
-    },
+    coresdk::{common::RetryPolicy, AsJsonPayloadExt},
     temporal::api::{enums::v1::EventType, failure::v1::Failure},
 };
 use tokio::sync::Barrier;
@@ -303,39 +299,22 @@ async fn local_act_retry_long_backoff_uses_timer() {
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         |ctx: WfContext| async move {
-            let mut la_opts = LocalActivityOptions {
-                activity_type: "echo".to_string(),
-                input: "hi".as_json_payload().expect("serializes fine"),
-                retry_policy: RetryPolicy {
-                    initial_interval: Some(Duration::from_millis(65).into()),
-                    // This will make the second backoff 65 seconds, plenty to use timer
-                    backoff_coefficient: 1_000.,
-                    maximum_interval: Some(Duration::from_secs(600).into()),
-                    maximum_attempts: 4,
-                    non_retryable_error_types: vec![],
-                },
-                ..Default::default()
-            };
-
-            let la_res = ctx.local_activity_no_timer_retry(la_opts.clone()).await;
-            if let Some(activity_resolution::Status::Backoff(b)) = la_res.status {
-                ctx.timer(
-                    b.backoff_duration
-                        .expect("Duration is set")
-                        .try_into()
-                        .expect("duration converts ok"),
-                )
+            let la_res = ctx
+                .local_activity(LocalActivityOptions {
+                    activity_type: "echo".to_string(),
+                    input: "hi".as_json_payload().expect("serializes fine"),
+                    retry_policy: RetryPolicy {
+                        initial_interval: Some(Duration::from_millis(65).into()),
+                        // This will make the second backoff 65 seconds, plenty to use timer
+                        backoff_coefficient: 1_000.,
+                        maximum_interval: Some(Duration::from_secs(600).into()),
+                        maximum_attempts: 3,
+                        non_retryable_error_types: vec![],
+                    },
+                    ..Default::default()
+                })
                 .await;
-                // Attempt # is 3 because we wanted to use timer backoff after failing the 2nd time
-                assert_eq!(b.attempt, 3);
-                // Explicitly schedule the next attempt
-                la_opts.attempt = Some(b.attempt);
-                let la_res = ctx.local_activity_no_timer_retry(la_opts).await;
-                assert_matches!(la_res, ActivityResolution {
-                    status: Some(activity_resolution::Status::Backoff(b))} if b.attempt == 4);
-            } else {
-                panic!("LA must resolve with backoff result");
-            }
+            assert!(la_res.failed());
             // Extra timer just to have an extra workflow task which we can return full history for
             ctx.timer(Duration::from_secs(1)).await;
             Ok(().into())
