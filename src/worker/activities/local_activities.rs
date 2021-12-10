@@ -193,21 +193,22 @@ impl LocalActivityManager {
                                     .map(|f| format!("{:?}", f))
                                     .unwrap_or_else(|| "".to_string()),
                             ) {
-                                warn!(
-                                    "Local activity {} failed on attempt {}, will retry after \
-                                     backing off for {:?}",
-                                    info.la_info.schedule_cmd.seq, info.attempt, backoff_dur
-                                );
-                                if backoff_dur
+                                let will_use_timer = backoff_dur
                                     > info
                                         .la_info
                                         .schedule_cmd
                                         .local_retry_threshold
                                         .clone()
                                         .try_into_or_none()
-                                        .unwrap_or_else(|| Duration::from_secs(60))
-                                {
-                                    warn!("Backoff is past local retry threshold");
+                                        .unwrap_or_else(|| Duration::from_secs(60));
+                                debug!(run_id = %info.la_info.workflow_exec_info.run_id,
+                                       seq_num = %info.la_info.schedule_cmd.seq,
+                                       attempt = %info.attempt,
+                                       will_use_timer,
+                                    "Local activity failed, will retry after backing off for {:?}",
+                                     backoff_dur
+                                );
+                                if will_use_timer {
                                     // We want this to be reported, as the workflow will mark this
                                     // failure down, then start a timer for backoff.
                                     return LACompleteAction::LangDoesTimerBackoff(

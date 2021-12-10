@@ -152,21 +152,23 @@ async fn local_act_retry_timer_backoff() {
     let mut starter = CoreWfStarter::new(wf_name);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.local_activity(LocalActivityOptions {
-            activity_type: "echo".to_string(),
-            input: "hi".as_json_payload().expect("serializes fine"),
-            retry_policy: RetryPolicy {
-                initial_interval: Some(Duration::from_micros(15).into()),
-                // We want two local backoffs that are short. Third backoff will use timer
-                backoff_coefficient: 1_000.,
-                maximum_interval: Some(Duration::from_millis(1500).into()),
-                maximum_attempts: 4,
-                non_retryable_error_types: vec![],
-            },
-            timer_backoff_threshold: Some(Duration::from_secs(1)),
-            ..Default::default()
-        })
-        .await;
+        let res = ctx
+            .local_activity(LocalActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi".as_json_payload().expect("serializes fine"),
+                retry_policy: RetryPolicy {
+                    initial_interval: Some(Duration::from_micros(15).into()),
+                    // We want two local backoffs that are short. Third backoff will use timer
+                    backoff_coefficient: 1_000.,
+                    maximum_interval: Some(Duration::from_millis(1500).into()),
+                    maximum_attempts: 4,
+                    non_retryable_error_types: vec![],
+                },
+                timer_backoff_threshold: Some(Duration::from_secs(1)),
+                ..Default::default()
+            })
+            .await;
+        assert!(res.failed());
         Ok(().into())
     });
     worker.register_activity("echo", |_: String| async {
