@@ -66,6 +66,7 @@ pub enum WFCommand {
     /// Returned when we need to wait for the lang sdk to send us something
     NoCommandsFromLang,
     AddActivity(ScheduleActivity),
+    AddLocalActivity(ScheduleLocalActivity),
     RequestCancelActivity(RequestCancelActivity),
     AddTimer(StartTimer),
     CancelTimer(CancelTimer),
@@ -120,6 +121,7 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::CancelUnstartedChildWorkflowExecution(s) => {
                 Ok(Self::CancelUnstartedChild(s))
             }
+            workflow_command::Variant::ScheduleLocalActivity(s) => Ok(Self::AddLocalActivity(s)),
         }
     }
 }

@@ -31,7 +31,7 @@ async fn signal_child_workflow(#[case] serial: bool) {
     let core = mock_core(mock);
     let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
-    let wf = move |mut ctx: WfContext| async move {
+    let wf = move |ctx: WfContext| async move {
         let child = ctx.child_workflow(ChildWorkflowOptions {
             workflow_id: "child-id-1".to_string(),
             workflow_type: "child".to_string(),
@@ -39,16 +39,16 @@ async fn signal_child_workflow(#[case] serial: bool) {
         });
 
         let start_res = child
-            .start(&mut ctx)
+            .start(&ctx)
             .await
             .into_started()
             .expect("Child should get started");
         let (sigres, res) = if serial {
-            let sigres = start_res.signal(&mut ctx, SIGNAME, b"Hi!").await;
+            let sigres = start_res.signal(&ctx, SIGNAME, b"Hi!").await;
             let res = start_res.result().await;
             (sigres, res)
         } else {
-            let sigfut = start_res.signal(&mut ctx, SIGNAME, b"Hi!");
+            let sigfut = start_res.signal(&ctx, SIGNAME, b"Hi!");
             let resfut = start_res.result();
             join!(sigfut, resfut)
         };
@@ -65,7 +65,7 @@ async fn signal_child_workflow(#[case] serial: bool) {
     worker.run_until_done().await.unwrap();
 }
 
-async fn parent_cancels_child_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+async fn parent_cancels_child_wf(ctx: WfContext) -> WorkflowResult<()> {
     let child = ctx.child_workflow(ChildWorkflowOptions {
         workflow_id: "child-id-1".to_string(),
         workflow_type: "child".to_string(),
@@ -74,11 +74,11 @@ async fn parent_cancels_child_wf(mut ctx: WfContext) -> WorkflowResult<()> {
     });
 
     let start_res = child
-        .start(&mut ctx)
+        .start(&ctx)
         .await
         .into_started()
         .expect("Child should get started");
-    let cancel_fut = start_res.cancel(&mut ctx);
+    let cancel_fut = start_res.cancel(&ctx);
     let resfut = start_res.result();
     let (cancel_res, res) = join!(cancel_fut, resfut);
     cancel_res.expect("cancel result is ok");

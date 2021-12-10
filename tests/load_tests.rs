@@ -27,7 +27,7 @@ async fn activity_load() {
     let task_queue = starter.get_task_queue().to_owned();
 
     let pd = payload_dat.clone();
-    let wf_fn = move |mut ctx: WfContext| {
+    let wf_fn = move |ctx: WfContext| {
         let task_queue = task_queue.clone();
         let payload_dat = pd.clone();
 

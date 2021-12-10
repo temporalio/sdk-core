@@ -1,5 +1,5 @@
-use crate::protosext::TryIntoOrNone;
 use crate::{
+    protosext::TryIntoOrNone,
     prototype_rust_sdk::{
         conversions::anyhow_to_fail, workflow_context::WfContextSharedData, CancellableID,
         RustWfCmd, UnblockEvent, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
@@ -31,7 +31,7 @@ use temporal_sdk_core_protos::{
             CancelSignalWorkflow, CancelTimer, CancelUnstartedChildWorkflowExecution,
             CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
             RequestCancelActivity, RequestCancelExternalWorkflowExecution, ScheduleActivity,
-            StartChildWorkflowExecution, StartTimer,
+            ScheduleLocalActivity, StartChildWorkflowExecution, StartTimer,
         },
         workflow_completion::WfActivationCompletion,
     },
@@ -365,7 +365,10 @@ impl Future for WorkflowFuture {
                             workflow_command::Variant::ScheduleActivity(ScheduleActivity {
                                 seq,
                                 ..
-                            }) => CommandID::Activity(seq),
+                            })
+                            | workflow_command::Variant::ScheduleLocalActivity(
+                                ScheduleLocalActivity { seq, .. },
+                            ) => CommandID::Activity(seq),
                             workflow_command::Variant::SetPatchMarker(_) => {
                                 panic!("Set patch marker should be a nonblocking command")
                             }

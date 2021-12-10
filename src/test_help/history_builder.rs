@@ -265,9 +265,11 @@ impl TestHistoryBuilder {
             details: build_local_activity_marker_details(
                 LocalActivityMarkerData {
                     seq,
+                    attempt: 1,
                     activity_id: activity_id.to_string(),
                     activity_type: "some_act_type".to_string(),
                     complete_time,
+                    backoff: None,
                 },
                 payload,
             ),

@@ -128,7 +128,7 @@ mod tests {
     };
     use std::time::Duration;
 
-    async fn wf_with_timer(mut ctx: WfContext) -> WorkflowResult<()> {
+    async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(500)).await;
         Ok(WfExitValue::continue_as_new(
             ContinueAsNewWorkflowExecution {

@@ -38,7 +38,7 @@ use temporal_sdk_core_protos::{
         },
         workflow_commands::{
             request_cancel_external_workflow_execution as cancel_we,
-            signal_external_workflow_execution as sig_we, ScheduleActivity,
+            signal_external_workflow_execution as sig_we, ScheduleLocalActivity,
         },
         FromPayloadsExt,
     },
@@ -107,7 +107,7 @@ pub(crate) struct WorkflowMachines {
     encountered_change_markers: HashMap<String, ChangeInfo>,
 
     /// Queued local activity requests which need to be executed
-    local_activity_requests: Vec<ScheduleActivity>,
+    local_activity_requests: Vec<ScheduleLocalActivity>,
     /// Seq #s of local activities which we have sent to be executed but have not yet resolved
     executing_local_activities: HashSet<u32>,
     /// Maps local activity sequence numbers to their resolutions as found when looking ahead at
@@ -167,7 +167,7 @@ pub enum MachineResponse {
 
     /// Queue a local activity to be processed by the worker
     #[display(fmt = "QueueLocalActivity")]
-    QueueLocalActivity(ScheduleActivity),
+    QueueLocalActivity(ScheduleLocalActivity),
     /// Set the workflow time to the provided time
     #[display(fmt = "UpdateWFTime({:?})", "_0")]
     UpdateWFTime(Option<SystemTime>),
@@ -271,12 +271,17 @@ impl WorkflowMachines {
         resolution: LocalResolution,
     ) -> Result<()> {
         match resolution {
-            LocalResolution::LocalActivity { result, runtime } => {
+            LocalResolution::LocalActivity {
+                result,
+                runtime,
+                attempt,
+                backoff,
+            } => {
                 let act_id = CommandID::LocalActivity(seq_id);
                 let mk = self.get_machine_key(act_id)?;
                 let mach = self.machine_mut(mk);
                 if let Machines::LocalActivityMachine(ref mut lam) = *mach {
-                    let resps = lam.try_resolve(seq_id, result, runtime)?;
+                    let resps = lam.try_resolve(seq_id, result, runtime, attempt, backoff)?;
                     self.process_machine_responses(mk, resps)?;
                 } else {
                     return Err(WFMachinesError::Nondeterminism(format!(
@@ -834,23 +839,20 @@ impl WorkflowMachines {
                 }
                 WFCommand::AddActivity(attrs) => {
                     let seq = attrs.seq;
-                    if attrs.local {
-                        let (la, mach_resp) = new_local_activity(
-                            attrs,
-                            self.replaying,
-                            self.local_activity_resolutions.remove(&seq),
-                            self.current_wf_time,
-                        )?;
-                        let machkey = self.all_machines.insert(la.into());
-                        self.id_to_machine
-                            .insert(CommandID::LocalActivity(seq), machkey);
-                        self.process_machine_responses(machkey, mach_resp)?;
-                    } else {
-                        self.add_cmd_to_wf_task(
-                            new_activity(attrs),
-                            Some(CommandID::Activity(seq)),
-                        );
-                    };
+                    self.add_cmd_to_wf_task(new_activity(attrs), Some(CommandID::Activity(seq)));
+                }
+                WFCommand::AddLocalActivity(attrs) => {
+                    let seq = attrs.seq;
+                    let (la, mach_resp) = new_local_activity(
+                        attrs,
+                        self.replaying,
+                        self.local_activity_resolutions.remove(&seq),
+                        self.current_wf_time,
+                    )?;
+                    let machkey = self.all_machines.insert(la.into());
+                    self.id_to_machine
+                        .insert(CommandID::LocalActivity(seq), machkey);
+                    self.process_machine_responses(machkey, mach_resp)?;
                 }
                 WFCommand::RequestCancelActivity(attrs) => {
                     jobs.extend(self.process_cancellation(CommandID::Activity(attrs.seq))?);

@@ -220,9 +220,12 @@ pub mod coresdk {
     }
 
     pub mod external_data {
-        use prost_types::Timestamp;
+        use prost_types::{Duration, Timestamp};
         use serde::{Deserialize, Deserializer, Serialize, Serializer};
         tonic::include_proto!("coresdk.external_data");
+
+        // Buncha hullaballoo because prost types aren't serde compat.
+        // See https://github.com/tokio-rs/prost/issues/75 which hilariously Chad opened ages ago
 
         #[derive(Serialize, Deserialize)]
         #[serde(remote = "Timestamp")]
@@ -230,9 +233,6 @@ pub mod coresdk {
             pub seconds: i64,
             pub nanos: i32,
         }
-
-        // Buncha hullaballoo because prost types aren't serde compat.
-        // See https://github.com/tokio-rs/prost/issues/75 which hilariously Chad opened ages ago
         mod opt_timestamp {
             use super::*;
 
@@ -252,6 +252,38 @@ pub mod coresdk {
             {
                 #[derive(Deserialize)]
                 struct Helper(#[serde(with = "TimestampDef")] Timestamp);
+
+                let helper = Option::deserialize(deserializer)?;
+                Ok(helper.map(|Helper(external)| external))
+            }
+        }
+
+        // Luckily Duration is also stored the exact same way
+        #[derive(Serialize, Deserialize)]
+        #[serde(remote = "Duration")]
+        struct DurationDef {
+            pub seconds: i64,
+            pub nanos: i32,
+        }
+        mod opt_duration {
+            use super::*;
+
+            pub fn serialize<S>(value: &Option<Duration>, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                #[derive(Serialize)]
+                struct Helper<'a>(#[serde(with = "DurationDef")] &'a Duration);
+
+                value.as_ref().map(Helper).serialize(serializer)
+            }
+
+            pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                #[derive(Deserialize)]
+                struct Helper(#[serde(with = "DurationDef")] Duration);
 
                 let helper = Option::deserialize(deserializer)?;
                 Ok(helper.map(|Helper(external)| external))
@@ -459,6 +491,16 @@ pub mod coresdk {
         impl Display for ScheduleActivity {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(f, "ScheduleActivity({}, {})", self.seq, self.activity_type)
+            }
+        }
+
+        impl Display for ScheduleLocalActivity {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(
+                    f,
+                    "ScheduleLocalActivity({}, {})",
+                    self.seq, self.activity_type
+                )
             }
         }
 

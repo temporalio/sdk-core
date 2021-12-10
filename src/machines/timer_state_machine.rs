@@ -294,7 +294,7 @@ mod test {
             timer to fire. In the all-in-one-go test, the timer is created and resolved in the same
             task, hence no extra loop.
         */
-        let func = WorkflowFunction::new(|mut command_sink: WfContext| async move {
+        let func = WorkflowFunction::new(|command_sink: WfContext| async move {
             command_sink.timer(Duration::from_secs(5)).await;
             Ok(().into())
         });
@@ -338,7 +338,7 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn mismatched_timer_ids_errors() {
-        let func = WorkflowFunction::new(|mut command_sink: WfContext| async move {
+        let func = WorkflowFunction::new(|command_sink: WfContext| async move {
             command_sink.timer(Duration::from_secs(5)).await;
             Ok(().into())
         });
@@ -355,11 +355,11 @@ mod test {
 
     #[fixture]
     fn cancellation_setup() -> ManagedWFFunc {
-        let func = WorkflowFunction::new(|mut ctx: WfContext| async move {
+        let func = WorkflowFunction::new(|ctx: WfContext| async move {
             let cancel_timer_fut = ctx.timer(Duration::from_secs(500));
             ctx.timer(Duration::from_secs(5)).await;
             // Cancel the first timer after having waited on the second
-            cancel_timer_fut.cancel(&mut ctx);
+            cancel_timer_fut.cancel(&ctx);
             cancel_timer_fut.await;
             Ok(().into())
         });
@@ -405,10 +405,10 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn cancel_before_sent_to_server() {
-        let func = WorkflowFunction::new(|mut ctx: WfContext| async move {
+        let func = WorkflowFunction::new(|ctx: WfContext| async move {
             let cancel_timer_fut = ctx.timer(Duration::from_secs(500));
             // Immediately cancel the timer
-            cancel_timer_fut.cancel(&mut ctx);
+            cancel_timer_fut.cancel(&ctx);
             cancel_timer_fut.await;
             Ok(().into())
         });

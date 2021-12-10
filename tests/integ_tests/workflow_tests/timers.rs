@@ -6,7 +6,7 @@ use temporal_sdk_core_protos::coresdk::{
 };
 use test_utils::{init_core_and_create_wf, start_timer_cmd, CoreTestHelpers, CoreWfStarter};
 
-pub async fn timer_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
+pub async fn timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
     command_sink.timer(Duration::from_secs(1)).await;
     Ok(().into())
 }
@@ -98,7 +98,7 @@ async fn timer_immediate_cancel_workflow() {
     .unwrap();
 }
 
-async fn parallel_timer_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
+async fn parallel_timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
     let t1 = command_sink.timer(Duration::from_secs(1));
     let t2 = command_sink.timer(Duration::from_secs(1));
     let _ = tokio::join!(t1, t2);

@@ -79,6 +79,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "coresdk.external_data.LocalActivityMarkerData.complete_time",
             "#[serde(with = \"opt_timestamp\")]",
         )
+        .field_attribute(
+            "coresdk.external_data.LocalActivityMarkerData.backoff",
+            "#[serde(with = \"opt_duration\")]",
+        )
         .compile(
             &[
                 "../protos/local/core_interface.proto",

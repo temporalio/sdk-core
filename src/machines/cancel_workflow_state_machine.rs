@@ -132,7 +132,7 @@ mod tests {
         wf_activation_job, WfActivationJob,
     };
 
-    async fn wf_with_timer(mut ctx: WfContext) -> WorkflowResult<()> {
+    async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(500)).await;
         Ok(WfExitValue::Cancelled)
     }

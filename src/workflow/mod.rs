@@ -87,6 +87,8 @@ pub(crate) enum LocalResolution {
     LocalActivity {
         result: LocalActivityExecutionResult,
         runtime: Duration,
+        attempt: u32,
+        backoff: Option<prost_types::Duration>,
     },
 }
 
@@ -329,6 +331,8 @@ pub mod managed_wf {
                         .try_into()
                         .expect("LA execution result must be a valid LA result"),
                     runtime: Duration::from_secs(1),
+                    attempt: 1,
+                    backoff: None,
                 },
             )
         }

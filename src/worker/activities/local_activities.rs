@@ -1,22 +1,24 @@
 use crate::{
-    machines::LocalActivityExecutionResult, retry_logic::RetryPolicyExt, task_token::TaskToken,
+    machines::LocalActivityExecutionResult, protosext::TryIntoOrNone, retry_logic::RetryPolicyExt,
+    task_token::TaskToken,
 };
 use parking_lot::Mutex;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
-    time::{Instant, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use temporal_sdk_core_protos::coresdk::{
     activity_task::{activity_task, ActivityTask, Start},
     common::WorkflowExecution,
-    workflow_commands::ScheduleActivity,
+    workflow_commands::ScheduleLocalActivity,
 };
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     Notify, Semaphore,
 };
 
+#[derive(Debug)]
 pub(crate) struct LocalInFlightActInfo {
     pub la_info: NewLocalAct,
     pub dispatch_time: Instant,
@@ -25,7 +27,7 @@ pub(crate) struct LocalInFlightActInfo {
 
 #[derive(Clone)]
 pub(crate) struct NewLocalAct {
-    pub schedule_cmd: ScheduleActivity,
+    pub schedule_cmd: ScheduleLocalActivity,
     pub workflow_type: String,
     pub workflow_exec_info: WorkflowExecution,
     pub schedule_time: SystemTime,
@@ -51,6 +53,8 @@ enum NewOrRetry {
 }
 
 pub(crate) struct LocalActivityManager {
+    /// Just so we can provide activity tasks the same namespace as the worker
+    namespace: String,
     /// Constrains number of currently executing local activities
     semaphore: Semaphore,
     /// Sink for new activity execution requests
@@ -70,9 +74,10 @@ struct LAMData {
 }
 
 impl LocalActivityManager {
-    pub(crate) fn new(max_concurrent: usize) -> Self {
+    pub(crate) fn new(max_concurrent: usize, namespace: String) -> Self {
         let (act_req_tx, act_req_rx) = unbounded_channel();
         Self {
+            namespace,
             semaphore: Semaphore::new(max_concurrent),
             act_req_tx,
             act_req_rx: tokio::sync::Mutex::new(act_req_rx),
@@ -104,7 +109,10 @@ impl LocalActivityManager {
         // it would mean dropping this future would cause us to drop the activity request.
         if let Some(new_or_retry) = self.act_req_rx.lock().await.recv().await {
             let (new_la, attempt) = match new_or_retry {
-                NewOrRetry::New(n) => (n, 1),
+                NewOrRetry::New(n) => {
+                    let explicit_attempt_num_or_1 = n.schedule_cmd.attempt.max(1);
+                    (n, explicit_attempt_num_or_1)
+                }
                 NewOrRetry::Retry { in_flight, attempt } => (in_flight, attempt),
             };
             let orig = new_la.clone();
@@ -129,7 +137,7 @@ impl LocalActivityManager {
                 task_token: tt.0,
                 activity_id: sa.activity_id,
                 variant: Some(activity_task::Variant::Start(Start {
-                    workflow_namespace: sa.namespace,
+                    workflow_namespace: self.namespace.clone(),
                     workflow_type: new_la.workflow_type,
                     workflow_execution: Some(new_la.workflow_exec_info),
                     activity_type: sa.activity_type,
@@ -171,16 +179,43 @@ impl LocalActivityManager {
                     self.complete_notify.notify_one();
                     LACompleteAction::Report(info)
                 }
-                LocalActivityExecutionResult::Failed(_) => {
+                LocalActivityExecutionResult::Failed(f) => {
                     match &info.la_info.schedule_cmd.retry_policy {
                         None => {
                             // If there's no retry policy... don't retry
                             LACompleteAction::Report(info)
                         }
                         Some(rp) => {
-                            if let Some(backoff_dur) =
-                                rp.should_retry(info.attempt as usize, "TODO")
-                            {
+                            if let Some(backoff_dur) = rp.should_retry(
+                                info.attempt as usize,
+                                &f.failure
+                                    .as_ref()
+                                    .map(|f| format!("{:?}", f))
+                                    .unwrap_or_else(|| "".to_string()),
+                            ) {
+                                let will_use_timer = backoff_dur
+                                    > info
+                                        .la_info
+                                        .schedule_cmd
+                                        .local_retry_threshold
+                                        .clone()
+                                        .try_into_or_none()
+                                        .unwrap_or_else(|| Duration::from_secs(60));
+                                debug!(run_id = %info.la_info.workflow_exec_info.run_id,
+                                       seq_num = %info.la_info.schedule_cmd.seq,
+                                       attempt = %info.attempt,
+                                       will_use_timer,
+                                    "Local activity failed, will retry after backing off for {:?}",
+                                     backoff_dur
+                                );
+                                if will_use_timer {
+                                    // We want this to be reported, as the workflow will mark this
+                                    // failure down, then start a timer for backoff.
+                                    return LACompleteAction::LangDoesTimerBackoff(
+                                        backoff_dur.into(),
+                                        info,
+                                    );
+                                }
                                 // Send the retry request after waiting the backoff duration
                                 let send_chan = self.act_req_tx.clone();
                                 tokio::spawn(async move {
@@ -216,10 +251,13 @@ impl LocalActivityManager {
     }
 }
 
+#[derive(Debug)]
 #[allow(clippy::large_enum_variant)] // Most will be reported
 pub(crate) enum LACompleteAction {
     /// Caller should report the status to the workflow
     Report(LocalInFlightActInfo),
+    /// Lang needs to be told to do the schedule-a-timer-then-rerun hack
+    LangDoesTimerBackoff(prost_types::Duration, LocalInFlightActInfo),
     /// The activity will be re-enqueued for another attempt (and so status should not be reported
     /// to the workflow)
     WillBeRetried,
@@ -230,13 +268,14 @@ pub(crate) enum LACompleteAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use temporal_sdk_core_protos::coresdk::common::RetryPolicy;
     use tokio::task::yield_now;
 
     #[tokio::test]
     async fn max_concurrent_respected() {
-        let lam = LocalActivityManager::new(1);
+        let lam = LocalActivityManager::new(1, "whatever".to_string());
         lam.enqueue((1..=50).map(|i| NewLocalAct {
-            schedule_cmd: ScheduleActivity {
+            schedule_cmd: ScheduleLocalActivity {
                 seq: i,
                 activity_id: i.to_string(),
                 ..Default::default()
@@ -267,9 +306,9 @@ mod tests {
 
     #[tokio::test]
     async fn no_work_doesnt_deadlock_with_complete() {
-        let lam = LocalActivityManager::new(5);
+        let lam = LocalActivityManager::new(5, "whatever".to_string());
         lam.enqueue([NewLocalAct {
-            schedule_cmd: ScheduleActivity {
+            schedule_cmd: ScheduleLocalActivity {
                 seq: 1,
                 activity_id: 1.to_string(),
                 ..Default::default()
@@ -294,5 +333,39 @@ mod tests {
                 lam.complete(&tt, &LocalActivityExecutionResult::Completed(Default::default()));
             } => (),
         };
+    }
+
+    #[tokio::test]
+    async fn respects_timer_backoff_threshold() {
+        let lam = LocalActivityManager::new(1, "whatever".to_string());
+        lam.enqueue([NewLocalAct {
+            schedule_cmd: ScheduleLocalActivity {
+                seq: 1,
+                activity_id: 1.to_string(),
+                attempt: 5,
+                retry_policy: Some(RetryPolicy {
+                    initial_interval: Some(Duration::from_secs(1).into()),
+                    backoff_coefficient: 10.0,
+                    maximum_interval: Some(Duration::from_secs(10).into()),
+                    maximum_attempts: 10,
+                    non_retryable_error_types: vec![],
+                }),
+                local_retry_threshold: Some(Duration::from_secs(5).into()),
+                ..Default::default()
+            },
+            workflow_type: "".to_string(),
+            workflow_exec_info: Default::default(),
+            schedule_time: SystemTime::now(),
+        }]);
+
+        let next = lam.next_pending().await.unwrap();
+        let tt = TaskToken(next.task_token);
+        let res = lam.complete(
+            &tt,
+            &LocalActivityExecutionResult::Failed(Default::default()),
+        );
+        assert_matches!(res, LACompleteAction::LangDoesTimerBackoff(dur, info)
+            if dur.seconds == 10 && info.attempt == 5
+        )
     }
 }

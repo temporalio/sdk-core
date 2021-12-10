@@ -297,7 +297,7 @@ mod tests {
 
     const SIGNAME: &str = "signame";
 
-    async fn signal_sender(mut ctx: WfContext) -> WorkflowResult<()> {
+    async fn signal_sender(ctx: WfContext) -> WorkflowResult<()> {
         let res = ctx
             .signal_workflow("fake_wid", "fake_rid", SIGNAME, b"hi!")
             .await;
@@ -356,9 +356,9 @@ mod tests {
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
 
-        let wff = WorkflowFunction::new(|mut ctx: WfContext| async move {
+        let wff = WorkflowFunction::new(|ctx: WfContext| async move {
             let sig = ctx.signal_workflow("fake_wid", "fake_rid", SIGNAME, b"hi!");
-            sig.cancel(&mut ctx);
+            sig.cancel(&ctx);
             let _res = sig.await;
             Ok(().into())
         });

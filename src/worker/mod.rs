@@ -185,7 +185,10 @@ impl Worker {
                     config.default_heartbeat_throttle_interval,
                 )
             }),
-            local_act_mgr: LocalActivityManager::new(config.max_outstanding_local_activities),
+            local_act_mgr: LocalActivityManager::new(
+                config.max_outstanding_local_activities,
+                sg.options.namespace.clone(),
+            ),
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             config,
             shutdown_requested: shut_rx,
@@ -283,32 +286,18 @@ impl Worker {
         if task_token.is_local_activity_task() {
             let as_la_res: LocalActivityExecutionResult = status.try_into()?;
             match self.local_act_mgr.complete(&task_token, &as_la_res) {
-                LACompleteAction::Report(LocalInFlightActInfo {
-                    la_info,
-                    dispatch_time,
-                    ..
-                }) => {
-                    if let Err(e) = self
-                        .wft_manager
-                        .notify_of_local_result(
-                            &la_info.workflow_exec_info.run_id,
-                            la_info.schedule_cmd.seq,
-                            LocalResolution::LocalActivity {
-                                result: as_la_res,
-                                runtime: dispatch_time.elapsed(),
-                            },
-                        )
+                LACompleteAction::Report(info) => {
+                    self.complete_local_act(&task_token, as_la_res, info, None)
                         .await
-                    {
-                        error!(
-                            "Problem completing local activity {}: {:?} -- will evict the workflow",
-                            task_token, e
-                        );
-                        self.request_wf_eviction(
-                            &la_info.workflow_exec_info.run_id,
-                            "Issue while completing local activity",
-                        );
-                    }
+                }
+                LACompleteAction::LangDoesTimerBackoff(backoff, info) => {
+                    // This la needs to write a failure marker, and then we will tell lang how
+                    // long of a timer to schedule to back off for. We do this because there are
+                    // no other situations where core generates "internal" commands so it is much
+                    // simpler for lang to reply with the timer / next LA command than to do it
+                    // internally. Plus, this backoff hack we'd like to eliminate eventually.
+                    self.complete_local_act(&task_token, as_la_res, info, Some(backoff))
+                        .await
                 }
                 LACompleteAction::WillBeRetried => {
                     // Nothing to do here
@@ -331,7 +320,6 @@ impl Worker {
             Ok(())
         }
     }
-
     pub(crate) async fn next_workflow_activation(&self) -> Result<WfActivation, PollWfError> {
         // The poll needs to be in a loop because we can't guarantee tail call optimization in Rust
         // (simply) and we really, really need that for long-poll retries.
@@ -729,6 +717,38 @@ impl Worker {
             self.request_wf_eviction(run_id, "Error reporting WFT to server");
         }
         res.map_err(Into::into)
+    }
+
+    async fn complete_local_act(
+        &self,
+        task_token: &TaskToken,
+        la_res: LocalActivityExecutionResult,
+        info: LocalInFlightActInfo,
+        backoff: Option<prost_types::Duration>,
+    ) {
+        if let Err(e) = self
+            .wft_manager
+            .notify_of_local_result(
+                &info.la_info.workflow_exec_info.run_id,
+                info.la_info.schedule_cmd.seq,
+                LocalResolution::LocalActivity {
+                    result: la_res,
+                    runtime: info.dispatch_time.elapsed(),
+                    attempt: info.attempt,
+                    backoff,
+                },
+            )
+            .await
+        {
+            error!(
+                "Problem completing local activity {}: {:?} -- will evict the workflow",
+                task_token, e
+            );
+            self.request_wf_eviction(
+                &info.la_info.workflow_exec_info.run_id,
+                "Issue while completing local activity",
+            );
+        }
     }
 
     /// Return the sticky execution attributes that should be used to complete workflow tasks

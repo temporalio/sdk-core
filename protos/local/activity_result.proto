@@ -66,6 +66,8 @@ message WillCompleteAsync {
  * from lang. So expecting lang to start the timer / next pass of the activity fits more smoothly.
  */
 message DoBackoff {
+    // The attempt number that lang should provide when scheduling the retry. If the LA failed
+    // on attempt 4 and we told lang to back off with a timer, this number will be 5.
     uint32 attempt = 1;
     google.protobuf.Duration backoff_duration = 2;
 }

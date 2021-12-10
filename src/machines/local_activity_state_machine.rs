@@ -1,10 +1,9 @@
-use crate::protosext::TryIntoOrNone;
 use crate::{
     machines::{
         workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, OnEventWrapper,
         WFMachinesAdapter, WFMachinesError,
     },
-    protosext::{CompleteLocalActivityData, HistoryEventExt},
+    protosext::{CompleteLocalActivityData, HistoryEventExt, TryIntoOrNone},
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::{
@@ -13,11 +12,11 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::{ActivityResolution, Failure as ActFail, Success},
+        activity_result::{ActivityResolution, DoBackoff, Failure as ActFail, Success},
         common::build_local_activity_marker_details,
         external_data::LocalActivityMarkerData,
         workflow_activation::ResolveActivity,
-        workflow_commands::ScheduleActivity,
+        workflow_commands::ScheduleLocalActivity,
     },
     temporal::api::{
         command::v1::{Command, RecordMarkerCommandAttributes},
@@ -71,6 +70,8 @@ pub(super) struct ResolveDat {
     pub(super) seq: u32,
     pub(super) result: LocalActivityExecutionResult,
     pub(super) complete_time: Option<SystemTime>,
+    pub(super) attempt: u32,
+    pub(super) backoff: Option<prost_types::Duration>,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +93,8 @@ impl From<CompleteLocalActivityData> for ResolveDat {
                 }),
             },
             complete_time: d.marker_dat.complete_time.try_into_or_none(),
+            attempt: d.marker_dat.attempt,
+            backoff: d.marker_dat.backoff,
         }
     }
 }
@@ -101,7 +104,7 @@ impl From<CompleteLocalActivityData> for ResolveDat {
 /// must resolve before we send a record marker command. A [MachineResponse] may be produced,
 /// to queue the LA for execution if it needs to be.
 pub(super) fn new_local_activity(
-    attrs: ScheduleActivity,
+    attrs: ScheduleLocalActivity,
     replaying_when_invoked: bool,
     maybe_pre_resolved: Option<ResolveDat>,
     wf_time: Option<SystemTime>,
@@ -198,6 +201,8 @@ impl LocalActivityMachine {
         seq: u32,
         result: LocalActivityExecutionResult,
         runtime: Duration,
+        attempt: u32,
+        backoff: Option<prost_types::Duration>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         let mut res = OnEventWrapper::on_event_mut(
             self,
@@ -205,6 +210,8 @@ impl LocalActivityMachine {
                 seq,
                 result,
                 complete_time: self.shared_state.wf_time_when_started.map(|t| t + runtime),
+                attempt,
+                backoff,
             }),
         )
         .map_err(|e| match e {
@@ -224,14 +231,14 @@ impl LocalActivityMachine {
 
 #[derive(Clone)]
 pub(super) struct SharedState {
-    attrs: ScheduleActivity,
+    attrs: ScheduleLocalActivity,
     replaying_when_invoked: bool,
     wf_time_when_started: Option<SystemTime>,
 }
 
 #[derive(Debug, derive_more::Display)]
 pub(super) enum LocalActivityCommand {
-    RequestActivityExecution(ScheduleActivity),
+    RequestActivityExecution(ScheduleLocalActivity),
     #[display(fmt = "Resolved")]
     Resolved(ResolveDat),
     /// The fake marker is used to avoid special casing marker recorded event handling.
@@ -422,6 +429,8 @@ impl WFMachinesAdapter for LocalActivityMachine {
                 seq,
                 result,
                 complete_time,
+                attempt,
+                backoff,
             }) => {
                 let mut maybe_ok_result = None;
                 let mut maybe_failure = None;
@@ -433,11 +442,24 @@ impl WFMachinesAdapter for LocalActivityMachine {
                         maybe_failure = fail.failure;
                     }
                 };
+                let resolution = if let Some(b) = backoff.as_ref() {
+                    ActivityResolution {
+                        status: Some(
+                            DoBackoff {
+                                attempt: attempt + 1,
+                                backoff_duration: Some(b.clone()),
+                            }
+                            .into(),
+                        ),
+                    }
+                } else {
+                    result.into()
+                };
                 let mut responses = vec![
                     MachineResponse::PushWFJob(
                         ResolveActivity {
                             seq: self.shared_state.attrs.seq,
-                            result: Some(result.into()),
+                            result: Some(resolution),
                         }
                         .into(),
                     ),
@@ -450,9 +472,11 @@ impl WFMachinesAdapter for LocalActivityMachine {
                         details: build_local_activity_marker_details(
                             LocalActivityMarkerData {
                                 seq,
+                                attempt,
                                 activity_id: self.shared_state.attrs.activity_id.clone(),
                                 activity_type: self.shared_state.attrs.activity_type.clone(),
                                 complete_time: complete_time.map(Into::into),
+                                backoff,
                             },
                             maybe_ok_result,
                         ),
@@ -563,7 +587,7 @@ mod tests {
         },
     };
 
-    async fn la_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+    async fn la_wf(ctx: WfContext) -> WorkflowResult<()> {
         ctx.local_activity(LocalActivityOptions::default()).await;
         Ok(().into())
     }
@@ -676,7 +700,7 @@ mod tests {
         wfm.shutdown().await.unwrap();
     }
 
-    async fn two_la_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+    async fn two_la_wf(ctx: WfContext) -> WorkflowResult<()> {
         ctx.local_activity(LocalActivityOptions::default()).await;
         ctx.local_activity(LocalActivityOptions::default()).await;
         Ok(().into())
@@ -769,7 +793,7 @@ mod tests {
         wfm.shutdown().await.unwrap();
     }
 
-    async fn two_la_wf_parallel(mut ctx: WfContext) -> WorkflowResult<()> {
+    async fn two_la_wf_parallel(ctx: WfContext) -> WorkflowResult<()> {
         tokio::join!(
             ctx.local_activity(LocalActivityOptions::default()),
             ctx.local_activity(LocalActivityOptions::default())
@@ -854,7 +878,7 @@ mod tests {
         wfm.shutdown().await.unwrap();
     }
 
-    async fn la_timer_la(mut ctx: WfContext) -> WorkflowResult<()> {
+    async fn la_timer_la(ctx: WfContext) -> WorkflowResult<()> {
         ctx.local_activity(LocalActivityOptions::default()).await;
         ctx.timer(Duration::from_secs(5)).await;
         ctx.local_activity(LocalActivityOptions::default()).await;

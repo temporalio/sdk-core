@@ -776,7 +776,7 @@ mod test {
         ManagedWFFunc::new(t, func, vec![])
     }
 
-    async fn activity_wf(mut command_sink: WfContext) -> WorkflowResult<()> {
+    async fn activity_wf(command_sink: WfContext) -> WorkflowResult<()> {
         command_sink.activity(ActivityOptions::default()).await;
         Ok(().into())
     }
@@ -825,10 +825,10 @@ mod test {
 
     #[tokio::test]
     async fn immediate_activity_cancelation() {
-        let func = WorkflowFunction::new(|mut ctx: WfContext| async move {
+        let func = WorkflowFunction::new(|ctx: WfContext| async move {
             let cancel_activity_future = ctx.activity(ActivityOptions::default());
             // Immediately cancel the activity
-            cancel_activity_future.cancel(&mut ctx);
+            cancel_activity_future.cancel(&ctx);
             cancel_activity_future.await;
             Ok(().into())
         });

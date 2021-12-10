@@ -16,7 +16,7 @@ use std::{
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
 
 static DID_FAIL: AtomicBool = AtomicBool::new(false);
-pub async fn timer_wf_fails_once(mut ctx: WfContext) -> WorkflowResult<()> {
+pub async fn timer_wf_fails_once(ctx: WfContext) -> WorkflowResult<()> {
     ctx.timer(Duration::from_secs(1)).await;
     if DID_FAIL
         .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
@@ -85,7 +85,7 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
     let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
     let started_count: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
-    worker.register_wf(wf_type.to_owned(), move |mut ctx: WfContext| async move {
+    worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
         // The workflow is replaying all of history, so the when it schedules an extra timer it
         // should not have, it causes a nondeterminism error.
         if started_count.fetch_add(1, Ordering::Relaxed) == 0 {

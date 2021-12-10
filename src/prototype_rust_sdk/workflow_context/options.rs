@@ -2,7 +2,10 @@ use std::time::Duration;
 use temporal_sdk_core_protos::coresdk::{
     child_workflow::ChildWorkflowCancellationType,
     common::{Payload, RetryPolicy},
-    workflow_commands::{ActivityCancellationType, ScheduleActivity, StartChildWorkflowExecution},
+    workflow_commands::{
+        ActivityCancellationType, ScheduleActivity, ScheduleLocalActivity,
+        StartChildWorkflowExecution,
+    },
 };
 
 pub trait IntoWorkflowCommand {
@@ -77,7 +80,7 @@ impl IntoWorkflowCommand for ActivityOptions {
 }
 
 /// Options for scheduling a local activity
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct LocalActivityOptions {
     /// Identifier to use for tracking the activity in Workflow history.
     /// The `activityId` can be accessed by the activity function.
@@ -91,14 +94,19 @@ pub struct LocalActivityOptions {
     pub input: Payload,
     /// Retry policy
     pub retry_policy: RetryPolicy,
+    /// Override attempt number rather than using 1.
+    /// Ideally we would not expose this in a released Rust SDK, but it's needed for test.
+    pub attempt: Option<u32>,
+    /// Retry backoffs over this amount will use a timer rather than a local retry
+    pub timer_backoff_threshold: Option<Duration>,
 }
 
 impl IntoWorkflowCommand for LocalActivityOptions {
-    type WFCommandType = ScheduleActivity;
-    fn into_command(self, seq: u32) -> ScheduleActivity {
-        ScheduleActivity {
-            local: true,
+    type WFCommandType = ScheduleLocalActivity;
+    fn into_command(self, seq: u32) -> ScheduleLocalActivity {
+        ScheduleLocalActivity {
             seq,
+            attempt: self.attempt.unwrap_or(1),
             activity_id: match self.activity_id {
                 None => seq.to_string(),
                 Some(aid) => aid,
@@ -106,6 +114,7 @@ impl IntoWorkflowCommand for LocalActivityOptions {
             activity_type: self.activity_type,
             arguments: vec![self.input],
             retry_policy: Some(self.retry_policy),
+            local_retry_threshold: self.timer_backoff_threshold.map(Into::into),
             ..Default::default()
         }
     }
