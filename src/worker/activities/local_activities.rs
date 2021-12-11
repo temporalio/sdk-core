@@ -175,7 +175,8 @@ impl LocalActivityManager {
             self.semaphore.add_permits(1);
 
             match status {
-                LocalActivityExecutionResult::Completed(_) => {
+                LocalActivityExecutionResult::Completed(_)
+                | LocalActivityExecutionResult::Cancelled(_, _) => {
                     self.complete_notify.notify_one();
                     LACompleteAction::Report(info)
                 }

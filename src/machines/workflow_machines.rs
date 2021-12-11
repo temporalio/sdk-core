@@ -1,3 +1,4 @@
+use crate::machines::LocalActivityExecutionResult;
 use crate::{
     machines::{
         activity_state_machine::new_activity,
@@ -268,32 +269,29 @@ impl WorkflowMachines {
 
     /// Let this workflow know that something we've been waiting locally on has resolved, like a
     /// local activity or side effect
-    pub(crate) fn local_resolution(
-        &mut self,
-        seq_id: u32,
-        resolution: LocalResolution,
-    ) -> Result<()> {
+    pub(crate) fn local_resolution(&mut self, resolution: LocalResolution) -> Result<()> {
         match resolution {
             LocalResolution::LocalActivity {
+                seq,
                 result,
                 runtime,
                 attempt,
                 backoff,
             } => {
-                let act_id = CommandID::LocalActivity(seq_id);
+                let act_id = CommandID::LocalActivity(seq);
                 let mk = self.get_machine_key(act_id)?;
                 let mach = self.machine_mut(mk);
                 if let Machines::LocalActivityMachine(ref mut lam) = *mach {
-                    let resps = lam.try_resolve(seq_id, result, runtime, attempt, backoff)?;
+                    let resps = lam.try_resolve(result, runtime, attempt, backoff)?;
                     self.process_machine_responses(mk, resps)?;
                 } else {
                     return Err(WFMachinesError::Nondeterminism(format!(
                         "Command matching activity with seq num {} existed but was not a \
                         local activity!",
-                        seq_id
+                        seq
                     )));
                 }
-                self.executing_local_activities.remove(&seq_id);
+                self.executing_local_activities.remove(&seq);
             }
         }
         Ok(())
@@ -460,12 +458,12 @@ impl WorkflowMachines {
                 )));
             };
 
-            // Feed the machine the event
             let canceled_before_sent = self
                 .machine(command.machine)
                 .was_cancelled_before_sent_to_server();
 
             if !canceled_before_sent {
+                // Feed the machine the event
                 self.submachine_handle_event(command.machine, event, true)?;
                 break command;
             }
@@ -1004,19 +1002,27 @@ impl WorkflowMachines {
                 }
                 MachineResponse::RequestCancelLocalActivity(seq) => {
                     // If it's in the request queue, just rip it out.
-                    let orig_len = self.local_activity_requests.len();
-                    self.local_activity_requests.retain(|req| req.seq != seq);
-                    if self.local_activity_requests.len() != orig_len {
+                    if let Some(removed_act) = self
+                        .local_activity_requests
+                        .iter()
+                        .position(|req| req.seq == seq)
+                        .map(|i| self.local_activity_requests.remove(i))
+                    {
                         // We removed it. Notify the machine that the activity cancelled.
                         if let Machines::LocalActivityMachine(lam) = self.machine_mut(m_key) {
-                            let more_responses = lam.try_resolve_cancelled()?;
+                            let more_responses = lam.try_resolve(
+                                LocalActivityExecutionResult::Cancelled(Default::default(), true),
+                                Duration::from_secs(0),
+                                removed_act.attempt,
+                                None,
+                            )?;
                             self.process_machine_responses(m_key, more_responses)?;
                         } else {
                             panic!("A non local-activity machine returned a request cancel LA response");
                         }
                     }
 
-                    // TODO: MORE
+                    // TODO: Actually send cancel request to LA manager
                 }
                 v => {
                     return Err(WFMachinesError::Fatal(format!(

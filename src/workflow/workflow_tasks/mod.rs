@@ -673,12 +673,11 @@ impl WorkflowTaskManager {
     pub(crate) async fn notify_of_local_result(
         &self,
         run_id: &str,
-        seq_id: u32,
         resolved: LocalResolution,
     ) -> Result<(), WorkflowUpdateError> {
         self.workflow_machines
             .access_sync(run_id, |wfm: &mut WorkflowManager| {
-                wfm.notify_of_local_result(seq_id, resolved)
+                wfm.notify_of_local_result(resolved)
             })?
             .map_err(|wfme| WorkflowUpdateError {
                 source: wfme,

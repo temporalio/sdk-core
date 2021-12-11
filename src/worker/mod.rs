@@ -742,8 +742,8 @@ impl Worker {
             .wft_manager
             .notify_of_local_result(
                 &info.la_info.workflow_exec_info.run_id,
-                info.la_info.schedule_cmd.seq,
                 LocalResolution::LocalActivity {
+                    seq: info.la_info.schedule_cmd.seq,
                     result: la_res,
                     runtime: info.dispatch_time.elapsed(),
                     attempt: info.attempt,

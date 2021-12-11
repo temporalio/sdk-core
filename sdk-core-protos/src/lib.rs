@@ -99,6 +99,10 @@ pub mod coresdk {
                     status: Some(aer::Status::WillCompleteAsync(WillCompleteAsync {})),
                 }
             }
+
+            pub fn is_cancelled(&self) -> bool {
+                matches!(self.status, Some(aer::Status::Cancelled(_)))
+            }
         }
 
         impl From<Result<APIPayload, APIFailure>> for ActivityExecutionResult {
@@ -128,6 +132,10 @@ pub mod coresdk {
 
             pub fn failed(&self) -> bool {
                 matches!(self.status, Some(activity_resolution::Status::Failed(_)))
+            }
+
+            pub fn cancelled(&self) -> bool {
+                matches!(self.status, Some(activity_resolution::Status::Cancelled(_)))
             }
         }
     }

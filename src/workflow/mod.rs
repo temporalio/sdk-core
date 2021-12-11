@@ -85,6 +85,7 @@ pub struct OutgoingServerCommands {
 #[derive(Debug)]
 pub(crate) enum LocalResolution {
     LocalActivity {
+        seq: u32,
         result: LocalActivityExecutionResult,
         runtime: Duration,
         attempt: u32,
@@ -107,8 +108,8 @@ impl WorkflowManager {
 
     /// Let this workflow know that something we've been waiting locally on has resolved, like a
     /// local activity or side effect
-    pub fn notify_of_local_result(&mut self, seq_id: u32, resolved: LocalResolution) -> Result<()> {
-        self.machines.local_resolution(seq_id, resolved)
+    pub fn notify_of_local_result(&mut self, resolved: LocalResolution) -> Result<()> {
+        self.machines.local_resolution(resolved)
     }
 
     /// Fetch the next workflow activation for this workflow if one is required. Doing so will apply
@@ -320,9 +321,9 @@ pub mod managed_wf {
             seq_num: u32,
             result: ActivityExecutionResult,
         ) -> Result<()> {
-            self.mgr.notify_of_local_result(
-                seq_num,
-                LocalResolution::LocalActivity {
+            self.mgr
+                .notify_of_local_result(LocalResolution::LocalActivity {
+                    seq: seq_num,
                     // We accept normal execution results and do this conversion because there
                     // are more helpers for constructing them.
                     result: result
@@ -333,8 +334,7 @@ pub mod managed_wf {
                     runtime: Duration::from_secs(1),
                     attempt: 1,
                     backoff: None,
-                },
-            )
+                })
         }
 
         /// During testing it can be useful to run through all activations to simulate replay

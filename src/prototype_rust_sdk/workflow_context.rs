@@ -392,21 +392,19 @@ pub trait CancellableFuture<T>: Future<Output = T> {
 
 /// Turn this command future into one that is cancelled via the provided token rather than
 /// an explicit cancel call.
-fn with_cancel_token<'a, T>(
+async fn with_cancel_token<'a, T>(
     mut fut: impl CancellableFuture<T> + Unpin + 'a,
     ct: CancellationToken,
     ctx: &'a WfContext,
-) -> impl Future<Output = T> + 'a {
+) -> T {
     // Ideally this would be a method on `CancellableFuture` but because of no `impl Trait` in
     // traits, that's very hard. Potentially just replace normal cancel with this anyway.
-    async move {
-        tokio::select! {
-            _ = ct.cancelled() => {
-                fut.cancel(ctx);
-                fut.await
-            },
-            r = &mut fut=> r
-        }
+    tokio::select! {
+        _ = ct.cancelled() => {
+            fut.cancel(ctx);
+            fut.await
+        },
+        r = &mut fut=> r
     }
 }
 

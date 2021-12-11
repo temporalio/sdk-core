@@ -250,10 +250,7 @@ impl TryFrom<activity_execution_result::Status> for LocalActivityExecutionResult
         match s {
             Status::Completed(c) => Ok(LocalActivityExecutionResult::Completed(c)),
             Status::Failed(f) => Ok(LocalActivityExecutionResult::Failed(f)),
-            Status::Cancelled(_) => Err(CompleteActivityError::MalformedActivityCompletion {
-                reason: "Cancellation not yet implemented for local activities".to_string(),
-                completion: None,
-            }),
+            Status::Cancelled(c) => Ok(LocalActivityExecutionResult::Cancelled(c, false)),
             Status::WillCompleteAsync(_) => {
                 Err(CompleteActivityError::MalformedActivityCompletion {
                     reason: "Local activities cannot be completed async".to_string(),
