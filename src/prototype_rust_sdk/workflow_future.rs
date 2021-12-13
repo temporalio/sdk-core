@@ -18,7 +18,6 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
-use temporal_sdk_core_protos::coresdk::workflow_commands::RequestCancelLocalActivity;
 use temporal_sdk_core_protos::{
     coresdk::{
         common::Payload,
@@ -31,8 +30,9 @@ use temporal_sdk_core_protos::{
             request_cancel_external_workflow_execution as cancel_we, workflow_command,
             CancelSignalWorkflow, CancelTimer, CancelUnstartedChildWorkflowExecution,
             CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
-            RequestCancelActivity, RequestCancelExternalWorkflowExecution, ScheduleActivity,
-            ScheduleLocalActivity, StartChildWorkflowExecution, StartTimer,
+            RequestCancelActivity, RequestCancelExternalWorkflowExecution,
+            RequestCancelLocalActivity, ScheduleActivity, ScheduleLocalActivity,
+            StartChildWorkflowExecution, StartTimer,
         },
         workflow_completion::WfActivationCompletion,
     },

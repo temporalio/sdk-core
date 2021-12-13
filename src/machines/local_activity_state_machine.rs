@@ -13,7 +13,8 @@ use std::{
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
-            ActivityResolution, Cancellation as ActCancel, DoBackoff, Failure as ActFail, Success,
+            ActivityResolution, Cancellation, Cancellation as ActCancel, DoBackoff,
+            Failure as ActFail, Success,
         },
         common::build_local_activity_marker_details,
         external_data::LocalActivityMarkerData,
@@ -23,6 +24,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::{Command, RecordMarkerCommandAttributes},
         enums::v1::{CommandType, EventType},
+        failure::v1::failure::FailureInfo,
         history::v1::HistoryEvent,
     },
 };
@@ -58,6 +60,11 @@ fsm! {
     // to eventually see the marker
     WaitingMarkerEvent --(MarkerRecorded(CompleteLocalActivityData), shared on_marker_recorded)
       --> MarkerCommandRecorded;
+    // If we are told to cancel while waiting for the marker, we still need to wait for the marker.
+    // TODO: Write down we expect to see a cancelled marker?
+    WaitingMarkerEvent --(Cancel, on_cancel_requested) --> WaitingMarkerEvent;
+    // TODO: Make this its own state if it works
+    WaitingMarkerEvent --(HandleResult(ResolveDat), on_handle_result) --> WaitingMarkerEvent;
     // It is entirely possible to have started the LA while replaying, only to find that we have
     // reached a new WFT and there still was no marker. In such cases we need to execute the LA.
     // This can easily happen if upon first execution, the worker does WFT heartbeating but then
@@ -82,7 +89,8 @@ pub(super) struct ResolveDat {
 pub(crate) enum LocalActivityExecutionResult {
     Completed(Success),
     Failed(ActFail),
-    /// The boolean must be set true if the activity was cancelled before being dispatched
+    /// The boolean must be set true if we should not record the marker. EX: If we cancelled before
+    /// dispatching.
     Cancelled(ActCancel, bool),
 }
 
@@ -93,9 +101,20 @@ impl From<CompleteLocalActivityData> for ResolveDat {
                 Ok(res) => LocalActivityExecutionResult::Completed(Success {
                     result: Some(res.into()),
                 }),
-                Err(fail) => LocalActivityExecutionResult::Failed(ActFail {
-                    failure: Some(fail),
-                }),
+                Err(fail) => {
+                    if matches!(fail.failure_info, Some(FailureInfo::CanceledFailureInfo(_))) {
+                        LocalActivityExecutionResult::Cancelled(
+                            Cancellation {
+                                failure: Some(fail),
+                            },
+                            true,
+                        )
+                    } else {
+                        LocalActivityExecutionResult::Failed(ActFail {
+                            failure: Some(fail),
+                        })
+                    }
+                }
             },
             complete_time: d.marker_dat.complete_time.try_into_or_none(),
             attempt: d.marker_dat.attempt,
@@ -208,23 +227,28 @@ impl LocalActivityMachine {
         attempt: u32,
         backoff: Option<prost_types::Duration>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        let mut res = OnEventWrapper::on_event_mut(
-            self,
-            LocalActivityMachineEvents::HandleResult(ResolveDat {
-                result,
-                complete_time: self.shared_state.wf_time_when_started.map(|t| t + runtime),
-                attempt,
-                backoff,
-            }),
-        )
-        .map_err(|e| match e {
-            MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
-                "Invalid transition resolving local activity (seq {}) in {}",
-                self.shared_state.attrs.seq,
-                self.state(),
-            )),
-            MachineError::Underlying(e) => e,
-        })?;
+        self.try_resolve_with_dat(ResolveDat {
+            result,
+            complete_time: self.shared_state.wf_time_when_started.map(|t| t + runtime),
+            attempt,
+            backoff,
+        })
+    }
+    /// Attempt to resolve the local activity with already known data, ex pre-resolved data
+    pub(super) fn try_resolve_with_dat(
+        &mut self,
+        dat: ResolveDat,
+    ) -> Result<Vec<MachineResponse>, WFMachinesError> {
+        let mut res =
+            OnEventWrapper::on_event_mut(self, LocalActivityMachineEvents::HandleResult(dat))
+                .map_err(|e| match e {
+                    MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
+                        "Invalid transition resolving local activity (seq {}) in {}",
+                        self.shared_state.attrs.seq,
+                        self.state(),
+                    )),
+                    MachineError::Underlying(e) => e,
+                })?;
         let res = res.pop().expect("Always produces one response");
         Ok(self
             .adapt_response(res, None)
@@ -250,9 +274,10 @@ pub(super) enum LocalActivityCommand {
     /// server because it is understood to be meaningless.
     #[display(fmt = "FakeMarker")]
     FakeMarker,
-    /// Indicate we want to cancel an LA that is currently executing
+    /// Indicate we want to cancel an LA that is currently executing, or look up if we have
+    /// processed a marker with resolution data since the machine was constructed.
     #[display(fmt = "Cancel")]
-    Cancel,
+    RequestCancel,
 }
 
 #[derive(Default, Clone)]
@@ -338,7 +363,7 @@ impl RequestSent {
     }
 
     fn on_cancel_requested(self) -> LocalActivityMachineTransition<RequestSent> {
-        TransitionResult::ok([LocalActivityCommand::Cancel], self)
+        TransitionResult::ok([LocalActivityCommand::RequestCancel], self)
     }
 }
 
@@ -400,6 +425,19 @@ impl WaitingMarkerEvent {
     ) -> LocalActivityMachineTransition<RequestSent> {
         TransitionResult::commands([LocalActivityCommand::RequestActivityExecution(dat.attrs)])
     }
+
+    fn on_cancel_requested(self) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
+        // We still "request a cancel" even though we know the local activity should not be running
+        // because the data might be in the pre-resolved list.
+        TransitionResult::ok([LocalActivityCommand::RequestCancel], self)
+    }
+
+    fn on_handle_result(
+        self,
+        dat: ResolveDat,
+    ) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
+        TransitionResult::ok([LocalActivityCommand::Resolved(dat)], self)
+    }
 }
 
 #[derive(Default, Clone)]
@@ -421,7 +459,7 @@ impl Cancellable for LocalActivityMachine {
         let mach_resps = cmds
             .into_iter()
             .flat_map(|mc| match mc {
-                LocalActivityCommand::Cancel => {
+                LocalActivityCommand::RequestCancel => {
                     vec![MachineResponse::RequestCancelLocalActivity(
                         self.shared_state.attrs.seq,
                     )]
@@ -464,7 +502,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
                 let mut maybe_failure = None;
                 // Only issue record marker commands if we weren't replaying
                 let mut record_marker = !self.shared_state.replaying_when_invoked;
-                match result.clone() {
+                match dbg!(result.clone()) {
                     LocalActivityExecutionResult::Completed(suc) => {
                         maybe_ok_result = suc.result;
                     }
@@ -531,7 +569,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
                 )])
             }
             // TODO: Should this *only* be here, or not be here?
-            LocalActivityCommand::Cancel => {
+            LocalActivityCommand::RequestCancel => {
                 todo!()
             }
         }
@@ -611,7 +649,6 @@ impl From<LocalActivityExecutionResult> for ActivityResolution {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::telemetry::test_telem_console;
     use crate::{
         prototype_rust_sdk::{
             CancellableFuture, LocalActivityOptions, WfContext, WorkflowFunction, WorkflowResult,
@@ -1146,7 +1183,6 @@ mod tests {
     #[case::replay(true)]
     #[tokio::test]
     async fn cancel_after_act_starts(#[case] replay: bool) {
-        test_telem_console();
         let func = WorkflowFunction::new(|ctx| async move {
             let la = ctx.local_activity(LocalActivityOptions::default());
             ctx.timer(Duration::from_secs(1)).await;
@@ -1181,12 +1217,12 @@ mod tests {
         assert_eq!(ready_to_execute_las.len(), num_queued);
 
         // Next activation timer fires and activity cancel will be requested
-        if !replay {
+        if replay {
+            wfm.get_next_activation().await.unwrap()
+        } else {
             wfm.new_history(t.get_history_info(2).unwrap().into())
                 .await
                 .unwrap()
-        } else {
-            wfm.get_next_activation().await.unwrap()
         };
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
@@ -1199,12 +1235,20 @@ mod tests {
         // next activation unblocks LA, which is cancelled now, and we persist that
         wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 2);
-        assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
-        assert_eq!(
-            commands[1].command_type,
-            CommandType::CompleteWorkflowExecution as i32
-        );
+        if replay {
+            assert_eq!(commands.len(), 1);
+            assert_eq!(
+                commands[0].command_type,
+                CommandType::CompleteWorkflowExecution as i32
+            );
+        } else {
+            assert_eq!(commands.len(), 2);
+            assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
+            assert_eq!(
+                commands[1].command_type,
+                CommandType::CompleteWorkflowExecution as i32
+            );
+        }
 
         wfm.shutdown().await.unwrap();
     }

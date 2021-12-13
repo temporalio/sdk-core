@@ -9,7 +9,6 @@ use crate::{
 use anyhow::bail;
 use prost_types::Timestamp;
 use std::time::{Duration, SystemTime};
-use temporal_sdk_core_protos::temporal::api::failure::v1::{failure, CanceledFailureInfo};
 use temporal_sdk_core_protos::{
     coresdk::{
         common::{
@@ -22,7 +21,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{EventType, WorkflowTaskFailedCause},
-        failure::v1::Failure,
+        failure::v1::{failure, CanceledFailureInfo, Failure},
         history::v1::{history_event::Attributes, *},
     },
 };

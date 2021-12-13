@@ -1,4 +1,3 @@
-use crate::machines::LocalActivityExecutionResult;
 use crate::{
     machines::{
         activity_state_machine::new_activity,
@@ -13,8 +12,8 @@ use crate::{
         signal_external_state_machine::new_external_signal,
         timer_state_machine::new_timer,
         workflow_task_state_machine::WorkflowTaskMachine,
-        MachineKind, Machines, NewMachineWithCommand, ProtoCommand, TemporalStateMachine,
-        WFCommand,
+        LocalActivityExecutionResult, MachineKind, Machines, NewMachineWithCommand, ProtoCommand,
+        TemporalStateMachine, WFCommand,
     },
     protosext::HistoryEventExt,
     telemetry::{metrics::MetricsContext, VecDisplayer},
@@ -1001,8 +1000,20 @@ impl WorkflowMachines {
                     jobs.push(j);
                 }
                 MachineResponse::RequestCancelLocalActivity(seq) => {
+                    // We might already know about the status from a pre-resolution. Apply it if so.
+                    // We need to do this because otherwise we might need to perform additional
+                    // activations during replay that didn't happen during execution, just like
+                    // we sometimes pre-resolve activities when first requested.
+                    if let Some(preres) = self.local_activity_resolutions.remove(&seq) {
+                        if let Machines::LocalActivityMachine(lam) = self.machine_mut(m_key) {
+                            let more_responses = lam.try_resolve_with_dat(preres)?;
+                            self.process_machine_responses(m_key, more_responses)?;
+                        } else {
+                            panic!("A non local-activity machine returned a request cancel LA response");
+                        }
+                    }
                     // If it's in the request queue, just rip it out.
-                    if let Some(removed_act) = self
+                    else if let Some(removed_act) = self
                         .local_activity_requests
                         .iter()
                         .position(|req| req.seq == seq)
