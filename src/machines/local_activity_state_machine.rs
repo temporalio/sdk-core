@@ -62,9 +62,8 @@ fsm! {
       --> MarkerCommandRecorded;
     // If we are told to cancel while waiting for the marker, we still need to wait for the marker.
     // TODO: Write down we expect to see a cancelled marker?
-    WaitingMarkerEvent --(Cancel, on_cancel_requested) --> WaitingMarkerEvent;
-    // TODO: Make this its own state if it works
-    WaitingMarkerEvent --(HandleResult(ResolveDat), on_handle_result) --> WaitingMarkerEvent;
+    WaitingMarkerEvent --(Cancel, on_cancel_requested) --> WaitingMarkerEventCancelled;
+    WaitingMarkerEventCancelled --(HandleResult(ResolveDat), on_handle_result) --> WaitingMarkerEvent;
     // It is entirely possible to have started the LA while replaying, only to find that we have
     // reached a new WFT and there still was no marker. In such cases we need to execute the LA.
     // This can easily happen if upon first execution, the worker does WFT heartbeating but then
@@ -323,7 +322,12 @@ pub(super) struct MarkerCommandRecorded {}
 pub(super) struct Replaying {}
 impl Replaying {
     pub(super) fn on_schedule(self) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
-        TransitionResult::ok([], WaitingMarkerEvent {})
+        TransitionResult::ok(
+            [],
+            WaitingMarkerEvent {
+                already_resolved: false,
+            },
+        )
     }
 }
 
@@ -405,7 +409,9 @@ impl ResultNotified {
 }
 
 #[derive(Default, Clone)]
-pub(super) struct WaitingMarkerEvent {}
+pub(super) struct WaitingMarkerEvent {
+    already_resolved: bool,
+}
 
 impl WaitingMarkerEvent {
     pub(super) fn on_marker_recorded(
@@ -416,7 +422,11 @@ impl WaitingMarkerEvent {
         verify_marker_dat!(
             &shared,
             &dat,
-            TransitionResult::commands([LocalActivityCommand::Resolved(dat.into())])
+            TransitionResult::commands(if self.already_resolved {
+                vec![]
+            } else {
+                vec![LocalActivityCommand::Resolved(dat.into())]
+            })
         )
     }
     pub(super) fn on_started_non_replay_wft(
@@ -426,17 +436,29 @@ impl WaitingMarkerEvent {
         TransitionResult::commands([LocalActivityCommand::RequestActivityExecution(dat.attrs)])
     }
 
-    fn on_cancel_requested(self) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
+    fn on_cancel_requested(self) -> LocalActivityMachineTransition<WaitingMarkerEventCancelled> {
         // We still "request a cancel" even though we know the local activity should not be running
         // because the data might be in the pre-resolved list.
-        TransitionResult::ok([LocalActivityCommand::RequestCancel], self)
+        TransitionResult::ok(
+            [LocalActivityCommand::RequestCancel],
+            WaitingMarkerEventCancelled {},
+        )
     }
+}
 
+#[derive(Default, Clone)]
+pub(super) struct WaitingMarkerEventCancelled {}
+impl WaitingMarkerEventCancelled {
     fn on_handle_result(
         self,
         dat: ResolveDat,
     ) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
-        TransitionResult::ok([LocalActivityCommand::Resolved(dat)], self)
+        TransitionResult::ok(
+            [LocalActivityCommand::Resolved(dat)],
+            WaitingMarkerEvent {
+                already_resolved: true,
+            },
+        )
     }
 }
 
@@ -502,7 +524,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
                 let mut maybe_failure = None;
                 // Only issue record marker commands if we weren't replaying
                 let mut record_marker = !self.shared_state.replaying_when_invoked;
-                match dbg!(result.clone()) {
+                match result.clone() {
                     LocalActivityExecutionResult::Completed(suc) => {
                         maybe_ok_result = suc.result;
                     }
@@ -1187,6 +1209,9 @@ mod tests {
             let la = ctx.local_activity(LocalActivityOptions::default());
             ctx.timer(Duration::from_secs(1)).await;
             la.cancel(&ctx);
+            // This extra timer is here to ensure the presence of another WF task doesn't mess up
+            // resolving the LA with cancel on replay
+            ctx.timer(Duration::from_secs(1)).await;
             let resolution = la.await;
             assert!(resolution.cancelled());
             Ok(().into())
@@ -1198,7 +1223,10 @@ mod tests {
         let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
         t.add_timer_fired(timer_started_event_id, "1".to_string());
         t.add_full_wf_task();
+        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
         t.add_local_activity_cancel_marker(1, "1");
+        t.add_timer_fired(timer_started_event_id, "2".to_string());
+        t.add_full_wf_task();
         t.add_workflow_execution_completed();
 
         let histinfo = if replay {
@@ -1224,31 +1252,40 @@ mod tests {
                 .await
                 .unwrap()
         };
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 0);
 
-        if !replay {
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+
+        if replay {
+            wfm.get_next_activation().await.unwrap()
+        } else {
+            // On non replay, there's an additional activation, because completing with the cancel
+            // wants to wake up the workflow to see if resolving the LA as cancelled did anything.
+            // In this case, it doesn't really, because we just hit the next timer which is also
+            // what would have happened if we woke up with new history -- but it does mean we
+            // generate the commands at this point. This matters b/c we want to make sure the record
+            // marker command is sent as soon as cancel happens.
             wfm.complete_local_activity(1, ActivityExecutionResult::cancel_from_details(None))
                 .unwrap();
-        }
+            wfm.get_next_activation().await.unwrap();
+            let commands = wfm.get_server_commands().commands;
+            assert_eq!(commands.len(), 2);
+            assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+            assert_eq!(commands[1].command_type, CommandType::RecordMarker as i32);
 
-        // next activation unblocks LA, which is cancelled now, and we persist that
+            wfm.new_history(t.get_history_info(3).unwrap().into())
+                .await
+                .unwrap()
+        };
+
         wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
-        if replay {
-            assert_eq!(commands.len(), 1);
-            assert_eq!(
-                commands[0].command_type,
-                CommandType::CompleteWorkflowExecution as i32
-            );
-        } else {
-            assert_eq!(commands.len(), 2);
-            assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
-            assert_eq!(
-                commands[1].command_type,
-                CommandType::CompleteWorkflowExecution as i32
-            );
-        }
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].command_type,
+            CommandType::CompleteWorkflowExecution as i32
+        );
 
         wfm.shutdown().await.unwrap();
     }

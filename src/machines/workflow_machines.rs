@@ -702,6 +702,7 @@ impl WorkflowMachines {
                     }));
             } else if e.is_local_activity_marker() {
                 if let Some(la_dat) = e.clone().into_local_activity_marker_details() {
+                    warn!("LA marker");
                     self.local_activity_resolutions
                         .insert(la_dat.marker_dat.seq, la_dat.into());
                 } else {
