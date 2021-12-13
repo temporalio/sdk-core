@@ -8,7 +8,7 @@ use crate::prototype_rust_sdk::{
     SignalExternalWfResult, TimerResult, UnblockEvent, Unblockable,
 };
 use crossbeam::channel::{Receiver, Sender};
-use futures::{future::BoxFuture, task::Context, FutureExt, Stream};
+use futures::{task::Context, FutureExt, Stream};
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
@@ -33,7 +33,6 @@ use temporal_sdk_core_protos::coresdk::{
 };
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tokio_util::sync::CancellationToken;
 
 /// Used within workflows to issue commands, get info, etc.
 pub struct WfContext {
@@ -198,41 +197,7 @@ impl WfContext {
         &self,
         opts: LocalActivityOptions,
     ) -> impl CancellableFuture<ActivityResolution> + '_ {
-        ManualCancellableFuture::new(move |ct| {
-            // We need to immediately create the first LA future to be consistent with the behavior
-            // of other functions where the command is scheduled before being awaited on.
-            let first_la_fut = with_cancel_token(
-                self.local_activity_no_timer_retry(opts.clone()),
-                ct.clone(),
-                self,
-            );
-            async move {
-                let mut last_resolution = first_la_fut.await;
-
-                while let Some(activity_resolution::Status::Backoff(b)) = last_resolution.status {
-                    with_cancel_token(
-                        self.timer(
-                            b.backoff_duration
-                                .expect("Duration is set")
-                                .try_into()
-                                .expect("duration converts ok"),
-                        ),
-                        ct.clone(),
-                        self,
-                    )
-                    .await;
-                    let mut opts = opts.clone();
-                    opts.attempt = Some(b.attempt);
-                    last_resolution = with_cancel_token(
-                        self.local_activity_no_timer_retry(opts.clone()),
-                        ct.clone(),
-                        self,
-                    )
-                    .await;
-                }
-                last_resolution
-            }
-        })
+        LATimerBackoffFut::new(opts, self)
     }
 
     /// Request to run a local activity with no implementation of timer-backoff based retrying.
@@ -390,24 +355,6 @@ pub trait CancellableFuture<T>: Future<Output = T> {
     fn cancel(&self, cx: &WfContext);
 }
 
-/// Turn this command future into one that is cancelled via the provided token rather than
-/// an explicit cancel call.
-async fn with_cancel_token<'a, T>(
-    mut fut: impl CancellableFuture<T> + Unpin + 'a,
-    ct: CancellationToken,
-    ctx: &'a WfContext,
-) -> T {
-    // Ideally this would be a method on `CancellableFuture` but because of no `impl Trait` in
-    // traits, that's very hard. Potentially just replace normal cancel with this anyway.
-    tokio::select! {
-        _ = ct.cancelled() => {
-            fut.cancel(ctx);
-            fut.await
-        },
-        r = &mut fut=> r
-    }
-}
-
 struct WFCommandFut<T, D> {
     _unused: PhantomData<T>,
     result_rx: oneshot::Receiver<UnblockEvent>,
@@ -498,36 +445,64 @@ where
     }
 }
 
-/// Allows composing [CancellableWFCommandFut]s into one future and manually managing the cancel
-/// request
-struct ManualCancellableFuture<'a, T> {
-    inner_fut: BoxFuture<'a, T>,
-    cancel_tok: CancellationToken,
+struct LATimerBackoffFut<'a> {
+    la_opts: LocalActivityOptions,
+    current_fut: Pin<Box<dyn CancellableFuture<ActivityResolution> + Send + Unpin + 'a>>,
+    timer_fut: Option<Pin<Box<dyn CancellableFuture<TimerResult> + Send + Unpin + 'a>>>,
+    ctx: &'a WfContext,
+    next_attempt: u32,
 }
-impl<'a, T> ManualCancellableFuture<'a, T> {
-    pub(crate) fn new<F, OF>(fun: F) -> Self
-    where
-        F: FnOnce(CancellationToken) -> OF,
-        OF: Future<Output = T> + 'a + Send,
-    {
-        let cancel_tok = CancellationToken::new();
+impl<'a> LATimerBackoffFut<'a> {
+    pub(crate) fn new(opts: LocalActivityOptions, ctx: &'a WfContext) -> Self {
         Self {
-            inner_fut: fun(cancel_tok.clone()).boxed(),
-            cancel_tok,
+            la_opts: opts.clone(),
+            current_fut: Box::pin(ctx.local_activity_no_timer_retry(opts)),
+            timer_fut: None,
+            ctx,
+            next_attempt: 1,
         }
     }
 }
-impl<'a, T> Unpin for ManualCancellableFuture<'a, T> {}
-impl<'a, T> Future for ManualCancellableFuture<'a, T> {
-    type Output = T;
+impl<'a> Unpin for LATimerBackoffFut<'a> {}
+impl<'a> Future for LATimerBackoffFut<'a> {
+    type Output = ActivityResolution;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.inner_fut.poll_unpin(cx)
+        // If the timer exists, wait for it first
+        if let Some(tf) = self.timer_fut.as_mut() {
+            return match tf.poll_unpin(cx) {
+                Poll::Ready(_) => {
+                    self.timer_fut = None;
+                    // Schedule next LA TODO: if this timer wasn't cancelled
+                    let mut opts = self.la_opts.clone();
+                    opts.attempt = Some(self.next_attempt);
+                    self.current_fut = Box::pin(self.ctx.local_activity_no_timer_retry(opts));
+                    Poll::Pending
+                }
+                Poll::Pending => Poll::Pending,
+            };
+        }
+        let poll_res = self.current_fut.poll_unpin(cx);
+        if let Poll::Ready(ref r) = poll_res {
+            if let Some(activity_resolution::Status::Backoff(b)) = r.status.as_ref() {
+                let timer_f = self.ctx.timer(
+                    b.backoff_duration
+                        .clone()
+                        .expect("Duration is set")
+                        .try_into()
+                        .expect("duration converts ok"),
+                );
+                self.timer_fut = Some(Box::pin(timer_f));
+                self.next_attempt = b.attempt;
+                return Poll::Pending;
+            }
+        }
+        poll_res
     }
 }
-impl<'a, T> CancellableFuture<T> for ManualCancellableFuture<'a, T> {
-    fn cancel(&self, _: &WfContext) {
-        self.cancel_tok.cancel()
+impl<'a> CancellableFuture<ActivityResolution> for LATimerBackoffFut<'a> {
+    fn cancel(&self, ctx: &WfContext) {
+        self.current_fut.cancel(ctx)
     }
 }
 
