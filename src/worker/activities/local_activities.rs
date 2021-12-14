@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 use temporal_sdk_core_protos::coresdk::{
-    activity_task::{activity_task, ActivityTask, Start},
+    activity_task::{activity_task, ActivityCancelReason, ActivityTask, Cancel, Start},
     common::WorkflowExecution,
     workflow_commands::ScheduleLocalActivity,
 };
@@ -31,6 +31,19 @@ pub(crate) struct NewLocalAct {
     pub workflow_type: String,
     pub workflow_exec_info: WorkflowExecution,
     pub schedule_time: SystemTime,
+}
+
+#[derive(Debug, derive_more::From)]
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum LocalActRequest {
+    New(NewLocalAct),
+    Cancel(ExecutingLAId),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub(crate) struct ExecutingLAId {
+    pub run_id: String,
+    pub seq_num: u32,
 }
 
 impl Debug for NewLocalAct {
@@ -61,6 +74,9 @@ pub(crate) struct LocalActivityManager {
     act_req_tx: UnboundedSender<NewOrRetry>,
     /// Activities that need to be executed by lang
     act_req_rx: tokio::sync::Mutex<UnboundedReceiver<NewOrRetry>>,
+    /// Cancels need a different queue since they should be taken first, and don't take a permit
+    cancels_req_tx: UnboundedSender<ActivityTask>,
+    cancels_req_rx: tokio::sync::Mutex<UnboundedReceiver<ActivityTask>>,
     /// Wakes every time a complete is processed
     complete_notify: Notify,
 
@@ -70,20 +86,25 @@ pub(crate) struct LocalActivityManager {
 struct LAMData {
     /// Activities that have been issued to lang but not yet completed
     outstanding_activity_tasks: HashMap<TaskToken, LocalInFlightActInfo>,
+    id_to_tt: HashMap<ExecutingLAId, TaskToken>,
     next_tt_num: u32,
 }
 
 impl LocalActivityManager {
     pub(crate) fn new(max_concurrent: usize, namespace: String) -> Self {
         let (act_req_tx, act_req_rx) = unbounded_channel();
+        let (cancels_req_tx, cancels_req_rx) = unbounded_channel();
         Self {
             namespace,
             semaphore: Semaphore::new(max_concurrent),
             act_req_tx,
             act_req_rx: tokio::sync::Mutex::new(act_req_rx),
+            cancels_req_tx,
+            cancels_req_rx: tokio::sync::Mutex::new(cancels_req_rx),
             complete_notify: Notify::new(),
             dat: Mutex::new(LAMData {
                 outstanding_activity_tasks: Default::default(),
+                id_to_tt: Default::default(),
                 next_tt_num: 0,
             }),
         }
@@ -93,21 +114,51 @@ impl LocalActivityManager {
         self.dat.lock().outstanding_activity_tasks.len()
     }
 
-    pub(crate) fn enqueue(&self, acts: impl IntoIterator<Item = NewLocalAct> + Debug) {
-        debug!("Queuing local activities: {:?}", &acts);
-        for act in acts {
-            self.act_req_tx
-                .send(NewOrRetry::New(act))
-                .expect("Receive half of LA request channel cannot be dropped");
+    pub(crate) fn enqueue(&self, reqs: impl IntoIterator<Item = LocalActRequest> + Debug) {
+        debug!("Queuing local activities: {:?}", &reqs);
+        for req in reqs {
+            match req {
+                LocalActRequest::New(act) => {
+                    self.act_req_tx
+                        .send(NewOrRetry::New(act))
+                        .expect("Receive half of LA request channel cannot be dropped");
+                }
+                LocalActRequest::Cancel(id) => {
+                    let dlock = self.dat.lock();
+                    if let Some(tt) = dlock.id_to_tt.get(&id) {
+                        let info = dlock
+                            .outstanding_activity_tasks
+                            .get(tt)
+                            .expect("Maps are in sync");
+                        self.cancels_req_tx
+                            .send(ActivityTask {
+                                task_token: tt.0.clone(),
+                                activity_id: info.la_info.schedule_cmd.activity_id.clone(),
+                                variant: Some(activity_task::Variant::Cancel(Cancel {
+                                    reason: ActivityCancelReason::Cancelled as i32,
+                                })),
+                            })
+                            .expect("Receive half of LA cancel channel cannot be dropped");
+                    }
+                }
+            }
         }
     }
 
     pub(crate) async fn next_pending(&self) -> Option<ActivityTask> {
-        // Wait for a permit to take a task
-        let permit = self.semaphore.acquire().await.expect("is never closed");
+        // TODO: Use a rcv half instead of individual locks
+        let maybe_new_or_retry = tokio::select! {
+            cancel = async { self.cancels_req_rx.lock().await.recv().await } => { return cancel }
+            maybe_new_or_retry = async {
+                // Wait for a permit to take a task and forget it. Permits are removed until a
+                // completion.
+                self.semaphore.acquire().await.expect("is never closed").forget();
+                self.act_req_rx.lock().await.recv().await
+            } => maybe_new_or_retry
+        };
         // It is important that there are no await points after receiving from the channel, as
         // it would mean dropping this future would cause us to drop the activity request.
-        if let Some(new_or_retry) = self.act_req_rx.lock().await.recv().await {
+        if let Some(new_or_retry) = maybe_new_or_retry {
             let (new_la, attempt) = match new_or_retry {
                 NewOrRetry::New(n) => {
                     let explicit_attempt_num_or_1 = n.schedule_cmd.attempt.max(1);
@@ -129,9 +180,13 @@ impl LocalActivityManager {
                     attempt,
                 },
             );
-
-            // Forget the permit. Permits are removed until a completion.
-            permit.forget();
+            dat.id_to_tt.insert(
+                ExecutingLAId {
+                    run_id: new_la.workflow_exec_info.run_id.clone(),
+                    seq_num: sa.seq,
+                },
+                tt.clone(),
+            );
 
             Some(ActivityTask {
                 task_token: tt.0,
@@ -160,18 +215,19 @@ impl LocalActivityManager {
         }
     }
 
-    /// Mark a local activity as having completed (pass or fail)
+    /// Mark a local activity as having completed (pass, fail, or cancelled)
     pub(crate) fn complete(
         &self,
         task_token: &TaskToken,
         status: &LocalActivityExecutionResult,
     ) -> LACompleteAction {
-        if let Some(info) = self
-            .dat
-            .lock()
-            .outstanding_activity_tasks
-            .remove(task_token)
-        {
+        let mut dlock = self.dat.lock();
+        if let Some(info) = dlock.outstanding_activity_tasks.remove(task_token) {
+            dlock.id_to_tt.remove(&ExecutingLAId {
+                run_id: info.la_info.workflow_exec_info.run_id.clone(),
+                seq_num: info.la_info.schedule_cmd.seq,
+            });
+            drop(dlock);
             self.semaphore.add_permits(1);
 
             match status {
@@ -275,15 +331,18 @@ mod tests {
     #[tokio::test]
     async fn max_concurrent_respected() {
         let lam = LocalActivityManager::new(1, "whatever".to_string());
-        lam.enqueue((1..=50).map(|i| NewLocalAct {
-            schedule_cmd: ScheduleLocalActivity {
-                seq: i,
-                activity_id: i.to_string(),
-                ..Default::default()
-            },
-            workflow_type: "".to_string(),
-            workflow_exec_info: Default::default(),
-            schedule_time: SystemTime::now(),
+        lam.enqueue((1..=50).map(|i| {
+            NewLocalAct {
+                schedule_cmd: ScheduleLocalActivity {
+                    seq: i,
+                    activity_id: i.to_string(),
+                    ..Default::default()
+                },
+                workflow_type: "".to_string(),
+                workflow_exec_info: Default::default(),
+                schedule_time: SystemTime::now(),
+            }
+            .into()
         }));
         for i in 1..=50 {
             let next = lam.next_pending().await.unwrap();
@@ -317,7 +376,8 @@ mod tests {
             workflow_type: "".to_string(),
             workflow_exec_info: Default::default(),
             schedule_time: SystemTime::now(),
-        }]);
+        }
+        .into()]);
 
         let next = lam.next_pending().await.unwrap();
         let tt = TaskToken(next.task_token);
@@ -357,7 +417,8 @@ mod tests {
             workflow_type: "".to_string(),
             workflow_exec_info: Default::default(),
             schedule_time: SystemTime::now(),
-        }]);
+        }
+        .into()]);
 
         let next = lam.next_pending().await.unwrap();
         let tt = TaskToken(next.task_token);

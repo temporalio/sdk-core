@@ -281,12 +281,18 @@ impl Future for WorkflowFuture {
                 .poll_unpin(cx)
             {
                 Poll::Ready(Err(e)) => {
+                    let errmsg = format!(
+                        "Workflow function panicked: {:?}",
+                        // Panics are typically strings
+                        e.downcast::<String>()
+                    );
+                    warn!("{}", errmsg);
                     self.outgoing_completions
                         .send(WfActivationCompletion::fail(
                             &self.task_queue,
                             run_id,
                             Failure {
-                                message: format!("Workflow function panicked: {:?}", e),
+                                message: errmsg,
                                 ..Default::default()
                             },
                         ))

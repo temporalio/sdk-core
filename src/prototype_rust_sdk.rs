@@ -16,10 +16,11 @@ pub use workflow_context::{
 
 use crate::{
     prototype_rust_sdk::workflow_context::{ChildWfCommon, PendingChildWorkflow},
-    Core, PollActivityError, PollWfError,
+    Core, PollActivityError, PollWfError, TaskToken,
 };
 use anyhow::{anyhow, bail};
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use std::fmt::{Display, Formatter};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -54,6 +55,7 @@ use tokio::{
     },
     task::JoinError,
 };
+use tokio_util::sync::CancellationToken;
 
 /// A worker that can poll for and respond to workflow tasks by using [WorkflowFunction]s
 pub struct TestRustWorker {
@@ -79,6 +81,7 @@ struct WorkflowHalf {
 struct ActivityHalf {
     /// Maps activity type to the function for executing activities of that type
     activity_fns: HashMap<String, ActivityFunction>,
+    task_tokens_to_cancels: HashMap<TaskToken, CancellationToken>,
 }
 
 impl TestRustWorker {
@@ -96,6 +99,7 @@ impl TestRustWorker {
             },
             activity_half: ActivityHalf {
                 activity_fns: Default::default(),
+                task_tokens_to_cancels: Default::default(),
             },
         }
     }
@@ -183,7 +187,7 @@ impl TestRustWorker {
                         };
                         wf_half
                             .workflow_activation_handler(
-                                core,
+                                core.as_ref(),
                                 task_q,
                                 &shutdown_rx,
                                 &completions_tx,
@@ -210,8 +214,8 @@ impl TestRustWorker {
                                     if matches!(activity, Err(PollActivityError::ShutDown)) {
                                         break;
                                     }
-                                    act_half.activity_task_handler(core, task_q,
-                                                                   activity?).await?;
+                                    act_half.activity_task_handler(core.clone(), task_q,
+                                                                   activity?)?;
                                 },
                                 _ = shutdown_rx.changed() => { break }
                             }
@@ -221,6 +225,7 @@ impl TestRustWorker {
                 }
             );
             wf_poll_res?;
+            // TODO: Activity loop errors don't show up until wf loop exits/errors
             act_poll_res?;
             Result::<_, anyhow::Error>::Ok(self)
         };
@@ -233,9 +238,9 @@ impl TestRustWorker {
         Ok(())
     }
 
-    fn split_apart(&mut self) -> (&dyn Core, &str, &mut WorkflowHalf, &mut ActivityHalf) {
+    fn split_apart(&mut self) -> (Arc<dyn Core>, &str, &mut WorkflowHalf, &mut ActivityHalf) {
         (
-            self.core.as_ref(),
+            self.core.clone(),
             &self.task_queue,
             &mut self.workflow_half,
             &mut self.activity_half,
@@ -302,38 +307,66 @@ impl WorkflowHalf {
     }
 }
 
+tokio::task_local! {
+    // This works, but maybe just passing a context object for activities like WFs is better
+    static ACT_CANCEL_TOK: CancellationToken
+}
+
+/// Returns a future the completes if and when the activity this was called inside has been
+/// cancelled
+pub async fn act_cancelled() {
+    ACT_CANCEL_TOK.with(|ct| ct.clone()).cancelled().await
+}
+
 impl ActivityHalf {
-    async fn activity_task_handler(
+    /// Spawns off a task to handle the provided activity task
+    fn activity_task_handler(
         &mut self,
-        core: &dyn Core,
+        core: Arc<dyn Core>,
         task_queue: &str,
         activity: ActivityTask,
     ) -> Result<(), anyhow::Error> {
-        // TODO: handle cancels, etc.
         match activity.variant {
             Some(activity_task::Variant::Start(start)) => {
-                let act_fn = self.activity_fns.get(&start.activity_type).ok_or_else(|| {
-                    anyhow!(
-                        "No function registered for activity type {}",
-                        start.activity_type
-                    )
-                })?;
-                let mut inputs = start.input;
-                let arg = inputs.pop().unwrap_or_default();
-                let output = (&act_fn.act_func)(arg).await;
-                let result = match output {
-                    Ok(res) => ActivityExecutionResult::ok(res),
-                    Err(err) => ActivityExecutionResult::fail(err.into()),
-                };
-                core.complete_activity_task(ActivityTaskCompletion {
-                    task_token: activity.task_token,
-                    task_queue: task_queue.to_string(),
-                    result: Some(result),
-                })
-                .await?;
+                let task_queue = task_queue.to_string();
+                let act_fn = self
+                    .activity_fns
+                    .get(&start.activity_type)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "No function registered for activity type {}",
+                            start.activity_type
+                        )
+                    })?
+                    .clone();
+                let ct = CancellationToken::new();
+                self.task_tokens_to_cancels
+                    .insert(activity.task_token.clone().into(), ct.clone());
+
+                tokio::spawn(ACT_CANCEL_TOK.scope(ct, async move {
+                    let mut inputs = start.input;
+                    let arg = inputs.pop().unwrap_or_default();
+                    let output = (&act_fn.act_func)(arg).await;
+                    let result = match output {
+                        Ok(res) => ActivityExecutionResult::ok(res),
+                        Err(err) => match err.downcast::<ActivityCancelledError>() {
+                            Ok(ce) => ActivityExecutionResult::cancel_from_details(ce.details),
+                            Err(other_err) => ActivityExecutionResult::fail(other_err.into()),
+                        },
+                    };
+                    core.complete_activity_task(ActivityTaskCompletion {
+                        task_token: activity.task_token,
+                        task_queue,
+                        result: Some(result),
+                    })
+                    .await?;
+                    Result::<_, anyhow::Error>::Ok(())
+                }));
             }
             Some(activity_task::Variant::Cancel(_)) => {
-                unimplemented!("Activity cancels not implemented yet in prototype sdk")
+                if let Some(ct) = self.task_tokens_to_cancels.get(&activity.task_token.into()) {
+                    ct.cancel();
+                }
             }
             None => bail!("Undefined activity task variant"),
         }
@@ -540,10 +573,24 @@ impl<T: Debug> WfExitValue<T> {
     }
 }
 
-type BoxActFn = Box<dyn Fn(Payload) -> BoxFuture<'static, Result<Payload, anyhow::Error>>>;
+type BoxActFn =
+    Arc<dyn Fn(Payload) -> BoxFuture<'static, Result<Payload, anyhow::Error>> + Send + Sync>;
 /// Container for user-defined activity functions
+#[derive(Clone)]
 pub struct ActivityFunction {
     act_func: BoxActFn,
+}
+
+/// Return this error to indicate your activity is cancelling
+#[derive(Debug, Default)]
+pub struct ActivityCancelledError {
+    details: Option<Payload>,
+}
+impl std::error::Error for ActivityCancelledError {}
+impl Display for ActivityCancelledError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Activity cancelled")
+    }
 }
 
 /// Closures / functions which can be turned into activity functions implement this trait
@@ -569,7 +616,7 @@ where
                 Err(e) => async move { Err(e.into()) }.boxed(),
             }
         };
-        Box::new(wrapper)
+        Arc::new(wrapper)
     }
 }
 

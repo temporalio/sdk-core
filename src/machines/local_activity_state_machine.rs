@@ -531,9 +531,11 @@ impl WFMachinesAdapter for LocalActivityMachine {
                     LocalActivityExecutionResult::Failed(fail) => {
                         maybe_failure = fail.failure;
                     }
-                    LocalActivityExecutionResult::Cancelled(_, no_marker) => {
+                    LocalActivityExecutionResult::Cancelled(fail, no_marker) => {
                         if no_marker {
                             record_marker = false;
+                        } else {
+                            maybe_failure = fail.failure;
                         }
                     }
                 };

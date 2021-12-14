@@ -1,7 +1,10 @@
 use anyhow::anyhow;
 use futures::future::join_all;
 use std::time::Duration;
-use temporal_sdk_core::prototype_rust_sdk::{LocalActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk_core::prototype_rust_sdk::{
+    act_cancelled, ActivityCancelledError, CancellableFuture, LocalActivityOptions, WfContext,
+    WorkflowResult,
+};
 use temporal_sdk_core_protos::coresdk::{common::RetryPolicy, AsJsonPayloadExt};
 use test_utils::CoreWfStarter;
 
@@ -172,6 +175,60 @@ async fn local_act_retry_timer_backoff() {
         Ok(().into())
     });
     worker.register_activity("echo", |_: String| async {
+        Result::<(), _>::Err(anyhow!("Oh no I failed!"))
+    });
+
+    worker
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    starter.shutdown().await;
+}
+
+#[tokio::test]
+async fn cancel_after_act_starts() {
+    let wf_name = "cancel_after_act_starts";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.wft_timeout(Duration::from_secs(1));
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name, |ctx: WfContext| async move {
+        let la = ctx.local_activity(LocalActivityOptions {
+            activity_type: "echo".to_string(),
+            input: "hi".as_json_payload().expect("serializes fine"),
+            retry_policy: RetryPolicy {
+                initial_interval: Some(Duration::from_micros(15).into()),
+                backoff_coefficient: 1_000.,
+                maximum_interval: Some(Duration::from_millis(1500).into()),
+                // Retry forever until cancelled
+                maximum_attempts: 0,
+                non_retryable_error_types: vec![],
+            },
+            timer_backoff_threshold: Some(Duration::from_secs(1)),
+            ..Default::default()
+        });
+        ctx.timer(Duration::from_secs(1)).await;
+        // Note that this cancel can't go through for *two* WF tasks, because we do a full heartbeat
+        // before the timer (LA hasn't resolved), and then the timer fired event won't appear in
+        // history until *after* the next WFT because we force generated it when we sent the timer
+        // command.
+        la.cancel(&ctx);
+        // This extra timer is here to ensure the presence of another WF task doesn't mess up
+        // resolving the LA with cancel on replay
+        ctx.timer(Duration::from_secs(1)).await;
+        let resolution = la.await;
+        assert!(resolution.cancelled());
+        Ok(().into())
+    });
+
+    worker.register_activity("echo", |_: String| async {
+        // TODO: Do an always-failing version to test timer cancellation
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(100)) => {},
+            _ = act_cancelled() => {
+                return Err(anyhow!(ActivityCancelledError::default()))
+            }
+        }
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
 

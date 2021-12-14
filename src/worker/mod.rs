@@ -5,7 +5,7 @@ mod wft_delivery;
 
 pub use config::{WorkerConfig, WorkerConfigBuilder};
 
-pub(crate) use activities::NewLocalAct;
+pub(crate) use activities::{ExecutingLAId, LocalActRequest, NewLocalAct};
 pub(crate) use dispatcher::WorkerDispatcher;
 
 use crate::{

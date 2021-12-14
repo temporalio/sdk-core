@@ -12,7 +12,7 @@ use crate::{
         LocalActivityExecutionResult, ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines,
     },
     telemetry::metrics::MetricsContext,
-    worker::NewLocalAct,
+    worker::LocalActRequest,
 };
 use std::{sync::mpsc::Sender, time::Duration};
 use temporal_sdk_core_protos::coresdk::workflow_activation::WfActivation;
@@ -161,7 +161,7 @@ impl WorkflowManager {
 
     /// Remove and return all queued local activities. Once this is called, they need to be
     /// dispatched for execution.
-    pub fn drain_queued_local_activities(&mut self) -> Vec<NewLocalAct> {
+    pub fn drain_queued_local_activities(&mut self) -> Vec<LocalActRequest> {
         self.machines.drain_queued_local_activities()
     }
 
@@ -303,7 +303,7 @@ pub mod managed_wf {
             self.mgr.get_server_commands()
         }
 
-        pub(crate) fn drain_queued_local_activities(&mut self) -> Vec<NewLocalAct> {
+        pub(crate) fn drain_queued_local_activities(&mut self) -> Vec<LocalActRequest> {
             self.mgr.drain_queued_local_activities()
         }
 

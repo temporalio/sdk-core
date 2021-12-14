@@ -11,7 +11,7 @@ use crate::{
     protosext::{ValidPollWFTQResponse, WfActivationExt},
     task_token::TaskToken,
     telemetry::metrics::MetricsContext,
-    worker::NewLocalAct,
+    worker::LocalActRequest,
     workflow::{
         workflow_tasks::{
             cache_manager::WorkflowCacheManager, concurrency_manager::WorkflowConcurrencyManager,
@@ -369,7 +369,7 @@ impl WorkflowTaskManager {
         &self,
         run_id: &str,
         mut commands: Vec<WFCommand>,
-        local_activity_request_sink: impl FnOnce(Vec<NewLocalAct>),
+        local_activity_request_sink: impl FnOnce(Vec<LocalActRequest>),
     ) -> Result<Option<ServerCommandsWithWorkflowInfo>, WorkflowUpdateError> {
         // No-command replies to evictions can simply skip everything
         if commands.is_empty() && self.activation_has_eviction(run_id) {
