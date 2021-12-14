@@ -1529,19 +1529,19 @@ async fn failing_wft_doesnt_eat_permit_forever() {
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_workflow_task_scheduled_and_started();
 
-    let failures = 5;
-    // One extra response for when we stop failing
-    let resps = (1..=(failures + 1)).map(|_| 1);
     let mock = MockServerGatewayApis::new();
-    let mut mock = single_hist_mock_sg("fake_wf_id", t, resps, mock, true);
+    let mut mock = single_hist_mock_sg("fake_wf_id", t, [1, 1, 1], mock, true);
     mock.worker_cfg(TEST_Q, |cfg| {
         cfg.max_cached_workflows = 2;
         cfg.max_outstanding_workflow_tasks = 2;
     });
+    let outstanding_mock_tasks = mock.outstanding_task_map.clone();
     let core = mock_core(mock);
 
-    // Spin failing the WFT to verify that we don't get stuck
-    for _ in 1..=failures {
+    let mut run_id = "".to_string();
+    // Fail twice, verifying a permit is eaten. We cannot fail the same run more than twice in a row
+    // because we purposefully time out rather than spamming.
+    for _ in 1..=2 {
         let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
         // Issue a nonsense completion that will trigger a WFT failure
         core.complete_workflow_activation(WfActivationCompletion::from_cmd(
@@ -1558,12 +1558,22 @@ async fn failing_wft_doesnt_eat_permit_forever() {
                 variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
             },]
         );
+        run_id = activation.run_id.clone();
         core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, activation.run_id))
             .await
             .unwrap();
         assert_eq!(core.outstanding_wfts(TEST_Q), 0);
         assert_eq!(core.available_wft_permits(TEST_Q), 2);
     }
+    // We should be "out of work" because the mock service thinks we didn't complete the last task,
+    // which we didn't, because we don't spam failures. The real server would eventually time out
+    // the task. Mock doesn't understand that, so the WFT permit is released because eventually a
+    // new one will be generated. We manually clear the mock's outstanding task list so the next
+    // poll will work.
+    outstanding_mock_tasks
+        .unwrap()
+        .write()
+        .remove_by_left(&run_id);
     let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
     core.complete_workflow_activation(WfActivationCompletion::from_cmd(
         TEST_Q,

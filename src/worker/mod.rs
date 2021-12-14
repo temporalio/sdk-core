@@ -376,7 +376,12 @@ impl Worker {
                     .await
             }
             Some(wf_activation_completion::Status::Failed(failure)) => {
-                self.wf_activation_failed(&completion.run_id, failure).await
+                self.wf_activation_failed(
+                    &completion.run_id,
+                    WorkflowTaskFailedCause::Unspecified,
+                    failure,
+                )
+                .await
             }
             None => Err(CompleteWfError::MalformedWorkflowCompletion {
                 reason: "Workflow completion had empty status field".to_owned(),
@@ -614,30 +619,13 @@ impl Worker {
                 } else {
                     WorkflowTaskFailedCause::Unspecified
                 };
-
-                warn!(run_id, error=?update_err, "Failing workflow task");
-
-                if let Some(ref tt) = update_err.task_token {
-                    let wft_fail_str = format!("{:?}", update_err);
-                    self.handle_wft_reporting_errs(run_id, || async {
-                        self.server_gateway
-                            .fail_workflow_task(
-                                tt.clone(),
-                                fail_cause,
-                                Some(Failure::application_failure(wft_fail_str.clone(), false)),
-                            )
-                            .await
-                    })
-                    .await?;
-                    // We must evict the workflow since we've failed a WFT
-                    self.request_wf_eviction(
-                        run_id,
-                        format!("Workflow task failure: {}", wft_fail_str),
-                    );
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
+                let wft_fail_str = format!("{:?}", update_err);
+                self.wf_activation_failed(
+                    run_id,
+                    fail_cause,
+                    Failure::application_failure(wft_fail_str.clone(), false).into(),
+                )
+                .await
             }
         }
     }
@@ -648,17 +636,16 @@ impl Worker {
     async fn wf_activation_failed(
         &self,
         run_id: &str,
+        cause: WorkflowTaskFailedCause,
         failure: workflow_completion::Failure,
     ) -> Result<bool, CompleteWfError> {
+        warn!(run_id, failure=?failure, "Failing workflow activation");
+
         Ok(match self.wft_manager.failed_activation(run_id) {
             FailedActivationOutcome::Report(tt) => {
                 self.handle_wft_reporting_errs(run_id, || async {
                     self.server_gateway
-                        .fail_workflow_task(
-                            tt,
-                            WorkflowTaskFailedCause::Unspecified,
-                            failure.failure.map(Into::into),
-                        )
+                        .fail_workflow_task(tt, cause, failure.failure.map(Into::into))
                         .await
                 })
                 .await?;
@@ -670,7 +657,10 @@ impl Worker {
                     .await?;
                 true
             }
-            FailedActivationOutcome::NoReport => false,
+            FailedActivationOutcome::NoReport => {
+                self.return_workflow_task_permit();
+                false
+            }
         })
     }
 
