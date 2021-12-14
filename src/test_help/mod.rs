@@ -146,6 +146,7 @@ pub struct FakeWfResponses {
 pub struct MocksHolder<SG> {
     sg: SG,
     mock_pollers: HashMap<String, MockWorker>,
+    // bidirectional mapping of run id / task token
     pub outstanding_task_map: Option<Arc<RwLock<BiMap<String, TaskToken>>>>,
 }
 
@@ -380,16 +381,6 @@ pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockServerGateway
                 );
             }
         }
-
-        // TODO: Fix -- or not? Sticky invalidation could make this pointless anyway
-        // Verify response batches only ever return longer histories (IE: Are sorted ascending)
-        // assert!(
-        //     hist.response_batches
-        //         .as_slice()
-        //         .windows(2)
-        //         .all(|w| w[0] <= w[1]),
-        //     "response batches must have increasing wft numbers"
-        // );
 
         if cfg.enforce_correct_number_of_polls {
             *correct_num_polls.get_or_insert(0) += hist.response_batches.len();

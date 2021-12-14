@@ -1,6 +1,6 @@
 //! Error types exposed by public APIs
 
-use crate::{machines::WFMachinesError, task_token::TaskToken, WorkerLookupErr};
+use crate::{machines::WFMachinesError, WorkerLookupErr};
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityExecutionResult, workflow_completion::WfActivationCompletion,
 };
@@ -13,8 +13,6 @@ pub(crate) struct WorkflowUpdateError {
     /// The run id of the erring workflow
     #[allow(dead_code)] // Useful in debug output
     pub run_id: String,
-    /// The task token associated with this update, if one existed yet.
-    pub task_token: Option<TaskToken>,
 }
 
 impl From<WorkflowMissingError> for WorkflowUpdateError {
@@ -22,7 +20,6 @@ impl From<WorkflowMissingError> for WorkflowUpdateError {
         Self {
             source: WFMachinesError::Fatal("Workflow machines missing".to_string()),
             run_id: wme.run_id,
-            task_token: None,
         }
     }
 }

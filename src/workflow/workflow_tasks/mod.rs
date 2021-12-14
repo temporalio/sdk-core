@@ -151,7 +151,7 @@ pub(crate) enum ActivationAction {
 }
 
 macro_rules! machine_mut {
-    ($myself:ident, $run_id:ident, $task_token:expr, $clos:expr) => {{
+    ($myself:ident, $run_id:ident, $clos:expr) => {{
         $myself
             .workflow_machines
             .access($run_id, $clos)
@@ -159,7 +159,6 @@ macro_rules! machine_mut {
             .map_err(|source| WorkflowUpdateError {
                 source,
                 run_id: $run_id.to_owned(),
-                task_token: $task_token,
             })
     }};
 }
@@ -293,6 +292,7 @@ impl WorkflowTaskManager {
         debug!(
             task_token = %&work.task_token,
             history_length = %work.history.events.len(),
+            attempt = %work.attempt,
             "Applying new workflow task from server"
         );
         let task_start_time = Instant::now();
@@ -420,7 +420,6 @@ impl WorkflowTaskManager {
                                         .to_string(),
                                 ),
                                 run_id: run_id.to_string(),
-                                task_token: Some(task_token),
                             });
                         }
                         query_responses.push(qr);
@@ -433,7 +432,6 @@ impl WorkflowTaskManager {
             let (are_pending, server_cmds, local_activities, wft_timeout) = machine_mut!(
                 self,
                 run_id,
-                Some(task_token.clone()),
                 |wfm: &mut WorkflowManager| {
                     async move {
                         // Send commands from lang into the machines then check if the workflow run
@@ -533,7 +531,7 @@ impl WorkflowTaskManager {
         } else {
             // Blow up any cached data associated with the workflow
             let should_report = self
-                .request_eviction(run_id, "Activation failed by lang")
+                .request_eviction(run_id, "Activation failed")
                 .map_or(true, |attempt| attempt <= 1);
             if should_report {
                 FailedActivationOutcome::Report(tt)
@@ -592,11 +590,7 @@ impl WorkflowTaskManager {
 
                 Ok((wft_info, activation))
             }
-            Err(source) => Err(WorkflowUpdateError {
-                source,
-                run_id,
-                task_token: Some(wft_info.task_token),
-            }),
+            Err(source) => Err(WorkflowUpdateError { source, run_id }),
         }
     }
 
@@ -689,7 +683,6 @@ impl WorkflowTaskManager {
             .map_err(|wfme| WorkflowUpdateError {
                 source: wfme,
                 run_id: run_id.to_string(),
-                task_token: None,
             })?;
 
         self.needs_activation(run_id);
