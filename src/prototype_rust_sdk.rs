@@ -167,9 +167,12 @@ impl TestRustWorker {
             .fetch_add(count, Ordering::SeqCst);
     }
 
-    /// Drives all workflows & activities until they have all finished, repeatedly polls server to
-    /// fetch work for them.
-    pub async fn run_until_done(mut self) -> Result<(), anyhow::Error> {
+    /// See [Self::run_until_done], except calls the provided callback just before performing core
+    /// shutdown.
+    pub async fn run_until_done_shutdown_hook(
+        mut self,
+        before_shutdown: impl FnOnce(),
+    ) -> Result<(), anyhow::Error> {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let pollers = async move {
             let (core, task_q, wf_half, act_half) = self.split_apart();
@@ -233,8 +236,15 @@ impl TestRustWorker {
         while let Some(h) = myself.workflow_half.join_handles.next().await {
             h??;
         }
+        before_shutdown();
         myself.core.shutdown().await;
         Ok(())
+    }
+
+    /// Drives all workflows & activities until they have all finished, repeatedly polls server to
+    /// fetch work for them.
+    pub async fn run_until_done(self) -> Result<(), anyhow::Error> {
+        self.run_until_done_shutdown_hook(|| {}).await
     }
 
     fn split_apart(&mut self) -> (Arc<dyn Core>, &str, &mut WorkflowHalf, &mut ActivityHalf) {

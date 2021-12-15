@@ -126,7 +126,6 @@ async fn workflow_lru_cache_evictions() {
             .unwrap();
     }
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
     // The wf must have started more than # workflows times, since all but one must experience
     // an eviction
     assert!(RUN_CT.load(Ordering::SeqCst) > n_workflows);

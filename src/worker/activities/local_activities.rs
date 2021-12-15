@@ -8,8 +8,8 @@ use std::{
     fmt::{Debug, Formatter},
     time::{Duration, Instant, SystemTime},
 };
-use temporal_sdk_core_protos::coresdk::activity_result::Cancellation;
 use temporal_sdk_core_protos::coresdk::{
+    activity_result::Cancellation,
     activity_task::{activity_task, ActivityCancelReason, ActivityTask, Cancel, Start},
     common::WorkflowExecution,
     workflow_commands::ScheduleLocalActivity,
@@ -153,7 +153,6 @@ impl LocalActivityManager {
                     // First check if this ID is currently backing off, if so abort the backoff
                     // task
                     if let Some(t) = dlock.backing_off_tasks.remove(&id) {
-                        warn!("Aborting currently backing off task");
                         t.abort();
                         immediate_resolutions.push(LocalActivityResolution {
                             seq: id.seq_num,
@@ -214,13 +213,13 @@ impl LocalActivityManager {
             let sa = new_la.schedule_cmd;
 
             let mut dat = self.dat.lock();
-            // If this request originated from a local backoff task, clear the entry for it
-            if let Some(jh) = dat.backing_off_tasks.remove(&ExecutingLAId {
+            // If this request originated from a local backoff task, clear the entry for it. We
+            // don't await the handle because we know it must already be done, and there's no
+            // meaningful value.
+            dat.backing_off_tasks.remove(&ExecutingLAId {
                 run_id: new_la.workflow_exec_info.run_id.clone(),
                 seq_num: sa.seq,
-            }) {
-                let _ = jh.await;
-            }
+            });
 
             dat.next_tt_num += 1;
             let tt = TaskToken::new_local_activity_token(dat.next_tt_num.to_le_bytes());
@@ -447,6 +446,33 @@ mod tests {
                 lam.complete(&tt, &LocalActivityExecutionResult::Completed(Default::default()));
             } => (),
         };
+    }
+
+    #[tokio::test]
+    async fn can_cancel_in_flight() {
+        let lam = LocalActivityManager::new(5, "whatever".to_string());
+        lam.enqueue([NewLocalAct {
+            schedule_cmd: ScheduleLocalActivity {
+                seq: 1,
+                activity_id: 1.to_string(),
+                ..Default::default()
+            },
+            workflow_type: "".to_string(),
+            workflow_exec_info: WorkflowExecution {
+                workflow_id: "".to_string(),
+                run_id: "run_id".to_string(),
+            },
+            schedule_time: SystemTime::now(),
+        }
+        .into()]);
+        lam.next_pending().await.unwrap();
+
+        lam.enqueue([LocalActRequest::Cancel(ExecutingLAId {
+            run_id: "run_id".to_string(),
+            seq_num: 1,
+        })]);
+        let next = lam.next_pending().await.unwrap();
+        assert_matches!(next.variant.unwrap(), activity_task::Variant::Cancel(_));
     }
 
     #[tokio::test]

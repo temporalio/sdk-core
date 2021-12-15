@@ -198,8 +198,7 @@ pub mod managed_wf {
         test_help::{TestHistoryBuilder, TEST_Q},
         workflow::WorkflowFetcher,
     };
-    use std::convert::TryInto;
-    use std::time::Duration;
+    use std::{convert::TryInto, time::Duration};
     use temporal_sdk_core_protos::coresdk::{
         activity_result::ActivityExecutionResult,
         common::Payload,

@@ -164,8 +164,13 @@ pub enum MachineResponse {
     #[display(fmt = "QueueLocalActivity")]
     QueueLocalActivity(ScheduleLocalActivity),
     /// Request cancellation of an executing local activity
-    #[display(fmt = "RequestCancelLocalActivity")]
+    #[display(fmt = "RequestCancelLocalActivity({})", "_0")]
     RequestCancelLocalActivity(u32),
+    /// Indicates we are abandoning the indicated LA, so we can remove it from "outstanding" LAs
+    /// and we will not try to WFT heartbeat because of it.
+    #[display(fmt = "AbandonLocalActivity({:?})", "_0")]
+    AbandonLocalActivity(u32),
+
     /// Set the workflow time to the provided time
     #[display(fmt = "UpdateWFTime({:?})", "_0")]
     UpdateWFTime(Option<SystemTime>),
@@ -775,7 +780,8 @@ impl WorkflowMachines {
                 MachineResponse::QueueLocalActivity(act) => {
                     self.local_activity_data.enqueue(act);
                 }
-                MachineResponse::RequestCancelLocalActivity(_) => {
+                MachineResponse::RequestCancelLocalActivity(_)
+                | MachineResponse::AbandonLocalActivity(_) => {
                     panic!(
                         "Request cancel local activity should not be returned from \
                          anything other than explicit cancellation"
@@ -1005,6 +1011,10 @@ impl WorkflowMachines {
                         });
                     }
                 }
+                MachineResponse::AbandonLocalActivity(seq) => {
+                    self.local_activity_data.done_executing(seq);
+                }
+                MachineResponse::UpdateWFTime(None) => {}
                 v => {
                     return Err(WFMachinesError::Fatal(format!(
                         "Unexpected machine response {:?} when cancelling {:?}",

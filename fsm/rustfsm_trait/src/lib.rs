@@ -86,6 +86,12 @@ pub enum MachineError<E: Error> {
     Underlying(E),
 }
 
+impl<E: Error> From<E> for MachineError<E> {
+    fn from(e: E) -> Self {
+        Self::Underlying(e)
+    }
+}
+
 impl<E: Error> Display for MachineError<E> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {

@@ -8,6 +8,8 @@ use temporal_sdk_core_protos::coresdk::{
     },
 };
 
+// TODO: Before release, probably best to avoid using proto types entirely here. They're awkward.
+
 pub trait IntoWorkflowCommand {
     type WFCommandType;
 
@@ -99,6 +101,8 @@ pub struct LocalActivityOptions {
     pub attempt: Option<u32>,
     /// Retry backoffs over this amount will use a timer rather than a local retry
     pub timer_backoff_threshold: Option<Duration>,
+    /// How the activity will cancel
+    pub cancel_type: ActivityCancellationType,
 }
 
 impl IntoWorkflowCommand for LocalActivityOptions {
@@ -115,6 +119,7 @@ impl IntoWorkflowCommand for LocalActivityOptions {
             arguments: vec![self.input],
             retry_policy: Some(self.retry_policy),
             local_retry_threshold: self.timer_backoff_threshold.map(Into::into),
+            cancellation_type: self.cancel_type.into(),
             ..Default::default()
         }
     }

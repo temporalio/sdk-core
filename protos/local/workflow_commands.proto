@@ -76,7 +76,7 @@ message ScheduleActivity {
     /// configuration. Retries are happening up to schedule_to_close_timeout. To disable retries set
     /// retry_policy.maximum_attempts to 1.
     common.RetryPolicy retry_policy = 12;
-    /// Defines behaviour of the underlying workflow when activity cancellation has been requested.
+    /// Defines how the workflow will wait (or not) for cancellation of the activity to be confirmed
     ActivityCancellationType cancellation_type = 13;
 }
 
@@ -111,6 +111,10 @@ message ScheduleLocalActivity {
     /// schedule a timer and retry the activity after. Otherwise, backoff will happen internally in
     /// core.
     google.protobuf.Duration local_retry_threshold = 11;
+    /// Defines how the workflow will wait (or not) for cancellation of the activity to be
+    /// confirmed. Lang should default this to `WAIT_CANCELLATION_COMPLETED`, even though proto
+    /// will default to `TRY_CANCEL` automatically.
+    ActivityCancellationType cancellation_type = 13;
 }
 
 enum ActivityCancellationType {

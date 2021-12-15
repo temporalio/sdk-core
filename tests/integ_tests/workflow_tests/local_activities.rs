@@ -5,8 +5,11 @@ use temporal_sdk_core::prototype_rust_sdk::{
     act_cancelled, act_is_cancelled, ActivityCancelledError, CancellableFuture,
     LocalActivityOptions, WfContext, WorkflowResult,
 };
-use temporal_sdk_core_protos::coresdk::{common::RetryPolicy, AsJsonPayloadExt};
+use temporal_sdk_core_protos::coresdk::{
+    common::RetryPolicy, workflow_commands::ActivityCancellationType, AsJsonPayloadExt,
+};
 use test_utils::CoreWfStarter;
+use tokio_util::sync::CancellationToken;
 
 pub async fn echo(e: String) -> anyhow::Result<String> {
     Ok(e)
@@ -38,7 +41,6 @@ async fn one_local_activity() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }
 
 pub async fn local_act_concurrent_with_timer_wf(ctx: WfContext) -> WorkflowResult<()> {
@@ -65,7 +67,6 @@ async fn local_act_concurrent_with_timer() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }
 
 pub async fn local_act_then_timer_then_wait(ctx: WfContext) -> WorkflowResult<()> {
@@ -92,7 +93,6 @@ async fn local_act_then_timer_then_wait_result() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }
 
 #[tokio::test]
@@ -112,7 +112,6 @@ async fn long_running_local_act_with_timer() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }
 
 pub async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
@@ -146,7 +145,6 @@ async fn local_act_fanout() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }
 
 #[tokio::test]
@@ -183,19 +181,22 @@ async fn local_act_retry_timer_backoff() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }
 
+#[rstest::rstest]
+#[case::wait(ActivityCancellationType::WaitCancellationCompleted)]
+#[case::try_cancel(ActivityCancellationType::TryCancel)]
+#[case::abandon(ActivityCancellationType::Abandon)]
 #[tokio::test]
-async fn cancel_immediate() {
-    let wf_name = "cancel_immediate";
-    let mut starter = CoreWfStarter::new(wf_name);
-    starter.wft_timeout(Duration::from_secs(1));
+async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
+    let wf_name = format!("cancel_immediate_{:?}", cancel_type);
+    let mut starter = CoreWfStarter::new(&wf_name);
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name, |ctx: WfContext| async move {
+    worker.register_wf(&wf_name, move |ctx: WfContext| async move {
         let la = ctx.local_activity(LocalActivityOptions {
             activity_type: "echo".to_string(),
             input: "hi".as_json_payload().expect("serializes fine"),
+            cancel_type,
             ..Default::default()
         });
         la.cancel(&ctx);
@@ -204,22 +205,32 @@ async fn cancel_immediate() {
         Ok(().into())
     });
 
-    worker.register_activity("echo", |_: String| async {
-        tokio::select! {
-            _ = tokio::time::sleep(Duration::from_secs(100)) => {},
-            _ = act_cancelled() => {
-                return Err(anyhow!(ActivityCancelledError::default()))
+    // If we don't use this, we'd hang on shutdown for abandon cancel modes.
+    let manual_cancel = CancellationToken::new();
+    let manual_cancel_act = manual_cancel.clone();
+
+    worker.register_activity("echo", move |_: String| {
+        let manual_cancel_act = manual_cancel_act.clone();
+        async move {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(10)) => {},
+                _ = act_cancelled() => {
+                    return Err(anyhow!(ActivityCancelledError::default()))
+                }
+                _ = manual_cancel_act.cancelled() => {}
             }
+            Ok(())
         }
-        Ok(())
     });
 
     worker
         .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
         .await
         .unwrap();
-    worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
+    worker
+        .run_until_done_shutdown_hook(|| manual_cancel.cancel())
+        .await
+        .unwrap();
 }
 
 #[rstest::rstest]
@@ -227,8 +238,19 @@ async fn cancel_immediate() {
 #[case::while_backing_off(Some(Duration::from_millis(1500)))]
 #[case::while_backing_off_locally(Some(Duration::from_millis(150)))]
 #[tokio::test]
-async fn cancel_after_act_starts(#[case] cancel_on_backoff: Option<Duration>) {
-    let wf_name = format!("cancel_after_act_starts_timer_{:?}", cancel_on_backoff);
+async fn cancel_after_act_starts(
+    #[case] cancel_on_backoff: Option<Duration>,
+    #[values(
+        ActivityCancellationType::WaitCancellationCompleted,
+        ActivityCancellationType::TryCancel,
+        ActivityCancellationType::Abandon
+    )]
+    cancel_type: ActivityCancellationType,
+) {
+    let wf_name = format!(
+        "cancel_after_act_starts_timer_{:?}_{:?}",
+        cancel_on_backoff, cancel_type
+    );
     let mut starter = CoreWfStarter::new(&wf_name);
     starter.wft_timeout(Duration::from_secs(1));
     let mut worker = starter.worker().await;
@@ -245,6 +267,7 @@ async fn cancel_after_act_starts(#[case] cancel_on_backoff: Option<Duration>) {
                 ..Default::default()
             },
             timer_backoff_threshold: Some(Duration::from_secs(1)),
+            cancel_type,
             ..Default::default()
         });
         ctx.timer(Duration::from_secs(1)).await;
@@ -261,28 +284,40 @@ async fn cancel_after_act_starts(#[case] cancel_on_backoff: Option<Duration>) {
         Ok(().into())
     });
 
-    worker.register_activity("echo", move |_: String| async move {
-        if cancel_on_backoff.is_some() {
-            if act_is_cancelled() {
-                return Err(anyhow!(ActivityCancelledError::default()));
-            }
-            // Just fail constantly so we get stuck on the backoff timer
-            return Err(anyhow!("Oh no I failed!"));
-        } else {
-            tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(100)) => {},
-                _ = act_cancelled() => {
-                    return Err(anyhow!(ActivityCancelledError::default()))
+    // If we don't use this, we'd hang on shutdown for abandon cancel modes.
+    let manual_cancel = CancellationToken::new();
+    let manual_cancel_act = manual_cancel.clone();
+
+    worker.register_activity("echo", move |_: String| {
+        let manual_cancel_act = manual_cancel_act.clone();
+        async move {
+            if cancel_on_backoff.is_some() {
+                if act_is_cancelled() {
+                    return Err(anyhow!(ActivityCancelledError::default()));
+                }
+                // Just fail constantly so we get stuck on the backoff timer
+                return Err(anyhow!("Oh no I failed!"));
+            } else {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(100)) => {},
+                    _ = act_cancelled() => {
+                        return Err(anyhow!(ActivityCancelledError::default()))
+                    }
+                    _ = manual_cancel_act.cancelled() => {
+                        return Ok(())
+                    }
                 }
             }
+            Err(anyhow!("Oh no I failed!"))
         }
-        Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
 
     worker
         .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
         .await
         .unwrap();
-    worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
+    worker
+        .run_until_done_shutdown_hook(|| manual_cancel.cancel())
+        .await
+        .unwrap();
 }

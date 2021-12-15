@@ -50,6 +50,4 @@ async fn cancel_during_timer() {
         desc.workflow_execution_info.unwrap().status,
         WorkflowExecutionStatus::Canceled as i32
     );
-
-    starter.shutdown().await;
 }

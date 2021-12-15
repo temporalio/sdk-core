@@ -35,6 +35,8 @@ impl LocalActivityData {
     }
 
     pub(super) fn done_executing(&mut self, seq: u32) {
+        // This seems nonsense, but can happen during abandonment
+        self.new_requests.retain(|req| req.seq != seq);
         self.executing.remove(&seq);
     }
 

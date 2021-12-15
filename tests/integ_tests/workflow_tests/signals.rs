@@ -38,7 +38,6 @@ async fn sends_signal_to_missing_wf() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }
 
 async fn signal_receiver(ctx: WfContext) -> WorkflowResult<()> {
@@ -66,7 +65,6 @@ async fn sends_signal_to_other_wf() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }
 
 async fn signals_child(ctx: WfContext) -> WorkflowResult<()> {
@@ -98,5 +96,4 @@ async fn sends_signal_to_child() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }
