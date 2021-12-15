@@ -2,7 +2,8 @@ use crate::{
     protosext::TryIntoOrNone,
     prototype_rust_sdk::{
         conversions::anyhow_to_fail, workflow_context::WfContextSharedData, CancellableID,
-        RustWfCmd, UnblockEvent, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
+        RustWfCmd, TimerResult, UnblockEvent, WfContext, WfExitValue, WorkflowFunction,
+        WorkflowResult,
     },
     workflow::CommandID,
 };
@@ -118,7 +119,7 @@ pub struct WorkflowFuture {
 impl WorkflowFuture {
     fn unblock(&mut self, event: UnblockEvent) -> Result<(), Error> {
         let cmd_id = match event {
-            UnblockEvent::Timer(seq) => CommandID::Timer(seq),
+            UnblockEvent::Timer(seq, _) => CommandID::Timer(seq),
             UnblockEvent::Activity(seq, _) => CommandID::Activity(seq),
             UnblockEvent::WorkflowStart(seq, _) => CommandID::ChildWorkflowStart(seq),
             UnblockEvent::WorkflowComplete(seq, _) => CommandID::ChildWorkflowComplete(seq),
@@ -167,7 +168,9 @@ impl WorkflowFuture {
                 Variant::StartWorkflow(_) => {
                     // TODO: Can assign randomness seed whenever needed
                 }
-                Variant::FireTimer(FireTimer { seq }) => self.unblock(UnblockEvent::Timer(seq))?,
+                Variant::FireTimer(FireTimer { seq }) => {
+                    self.unblock(UnblockEvent::Timer(seq, TimerResult::Fired))?
+                }
                 Variant::ResolveActivity(ResolveActivity { seq, result }) => {
                     self.unblock(UnblockEvent::Activity(
                         seq,
@@ -313,9 +316,7 @@ impl Future for WorkflowFuture {
                                 activation_cmds.push(workflow_command::Variant::CancelTimer(
                                     CancelTimer { seq },
                                 ));
-                                // TODO: cancelled timer should not simply be unblocked, in the
-                                //   other SDKs this returns an error
-                                self.unblock(UnblockEvent::Timer(seq))?;
+                                self.unblock(UnblockEvent::Timer(seq, TimerResult::Cancelled))?;
                                 // Re-poll wf future since a timer is now unblocked
                                 res = self.inner.poll_unpin(cx);
                             }

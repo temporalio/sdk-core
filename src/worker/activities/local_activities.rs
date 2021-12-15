@@ -8,14 +8,18 @@ use std::{
     fmt::{Debug, Formatter},
     time::{Duration, Instant, SystemTime},
 };
+use temporal_sdk_core_protos::coresdk::activity_result::Cancellation;
 use temporal_sdk_core_protos::coresdk::{
     activity_task::{activity_task, ActivityCancelReason, ActivityTask, Cancel, Start},
     common::WorkflowExecution,
     workflow_commands::ScheduleLocalActivity,
 };
-use tokio::sync::{
-    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    Notify, Semaphore,
+use tokio::{
+    sync::{
+        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+        Notify, Semaphore,
+    },
+    task::JoinHandle,
 };
 
 #[derive(Debug)]
@@ -25,12 +29,30 @@ pub(crate) struct LocalInFlightActInfo {
     pub attempt: u32,
 }
 
+#[derive(Debug)]
+pub(crate) struct LocalActivityResolution {
+    pub seq: u32,
+    pub result: LocalActivityExecutionResult,
+    pub runtime: Duration,
+    pub attempt: u32,
+    pub backoff: Option<prost_types::Duration>,
+}
+
 #[derive(Clone)]
 pub(crate) struct NewLocalAct {
     pub schedule_cmd: ScheduleLocalActivity,
     pub workflow_type: String,
     pub workflow_exec_info: WorkflowExecution,
     pub schedule_time: SystemTime,
+}
+impl Debug for NewLocalAct {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "LocalActivity({}, {})",
+            self.schedule_cmd.seq, self.schedule_cmd.activity_type
+        )
+    }
 }
 
 #[derive(Debug, derive_more::From)]
@@ -44,16 +66,6 @@ pub(crate) enum LocalActRequest {
 pub(crate) struct ExecutingLAId {
     pub run_id: String,
     pub seq_num: u32,
-}
-
-impl Debug for NewLocalAct {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "LocalActivity({}, {})",
-            self.schedule_cmd.seq, self.schedule_cmd.activity_type
-        )
-    }
 }
 
 #[derive(Debug)]
@@ -87,6 +99,8 @@ struct LAMData {
     /// Activities that have been issued to lang but not yet completed
     outstanding_activity_tasks: HashMap<TaskToken, LocalInFlightActInfo>,
     id_to_tt: HashMap<ExecutingLAId, TaskToken>,
+    /// Tasks for activities which are currently backing off. May be used to cancel retrying them.
+    backing_off_tasks: HashMap<ExecutingLAId, JoinHandle<()>>,
     next_tt_num: u32,
 }
 
@@ -105,6 +119,7 @@ impl LocalActivityManager {
             dat: Mutex::new(LAMData {
                 outstanding_activity_tasks: Default::default(),
                 id_to_tt: Default::default(),
+                backing_off_tasks: Default::default(),
                 next_tt_num: 0,
             }),
         }
@@ -114,8 +129,17 @@ impl LocalActivityManager {
         self.dat.lock().outstanding_activity_tasks.len()
     }
 
-    pub(crate) fn enqueue(&self, reqs: impl IntoIterator<Item = LocalActRequest> + Debug) {
+    #[cfg(test)]
+    fn num_in_backoff(&self) -> usize {
+        self.dat.lock().backing_off_tasks.len()
+    }
+
+    pub(crate) fn enqueue(
+        &self,
+        reqs: impl IntoIterator<Item = LocalActRequest> + Debug,
+    ) -> Vec<LocalActivityResolution> {
         debug!("Queuing local activities: {:?}", &reqs);
+        let mut immediate_resolutions = vec![];
         for req in reqs {
             match req {
                 LocalActRequest::New(act) => {
@@ -124,7 +148,26 @@ impl LocalActivityManager {
                         .expect("Receive half of LA request channel cannot be dropped");
                 }
                 LocalActRequest::Cancel(id) => {
-                    let dlock = self.dat.lock();
+                    let mut dlock = self.dat.lock();
+
+                    // First check if this ID is currently backing off, if so abort the backoff
+                    // task
+                    if let Some(t) = dlock.backing_off_tasks.remove(&id) {
+                        warn!("Aborting currently backing off task");
+                        t.abort();
+                        immediate_resolutions.push(LocalActivityResolution {
+                            seq: id.seq_num,
+                            result: LocalActivityExecutionResult::Cancelled(
+                                Cancellation::from_details(None),
+                                false,
+                            ),
+                            runtime: Duration::from_secs(0),
+                            attempt: 0,
+                            backoff: None,
+                        });
+                        continue;
+                    }
+
                     if let Some(tt) = dlock.id_to_tt.get(&id) {
                         let info = dlock
                             .outstanding_activity_tasks
@@ -143,6 +186,7 @@ impl LocalActivityManager {
                 }
             }
         }
+        immediate_resolutions
     }
 
     pub(crate) async fn next_pending(&self) -> Option<ActivityTask> {
@@ -170,6 +214,14 @@ impl LocalActivityManager {
             let sa = new_la.schedule_cmd;
 
             let mut dat = self.dat.lock();
+            // If this request originated from a local backoff task, clear the entry for it
+            if let Some(jh) = dat.backing_off_tasks.remove(&ExecutingLAId {
+                run_id: new_la.workflow_exec_info.run_id.clone(),
+                seq_num: sa.seq,
+            }) {
+                let _ = jh.await;
+            }
+
             dat.next_tt_num += 1;
             let tt = TaskToken::new_local_activity_token(dat.next_tt_num.to_le_bytes());
             dat.outstanding_activity_tasks.insert(
@@ -223,11 +275,11 @@ impl LocalActivityManager {
     ) -> LACompleteAction {
         let mut dlock = self.dat.lock();
         if let Some(info) = dlock.outstanding_activity_tasks.remove(task_token) {
-            dlock.id_to_tt.remove(&ExecutingLAId {
+            let exec_id = ExecutingLAId {
                 run_id: info.la_info.workflow_exec_info.run_id.clone(),
                 seq_num: info.la_info.schedule_cmd.seq,
-            });
-            drop(dlock);
+            };
+            dlock.id_to_tt.remove(&exec_id);
             self.semaphore.add_permits(1);
 
             match status {
@@ -275,7 +327,7 @@ impl LocalActivityManager {
                                 }
                                 // Send the retry request after waiting the backoff duration
                                 let send_chan = self.act_req_tx.clone();
-                                tokio::spawn(async move {
+                                let jh = tokio::spawn(async move {
                                     tokio::time::sleep(backoff_dur).await;
 
                                     send_chan
@@ -287,6 +339,7 @@ impl LocalActivityManager {
                                             "Receive half of LA request channel cannot be dropped",
                                         );
                                 });
+                                dlock.backing_off_tasks.insert(exec_id, jh);
 
                                 LACompleteAction::WillBeRetried
                             } else {
@@ -429,5 +482,90 @@ mod tests {
         assert_matches!(res, LACompleteAction::LangDoesTimerBackoff(dur, info)
             if dur.seconds == 10 && info.attempt == 5
         )
+    }
+
+    #[tokio::test]
+    async fn can_cancel_during_local_backoff() {
+        let lam = LocalActivityManager::new(1, "whatever".to_string());
+        lam.enqueue([NewLocalAct {
+            schedule_cmd: ScheduleLocalActivity {
+                seq: 1,
+                activity_id: 1.to_string(),
+                attempt: 5,
+                retry_policy: Some(RetryPolicy {
+                    initial_interval: Some(Duration::from_secs(10).into()),
+                    backoff_coefficient: 1.0,
+                    maximum_interval: Some(Duration::from_secs(10).into()),
+                    maximum_attempts: 10,
+                    non_retryable_error_types: vec![],
+                }),
+                local_retry_threshold: Some(Duration::from_secs(500).into()),
+                ..Default::default()
+            },
+            workflow_type: "".to_string(),
+            workflow_exec_info: WorkflowExecution {
+                workflow_id: "".to_string(),
+                run_id: "run_id".to_string(),
+            },
+            schedule_time: SystemTime::now(),
+        }
+        .into()]);
+
+        let next = lam.next_pending().await.unwrap();
+        let tt = TaskToken(next.task_token);
+        lam.complete(
+            &tt,
+            &LocalActivityExecutionResult::Failed(Default::default()),
+        );
+        // Cancel the activity, which is performing local backoff
+        let immediate_res = lam.enqueue([LocalActRequest::Cancel(ExecutingLAId {
+            run_id: "run_id".to_string(),
+            seq_num: 1,
+        })]);
+        // It should not be present in the backoff tasks
+        assert_eq!(lam.num_in_backoff(), 0);
+        assert_eq!(lam.num_outstanding(), 0);
+        // It should return a resolution to cancel
+        assert_eq!(immediate_res.len(), 1);
+        assert_matches!(
+            immediate_res[0].result,
+            LocalActivityExecutionResult::Cancelled(_, _)
+        );
+    }
+
+    #[tokio::test]
+    async fn local_backoff_clears_handle_map_when_started() {
+        let lam = LocalActivityManager::new(1, "whatever".to_string());
+        lam.enqueue([NewLocalAct {
+            schedule_cmd: ScheduleLocalActivity {
+                seq: 1,
+                activity_id: 1.to_string(),
+                attempt: 5,
+                retry_policy: Some(RetryPolicy {
+                    initial_interval: Some(Duration::from_millis(10).into()),
+                    backoff_coefficient: 1.0,
+                    ..Default::default()
+                }),
+                local_retry_threshold: Some(Duration::from_secs(500).into()),
+                ..Default::default()
+            },
+            workflow_type: "".to_string(),
+            workflow_exec_info: WorkflowExecution {
+                workflow_id: "".to_string(),
+                run_id: "run_id".to_string(),
+            },
+            schedule_time: SystemTime::now(),
+        }
+        .into()]);
+
+        let next = lam.next_pending().await.unwrap();
+        let tt = TaskToken(next.task_token);
+        lam.complete(
+            &tt,
+            &LocalActivityExecutionResult::Failed(Default::default()),
+        );
+        lam.next_pending().await.unwrap();
+        assert_eq!(lam.num_in_backoff(), 0);
+        assert_eq!(lam.num_outstanding(), 1);
     }
 }

@@ -11,7 +11,7 @@ use crate::{
     protosext::{ValidPollWFTQResponse, WfActivationExt},
     task_token::TaskToken,
     telemetry::metrics::MetricsContext,
-    worker::LocalActRequest,
+    worker::{LocalActRequest, LocalActivityResolution},
     workflow::{
         workflow_tasks::{
             cache_manager::WorkflowCacheManager, concurrency_manager::WorkflowConcurrencyManager,
@@ -369,7 +369,7 @@ impl WorkflowTaskManager {
         &self,
         run_id: &str,
         mut commands: Vec<WFCommand>,
-        local_activity_request_sink: impl FnOnce(Vec<LocalActRequest>),
+        local_activity_request_sink: impl FnOnce(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>,
     ) -> Result<Option<ServerCommandsWithWorkflowInfo>, WorkflowUpdateError> {
         // No-command replies to evictions can simply skip everything
         if commands.is_empty() && self.activation_has_eviction(run_id) {
@@ -464,7 +464,11 @@ impl WorkflowTaskManager {
             if are_pending {
                 self.needs_activation(run_id);
             }
-            local_activity_request_sink(local_activities);
+            let immediate_resolutions = local_activity_request_sink(local_activities);
+            for resolution in immediate_resolutions {
+                self.notify_of_local_result(run_id, LocalResolution::LocalActivity(resolution))
+                    .await?;
+            }
 
             // The heartbeat deadline is 80% of the WFT timeout
             let wft_heartbeat_deadline =

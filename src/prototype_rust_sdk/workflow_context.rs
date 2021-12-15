@@ -15,7 +15,10 @@ use std::{
     future::Future,
     marker::PhantomData,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     task::Poll,
     time::{Duration, SystemTime},
 };
@@ -451,6 +454,7 @@ struct LATimerBackoffFut<'a> {
     timer_fut: Option<Pin<Box<dyn CancellableFuture<TimerResult> + Send + Unpin + 'a>>>,
     ctx: &'a WfContext,
     next_attempt: u32,
+    did_cancel: AtomicBool,
 }
 impl<'a> LATimerBackoffFut<'a> {
     pub(crate) fn new(opts: LocalActivityOptions, ctx: &'a WfContext) -> Self {
@@ -460,6 +464,7 @@ impl<'a> LATimerBackoffFut<'a> {
             timer_fut: None,
             ctx,
             next_attempt: 1,
+            did_cancel: AtomicBool::new(false),
         }
     }
 }
@@ -471,19 +476,36 @@ impl<'a> Future for LATimerBackoffFut<'a> {
         // If the timer exists, wait for it first
         if let Some(tf) = self.timer_fut.as_mut() {
             return match tf.poll_unpin(cx) {
-                Poll::Ready(_) => {
+                Poll::Ready(tr) => {
                     self.timer_fut = None;
-                    // Schedule next LA TODO: if this timer wasn't cancelled
-                    let mut opts = self.la_opts.clone();
-                    opts.attempt = Some(self.next_attempt);
-                    self.current_fut = Box::pin(self.ctx.local_activity_no_timer_retry(opts));
-                    Poll::Pending
+                    // Schedule next LA if this timer wasn't cancelled
+                    if let TimerResult::Fired = tr {
+                        let mut opts = self.la_opts.clone();
+                        opts.attempt = Some(self.next_attempt);
+                        self.current_fut = Box::pin(self.ctx.local_activity_no_timer_retry(opts));
+                        Poll::Pending
+                    } else {
+                        Poll::Ready(ActivityResolution {
+                            status: Some(
+                                activity_resolution::Status::Cancelled(Default::default()),
+                            ),
+                        })
+                    }
                 }
                 Poll::Pending => Poll::Pending,
             };
         }
         let poll_res = self.current_fut.poll_unpin(cx);
         if let Poll::Ready(ref r) = poll_res {
+            // If we've already said we want to cancel, don't schedule the backoff timer. Just
+            // return cancel status. This can happen if cancel comes after the LA says it wants to
+            // back off but before we have scheduled the timer.
+            if self.did_cancel.load(Ordering::Acquire) {
+                return Poll::Ready(ActivityResolution {
+                    status: Some(activity_resolution::Status::Cancelled(Default::default())),
+                });
+            }
+
             if let Some(activity_resolution::Status::Backoff(b)) = r.status.as_ref() {
                 let timer_f = self.ctx.timer(
                     b.backoff_duration
@@ -502,7 +524,11 @@ impl<'a> Future for LATimerBackoffFut<'a> {
 }
 impl<'a> CancellableFuture<ActivityResolution> for LATimerBackoffFut<'a> {
     fn cancel(&self, ctx: &WfContext) {
-        self.current_fut.cancel(ctx)
+        self.did_cancel.store(true, Ordering::Release);
+        if let Some(tf) = self.timer_fut.as_ref() {
+            tf.cancel(ctx);
+        }
+        self.current_fut.cancel(ctx);
     }
 }
 

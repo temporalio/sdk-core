@@ -74,6 +74,9 @@ fsm! {
     // even though we already resolved the activity.
     WaitingMarkerEventPreResolved --(MarkerRecorded(CompleteLocalActivityData),
                                      shared on_marker_recorded) --> MarkerCommandRecorded;
+
+    // Ignore cancel in final state
+    MarkerCommandRecorded --(Cancel, on_cancel_requested) --> MarkerCommandRecorded;
 }
 
 #[derive(Debug, Clone)]
@@ -317,6 +320,13 @@ impl MarkerCommandCreated {
 
 #[derive(Default, Clone)]
 pub(super) struct MarkerCommandRecorded {}
+impl MarkerCommandRecorded {
+    fn on_cancel_requested(self) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
+        // We still must issue a cancel request even if this command is resolved, because if it
+        // failed and we are backing off locally, we must tell the LA dispatcher to quit retrying.
+        TransitionResult::ok([LocalActivityCommand::RequestCancel], self)
+    }
+}
 
 #[derive(Default, Clone)]
 pub(super) struct Replaying {}

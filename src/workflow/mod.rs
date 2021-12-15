@@ -8,13 +8,11 @@ pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
 pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
 
 use crate::{
-    machines::{
-        LocalActivityExecutionResult, ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines,
-    },
+    machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
     telemetry::metrics::MetricsContext,
-    worker::LocalActRequest,
+    worker::{LocalActRequest, LocalActivityResolution},
 };
-use std::{sync::mpsc::Sender, time::Duration};
+use std::sync::mpsc::Sender;
 use temporal_sdk_core_protos::coresdk::workflow_activation::WfActivation;
 
 pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
@@ -84,13 +82,7 @@ pub struct OutgoingServerCommands {
 
 #[derive(Debug)]
 pub(crate) enum LocalResolution {
-    LocalActivity {
-        seq: u32,
-        result: LocalActivityExecutionResult,
-        runtime: Duration,
-        attempt: u32,
-        backoff: Option<prost_types::Duration>,
-    },
+    LocalActivity(LocalActivityResolution),
 }
 
 impl WorkflowManager {
@@ -207,6 +199,7 @@ pub mod managed_wf {
         workflow::WorkflowFetcher,
     };
     use std::convert::TryInto;
+    use std::time::Duration;
     use temporal_sdk_core_protos::coresdk::{
         activity_result::ActivityExecutionResult,
         common::Payload,
@@ -322,7 +315,7 @@ pub mod managed_wf {
             result: ActivityExecutionResult,
         ) -> Result<()> {
             self.mgr
-                .notify_of_local_result(LocalResolution::LocalActivity {
+                .notify_of_local_result(LocalResolution::LocalActivity(LocalActivityResolution {
                     seq: seq_num,
                     // We accept normal execution results and do this conversion because there
                     // are more helpers for constructing them.
@@ -334,7 +327,7 @@ pub mod managed_wf {
                     runtime: Duration::from_secs(1),
                     attempt: 1,
                     backoff: None,
-                })
+                }))
         }
 
         /// During testing it can be useful to run through all activations to simulate replay

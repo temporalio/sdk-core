@@ -20,10 +20,9 @@ use crate::{
 };
 use anyhow::{anyhow, bail};
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
-use std::fmt::{Display, Formatter};
 use std::{
     collections::HashMap,
-    fmt::Debug,
+    fmt::{Debug, Display, Formatter},
     future::Future,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -318,6 +317,11 @@ pub async fn act_cancelled() {
     ACT_CANCEL_TOK.with(|ct| ct.clone()).cancelled().await
 }
 
+/// Returns true if this activity has already been cancelled
+pub fn act_is_cancelled() -> bool {
+    ACT_CANCEL_TOK.with(|ct| ct.is_cancelled())
+}
+
 impl ActivityHalf {
     /// Spawns off a task to handle the provided activity task
     fn activity_task_handler(
@@ -376,7 +380,7 @@ impl ActivityHalf {
 
 #[derive(Debug)]
 enum UnblockEvent {
-    Timer(u32),
+    Timer(u32, TimerResult),
     Activity(u32, Box<ActivityResolution>),
     WorkflowStart(u32, Box<ChildWorkflowStartStatus>),
     WorkflowComplete(u32, Box<ChildWorkflowResult>),
@@ -385,7 +389,13 @@ enum UnblockEvent {
 }
 
 /// Result of awaiting on a timer
-pub struct TimerResult;
+#[derive(Debug, Copy, Clone)]
+pub enum TimerResult {
+    /// The timer was cancelled
+    Cancelled,
+    /// The timer elapsed and fired
+    Fired,
+}
 
 /// Successful result of sending a signal to an external workflow
 pub struct SignalExternalOk;
@@ -407,7 +417,7 @@ impl Unblockable for TimerResult {
     type OtherDat = ();
     fn unblock(ue: UnblockEvent, _: Self::OtherDat) -> Self {
         match ue {
-            UnblockEvent::Timer(_) => TimerResult,
+            UnblockEvent::Timer(_, result) => result,
             _ => panic!("Invalid unblock event for timer"),
         }
     }

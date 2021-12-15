@@ -17,7 +17,7 @@ use crate::{
     },
     protosext::HistoryEventExt,
     telemetry::{metrics::MetricsContext, VecDisplayer},
-    worker::{ExecutingLAId, LocalActRequest},
+    worker::{ExecutingLAId, LocalActRequest, LocalActivityResolution},
     workflow::{CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WorkflowFetcher},
 };
 use prost_types::TimestampOutOfSystemRangeError;
@@ -263,13 +263,13 @@ impl WorkflowMachines {
     /// local activity or side effect
     pub(crate) fn local_resolution(&mut self, resolution: LocalResolution) -> Result<()> {
         match resolution {
-            LocalResolution::LocalActivity {
+            LocalResolution::LocalActivity(LocalActivityResolution {
                 seq,
                 result,
                 runtime,
                 attempt,
                 backoff,
-            } => {
+            }) => {
                 let act_id = CommandID::LocalActivity(seq);
                 let mk = self.get_machine_key(act_id)?;
                 let mach = self.machine_mut(mk);
@@ -392,10 +392,7 @@ impl WorkflowMachines {
     fn handle_command_event(&mut self, event: &HistoryEvent) -> Result<()> {
         if event.is_local_activity_marker() {
             let deets = event.extract_local_activity_marker_data().ok_or_else(|| {
-                WFMachinesError::Fatal(format!(
-                    "Local activity marker was unparseable: {:?}",
-                    event
-                ))
+                WFMachinesError::Fatal(format!("Local activity marker was unparsable: {:?}", event))
             })?;
             let cmdid = CommandID::LocalActivity(deets.seq);
             let mkey = self.get_machine_key(cmdid)?;

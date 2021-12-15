@@ -74,7 +74,7 @@ impl LocalActivityData {
                 .insert(la_dat.marker_dat.seq, la_dat.into());
         } else {
             return Err(WFMachinesError::Fatal(format!(
-                "Local activity marker was unparseable: {:?}",
+                "Local activity marker was unparsable: {:?}",
                 e
             )));
         }

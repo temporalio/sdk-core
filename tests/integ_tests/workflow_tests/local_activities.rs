@@ -2,8 +2,8 @@ use anyhow::anyhow;
 use futures::future::join_all;
 use std::time::Duration;
 use temporal_sdk_core::prototype_rust_sdk::{
-    act_cancelled, ActivityCancelledError, CancellableFuture, LocalActivityOptions, WfContext,
-    WorkflowResult,
+    act_cancelled, act_is_cancelled, ActivityCancelledError, CancellableFuture,
+    LocalActivityOptions, WfContext, WorkflowResult,
 };
 use temporal_sdk_core_protos::coresdk::{common::RetryPolicy, AsJsonPayloadExt};
 use test_utils::CoreWfStarter;
@@ -187,8 +187,8 @@ async fn local_act_retry_timer_backoff() {
 }
 
 #[tokio::test]
-async fn cancel_after_act_starts() {
-    let wf_name = "cancel_after_act_starts";
+async fn cancel_immediate() {
+    let wf_name = "cancel_immediate";
     let mut starter = CoreWfStarter::new(wf_name);
     starter.wft_timeout(Duration::from_secs(1));
     let mut worker = starter.worker().await;
@@ -196,13 +196,53 @@ async fn cancel_after_act_starts() {
         let la = ctx.local_activity(LocalActivityOptions {
             activity_type: "echo".to_string(),
             input: "hi".as_json_payload().expect("serializes fine"),
+            ..Default::default()
+        });
+        la.cancel(&ctx);
+        let resolution = la.await;
+        assert!(resolution.cancelled());
+        Ok(().into())
+    });
+
+    worker.register_activity("echo", |_: String| async {
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(100)) => {},
+            _ = act_cancelled() => {
+                return Err(anyhow!(ActivityCancelledError::default()))
+            }
+        }
+        Ok(())
+    });
+
+    worker
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    starter.shutdown().await;
+}
+
+#[rstest::rstest]
+#[case::while_running(None)]
+#[case::while_backing_off(Some(Duration::from_millis(1500)))]
+#[case::while_backing_off_locally(Some(Duration::from_millis(150)))]
+#[tokio::test]
+async fn cancel_after_act_starts(#[case] cancel_on_backoff: Option<Duration>) {
+    let wf_name = format!("cancel_after_act_starts_timer_{:?}", cancel_on_backoff);
+    let mut starter = CoreWfStarter::new(&wf_name);
+    starter.wft_timeout(Duration::from_secs(1));
+    let mut worker = starter.worker().await;
+    let bo_dur = cancel_on_backoff.unwrap_or_else(|| Duration::from_secs(1));
+    worker.register_wf(&wf_name, move |ctx: WfContext| async move {
+        let la = ctx.local_activity(LocalActivityOptions {
+            activity_type: "echo".to_string(),
+            input: "hi".as_json_payload().expect("serializes fine"),
             retry_policy: RetryPolicy {
-                initial_interval: Some(Duration::from_micros(15).into()),
-                backoff_coefficient: 1_000.,
-                maximum_interval: Some(Duration::from_millis(1500).into()),
+                initial_interval: Some(bo_dur.into()),
+                backoff_coefficient: 1.,
+                maximum_interval: Some(bo_dur.into()),
                 // Retry forever until cancelled
-                maximum_attempts: 0,
-                non_retryable_error_types: vec![],
+                ..Default::default()
             },
             timer_backoff_threshold: Some(Duration::from_secs(1)),
             ..Default::default()
@@ -221,12 +261,19 @@ async fn cancel_after_act_starts() {
         Ok(().into())
     });
 
-    worker.register_activity("echo", |_: String| async {
-        // TODO: Do an always-failing version to test timer cancellation
-        tokio::select! {
-            _ = tokio::time::sleep(Duration::from_secs(100)) => {},
-            _ = act_cancelled() => {
-                return Err(anyhow!(ActivityCancelledError::default()))
+    worker.register_activity("echo", move |_: String| async move {
+        if cancel_on_backoff.is_some() {
+            if act_is_cancelled() {
+                return Err(anyhow!(ActivityCancelledError::default()));
+            }
+            // Just fail constantly so we get stuck on the backoff timer
+            return Err(anyhow!("Oh no I failed!"));
+        } else {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(100)) => {},
+                _ = act_cancelled() => {
+                    return Err(anyhow!(ActivityCancelledError::default()))
+                }
             }
         }
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
