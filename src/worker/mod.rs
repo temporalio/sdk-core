@@ -651,10 +651,9 @@ impl Worker {
         cause: WorkflowTaskFailedCause,
         failure: workflow_completion::Failure,
     ) -> Result<WFTReportOutcome, CompleteWfError> {
-        warn!(run_id, failure=?failure, "Failing workflow activation");
-
         Ok(match self.wft_manager.failed_activation(run_id) {
             FailedActivationOutcome::Report(tt) => {
+                warn!(run_id, failure=?failure, "Failing workflow activation");
                 self.handle_wft_reporting_errs(run_id, || async {
                     self.server_gateway
                         .fail_workflow_task(tt, cause, failure.failure.map(Into::into))
@@ -667,6 +666,7 @@ impl Worker {
                 }
             }
             FailedActivationOutcome::ReportLegacyQueryFailure(task_token) => {
+                warn!(run_id, failure=?failure, "Failing legacy query request");
                 self.server_gateway
                     .respond_legacy_query(task_token, legacy_query_failure(failure))
                     .await?;
