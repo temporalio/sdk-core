@@ -1,6 +1,6 @@
 use crate::{
     machines::{local_activity_state_machine::ResolveDat, WFMachinesError},
-    protosext::HistoryEventExt,
+    protosext::{HistoryEventExt, ValidScheduleLA},
     worker::{ExecutingLAId, LocalActRequest, NewLocalAct},
 };
 use std::{
@@ -8,14 +8,13 @@ use std::{
     time::SystemTime,
 };
 use temporal_sdk_core_protos::{
-    coresdk::{common::WorkflowExecution, workflow_commands::ScheduleLocalActivity},
-    temporal::api::history::v1::HistoryEvent,
+    coresdk::common::WorkflowExecution, temporal::api::history::v1::HistoryEvent,
 };
 
 #[derive(Default)]
 pub(super) struct LocalActivityData {
     /// Queued local activity requests which need to be executed
-    new_requests: Vec<ScheduleLocalActivity>,
+    new_requests: Vec<ValidScheduleLA>,
     /// Queued cancels that need to be dispatched
     cancel_requests: Vec<ExecutingLAId>,
     /// Seq #s of local activities which we have sent to be executed but have not yet resolved
@@ -26,7 +25,7 @@ pub(super) struct LocalActivityData {
 }
 
 impl LocalActivityData {
-    pub(super) fn enqueue(&mut self, act: ScheduleLocalActivity) {
+    pub(super) fn enqueue(&mut self, act: ValidScheduleLA) {
         self.new_requests.push(act);
     }
 
@@ -87,7 +86,7 @@ impl LocalActivityData {
         self.resolutions.remove(&seq)
     }
 
-    pub(super) fn remove_from_queue(&mut self, seq: u32) -> Option<ScheduleLocalActivity> {
+    pub(super) fn remove_from_queue(&mut self, seq: u32) -> Option<ValidScheduleLA> {
         self.new_requests
             .iter()
             .position(|req| req.seq == seq)

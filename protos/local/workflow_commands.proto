@@ -93,23 +93,26 @@ message ScheduleLocalActivity {
     /// Arguments/input to the activity.
     repeated common.Payload arguments = 6;
     /// Indicates how long the caller is willing to wait for local activity completion. Limits how
-    /// long retries will be attempted. Either this or start_to_close_timeout_seconds must be
-    /// specified. When not specified defaults to the workflow execution timeout.
+    /// long retries will be attempted. When not specified defaults to the workflow execution
+    /// timeout (which may be unset).
     google.protobuf.Duration schedule_to_close_timeout = 7;
     /// Limits time the local activity can idle internally before being executed. That can happen if
     /// the worker is currently at max concurrent local activity executions. This timeout is always
     /// non retryable as all a retry would achieve is to put it back into the same queue. Defaults
-    /// to schedule_to_close_timeout or workflow execution timeout if not specified.
+    /// to `schedule_to_close_timeout` if not specified and that is set. Must be <=
+    /// `schedule_to_close_timeout` when set, if not, it will be clamped down.
     google.protobuf.Duration schedule_to_start_timeout = 8;
     /// Maximum time the local activity is allowed to execute after the task is dispatched. This
-    /// timeout is always retryable. Either this or schedule_to_close_timeout must be specified.
+    /// timeout is always retryable. Either or both of `schedule_to_close_timeout` and this must be
+    /// specified. If set, this must be <= `schedule_to_close_timeout`, if not, it will be clamped
+    /// down.
     google.protobuf.Duration start_to_close_timeout = 9;
     /// Specify a retry policy for the local activity. By default local activities will be retried
     /// indefinitely.
     common.RetryPolicy retry_policy = 10;
     /// If the activity is retrying and backoff would exceed this value, lang will be told to
     /// schedule a timer and retry the activity after. Otherwise, backoff will happen internally in
-    /// core.
+    /// core. Defaults to 1 minute.
     google.protobuf.Duration local_retry_threshold = 11;
     /// Defines how the workflow will wait (or not) for cancellation of the activity to be
     /// confirmed. Lang should default this to `WAIT_CANCELLATION_COMPLETED`, even though proto

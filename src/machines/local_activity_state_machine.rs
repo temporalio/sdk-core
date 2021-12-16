@@ -3,7 +3,7 @@ use crate::{
         workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, OnEventWrapper,
         WFMachinesAdapter, WFMachinesError,
     },
-    protosext::{CompleteLocalActivityData, HistoryEventExt, TryIntoOrNone},
+    protosext::{CompleteLocalActivityData, HistoryEventExt, TryIntoOrNone, ValidScheduleLA},
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::{
@@ -19,7 +19,7 @@ use temporal_sdk_core_protos::{
         common::build_local_activity_marker_details,
         external_data::LocalActivityMarkerData,
         workflow_activation::ResolveActivity,
-        workflow_commands::{ActivityCancellationType, ScheduleLocalActivity},
+        workflow_commands::ActivityCancellationType,
     },
     temporal::api::{
         command::v1::{Command, RecordMarkerCommandAttributes},
@@ -139,7 +139,7 @@ impl From<CompleteLocalActivityData> for ResolveDat {
 /// must resolve before we send a record marker command. A [MachineResponse] may be produced,
 /// to queue the LA for execution if it needs to be.
 pub(super) fn new_local_activity(
-    attrs: ScheduleLocalActivity,
+    attrs: ValidScheduleLA,
     replaying_when_invoked: bool,
     maybe_pre_resolved: Option<ResolveDat>,
     wf_time: Option<SystemTime>,
@@ -158,6 +158,8 @@ pub(super) fn new_local_activity(
         }
         Executing {}.into()
     };
+
+    // TODO: Validate timeouts are set here
 
     let mut machine = LocalActivityMachine {
         state: initial_state,
@@ -272,7 +274,7 @@ impl LocalActivityMachine {
 
 #[derive(Clone)]
 pub(super) struct SharedState {
-    attrs: ScheduleLocalActivity,
+    attrs: ValidScheduleLA,
     replaying_when_invoked: bool,
     wf_time_when_started: Option<SystemTime>,
 }
@@ -293,7 +295,7 @@ impl SharedState {
 
 #[derive(Debug, derive_more::Display)]
 pub(super) enum LocalActivityCommand {
-    RequestActivityExecution(ScheduleLocalActivity),
+    RequestActivityExecution(ValidScheduleLA),
     #[display(fmt = "Resolved")]
     Resolved(ResolveDat),
     /// The fake marker is used to avoid special casing marker recorded event handling.
@@ -554,14 +556,12 @@ impl WaitingMarkerEventPreResolved {
 
 impl Cancellable for LocalActivityMachine {
     fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
-        let event =
-            match ActivityCancellationType::from_i32(self.shared_state.attrs.cancellation_type) {
-                Some(
-                    ct @ ActivityCancellationType::TryCancel
-                    | ct @ ActivityCancellationType::Abandon,
-                ) => LocalActivityMachineEvents::NoWaitCancel(ct),
-                _ => LocalActivityMachineEvents::Cancel,
-            };
+        let event = match self.shared_state.attrs.cancellation_type {
+            ct @ ActivityCancellationType::TryCancel | ct @ ActivityCancellationType::Abandon => {
+                LocalActivityMachineEvents::NoWaitCancel(ct)
+            }
+            _ => LocalActivityMachineEvents::Cancel,
+        };
         let cmds = OnEventWrapper::on_event_mut(self, event)?;
         let mach_resps = cmds
             .into_iter()
@@ -650,10 +650,8 @@ impl WFMachinesAdapter for LocalActivityMachine {
                 // to avoid unnecessary WFT heartbeating.
                 if did_cancel
                     && matches!(
-                        ActivityCancellationType::from_i32(
-                            self.shared_state.attrs.cancellation_type
-                        ),
-                        Some(ActivityCancellationType::Abandon)
+                        self.shared_state.attrs.cancellation_type,
+                        ActivityCancellationType::Abandon
                     )
                 {
                     responses.push(MachineResponse::AbandonLocalActivity(

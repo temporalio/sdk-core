@@ -103,11 +103,32 @@ pub struct LocalActivityOptions {
     pub timer_backoff_threshold: Option<Duration>,
     /// How the activity will cancel
     pub cancel_type: ActivityCancellationType,
+    /// Indicates how long the caller is willing to wait for local activity completion. Limits how
+    /// long retries will be attempted. When not specified defaults to the workflow execution
+    /// timeout (which may be unset).
+    pub schedule_to_close_timeout: Option<Duration>,
+    /// Limits time the local activity can idle internally before being executed. That can happen if
+    /// the worker is currently at max concurrent local activity executions. This timeout is always
+    /// non retryable as all a retry would achieve is to put it back into the same queue. Defaults
+    /// to `schedule_to_close_timeout` if not specified and that is set. Must be <=
+    /// `schedule_to_close_timeout` when set, if not, it will be clamped down.
+    pub schedule_to_start_timeout: Option<Duration>,
+    /// Maximum time the local activity is allowed to execute after the task is dispatched. This
+    /// timeout is always retryable. Either or both of `schedule_to_close_timeout` and this must be
+    /// specified. If set, this must be <= `schedule_to_close_timeout`, if not, it will be clamped
+    /// down.
+    pub start_to_close_timeout: Option<Duration>,
 }
 
 impl IntoWorkflowCommand for LocalActivityOptions {
     type WFCommandType = ScheduleLocalActivity;
-    fn into_command(self, seq: u32) -> ScheduleLocalActivity {
+    #[allow(unused_mut)]
+    fn into_command(mut self, seq: u32) -> ScheduleLocalActivity {
+        // Allow tests to avoid extra verbosity when they don't care about timeouts
+        #[cfg(test)]
+        self.schedule_to_close_timeout
+            .get_or_insert(Duration::from_secs(100));
+
         ScheduleLocalActivity {
             seq,
             attempt: self.attempt.unwrap_or(1),
@@ -120,6 +141,9 @@ impl IntoWorkflowCommand for LocalActivityOptions {
             retry_policy: Some(self.retry_policy),
             local_retry_threshold: self.timer_backoff_threshold.map(Into::into),
             cancellation_type: self.cancel_type.into(),
+            schedule_to_close_timeout: self.schedule_to_close_timeout.map(Into::into),
+            schedule_to_start_timeout: self.schedule_to_start_timeout.map(Into::into),
+            start_to_close_timeout: self.start_to_close_timeout.map(Into::into),
             ..Default::default()
         }
     }

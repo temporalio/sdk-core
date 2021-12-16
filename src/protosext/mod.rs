@@ -7,17 +7,25 @@ use crate::{
     workflow::LEGACY_QUERY_ID,
     CompleteActivityError,
 };
-use std::convert::TryFrom;
+use anyhow::anyhow;
+use std::{
+    collections::HashMap,
+    convert::TryFrom,
+    fmt::{Display, Formatter},
+    time::Duration,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{activity_execution_result, activity_execution_result::Status},
         common::{
             decode_change_marker_details, extract_local_activity_marker_data,
-            extract_local_activity_marker_details,
+            extract_local_activity_marker_details, Payload as SDKPayload, RetryPolicy,
         },
         external_data::LocalActivityMarkerData,
         workflow_activation::{wf_activation_job, QueryWorkflow, WfActivation, WfActivationJob},
-        workflow_commands::{query_result, QueryResult},
+        workflow_commands::{
+            query_result, ActivityCancellationType, QueryResult, ScheduleLocalActivity,
+        },
         workflow_completion, FromPayloadsExt,
     },
     temporal::api::{
@@ -273,5 +281,108 @@ where
 {
     fn try_into_or_none(self) -> Option<T> {
         self.map(TryInto::try_into).transpose().ok().flatten()
+    }
+}
+
+/// Validated version of [ScheduleLocalActivity]. See it for field docs.
+/// One or both of `schedule_to_close_timeout` and `start_to_close_timeout` are guaranteed to exist.
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(Default))]
+pub struct ValidScheduleLA {
+    pub seq: u32,
+    pub activity_id: String,
+    pub activity_type: String,
+    pub attempt: u32,
+    pub header_fields: HashMap<String, SDKPayload>,
+    pub arguments: Vec<SDKPayload>,
+    pub schedule_to_start_timeout: Option<Duration>,
+    pub close_timeouts: LACloseTimeouts,
+    pub retry_policy: RetryPolicy,
+    pub local_retry_threshold: Duration,
+    pub cancellation_type: ActivityCancellationType,
+}
+
+#[derive(Debug, Clone)]
+pub enum LACloseTimeouts {
+    ScheduleOnly(Duration),
+    StartOnly(Duration),
+    Both { sched: Duration, start: Duration },
+}
+
+#[cfg(test)]
+impl Default for LACloseTimeouts {
+    fn default() -> Self {
+        LACloseTimeouts::ScheduleOnly(Duration::from_secs(100))
+    }
+}
+
+impl ValidScheduleLA {
+    pub fn from_schedule_la(
+        v: ScheduleLocalActivity,
+        wf_exe_timeout: Option<Duration>,
+    ) -> Result<Self, anyhow::Error> {
+        let sched_to_close = v
+            .schedule_to_close_timeout
+            .map(|x| {
+                x.try_into()
+                    .map_err(|_| anyhow!("Could not convert schedule_to_close_timeout"))
+            })
+            .transpose()?
+            // Default to execution timeout if unset
+            .or(wf_exe_timeout);
+        let close_timeouts = match (
+            sched_to_close,
+            v.start_to_close_timeout
+                .map(|x| {
+                    x.try_into()
+                        .map_err(|_| anyhow!("Could not convert start_to_close_timeout"))
+                })
+                .transpose()?,
+        ) {
+            (Some(sch), None) => LACloseTimeouts::ScheduleOnly(sch),
+            (None, Some(start)) => LACloseTimeouts::StartOnly(start),
+            (Some(sched), Some(start)) => LACloseTimeouts::Both { sched, start },
+            (None, None) => {
+                return Err(anyhow!(
+                    "One of schedule_to_close or start_to_close timeouts must be set"
+                ))
+            }
+        };
+        let schedule_to_start_timeout = v
+            .schedule_to_start_timeout
+            .map(|x| {
+                x.try_into()
+                    .map_err(|_| anyhow!("Could not convert schedule_to_start_timeout"))
+            })
+            .transpose()?;
+        let retry_policy = v
+            .retry_policy
+            .ok_or(anyhow!("Retry policy must be defined!"))?;
+        let local_retry_threshold = v
+            .local_retry_threshold
+            .clone()
+            .try_into_or_none()
+            .unwrap_or_else(|| Duration::from_secs(60));
+        let cancellation_type = ActivityCancellationType::from_i32(v.cancellation_type)
+            .unwrap_or(ActivityCancellationType::WaitCancellationCompleted);
+        Ok(ValidScheduleLA {
+            seq: v.seq,
+            activity_id: v.activity_id,
+            activity_type: v.activity_type,
+            attempt: v.attempt,
+            header_fields: v.header_fields,
+            arguments: v.arguments,
+            schedule_to_start_timeout,
+            close_timeouts,
+            retry_policy,
+            local_retry_threshold,
+            cancellation_type,
+        })
+    }
+}
+
+impl Display for ValidScheduleLA {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ValidScheduleLA({}, {})", self.seq, self.activity_type)
     }
 }

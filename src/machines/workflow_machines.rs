@@ -15,7 +15,7 @@ use crate::{
         MachineKind, Machines, NewMachineWithCommand, ProtoCommand, TemporalStateMachine,
         WFCommand,
     },
-    protosext::HistoryEventExt,
+    protosext::{HistoryEventExt, TryIntoOrNone, ValidScheduleLA},
     telemetry::{metrics::MetricsContext, VecDisplayer},
     worker::{ExecutingLAId, LocalActRequest, LocalActivityResolution},
     workflow::{CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WorkflowFetcher},
@@ -38,7 +38,7 @@ use temporal_sdk_core_protos::{
         },
         workflow_commands::{
             request_cancel_external_workflow_execution as cancel_we,
-            signal_external_workflow_execution as sig_we, ScheduleLocalActivity,
+            signal_external_workflow_execution as sig_we,
         },
         FromPayloadsExt,
     },
@@ -162,7 +162,7 @@ pub enum MachineResponse {
 
     /// Queue a local activity to be processed by the worker
     #[display(fmt = "QueueLocalActivity")]
-    QueueLocalActivity(ScheduleLocalActivity),
+    QueueLocalActivity(ValidScheduleLA),
     /// Request cancellation of an executing local activity
     #[display(fmt = "RequestCancelLocalActivity({})", "_0")]
     RequestCancelLocalActivity(u32),
@@ -823,6 +823,19 @@ impl WorkflowMachines {
                 }
                 WFCommand::AddLocalActivity(attrs) => {
                     let seq = attrs.seq;
+                    let attrs: ValidScheduleLA = ValidScheduleLA::from_schedule_la(
+                        attrs,
+                        self.started_attrs()
+                            .as_ref()
+                            .map(|x| x.workflow_execution_timeout.clone().try_into_or_none())
+                            .flatten(),
+                    )
+                    .map_err(|e| {
+                        WFMachinesError::Fatal(format!(
+                            "Invalid schedule local activity request (seq {}): {}",
+                            seq, e
+                        ))
+                    })?;
                     let (la, mach_resp) = new_local_activity(
                         attrs,
                         self.replaying,
