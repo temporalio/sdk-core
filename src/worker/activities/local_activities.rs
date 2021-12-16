@@ -164,10 +164,10 @@ impl LocalActivityManager {
                         t.abort();
                         immediate_resolutions.push(LocalActivityResolution {
                             seq: id.seq_num,
-                            result: LocalActivityExecutionResult::Cancelled(
-                                Cancellation::from_details(None),
-                                false,
-                            ),
+                            result: LocalActivityExecutionResult::Cancelled {
+                                cancel: Cancellation::from_details(None),
+                                do_not_record_marker: false,
+                            },
                             runtime: Duration::from_secs(0),
                             attempt: 0,
                             backoff: None,
@@ -287,7 +287,7 @@ impl LocalActivityManager {
 
             match status {
                 LocalActivityExecutionResult::Completed(_)
-                | LocalActivityExecutionResult::Cancelled(_, _) => {
+                | LocalActivityExecutionResult::Cancelled { .. } => {
                     self.complete_notify.notify_one();
                     LACompleteAction::Report(info)
                 }
@@ -562,7 +562,7 @@ mod tests {
         assert_eq!(immediate_res.len(), 1);
         assert_matches!(
             immediate_res[0].result,
-            LocalActivityExecutionResult::Cancelled(_, _)
+            LocalActivityExecutionResult::Cancelled { .. }
         );
     }
 

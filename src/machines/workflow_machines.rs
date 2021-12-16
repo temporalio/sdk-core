@@ -1006,7 +1006,7 @@ impl WorkflowMachines {
                         // We removed it. Notify the machine that the activity cancelled.
                         if let Machines::LocalActivityMachine(lam) = self.machine_mut(m_key) {
                             let more_responses = lam.try_resolve(
-                                LocalActivityExecutionResult::Cancelled(Default::default(), true),
+                                LocalActivityExecutionResult::empty_cancel(true),
                                 Duration::from_secs(0),
                                 removed_act.attempt,
                                 None,

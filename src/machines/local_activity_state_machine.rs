@@ -100,9 +100,18 @@ pub(super) struct ResolveDat {
 pub(crate) enum LocalActivityExecutionResult {
     Completed(Success),
     Failed(ActFail),
-    /// The boolean must be set true if we should not record the marker. EX: If we cancelled before
-    /// dispatching.
-    Cancelled(ActCancel, bool),
+    Cancelled {
+        cancel: ActCancel,
+        do_not_record_marker: bool,
+    },
+}
+impl LocalActivityExecutionResult {
+    pub(crate) fn empty_cancel(do_not_record_marker: bool) -> Self {
+        Self::Cancelled {
+            cancel: Default::default(),
+            do_not_record_marker,
+        }
+    }
 }
 
 impl From<CompleteLocalActivityData> for ResolveDat {
@@ -114,12 +123,12 @@ impl From<CompleteLocalActivityData> for ResolveDat {
                 }),
                 Err(fail) => {
                     if matches!(fail.failure_info, Some(FailureInfo::CanceledFailureInfo(_))) {
-                        LocalActivityExecutionResult::Cancelled(
-                            Cancellation {
+                        LocalActivityExecutionResult::Cancelled {
+                            cancel: Cancellation {
                                 failure: Some(fail),
                             },
-                            true,
-                        )
+                            do_not_record_marker: true,
+                        }
                     } else {
                         LocalActivityExecutionResult::Failed(ActFail {
                             failure: Some(fail),
@@ -282,7 +291,7 @@ pub(super) struct SharedState {
 impl SharedState {
     fn produce_no_wait_cancel_resolve_dat(&self) -> ResolveDat {
         ResolveDat {
-            result: LocalActivityExecutionResult::Cancelled(Default::default(), true),
+            result: LocalActivityExecutionResult::empty_cancel(true),
             // Just don't provide a complete time, which means try-cancel/abandon cancels won't
             // advance the clock. Seems like that's fine, since you can only cancel after awaiting
             // some other command, which would have appropriately advanced the clock anyway.
@@ -415,7 +424,7 @@ impl RequestSent {
         let result_type = match &dat.result {
             LocalActivityExecutionResult::Completed(_) => ResultType::Completed,
             LocalActivityExecutionResult::Failed(_) => ResultType::Failed,
-            LocalActivityExecutionResult::Cancelled(_, _) => ResultType::Cancelled,
+            LocalActivityExecutionResult::Cancelled { .. } => ResultType::Cancelled,
         };
         let new_state = MarkerCommandCreated { result_type };
         TransitionResult::ok([LocalActivityCommand::Resolved(dat)], new_state)
@@ -613,12 +622,15 @@ impl WFMachinesAdapter for LocalActivityMachine {
                     LocalActivityExecutionResult::Failed(fail) => {
                         maybe_failure = fail.failure;
                     }
-                    LocalActivityExecutionResult::Cancelled(fail, no_marker) => {
+                    LocalActivityExecutionResult::Cancelled {
+                        cancel,
+                        do_not_record_marker,
+                    } => {
                         did_cancel = true;
-                        if no_marker {
+                        if do_not_record_marker {
                             record_marker = false;
                         } else {
-                            maybe_failure = fail.failure;
+                            maybe_failure = cancel.failure;
                         }
                     }
                 };
@@ -761,8 +773,8 @@ impl From<LocalActivityExecutionResult> for ActivityResolution {
             LocalActivityExecutionResult::Failed(f) => ActivityResolution {
                 status: Some(f.into()),
             },
-            LocalActivityExecutionResult::Cancelled(c, _) => ActivityResolution {
-                status: Some(c.into()),
+            LocalActivityExecutionResult::Cancelled { cancel, .. } => ActivityResolution {
+                status: Some(cancel.into()),
             },
         }
     }
