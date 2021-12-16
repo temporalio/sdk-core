@@ -84,14 +84,12 @@ pub(crate) struct LocalActivityManager {
     semaphore: Semaphore,
     /// Sink for new activity execution requests
     act_req_tx: UnboundedSender<NewOrRetry>,
-    /// Activities that need to be executed by lang
-    act_req_rx: tokio::sync::Mutex<UnboundedReceiver<NewOrRetry>>,
     /// Cancels need a different queue since they should be taken first, and don't take a permit
     cancels_req_tx: UnboundedSender<ActivityTask>,
-    cancels_req_rx: tokio::sync::Mutex<UnboundedReceiver<ActivityTask>>,
     /// Wakes every time a complete is processed
     complete_notify: Notify,
 
+    rcvs: tokio::sync::Mutex<RcvChans>,
     dat: Mutex<LAMData>,
 }
 
@@ -104,6 +102,13 @@ struct LAMData {
     next_tt_num: u32,
 }
 
+struct RcvChans {
+    /// Activities that need to be executed by lang
+    act_req_rx: UnboundedReceiver<NewOrRetry>,
+    /// Cancels to send to lang or apply internally
+    cancels_req_rx: UnboundedReceiver<ActivityTask>,
+}
+
 impl LocalActivityManager {
     pub(crate) fn new(max_concurrent: usize, namespace: String) -> Self {
         let (act_req_tx, act_req_rx) = unbounded_channel();
@@ -112,10 +117,12 @@ impl LocalActivityManager {
             namespace,
             semaphore: Semaphore::new(max_concurrent),
             act_req_tx,
-            act_req_rx: tokio::sync::Mutex::new(act_req_rx),
             cancels_req_tx,
-            cancels_req_rx: tokio::sync::Mutex::new(cancels_req_rx),
             complete_notify: Notify::new(),
+            rcvs: tokio::sync::Mutex::new(RcvChans {
+                act_req_rx,
+                cancels_req_rx,
+            }),
             dat: Mutex::new(LAMData {
                 outstanding_activity_tasks: Default::default(),
                 id_to_tt: Default::default(),
@@ -189,81 +196,72 @@ impl LocalActivityManager {
     }
 
     pub(crate) async fn next_pending(&self) -> Option<ActivityTask> {
-        // TODO: Use a rcv half instead of individual locks
-        let maybe_new_or_retry = tokio::select! {
-            cancel = async { self.cancels_req_rx.lock().await.recv().await } => { return cancel }
-            maybe_new_or_retry = async {
-                // Wait for a permit to take a task and forget it. Permits are removed until a
-                // completion.
-                self.semaphore.acquire().await.expect("is never closed").forget();
-                self.act_req_rx.lock().await.recv().await
-            } => maybe_new_or_retry
+        let new_or_retry = match self.rcvs.lock().await.next(&self.semaphore).await {
+            None => return None,
+            Some(NewOrCancel::Cancel(c)) => return Some(c),
+            Some(NewOrCancel::New(n)) => n,
         };
         // It is important that there are no await points after receiving from the channel, as
         // it would mean dropping this future would cause us to drop the activity request.
-        if let Some(new_or_retry) = maybe_new_or_retry {
-            let (new_la, attempt) = match new_or_retry {
-                NewOrRetry::New(n) => {
-                    let explicit_attempt_num_or_1 = n.schedule_cmd.attempt.max(1);
-                    (n, explicit_attempt_num_or_1)
-                }
-                NewOrRetry::Retry { in_flight, attempt } => (in_flight, attempt),
-            };
-            let orig = new_la.clone();
-            let sa = new_la.schedule_cmd;
+        let (new_la, attempt) = match new_or_retry {
+            NewOrRetry::New(n) => {
+                let explicit_attempt_num_or_1 = n.schedule_cmd.attempt.max(1);
+                (n, explicit_attempt_num_or_1)
+            }
+            NewOrRetry::Retry { in_flight, attempt } => (in_flight, attempt),
+        };
+        let orig = new_la.clone();
+        let sa = new_la.schedule_cmd;
 
-            let mut dat = self.dat.lock();
-            // If this request originated from a local backoff task, clear the entry for it. We
-            // don't await the handle because we know it must already be done, and there's no
-            // meaningful value.
-            dat.backing_off_tasks.remove(&ExecutingLAId {
+        let mut dat = self.dat.lock();
+        // If this request originated from a local backoff task, clear the entry for it. We
+        // don't await the handle because we know it must already be done, and there's no
+        // meaningful value.
+        dat.backing_off_tasks.remove(&ExecutingLAId {
+            run_id: new_la.workflow_exec_info.run_id.clone(),
+            seq_num: sa.seq,
+        });
+
+        dat.next_tt_num += 1;
+        let tt = TaskToken::new_local_activity_token(dat.next_tt_num.to_le_bytes());
+        dat.outstanding_activity_tasks.insert(
+            tt.clone(),
+            LocalInFlightActInfo {
+                la_info: orig,
+                dispatch_time: Instant::now(),
+                attempt,
+            },
+        );
+        dat.id_to_tt.insert(
+            ExecutingLAId {
                 run_id: new_la.workflow_exec_info.run_id.clone(),
                 seq_num: sa.seq,
-            });
+            },
+            tt.clone(),
+        );
 
-            dat.next_tt_num += 1;
-            let tt = TaskToken::new_local_activity_token(dat.next_tt_num.to_le_bytes());
-            dat.outstanding_activity_tasks.insert(
-                tt.clone(),
-                LocalInFlightActInfo {
-                    la_info: orig,
-                    dispatch_time: Instant::now(),
-                    attempt,
-                },
-            );
-            dat.id_to_tt.insert(
-                ExecutingLAId {
-                    run_id: new_la.workflow_exec_info.run_id.clone(),
-                    seq_num: sa.seq,
-                },
-                tt.clone(),
-            );
-
-            Some(ActivityTask {
-                task_token: tt.0,
-                activity_id: sa.activity_id,
-                variant: Some(activity_task::Variant::Start(Start {
-                    workflow_namespace: self.namespace.clone(),
-                    workflow_type: new_la.workflow_type,
-                    workflow_execution: Some(new_la.workflow_exec_info),
-                    activity_type: sa.activity_type,
-                    header_fields: sa.header_fields,
-                    input: sa.arguments,
-                    heartbeat_details: vec![],
-                    scheduled_time: Some(new_la.schedule_time.into()),
-                    current_attempt_scheduled_time: Some(new_la.schedule_time.into()),
-                    started_time: Some(SystemTime::now().into()),
-                    attempt,
-                    schedule_to_close_timeout: sa.schedule_to_close_timeout,
-                    start_to_close_timeout: sa.start_to_close_timeout,
-                    heartbeat_timeout: None,
-                    retry_policy: sa.retry_policy,
-                    is_local: true,
-                })),
-            })
-        } else {
-            None
-        }
+        Some(ActivityTask {
+            task_token: tt.0,
+            activity_id: sa.activity_id,
+            variant: Some(activity_task::Variant::Start(Start {
+                workflow_namespace: self.namespace.clone(),
+                workflow_type: new_la.workflow_type,
+                workflow_execution: Some(new_la.workflow_exec_info),
+                activity_type: sa.activity_type,
+                header_fields: sa.header_fields,
+                input: sa.arguments,
+                heartbeat_details: vec![],
+                scheduled_time: Some(new_la.schedule_time.into()),
+                current_attempt_scheduled_time: Some(new_la.schedule_time.into()),
+                started_time: Some(SystemTime::now().into()),
+                attempt,
+                schedule_to_close_timeout: sa.schedule_to_close_timeout,
+                start_to_close_timeout: sa.start_to_close_timeout,
+                heartbeat_timeout: None,
+                retry_policy: sa.retry_policy,
+                is_local: true,
+            })),
+        })
     }
 
     /// Mark a local activity as having completed (pass, fail, or cancelled)
@@ -374,6 +372,25 @@ pub(crate) enum LACompleteAction {
     Untracked,
 }
 
+enum NewOrCancel {
+    New(NewOrRetry),
+    Cancel(ActivityTask),
+}
+
+impl RcvChans {
+    async fn next(&mut self, new_sem: &Semaphore) -> Option<NewOrCancel> {
+        tokio::select! {
+            cancel = async { self.cancels_req_rx.recv().await } => { cancel.map(NewOrCancel::Cancel) }
+            maybe_new_or_retry = async {
+                // Wait for a permit to take a task and forget it. Permits are removed until a
+                // completion.
+                new_sem.acquire().await.expect("is never closed").forget();
+                self.act_req_rx.recv().await
+            } => maybe_new_or_retry.map(NewOrCancel::New)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,7 +459,7 @@ mod tests {
             _ = async {
                 // Spin until the receive lock has been grabbed by the call to pending, to ensure
                 // it's advanced enough
-                while lam.act_req_rx.try_lock().is_ok() { yield_now().await; }
+                while lam.rcvs.try_lock().is_ok() { yield_now().await; }
                 lam.complete(&tt, &LocalActivityExecutionResult::Completed(Default::default()));
             } => (),
         };
