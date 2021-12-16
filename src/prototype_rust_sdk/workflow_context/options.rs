@@ -122,10 +122,9 @@ pub struct LocalActivityOptions {
 
 impl IntoWorkflowCommand for LocalActivityOptions {
     type WFCommandType = ScheduleLocalActivity;
-    #[allow(unused_mut)]
     fn into_command(mut self, seq: u32) -> ScheduleLocalActivity {
         // Allow tests to avoid extra verbosity when they don't care about timeouts
-        #[cfg(test)]
+        // TODO: Builderize LA options
         self.schedule_to_close_timeout
             .get_or_insert(Duration::from_secs(100));
 
