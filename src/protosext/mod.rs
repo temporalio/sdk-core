@@ -305,11 +305,23 @@ pub struct ValidScheduleLA {
     pub cancellation_type: ActivityCancellationType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum LACloseTimeouts {
     ScheduleOnly(Duration),
     StartOnly(Duration),
     Both { sched: Duration, start: Duration },
+}
+
+impl LACloseTimeouts {
+    /// Splits into (schedule_to_close, start_to_close) options, one or both of which is guaranteed
+    /// to be populated
+    pub fn into_sched_and_start(self) -> (Option<Duration>, Option<Duration>) {
+        match self {
+            LACloseTimeouts::ScheduleOnly(x) => (Some(x), None),
+            LACloseTimeouts::StartOnly(x) => (None, Some(x)),
+            LACloseTimeouts::Both { sched, start } => (Some(sched), Some(start)),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -368,6 +380,7 @@ impl ValidScheduleLA {
             .unwrap_or_else(|| Duration::from_secs(60));
         let cancellation_type = ActivityCancellationType::from_i32(v.cancellation_type)
             .unwrap_or(ActivityCancellationType::WaitCancellationCompleted);
+        // TODO: Clamps
         Ok(ValidScheduleLA {
             seq: v.seq,
             activity_id: v.activity_id,

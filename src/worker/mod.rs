@@ -8,6 +8,7 @@ pub use config::{WorkerConfig, WorkerConfigBuilder};
 pub(crate) use activities::{ExecutingLAId, LocalActRequest, LocalActivityResolution, NewLocalAct};
 pub(crate) use dispatcher::WorkerDispatcher;
 
+use crate::worker::activities::DispatchOrTimeoutLA;
 use crate::{
     errors::CompleteWfError,
     machines::{EmptyWorkflowCommandErr, LocalActivityExecutionResult, WFMachinesError},
@@ -35,7 +36,7 @@ use crate::{
 };
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
 use futures::{Future, TryFutureExt};
-use std::{convert::TryInto, sync::Arc};
+use std::{convert::TryInto, future, sync::Arc};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::activity_execution_result,
@@ -246,24 +247,28 @@ impl Worker {
     /// Returns `Ok(None)` in the event of a poll timeout or if the polling loop should otherwise
     /// be restarted
     pub(crate) async fn activity_poll(&self) -> Result<Option<ActivityTask>, PollActivityError> {
-        if let Some(ref act_mgr) = self.at_task_mgr {
-            tokio::select! {
-                biased;
-
-                r = self.local_act_mgr.next_pending() => Ok(r),
-                r = act_mgr.poll() => r,
-                _ = self.shutdown_notifier() => {
-                    Err(PollActivityError::ShutDown)
-                }
+        let act_mgr_poll = async {
+            if let Some(ref act_mgr) = self.at_task_mgr {
+                act_mgr.poll().await
+            } else {
+                future::pending().await
             }
-        } else {
-            tokio::select! {
-                biased;
+        };
 
-                r = self.local_act_mgr.next_pending() => Ok(r),
-                _ = self.shutdown_notifier() => {
-                    Err(PollActivityError::ShutDown)
+        tokio::select! {
+            biased;
+
+            r = self.local_act_mgr.next_pending() => {
+                match r {
+                    DispatchOrTimeoutLA::Dispatch(r) => Ok(Some(r)),
+                    DispatchOrTimeoutLA::Timeout => {
+                        todo!()
+                    }
                 }
+            },
+            r = act_mgr_poll => r,
+            _ = self.shutdown_notifier() => {
+                Err(PollActivityError::ShutDown)
             }
         }
     }
@@ -303,7 +308,7 @@ impl Worker {
                     // Nothing to do here
                 }
                 LACompleteAction::Untracked => {
-                    error!("Tried to complete untracked local activity {}", task_token);
+                    warn!("Tried to complete untracked local activity {}", task_token);
                 }
             }
             return Ok(());
