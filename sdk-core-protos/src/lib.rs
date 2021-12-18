@@ -58,6 +58,7 @@ pub mod coresdk {
             },
             common::Payload,
         };
+        use crate::temporal::api::{enums::v1::TimeoutType, failure::v1::TimeoutFailureInfo};
         use activity_execution_result as aer;
 
         impl ActivityExecutionResult {
@@ -136,6 +137,21 @@ pub mod coresdk {
                         failure_info: Some(failure::FailureInfo::CanceledFailureInfo(
                             CanceledFailureInfo {
                                 details: payload.map(Into::into),
+                            },
+                        )),
+                        ..Default::default()
+                    }),
+                }
+            }
+
+            pub fn timeout(timeout_type: TimeoutType) -> Self {
+                Cancellation {
+                    failure: Some(APIFailure {
+                        message: "Activity timed out".to_string(),
+                        failure_info: Some(failure::FailureInfo::TimeoutFailureInfo(
+                            TimeoutFailureInfo {
+                                timeout_type: timeout_type as i32,
+                                last_heartbeat_details: None,
                             },
                         )),
                         ..Default::default()

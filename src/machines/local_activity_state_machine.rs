@@ -23,7 +23,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         command::v1::{Command, RecordMarkerCommandAttributes},
-        enums::v1::{CommandType, EventType},
+        enums::v1::{CommandType, EventType, TimeoutType},
         failure::v1::failure::FailureInfo,
         history::v1::HistoryEvent,
     },
@@ -110,6 +110,13 @@ impl LocalActivityExecutionResult {
         Self::Cancelled {
             cancel: Default::default(),
             do_not_record_marker,
+        }
+    }
+
+    pub(crate) fn timeout_cancel(timeout_type: TimeoutType) -> Self {
+        Self::Cancelled {
+            cancel: ActCancel::timeout(timeout_type),
+            do_not_record_marker: false,
         }
     }
 }

@@ -8,7 +8,6 @@ pub use config::{WorkerConfig, WorkerConfigBuilder};
 pub(crate) use activities::{ExecutingLAId, LocalActRequest, LocalActivityResolution, NewLocalAct};
 pub(crate) use dispatcher::WorkerDispatcher;
 
-use crate::worker::activities::DispatchOrTimeoutLA;
 use crate::{
     errors::CompleteWfError,
     machines::{EmptyWorkflowCommandErr, LocalActivityExecutionResult, WFMachinesError},
@@ -22,7 +21,7 @@ use crate::{
         activity_poller, workflow_poller, workflow_sticky_poller, MetricsContext,
     },
     worker::{
-        activities::{LACompleteAction, LocalActivityManager},
+        activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
         wft_delivery::WFTSource,
     },
     workflow::{
@@ -261,8 +260,11 @@ impl Worker {
             r = self.local_act_mgr.next_pending() => {
                 match r {
                     DispatchOrTimeoutLA::Dispatch(r) => Ok(Some(r)),
-                    DispatchOrTimeoutLA::Timeout => {
-                        todo!()
+                    DispatchOrTimeoutLA::Timeout { run_id, resolution, task } => {
+                        warn!("Notifying!!! {:?} -- task -- {:?}", resolution, task);
+                        self.wft_manager.notify_of_local_result(
+                            &run_id, LocalResolution::LocalActivity(resolution)).await.expect("TODO");
+                        Ok(task)
                     }
                 }
             },

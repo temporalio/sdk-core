@@ -321,3 +321,45 @@ async fn cancel_after_act_starts(
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn schedule_to_close_timeout() {
+    let wf_name = "schedule_to_close_timeout";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        let res = ctx
+            .local_activity(LocalActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi".as_json_payload().expect("serializes fine"),
+                retry_policy: RetryPolicy {
+                    initial_interval: Some(Duration::from_micros(15).into()),
+                    backoff_coefficient: 1_000.,
+                    maximum_interval: Some(Duration::from_millis(1500).into()),
+                    maximum_attempts: 4,
+                    non_retryable_error_types: vec![],
+                },
+                timer_backoff_threshold: Some(Duration::from_secs(1)),
+                schedule_to_close_timeout: Some(Duration::from_secs(2)),
+                ..Default::default()
+            })
+            .await;
+        assert!(res.cancelled());
+        Ok(().into())
+    });
+    worker.register_activity("echo", |_: String| async {
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(100)) => {},
+            _ = act_cancelled() => {
+                return Err(anyhow!(ActivityCancelledError::default()))
+            }
+        };
+        Ok(())
+    });
+
+    worker
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}

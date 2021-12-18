@@ -13,7 +13,7 @@ import "google/protobuf/duration.proto";
 message ActivityTask {
     /// A unique identifier for this task
     bytes task_token = 1;
-    /// The activity's ID
+    /// The activity's ID TODO: Move inside start
     string activity_id = 2;
     oneof variant {
         /// Start activity execution.
@@ -72,6 +72,8 @@ enum ActivityCancelReason {
     NOT_FOUND = 0;
     /// Activity was explicitly cancelled
     CANCELLED = 1;
+    /// Activity timed out
+    TIMED_OUT = 2;
 }
 
 
