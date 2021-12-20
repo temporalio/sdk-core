@@ -21,7 +21,7 @@ pub(super) struct LocalActivityData {
     executing: HashSet<u32>,
     /// Maps local activity sequence numbers to their resolutions as found when looking ahead at
     /// next WFT
-    resolutions: HashMap<u32, ResolveDat>,
+    preresolutions: HashMap<u32, ResolveDat>,
 }
 
 impl LocalActivityData {
@@ -65,13 +65,14 @@ impl LocalActivityData {
             .collect()
     }
 
+    /// Returns all outstanding local activities, whether executing or requested and in the queue
     pub(super) fn outstanding_la_count(&self) -> usize {
         self.executing.len() + self.new_requests.len()
     }
 
     pub(super) fn process_peekahead_marker(&mut self, e: &HistoryEvent) -> super::Result<()> {
         if let Some(la_dat) = e.clone().into_local_activity_marker_details() {
-            self.resolutions
+            self.preresolutions
                 .insert(la_dat.marker_dat.seq, la_dat.into());
         } else {
             return Err(WFMachinesError::Fatal(format!(
@@ -83,7 +84,7 @@ impl LocalActivityData {
     }
 
     pub(super) fn take_preresolution(&mut self, seq: u32) -> Option<ResolveDat> {
-        self.resolutions.remove(&seq)
+        self.preresolutions.remove(&seq)
     }
 
     pub(super) fn remove_from_queue(&mut self, seq: u32) -> Option<ValidScheduleLA> {

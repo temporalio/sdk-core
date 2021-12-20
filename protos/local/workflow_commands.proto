@@ -100,12 +100,12 @@ message ScheduleLocalActivity {
     /// the worker is currently at max concurrent local activity executions. This timeout is always
     /// non retryable as all a retry would achieve is to put it back into the same queue. Defaults
     /// to `schedule_to_close_timeout` if not specified and that is set. Must be <=
-    /// `schedule_to_close_timeout` when set, if not, it will be clamped down.
+    /// `schedule_to_close_timeout` when set, otherwise, it will be clamped down.
     google.protobuf.Duration schedule_to_start_timeout = 8;
     /// Maximum time the local activity is allowed to execute after the task is dispatched. This
     /// timeout is always retryable. Either or both of `schedule_to_close_timeout` and this must be
-    /// specified. If set, this must be <= `schedule_to_close_timeout`, if not, it will be clamped
-    /// down.
+    /// specified. If set, this must be <= `schedule_to_close_timeout`, otherwise, it will be
+    /// clamped down.
     google.protobuf.Duration start_to_close_timeout = 9;
     /// Specify a retry policy for the local activity. By default local activities will be retried
     /// indefinitely.
