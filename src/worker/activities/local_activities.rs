@@ -45,7 +45,7 @@ pub(crate) struct LocalInFlightActInfo {
     pub attempt: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct LocalActivityResolution {
     pub seq: u32,
     pub result: LocalActivityExecutionResult,
@@ -447,7 +447,8 @@ enum NewOrRetry {
     },
 }
 
-#[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone)]
 enum CancelOrTimeout {
     Cancel(ActivityTask),
     Timeout {
@@ -482,7 +483,7 @@ impl RcvChans {
 
 struct TimeoutBag {
     scheduling: JoinHandle<()>,
-    start_to_close_dur: Option<Duration>,
+    start_to_close_dur_and_dat: Option<(Duration, CancelOrTimeout)>,
     start_to_close_handle: Option<JoinHandle<()>>,
     cancel_chan: UnboundedSender<CancelOrTimeout>,
 }
@@ -494,24 +495,19 @@ impl TimeoutBag {
         let (schedule_to_close, start_to_close) =
             new_la.schedule_cmd.close_timeouts.into_sched_and_start();
 
-        let fut_dat = schedule_to_close.map(|s2c| {
-            (
-                s2c,
-                CancelOrTimeout::Timeout {
-                    run_id: new_la.workflow_exec_info.run_id.clone(),
-                    resolution: LocalActivityResolution {
-                        seq: new_la.schedule_cmd.seq,
-                        result: LocalActivityExecutionResult::timeout_cancel(
-                            TimeoutType::ScheduleToClose,
-                        ),
-                        runtime: s2c,
-                        attempt: new_la.schedule_cmd.attempt,
-                        backoff: None,
-                    },
-                    dispatch_cancel: true,
-                },
-            )
-        });
+        let timeout_dat = CancelOrTimeout::Timeout {
+            run_id: new_la.workflow_exec_info.run_id.clone(),
+            resolution: LocalActivityResolution {
+                seq: new_la.schedule_cmd.seq,
+                result: LocalActivityExecutionResult::timeout_cancel(TimeoutType::ScheduleToClose),
+                runtime: Default::default(),
+                attempt: new_la.schedule_cmd.attempt,
+                backoff: None,
+            },
+            dispatch_cancel: true,
+        };
+        let start_to_close_dur_and_dat = start_to_close.map(|d| (d, timeout_dat.clone()));
+        let fut_dat = schedule_to_close.map(|s2c| (s2c, timeout_dat));
 
         let cancel_chan_clone = cancel_chan.clone();
         let scheduling = tokio::spawn(async move {
@@ -524,7 +520,7 @@ impl TimeoutBag {
         });
         TimeoutBag {
             scheduling,
-            start_to_close_dur: start_to_close,
+            start_to_close_dur_and_dat,
             start_to_close_handle: None,
             cancel_chan,
         }
@@ -532,10 +528,18 @@ impl TimeoutBag {
 
     /// Must be called once the associated local activity has been started / dispatched to lang.
     fn mark_started(&mut self) {
-        if let Some(start_to_close) = self.start_to_close_dur {
+        if let Some((start_to_close, mut dat)) = self.start_to_close_dur_and_dat.take() {
+            let started_t = Instant::now();
+            let cchan = self.cancel_chan.clone();
             self.start_to_close_handle = Some(tokio::spawn(async move {
                 sleep(start_to_close).await;
-                todo!("Start to close fired");
+                if let CancelOrTimeout::Timeout { resolution, .. } = &mut dat {
+                    resolution.result =
+                        LocalActivityExecutionResult::timeout_cancel(TimeoutType::StartToClose);
+                    resolution.runtime = started_t.elapsed();
+                }
+
+                cchan.send(dat).expect("receive half not dropped");
             }));
         }
     }
@@ -821,10 +825,18 @@ mod tests {
         assert_eq!(lam.num_outstanding(), 0);
     }
 
+    #[rstest::rstest]
+    #[case::schedule(true)]
+    #[case::start(false)]
     #[tokio::test]
-    async fn sched_to_close_timeout() {
+    async fn local_x_to_close_timeout(#[case] is_schedule: bool) {
         let lam = LocalActivityManager::new(1, "whatever".to_string());
         let timeout = Duration::from_millis(100);
+        let close_timeouts = if is_schedule {
+            LACloseTimeouts::ScheduleOnly(timeout)
+        } else {
+            LACloseTimeouts::StartOnly(timeout)
+        };
         lam.enqueue([NewLocalAct {
             schedule_cmd: ValidScheduleLA {
                 seq: 1,
@@ -836,7 +848,7 @@ mod tests {
                     ..Default::default()
                 },
                 local_retry_threshold: Duration::from_secs(500),
-                close_timeouts: LACloseTimeouts::ScheduleOnly(timeout),
+                close_timeouts,
                 ..Default::default()
             },
             workflow_type: "".to_string(),
@@ -848,8 +860,7 @@ mod tests {
         }
         .into()]);
 
-        let next = lam.next_pending().await.unwrap();
-        let tt = TaskToken(next.task_token);
+        lam.next_pending().await.unwrap();
         assert_eq!(lam.num_in_backoff(), 0);
         assert_eq!(lam.num_outstanding(), 1);
 
@@ -858,5 +869,6 @@ mod tests {
             lam.next_pending().await,
             DispatchOrTimeoutLA::Timeout { .. }
         );
+        assert_eq!(lam.num_outstanding(), 0);
     }
 }

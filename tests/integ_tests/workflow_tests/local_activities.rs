@@ -322,12 +322,24 @@ async fn cancel_after_act_starts(
         .unwrap();
 }
 
+#[rstest::rstest]
+#[case::schedule(true)]
+#[case::start(false)]
 #[tokio::test]
-async fn schedule_to_close_timeout() {
-    let wf_name = "schedule_to_close_timeout";
-    let mut starter = CoreWfStarter::new(wf_name);
+async fn x_to_close_timeout(#[case] is_schedule: bool) {
+    let wf_name = format!(
+        "{}_to_close_timeout",
+        if is_schedule { "schedule" } else { "start" }
+    );
+    let mut starter = CoreWfStarter::new(&wf_name);
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    let (sched, start) = if is_schedule {
+        (Some(Duration::from_secs(2)), None)
+    } else {
+        (None, Some(Duration::from_secs(2)))
+    };
+
+    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
         let res = ctx
             .local_activity(LocalActivityOptions {
                 activity_type: "echo".to_string(),
@@ -340,7 +352,8 @@ async fn schedule_to_close_timeout() {
                     non_retryable_error_types: vec![],
                 },
                 timer_backoff_threshold: Some(Duration::from_secs(1)),
-                schedule_to_close_timeout: Some(Duration::from_secs(2)),
+                schedule_to_close_timeout: sched,
+                start_to_close_timeout: start,
                 ..Default::default()
             })
             .await;
