@@ -66,6 +66,10 @@ pub(crate) struct WorkflowMachines {
     /// Eventually, this number should reach the started id in the latest history update, but
     /// we must incrementally apply the history while communicating with lang.
     next_started_event_id: i64,
+    /// The event id of the most recent event processed. It's possible in some situations (ex legacy
+    /// queries) to receive a history with no new workflow tasks. If the last history we processed
+    /// also had no new tasks, we need a way to know not to apply the same events over again.
+    last_processed_event: i64,
     /// True if the workflow is replaying from history
     pub replaying: bool,
     /// Namespace this workflow exists in
@@ -226,6 +230,7 @@ impl WorkflowMachines {
             // In an ideal world one could say ..Default::default() here and it'd still work.
             current_started_event_id: 0,
             next_started_event_id: 0,
+            last_processed_event: 0,
             workflow_start_time: None,
             workflow_end_time: None,
             wft_start_time: None,
@@ -643,12 +648,17 @@ impl WorkflowMachines {
         }
 
         let last_handled_wft_started_id = self.current_started_event_id;
-        let events = self
-            .last_history_from_server
-            .take_next_wft_sequence(last_handled_wft_started_id)
-            .await
-            .map_err(WFMachinesError::HistoryFetchingError)?;
-        let num_consumed_events = events.len();
+        let events = {
+            let mut evts = self
+                .last_history_from_server
+                .take_next_wft_sequence(last_handled_wft_started_id)
+                .await
+                .map_err(WFMachinesError::HistoryFetchingError)?;
+            // Do not re-process events we have already processed
+            evts.retain(|e| e.event_id > self.last_processed_event);
+            evts
+        };
+        let num_events_to_process = events.len();
 
         // We're caught up on reply if there are no new events to process
         // TODO: Probably this is unneeded if we evict whenever history is from non-sticky queue
@@ -680,6 +690,7 @@ impl WorkflowMachines {
         while let Some(event) = history.next() {
             let next_event = history.peek();
             self.handle_event(event, next_event.is_some())?;
+            self.last_processed_event = event.event_id;
             if event.event_type == EventType::WorkflowTaskStarted as i32 && next_event.is_none() {
                 break;
             }
@@ -717,7 +728,7 @@ impl WorkflowMachines {
             self.metrics.wf_task_replay_latency(replay_start.elapsed());
         }
 
-        Ok(num_consumed_events)
+        Ok(num_events_to_process)
     }
 
     /// Wrapper for calling [TemporalStateMachine::handle_event] which appropriately takes action

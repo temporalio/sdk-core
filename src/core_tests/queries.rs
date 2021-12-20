@@ -285,10 +285,17 @@ async fn legacy_query_failure_on_wft_failure() {
     core.shutdown().await;
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn legacy_query_with_full_history_after_complete() {
+async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) {
     let wfid = "fake_wf_id";
-    let t = canned_histories::single_timer_wf_completes("1");
+    let t = if full_history {
+        canned_histories::single_timer_wf_completes("1")
+    } else {
+        let mut t = canned_histories::single_timer("1");
+        t.add_workflow_task_completed();
+        t
+    };
     let query_with_hist_task = {
         let mut pr = hist_to_poll_resp(
             &t,
