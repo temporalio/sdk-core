@@ -39,6 +39,7 @@ impl HistoryInfo {
             return Err(HistoryInfoError::HistoryEndsUnexpectedly);
         }
 
+        let is_all_hist = to_wf_task_num.is_none();
         let to_wf_task_num = to_wf_task_num.unwrap_or(usize::MAX);
         let mut workflow_task_started_event_id = 0;
         let mut wf_task_count = 0;
@@ -82,7 +83,7 @@ impl HistoryInfo {
             }
 
             if next_event.is_none() {
-                if event.is_final_wf_execution_event() {
+                if event.is_final_wf_execution_event() || is_all_hist {
                     // Since this is the end of execution, we are pretending that the SDK is
                     // replaying *complete* history, which would mean the previously started ID is
                     // in fact the last task.
