@@ -48,7 +48,10 @@ fsm! {
     RequestSent --(HandleResult(ResolveDat), on_handle_result) --> MarkerCommandCreated;
     // We loop back on RequestSent here because the LA needs to report its result
     RequestSent --(Cancel, on_cancel_requested) --> RequestSent;
-    RequestSent --(NoWaitCancel(ActivityCancellationType), shared on_no_wait_cancel) --> Abandoned;
+    // No wait cancels skip waiting for the LA to report the result, but do generate a command
+    // to record the cancel marker
+    RequestSent --(NoWaitCancel(ActivityCancellationType), shared on_no_wait_cancel)
+      --> MarkerCommandCreated;
 
     MarkerCommandCreated --(CommandRecordMarker, on_command_record_marker) --> ResultNotified;
 
@@ -62,9 +65,8 @@ fsm! {
       --> MarkerCommandRecorded;
     // If we are told to cancel while waiting for the marker, we still need to wait for the marker.
     WaitingMarkerEvent --(Cancel, on_cancel_requested) --> WaitingMarkerEventCancelled;
-    // Unless, of course, we abandoned the activity, in which case we won't bother with the marker.
     WaitingMarkerEvent --(NoWaitCancel(ActivityCancellationType),
-                          on_no_wait_cancel) --> Abandoned;
+                          on_no_wait_cancel) --> WaitingMarkerEventCancelled;
     WaitingMarkerEventCancelled --(HandleResult(ResolveDat), on_handle_result) --> WaitingMarkerEvent;
 
     // It is entirely possible to have started the LA while replaying, only to find that we have
@@ -83,9 +85,11 @@ fsm! {
     MarkerCommandRecorded --(NoWaitCancel(ActivityCancellationType),
                              on_no_wait_cancel) --> MarkerCommandRecorded;
 
-    // LAs reporting status after they've been abandoned can simply be ignored. We could optimize
-    // this away higher up but that feels very overkill.
-    Abandoned --(HandleResult(ResolveDat)) --> Abandoned;
+    // LAs reporting status after they've handled their result can simply be ignored. We could
+    // optimize this away higher up but that feels very overkill.
+    MarkerCommandCreated --(HandleResult(ResolveDat)) --> MarkerCommandCreated;
+    ResultNotified --(HandleResult(ResolveDat)) --> ResultNotified;
+    MarkerCommandRecorded --(HandleResult(ResolveDat)) --> MarkerCommandRecorded;
 }
 
 #[derive(Debug, Clone)]
@@ -100,17 +104,11 @@ pub(super) struct ResolveDat {
 pub(crate) enum LocalActivityExecutionResult {
     Completed(Success),
     Failed(ActFail),
-    Cancelled {
-        cancel: ActCancel,
-        do_not_record_marker: bool,
-    },
+    Cancelled(ActCancel),
 }
 impl LocalActivityExecutionResult {
-    pub(crate) fn empty_cancel(do_not_record_marker: bool) -> Self {
-        Self::Cancelled {
-            cancel: Default::default(),
-            do_not_record_marker,
-        }
+    pub(crate) fn empty_cancel() -> Self {
+        Self::Cancelled(Cancellation::from_details(None))
     }
 }
 
@@ -123,12 +121,9 @@ impl From<CompleteLocalActivityData> for ResolveDat {
                 }),
                 Err(fail) => {
                     if matches!(fail.failure_info, Some(FailureInfo::CanceledFailureInfo(_))) {
-                        LocalActivityExecutionResult::Cancelled {
-                            cancel: Cancellation {
-                                failure: Some(fail),
-                            },
-                            do_not_record_marker: true,
-                        }
+                        LocalActivityExecutionResult::Cancelled(Cancellation {
+                            failure: Some(fail),
+                        })
                     } else {
                         LocalActivityExecutionResult::Failed(ActFail {
                             failure: Some(fail),
@@ -291,7 +286,7 @@ pub(super) struct SharedState {
 impl SharedState {
     fn produce_no_wait_cancel_resolve_dat(&self) -> ResolveDat {
         ResolveDat {
-            result: LocalActivityExecutionResult::empty_cancel(true),
+            result: LocalActivityExecutionResult::empty_cancel(),
             // Just don't provide a complete time, which means try-cancel/abandon cancels won't
             // advance the clock. Seems like that's fine, since you can only cancel after awaiting
             // some other command, which would have appropriately advanced the clock anyway.
@@ -438,16 +433,22 @@ impl RequestSent {
         self,
         shared: SharedState,
         cancel_type: ActivityCancellationType,
-    ) -> LocalActivityMachineTransition<Abandoned> {
-        // Immediately resolve
-        let mut cmds = vec![LocalActivityCommand::Resolved(
-            shared.produce_no_wait_cancel_resolve_dat(),
-        )];
+    ) -> LocalActivityMachineTransition<MarkerCommandCreated> {
+        let mut cmds = vec![];
         if matches!(cancel_type, ActivityCancellationType::TryCancel) {
             // For try-cancels also request the cancel
             cmds.push(LocalActivityCommand::RequestCancel);
         }
-        TransitionResult::ok(cmds, Abandoned::default())
+        // Immediately resolve
+        cmds.push(LocalActivityCommand::Resolved(
+            shared.produce_no_wait_cancel_resolve_dat(),
+        ));
+        TransitionResult::ok(
+            cmds,
+            MarkerCommandCreated {
+                result_type: ResultType::Cancelled,
+            },
+        )
     }
 }
 
@@ -528,10 +529,10 @@ impl WaitingMarkerEvent {
     fn on_no_wait_cancel(
         self,
         _: ActivityCancellationType,
-    ) -> LocalActivityMachineTransition<Abandoned> {
-        // There is nothing to be done here. We are waiting for a marker that will never come and
-        // we don't care about the result anyway.
-        TransitionResult::default()
+    ) -> LocalActivityMachineTransition<WaitingMarkerEventCancelled> {
+        // Markers are always recorded when cancelling, so this is the same as a normal cancel on
+        // the replay path
+        self.on_cancel_requested()
     }
 }
 
@@ -613,7 +614,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
                 let mut maybe_ok_result = None;
                 let mut maybe_failure = None;
                 // Only issue record marker commands if we weren't replaying
-                let mut record_marker = !self.shared_state.replaying_when_invoked;
+                let record_marker = !self.shared_state.replaying_when_invoked;
                 let mut did_cancel = false;
                 match result.clone() {
                     LocalActivityExecutionResult::Completed(suc) => {
@@ -622,16 +623,9 @@ impl WFMachinesAdapter for LocalActivityMachine {
                     LocalActivityExecutionResult::Failed(fail) => {
                         maybe_failure = fail.failure;
                     }
-                    LocalActivityExecutionResult::Cancelled {
-                        cancel,
-                        do_not_record_marker,
-                    } => {
+                    LocalActivityExecutionResult::Cancelled(cancel) => {
                         did_cancel = true;
-                        if do_not_record_marker {
-                            record_marker = false;
-                        } else {
-                            maybe_failure = cancel.failure;
-                        }
+                        maybe_failure = cancel.failure;
                     }
                 };
                 let resolution = if let Some(b) = backoff.as_ref() {
@@ -773,7 +767,7 @@ impl From<LocalActivityExecutionResult> for ActivityResolution {
             LocalActivityExecutionResult::Failed(f) => ActivityResolution {
                 status: Some(f.into()),
             },
-            LocalActivityExecutionResult::Cancelled { cancel, .. } => ActivityResolution {
+            LocalActivityExecutionResult::Cancelled(cancel) => ActivityResolution {
                 status: Some(cancel.into()),
             },
         }
@@ -796,6 +790,7 @@ mod tests {
         coresdk::{
             activity_result::ActivityExecutionResult,
             workflow_activation::{wf_activation_job, WfActivationJob},
+            workflow_commands::ActivityCancellationType::WaitCancellationCompleted,
         },
         temporal::api::{
             command::v1::command, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
@@ -1277,11 +1272,19 @@ mod tests {
         wfm.shutdown().await.unwrap();
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn immediate_cancel() {
-        let func = WorkflowFunction::new(|ctx| async move {
+    async fn immediate_cancel(
+        #[values(
+            ActivityCancellationType::WaitCancellationCompleted,
+            ActivityCancellationType::TryCancel,
+            ActivityCancellationType::Abandon
+        )]
+        cancel_type: ActivityCancellationType,
+    ) {
+        let func = WorkflowFunction::new(move |ctx| async move {
             let la = ctx.local_activity(LocalActivityOptions {
-                cancel_type: ActivityCancellationType::WaitCancellationCompleted,
+                cancel_type,
                 ..Default::default()
             });
             la.cancel(&ctx);
@@ -1298,7 +1301,9 @@ mod tests {
 
         wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 0);
+        assert_eq!(commands.len(), 1);
+        // We record the cancel marker
+        assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
         // Importantly, the activity shouldn't get executed since it was insta-cancelled
         let ready_to_execute_las = wfm.drain_queued_local_activities();
         assert_eq!(ready_to_execute_las.len(), 0);
@@ -1306,9 +1311,10 @@ mod tests {
         // next activation unblocks LA, which is cancelled now.
         wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
         assert_eq!(
-            commands[0].command_type,
+            commands[1].command_type,
             CommandType::CompleteWorkflowExecution as i32
         );
 
@@ -1319,10 +1325,18 @@ mod tests {
     #[case::incremental(false)]
     #[case::replay(true)]
     #[tokio::test]
-    async fn wait_cancel_after_act_starts(#[case] replay: bool) {
-        let func = WorkflowFunction::new(|ctx| async move {
+    async fn cancel_after_act_starts(
+        #[case] replay: bool,
+        #[values(
+            ActivityCancellationType::WaitCancellationCompleted,
+            ActivityCancellationType::TryCancel,
+            ActivityCancellationType::Abandon
+        )]
+        cancel_type: ActivityCancellationType,
+    ) {
+        let func = WorkflowFunction::new(move |ctx| async move {
             let la = ctx.local_activity(LocalActivityOptions {
-                cancel_type: ActivityCancellationType::WaitCancellationCompleted,
+                cancel_type,
                 ..Default::default()
             });
             ctx.timer(Duration::from_secs(1)).await;
@@ -1341,8 +1355,15 @@ mod tests {
         let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
         t.add_timer_fired(timer_started_event_id, "1".to_string());
         t.add_full_wf_task();
+        if cancel_type != ActivityCancellationType::WaitCancellationCompleted {
+            // With non-wait cancels, the cancel is immediate
+            t.add_local_activity_cancel_marker(1, "1");
+        }
         let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-        t.add_local_activity_cancel_marker(1, "1");
+        if cancel_type == ActivityCancellationType::WaitCancellationCompleted {
+            // With wait cancels, the cancel marker is not recorded until activity reports.
+            t.add_local_activity_cancel_marker(1, "1");
+        }
         t.add_timer_fired(timer_started_event_id, "2".to_string());
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
@@ -1372,8 +1393,15 @@ mod tests {
         };
 
         let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+        if cancel_type == ActivityCancellationType::WaitCancellationCompleted || replay {
+            assert_eq!(commands.len(), 1);
+            assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+        } else {
+            // Try-cancel/abandon will immediately record marker (when not replaying)
+            assert_eq!(commands.len(), 2);
+            assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
+            assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
+        }
 
         if replay {
             wfm.get_next_activation().await.unwrap()
@@ -1384,13 +1412,21 @@ mod tests {
             // what would have happened if we woke up with new history -- but it does mean we
             // generate the commands at this point. This matters b/c we want to make sure the record
             // marker command is sent as soon as cancel happens.
-            wfm.complete_local_activity(1, ActivityExecutionResult::cancel_from_details(None))
-                .unwrap();
+            if cancel_type == WaitCancellationCompleted {
+                wfm.complete_local_activity(1, ActivityExecutionResult::cancel_from_details(None))
+                    .unwrap();
+            }
             wfm.get_next_activation().await.unwrap();
             let commands = wfm.get_server_commands().commands;
-            assert_eq!(commands.len(), 2);
-            assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
-            assert_eq!(commands[1].command_type, CommandType::RecordMarker as i32);
+            if cancel_type == ActivityCancellationType::WaitCancellationCompleted {
+                assert_eq!(commands.len(), 2);
+                assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+                assert_eq!(commands[1].command_type, CommandType::RecordMarker as i32);
+            } else {
+                assert_eq!(commands.len(), 2);
+                assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
+                assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
+            }
 
             wfm.new_history(t.get_history_info(3).unwrap().into())
                 .await

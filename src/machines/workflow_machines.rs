@@ -780,12 +780,14 @@ impl WorkflowMachines {
                 MachineResponse::QueueLocalActivity(act) => {
                     self.local_activity_data.enqueue(act);
                 }
-                MachineResponse::RequestCancelLocalActivity(_)
-                | MachineResponse::AbandonLocalActivity(_) => {
+                MachineResponse::RequestCancelLocalActivity(_) => {
                     panic!(
                         "Request cancel local activity should not be returned from \
                          anything other than explicit cancellation"
                     )
+                }
+                MachineResponse::AbandonLocalActivity(seq) => {
+                    self.local_activity_data.done_executing(seq);
                 }
                 MachineResponse::UpdateWFTime(t) => {
                     if let Some(t) = t {
@@ -1006,7 +1008,7 @@ impl WorkflowMachines {
                         // We removed it. Notify the machine that the activity cancelled.
                         if let Machines::LocalActivityMachine(lam) = self.machine_mut(m_key) {
                             let more_responses = lam.try_resolve(
-                                LocalActivityExecutionResult::empty_cancel(true),
+                                LocalActivityExecutionResult::empty_cancel(),
                                 Duration::from_secs(0),
                                 removed_act.attempt,
                                 None,

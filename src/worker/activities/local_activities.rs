@@ -164,10 +164,9 @@ impl LocalActivityManager {
                         t.abort();
                         immediate_resolutions.push(LocalActivityResolution {
                             seq: id.seq_num,
-                            result: LocalActivityExecutionResult::Cancelled {
-                                cancel: Cancellation::from_details(None),
-                                do_not_record_marker: false,
-                            },
+                            result: LocalActivityExecutionResult::Cancelled(
+                                Cancellation::from_details(None),
+                            ),
                             runtime: Duration::from_secs(0),
                             attempt: 0,
                             backoff: None,
