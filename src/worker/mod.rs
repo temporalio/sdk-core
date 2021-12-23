@@ -5,7 +5,7 @@ mod wft_delivery;
 
 pub use config::{WorkerConfig, WorkerConfigBuilder};
 
-pub(crate) use activities::NewLocalAct;
+pub(crate) use activities::{ExecutingLAId, LocalActRequest, LocalActivityResolution, NewLocalAct};
 pub(crate) use dispatcher::WorkerDispatcher;
 
 use crate::{
@@ -742,13 +742,13 @@ impl Worker {
             .wft_manager
             .notify_of_local_result(
                 &info.la_info.workflow_exec_info.run_id,
-                info.la_info.schedule_cmd.seq,
-                LocalResolution::LocalActivity {
+                LocalResolution::LocalActivity(LocalActivityResolution {
+                    seq: info.la_info.schedule_cmd.seq,
                     result: la_res,
                     runtime: info.dispatch_time.elapsed(),
                     attempt: info.attempt,
                     backoff,
-                },
+                }),
             )
             .await
         {

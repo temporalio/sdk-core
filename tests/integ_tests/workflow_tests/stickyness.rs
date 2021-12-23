@@ -20,7 +20,6 @@ async fn timer_workflow_not_sticky() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }
 
 static TIMED_OUT_ONCE: AtomicBool = AtomicBool::new(false);
@@ -51,7 +50,6 @@ async fn timer_workflow_timeout_on_sticky() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
     // If it didn't run twice it didn't time out
     assert_eq!(RUN_CT.load(Ordering::SeqCst), 2);
 }
@@ -83,5 +81,4 @@ async fn cache_miss_ok() {
         barr.wait().await;
     });
     r1.unwrap();
-    starter.shutdown().await;
 }

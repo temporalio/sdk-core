@@ -8,13 +8,11 @@ pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
 pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
 
 use crate::{
-    machines::{
-        LocalActivityExecutionResult, ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines,
-    },
+    machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
     telemetry::metrics::MetricsContext,
-    worker::NewLocalAct,
+    worker::{LocalActRequest, LocalActivityResolution},
 };
-use std::{sync::mpsc::Sender, time::Duration};
+use std::sync::mpsc::Sender;
 use temporal_sdk_core_protos::coresdk::workflow_activation::WfActivation;
 
 pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
@@ -84,12 +82,7 @@ pub struct OutgoingServerCommands {
 
 #[derive(Debug)]
 pub(crate) enum LocalResolution {
-    LocalActivity {
-        result: LocalActivityExecutionResult,
-        runtime: Duration,
-        attempt: u32,
-        backoff: Option<prost_types::Duration>,
-    },
+    LocalActivity(LocalActivityResolution),
 }
 
 impl WorkflowManager {
@@ -107,8 +100,8 @@ impl WorkflowManager {
 
     /// Let this workflow know that something we've been waiting locally on has resolved, like a
     /// local activity or side effect
-    pub fn notify_of_local_result(&mut self, seq_id: u32, resolved: LocalResolution) -> Result<()> {
-        self.machines.local_resolution(seq_id, resolved)
+    pub fn notify_of_local_result(&mut self, resolved: LocalResolution) -> Result<()> {
+        self.machines.local_resolution(resolved)
     }
 
     /// Fetch the next workflow activation for this workflow if one is required. Doing so will apply
@@ -160,7 +153,7 @@ impl WorkflowManager {
 
     /// Remove and return all queued local activities. Once this is called, they need to be
     /// dispatched for execution.
-    pub fn drain_queued_local_activities(&mut self) -> Vec<NewLocalAct> {
+    pub fn drain_queued_local_activities(&mut self) -> Vec<LocalActRequest> {
         self.machines.drain_queued_local_activities()
     }
 
@@ -205,7 +198,7 @@ pub mod managed_wf {
         test_help::{TestHistoryBuilder, TEST_Q},
         workflow::WorkflowFetcher,
     };
-    use std::convert::TryInto;
+    use std::{convert::TryInto, time::Duration};
     use temporal_sdk_core_protos::coresdk::{
         activity_result::ActivityExecutionResult,
         common::Payload,
@@ -302,7 +295,7 @@ pub mod managed_wf {
             self.mgr.get_server_commands()
         }
 
-        pub(crate) fn drain_queued_local_activities(&mut self) -> Vec<NewLocalAct> {
+        pub(crate) fn drain_queued_local_activities(&mut self) -> Vec<LocalActRequest> {
             self.mgr.drain_queued_local_activities()
         }
 
@@ -320,9 +313,9 @@ pub mod managed_wf {
             seq_num: u32,
             result: ActivityExecutionResult,
         ) -> Result<()> {
-            self.mgr.notify_of_local_result(
-                seq_num,
-                LocalResolution::LocalActivity {
+            self.mgr
+                .notify_of_local_result(LocalResolution::LocalActivity(LocalActivityResolution {
+                    seq: seq_num,
                     // We accept normal execution results and do this conversion because there
                     // are more helpers for constructing them.
                     result: result
@@ -333,8 +326,7 @@ pub mod managed_wf {
                     runtime: Duration::from_secs(1),
                     attempt: 1,
                     backoff: None,
-                },
-            )
+                }))
         }
 
         /// During testing it can be useful to run through all activations to simulate replay

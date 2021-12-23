@@ -122,5 +122,4 @@ async fn can_paginate_long_history() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }

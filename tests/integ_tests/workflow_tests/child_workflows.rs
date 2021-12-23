@@ -42,6 +42,4 @@ async fn child_workflow_happy_path() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-
-    starter.shutdown().await;
 }

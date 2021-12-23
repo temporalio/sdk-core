@@ -34,7 +34,6 @@ async fn writes_change_markers() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }
 
 /// This one simulates a run as if the worker had the "old" code, then it fails at the end as
@@ -70,7 +69,6 @@ async fn can_add_change_markers() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }
 
 static DID_DIE_2: AtomicBool = AtomicBool::new(false);
@@ -96,5 +94,4 @@ async fn replaying_with_patch_marker() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }

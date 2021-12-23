@@ -13,7 +13,8 @@ pub(crate) trait RetryPolicyExt {
 
 impl RetryPolicyExt for RetryPolicy {
     fn should_retry(&self, attempt_number: usize, err_type_str: &str) -> Option<Duration> {
-        if attempt_number >= self.maximum_attempts.max(0) as usize {
+        let realmax = self.maximum_attempts.max(0);
+        if realmax > 0 && attempt_number >= realmax as usize {
             return None;
         }
 
@@ -38,12 +39,26 @@ impl RetryPolicyExt for RetryPolicy {
                 .maximum_interval
                 .clone()
                 .try_into_or_none()
-                .unwrap_or_else(|| interval * 100);
-            Some((interval.mul_f64(coeff.powi(attempt_number as i32 - 1))).min(max_iv))
+                .unwrap_or_else(|| interval.saturating_mul(100));
+            let mul_factor = coeff.powi(attempt_number as i32 - 1);
+            let tried_mul = try_from_secs_f64(mul_factor * interval.as_secs_f64());
+            Some(tried_mul.unwrap_or(max_iv).min(max_iv))
         } else {
             // No retries if initial interval is not specified
             None
         }
+    }
+}
+
+const NANOS_PER_SEC: u32 = 1_000_000_000;
+/// modified from rust stdlib since this feature is currently nightly only
+fn try_from_secs_f64(secs: f64) -> Option<Duration> {
+    const MAX_NANOS_F64: f64 = ((u64::MAX as u128 + 1) * (NANOS_PER_SEC as u128)) as f64;
+    let nanos = secs * (NANOS_PER_SEC as f64);
+    if !nanos.is_finite() || nanos >= MAX_NANOS_F64 || nanos < 0.0 {
+        None
+    } else {
+        Some(Duration::from_secs_f64(secs))
     }
 }
 
@@ -86,6 +101,34 @@ mod tests {
             non_retryable_error_types: vec![],
         };
         assert!(rp.should_retry(1, "").is_none());
+    }
+
+    #[test]
+    fn max_attempts_zero_retry_forever() {
+        let rp = RetryPolicy {
+            initial_interval: Some(Duration::from_secs(1).into()),
+            backoff_coefficient: 1.2,
+            maximum_interval: None,
+            maximum_attempts: 0,
+            non_retryable_error_types: vec![],
+        };
+        for i in 0..50 {
+            assert!(rp.should_retry(i, "").is_some());
+        }
+    }
+
+    #[test]
+    fn no_overflows() {
+        let rp = RetryPolicy {
+            initial_interval: Some(Duration::from_secs(1).into()),
+            backoff_coefficient: 10.,
+            maximum_interval: None,
+            maximum_attempts: 0,
+            non_retryable_error_types: vec![],
+        };
+        for i in 0..50 {
+            assert!(rp.should_retry(i, "").is_some());
+        }
     }
 
     #[test]

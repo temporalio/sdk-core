@@ -49,5 +49,4 @@ async fn sends_cancel_to_other_wf() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }

@@ -1,44 +1,44 @@
+mod local_acts;
+
 use crate::{
     machines::{
-        activity_state_machine::new_activity,
-        cancel_external_state_machine::new_external_cancel,
+        activity_state_machine::new_activity, cancel_external_state_machine::new_external_cancel,
         cancel_workflow_state_machine::cancel_workflow,
         child_workflow_state_machine::new_child_workflow,
         complete_workflow_state_machine::complete_workflow,
         continue_as_new_workflow_state_machine::continue_as_new,
         fail_workflow_state_machine::fail_workflow,
-        local_activity_state_machine::{new_local_activity, ResolveDat},
-        patch_state_machine::has_change,
-        signal_external_state_machine::new_external_signal,
-        timer_state_machine::new_timer,
-        workflow_task_state_machine::WorkflowTaskMachine,
+        local_activity_state_machine::new_local_activity, patch_state_machine::has_change,
+        signal_external_state_machine::new_external_signal, timer_state_machine::new_timer,
+        workflow_machines::local_acts::LocalActivityData,
+        workflow_task_state_machine::WorkflowTaskMachine, LocalActivityExecutionResult,
         MachineKind, Machines, NewMachineWithCommand, ProtoCommand, TemporalStateMachine,
         WFCommand,
     },
-    protosext::HistoryEventExt,
+    protosext::{HistoryEventExt, TryIntoOrNone, ValidScheduleLA},
     telemetry::{metrics::MetricsContext, VecDisplayer},
-    worker::NewLocalAct,
+    worker::{ExecutingLAId, LocalActRequest, LocalActivityResolution},
     workflow::{CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WorkflowFetcher},
 };
 use prost_types::TimestampOutOfSystemRangeError;
 use slotmap::SlotMap;
 use std::{
     borrow::{Borrow, BorrowMut},
-    collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque},
+    collections::{hash_map::DefaultHasher, HashMap, VecDeque},
     convert::TryInto,
     hash::{Hash, Hasher},
     time::{Duration, Instant, SystemTime},
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        common::{NamespacedWorkflowExecution, Payload, WorkflowExecution},
+        common::{NamespacedWorkflowExecution, Payload},
         workflow_activation::{
             wf_activation_job::{self, Variant},
             NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WfActivation,
         },
         workflow_commands::{
             request_cancel_external_workflow_execution as cancel_we,
-            signal_external_workflow_execution as sig_we, ScheduleLocalActivity,
+            signal_external_workflow_execution as sig_we,
         },
         FromPayloadsExt,
     },
@@ -110,13 +110,8 @@ pub(crate) struct WorkflowMachines {
     /// Information about patch markers we have already seen while replaying history
     encountered_change_markers: HashMap<String, ChangeInfo>,
 
-    /// Queued local activity requests which need to be executed
-    local_activity_requests: Vec<ScheduleLocalActivity>,
-    /// Seq #s of local activities which we have sent to be executed but have not yet resolved
-    executing_local_activities: HashSet<u32>,
-    /// Maps local activity sequence numbers to their resolutions as found when looking ahead at
-    /// next WFT
-    local_activity_resolutions: HashMap<u32, ResolveDat>,
+    /// Contains extra local-activity related data
+    local_activity_data: LocalActivityData,
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: DrivenWorkflow,
@@ -171,7 +166,15 @@ pub enum MachineResponse {
 
     /// Queue a local activity to be processed by the worker
     #[display(fmt = "QueueLocalActivity")]
-    QueueLocalActivity(ScheduleLocalActivity),
+    QueueLocalActivity(ValidScheduleLA),
+    /// Request cancellation of an executing local activity
+    #[display(fmt = "RequestCancelLocalActivity({})", "_0")]
+    RequestCancelLocalActivity(u32),
+    /// Indicates we are abandoning the indicated LA, so we can remove it from "outstanding" LAs
+    /// and we will not try to WFT heartbeat because of it.
+    #[display(fmt = "AbandonLocalActivity({:?})", "_0")]
+    AbandonLocalActivity(u32),
+
     /// Set the workflow time to the provided time
     #[display(fmt = "UpdateWFTime({:?})", "_0")]
     UpdateWFTime(Option<SystemTime>),
@@ -241,9 +244,7 @@ impl WorkflowMachines {
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
             encountered_change_markers: Default::default(),
-            local_activity_requests: Default::default(),
-            executing_local_activities: Default::default(),
-            local_activity_resolutions: Default::default(),
+            local_activity_data: LocalActivityData::default(),
             have_seen_terminal_event: false,
         }
     }
@@ -270,60 +271,43 @@ impl WorkflowMachines {
 
     /// Let this workflow know that something we've been waiting locally on has resolved, like a
     /// local activity or side effect
-    pub(crate) fn local_resolution(
-        &mut self,
-        seq_id: u32,
-        resolution: LocalResolution,
-    ) -> Result<()> {
+    pub(crate) fn local_resolution(&mut self, resolution: LocalResolution) -> Result<()> {
         match resolution {
-            LocalResolution::LocalActivity {
+            LocalResolution::LocalActivity(LocalActivityResolution {
+                seq,
                 result,
                 runtime,
                 attempt,
                 backoff,
-            } => {
-                let act_id = CommandID::LocalActivity(seq_id);
+            }) => {
+                let act_id = CommandID::LocalActivity(seq);
                 let mk = self.get_machine_key(act_id)?;
                 let mach = self.machine_mut(mk);
                 if let Machines::LocalActivityMachine(ref mut lam) = *mach {
-                    let resps = lam.try_resolve(seq_id, result, runtime, attempt, backoff)?;
+                    let resps = lam.try_resolve(result, runtime, attempt, backoff)?;
                     self.process_machine_responses(mk, resps)?;
                 } else {
                     return Err(WFMachinesError::Nondeterminism(format!(
                         "Command matching activity with seq num {} existed but was not a \
                         local activity!",
-                        seq_id
+                        seq
                     )));
                 }
-                self.executing_local_activities.remove(&seq_id);
+                self.local_activity_data.done_executing(seq);
             }
         }
         Ok(())
     }
 
-    /// Fetch all queued local activities that need executing, mark them as sent
-    pub(crate) fn drain_queued_local_activities(&mut self) -> Vec<NewLocalAct> {
-        let key_and_act = std::mem::take(&mut self.local_activity_requests);
-        key_and_act
-            .into_iter()
-            .map(|act| {
-                self.executing_local_activities.insert(act.seq);
-                NewLocalAct {
-                    schedule_cmd: act,
-                    workflow_type: self.workflow_type.clone(),
-                    workflow_exec_info: WorkflowExecution {
-                        workflow_id: self.workflow_id.clone(),
-                        run_id: self.run_id.clone(),
-                    },
-                    schedule_time: SystemTime::now(),
-                }
-            })
-            .collect()
+    /// Drain all queued local activities that need executing or cancellation
+    pub(crate) fn drain_queued_local_activities(&mut self) -> Vec<LocalActRequest> {
+        self.local_activity_data
+            .take_all_reqs(&self.workflow_type, &self.workflow_id, &self.run_id)
     }
 
     /// Returns the number of local activities we know we need to execute but have not yet finished
     pub(crate) fn outstanding_local_activity_count(&self) -> usize {
-        self.executing_local_activities.len() + self.local_activity_requests.len()
+        self.local_activity_data.outstanding_la_count()
     }
 
     /// Returns the start attributes for the workflow if it has started
@@ -418,10 +402,7 @@ impl WorkflowMachines {
     fn handle_command_event(&mut self, event: &HistoryEvent) -> Result<()> {
         if event.is_local_activity_marker() {
             let deets = event.extract_local_activity_marker_data().ok_or_else(|| {
-                WFMachinesError::Fatal(format!(
-                    "Local activity marker was unparseable: {:?}",
-                    event
-                ))
+                WFMachinesError::Fatal(format!("Local activity marker was unparsable: {:?}", event))
             })?;
             let cmdid = CommandID::LocalActivity(deets.seq);
             let mkey = self.get_machine_key(cmdid)?;
@@ -462,12 +443,12 @@ impl WorkflowMachines {
                 )));
             };
 
-            // Feed the machine the event
             let canceled_before_sent = self
                 .machine(command.machine)
                 .was_cancelled_before_sent_to_server();
 
             if !canceled_before_sent {
+                // Feed the machine the event
                 self.submachine_handle_event(command.machine, event, true)?;
                 break command;
             }
@@ -712,15 +693,7 @@ impl WorkflowMachines {
                         patch_id,
                     }));
             } else if e.is_local_activity_marker() {
-                if let Some(la_dat) = e.clone().into_local_activity_marker_details() {
-                    self.local_activity_resolutions
-                        .insert(la_dat.marker_dat.seq, la_dat.into());
-                } else {
-                    return Err(WFMachinesError::Fatal(format!(
-                        "Local activity marker was unparseable: {:?}",
-                        e
-                    )));
-                }
+                self.local_activity_data.process_peekahead_marker(e)?;
             }
         }
 
@@ -816,7 +789,16 @@ impl WorkflowMachines {
                     });
                 }
                 MachineResponse::QueueLocalActivity(act) => {
-                    self.local_activity_requests.push(act);
+                    self.local_activity_data.enqueue(act);
+                }
+                MachineResponse::RequestCancelLocalActivity(_) => {
+                    panic!(
+                        "Request cancel local activity should not be returned from \
+                         anything other than explicit cancellation"
+                    )
+                }
+                MachineResponse::AbandonLocalActivity(seq) => {
+                    self.local_activity_data.done_executing(seq);
                 }
                 MachineResponse::UpdateWFTime(t) => {
                     if let Some(t) = t {
@@ -854,10 +836,23 @@ impl WorkflowMachines {
                 }
                 WFCommand::AddLocalActivity(attrs) => {
                     let seq = attrs.seq;
+                    let attrs: ValidScheduleLA = ValidScheduleLA::from_schedule_la(
+                        attrs,
+                        self.started_attrs()
+                            .as_ref()
+                            .map(|x| x.workflow_execution_timeout.clone().try_into_or_none())
+                            .flatten(),
+                    )
+                    .map_err(|e| {
+                        WFMachinesError::Fatal(format!(
+                            "Invalid schedule local activity request (seq {}): {}",
+                            seq, e
+                        ))
+                    })?;
                     let (la, mach_resp) = new_local_activity(
                         attrs,
                         self.replaying,
-                        self.local_activity_resolutions.remove(&seq),
+                        self.local_activity_data.take_preresolution(seq),
                         self.current_wf_time,
                     )?;
                     let machkey = self.all_machines.insert(la.into());
@@ -867,6 +862,9 @@ impl WorkflowMachines {
                 }
                 WFCommand::RequestCancelActivity(attrs) => {
                     jobs.extend(self.process_cancellation(CommandID::Activity(attrs.seq))?);
+                }
+                WFCommand::RequestCancelLocalActivity(attrs) => {
+                    jobs.extend(self.process_cancellation(CommandID::LocalActivity(attrs.seq))?);
                 }
                 WFCommand::CompleteWorkflow(attrs) => {
                     self.metrics.wf_completed();
@@ -988,9 +986,9 @@ impl WorkflowMachines {
     fn process_cancellation(&mut self, id: CommandID) -> Result<Vec<Variant>> {
         let mut jobs = vec![];
         let m_key = self.get_machine_key(id)?;
-        let res = self.machine_mut(m_key).cancel()?;
-        debug!(machine_responses = ?res, cmd_id = ?id, "Cancel request responses");
-        for r in res {
+        let machine_resps = self.machine_mut(m_key).cancel()?;
+        debug!(machine_responses = ?machine_resps, cmd_id = ?id, "Cancel request responses");
+        for r in machine_resps {
             match r {
                 MachineResponse::IssueNewCommand(c) => {
                     self.current_wf_task_commands.push_back(CommandAndMachine {
@@ -1001,6 +999,48 @@ impl WorkflowMachines {
                 MachineResponse::PushWFJob(j) => {
                     jobs.push(j);
                 }
+                MachineResponse::RequestCancelLocalActivity(seq) => {
+                    // We might already know about the status from a pre-resolution. Apply it if so.
+                    // We need to do this because otherwise we might need to perform additional
+                    // activations during replay that didn't happen during execution, just like
+                    // we sometimes pre-resolve activities when first requested.
+                    if let Some(preres) = self.local_activity_data.take_preresolution(seq) {
+                        if let Machines::LocalActivityMachine(lam) = self.machine_mut(m_key) {
+                            let more_responses = lam.try_resolve_with_dat(preres)?;
+                            self.process_machine_responses(m_key, more_responses)?;
+                        } else {
+                            panic!("A non local-activity machine returned a request cancel LA response");
+                        }
+                    }
+                    // If it's in the request queue, just rip it out.
+                    else if let Some(removed_act) =
+                        self.local_activity_data.remove_from_queue(seq)
+                    {
+                        // We removed it. Notify the machine that the activity cancelled.
+                        if let Machines::LocalActivityMachine(lam) = self.machine_mut(m_key) {
+                            let more_responses = lam.try_resolve(
+                                LocalActivityExecutionResult::empty_cancel(),
+                                Duration::from_secs(0),
+                                removed_act.attempt,
+                                None,
+                            )?;
+                            self.process_machine_responses(m_key, more_responses)?;
+                        } else {
+                            panic!("A non local-activity machine returned a request cancel LA response");
+                        }
+                    } else {
+                        // Finally, if we know about the LA at all, it's currently running, so
+                        // queue the cancel request to be given to the LA manager.
+                        self.local_activity_data.enqueue_cancel(ExecutingLAId {
+                            run_id: self.run_id.clone(),
+                            seq_num: seq,
+                        });
+                    }
+                }
+                MachineResponse::AbandonLocalActivity(seq) => {
+                    self.local_activity_data.done_executing(seq);
+                }
+                MachineResponse::UpdateWFTime(None) => {}
                 v => {
                     return Err(WFMachinesError::Fatal(format!(
                         "Unexpected machine response {:?} when cancelling {:?}",

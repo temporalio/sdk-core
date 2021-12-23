@@ -21,7 +21,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{EventType, WorkflowTaskFailedCause},
-        failure::v1::Failure,
+        failure::v1::{failure, CanceledFailureInfo, Failure},
         history::v1::{history_event::Attributes, *},
     },
 };
@@ -306,6 +306,24 @@ impl TestHistoryBuilder {
         failure: Failure,
     ) {
         self.add_local_activity_marker(seq, activity_id, None, Some(failure), None);
+    }
+
+    pub(crate) fn add_local_activity_cancel_marker(&mut self, seq: u32, activity_id: &str) {
+        self.add_local_activity_marker(
+            seq,
+            activity_id,
+            None,
+            Some(Failure {
+                message: "cancelled bro".to_string(),
+                source: "".to_string(),
+                stack_trace: "".to_string(),
+                cause: None,
+                failure_info: Some(failure::FailureInfo::CanceledFailureInfo(
+                    CanceledFailureInfo { details: None },
+                )),
+            }),
+            None,
+        );
     }
 
     pub(crate) fn add_signal_wf(

@@ -50,7 +50,6 @@ async fn one_activity() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }
 
 #[tokio::test]

@@ -79,18 +79,7 @@ pub mod coresdk {
 
             pub fn cancel_from_details(payload: Option<Payload>) -> Self {
                 Self {
-                    status: Some(aer::Status::Cancelled(Cancellation {
-                        failure: Some(APIFailure {
-                            // CanceledFailure
-                            message: "Activity cancelled".to_string(),
-                            failure_info: Some(failure::FailureInfo::CanceledFailureInfo(
-                                CanceledFailureInfo {
-                                    details: payload.map(Into::into),
-                                },
-                            )),
-                            ..Default::default()
-                        }),
-                    })),
+                    status: Some(aer::Status::Cancelled(Cancellation::from_details(payload))),
                 }
             }
 
@@ -98,6 +87,10 @@ pub mod coresdk {
                 Self {
                     status: Some(aer::Status::WillCompleteAsync(WillCompleteAsync {})),
                 }
+            }
+
+            pub fn is_cancelled(&self) -> bool {
+                matches!(self.status, Some(aer::Status::Cancelled(_)))
             }
         }
 
@@ -128,6 +121,26 @@ pub mod coresdk {
 
             pub fn failed(&self) -> bool {
                 matches!(self.status, Some(activity_resolution::Status::Failed(_)))
+            }
+
+            pub fn cancelled(&self) -> bool {
+                matches!(self.status, Some(activity_resolution::Status::Cancelled(_)))
+            }
+        }
+
+        impl Cancellation {
+            pub fn from_details(payload: Option<Payload>) -> Self {
+                Cancellation {
+                    failure: Some(APIFailure {
+                        message: "Activity cancelled".to_string(),
+                        failure_info: Some(failure::FailureInfo::CanceledFailureInfo(
+                            CanceledFailureInfo {
+                                details: payload.map(Into::into),
+                            },
+                        )),
+                        ..Default::default()
+                    }),
+                }
             }
         }
     }
@@ -520,6 +533,12 @@ pub mod coresdk {
         impl Display for RequestCancelActivity {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(f, "RequestCancelActivity({})", self.seq)
+            }
+        }
+
+        impl Display for RequestCancelLocalActivity {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "RequestCancelLocalActivity({})", self.seq)
             }
         }
 

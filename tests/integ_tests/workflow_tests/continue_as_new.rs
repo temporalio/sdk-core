@@ -37,6 +37,4 @@ async fn continue_as_new_happy_path() {
         .terminate_workflow_execution(wf_name.to_owned(), None)
         .await
         .unwrap();
-
-    starter.shutdown().await;
 }

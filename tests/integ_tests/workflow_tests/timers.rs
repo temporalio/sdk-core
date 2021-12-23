@@ -23,7 +23,6 @@ async fn timer_workflow_workflow_driver() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }
 
 #[tokio::test]
@@ -117,5 +116,4 @@ async fn parallel_timers() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter.shutdown().await;
 }

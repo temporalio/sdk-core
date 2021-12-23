@@ -2,7 +2,8 @@ mod activity_heartbeat_manager;
 mod local_activities;
 
 pub(crate) use local_activities::{
-    LACompleteAction, LocalActivityManager, LocalInFlightActInfo, NewLocalAct,
+    ExecutingLAId, LACompleteAction, LocalActRequest, LocalActivityManager,
+    LocalActivityResolution, LocalInFlightActInfo, NewLocalAct,
 };
 
 use crate::{
