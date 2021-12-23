@@ -182,10 +182,9 @@ impl LocalActivityManager {
                         t.abort();
                         immediate_resolutions.push(LocalActivityResolution {
                             seq: id.seq_num,
-                            result: LocalActivityExecutionResult::Cancelled {
-                                cancel: Cancellation::from_details(None),
-                                do_not_record_marker: false,
-                            },
+                            result: LocalActivityExecutionResult::Cancelled(
+                                Cancellation::from_details(None),
+                            ),
                             runtime: Duration::from_secs(0),
                             attempt: 0,
                             backoff: None,
@@ -238,10 +237,10 @@ impl LocalActivityManager {
                                 .clone();
                             self.complete(
                                 &task_token,
-                                &LocalActivityExecutionResult::Cancelled {
-                                    cancel: Default::default(),
-                                    do_not_record_marker: false,
-                                },
+                                // TODO: Type?
+                                &LocalActivityExecutionResult::timeout_cancel(
+                                    TimeoutType::Unspecified,
+                                ),
                             );
                             Some(ActivityTask {
                                 task_token: task_token.0,
