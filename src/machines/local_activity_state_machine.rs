@@ -1418,12 +1418,11 @@ mod tests {
             }
             wfm.get_next_activation().await.unwrap();
             let commands = wfm.get_server_commands().commands;
+            assert_eq!(commands.len(), 2);
             if cancel_type == ActivityCancellationType::WaitCancellationCompleted {
-                assert_eq!(commands.len(), 2);
                 assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
                 assert_eq!(commands[1].command_type, CommandType::RecordMarker as i32);
             } else {
-                assert_eq!(commands.len(), 2);
                 assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
                 assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
             }
