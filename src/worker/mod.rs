@@ -261,7 +261,6 @@ impl Worker {
                 match r {
                     DispatchOrTimeoutLA::Dispatch(r) => Ok(Some(r)),
                     DispatchOrTimeoutLA::Timeout { run_id, resolution, task } => {
-                        warn!("Notifying!!! {:?} -- task -- {:?}", resolution, task);
                         self.wft_manager.notify_of_local_result(
                             &run_id, LocalResolution::LocalActivity(resolution)).await.expect("TODO");
                         Ok(task)

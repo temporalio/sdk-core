@@ -357,7 +357,7 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
                 ..Default::default()
             })
             .await;
-        assert!(res.cancelled());
+        assert!(res.timed_out());
         Ok(().into())
     });
     worker.register_activity("echo", |_: String| async {

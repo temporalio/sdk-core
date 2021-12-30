@@ -104,14 +104,15 @@ pub(super) struct ResolveDat {
 pub(crate) enum LocalActivityExecutionResult {
     Completed(Success),
     Failed(ActFail),
+    TimedOut(ActFail),
     Cancelled(ActCancel),
 }
 impl LocalActivityExecutionResult {
     pub(crate) fn empty_cancel() -> Self {
         Self::Cancelled(Cancellation::from_details(None))
     }
-    pub(crate) fn timeout_cancel(tt: TimeoutType) -> Self {
-        Self::Cancelled(Cancellation::timeout(tt))
+    pub(crate) fn timeout(tt: TimeoutType) -> Self {
+        Self::TimedOut(ActFail::timeout(tt))
     }
 }
 
@@ -422,6 +423,7 @@ impl RequestSent {
         let result_type = match &dat.result {
             LocalActivityExecutionResult::Completed(_) => ResultType::Completed,
             LocalActivityExecutionResult::Failed(_) => ResultType::Failed,
+            LocalActivityExecutionResult::TimedOut(_) => ResultType::Failed,
             LocalActivityExecutionResult::Cancelled { .. } => ResultType::Cancelled,
         };
         let new_state = MarkerCommandCreated { result_type };
@@ -626,9 +628,10 @@ impl WFMachinesAdapter for LocalActivityMachine {
                     LocalActivityExecutionResult::Failed(fail) => {
                         maybe_failure = fail.failure;
                     }
-                    LocalActivityExecutionResult::Cancelled(cancel) => {
+                    LocalActivityExecutionResult::Cancelled(ActCancel { failure })
+                    | LocalActivityExecutionResult::TimedOut(ActFail { failure }) => {
                         did_cancel = true;
-                        maybe_failure = cancel.failure;
+                        maybe_failure = failure;
                     }
                 };
                 let resolution = if let Some(b) = backoff.as_ref() {
@@ -767,9 +770,11 @@ impl From<LocalActivityExecutionResult> for ActivityResolution {
             LocalActivityExecutionResult::Completed(c) => ActivityResolution {
                 status: Some(c.into()),
             },
-            LocalActivityExecutionResult::Failed(f) => ActivityResolution {
-                status: Some(f.into()),
-            },
+            LocalActivityExecutionResult::Failed(f) | LocalActivityExecutionResult::TimedOut(f) => {
+                ActivityResolution {
+                    status: Some(f.into()),
+                }
+            }
             LocalActivityExecutionResult::Cancelled(cancel) => ActivityResolution {
                 status: Some(cancel.into()),
             },

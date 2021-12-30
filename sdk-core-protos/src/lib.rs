@@ -124,6 +124,12 @@ pub mod coresdk {
                 matches!(self.status, Some(activity_resolution::Status::Failed(_)))
             }
 
+            pub fn timed_out(&self) -> bool {
+                matches!(self.status, Some(activity_resolution::Status::Failed(Failure {
+                    failure: Some(ref f)
+                })) if f.is_timeout())
+            }
+
             pub fn cancelled(&self) -> bool {
                 matches!(self.status, Some(activity_resolution::Status::Cancelled(_)))
             }
@@ -143,9 +149,11 @@ pub mod coresdk {
                     }),
                 }
             }
+        }
 
+        impl Failure {
             pub fn timeout(timeout_type: TimeoutType) -> Self {
-                Cancellation {
+                Failure {
                     failure: Some(APIFailure {
                         message: "Activity timed out".to_string(),
                         failure_info: Some(failure::FailureInfo::TimeoutFailureInfo(
@@ -945,6 +953,10 @@ pub mod coresdk {
     }
 
     impl Failure {
+        pub fn is_timeout(&self) -> bool {
+            matches!(self.failure_info, Some(FailureInfo::TimeoutFailureInfo(_)))
+        }
+
         pub fn application_failure(message: String, non_retryable: bool) -> Self {
             Self {
                 message,

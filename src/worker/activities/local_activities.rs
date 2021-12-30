@@ -238,9 +238,7 @@ impl LocalActivityManager {
                             self.complete(
                                 &task_token,
                                 // TODO: Type?
-                                &LocalActivityExecutionResult::timeout_cancel(
-                                    TimeoutType::Unspecified,
-                                ),
+                                &LocalActivityExecutionResult::timeout(TimeoutType::Unspecified),
                             );
                             Some(ActivityTask {
                                 task_token: task_token.0,
@@ -293,9 +291,7 @@ impl LocalActivityManager {
                     run_id: new_la.workflow_exec_info.run_id,
                     resolution: LocalActivityResolution {
                         seq: sa.seq,
-                        result: LocalActivityExecutionResult::timeout_cancel(
-                            TimeoutType::ScheduleToStart,
-                        ),
+                        result: LocalActivityExecutionResult::timeout(TimeoutType::ScheduleToStart),
                         runtime: sat_for,
                         attempt,
                         backoff: None,
@@ -362,7 +358,9 @@ impl LocalActivityManager {
 
             match status {
                 LocalActivityExecutionResult::Completed(_)
+                | LocalActivityExecutionResult::TimedOut(_)
                 | LocalActivityExecutionResult::Cancelled { .. } => {
+                    // Timeouts are included in this branch since they are not retried
                     self.complete_notify.notify_one();
                     LACompleteAction::Report(info)
                 }
@@ -498,7 +496,7 @@ impl TimeoutBag {
             run_id: new_la.workflow_exec_info.run_id.clone(),
             resolution: LocalActivityResolution {
                 seq: new_la.schedule_cmd.seq,
-                result: LocalActivityExecutionResult::timeout_cancel(TimeoutType::ScheduleToClose),
+                result: LocalActivityExecutionResult::timeout(TimeoutType::ScheduleToClose),
                 runtime: Default::default(),
                 attempt: new_la.schedule_cmd.attempt,
                 backoff: None,
@@ -534,7 +532,7 @@ impl TimeoutBag {
                 sleep(start_to_close).await;
                 if let CancelOrTimeout::Timeout { resolution, .. } = &mut dat {
                     resolution.result =
-                        LocalActivityExecutionResult::timeout_cancel(TimeoutType::StartToClose);
+                        LocalActivityExecutionResult::timeout(TimeoutType::StartToClose);
                     resolution.runtime = started_t.elapsed();
                 }
 

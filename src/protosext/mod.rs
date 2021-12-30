@@ -257,6 +257,14 @@ impl TryFrom<activity_execution_result::Status> for LocalActivityExecutionResult
     fn try_from(s: activity_execution_result::Status) -> Result<Self, Self::Error> {
         match s {
             Status::Completed(c) => Ok(LocalActivityExecutionResult::Completed(c)),
+            Status::Failed(f)
+                if f.failure
+                    .as_ref()
+                    .map(|fail| fail.is_timeout())
+                    .unwrap_or_default() =>
+            {
+                Ok(LocalActivityExecutionResult::TimedOut(f))
+            }
             Status::Failed(f) => Ok(LocalActivityExecutionResult::Failed(f)),
             Status::Cancelled(cancel) => Ok(LocalActivityExecutionResult::Cancelled(cancel)),
             Status::WillCompleteAsync(_) => {
