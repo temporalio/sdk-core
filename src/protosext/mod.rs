@@ -350,6 +350,21 @@ impl ValidScheduleLA {
             .transpose()?
             // Default to execution timeout if unset
             .or(wf_exe_timeout);
+        let mut schedule_to_start_timeout = v
+            .schedule_to_start_timeout
+            .map(|x| {
+                x.try_into()
+                    .map_err(|_| anyhow!("Could not convert schedule_to_start_timeout"))
+            })
+            .transpose()?;
+        // Clamp schedule-to-start if larger than schedule-to-close
+        if let Some((sched_to_start, sched_to_close)) =
+            schedule_to_start_timeout.as_mut().zip(sched_to_close)
+        {
+            if *sched_to_start > sched_to_close {
+                *sched_to_start = sched_to_close;
+            }
+        }
         let close_timeouts = match (
             sched_to_close,
             v.start_to_close_timeout
@@ -361,20 +376,19 @@ impl ValidScheduleLA {
         ) {
             (Some(sch), None) => LACloseTimeouts::ScheduleOnly(sch),
             (None, Some(start)) => LACloseTimeouts::StartOnly(start),
-            (Some(sched), Some(start)) => LACloseTimeouts::Both { sched, start },
+            (Some(sched), Some(mut start)) => {
+                // Clamp start-to-close if larger than schedule-to-close
+                if start > sched {
+                    start = sched;
+                }
+                LACloseTimeouts::Both { sched, start }
+            }
             (None, None) => {
                 return Err(anyhow!(
                     "One of schedule_to_close or start_to_close timeouts must be set"
                 ))
             }
         };
-        let schedule_to_start_timeout = v
-            .schedule_to_start_timeout
-            .map(|x| {
-                x.try_into()
-                    .map_err(|_| anyhow!("Could not convert schedule_to_start_timeout"))
-            })
-            .transpose()?;
         let retry_policy = v
             .retry_policy
             .ok_or(anyhow!("Retry policy must be defined!"))?;
@@ -385,7 +399,6 @@ impl ValidScheduleLA {
             .unwrap_or_else(|| Duration::from_secs(60));
         let cancellation_type = ActivityCancellationType::from_i32(v.cancellation_type)
             .unwrap_or(ActivityCancellationType::WaitCancellationCompleted);
-        // TODO: Clamps
         Ok(ValidScheduleLA {
             seq: v.seq,
             activity_id: v.activity_id,
