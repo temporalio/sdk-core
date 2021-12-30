@@ -89,9 +89,6 @@ message ScheduleLocalActivity {
     /// a timer before retrying. It should pass the attempt number from a `DoBackoff` activity
     /// resolution.
     uint32 attempt = 4;
-
-    // TODO: Original seq num for sched-to-close timeouts?
-
     map<string, common.Payload> header_fields = 5;
     /// Arguments/input to the activity.
     repeated common.Payload arguments = 6;

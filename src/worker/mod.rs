@@ -261,8 +261,8 @@ impl Worker {
                 match r {
                     DispatchOrTimeoutLA::Dispatch(r) => Ok(Some(r)),
                     DispatchOrTimeoutLA::Timeout { run_id, resolution, task } => {
-                        self.wft_manager.notify_of_local_result(
-                            &run_id, LocalResolution::LocalActivity(resolution)).await.expect("TODO");
+                        self.notify_local_result(
+                            &run_id, LocalResolution::LocalActivity(resolution)).await;
                         Ok(task)
                     }
                 }
@@ -293,8 +293,7 @@ impl Worker {
             let as_la_res: LocalActivityExecutionResult = status.try_into()?;
             match self.local_act_mgr.complete(&task_token, &as_la_res) {
                 LACompleteAction::Report(info) => {
-                    self.complete_local_act(&task_token, as_la_res, info, None)
-                        .await
+                    self.complete_local_act(as_la_res, info, None).await
                 }
                 LACompleteAction::LangDoesTimerBackoff(backoff, info) => {
                     // This la needs to write a failure marker, and then we will tell lang how
@@ -302,7 +301,7 @@ impl Worker {
                     // no other situations where core generates "internal" commands so it is much
                     // simpler for lang to reply with the timer / next LA command than to do it
                     // internally. Plus, this backoff hack we'd like to eliminate eventually.
-                    self.complete_local_act(&task_token, as_la_res, info, Some(backoff))
+                    self.complete_local_act(as_la_res, info, Some(backoff))
                         .await
                 }
                 LACompleteAction::WillBeRetried => {
@@ -739,33 +738,30 @@ impl Worker {
 
     async fn complete_local_act(
         &self,
-        task_token: &TaskToken,
         la_res: LocalActivityExecutionResult,
         info: LocalInFlightActInfo,
         backoff: Option<prost_types::Duration>,
     ) {
-        if let Err(e) = self
-            .wft_manager
-            .notify_of_local_result(
-                &info.la_info.workflow_exec_info.run_id,
-                LocalResolution::LocalActivity(LocalActivityResolution {
-                    seq: info.la_info.schedule_cmd.seq,
-                    result: la_res,
-                    runtime: info.dispatch_time.elapsed(),
-                    attempt: info.attempt,
-                    backoff,
-                }),
-            )
-            .await
-        {
+        self.notify_local_result(
+            &info.la_info.workflow_exec_info.run_id,
+            LocalResolution::LocalActivity(LocalActivityResolution {
+                seq: info.la_info.schedule_cmd.seq,
+                result: la_res,
+                runtime: info.dispatch_time.elapsed(),
+                attempt: info.attempt,
+                backoff,
+            }),
+        )
+        .await
+    }
+
+    async fn notify_local_result(&self, run_id: &str, res: LocalResolution) {
+        if let Err(e) = self.wft_manager.notify_of_local_result(run_id, res).await {
             error!(
-                "Problem completing local activity {}: {:?} -- will evict the workflow",
-                task_token, e
+                "Problem with local resolution on run {}: {:?} -- will evict the workflow",
+                run_id, e
             );
-            self.request_wf_eviction(
-                &info.la_info.workflow_exec_info.run_id,
-                "Issue while completing local activity",
-            );
+            self.request_wf_eviction(run_id, "Issue while processing local resolution");
         }
     }
 

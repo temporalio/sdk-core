@@ -224,7 +224,7 @@ impl LocalActivityManager {
                         dispatch_cancel,
                     } => {
                         let task = if dispatch_cancel {
-                            let task_token = self
+                            let tt = self
                                 .dat
                                 .lock()
                                 .id_to_tt
@@ -232,21 +232,19 @@ impl LocalActivityManager {
                                     run_id: run_id.clone(),
                                     seq_num: resolution.seq,
                                 })
-                                // TODO: Not that
-                                .expect("Should exist")
-                                .clone();
-                            self.complete(
-                                &task_token,
-                                // TODO: Type?
-                                &LocalActivityExecutionResult::timeout(TimeoutType::Unspecified),
-                            );
-                            Some(ActivityTask {
-                                task_token: task_token.0,
-                                activity_id: "".to_string(),
-                                variant: Some(activity_task::Variant::Cancel(Cancel {
-                                    reason: ActivityCancelReason::TimedOut as i32,
-                                })),
-                            })
+                                .map(Clone::clone);
+                            if let Some(task_token) = tt {
+                                self.complete(&task_token, &resolution.result);
+                                Some(ActivityTask {
+                                    task_token: task_token.0,
+                                    activity_id: "".to_string(),
+                                    variant: Some(activity_task::Variant::Cancel(Cancel {
+                                        reason: ActivityCancelReason::TimedOut as i32,
+                                    })),
+                                })
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         };
