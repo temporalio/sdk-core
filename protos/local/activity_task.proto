@@ -13,8 +13,6 @@ import "google/protobuf/duration.proto";
 message ActivityTask {
     /// A unique identifier for this task
     bytes task_token = 1;
-    /// The activity's ID TODO: Move inside start
-    string activity_id = 2;
     oneof variant {
         /// Start activity execution.
         Start start = 3;
@@ -31,35 +29,37 @@ message Start {
     string workflow_type = 2;
     // The workflow execution which requested this activity
     common.WorkflowExecution workflow_execution = 3;
+    // The activity's ID
+    string activity_id = 4;
     // The activity's type name or function identifier
-    string activity_type = 4;
-    map<string, common.Payload> header_fields = 5;
+    string activity_type = 5;
+    map<string, common.Payload> header_fields = 6;
     // Arguments to the activity
-    repeated common.Payload input = 6;
+    repeated common.Payload input = 7;
     // The last details that were recorded by a heartbeat when this task was generated
-    repeated common.Payload heartbeat_details = 7;
+    repeated common.Payload heartbeat_details = 8;
     // When the task was *first* scheduled
-    google.protobuf.Timestamp scheduled_time = 8;
+    google.protobuf.Timestamp scheduled_time = 9;
     // When this current attempt at the task was scheduled
-    google.protobuf.Timestamp current_attempt_scheduled_time = 9;
+    google.protobuf.Timestamp current_attempt_scheduled_time = 10;
     // When this attempt was started, which is to say when core received it by polling.
-    google.protobuf.Timestamp started_time = 10;
-    uint32 attempt = 11;
+    google.protobuf.Timestamp started_time = 11;
+    uint32 attempt = 12;
 
     // Timeout from the first schedule time to completion
-    google.protobuf.Duration schedule_to_close_timeout = 12;
+    google.protobuf.Duration schedule_to_close_timeout = 13;
     // Timeout from starting an attempt to reporting its result
-    google.protobuf.Duration start_to_close_timeout = 13;
+    google.protobuf.Duration start_to_close_timeout = 14;
     // If set a heartbeat must be reported within this interval
-    google.protobuf.Duration heartbeat_timeout = 14;
+    google.protobuf.Duration heartbeat_timeout = 15;
     // This is an actual retry policy the service uses. It can be different from the one provided
     // (or not) during activity scheduling as the service can override the provided one in case its
     // values are not specified or exceed configured system limits.
-    common.RetryPolicy retry_policy = 15;
+    common.RetryPolicy retry_policy = 16;
 
     // Set to true if this is a local activity. Note that heartbeating does not apply to local
     // activities.
-    bool is_local = 16;
+    bool is_local = 17;
 }
 
 /// Attempt to cancel a running activity

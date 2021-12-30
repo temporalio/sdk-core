@@ -193,14 +193,9 @@ impl LocalActivityManager {
                     }
 
                     if let Some(tt) = dlock.id_to_tt.get(&id) {
-                        let info = dlock
-                            .outstanding_activity_tasks
-                            .get(tt)
-                            .expect("Maps are in sync");
                         self.cancels_req_tx
                             .send(CancelOrTimeout::Cancel(ActivityTask {
                                 task_token: tt.0.clone(),
-                                activity_id: info.la_info.schedule_cmd.activity_id.clone(),
                                 variant: Some(activity_task::Variant::Cancel(Cancel {
                                     reason: ActivityCancelReason::Cancelled as i32,
                                 })),
@@ -237,7 +232,6 @@ impl LocalActivityManager {
                                 self.complete(&task_token, &resolution.result);
                                 Some(ActivityTask {
                                     task_token: task_token.0,
-                                    activity_id: "".to_string(),
                                     variant: Some(activity_task::Variant::Cancel(Cancel {
                                         reason: ActivityCancelReason::TimedOut as i32,
                                     })),
@@ -317,11 +311,11 @@ impl LocalActivityManager {
         let (schedule_to_close, start_to_close) = sa.close_timeouts.into_sched_and_start();
         DispatchOrTimeoutLA::Dispatch(ActivityTask {
             task_token: tt.0,
-            activity_id: sa.activity_id,
             variant: Some(activity_task::Variant::Start(Start {
                 workflow_namespace: self.namespace.clone(),
                 workflow_type: new_la.workflow_type,
                 workflow_execution: Some(new_la.workflow_exec_info),
+                activity_id: sa.activity_id,
                 activity_type: sa.activity_type,
                 header_fields: sa.header_fields,
                 input: sa.arguments,
@@ -585,7 +579,11 @@ mod tests {
         }));
         for i in 1..=50 {
             let next = lam.next_pending().await.unwrap();
-            assert_eq!(next.activity_id, i.to_string());
+            assert_matches!(
+                next.variant.unwrap(),
+                activity_task::Variant::Start(Start {activity_id, ..})
+                    if activity_id == i.to_string()
+            );
             let next_tt = TaskToken(next.task_token);
             let complete_branch = async {
                 lam.complete(

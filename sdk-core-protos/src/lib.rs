@@ -33,14 +33,9 @@ pub mod coresdk {
         tonic::include_proto!("coresdk.activity_task");
 
         impl ActivityTask {
-            pub fn cancel_from_ids(
-                task_token: Vec<u8>,
-                activity_id: String,
-                reason: ActivityCancelReason,
-            ) -> Self {
+            pub fn cancel_from_ids(task_token: Vec<u8>, reason: ActivityCancelReason) -> Self {
                 Self {
                     task_token,
-                    activity_id,
                     variant: Some(activity_task::Variant::Cancel(Cancel {
                         reason: reason as i32,
                     })),
@@ -903,7 +898,6 @@ pub mod coresdk {
                 .unwrap_or_default();
             Self {
                 task_token: r.task_token,
-                activity_id: r.activity_id,
                 variant: Some(activity_task::activity_task::Variant::Start(
                     activity_task::Start {
                         workflow_namespace: r.workflow_namespace,
@@ -912,6 +906,7 @@ pub mod coresdk {
                             workflow_id,
                             run_id,
                         }),
+                        activity_id: r.activity_id,
                         activity_type: r.activity_type.map_or_else(|| "".to_string(), |at| at.name),
                         header_fields: r.header.map(Into::into).unwrap_or_default(),
                         input: Vec::from_payloads(r.input),
