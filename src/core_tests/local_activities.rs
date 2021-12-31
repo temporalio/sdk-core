@@ -321,7 +321,6 @@ async fn local_act_retry_long_backoff_uses_timer() {
         },
     );
     worker.register_activity("echo", move |_: String| async move {
-        // Activity always fails since our workflow doesn't *actually* retry it after timer
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
     worker

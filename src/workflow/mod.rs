@@ -326,6 +326,8 @@ pub mod managed_wf {
                     runtime: Duration::from_secs(1),
                     attempt: 1,
                     backoff: None,
+                    // Tests at this level don't use the LA dispatcher, so this is irrelevant
+                    original_schedule_time: None,
                 }))
         }
 

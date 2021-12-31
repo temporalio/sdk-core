@@ -279,12 +279,14 @@ impl WorkflowMachines {
                 runtime,
                 attempt,
                 backoff,
+                original_schedule_time,
             }) => {
                 let act_id = CommandID::LocalActivity(seq);
                 let mk = self.get_machine_key(act_id)?;
                 let mach = self.machine_mut(mk);
                 if let Machines::LocalActivityMachine(ref mut lam) = *mach {
-                    let resps = lam.try_resolve(result, runtime, attempt, backoff)?;
+                    let resps =
+                        lam.try_resolve(result, runtime, attempt, backoff, original_schedule_time)?;
                     self.process_machine_responses(mk, resps)?;
                 } else {
                     return Err(WFMachinesError::Nondeterminism(format!(
@@ -1022,6 +1024,7 @@ impl WorkflowMachines {
                                 LocalActivityExecutionResult::empty_cancel(),
                                 Duration::from_secs(0),
                                 removed_act.attempt,
+                                None,
                                 None,
                             )?;
                             self.process_machine_responses(m_key, more_responses)?;

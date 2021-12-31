@@ -454,6 +454,7 @@ struct LATimerBackoffFut<'a> {
     timer_fut: Option<Pin<Box<dyn CancellableFuture<TimerResult> + Send + Unpin + 'a>>>,
     ctx: &'a WfContext,
     next_attempt: u32,
+    next_sched_time: Option<prost_types::Timestamp>,
     did_cancel: AtomicBool,
 }
 impl<'a> LATimerBackoffFut<'a> {
@@ -464,6 +465,7 @@ impl<'a> LATimerBackoffFut<'a> {
             timer_fut: None,
             ctx,
             next_attempt: 1,
+            next_sched_time: None,
             did_cancel: AtomicBool::new(false),
         }
     }
@@ -482,6 +484,7 @@ impl<'a> Future for LATimerBackoffFut<'a> {
                     if let TimerResult::Fired = tr {
                         let mut opts = self.la_opts.clone();
                         opts.attempt = Some(self.next_attempt);
+                        opts.original_schedule_time = self.next_sched_time.clone();
                         self.current_fut = Box::pin(self.ctx.local_activity_no_timer_retry(opts));
                         Poll::Pending
                     } else {
@@ -516,6 +519,7 @@ impl<'a> Future for LATimerBackoffFut<'a> {
                 );
                 self.timer_fut = Some(Box::pin(timer_f));
                 self.next_attempt = b.attempt;
+                self.next_sched_time = b.original_schedule_time.clone();
                 return Poll::Pending;
             }
         }

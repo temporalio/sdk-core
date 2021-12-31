@@ -80,6 +80,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[serde(with = \"opt_timestamp\")]",
         )
         .field_attribute(
+            "coresdk.external_data.LocalActivityMarkerData.original_schedule_time",
+            "#[serde(with = \"opt_timestamp\")]",
+        )
+        .field_attribute(
             "coresdk.external_data.LocalActivityMarkerData.backoff",
             "#[serde(with = \"opt_duration\")]",
         )

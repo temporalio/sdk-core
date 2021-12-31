@@ -750,6 +750,7 @@ impl Worker {
                 runtime: info.dispatch_time.elapsed(),
                 attempt: info.attempt,
                 backoff,
+                original_schedule_time: Some(info.la_info.schedule_time),
             }),
         )
         .await

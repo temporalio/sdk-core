@@ -10,6 +10,7 @@ package coresdk.workflow_commands;
 import "common.proto";
 import "child_workflow.proto";
 import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
 import "temporal/api/failure/v1/message.proto";
 
 message WorkflowCommand {
@@ -89,6 +90,9 @@ message ScheduleLocalActivity {
     /// a timer before retrying. It should pass the attempt number from a `DoBackoff` activity
     /// resolution.
     uint32 attempt = 4;
+    /// If this local activity is a retry (as per the attempt field) this needs to be the original
+    /// scheduling time (as provided in `DoBackoff`)
+    google.protobuf.Timestamp original_schedule_time = 14;
     map<string, common.Payload> header_fields = 5;
     /// Arguments/input to the activity.
     repeated common.Payload arguments = 6;

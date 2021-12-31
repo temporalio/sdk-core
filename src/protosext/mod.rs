@@ -8,6 +8,7 @@ use crate::{
     CompleteActivityError,
 };
 use anyhow::anyhow;
+use std::time::SystemTime;
 use std::{
     collections::HashMap,
     convert::TryFrom,
@@ -301,6 +302,7 @@ pub struct ValidScheduleLA {
     pub activity_id: String,
     pub activity_type: String,
     pub attempt: u32,
+    pub original_schedule_time: Option<SystemTime>,
     pub header_fields: HashMap<String, SDKPayload>,
     pub arguments: Vec<SDKPayload>,
     pub schedule_to_start_timeout: Option<Duration>,
@@ -341,6 +343,13 @@ impl ValidScheduleLA {
         v: ScheduleLocalActivity,
         wf_exe_timeout: Option<Duration>,
     ) -> Result<Self, anyhow::Error> {
+        let original_schedule_time = v
+            .original_schedule_time
+            .map(|x| {
+                x.try_into()
+                    .map_err(|_| anyhow!("Could not convert original_schedule_time"))
+            })
+            .transpose()?;
         let sched_to_close = v
             .schedule_to_close_timeout
             .map(|x| {
@@ -404,6 +413,7 @@ impl ValidScheduleLA {
             activity_id: v.activity_id,
             activity_type: v.activity_type,
             attempt: v.attempt,
+            original_schedule_time,
             header_fields: v.header_fields,
             arguments: v.arguments,
             schedule_to_start_timeout,

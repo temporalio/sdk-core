@@ -99,6 +99,9 @@ pub struct LocalActivityOptions {
     /// Override attempt number rather than using 1.
     /// Ideally we would not expose this in a released Rust SDK, but it's needed for test.
     pub attempt: Option<u32>,
+    /// Override schedule time when doing timer backoff.
+    /// Ideally we would not expose this in a released Rust SDK, but it's needed for test.
+    pub original_schedule_time: Option<prost_types::Timestamp>,
     /// Retry backoffs over this amount will use a timer rather than a local retry
     pub timer_backoff_threshold: Option<Duration>,
     /// How the activity will cancel
@@ -131,6 +134,7 @@ impl IntoWorkflowCommand for LocalActivityOptions {
         ScheduleLocalActivity {
             seq,
             attempt: self.attempt.unwrap_or(1),
+            original_schedule_time: self.original_schedule_time,
             activity_id: match self.activity_id {
                 None => seq.to_string(),
                 Some(aid) => aid,

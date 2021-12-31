@@ -376,3 +376,40 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
         .unwrap();
     worker.run_until_done().await.unwrap();
 }
+
+#[tokio::test]
+async fn schedule_to_close_timeout_across_timer_backoff() {
+    let wf_name = "schedule_to_close_timeout_across_timer_backoff";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.max_cached_workflows(10);
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        let res = ctx
+            .local_activity(LocalActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi".as_json_payload().expect("serializes fine"),
+                retry_policy: RetryPolicy {
+                    initial_interval: Some(Duration::from_micros(15).into()),
+                    backoff_coefficient: 1_000.,
+                    maximum_interval: Some(Duration::from_millis(1500).into()),
+                    maximum_attempts: 40,
+                    non_retryable_error_types: vec![],
+                },
+                timer_backoff_threshold: Some(Duration::from_secs(1)),
+                schedule_to_close_timeout: Some(Duration::from_secs(3)),
+                ..Default::default()
+            })
+            .await;
+        assert!(res.timed_out());
+        Ok(().into())
+    });
+    worker.register_activity("echo", |_: String| async {
+        Result::<(), _>::Err(anyhow!("Oh no I failed!"))
+    });
+
+    worker
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}

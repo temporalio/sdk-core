@@ -98,6 +98,7 @@ pub(super) struct ResolveDat {
     pub(super) complete_time: Option<SystemTime>,
     pub(super) attempt: u32,
     pub(super) backoff: Option<prost_types::Duration>,
+    pub(super) original_schedule_time: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +139,7 @@ impl From<CompleteLocalActivityData> for ResolveDat {
             complete_time: d.marker_dat.complete_time.try_into_or_none(),
             attempt: d.marker_dat.attempt,
             backoff: d.marker_dat.backoff,
+            original_schedule_time: d.marker_dat.original_schedule_time.try_into_or_none(),
         }
     }
 }
@@ -247,12 +249,14 @@ impl LocalActivityMachine {
         runtime: Duration,
         attempt: u32,
         backoff: Option<prost_types::Duration>,
+        original_schedule_time: Option<SystemTime>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         self.try_resolve_with_dat(ResolveDat {
             result,
             complete_time: self.shared_state.wf_time_when_started.map(|t| t + runtime),
             attempt,
             backoff,
+            original_schedule_time,
         })
     }
     /// Attempt to resolve the local activity with already known data, ex pre-resolved data
@@ -297,6 +301,7 @@ impl SharedState {
             complete_time: None,
             attempt: self.attrs.attempt,
             backoff: None,
+            original_schedule_time: None,
         }
     }
 }
@@ -615,6 +620,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
                 complete_time,
                 attempt,
                 backoff,
+                original_schedule_time,
             }) => {
                 let mut maybe_ok_result = None;
                 let mut maybe_failure = None;
@@ -640,6 +646,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
                             DoBackoff {
                                 attempt: attempt + 1,
                                 backoff_duration: Some(b.clone()),
+                                original_schedule_time: original_schedule_time.map(Into::into),
                             }
                             .into(),
                         ),
@@ -682,6 +689,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
                                 activity_type: self.shared_state.attrs.activity_type.clone(),
                                 complete_time: complete_time.map(Into::into),
                                 backoff,
+                                original_schedule_time: original_schedule_time.map(Into::into),
                             },
                             maybe_ok_result,
                         ),

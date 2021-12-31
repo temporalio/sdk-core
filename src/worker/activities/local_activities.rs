@@ -52,6 +52,7 @@ pub(crate) struct LocalActivityResolution {
     pub runtime: Duration,
     pub attempt: u32,
     pub backoff: Option<prost_types::Duration>,
+    pub original_schedule_time: Option<SystemTime>,
 }
 
 #[derive(Clone)]
@@ -160,18 +161,23 @@ impl LocalActivityManager {
         for req in reqs {
             match req {
                 LocalActRequest::New(act) => {
-                    // Set up timeouts for the new activity TODO: sched-to-close timer-backoff retry
-                    self.dat.lock().timeout_tasks.insert(
-                        ExecutingLAId {
-                            run_id: act.workflow_exec_info.run_id.clone(),
-                            seq_num: act.schedule_cmd.seq,
-                        },
-                        TimeoutBag::new(&act, self.cancels_req_tx.clone()),
-                    );
+                    // Set up timeouts for the new activity
+                    match TimeoutBag::new(&act, self.cancels_req_tx.clone()) {
+                        Ok(tb) => {
+                            self.dat.lock().timeout_tasks.insert(
+                                ExecutingLAId {
+                                    run_id: act.workflow_exec_info.run_id.clone(),
+                                    seq_num: act.schedule_cmd.seq,
+                                },
+                                tb,
+                            );
 
-                    self.act_req_tx
-                        .send(NewOrRetry::New(act))
-                        .expect("Receive half of LA request channel cannot be dropped");
+                            self.act_req_tx
+                                .send(NewOrRetry::New(act))
+                                .expect("Receive half of LA request channel cannot be dropped");
+                        }
+                        Err(res) => immediate_resolutions.push(res),
+                    }
                 }
                 LocalActRequest::Cancel(id) => {
                     let mut dlock = self.dat.lock();
@@ -188,6 +194,7 @@ impl LocalActivityManager {
                             runtime: Duration::from_secs(0),
                             attempt: 0,
                             backoff: None,
+                            original_schedule_time: None,
                         });
                         continue;
                     }
@@ -287,6 +294,7 @@ impl LocalActivityManager {
                         runtime: sat_for,
                         attempt,
                         backoff: None,
+                        original_schedule_time: Some(new_la.schedule_time),
                     },
                     task: None,
                 };
@@ -471,7 +479,7 @@ impl RcvChans {
 }
 
 struct TimeoutBag {
-    scheduling: JoinHandle<()>,
+    sched_to_close_handle: JoinHandle<()>,
     start_to_close_dur_and_dat: Option<(Duration, CancelOrTimeout)>,
     start_to_close_handle: Option<JoinHandle<()>>,
     cancel_chan: UnboundedSender<CancelOrTimeout>,
@@ -480,19 +488,34 @@ struct TimeoutBag {
 impl TimeoutBag {
     /// Create new timeout tasks for the provided local activity. This must be called as soon
     /// as request to schedule it arrives.
-    fn new(new_la: &NewLocalAct, cancel_chan: UnboundedSender<CancelOrTimeout>) -> TimeoutBag {
+    ///
+    /// Returns error in the event the activity is *already* timed out
+    fn new(
+        new_la: &NewLocalAct,
+        cancel_chan: UnboundedSender<CancelOrTimeout>,
+    ) -> Result<TimeoutBag, LocalActivityResolution> {
         let (schedule_to_close, start_to_close) =
             new_la.schedule_cmd.close_timeouts.into_sched_and_start();
 
+        let resolution = LocalActivityResolution {
+            seq: new_la.schedule_cmd.seq,
+            result: LocalActivityExecutionResult::timeout(TimeoutType::ScheduleToClose),
+            runtime: Default::default(),
+            attempt: new_la.schedule_cmd.attempt,
+            backoff: None,
+            original_schedule_time: Some(new_la.schedule_time),
+        };
+        // Remove any time already elapsed since the scheduling time
+        let schedule_to_close = schedule_to_close
+            .map(|s2c| s2c.saturating_sub(new_la.schedule_time.elapsed().unwrap_or_default()));
+        if let Some(ref s2c) = schedule_to_close {
+            if s2c.is_zero() {
+                return Err(resolution);
+            }
+        }
         let timeout_dat = CancelOrTimeout::Timeout {
             run_id: new_la.workflow_exec_info.run_id.clone(),
-            resolution: LocalActivityResolution {
-                seq: new_la.schedule_cmd.seq,
-                result: LocalActivityExecutionResult::timeout(TimeoutType::ScheduleToClose),
-                runtime: Default::default(),
-                attempt: new_la.schedule_cmd.attempt,
-                backoff: None,
-            },
+            resolution,
             dispatch_cancel: true,
         };
         let start_to_close_dur_and_dat = start_to_close.map(|d| (d, timeout_dat.clone()));
@@ -507,12 +530,12 @@ impl TimeoutBag {
                     .expect("receive half not dropped");
             }
         });
-        TimeoutBag {
-            scheduling,
+        Ok(TimeoutBag {
+            sched_to_close_handle: scheduling,
             start_to_close_dur_and_dat,
             start_to_close_handle: None,
             cancel_chan,
-        }
+        })
     }
 
     /// Must be called once the associated local activity has been started / dispatched to lang.
@@ -536,7 +559,7 @@ impl TimeoutBag {
 
 impl Drop for TimeoutBag {
     fn drop(&mut self) {
-        self.scheduling.abort();
+        self.sched_to_close_handle.abort();
         if let Some(x) = self.start_to_close_handle.as_ref() {
             x.abort()
         }
