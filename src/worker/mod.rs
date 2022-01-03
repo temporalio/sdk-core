@@ -268,9 +268,6 @@ impl Worker {
                 }
             },
             r = act_mgr_poll => r,
-            _ = self.shutdown_notifier() => {
-                Err(PollActivityError::ShutDown)
-            }
         }
     }
 
@@ -780,15 +777,6 @@ impl Worker {
                     self.config.sticky_queue_schedule_to_start_timeout.into(),
                 ),
             })
-    }
-
-    /// A future that resolves to true the shutdown flag has been set to true, false is simply
-    /// a signal that a poll loop should be restarted. Only meant to be called from polling funcs.
-    async fn shutdown_notifier(&self) {
-        if *self.shutdown_requested.borrow() {
-            return;
-        }
-        let _ = self.shutdown_requested.clone().changed().await;
     }
 
     /// Returns true if shutdown has been requested and there are no more outstanding WFTs
