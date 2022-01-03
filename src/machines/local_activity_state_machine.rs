@@ -169,8 +169,6 @@ pub(super) fn new_local_activity(
         Executing {}.into()
     };
 
-    // TODO: Validate timeouts are set here
-
     let mut machine = LocalActivityMachine {
         state: initial_state,
         shared_state: SharedState {
@@ -522,9 +520,17 @@ impl WaitingMarkerEvent {
     }
     pub(super) fn on_started_non_replay_wft(
         self,
-        dat: SharedState,
+        mut dat: SharedState,
     ) -> LocalActivityMachineTransition<RequestSent> {
-        TransitionResult::commands([LocalActivityCommand::RequestActivityExecution(dat.attrs)])
+        // We aren't really "replaying" anymore for our purposes, and want to record the marker.
+        dat.replaying_when_invoked = false;
+        TransitionResult::ok_shared(
+            [LocalActivityCommand::RequestActivityExecution(
+                dat.attrs.clone(),
+            )],
+            RequestSent::default(),
+            dat,
+        )
     }
 
     fn on_cancel_requested(self) -> LocalActivityMachineTransition<WaitingMarkerEventCancelled> {

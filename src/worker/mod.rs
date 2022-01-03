@@ -589,6 +589,11 @@ impl Worker {
                     force_create_new_workflow_task: force_new_wft,
                 };
                 let sticky_attrs = self.get_sticky_attrs();
+                // Do not return new WFT if we would not cache, because returned new WFTs are always
+                // partial.
+                if sticky_attrs.is_none() {
+                    completion.return_new_workflow_task = false;
+                }
                 completion.sticky_attributes = sticky_attrs;
 
                 self.handle_wft_reporting_errs(run_id, || async {

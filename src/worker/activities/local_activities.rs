@@ -112,6 +112,13 @@ struct LAMData {
     next_tt_num: u32,
 }
 
+impl LAMData {
+    fn gen_next_token(&mut self) -> TaskToken {
+        self.next_tt_num += 1;
+        TaskToken::new_local_activity_token(self.next_tt_num.to_le_bytes())
+    }
+}
+
 struct RcvChans {
     /// Activities that need to be executed by lang
     act_req_rx: UnboundedReceiver<NewOrRetry>,
@@ -161,16 +168,27 @@ impl LocalActivityManager {
         for req in reqs {
             match req {
                 LocalActRequest::New(act) => {
+                    let id = ExecutingLAId {
+                        run_id: act.workflow_exec_info.run_id.clone(),
+                        seq_num: act.schedule_cmd.seq,
+                    };
+                    let mut dlock = self.dat.lock();
+                    if dlock.id_to_tt.contains_key(&id) {
+                        // Do not queue local activities which are in fact already executing.
+                        // This can happen during evictions.
+                        debug!("Tried to queue already-executing local activity {:?}", &id);
+                        continue;
+                    }
+                    // Pre-generate and insert the task token now, before we may or may not dispatch
+                    // the activity, so we can enforce idempotency. Prevents two identical LAs
+                    // ending up in the queue at once.
+                    let tt = dlock.gen_next_token();
+                    dlock.id_to_tt.insert(id.clone(), tt);
+
                     // Set up timeouts for the new activity
                     match TimeoutBag::new(&act, self.cancels_req_tx.clone()) {
                         Ok(tb) => {
-                            self.dat.lock().timeout_tasks.insert(
-                                ExecutingLAId {
-                                    run_id: act.workflow_exec_info.run_id.clone(),
-                                    seq_num: act.schedule_cmd.seq,
-                                },
-                                tb,
-                            );
+                            dlock.timeout_tasks.insert(id, tb);
 
                             self.act_req_tx
                                 .send(NewOrRetry::New(act))
@@ -301,8 +319,11 @@ impl LocalActivityManager {
             }
         }
 
-        dat.next_tt_num += 1;
-        let tt = TaskToken::new_local_activity_token(dat.next_tt_num.to_le_bytes());
+        let tt = dat
+            .id_to_tt
+            .get(&id)
+            .expect("Task token must exist")
+            .clone();
         dat.outstanding_activity_tasks.insert(
             tt.clone(),
             LocalInFlightActInfo {
@@ -314,7 +335,6 @@ impl LocalActivityManager {
         if let Some(to) = dat.timeout_tasks.get_mut(&id) {
             to.mark_started();
         }
-        dat.id_to_tt.insert(id, tt.clone());
 
         let (schedule_to_close, start_to_close) = sa.close_timeouts.into_sched_and_start();
         DispatchOrTimeoutLA::Dispatch(ActivityTask {
@@ -389,6 +409,10 @@ impl LocalActivityManager {
                                 info,
                             );
                         }
+                        // Immediately create a new task token for the to-be-retried LA
+                        let tt = dlock.gen_next_token();
+                        dlock.id_to_tt.insert(exec_id.clone(), tt);
+
                         // Send the retry request after waiting the backoff duration
                         let send_chan = self.act_req_tx.clone();
                         let jh = tokio::spawn(async move {
@@ -571,6 +595,7 @@ mod tests {
     use super::*;
     use crate::protosext::LACloseTimeouts;
     use temporal_sdk_core_protos::coresdk::common::RetryPolicy;
+    use tokio::sync::mpsc::error::TryRecvError;
     use tokio::task::yield_now;
 
     impl DispatchOrTimeoutLA {
@@ -886,5 +911,41 @@ mod tests {
             DispatchOrTimeoutLA::Timeout { .. }
         );
         assert_eq!(lam.num_outstanding(), 0);
+    }
+
+    #[tokio::test]
+    async fn idempotency_enforced() {
+        let lam = LocalActivityManager::new(10, "whatever".to_string());
+        let new_la = NewLocalAct {
+            schedule_cmd: ValidScheduleLA {
+                seq: 1,
+                activity_id: 1.to_string(),
+                ..Default::default()
+            },
+            workflow_type: "".to_string(),
+            workflow_exec_info: WorkflowExecution {
+                workflow_id: "".to_string(),
+                run_id: "run_id".to_string(),
+            },
+            schedule_time: SystemTime::now(),
+        };
+        // Verify only one will get queued
+        lam.enqueue([new_la.clone().into(), new_la.clone().into()]);
+        lam.next_pending().await.unwrap();
+        assert_eq!(lam.num_outstanding(), 1);
+        // There should be nothing else in the queue
+        assert_eq!(
+            lam.rcvs.lock().await.act_req_rx.try_recv().unwrap_err(),
+            TryRecvError::Empty
+        );
+
+        // Verify that if we now enqueue the same act again, after the task is outstanding, we still
+        // don't add it.
+        lam.enqueue([new_la.into()]);
+        assert_eq!(lam.num_outstanding(), 1);
+        assert_eq!(
+            lam.rcvs.lock().await.act_req_rx.try_recv().unwrap_err(),
+            TryRecvError::Empty
+        );
     }
 }

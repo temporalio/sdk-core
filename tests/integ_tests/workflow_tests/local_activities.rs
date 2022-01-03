@@ -76,7 +76,8 @@ pub async fn local_act_then_timer_then_wait(ctx: WfContext) -> WorkflowResult<()
         ..Default::default()
     });
     ctx.timer(Duration::from_secs(1)).await;
-    la.await;
+    let res = la.await;
+    assert!(res.completed_ok());
     Ok(().into())
 }
 
@@ -405,6 +406,26 @@ async fn schedule_to_close_timeout_across_timer_backoff() {
     });
     worker.register_activity("echo", |_: String| async {
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
+    });
+
+    worker
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn eviction_wont_make_local_act_get_dropped() {
+    let wf_name = "eviction_wont_make_local_act_get_dropped";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.max_cached_workflows(0);
+    starter.wft_timeout(Duration::from_secs(1));
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
+    worker.register_activity("echo_activity", |str: String| async {
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        Ok(str)
     });
 
     worker
