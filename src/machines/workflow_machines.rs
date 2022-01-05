@@ -10,6 +10,7 @@ use crate::{
         fail_workflow_state_machine::fail_workflow,
         local_activity_state_machine::new_local_activity, patch_state_machine::has_change,
         signal_external_state_machine::new_external_signal, timer_state_machine::new_timer,
+        upsert_search_attributes_state_machine::upsert_search_attrs,
         workflow_machines::local_acts::LocalActivityData,
         workflow_task_state_machine::WorkflowTaskMachine, LocalActivityExecutionResult,
         MachineKind, Machines, NewMachineWithCommand, ProtoCommand, TemporalStateMachine,
@@ -974,6 +975,10 @@ impl WorkflowMachines {
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level
                     unimplemented!("Query responses should not make it down into the machines")
+                }
+                WFCommand::UpsertSearchAttributes(attrs) => {
+                    let seq = attrs.seq;
+                    self.add_cmd_to_wf_task(upsert_search_attrs(attrs), Some(CommandID::SearchAttributes(seq)));
                 }
                 WFCommand::NoCommandsFromLang => (),
             }
