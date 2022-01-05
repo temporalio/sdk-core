@@ -31,11 +31,11 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::workflowservice::v1::{
         PollActivityTaskQueueResponse, RecordActivityTaskHeartbeatResponse,
-        RespondActivityTaskCompletedResponse,
+        RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedResponse,
     },
 };
 use test_utils::{fanout_tasks, start_timer_cmd};
-use tokio::{sync::Notify, time::sleep};
+use tokio::{join, sync::Notify, time::sleep};
 
 #[tokio::test]
 async fn max_activities_respected() {
@@ -139,6 +139,14 @@ async fn heartbeats_report_cancels_only_once() {
                 cancel_requested: true,
             })
         });
+    mock_gateway
+        .expect_complete_activity_task()
+        .times(1)
+        .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
+    mock_gateway
+        .expect_cancel_activity_task()
+        .times(1)
+        .returning(|_, _| Ok(RespondActivityTaskCanceledResponse::default()));
 
     let core = mock_core(MocksHolder::from_gateway_with_responses(
         mock_gateway,
@@ -181,22 +189,39 @@ async fn heartbeats_report_cancels_only_once() {
     // Allow heartbeat delay to elapse
     sleep(Duration::from_millis(10)).await;
     core.record_activity_heartbeat(ActivityHeartbeat {
-        task_token: act.task_token,
+        task_token: act.task_token.clone(),
         task_queue: TEST_Q.to_string(),
         details: vec![vec![1_u8, 2, 3].into()],
     });
+    // Wait delay again to flush heartbeat
     sleep(Duration::from_millis(10)).await;
+    // Now complete it as cancelled
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act.task_token,
+        task_queue: TEST_Q.to_string(),
+        result: Some(ActivityExecutionResult::cancel_from_details(None)),
+    })
+    .await
+    .unwrap();
     // Since cancels always come before new tasks, if we get a new non-cancel task, we did not
     // double-issue cancels.
     let act = core.poll_activity_task(TEST_Q).await.unwrap();
     assert_matches!(
-        act,
+        &act,
         ActivityTask {
             task_token,
             variant: Some(activity_task::Variant::Start(_)),
             ..
-        } => { task_token == vec![2] }
+        } => { task_token == &[2] }
     );
+    // Complete it so shutdown goes through
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act.task_token,
+        task_queue: TEST_Q.to_string(),
+        result: Some(ActivityExecutionResult::ok(vec![1].into())),
+    })
+    .await
+    .unwrap();
     core.shutdown().await;
 }
 
@@ -235,6 +260,10 @@ async fn activity_cancel_interrupts_poll() {
             }
             .boxed()
         });
+    mock_gateway
+        .expect_complete_activity_task()
+        .times(1)
+        .returning(|_, _| async { Ok(RespondActivityTaskCompletedResponse::default()) }.boxed());
 
     let mock_worker = MockWorker {
         act_poller: Some(Box::from(mock_poller)),
@@ -256,7 +285,15 @@ async fn activity_cancel_interrupts_poll() {
             last_finisher.store(1, Ordering::SeqCst);
         },
         async {
-            core.poll_activity_task(TEST_Q).await.unwrap();
+            let act = core.poll_activity_task(TEST_Q).await.unwrap();
+            // Must complete this activity for shutdown to finish
+            core.complete_activity_task(
+                ActivityTaskCompletion {
+                    task_token: act.task_token,
+                    task_queue: TEST_Q.to_string(),
+                    result: Some(ActivityExecutionResult::ok(vec![1].into())),
+                }
+            ).await.unwrap();
             last_finisher.store(2, Ordering::SeqCst);
         }
     };
@@ -474,6 +511,10 @@ async fn only_returns_cancels_for_desired_queue() {
                 cancel_requested: true,
             })
         });
+    mock_gateway
+        .expect_cancel_activity_task()
+        .times(1)
+        .returning(|_, _| Ok(RespondActivityTaskCanceledResponse::default()));
 
     let mut w1 = MockWorker::for_queue("q1");
     w1.act_poller = Some(mock_poller_from_resps([PollActivityTaskQueueResponse {
@@ -511,12 +552,66 @@ async fn only_returns_cancels_for_desired_queue() {
         }
     };
     assert_matches!(
-        q1_res,
+        &q1_res,
         ActivityTask {
             variant: Some(activity_task::Variant::Cancel(_)),
             ..
         }
     );
+    // act needs to complete to finalize shutdown
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: q1_res.task_token,
+        task_queue: "q1".to_string(),
+        result: Some(ActivityExecutionResult::cancel_from_details(None)),
+    })
+    .await
+    .unwrap();
 
     core.shutdown().await;
+}
+
+#[tokio::test]
+async fn can_heartbeat_acts_during_shutdown() {
+    let mut mock_gateway = MockServerGatewayApis::new();
+    mock_gateway
+        .expect_record_activity_heartbeat()
+        .times(1)
+        .returning(|_, _| {
+            Ok(RecordActivityTaskHeartbeatResponse {
+                cancel_requested: false,
+            })
+        });
+    mock_gateway
+        .expect_complete_activity_task()
+        .times(1)
+        .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
+
+    let core = mock_core(MocksHolder::from_gateway_with_responses(
+        mock_gateway,
+        [],
+        [PollActivityTaskQueueResponse {
+            task_token: vec![1],
+            activity_id: "act1".to_string(),
+            heartbeat_timeout: Some(Duration::from_millis(1).into()),
+            ..Default::default()
+        }],
+    ));
+
+    let act = core.poll_activity_task(TEST_Q).await.unwrap();
+    // Start shutdown before completing the activity
+    let shutdown_fut = core.shutdown();
+    join!(shutdown_fut, async {
+        core.record_activity_heartbeat(ActivityHeartbeat {
+            task_token: act.task_token.clone(),
+            task_queue: TEST_Q.to_string(),
+            details: vec![vec![1_u8, 2, 3].into()],
+        });
+        core.complete_activity_task(ActivityTaskCompletion {
+            task_token: act.task_token,
+            task_queue: TEST_Q.to_string(),
+            result: Some(ActivityExecutionResult::ok(vec![1].into())),
+        })
+        .await
+        .unwrap();
+    });
 }

@@ -216,9 +216,13 @@ impl Worker {
         self.wf_task_source
             .wait_for_tasks_from_complete_to_drain()
             .await;
-        // wait until all outstanding workflow tasks have been completed before shutting down
+        // wait until all outstanding workflow tasks have been completed
         while !self.all_wfts_drained() {
             self.wfts_drained_notify.notified().await;
+        }
+        // Wait for activities to finish
+        if let Some(acts) = self.at_task_mgr.as_ref() {
+            acts.wait_all_finished().await;
         }
     }
 
