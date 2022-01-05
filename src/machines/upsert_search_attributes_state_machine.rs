@@ -21,7 +21,7 @@ impl Created {
     pub(super) fn on_schedule(
         self,
     ) -> UpsertSearchAttributesMachineTransition<UpsertCommandCreated> {
-        unimplemented!()
+        TransitionResult::default()
     }
 }
 
@@ -32,7 +32,7 @@ impl UpsertCommandCreated {
     pub(super) fn on_upsert_workflow_search_attributes(
         self,
     ) -> UpsertSearchAttributesMachineTransition<UpsertCommandRecorded> {
-        unimplemented!()
+        TransitionResult::ok(vec![], UpsertCommandRecorded::default())
     }
 }
 
