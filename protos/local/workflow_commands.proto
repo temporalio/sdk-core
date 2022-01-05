@@ -278,4 +278,6 @@ message CancelSignalWorkflow {
 message UpsertWorkflowSearchAttributes {
     /// Lang's incremental sequence number as passed to `UpsertWorkflowSearchAttributes`
     uint32 seq = 1;
+    /// SearchAttributes fields
+    map<string, common.Payload> indexed_fields = 2;
 }

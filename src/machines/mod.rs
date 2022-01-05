@@ -82,6 +82,7 @@ pub enum WFCommand {
     RequestCancelExternalWorkflow(RequestCancelExternalWorkflowExecution),
     SignalExternalWorkflow(SignalExternalWorkflowExecution),
     CancelSignalWorkflow(CancelSignalWorkflow),
+    UpsertSearchAttributes(UpsertSearchAttributes),
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
@@ -126,6 +127,7 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::RequestCancelLocalActivity(s) => {
                 Ok(Self::RequestCancelLocalActivity(s))
             }
+            workflow_command::Variant::UpsertSearchAttributes(s) => Ok(Self::UpsertSearchAttributes(s)),
         }
     }
 }
