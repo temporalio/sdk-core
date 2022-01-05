@@ -96,13 +96,15 @@ impl WorkerDispatcher {
         }))
         .await;
 
-        let mut all_workers = HashMap::new();
+        let mut all_workers = vec![];
         self.workers.rcu(|map| {
             let mut map = HashMap::clone(map);
-            all_workers.extend(map.drain());
+            for worker in map.values_mut() {
+                all_workers.push(worker.take());
+            }
             map
         });
-        join_all(all_workers.into_values().map(|w| async move {
+        join_all(all_workers.into_iter().map(|w| async move {
             if let Some(w) = w {
                 w.destroy().await;
             }

@@ -299,7 +299,7 @@ impl SharedState {
             complete_time: None,
             attempt: self.attrs.attempt,
             backoff: None,
-            original_schedule_time: None,
+            original_schedule_time: self.attrs.original_schedule_time,
         }
     }
 }
@@ -632,7 +632,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
                 let mut maybe_failure = None;
                 // Only issue record marker commands if we weren't replaying
                 let record_marker = !self.shared_state.replaying_when_invoked;
-                let mut did_cancel = false;
+                let mut will_not_run_again = false;
                 match result.clone() {
                     LocalActivityExecutionResult::Completed(suc) => {
                         maybe_ok_result = suc.result;
@@ -642,7 +642,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
                     }
                     LocalActivityExecutionResult::Cancelled(ActCancel { failure })
                     | LocalActivityExecutionResult::TimedOut(ActFail { failure }) => {
-                        did_cancel = true;
+                        will_not_run_again = true;
                         maybe_failure = failure;
                     }
                 };
@@ -673,7 +673,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
 
                 // Cancel-resolves of abandoned activities must be explicitly dropped from tracking
                 // to avoid unnecessary WFT heartbeating.
-                if did_cancel
+                if will_not_run_again
                     && matches!(
                         self.shared_state.attrs.cancellation_type,
                         ActivityCancellationType::Abandon

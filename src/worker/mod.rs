@@ -210,7 +210,7 @@ impl Worker {
         self.wf_task_source.stop_pollers();
         // Next we need to wait for all local activities to finish so no more workflow task
         // heartbeats will be generated
-        self.local_act_mgr.wait_all_finished().await;
+        self.local_act_mgr.shutdown_and_wait_all_finished().await;
         // Then we need to wait for any tasks generated as a result of completing WFTs, which
         // heartbeating generates
         self.wf_task_source
@@ -259,12 +259,13 @@ impl Worker {
 
             r = self.local_act_mgr.next_pending() => {
                 match r {
-                    DispatchOrTimeoutLA::Dispatch(r) => Ok(Some(r)),
-                    DispatchOrTimeoutLA::Timeout { run_id, resolution, task } => {
+                    Some(DispatchOrTimeoutLA::Dispatch(r)) => Ok(Some(r)),
+                    Some(DispatchOrTimeoutLA::Timeout { run_id, resolution, task }) => {
                         self.notify_local_result(
                             &run_id, LocalResolution::LocalActivity(resolution)).await;
                         Ok(task)
-                    }
+                    },
+                    None => Ok(None)
                 }
             },
             r = act_mgr_poll => r,

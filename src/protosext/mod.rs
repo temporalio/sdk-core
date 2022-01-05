@@ -8,12 +8,11 @@ use crate::{
     CompleteActivityError,
 };
 use anyhow::anyhow;
-use std::time::SystemTime;
 use std::{
     collections::HashMap,
     convert::TryFrom,
     fmt::{Display, Formatter},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use temporal_sdk_core_protos::{
     coresdk::{

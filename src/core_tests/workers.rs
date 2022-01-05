@@ -1,11 +1,12 @@
 use crate::{
     pollers::{MockManualGateway, MockServerGatewayApis},
     test_help::{
-        build_fake_core, build_multihist_mock_sg, canned_histories, hist_to_poll_resp, mock_core,
-        mock_core_with_opts_no_workers, mock_manual_poller, register_mock_workers,
-        single_hist_mock_sg, FakeWfResponses, MockWorker, MocksHolder, ResponseType, TEST_Q,
+        build_fake_core, build_mock_pollers, build_multihist_mock_sg, canned_histories,
+        hist_to_poll_resp, mock_core, mock_core_with_opts_no_workers, mock_manual_poller,
+        register_mock_workers, single_hist_mock_sg, FakeWfResponses, MockPollCfg, MockWorker,
+        MocksHolder, ResponseType, TEST_Q,
     },
-    Core, CoreInitOptionsBuilder, CoreSDK, PollWfError, WorkerConfigBuilder,
+    Core, CoreInitOptionsBuilder, CoreSDK, PollActivityError, PollWfError, WorkerConfigBuilder,
 };
 use futures::FutureExt;
 use rstest::{fixture, rstest};
@@ -22,7 +23,7 @@ use temporal_sdk_core_protos::{
     temporal::api::workflowservice::v1::RespondWorkflowTaskCompletedResponse,
 };
 use test_utils::start_timer_cmd;
-use tokio::sync::watch;
+use tokio::sync::{watch, Barrier};
 
 #[tokio::test]
 async fn multi_workers() {
@@ -332,4 +333,43 @@ async fn worker_shutdown_during_multiple_poll_doesnt_deadlock(
     };
     tokio::join!(pollfut, poll2fut, shutdownfut);
     core.shutdown().await;
+}
+
+#[rstest]
+#[tokio::test]
+async fn can_shutdown_local_act_only_worker_when_act_polling(
+    #[values(true, false)] whole_core_shutdown: bool,
+) {
+    let t = canned_histories::single_timer("1");
+    let mock = MockServerGatewayApis::new();
+    let mh = MockPollCfg::from_resp_batches("fakeid", t, [1], mock);
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(TEST_Q, |w| {
+        w.no_remote_activities = true;
+    });
+    let core = mock_core(mock);
+    let barrier = Barrier::new(2);
+
+    tokio::join!(
+        async {
+            barrier.wait().await;
+            if whole_core_shutdown {
+                core.shutdown().await;
+            } else {
+                core.shutdown_worker(TEST_Q).await;
+            }
+        },
+        async {
+            let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
+            // Complete so there's no outstanding WFT and shutdown can finish
+            core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, res.run_id))
+                .await
+                .unwrap();
+            barrier.wait().await;
+            assert_matches!(
+                core.poll_activity_task(TEST_Q).await.unwrap_err(),
+                PollActivityError::ShutDown
+            );
+        }
+    );
 }

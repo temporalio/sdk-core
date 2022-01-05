@@ -291,7 +291,6 @@ async fn local_act_retry_long_backoff_uses_timer() {
         mock,
     );
     let mut mock = build_mock_pollers(mh);
-    // TODO: Probably test w/o cache too -
     mock.worker_cfg(TEST_Q, |w| w.max_cached_workflows = 1);
     let core = mock_core(mock);
     let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
