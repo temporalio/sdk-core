@@ -223,8 +223,8 @@ struct CoreSDK {
     server_gateway: Arc<GatewayRef>,
     /// Controls access to workers
     workers: WorkerDispatcher,
-    /// Has shutdown been called?
-    shutdown_requested: AtomicBool,
+    /// Has shutdown been called and all workers drained of tasks?
+    whole_core_shutdown: AtomicBool,
     /// Top-level metrics context
     metrics: MetricsContext,
 }
@@ -261,14 +261,17 @@ impl Core for CoreSDK {
         &self,
         task_queue: &str,
     ) -> Result<ActivityTask, PollActivityError> {
-        let worker = self.worker(task_queue)?;
         loop {
-            if self.shutdown_requested.load(Ordering::Relaxed) {
+            if self.whole_core_shutdown.load(Ordering::Relaxed) {
                 return Err(PollActivityError::ShutDown);
             }
+            let worker = self.worker(task_queue)?;
             match worker.activity_poll().await.transpose() {
                 Some(r) => break r,
-                None => continue,
+                None => {
+                    tokio::task::yield_now().await;
+                    continue;
+                }
             }
         }
     }
@@ -319,8 +322,8 @@ impl Core for CoreSDK {
     }
 
     async fn shutdown(&self) {
-        self.shutdown_requested.store(true, Ordering::SeqCst);
         self.workers.shutdown_all().await;
+        self.whole_core_shutdown.store(true, Ordering::Relaxed);
     }
 
     async fn shutdown_worker(&self, task_queue: &str) {
@@ -346,7 +349,7 @@ impl CoreSDK {
         Self {
             workers,
             init_options,
-            shutdown_requested: AtomicBool::new(false),
+            whole_core_shutdown: AtomicBool::new(false),
             metrics: MetricsContext::top_level(sg.options.namespace.clone()),
             server_gateway: Arc::new(sg),
         }
@@ -390,7 +393,7 @@ impl CoreSDK {
 
     fn worker(&self, tq: &str) -> Result<impl Deref<Target = Worker>, WorkerLookupErr> {
         let worker = self.workers.get(tq);
-        if worker.is_err() && self.shutdown_requested.load(Ordering::Relaxed) {
+        if worker.is_err() && self.whole_core_shutdown.load(Ordering::Relaxed) {
             return Err(WorkerLookupErr::Shutdown(tq.to_owned()));
         }
         worker

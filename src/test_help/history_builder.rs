@@ -270,6 +270,7 @@ impl TestHistoryBuilder {
                     activity_type: "some_act_type".to_string(),
                     complete_time,
                     backoff: None,
+                    original_schedule_time: None,
                 },
                 payload,
             ),

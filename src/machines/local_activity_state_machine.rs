@@ -23,7 +23,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         command::v1::{Command, RecordMarkerCommandAttributes},
-        enums::v1::{CommandType, EventType},
+        enums::v1::{CommandType, EventType, TimeoutType},
         failure::v1::failure::FailureInfo,
         history::v1::HistoryEvent,
     },
@@ -98,17 +98,22 @@ pub(super) struct ResolveDat {
     pub(super) complete_time: Option<SystemTime>,
     pub(super) attempt: u32,
     pub(super) backoff: Option<prost_types::Duration>,
+    pub(super) original_schedule_time: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum LocalActivityExecutionResult {
     Completed(Success),
     Failed(ActFail),
+    TimedOut(ActFail),
     Cancelled(ActCancel),
 }
 impl LocalActivityExecutionResult {
     pub(crate) fn empty_cancel() -> Self {
         Self::Cancelled(Cancellation::from_details(None))
+    }
+    pub(crate) fn timeout(tt: TimeoutType) -> Self {
+        Self::TimedOut(ActFail::timeout(tt))
     }
 }
 
@@ -134,6 +139,7 @@ impl From<CompleteLocalActivityData> for ResolveDat {
             complete_time: d.marker_dat.complete_time.try_into_or_none(),
             attempt: d.marker_dat.attempt,
             backoff: d.marker_dat.backoff,
+            original_schedule_time: d.marker_dat.original_schedule_time.try_into_or_none(),
         }
     }
 }
@@ -162,8 +168,6 @@ pub(super) fn new_local_activity(
         }
         Executing {}.into()
     };
-
-    // TODO: Validate timeouts are set here
 
     let mut machine = LocalActivityMachine {
         state: initial_state,
@@ -243,12 +247,14 @@ impl LocalActivityMachine {
         runtime: Duration,
         attempt: u32,
         backoff: Option<prost_types::Duration>,
+        original_schedule_time: Option<SystemTime>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         self.try_resolve_with_dat(ResolveDat {
             result,
             complete_time: self.shared_state.wf_time_when_started.map(|t| t + runtime),
             attempt,
             backoff,
+            original_schedule_time,
         })
     }
     /// Attempt to resolve the local activity with already known data, ex pre-resolved data
@@ -293,6 +299,7 @@ impl SharedState {
             complete_time: None,
             attempt: self.attrs.attempt,
             backoff: None,
+            original_schedule_time: self.attrs.original_schedule_time,
         }
     }
 }
@@ -419,6 +426,7 @@ impl RequestSent {
         let result_type = match &dat.result {
             LocalActivityExecutionResult::Completed(_) => ResultType::Completed,
             LocalActivityExecutionResult::Failed(_) => ResultType::Failed,
+            LocalActivityExecutionResult::TimedOut(_) => ResultType::Failed,
             LocalActivityExecutionResult::Cancelled { .. } => ResultType::Cancelled,
         };
         let new_state = MarkerCommandCreated { result_type };
@@ -512,9 +520,17 @@ impl WaitingMarkerEvent {
     }
     pub(super) fn on_started_non_replay_wft(
         self,
-        dat: SharedState,
+        mut dat: SharedState,
     ) -> LocalActivityMachineTransition<RequestSent> {
-        TransitionResult::commands([LocalActivityCommand::RequestActivityExecution(dat.attrs)])
+        // We aren't really "replaying" anymore for our purposes, and want to record the marker.
+        dat.replaying_when_invoked = false;
+        TransitionResult::ok_shared(
+            [LocalActivityCommand::RequestActivityExecution(
+                dat.attrs.clone(),
+            )],
+            RequestSent::default(),
+            dat,
+        )
     }
 
     fn on_cancel_requested(self) -> LocalActivityMachineTransition<WaitingMarkerEventCancelled> {
@@ -610,12 +626,13 @@ impl WFMachinesAdapter for LocalActivityMachine {
                 complete_time,
                 attempt,
                 backoff,
+                original_schedule_time,
             }) => {
                 let mut maybe_ok_result = None;
                 let mut maybe_failure = None;
                 // Only issue record marker commands if we weren't replaying
                 let record_marker = !self.shared_state.replaying_when_invoked;
-                let mut did_cancel = false;
+                let mut will_not_run_again = false;
                 match result.clone() {
                     LocalActivityExecutionResult::Completed(suc) => {
                         maybe_ok_result = suc.result;
@@ -623,9 +640,10 @@ impl WFMachinesAdapter for LocalActivityMachine {
                     LocalActivityExecutionResult::Failed(fail) => {
                         maybe_failure = fail.failure;
                     }
-                    LocalActivityExecutionResult::Cancelled(cancel) => {
-                        did_cancel = true;
-                        maybe_failure = cancel.failure;
+                    LocalActivityExecutionResult::Cancelled(ActCancel { failure })
+                    | LocalActivityExecutionResult::TimedOut(ActFail { failure }) => {
+                        will_not_run_again = true;
+                        maybe_failure = failure;
                     }
                 };
                 let resolution = if let Some(b) = backoff.as_ref() {
@@ -634,6 +652,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
                             DoBackoff {
                                 attempt: attempt + 1,
                                 backoff_duration: Some(b.clone()),
+                                original_schedule_time: original_schedule_time.map(Into::into),
                             }
                             .into(),
                         ),
@@ -654,7 +673,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
 
                 // Cancel-resolves of abandoned activities must be explicitly dropped from tracking
                 // to avoid unnecessary WFT heartbeating.
-                if did_cancel
+                if will_not_run_again
                     && matches!(
                         self.shared_state.attrs.cancellation_type,
                         ActivityCancellationType::Abandon
@@ -676,6 +695,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
                                 activity_type: self.shared_state.attrs.activity_type.clone(),
                                 complete_time: complete_time.map(Into::into),
                                 backoff,
+                                original_schedule_time: original_schedule_time.map(Into::into),
                             },
                             maybe_ok_result,
                         ),
@@ -764,9 +784,11 @@ impl From<LocalActivityExecutionResult> for ActivityResolution {
             LocalActivityExecutionResult::Completed(c) => ActivityResolution {
                 status: Some(c.into()),
             },
-            LocalActivityExecutionResult::Failed(f) => ActivityResolution {
-                status: Some(f.into()),
-            },
+            LocalActivityExecutionResult::Failed(f) | LocalActivityExecutionResult::TimedOut(f) => {
+                ActivityResolution {
+                    status: Some(f.into()),
+                }
+            }
             LocalActivityExecutionResult::Cancelled(cancel) => ActivityResolution {
                 status: Some(cancel.into()),
             },

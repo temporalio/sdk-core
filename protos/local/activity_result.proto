@@ -5,6 +5,7 @@ package coresdk.activity_result;
 import "common.proto";
 import "temporal/api/failure/v1/message.proto";
 import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
 
 /**
  * Used to report activity completions to core
@@ -70,5 +71,8 @@ message DoBackoff {
     // on attempt 4 and we told lang to back off with a timer, this number will be 5.
     uint32 attempt = 1;
     google.protobuf.Duration backoff_duration = 2;
+    // The time the first attempt of this local activity was scheduled. Must be passed with attempt
+    // to the retry LA.
+    google.protobuf.Timestamp original_schedule_time = 3;
 }
 

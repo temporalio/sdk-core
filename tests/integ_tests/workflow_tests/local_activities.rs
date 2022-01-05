@@ -76,7 +76,8 @@ pub async fn local_act_then_timer_then_wait(ctx: WfContext) -> WorkflowResult<()
         ..Default::default()
     });
     ctx.timer(Duration::from_secs(1)).await;
-    la.await;
+    let res = la.await;
+    assert!(res.completed_ok());
     Ok(().into())
 }
 
@@ -320,4 +321,172 @@ async fn cancel_after_act_starts(
         .run_until_done_shutdown_hook(|| manual_cancel.cancel())
         .await
         .unwrap();
+}
+
+#[rstest::rstest]
+#[case::schedule(true)]
+#[case::start(false)]
+#[tokio::test]
+async fn x_to_close_timeout(#[case] is_schedule: bool) {
+    let wf_name = format!(
+        "{}_to_close_timeout",
+        if is_schedule { "schedule" } else { "start" }
+    );
+    let mut starter = CoreWfStarter::new(&wf_name);
+    let mut worker = starter.worker().await;
+    let (sched, start) = if is_schedule {
+        (Some(Duration::from_secs(2)), None)
+    } else {
+        (None, Some(Duration::from_secs(2)))
+    };
+
+    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+        let res = ctx
+            .local_activity(LocalActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi".as_json_payload().expect("serializes fine"),
+                retry_policy: RetryPolicy {
+                    initial_interval: Some(Duration::from_micros(15).into()),
+                    backoff_coefficient: 1_000.,
+                    maximum_interval: Some(Duration::from_millis(1500).into()),
+                    maximum_attempts: 4,
+                    non_retryable_error_types: vec![],
+                },
+                timer_backoff_threshold: Some(Duration::from_secs(1)),
+                schedule_to_close_timeout: sched,
+                start_to_close_timeout: start,
+                ..Default::default()
+            })
+            .await;
+        assert!(res.timed_out());
+        Ok(().into())
+    });
+    worker.register_activity("echo", |_: String| async {
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(100)) => {},
+            _ = act_cancelled() => {
+                return Err(anyhow!(ActivityCancelledError::default()))
+            }
+        };
+        Ok(())
+    });
+
+    worker
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[rstest::rstest]
+#[case::cached(true)]
+#[case::not_cached(false)]
+#[tokio::test]
+async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
+    let wf_name = format!(
+        "schedule_to_close_timeout_across_timer_backoff_{}",
+        if cached { "cached" } else { "not_cached" }
+    );
+    let mut starter = CoreWfStarter::new(&wf_name);
+    if !cached {
+        starter.max_cached_workflows(0);
+    }
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        let res = ctx
+            .local_activity(LocalActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi".as_json_payload().expect("serializes fine"),
+                retry_policy: RetryPolicy {
+                    initial_interval: Some(Duration::from_micros(15).into()),
+                    backoff_coefficient: 1_000.,
+                    maximum_interval: Some(Duration::from_millis(1500).into()),
+                    maximum_attempts: 40,
+                    non_retryable_error_types: vec![],
+                },
+                timer_backoff_threshold: Some(Duration::from_secs(1)),
+                schedule_to_close_timeout: Some(Duration::from_secs(3)),
+                ..Default::default()
+            })
+            .await;
+        assert!(res.timed_out());
+        Ok(().into())
+    });
+    worker.register_activity("echo", |_: String| async {
+        Result::<(), _>::Err(anyhow!("Oh no I failed!"))
+    });
+
+    worker
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn eviction_wont_make_local_act_get_dropped() {
+    let wf_name = "eviction_wont_make_local_act_get_dropped";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.max_cached_workflows(0);
+    starter.wft_timeout(Duration::from_secs(1));
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
+    worker.register_activity("echo_activity", |str: String| async {
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        Ok(str)
+    });
+
+    worker
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn timer_backoff_concurrent_with_non_timer_backoff() {
+    let wf_name = "timer_backoff_concurrent_with_non_timer_backoff";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        let r1 = ctx.local_activity(LocalActivityOptions {
+            activity_type: "echo".to_string(),
+            input: "hi".as_json_payload().expect("serializes fine"),
+            retry_policy: RetryPolicy {
+                initial_interval: Some(Duration::from_micros(15).into()),
+                backoff_coefficient: 1_000.,
+                maximum_interval: Some(Duration::from_millis(1500).into()),
+                maximum_attempts: 4,
+                non_retryable_error_types: vec![],
+            },
+            timer_backoff_threshold: Some(Duration::from_secs(1)),
+            ..Default::default()
+        });
+        let r2 = ctx.local_activity(LocalActivityOptions {
+            activity_type: "echo".to_string(),
+            input: "hi".as_json_payload().expect("serializes fine"),
+            retry_policy: RetryPolicy {
+                initial_interval: Some(Duration::from_millis(15).into()),
+                backoff_coefficient: 10.,
+                maximum_interval: Some(Duration::from_millis(1500).into()),
+                maximum_attempts: 4,
+                non_retryable_error_types: vec![],
+            },
+            timer_backoff_threshold: Some(Duration::from_secs(10)),
+            ..Default::default()
+        });
+        let (r1, r2) = tokio::join!(r1, r2);
+        assert!(r1.failed());
+        assert!(r2.failed());
+        Ok(().into())
+    });
+    worker.register_activity("echo", |_: String| async {
+        Result::<(), _>::Err(anyhow!("Oh no I failed!"))
+    });
+
+    worker
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
 }

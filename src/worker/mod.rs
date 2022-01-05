@@ -21,7 +21,7 @@ use crate::{
         activity_poller, workflow_poller, workflow_sticky_poller, MetricsContext,
     },
     worker::{
-        activities::{LACompleteAction, LocalActivityManager},
+        activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
         wft_delivery::WFTSource,
     },
     workflow::{
@@ -35,7 +35,7 @@ use crate::{
 };
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
 use futures::{Future, TryFutureExt};
-use std::{convert::TryInto, sync::Arc};
+use std::{convert::TryInto, future, sync::Arc};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::activity_execution_result,
@@ -210,7 +210,7 @@ impl Worker {
         self.wf_task_source.stop_pollers();
         // Next we need to wait for all local activities to finish so no more workflow task
         // heartbeats will be generated
-        self.local_act_mgr.wait_all_finished().await;
+        self.local_act_mgr.shutdown_and_wait_all_finished().await;
         // Then we need to wait for any tasks generated as a result of completing WFTs, which
         // heartbeating generates
         self.wf_task_source
@@ -246,25 +246,29 @@ impl Worker {
     /// Returns `Ok(None)` in the event of a poll timeout or if the polling loop should otherwise
     /// be restarted
     pub(crate) async fn activity_poll(&self) -> Result<Option<ActivityTask>, PollActivityError> {
-        if let Some(ref act_mgr) = self.at_task_mgr {
-            tokio::select! {
-                biased;
-
-                r = self.local_act_mgr.next_pending() => Ok(r),
-                r = act_mgr.poll() => r,
-                _ = self.shutdown_notifier() => {
-                    Err(PollActivityError::ShutDown)
-                }
+        let act_mgr_poll = async {
+            if let Some(ref act_mgr) = self.at_task_mgr {
+                act_mgr.poll().await
+            } else {
+                future::pending().await
             }
-        } else {
-            tokio::select! {
-                biased;
+        };
 
-                r = self.local_act_mgr.next_pending() => Ok(r),
-                _ = self.shutdown_notifier() => {
-                    Err(PollActivityError::ShutDown)
+        tokio::select! {
+            biased;
+
+            r = self.local_act_mgr.next_pending() => {
+                match r {
+                    Some(DispatchOrTimeoutLA::Dispatch(r)) => Ok(Some(r)),
+                    Some(DispatchOrTimeoutLA::Timeout { run_id, resolution, task }) => {
+                        self.notify_local_result(
+                            &run_id, LocalResolution::LocalActivity(resolution)).await;
+                        Ok(task)
+                    },
+                    None => Ok(None)
                 }
-            }
+            },
+            r = act_mgr_poll => r,
         }
     }
 
@@ -287,8 +291,7 @@ impl Worker {
             let as_la_res: LocalActivityExecutionResult = status.try_into()?;
             match self.local_act_mgr.complete(&task_token, &as_la_res) {
                 LACompleteAction::Report(info) => {
-                    self.complete_local_act(&task_token, as_la_res, info, None)
-                        .await
+                    self.complete_local_act(as_la_res, info, None).await
                 }
                 LACompleteAction::LangDoesTimerBackoff(backoff, info) => {
                     // This la needs to write a failure marker, and then we will tell lang how
@@ -296,14 +299,14 @@ impl Worker {
                     // no other situations where core generates "internal" commands so it is much
                     // simpler for lang to reply with the timer / next LA command than to do it
                     // internally. Plus, this backoff hack we'd like to eliminate eventually.
-                    self.complete_local_act(&task_token, as_la_res, info, Some(backoff))
+                    self.complete_local_act(as_la_res, info, Some(backoff))
                         .await
                 }
                 LACompleteAction::WillBeRetried => {
                     // Nothing to do here
                 }
                 LACompleteAction::Untracked => {
-                    error!("Tried to complete untracked local activity {}", task_token);
+                    warn!("Tried to complete untracked local activity {}", task_token);
                 }
             }
             return Ok(());
@@ -587,6 +590,11 @@ impl Worker {
                     force_create_new_workflow_task: force_new_wft,
                 };
                 let sticky_attrs = self.get_sticky_attrs();
+                // Do not return new WFT if we would not cache, because returned new WFTs are always
+                // partial.
+                if sticky_attrs.is_none() {
+                    completion.return_new_workflow_task = false;
+                }
                 completion.sticky_attributes = sticky_attrs;
 
                 self.handle_wft_reporting_errs(run_id, || async {
@@ -733,33 +741,31 @@ impl Worker {
 
     async fn complete_local_act(
         &self,
-        task_token: &TaskToken,
         la_res: LocalActivityExecutionResult,
         info: LocalInFlightActInfo,
         backoff: Option<prost_types::Duration>,
     ) {
-        if let Err(e) = self
-            .wft_manager
-            .notify_of_local_result(
-                &info.la_info.workflow_exec_info.run_id,
-                LocalResolution::LocalActivity(LocalActivityResolution {
-                    seq: info.la_info.schedule_cmd.seq,
-                    result: la_res,
-                    runtime: info.dispatch_time.elapsed(),
-                    attempt: info.attempt,
-                    backoff,
-                }),
-            )
-            .await
-        {
+        self.notify_local_result(
+            &info.la_info.workflow_exec_info.run_id,
+            LocalResolution::LocalActivity(LocalActivityResolution {
+                seq: info.la_info.schedule_cmd.seq,
+                result: la_res,
+                runtime: info.dispatch_time.elapsed(),
+                attempt: info.attempt,
+                backoff,
+                original_schedule_time: Some(info.la_info.schedule_time),
+            }),
+        )
+        .await
+    }
+
+    async fn notify_local_result(&self, run_id: &str, res: LocalResolution) {
+        if let Err(e) = self.wft_manager.notify_of_local_result(run_id, res).await {
             error!(
-                "Problem completing local activity {}: {:?} -- will evict the workflow",
-                task_token, e
+                "Problem with local resolution on run {}: {:?} -- will evict the workflow",
+                run_id, e
             );
-            self.request_wf_eviction(
-                &info.la_info.workflow_exec_info.run_id,
-                "Issue while completing local activity",
-            );
+            self.request_wf_eviction(run_id, "Issue while processing local resolution");
         }
     }
 
@@ -777,15 +783,6 @@ impl Worker {
                     self.config.sticky_queue_schedule_to_start_timeout.into(),
                 ),
             })
-    }
-
-    /// A future that resolves to true the shutdown flag has been set to true, false is simply
-    /// a signal that a poll loop should be restarted. Only meant to be called from polling funcs.
-    async fn shutdown_notifier(&self) {
-        if *self.shutdown_requested.borrow() {
-            return;
-        }
-        let _ = self.shutdown_requested.clone().changed().await;
     }
 
     /// Returns true if shutdown has been requested and there are no more outstanding WFTs

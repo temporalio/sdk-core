@@ -12,7 +12,7 @@ use std::{
     collections::HashMap,
     convert::TryFrom,
     fmt::{Display, Formatter},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -257,6 +257,14 @@ impl TryFrom<activity_execution_result::Status> for LocalActivityExecutionResult
     fn try_from(s: activity_execution_result::Status) -> Result<Self, Self::Error> {
         match s {
             Status::Completed(c) => Ok(LocalActivityExecutionResult::Completed(c)),
+            Status::Failed(f)
+                if f.failure
+                    .as_ref()
+                    .map(|fail| fail.is_timeout())
+                    .unwrap_or_default() =>
+            {
+                Ok(LocalActivityExecutionResult::TimedOut(f))
+            }
             Status::Failed(f) => Ok(LocalActivityExecutionResult::Failed(f)),
             Status::Cancelled(cancel) => Ok(LocalActivityExecutionResult::Cancelled(cancel)),
             Status::WillCompleteAsync(_) => {
@@ -293,6 +301,7 @@ pub struct ValidScheduleLA {
     pub activity_id: String,
     pub activity_type: String,
     pub attempt: u32,
+    pub original_schedule_time: Option<SystemTime>,
     pub header_fields: HashMap<String, SDKPayload>,
     pub arguments: Vec<SDKPayload>,
     pub schedule_to_start_timeout: Option<Duration>,
@@ -302,11 +311,23 @@ pub struct ValidScheduleLA {
     pub cancellation_type: ActivityCancellationType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum LACloseTimeouts {
     ScheduleOnly(Duration),
     StartOnly(Duration),
     Both { sched: Duration, start: Duration },
+}
+
+impl LACloseTimeouts {
+    /// Splits into (schedule_to_close, start_to_close) options, one or both of which is guaranteed
+    /// to be populated
+    pub fn into_sched_and_start(self) -> (Option<Duration>, Option<Duration>) {
+        match self {
+            LACloseTimeouts::ScheduleOnly(x) => (Some(x), None),
+            LACloseTimeouts::StartOnly(x) => (None, Some(x)),
+            LACloseTimeouts::Both { sched, start } => (Some(sched), Some(start)),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -321,6 +342,13 @@ impl ValidScheduleLA {
         v: ScheduleLocalActivity,
         wf_exe_timeout: Option<Duration>,
     ) -> Result<Self, anyhow::Error> {
+        let original_schedule_time = v
+            .original_schedule_time
+            .map(|x| {
+                x.try_into()
+                    .map_err(|_| anyhow!("Could not convert original_schedule_time"))
+            })
+            .transpose()?;
         let sched_to_close = v
             .schedule_to_close_timeout
             .map(|x| {
@@ -330,6 +358,21 @@ impl ValidScheduleLA {
             .transpose()?
             // Default to execution timeout if unset
             .or(wf_exe_timeout);
+        let mut schedule_to_start_timeout = v
+            .schedule_to_start_timeout
+            .map(|x| {
+                x.try_into()
+                    .map_err(|_| anyhow!("Could not convert schedule_to_start_timeout"))
+            })
+            .transpose()?;
+        // Clamp schedule-to-start if larger than schedule-to-close
+        if let Some((sched_to_start, sched_to_close)) =
+            schedule_to_start_timeout.as_mut().zip(sched_to_close)
+        {
+            if *sched_to_start > sched_to_close {
+                *sched_to_start = sched_to_close;
+            }
+        }
         let close_timeouts = match (
             sched_to_close,
             v.start_to_close_timeout
@@ -341,20 +384,19 @@ impl ValidScheduleLA {
         ) {
             (Some(sch), None) => LACloseTimeouts::ScheduleOnly(sch),
             (None, Some(start)) => LACloseTimeouts::StartOnly(start),
-            (Some(sched), Some(start)) => LACloseTimeouts::Both { sched, start },
+            (Some(sched), Some(mut start)) => {
+                // Clamp start-to-close if larger than schedule-to-close
+                if start > sched {
+                    start = sched;
+                }
+                LACloseTimeouts::Both { sched, start }
+            }
             (None, None) => {
                 return Err(anyhow!(
                     "One of schedule_to_close or start_to_close timeouts must be set"
                 ))
             }
         };
-        let schedule_to_start_timeout = v
-            .schedule_to_start_timeout
-            .map(|x| {
-                x.try_into()
-                    .map_err(|_| anyhow!("Could not convert schedule_to_start_timeout"))
-            })
-            .transpose()?;
         let retry_policy = v
             .retry_policy
             .ok_or(anyhow!("Retry policy must be defined!"))?;
@@ -370,6 +412,7 @@ impl ValidScheduleLA {
             activity_id: v.activity_id,
             activity_type: v.activity_type,
             attempt: v.attempt,
+            original_schedule_time,
             header_fields: v.header_fields,
             arguments: v.arguments,
             schedule_to_start_timeout,

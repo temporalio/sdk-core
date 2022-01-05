@@ -1,8 +1,6 @@
 use crate::{
-    machines::LocalActivityExecutionResult,
-    protosext::{LACloseTimeouts, ValidScheduleLA},
-    retry_logic::RetryPolicyExt,
-    task_token::TaskToken,
+    machines::LocalActivityExecutionResult, protosext::ValidScheduleLA,
+    retry_logic::RetryPolicyExt, task_token::TaskToken,
 };
 use parking_lot::Mutex;
 use std::{
@@ -10,10 +8,13 @@ use std::{
     fmt::{Debug, Formatter},
     time::{Duration, Instant, SystemTime},
 };
-use temporal_sdk_core_protos::coresdk::{
-    activity_result::Cancellation,
-    activity_task::{activity_task, ActivityCancelReason, ActivityTask, Cancel, Start},
-    common::WorkflowExecution,
+use temporal_sdk_core_protos::{
+    coresdk::{
+        activity_result::Cancellation,
+        activity_task::{activity_task, ActivityCancelReason, ActivityTask, Cancel, Start},
+        common::WorkflowExecution,
+    },
+    temporal::api::enums::v1::TimeoutType,
 };
 use tokio::{
     sync::{
@@ -21,7 +22,22 @@ use tokio::{
         Notify, Semaphore,
     },
     task::JoinHandle,
+    time::sleep,
 };
+use tokio_util::sync::CancellationToken;
+
+#[allow(clippy::large_enum_variant)] // Timeouts are relatively rare
+#[derive(Debug)]
+pub(crate) enum DispatchOrTimeoutLA {
+    /// Send the activity task to lang
+    Dispatch(ActivityTask),
+    /// Notify the machines (and maybe lang) that this LA has timed out
+    Timeout {
+        run_id: String,
+        resolution: LocalActivityResolution,
+        task: Option<ActivityTask>,
+    },
+}
 
 #[derive(Debug)]
 pub(crate) struct LocalInFlightActInfo {
@@ -30,13 +46,14 @@ pub(crate) struct LocalInFlightActInfo {
     pub attempt: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct LocalActivityResolution {
     pub seq: u32,
     pub result: LocalActivityExecutionResult,
     pub runtime: Duration,
     pub attempt: u32,
     pub backoff: Option<prost_types::Duration>,
+    pub original_schedule_time: Option<SystemTime>,
 }
 
 #[derive(Clone)]
@@ -69,15 +86,6 @@ pub(crate) struct ExecutingLAId {
     pub seq_num: u32,
 }
 
-#[derive(Debug)]
-enum NewOrRetry {
-    New(NewLocalAct),
-    Retry {
-        in_flight: NewLocalAct,
-        attempt: u32,
-    },
-}
-
 pub(crate) struct LocalActivityManager {
     /// Just so we can provide activity tasks the same namespace as the worker
     namespace: String,
@@ -86,11 +94,12 @@ pub(crate) struct LocalActivityManager {
     /// Sink for new activity execution requests
     act_req_tx: UnboundedSender<NewOrRetry>,
     /// Cancels need a different queue since they should be taken first, and don't take a permit
-    cancels_req_tx: UnboundedSender<ActivityTask>,
+    cancels_req_tx: UnboundedSender<CancelOrTimeout>,
     /// Wakes every time a complete is processed
     complete_notify: Notify,
 
     rcvs: tokio::sync::Mutex<RcvChans>,
+    shutdown_complete_tok: CancellationToken,
     dat: Mutex<LAMData>,
 }
 
@@ -100,20 +109,23 @@ struct LAMData {
     id_to_tt: HashMap<ExecutingLAId, TaskToken>,
     /// Tasks for activities which are currently backing off. May be used to cancel retrying them.
     backing_off_tasks: HashMap<ExecutingLAId, JoinHandle<()>>,
+    /// Tasks for timing out activities which are currently in the queue or dispatched.
+    timeout_tasks: HashMap<ExecutingLAId, TimeoutBag>,
     next_tt_num: u32,
 }
 
-struct RcvChans {
-    /// Activities that need to be executed by lang
-    act_req_rx: UnboundedReceiver<NewOrRetry>,
-    /// Cancels to send to lang or apply internally
-    cancels_req_rx: UnboundedReceiver<ActivityTask>,
+impl LAMData {
+    fn gen_next_token(&mut self) -> TaskToken {
+        self.next_tt_num += 1;
+        TaskToken::new_local_activity_token(self.next_tt_num.to_le_bytes())
+    }
 }
 
 impl LocalActivityManager {
     pub(crate) fn new(max_concurrent: usize, namespace: String) -> Self {
         let (act_req_tx, act_req_rx) = unbounded_channel();
         let (cancels_req_tx, cancels_req_rx) = unbounded_channel();
+        let shutdown_complete_tok = CancellationToken::new();
         Self {
             namespace,
             semaphore: Semaphore::new(max_concurrent),
@@ -123,11 +135,14 @@ impl LocalActivityManager {
             rcvs: tokio::sync::Mutex::new(RcvChans {
                 act_req_rx,
                 cancels_req_rx,
+                shutdown: shutdown_complete_tok.clone(),
             }),
+            shutdown_complete_tok,
             dat: Mutex::new(LAMData {
                 outstanding_activity_tasks: Default::default(),
                 id_to_tt: Default::default(),
                 backing_off_tasks: Default::default(),
+                timeout_tasks: Default::default(),
                 next_tt_num: 0,
             }),
         }
@@ -151,9 +166,34 @@ impl LocalActivityManager {
         for req in reqs {
             match req {
                 LocalActRequest::New(act) => {
-                    self.act_req_tx
-                        .send(NewOrRetry::New(act))
-                        .expect("Receive half of LA request channel cannot be dropped");
+                    let id = ExecutingLAId {
+                        run_id: act.workflow_exec_info.run_id.clone(),
+                        seq_num: act.schedule_cmd.seq,
+                    };
+                    let mut dlock = self.dat.lock();
+                    if dlock.id_to_tt.contains_key(&id) {
+                        // Do not queue local activities which are in fact already executing.
+                        // This can happen during evictions.
+                        debug!("Tried to queue already-executing local activity {:?}", &id);
+                        continue;
+                    }
+                    // Pre-generate and insert the task token now, before we may or may not dispatch
+                    // the activity, so we can enforce idempotency. Prevents two identical LAs
+                    // ending up in the queue at once.
+                    let tt = dlock.gen_next_token();
+                    dlock.id_to_tt.insert(id.clone(), tt);
+
+                    // Set up timeouts for the new activity
+                    match TimeoutBag::new(&act, self.cancels_req_tx.clone()) {
+                        Ok(tb) => {
+                            dlock.timeout_tasks.insert(id, tb);
+
+                            self.act_req_tx
+                                .send(NewOrRetry::New(act))
+                                .expect("Receive half of LA request channel cannot be dropped");
+                        }
+                        Err(res) => immediate_resolutions.push(res),
+                    }
                 }
                 LocalActRequest::Cancel(id) => {
                     let mut dlock = self.dat.lock();
@@ -170,23 +210,19 @@ impl LocalActivityManager {
                             runtime: Duration::from_secs(0),
                             attempt: 0,
                             backoff: None,
+                            original_schedule_time: None,
                         });
                         continue;
                     }
 
                     if let Some(tt) = dlock.id_to_tt.get(&id) {
-                        let info = dlock
-                            .outstanding_activity_tasks
-                            .get(tt)
-                            .expect("Maps are in sync");
                         self.cancels_req_tx
-                            .send(ActivityTask {
+                            .send(CancelOrTimeout::Cancel(ActivityTask {
                                 task_token: tt.0.clone(),
-                                activity_id: info.la_info.schedule_cmd.activity_id.clone(),
                                 variant: Some(activity_task::Variant::Cancel(Cancel {
                                     reason: ActivityCancelReason::Cancelled as i32,
                                 })),
-                            })
+                            }))
                             .expect("Receive half of LA cancel channel cannot be dropped");
                     }
                 }
@@ -195,12 +231,53 @@ impl LocalActivityManager {
         immediate_resolutions
     }
 
-    pub(crate) async fn next_pending(&self) -> Option<ActivityTask> {
-        let new_or_retry = match self.rcvs.lock().await.next(&self.semaphore).await {
-            None => return None,
-            Some(NewOrCancel::Cancel(c)) => return Some(c),
-            Some(NewOrCancel::New(n)) => n,
+    /// Returns the next pending local-activity related action, or None if shutdown has initiated
+    /// and there are no more remaining actions to take.
+    pub(crate) async fn next_pending(&self) -> Option<DispatchOrTimeoutLA> {
+        let new_or_retry = match self.rcvs.lock().await.next(&self.semaphore).await? {
+            NewOrCancel::Cancel(c) => {
+                return match c {
+                    CancelOrTimeout::Cancel(c) => Some(DispatchOrTimeoutLA::Dispatch(c)),
+                    CancelOrTimeout::Timeout {
+                        run_id,
+                        resolution,
+                        dispatch_cancel,
+                    } => {
+                        let task = if dispatch_cancel {
+                            let tt = self
+                                .dat
+                                .lock()
+                                .id_to_tt
+                                .get(&ExecutingLAId {
+                                    run_id: run_id.clone(),
+                                    seq_num: resolution.seq,
+                                })
+                                .map(Clone::clone);
+                            if let Some(task_token) = tt {
+                                self.complete(&task_token, &resolution.result);
+                                Some(ActivityTask {
+                                    task_token: task_token.0,
+                                    variant: Some(activity_task::Variant::Cancel(Cancel {
+                                        reason: ActivityCancelReason::TimedOut as i32,
+                                    })),
+                                })
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+                        Some(DispatchOrTimeoutLA::Timeout {
+                            run_id,
+                            resolution,
+                            task,
+                        })
+                    }
+                };
+            }
+            NewOrCancel::New(n) => n,
         };
+
         // It is important that there are no await points after receiving from the channel, as
         // it would mean dropping this future would cause us to drop the activity request.
         let (new_la, attempt) = match new_or_retry {
@@ -211,19 +288,42 @@ impl LocalActivityManager {
             NewOrRetry::Retry { in_flight, attempt } => (in_flight, attempt),
         };
         let orig = new_la.clone();
+        let id = ExecutingLAId {
+            run_id: new_la.workflow_exec_info.run_id.clone(),
+            seq_num: new_la.schedule_cmd.seq,
+        };
         let sa = new_la.schedule_cmd;
 
         let mut dat = self.dat.lock();
         // If this request originated from a local backoff task, clear the entry for it. We
         // don't await the handle because we know it must already be done, and there's no
         // meaningful value.
-        dat.backing_off_tasks.remove(&ExecutingLAId {
-            run_id: new_la.workflow_exec_info.run_id.clone(),
-            seq_num: sa.seq,
-        });
+        dat.backing_off_tasks.remove(&id);
 
-        dat.next_tt_num += 1;
-        let tt = TaskToken::new_local_activity_token(dat.next_tt_num.to_le_bytes());
+        // If this task sat in the queue for too long, return a timeout for it instead
+        if let Some(s2s) = sa.schedule_to_start_timeout.as_ref() {
+            let sat_for = new_la.schedule_time.elapsed().unwrap_or_default();
+            if sat_for > *s2s {
+                return Some(DispatchOrTimeoutLA::Timeout {
+                    run_id: new_la.workflow_exec_info.run_id,
+                    resolution: LocalActivityResolution {
+                        seq: sa.seq,
+                        result: LocalActivityExecutionResult::timeout(TimeoutType::ScheduleToStart),
+                        runtime: sat_for,
+                        attempt,
+                        backoff: None,
+                        original_schedule_time: Some(new_la.schedule_time),
+                    },
+                    task: None,
+                });
+            }
+        }
+
+        let tt = dat
+            .id_to_tt
+            .get(&id)
+            .expect("Task token must exist")
+            .clone();
         dat.outstanding_activity_tasks.insert(
             tt.clone(),
             LocalInFlightActInfo {
@@ -232,26 +332,18 @@ impl LocalActivityManager {
                 attempt,
             },
         );
-        dat.id_to_tt.insert(
-            ExecutingLAId {
-                run_id: new_la.workflow_exec_info.run_id.clone(),
-                seq_num: sa.seq,
-            },
-            tt.clone(),
-        );
+        if let Some(to) = dat.timeout_tasks.get_mut(&id) {
+            to.mark_started();
+        }
 
-        let (schedule_to_close, start_to_close) = match sa.close_timeouts {
-            LACloseTimeouts::StartOnly(x) => (None, Some(x)),
-            LACloseTimeouts::ScheduleOnly(x) => (Some(x), None),
-            LACloseTimeouts::Both { sched, start } => (Some(sched), Some(start)),
-        };
-        Some(ActivityTask {
+        let (schedule_to_close, start_to_close) = sa.close_timeouts.into_sched_and_start();
+        Some(DispatchOrTimeoutLA::Dispatch(ActivityTask {
             task_token: tt.0,
-            activity_id: sa.activity_id,
             variant: Some(activity_task::Variant::Start(Start {
                 workflow_namespace: self.namespace.clone(),
                 workflow_type: new_la.workflow_type,
                 workflow_execution: Some(new_la.workflow_exec_info),
+                activity_id: sa.activity_id,
                 activity_type: sa.activity_type,
                 header_fields: sa.header_fields,
                 input: sa.arguments,
@@ -266,7 +358,7 @@ impl LocalActivityManager {
                 retry_policy: Some(sa.retry_policy),
                 is_local: true,
             })),
-        })
+        }))
     }
 
     /// Mark a local activity as having completed (pass, fail, or cancelled)
@@ -286,7 +378,9 @@ impl LocalActivityManager {
 
             match status {
                 LocalActivityExecutionResult::Completed(_)
+                | LocalActivityExecutionResult::TimedOut(_)
                 | LocalActivityExecutionResult::Cancelled { .. } => {
+                    // Timeouts are included in this branch since they are not retried
                     self.complete_notify.notify_one();
                     LACompleteAction::Report(info)
                 }
@@ -315,6 +409,10 @@ impl LocalActivityManager {
                                 info,
                             );
                         }
+                        // Immediately create a new task token for the to-be-retried LA
+                        let tt = dlock.gen_next_token();
+                        dlock.id_to_tt.insert(exec_id.clone(), tt);
+
                         // Send the retry request after waiting the backoff duration
                         let send_chan = self.act_req_tx.clone();
                         let jh = tokio::spawn(async move {
@@ -340,10 +438,11 @@ impl LocalActivityManager {
         }
     }
 
-    pub(crate) async fn wait_all_finished(&self) {
+    pub(crate) async fn shutdown_and_wait_all_finished(&self) {
         while !self.dat.lock().outstanding_activity_tasks.is_empty() {
             self.complete_notify.notified().await;
         }
+        self.shutdown_complete_tok.cancel();
     }
 }
 
@@ -361,21 +460,142 @@ pub(crate) enum LACompleteAction {
     Untracked,
 }
 
+#[derive(Debug)]
+enum NewOrRetry {
+    New(NewLocalAct),
+    Retry {
+        in_flight: NewLocalAct,
+        attempt: u32,
+    },
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone)]
+enum CancelOrTimeout {
+    Cancel(ActivityTask),
+    Timeout {
+        run_id: String,
+        resolution: LocalActivityResolution,
+        dispatch_cancel: bool,
+    },
+}
+
 enum NewOrCancel {
     New(NewOrRetry),
-    Cancel(ActivityTask),
+    Cancel(CancelOrTimeout),
+}
+
+struct RcvChans {
+    /// Activities that need to be executed by lang
+    act_req_rx: UnboundedReceiver<NewOrRetry>,
+    /// Cancels to send to lang or apply internally
+    cancels_req_rx: UnboundedReceiver<CancelOrTimeout>,
+    shutdown: CancellationToken,
 }
 
 impl RcvChans {
     async fn next(&mut self, new_sem: &Semaphore) -> Option<NewOrCancel> {
         tokio::select! {
-            cancel = async { self.cancels_req_rx.recv().await } => { cancel.map(NewOrCancel::Cancel) }
+            cancel = async { self.cancels_req_rx.recv().await } => {
+                Some(NewOrCancel::Cancel(cancel.expect("Send halves of LA manager are not dropped")))
+            }
             maybe_new_or_retry = async {
                 // Wait for a permit to take a task and forget it. Permits are removed until a
                 // completion.
                 new_sem.acquire().await.expect("is never closed").forget();
                 self.act_req_rx.recv().await
-            } => maybe_new_or_retry.map(NewOrCancel::New)
+            } => Some(NewOrCancel::New(
+                maybe_new_or_retry.expect("Send halves of LA manager are not dropped")
+            )),
+            _ = self.shutdown.cancelled() => None
+        }
+    }
+}
+
+struct TimeoutBag {
+    sched_to_close_handle: JoinHandle<()>,
+    start_to_close_dur_and_dat: Option<(Duration, CancelOrTimeout)>,
+    start_to_close_handle: Option<JoinHandle<()>>,
+    cancel_chan: UnboundedSender<CancelOrTimeout>,
+}
+
+impl TimeoutBag {
+    /// Create new timeout tasks for the provided local activity. This must be called as soon
+    /// as request to schedule it arrives.
+    ///
+    /// Returns error in the event the activity is *already* timed out
+    fn new(
+        new_la: &NewLocalAct,
+        cancel_chan: UnboundedSender<CancelOrTimeout>,
+    ) -> Result<TimeoutBag, LocalActivityResolution> {
+        let (schedule_to_close, start_to_close) =
+            new_la.schedule_cmd.close_timeouts.into_sched_and_start();
+
+        let resolution = LocalActivityResolution {
+            seq: new_la.schedule_cmd.seq,
+            result: LocalActivityExecutionResult::timeout(TimeoutType::ScheduleToClose),
+            runtime: Default::default(),
+            attempt: new_la.schedule_cmd.attempt,
+            backoff: None,
+            original_schedule_time: Some(new_la.schedule_time),
+        };
+        // Remove any time already elapsed since the scheduling time
+        let schedule_to_close = schedule_to_close
+            .map(|s2c| s2c.saturating_sub(new_la.schedule_time.elapsed().unwrap_or_default()));
+        if let Some(ref s2c) = schedule_to_close {
+            if s2c.is_zero() {
+                return Err(resolution);
+            }
+        }
+        let timeout_dat = CancelOrTimeout::Timeout {
+            run_id: new_la.workflow_exec_info.run_id.clone(),
+            resolution,
+            dispatch_cancel: true,
+        };
+        let start_to_close_dur_and_dat = start_to_close.map(|d| (d, timeout_dat.clone()));
+        let fut_dat = schedule_to_close.map(|s2c| (s2c, timeout_dat));
+
+        let cancel_chan_clone = cancel_chan.clone();
+        let scheduling = tokio::spawn(async move {
+            if let Some((timeout, dat)) = fut_dat {
+                sleep(timeout).await;
+                cancel_chan_clone
+                    .send(dat)
+                    .expect("receive half not dropped");
+            }
+        });
+        Ok(TimeoutBag {
+            sched_to_close_handle: scheduling,
+            start_to_close_dur_and_dat,
+            start_to_close_handle: None,
+            cancel_chan,
+        })
+    }
+
+    /// Must be called once the associated local activity has been started / dispatched to lang.
+    fn mark_started(&mut self) {
+        if let Some((start_to_close, mut dat)) = self.start_to_close_dur_and_dat.take() {
+            let started_t = Instant::now();
+            let cchan = self.cancel_chan.clone();
+            self.start_to_close_handle = Some(tokio::spawn(async move {
+                sleep(start_to_close).await;
+                if let CancelOrTimeout::Timeout { resolution, .. } = &mut dat {
+                    resolution.result =
+                        LocalActivityExecutionResult::timeout(TimeoutType::StartToClose);
+                    resolution.runtime = started_t.elapsed();
+                }
+
+                cchan.send(dat).expect("receive half not dropped");
+            }));
+        }
+    }
+}
+
+impl Drop for TimeoutBag {
+    fn drop(&mut self) {
+        self.sched_to_close_handle.abort();
+        if let Some(x) = self.start_to_close_handle.as_ref() {
+            x.abort()
         }
     }
 }
@@ -383,8 +603,20 @@ impl RcvChans {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protosext::LACloseTimeouts;
     use temporal_sdk_core_protos::coresdk::common::RetryPolicy;
-    use tokio::task::yield_now;
+    use tokio::{sync::mpsc::error::TryRecvError, task::yield_now};
+
+    impl DispatchOrTimeoutLA {
+        fn unwrap(self) -> ActivityTask {
+            match self {
+                DispatchOrTimeoutLA::Dispatch(t) => t,
+                DispatchOrTimeoutLA::Timeout { .. } => {
+                    panic!("Timeout returned when expected a task")
+                }
+            }
+        }
+    }
 
     #[tokio::test]
     async fn max_concurrent_respected() {
@@ -403,8 +635,12 @@ mod tests {
             .into()
         }));
         for i in 1..=50 {
-            let next = lam.next_pending().await.unwrap();
-            assert_eq!(next.activity_id, i.to_string());
+            let next = lam.next_pending().await.unwrap().unwrap();
+            assert_matches!(
+                next.variant.unwrap(),
+                activity_task::Variant::Start(Start {activity_id, ..})
+                    if activity_id == i.to_string()
+            );
             let next_tt = TaskToken(next.task_token);
             let complete_branch = async {
                 lam.complete(
@@ -437,7 +673,7 @@ mod tests {
         }
         .into()]);
 
-        let next = lam.next_pending().await.unwrap();
+        let next = lam.next_pending().await.unwrap().unwrap();
         let tt = TaskToken(next.task_token);
         tokio::select! {
             biased;
@@ -471,13 +707,13 @@ mod tests {
             schedule_time: SystemTime::now(),
         }
         .into()]);
-        lam.next_pending().await.unwrap();
+        lam.next_pending().await.unwrap().unwrap();
 
         lam.enqueue([LocalActRequest::Cancel(ExecutingLAId {
             run_id: "run_id".to_string(),
             seq_num: 1,
         })]);
-        let next = lam.next_pending().await.unwrap();
+        let next = lam.next_pending().await.unwrap().unwrap();
         assert_matches!(next.variant.unwrap(), activity_task::Variant::Cancel(_));
     }
 
@@ -505,7 +741,7 @@ mod tests {
         }
         .into()]);
 
-        let next = lam.next_pending().await.unwrap();
+        let next = lam.next_pending().await.unwrap().unwrap();
         let tt = TaskToken(next.task_token);
         let res = lam.complete(
             &tt,
@@ -543,7 +779,7 @@ mod tests {
         }
         .into()]);
 
-        let next = lam.next_pending().await.unwrap();
+        let next = lam.next_pending().await.unwrap().unwrap();
         let tt = TaskToken(next.task_token);
         lam.complete(
             &tt,
@@ -590,14 +826,135 @@ mod tests {
         }
         .into()]);
 
-        let next = lam.next_pending().await.unwrap();
+        let next = lam.next_pending().await.unwrap().unwrap();
         let tt = TaskToken(next.task_token);
         lam.complete(
             &tt,
             &LocalActivityExecutionResult::Failed(Default::default()),
         );
-        lam.next_pending().await.unwrap();
+        lam.next_pending().await.unwrap().unwrap();
         assert_eq!(lam.num_in_backoff(), 0);
         assert_eq!(lam.num_outstanding(), 1);
+    }
+
+    #[tokio::test]
+    async fn sched_to_start_timeout() {
+        let lam = LocalActivityManager::new(1, "whatever".to_string());
+        let timeout = Duration::from_millis(100);
+        lam.enqueue([NewLocalAct {
+            schedule_cmd: ValidScheduleLA {
+                seq: 1,
+                activity_id: 1.to_string(),
+                attempt: 5,
+                retry_policy: RetryPolicy {
+                    initial_interval: Some(Duration::from_millis(10).into()),
+                    backoff_coefficient: 1.0,
+                    ..Default::default()
+                },
+                local_retry_threshold: Duration::from_secs(500),
+                schedule_to_start_timeout: Some(timeout),
+                ..Default::default()
+            },
+            workflow_type: "".to_string(),
+            workflow_exec_info: WorkflowExecution {
+                workflow_id: "".to_string(),
+                run_id: "run_id".to_string(),
+            },
+            schedule_time: SystemTime::now(),
+        }
+        .into()]);
+
+        // Wait more than the timeout before grabbing the task
+        sleep(timeout + Duration::from_millis(10)).await;
+
+        assert_matches!(
+            lam.next_pending().await.unwrap(),
+            DispatchOrTimeoutLA::Timeout { .. }
+        );
+        assert_eq!(lam.num_in_backoff(), 0);
+        assert_eq!(lam.num_outstanding(), 0);
+    }
+
+    #[rstest::rstest]
+    #[case::schedule(true)]
+    #[case::start(false)]
+    #[tokio::test]
+    async fn local_x_to_close_timeout(#[case] is_schedule: bool) {
+        let lam = LocalActivityManager::new(1, "whatever".to_string());
+        let timeout = Duration::from_millis(100);
+        let close_timeouts = if is_schedule {
+            LACloseTimeouts::ScheduleOnly(timeout)
+        } else {
+            LACloseTimeouts::StartOnly(timeout)
+        };
+        lam.enqueue([NewLocalAct {
+            schedule_cmd: ValidScheduleLA {
+                seq: 1,
+                activity_id: 1.to_string(),
+                attempt: 5,
+                retry_policy: RetryPolicy {
+                    initial_interval: Some(Duration::from_millis(10).into()),
+                    backoff_coefficient: 1.0,
+                    ..Default::default()
+                },
+                local_retry_threshold: Duration::from_secs(500),
+                close_timeouts,
+                ..Default::default()
+            },
+            workflow_type: "".to_string(),
+            workflow_exec_info: WorkflowExecution {
+                workflow_id: "".to_string(),
+                run_id: "run_id".to_string(),
+            },
+            schedule_time: SystemTime::now(),
+        }
+        .into()]);
+
+        lam.next_pending().await.unwrap().unwrap();
+        assert_eq!(lam.num_in_backoff(), 0);
+        assert_eq!(lam.num_outstanding(), 1);
+
+        sleep(timeout + Duration::from_millis(10)).await;
+        assert_matches!(
+            lam.next_pending().await.unwrap(),
+            DispatchOrTimeoutLA::Timeout { .. }
+        );
+        assert_eq!(lam.num_outstanding(), 0);
+    }
+
+    #[tokio::test]
+    async fn idempotency_enforced() {
+        let lam = LocalActivityManager::new(10, "whatever".to_string());
+        let new_la = NewLocalAct {
+            schedule_cmd: ValidScheduleLA {
+                seq: 1,
+                activity_id: 1.to_string(),
+                ..Default::default()
+            },
+            workflow_type: "".to_string(),
+            workflow_exec_info: WorkflowExecution {
+                workflow_id: "".to_string(),
+                run_id: "run_id".to_string(),
+            },
+            schedule_time: SystemTime::now(),
+        };
+        // Verify only one will get queued
+        lam.enqueue([new_la.clone().into(), new_la.clone().into()]);
+        lam.next_pending().await.unwrap().unwrap();
+        assert_eq!(lam.num_outstanding(), 1);
+        // There should be nothing else in the queue
+        assert_eq!(
+            lam.rcvs.lock().await.act_req_rx.try_recv().unwrap_err(),
+            TryRecvError::Empty
+        );
+
+        // Verify that if we now enqueue the same act again, after the task is outstanding, we still
+        // don't add it.
+        lam.enqueue([new_la.into()]);
+        assert_eq!(lam.num_outstanding(), 1);
+        assert_eq!(
+            lam.rcvs.lock().await.act_req_rx.try_recv().unwrap_err(),
+            TryRecvError::Empty
+        );
     }
 }

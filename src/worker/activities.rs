@@ -2,7 +2,7 @@ mod activity_heartbeat_manager;
 mod local_activities;
 
 pub(crate) use local_activities::{
-    ExecutingLAId, LACompleteAction, LocalActRequest, LocalActivityManager,
+    DispatchOrTimeoutLA, ExecutingLAId, LACompleteAction, LocalActRequest, LocalActivityManager,
     LocalActivityResolution, LocalInFlightActInfo, NewLocalAct,
 };
 
@@ -41,7 +41,6 @@ struct PendingActivityCancel {
 /// Contains minimal set of details that core needs to store while an activity is running.
 #[derive(Debug)]
 struct InFlightActInfo {
-    pub activity_id: String,
     pub activity_type: String,
     pub workflow_type: String,
     start_time: Instant,
@@ -62,14 +61,12 @@ struct RemoteInFlightActInfo {
 }
 impl RemoteInFlightActInfo {
     fn new(
-        activity_id: String,
         activity_type: String,
         workflow_type: String,
         heartbeat_timeout: Option<prost_types::Duration>,
     ) -> Self {
         Self {
             base: InFlightActInfo {
-                activity_id,
                 activity_type,
                 workflow_type,
                 start_time: Instant::now(),
@@ -166,7 +163,6 @@ impl WorkerActivityTasks {
                         self.outstanding_activity_tasks.insert(
                             work.task_token.clone().into(),
                             RemoteInFlightActInfo::new(
-                                work.activity_id.clone(),
                                 work.activity_type.clone().unwrap_or_default().name,
                                 work.workflow_type.clone().unwrap_or_default().name,
                                 work.heartbeat_timeout.clone()
@@ -306,11 +302,7 @@ impl WorkerActivityTasks {
                 if reason == ActivityCancelReason::NotFound {
                     details.known_not_found = true;
                 }
-                Ok(Some(ActivityTask::cancel_from_ids(
-                    task_token.0,
-                    details.base.activity_id.clone(),
-                    reason,
-                )))
+                Ok(Some(ActivityTask::cancel_from_ids(task_token.0, reason)))
             } else {
                 warn!(task_token = ?task_token,
                               "Unknown activity task when issuing cancel");

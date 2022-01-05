@@ -33,14 +33,9 @@ pub mod coresdk {
         tonic::include_proto!("coresdk.activity_task");
 
         impl ActivityTask {
-            pub fn cancel_from_ids(
-                task_token: Vec<u8>,
-                activity_id: String,
-                reason: ActivityCancelReason,
-            ) -> Self {
+            pub fn cancel_from_ids(task_token: Vec<u8>, reason: ActivityCancelReason) -> Self {
                 Self {
                     task_token,
-                    activity_id,
                     variant: Some(activity_task::Variant::Cancel(Cancel {
                         reason: reason as i32,
                     })),
@@ -58,6 +53,7 @@ pub mod coresdk {
             },
             common::Payload,
         };
+        use crate::temporal::api::{enums::v1::TimeoutType, failure::v1::TimeoutFailureInfo};
         use activity_execution_result as aer;
 
         impl ActivityExecutionResult {
@@ -123,6 +119,12 @@ pub mod coresdk {
                 matches!(self.status, Some(activity_resolution::Status::Failed(_)))
             }
 
+            pub fn timed_out(&self) -> bool {
+                matches!(self.status, Some(activity_resolution::Status::Failed(Failure {
+                    failure: Some(ref f)
+                })) if f.is_timeout())
+            }
+
             pub fn cancelled(&self) -> bool {
                 matches!(self.status, Some(activity_resolution::Status::Cancelled(_)))
             }
@@ -136,6 +138,23 @@ pub mod coresdk {
                         failure_info: Some(failure::FailureInfo::CanceledFailureInfo(
                             CanceledFailureInfo {
                                 details: payload.map(Into::into),
+                            },
+                        )),
+                        ..Default::default()
+                    }),
+                }
+            }
+        }
+
+        impl Failure {
+            pub fn timeout(timeout_type: TimeoutType) -> Self {
+                Failure {
+                    failure: Some(APIFailure {
+                        message: "Activity timed out".to_string(),
+                        failure_info: Some(failure::FailureInfo::TimeoutFailureInfo(
+                            TimeoutFailureInfo {
+                                timeout_type: timeout_type as i32,
+                                last_heartbeat_details: None,
                             },
                         )),
                         ..Default::default()
@@ -879,7 +898,6 @@ pub mod coresdk {
                 .unwrap_or_default();
             Self {
                 task_token: r.task_token,
-                activity_id: r.activity_id,
                 variant: Some(activity_task::activity_task::Variant::Start(
                     activity_task::Start {
                         workflow_namespace: r.workflow_namespace,
@@ -888,6 +906,7 @@ pub mod coresdk {
                             workflow_id,
                             run_id,
                         }),
+                        activity_id: r.activity_id,
                         activity_type: r.activity_type.map_or_else(|| "".to_string(), |at| at.name),
                         header_fields: r.header.map(Into::into).unwrap_or_default(),
                         input: Vec::from_payloads(r.input),
@@ -929,6 +948,10 @@ pub mod coresdk {
     }
 
     impl Failure {
+        pub fn is_timeout(&self) -> bool {
+            matches!(self.failure_info, Some(FailureInfo::TimeoutFailureInfo(_)))
+        }
+
         pub fn application_failure(message: String, non_retryable: bool) -> Self {
             Self {
                 message,
