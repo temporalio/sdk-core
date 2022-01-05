@@ -31,9 +31,7 @@ message WorkflowCommand {
         CancelSignalWorkflow cancel_signal_workflow = 15;
         ScheduleLocalActivity schedule_local_activity = 16;
         RequestCancelLocalActivity request_cancel_local_activity = 17;
-
-        // To be added as/if needed:
-        //  UpsertWorkflowSearchAttributes upsert_workflow_search_attributes_command_attributes = 14;
+        UpsertWorkflowSearchAttributes upsert_workflow_search_attributes_command_attributes = 14;
     }
 }
 
@@ -274,5 +272,10 @@ message SignalExternalWorkflowExecution {
 /// Can be used to cancel not-already-sent `SignalExternalWorkflowExecution` commands
 message CancelSignalWorkflow {
     /// Lang's incremental sequence number as passed to `SignalExternalWorkflowExecution`
+    uint32 seq = 1;
+}
+
+message UpsertWorkflowSearchAttributes {
+    /// Lang's incremental sequence number as passed to `StartTimer`
     uint32 seq = 1;
 }
