@@ -30,7 +30,7 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::PollActivityTaskQueueResponse,
     },
 };
-use tokio::sync::Semaphore;
+use tokio::sync::{Notify, Semaphore};
 
 #[derive(Debug, derive_more::Constructor)]
 struct PendingActivityCancel {
@@ -88,6 +88,8 @@ pub(crate) struct WorkerActivityTasks {
     poller: BoxedActPoller,
     /// Ensures we stay at or below this worker's maximum concurrent activity limit
     activities_semaphore: Semaphore,
+    /// Wakes every time an activity is removed from the outstanding map
+    complete_notify: Notify,
 
     metrics: MetricsContext,
 
@@ -109,6 +111,7 @@ impl WorkerActivityTasks {
             outstanding_activity_tasks: Default::default(),
             poller,
             activities_semaphore: Semaphore::new(max_activity_tasks),
+            complete_notify: Notify::new(),
             metrics,
             max_heartbeat_throttle_interval,
             default_heartbeat_throttle_interval,
@@ -117,6 +120,13 @@ impl WorkerActivityTasks {
 
     pub(crate) fn notify_shutdown(&self) {
         self.poller.notify_shutdown();
+    }
+
+    /// Wait for all outstanding activity tasks to finish
+    pub(crate) async fn wait_all_finished(&self) {
+        while !self.outstanding_activity_tasks.is_empty() {
+            self.complete_notify.notified().await
+        }
     }
 
     pub(crate) async fn shutdown(self) {
@@ -197,6 +207,7 @@ impl WorkerActivityTasks {
             self.heartbeat_manager.evict(task_token.clone());
             let known_not_found = act_info.known_not_found;
             drop(act_info); // TODO: Get rid of dashmap. If we hold ref across await, bad stuff.
+            self.complete_notify.notify_waiters();
 
             // No need to report activities which we already know the server doesn't care about
             if !known_not_found {
