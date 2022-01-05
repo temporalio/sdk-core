@@ -1,12 +1,13 @@
-use crate::machines::{
+use super::{
     workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, NewMachineWithCommand,
-    OnEventWrapper, ProtoCommand, WFMachinesAdapter, WFMachinesError,
+    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::FailWorkflowExecution,
     temporal::api::{
+        command::v1::Command as ProtoCommand,
         enums::v1::{CommandType, EventType},
         history::v1::HistoryEvent,
     },

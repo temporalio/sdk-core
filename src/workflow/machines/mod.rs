@@ -1,6 +1,5 @@
 mod workflow_machines;
 
-// TODO: Move all these inside a submachines module
 mod activity_state_machine;
 mod cancel_external_state_machine;
 mod cancel_workflow_state_machine;
@@ -23,13 +22,11 @@ mod workflow_task_state_machine;
 #[cfg(test)]
 mod transition_coverage;
 
-pub(crate) use local_activity_state_machine::{
-    LocalActivityExecutionResult, LOCAL_ACTIVITY_MARKER_NAME,
-};
-pub use patch_state_machine::HAS_CHANGE_MARKER_NAME;
+pub(crate) use local_activity_state_machine::LOCAL_ACTIVITY_MARKER_NAME;
+pub(crate) use patch_state_machine::HAS_CHANGE_MARKER_NAME;
 pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
 
-use crate::{machines::workflow_machines::MachineResponse, telemetry::VecDisplayer};
+use crate::telemetry::VecDisplayer;
 use activity_state_machine::ActivityMachine;
 use cancel_external_state_machine::CancelExternalMachine;
 use cancel_workflow_state_machine::CancelWorkflowMachine;
@@ -46,89 +43,15 @@ use std::{
     convert::{TryFrom, TryInto},
     fmt::{Debug, Display},
 };
-use temporal_sdk_core_protos::{
-    coresdk::workflow_commands::*,
-    temporal::api::{command::v1::Command, enums::v1::CommandType, history::v1::HistoryEvent},
+use temporal_sdk_core_protos::temporal::api::{
+    command::v1::Command as ProtoCommand, enums::v1::CommandType, history::v1::HistoryEvent,
 };
 use timer_state_machine::TimerMachine;
+use workflow_machines::MachineResponse;
 use workflow_task_state_machine::WorkflowTaskMachine;
 
 #[cfg(test)]
 use transition_coverage::add_coverage;
-
-pub(crate) type ProtoCommand = Command;
-
-/// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
-/// EX: Create a new timer, complete the workflow, etc.
-#[derive(Debug, derive_more::From, derive_more::Display)]
-#[allow(clippy::large_enum_variant)]
-pub enum WFCommand {
-    /// Returned when we need to wait for the lang sdk to send us something
-    NoCommandsFromLang,
-    AddActivity(ScheduleActivity),
-    AddLocalActivity(ScheduleLocalActivity),
-    RequestCancelActivity(RequestCancelActivity),
-    RequestCancelLocalActivity(RequestCancelLocalActivity),
-    AddTimer(StartTimer),
-    CancelTimer(CancelTimer),
-    CompleteWorkflow(CompleteWorkflowExecution),
-    FailWorkflow(FailWorkflowExecution),
-    QueryResponse(QueryResult),
-    ContinueAsNew(ContinueAsNewWorkflowExecution),
-    CancelWorkflow(CancelWorkflowExecution),
-    SetPatchMarker(SetPatchMarker),
-    AddChildWorkflow(StartChildWorkflowExecution),
-    CancelUnstartedChild(CancelUnstartedChildWorkflowExecution),
-    RequestCancelExternalWorkflow(RequestCancelExternalWorkflowExecution),
-    SignalExternalWorkflow(SignalExternalWorkflowExecution),
-    CancelSignalWorkflow(CancelSignalWorkflow),
-}
-
-#[derive(thiserror::Error, Debug, derive_more::From)]
-#[error("Lang provided workflow command with empty variant")]
-pub struct EmptyWorkflowCommandErr;
-
-impl TryFrom<WorkflowCommand> for WFCommand {
-    type Error = EmptyWorkflowCommandErr;
-
-    fn try_from(c: WorkflowCommand) -> Result<Self, Self::Error> {
-        match c.variant.ok_or(EmptyWorkflowCommandErr)? {
-            workflow_command::Variant::StartTimer(s) => Ok(Self::AddTimer(s)),
-            workflow_command::Variant::CancelTimer(s) => Ok(Self::CancelTimer(s)),
-            workflow_command::Variant::ScheduleActivity(s) => Ok(Self::AddActivity(s)),
-            workflow_command::Variant::RequestCancelActivity(s) => {
-                Ok(Self::RequestCancelActivity(s))
-            }
-            workflow_command::Variant::CompleteWorkflowExecution(c) => {
-                Ok(Self::CompleteWorkflow(c))
-            }
-            workflow_command::Variant::FailWorkflowExecution(s) => Ok(Self::FailWorkflow(s)),
-            workflow_command::Variant::RespondToQuery(s) => Ok(Self::QueryResponse(s)),
-            workflow_command::Variant::ContinueAsNewWorkflowExecution(s) => {
-                Ok(Self::ContinueAsNew(s))
-            }
-            workflow_command::Variant::CancelWorkflowExecution(s) => Ok(Self::CancelWorkflow(s)),
-            workflow_command::Variant::SetPatchMarker(s) => Ok(Self::SetPatchMarker(s)),
-            workflow_command::Variant::StartChildWorkflowExecution(s) => {
-                Ok(Self::AddChildWorkflow(s))
-            }
-            workflow_command::Variant::RequestCancelExternalWorkflowExecution(s) => {
-                Ok(Self::RequestCancelExternalWorkflow(s))
-            }
-            workflow_command::Variant::SignalExternalWorkflowExecution(s) => {
-                Ok(Self::SignalExternalWorkflow(s))
-            }
-            workflow_command::Variant::CancelSignalWorkflow(s) => Ok(Self::CancelSignalWorkflow(s)),
-            workflow_command::Variant::CancelUnstartedChildWorkflowExecution(s) => {
-                Ok(Self::CancelUnstartedChild(s))
-            }
-            workflow_command::Variant::ScheduleLocalActivity(s) => Ok(Self::AddLocalActivity(s)),
-            workflow_command::Variant::RequestCancelLocalActivity(s) => {
-                Ok(Self::RequestCancelLocalActivity(s))
-            }
-        }
-    }
-}
 
 #[derive(Copy, Clone, Debug, derive_more::Display, Eq, PartialEq)]
 enum MachineKind {

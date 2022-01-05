@@ -17,13 +17,11 @@
 //! | deprecated marker for change | deprecate_patch | Call allowed                                                                       |
 //! | replaying, no marker         | deprecate_patch | Call allowed                                                                       |
 
-use crate::{
-    machines::{
-        workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind,
-        NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
-    },
-    protosext::HistoryEventExt,
+use super::{
+    workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, NewMachineWithCommand,
+    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
+use crate::protosext::HistoryEventExt;
 use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
@@ -225,10 +223,12 @@ impl TryFrom<HistoryEvent> for PatchMachineEvents {
 #[cfg(test)]
 mod tests {
     use crate::{
-        machines::{WFMachinesError, HAS_CHANGE_MARKER_NAME},
         prototype_rust_sdk::{ActivityOptions, WfContext, WorkflowFunction},
         test_help::TestHistoryBuilder,
-        workflow::managed_wf::ManagedWFFunc,
+        workflow::{
+            machines::{WFMachinesError, HAS_CHANGE_MARKER_NAME},
+            managed_wf::ManagedWFFunc,
+        },
     };
     use rstest::rstest;
     use std::time::Duration;

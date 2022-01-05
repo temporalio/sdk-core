@@ -1,11 +1,11 @@
-use crate::machines::{
+use super::{
     Cancellable, EventInfo, HistoryEvent, MachineKind, MachineResponse, NewMachineWithCommand,
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
-    coresdk::workflow_commands::CancelWorkflowExecution,
+    coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
     temporal::api::{
         command::v1::Command,
         enums::v1::{CommandType, EventType},
@@ -14,33 +14,30 @@ use temporal_sdk_core_protos::{
 
 fsm! {
     pub(super)
-    name CancelWorkflowMachine;
-    command CancelWorkflowCommand;
+    name ContinueAsNewWorkflowMachine;
+    command ContinueAsNewWorkflowCommand;
     error WFMachinesError;
 
-    Created --(Schedule, on_schedule) --> CancelWorkflowCommandCreated;
+    Created --(Schedule, on_schedule) --> ContinueAsNewWorkflowCommandCreated;
 
-    CancelWorkflowCommandCreated --(CommandCancelWorkflowExecution)
-        --> CancelWorkflowCommandCreated;
-    CancelWorkflowCommandCreated --(WorkflowExecutionCanceled)
-        --> CancelWorkflowCommandRecorded;
+    ContinueAsNewWorkflowCommandCreated --(CommandContinueAsNewWorkflowExecution)
+        --> ContinueAsNewWorkflowCommandCreated;
+    ContinueAsNewWorkflowCommandCreated --(WorkflowExecutionContinuedAsNew)
+        --> ContinueAsNewWorkflowCommandRecorded;
 }
 
-#[derive(thiserror::Error, Debug)]
-pub(super) enum CancelWorkflowMachineError {}
-
 #[derive(Debug, derive_more::Display)]
-pub(super) enum CancelWorkflowCommand {}
+pub(super) enum ContinueAsNewWorkflowCommand {}
 
-pub(super) fn cancel_workflow(attribs: CancelWorkflowExecution) -> NewMachineWithCommand {
-    let mut machine = CancelWorkflowMachine {
+pub(super) fn continue_as_new(attribs: ContinueAsNewWorkflowExecution) -> NewMachineWithCommand {
+    let mut machine = ContinueAsNewWorkflowMachine {
         state: Created {}.into(),
         shared_state: (),
     };
-    OnEventWrapper::on_event_mut(&mut machine, CancelWorkflowMachineEvents::Schedule)
+    OnEventWrapper::on_event_mut(&mut machine, ContinueAsNewWorkflowMachineEvents::Schedule)
         .expect("Scheduling continue as new machine doesn't fail");
     let command = Command {
-        command_type: CommandType::CancelWorkflowExecution as i32,
+        command_type: CommandType::ContinueAsNewWorkflowExecution as i32,
         attributes: Some(attribs.into()),
     };
     NewMachineWithCommand {
@@ -50,16 +47,10 @@ pub(super) fn cancel_workflow(attribs: CancelWorkflowExecution) -> NewMachineWit
 }
 
 #[derive(Default, Clone)]
-pub(super) struct CancelWorkflowCommandCreated {}
+pub(super) struct ContinueAsNewWorkflowCommandCreated {}
 
 #[derive(Default, Clone)]
-pub(super) struct CancelWorkflowCommandRecorded {}
-
-impl From<CancelWorkflowCommandCreated> for CancelWorkflowCommandRecorded {
-    fn from(_: CancelWorkflowCommandCreated) -> Self {
-        Self::default()
-    }
-}
+pub(super) struct ContinueAsNewWorkflowCommandRecorded {}
 
 #[derive(Default, Clone)]
 pub(super) struct Created {}
@@ -67,20 +58,26 @@ pub(super) struct Created {}
 impl Created {
     pub(super) fn on_schedule(
         self,
-    ) -> CancelWorkflowMachineTransition<CancelWorkflowCommandCreated> {
+    ) -> ContinueAsNewWorkflowMachineTransition<ContinueAsNewWorkflowCommandCreated> {
         TransitionResult::default()
     }
 }
 
-impl TryFrom<HistoryEvent> for CancelWorkflowMachineEvents {
+impl From<ContinueAsNewWorkflowCommandCreated> for ContinueAsNewWorkflowCommandRecorded {
+    fn from(_: ContinueAsNewWorkflowCommandCreated) -> Self {
+        Self::default()
+    }
+}
+
+impl TryFrom<HistoryEvent> for ContinueAsNewWorkflowMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
-        Ok(match EventType::from_i32(e.event_type) {
-            Some(EventType::WorkflowExecutionCanceled) => Self::WorkflowExecutionCanceled,
+        Ok(match e.event_type() {
+            EventType::WorkflowExecutionContinuedAsNew => Self::WorkflowExecutionContinuedAsNew,
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
-                    "Cancel workflow machine does not handle this event: {}",
+                    "Continue as new workflow machine does not handle this event: {}",
                     e
                 )))
             }
@@ -88,18 +85,20 @@ impl TryFrom<HistoryEvent> for CancelWorkflowMachineEvents {
     }
 }
 
-impl TryFrom<CommandType> for CancelWorkflowMachineEvents {
+impl TryFrom<CommandType> for ContinueAsNewWorkflowMachineEvents {
     type Error = ();
 
     fn try_from(c: CommandType) -> Result<Self, Self::Error> {
         Ok(match c {
-            CommandType::CancelWorkflowExecution => Self::CommandCancelWorkflowExecution,
+            CommandType::ContinueAsNewWorkflowExecution => {
+                Self::CommandContinueAsNewWorkflowExecution
+            }
             _ => return Err(()),
         })
     }
 }
 
-impl WFMachinesAdapter for CancelWorkflowMachine {
+impl WFMachinesAdapter for ContinueAsNewWorkflowMachine {
     fn adapt_response(
         &self,
         _my_command: Self::Command,
@@ -109,15 +108,15 @@ impl WFMachinesAdapter for CancelWorkflowMachine {
     }
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
-        event.event_type() == EventType::WorkflowExecutionCanceled
+        event.event_type() == EventType::WorkflowExecutionContinuedAsNew
     }
 
     fn kind(&self) -> MachineKind {
-        MachineKind::CancelWorkflow
+        MachineKind::ContinueAsNewWorkflow
     }
 }
 
-impl Cancellable for CancelWorkflowMachine {}
+impl Cancellable for ContinueAsNewWorkflowMachine {}
 
 #[cfg(test)]
 mod tests {
@@ -128,42 +127,33 @@ mod tests {
         workflow::managed_wf::ManagedWFFunc,
     };
     use std::time::Duration;
-    use temporal_sdk_core_protos::coresdk::workflow_activation::{
-        wf_activation_job, WfActivationJob,
-    };
 
     async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(500)).await;
-        Ok(WfExitValue::Cancelled)
+        Ok(WfExitValue::continue_as_new(
+            ContinueAsNewWorkflowExecution {
+                arguments: vec![[1].into()],
+                ..Default::default()
+            },
+        ))
     }
 
     #[tokio::test]
-    async fn wf_completing_with_cancelled() {
+    async fn wf_completing_with_continue_as_new() {
         let func = WorkflowFunction::new(wf_with_timer);
-        let t = canned_histories::timer_wf_cancel_req_cancelled("1");
+        let t = canned_histories::timer_then_continue_as_new("1");
         let mut wfm = ManagedWFFunc::new(t, func, vec![]);
         wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
 
-        let act = wfm.get_next_activation().await.unwrap();
-        assert_matches!(
-            act.jobs.as_slice(),
-            [
-                WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::FireTimer(_)),
-                },
-                WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::CancelWorkflow(_)),
-                }
-            ]
-        );
+        wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,
-            CommandType::CancelWorkflowExecution as i32
+            CommandType::ContinueAsNewWorkflowExecution as i32
         );
 
         assert!(wfm.get_next_activation().await.unwrap().jobs.is_empty());

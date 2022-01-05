@@ -1,4 +1,4 @@
-use crate::machines::WFCommand;
+use crate::workflow::WFCommand;
 use std::collections::VecDeque;
 use temporal_sdk_core_protos::{
     coresdk::workflow_activation::{

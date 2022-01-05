@@ -1,21 +1,28 @@
+pub(crate) mod workflow_tasks;
+
 mod bridge;
 mod driven_workflow;
 mod history_update;
-pub(crate) mod workflow_tasks;
+mod machines;
 
 pub(crate) use bridge::WorkflowBridge;
 pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
 pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
+pub(crate) use machines::{WFMachinesError, HAS_CHANGE_MARKER_NAME, LOCAL_ACTIVITY_MARKER_NAME};
 
 use crate::{
-    machines::{ProtoCommand, WFCommand, WFMachinesError, WorkflowMachines},
     telemetry::metrics::MetricsContext,
     worker::{LocalActRequest, LocalActivityResolution},
 };
-use std::sync::mpsc::Sender;
-use temporal_sdk_core_protos::coresdk::workflow_activation::WfActivation;
+use machines::WorkflowMachines;
+use std::{result, sync::mpsc::Sender};
+use temporal_sdk_core_protos::{
+    coresdk::{workflow_activation::WfActivation, workflow_commands::*},
+    temporal::api::command::v1::Command as ProtoCommand,
+};
 
 pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
+
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -189,14 +196,85 @@ pub(crate) enum WorkflowCachingPolicy {
     AfterEveryReply,
 }
 
+#[derive(thiserror::Error, Debug, derive_more::From)]
+#[error("Lang provided workflow command with empty variant")]
+pub struct EmptyWorkflowCommandErr;
+
+/// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
+/// EX: Create a new timer, complete the workflow, etc.
+#[derive(Debug, derive_more::From, derive_more::Display)]
+#[allow(clippy::large_enum_variant)]
+pub enum WFCommand {
+    /// Returned when we need to wait for the lang sdk to send us something
+    NoCommandsFromLang,
+    AddActivity(ScheduleActivity),
+    AddLocalActivity(ScheduleLocalActivity),
+    RequestCancelActivity(RequestCancelActivity),
+    RequestCancelLocalActivity(RequestCancelLocalActivity),
+    AddTimer(StartTimer),
+    CancelTimer(CancelTimer),
+    CompleteWorkflow(CompleteWorkflowExecution),
+    FailWorkflow(FailWorkflowExecution),
+    QueryResponse(QueryResult),
+    ContinueAsNew(ContinueAsNewWorkflowExecution),
+    CancelWorkflow(CancelWorkflowExecution),
+    SetPatchMarker(SetPatchMarker),
+    AddChildWorkflow(StartChildWorkflowExecution),
+    CancelUnstartedChild(CancelUnstartedChildWorkflowExecution),
+    RequestCancelExternalWorkflow(RequestCancelExternalWorkflowExecution),
+    SignalExternalWorkflow(SignalExternalWorkflowExecution),
+    CancelSignalWorkflow(CancelSignalWorkflow),
+}
+
+impl TryFrom<WorkflowCommand> for WFCommand {
+    type Error = EmptyWorkflowCommandErr;
+
+    fn try_from(c: WorkflowCommand) -> result::Result<Self, Self::Error> {
+        match c.variant.ok_or(EmptyWorkflowCommandErr)? {
+            workflow_command::Variant::StartTimer(s) => Ok(Self::AddTimer(s)),
+            workflow_command::Variant::CancelTimer(s) => Ok(Self::CancelTimer(s)),
+            workflow_command::Variant::ScheduleActivity(s) => Ok(Self::AddActivity(s)),
+            workflow_command::Variant::RequestCancelActivity(s) => {
+                Ok(Self::RequestCancelActivity(s))
+            }
+            workflow_command::Variant::CompleteWorkflowExecution(c) => {
+                Ok(Self::CompleteWorkflow(c))
+            }
+            workflow_command::Variant::FailWorkflowExecution(s) => Ok(Self::FailWorkflow(s)),
+            workflow_command::Variant::RespondToQuery(s) => Ok(Self::QueryResponse(s)),
+            workflow_command::Variant::ContinueAsNewWorkflowExecution(s) => {
+                Ok(Self::ContinueAsNew(s))
+            }
+            workflow_command::Variant::CancelWorkflowExecution(s) => Ok(Self::CancelWorkflow(s)),
+            workflow_command::Variant::SetPatchMarker(s) => Ok(Self::SetPatchMarker(s)),
+            workflow_command::Variant::StartChildWorkflowExecution(s) => {
+                Ok(Self::AddChildWorkflow(s))
+            }
+            workflow_command::Variant::RequestCancelExternalWorkflowExecution(s) => {
+                Ok(Self::RequestCancelExternalWorkflow(s))
+            }
+            workflow_command::Variant::SignalExternalWorkflowExecution(s) => {
+                Ok(Self::SignalExternalWorkflow(s))
+            }
+            workflow_command::Variant::CancelSignalWorkflow(s) => Ok(Self::CancelSignalWorkflow(s)),
+            workflow_command::Variant::CancelUnstartedChildWorkflowExecution(s) => {
+                Ok(Self::CancelUnstartedChild(s))
+            }
+            workflow_command::Variant::ScheduleLocalActivity(s) => Ok(Self::AddLocalActivity(s)),
+            workflow_command::Variant::RequestCancelLocalActivity(s) => {
+                Ok(Self::RequestCancelLocalActivity(s))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 pub mod managed_wf {
     use super::*;
     use crate::{
-        machines::WFCommand,
         prototype_rust_sdk::{WorkflowFunction, WorkflowResult},
         test_help::{TestHistoryBuilder, TEST_Q},
-        workflow::WorkflowFetcher,
+        workflow::{WFCommand, WorkflowFetcher},
     };
     use std::{convert::TryInto, time::Duration};
     use temporal_sdk_core_protos::coresdk::{

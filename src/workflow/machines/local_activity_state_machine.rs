@@ -1,9 +1,10 @@
+use super::{
+    workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, OnEventWrapper,
+    WFMachinesAdapter, WFMachinesError,
+};
 use crate::{
-    machines::{
-        workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, OnEventWrapper,
-        WFMachinesAdapter, WFMachinesError,
-    },
     protosext::{CompleteLocalActivityData, HistoryEventExt, TryIntoOrNone, ValidScheduleLA},
+    worker::LocalActivityExecutionResult,
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::{
@@ -13,8 +14,7 @@ use std::{
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
-            ActivityResolution, Cancellation, Cancellation as ActCancel, DoBackoff,
-            Failure as ActFail, Success,
+            ActivityResolution, Cancellation, DoBackoff, Failure as ActFail, Success,
         },
         common::build_local_activity_marker_details,
         external_data::LocalActivityMarkerData,
@@ -23,7 +23,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         command::v1::{Command, RecordMarkerCommandAttributes},
-        enums::v1::{CommandType, EventType, TimeoutType},
+        enums::v1::{CommandType, EventType},
         failure::v1::failure::FailureInfo,
         history::v1::HistoryEvent,
     },
@@ -99,22 +99,6 @@ pub(super) struct ResolveDat {
     pub(super) attempt: u32,
     pub(super) backoff: Option<prost_types::Duration>,
     pub(super) original_schedule_time: Option<SystemTime>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum LocalActivityExecutionResult {
-    Completed(Success),
-    Failed(ActFail),
-    TimedOut(ActFail),
-    Cancelled(ActCancel),
-}
-impl LocalActivityExecutionResult {
-    pub(crate) fn empty_cancel() -> Self {
-        Self::Cancelled(Cancellation::from_details(None))
-    }
-    pub(crate) fn timeout(tt: TimeoutType) -> Self {
-        Self::TimedOut(ActFail::timeout(tt))
-    }
 }
 
 impl From<CompleteLocalActivityData> for ResolveDat {
@@ -640,7 +624,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
                     LocalActivityExecutionResult::Failed(fail) => {
                         maybe_failure = fail.failure;
                     }
-                    LocalActivityExecutionResult::Cancelled(ActCancel { failure })
+                    LocalActivityExecutionResult::Cancelled(Cancellation { failure })
                     | LocalActivityExecutionResult::TimedOut(ActFail { failure }) => {
                         will_not_run_again = true;
                         maybe_failure = failure;

@@ -5,12 +5,14 @@ mod wft_delivery;
 
 pub use config::{WorkerConfig, WorkerConfigBuilder};
 
-pub(crate) use activities::{ExecutingLAId, LocalActRequest, LocalActivityResolution, NewLocalAct};
+pub(crate) use activities::{
+    ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
+    NewLocalAct,
+};
 pub(crate) use dispatcher::WorkerDispatcher;
 
 use crate::{
     errors::CompleteWfError,
-    machines::{EmptyWorkflowCommandErr, LocalActivityExecutionResult, WFMachinesError},
     pollers::{
         new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, BoxedWFPoller,
         GatewayRef, Poller, WorkflowTaskPoller,
@@ -29,7 +31,7 @@ use crate::{
             ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
             ServerCommandsWithWorkflowInfo, WorkflowTaskManager,
         },
-        LocalResolution, WorkflowCachingPolicy,
+        EmptyWorkflowCommandErr, LocalResolution, WFMachinesError, WorkflowCachingPolicy,
     },
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError,
 };

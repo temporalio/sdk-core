@@ -1,10 +1,7 @@
 use crate::{
-    machines::{
-        LocalActivityExecutionResult, ProtoCommand, HAS_CHANGE_MARKER_NAME,
-        LOCAL_ACTIVITY_MARKER_NAME,
-    },
     task_token::TaskToken,
-    workflow::LEGACY_QUERY_ID,
+    worker::LocalActivityExecutionResult,
+    workflow::{HAS_CHANGE_MARKER_NAME, LEGACY_QUERY_ID, LOCAL_ACTIVITY_MARKER_NAME},
     CompleteActivityError,
 };
 use anyhow::anyhow;
@@ -29,6 +26,7 @@ use temporal_sdk_core_protos::{
         workflow_completion, FromPayloadsExt,
     },
     temporal::api::{
+        command::v1::Command as ProtoCommand,
         common::v1::{Payload, WorkflowExecution},
         enums::v1::EventType,
         failure::v1::Failure,

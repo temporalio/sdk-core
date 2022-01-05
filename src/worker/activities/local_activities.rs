@@ -1,7 +1,4 @@
-use crate::{
-    machines::LocalActivityExecutionResult, protosext::ValidScheduleLA,
-    retry_logic::RetryPolicyExt, task_token::TaskToken,
-};
+use crate::{protosext::ValidScheduleLA, retry_logic::RetryPolicyExt, task_token::TaskToken};
 use parking_lot::Mutex;
 use std::{
     collections::HashMap,
@@ -10,7 +7,7 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::Cancellation,
+        activity_result::{Cancellation, Failure as ActFail, Success},
         activity_task::{activity_task, ActivityCancelReason, ActivityTask, Cancel, Start},
         common::WorkflowExecution,
     },
@@ -44,6 +41,22 @@ pub(crate) struct LocalInFlightActInfo {
     pub la_info: NewLocalAct,
     pub dispatch_time: Instant,
     pub attempt: u32,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum LocalActivityExecutionResult {
+    Completed(Success),
+    Failed(ActFail),
+    TimedOut(ActFail),
+    Cancelled(Cancellation),
+}
+impl LocalActivityExecutionResult {
+    pub(crate) fn empty_cancel() -> Self {
+        Self::Cancelled(Cancellation::from_details(None))
+    }
+    pub(crate) fn timeout(tt: TimeoutType) -> Self {
+        Self::TimedOut(ActFail::timeout(tt))
+    }
 }
 
 #[derive(Debug, Clone)]

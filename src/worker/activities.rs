@@ -2,8 +2,9 @@ mod activity_heartbeat_manager;
 mod local_activities;
 
 pub(crate) use local_activities::{
-    DispatchOrTimeoutLA, ExecutingLAId, LACompleteAction, LocalActRequest, LocalActivityManager,
-    LocalActivityResolution, LocalInFlightActInfo, NewLocalAct,
+    DispatchOrTimeoutLA, ExecutingLAId, LACompleteAction, LocalActRequest,
+    LocalActivityExecutionResult, LocalActivityManager, LocalActivityResolution,
+    LocalInFlightActInfo, NewLocalAct,
 };
 
 use crate::{

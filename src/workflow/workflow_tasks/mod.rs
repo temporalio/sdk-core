@@ -5,7 +5,6 @@ mod concurrency_manager;
 
 use crate::{
     errors::{WorkflowMissingError, WorkflowUpdateError},
-    machines::{ProtoCommand, WFCommand, WFMachinesError},
     pending_activations::PendingActivations,
     pollers::GatewayRef,
     protosext::{ValidPollWFTQResponse, WfActivationExt},
@@ -13,11 +12,12 @@ use crate::{
     telemetry::metrics::MetricsContext,
     worker::{LocalActRequest, LocalActivityResolution},
     workflow::{
+        machines::WFMachinesError,
         workflow_tasks::{
             cache_manager::WorkflowCacheManager, concurrency_manager::WorkflowConcurrencyManager,
         },
-        HistoryPaginator, HistoryUpdate, LocalResolution, WorkflowCachingPolicy, WorkflowManager,
-        LEGACY_QUERY_ID,
+        HistoryPaginator, HistoryUpdate, LocalResolution, WFCommand, WorkflowCachingPolicy,
+        WorkflowManager, LEGACY_QUERY_ID,
     },
 };
 use crossbeam::queue::SegQueue;
@@ -29,12 +29,15 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use temporal_sdk_core_protos::coresdk::{
-    workflow_activation::{
-        create_query_activation, wf_activation_job, QueryWorkflow, WfActivation,
+use temporal_sdk_core_protos::{
+    coresdk::{
+        workflow_activation::{
+            create_query_activation, wf_activation_job, QueryWorkflow, WfActivation,
+        },
+        workflow_commands::QueryResult,
+        FromPayloadsExt,
     },
-    workflow_commands::QueryResult,
-    FromPayloadsExt,
+    temporal::api::command::v1::Command as ProtoCommand,
 };
 use tokio::{sync::Notify, time::timeout_at};
 

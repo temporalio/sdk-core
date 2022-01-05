@@ -1,6 +1,6 @@
 //! Error types exposed by public APIs
 
-use crate::{machines::WFMachinesError, WorkerLookupErr};
+use crate::{workflow::WFMachinesError, WorkerLookupErr};
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityExecutionResult, workflow_completion::WfActivationCompletion,
 };

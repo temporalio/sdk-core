@@ -1,4 +1,7 @@
-use crate::{machines::WFCommand, telemetry::VecDisplayer, workflow::WorkflowFetcher};
+use crate::{
+    telemetry::VecDisplayer,
+    workflow::{WFCommand, WorkflowFetcher},
+};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 /// The [DrivenWorkflow] trait expects to be called to make progress, but the [CoreSDKService]

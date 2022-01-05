@@ -14,7 +14,6 @@ pub mod errors;
 pub mod prototype_rust_sdk;
 
 mod log_export;
-mod machines;
 mod pending_activations;
 mod pollers;
 mod protosext;

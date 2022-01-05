@@ -1,5 +1,5 @@
+use super::super::{local_activity_state_machine::ResolveDat, WFMachinesError};
 use crate::{
-    machines::{local_activity_state_machine::ResolveDat, WFMachinesError},
     protosext::{HistoryEventExt, ValidScheduleLA},
     worker::{ExecutingLAId, LocalActRequest, NewLocalAct},
 };

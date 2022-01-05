@@ -1,6 +1,6 @@
 #![allow(clippy::enum_variant_names)]
 
-use crate::machines::{
+use super::{
     workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, WFMachinesAdapter,
     WFMachinesError,
 };

@@ -1,10 +1,9 @@
 use crate::{
-    machines::{HAS_CHANGE_MARKER_NAME, LOCAL_ACTIVITY_MARKER_NAME},
     test_help::{
         history_info::{HistoryInfo, HistoryInfoError},
         Result,
     },
-    workflow::HistoryUpdate,
+    workflow::{HistoryUpdate, HAS_CHANGE_MARKER_NAME, LOCAL_ACTIVITY_MARKER_NAME},
 };
 use anyhow::bail;
 use prost_types::Timestamp;

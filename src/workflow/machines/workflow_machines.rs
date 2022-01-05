@@ -1,24 +1,26 @@
 mod local_acts;
 
+use super::{
+    activity_state_machine::new_activity, cancel_external_state_machine::new_external_cancel,
+    cancel_workflow_state_machine::cancel_workflow,
+    child_workflow_state_machine::new_child_workflow,
+    complete_workflow_state_machine::complete_workflow,
+    continue_as_new_workflow_state_machine::continue_as_new,
+    fail_workflow_state_machine::fail_workflow, local_activity_state_machine::new_local_activity,
+    patch_state_machine::has_change, signal_external_state_machine::new_external_signal,
+    timer_state_machine::new_timer, workflow_machines::local_acts::LocalActivityData,
+    workflow_task_state_machine::WorkflowTaskMachine, MachineKind, Machines, NewMachineWithCommand,
+    TemporalStateMachine,
+};
 use crate::{
-    machines::{
-        activity_state_machine::new_activity, cancel_external_state_machine::new_external_cancel,
-        cancel_workflow_state_machine::cancel_workflow,
-        child_workflow_state_machine::new_child_workflow,
-        complete_workflow_state_machine::complete_workflow,
-        continue_as_new_workflow_state_machine::continue_as_new,
-        fail_workflow_state_machine::fail_workflow,
-        local_activity_state_machine::new_local_activity, patch_state_machine::has_change,
-        signal_external_state_machine::new_external_signal, timer_state_machine::new_timer,
-        workflow_machines::local_acts::LocalActivityData,
-        workflow_task_state_machine::WorkflowTaskMachine, LocalActivityExecutionResult,
-        MachineKind, Machines, NewMachineWithCommand, ProtoCommand, TemporalStateMachine,
-        WFCommand,
-    },
     protosext::{HistoryEventExt, TryIntoOrNone, ValidScheduleLA},
     telemetry::{metrics::MetricsContext, VecDisplayer},
-    worker::{ExecutingLAId, LocalActRequest, LocalActivityResolution},
-    workflow::{CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WorkflowFetcher},
+    worker::{
+        ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
+    },
+    workflow::{
+        CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WFCommand, WorkflowFetcher,
+    },
 };
 use prost_types::TimestampOutOfSystemRangeError;
 use slotmap::SlotMap;
@@ -43,6 +45,7 @@ use temporal_sdk_core_protos::{
         FromPayloadsExt,
     },
     temporal::api::{
+        command::v1::Command as ProtoCommand,
         common::v1::Header,
         enums::v1::EventType,
         history::v1::{history_event, HistoryEvent, WorkflowExecutionStartedEventAttributes},
