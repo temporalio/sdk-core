@@ -10,6 +10,7 @@ use crate::{
     ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
 };
 use futures::FutureExt;
+use std::cell::RefCell;
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     sync::{
@@ -598,9 +599,13 @@ async fn can_heartbeat_acts_during_shutdown() {
     ));
 
     let act = core.poll_activity_task(TEST_Q).await.unwrap();
+    let complete_order = RefCell::new(vec![]);
     // Start shutdown before completing the activity
-    let shutdown_fut = core.shutdown();
-    join!(shutdown_fut, async {
+    let shutdown_fut = async {
+        core.shutdown().await;
+        complete_order.borrow_mut().push(1);
+    };
+    let complete_fut = async {
         core.record_activity_heartbeat(ActivityHeartbeat {
             task_token: act.task_token.clone(),
             task_queue: TEST_Q.to_string(),
@@ -613,5 +618,8 @@ async fn can_heartbeat_acts_during_shutdown() {
         })
         .await
         .unwrap();
-    });
+        complete_order.borrow_mut().push(2);
+    };
+    join!(shutdown_fut, complete_fut);
+    assert_eq!(&complete_order.into_inner(), &[2, 1])
 }
