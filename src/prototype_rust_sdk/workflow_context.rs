@@ -31,7 +31,7 @@ use temporal_sdk_core_protos::coresdk::{
         request_cancel_external_workflow_execution as cancel_we,
         signal_external_workflow_execution as sig_we, workflow_command,
         RequestCancelExternalWorkflowExecution, SetPatchMarker, SignalExternalWorkflowExecution,
-        StartTimer,
+        StartTimer, UpsertWorkflowSearchAttributes,
     },
 };
 use tokio::sync::{mpsc, oneshot, watch};
@@ -56,6 +56,7 @@ struct WfCtxProtectedDat {
     next_child_workflow_sequence_number: u32,
     next_cancel_external_wf_sequence_number: u32,
     next_signal_external_wf_sequence_number: u32,
+    next_upsert_search_attrs_sequence_number: u32,
 }
 
 impl WfCtxProtectedDat {
@@ -82,6 +83,11 @@ impl WfCtxProtectedDat {
     fn next_signal_external_wf_seq(&mut self) -> u32 {
         let seq = self.next_signal_external_wf_sequence_number;
         self.next_signal_external_wf_sequence_number += 1;
+        seq
+    }
+    fn next_upsert_search_attrs_seq(&mut self) -> u32 {
+        let seq = self.next_upsert_search_attrs_sequence_number;
+        self.next_upsert_search_attrs_sequence_number += 1;
         seq
     }
 }
@@ -259,6 +265,24 @@ impl WfContext {
             .insert(patch_id.to_string(), res);
 
         res
+    }
+
+    /// Upsert search attributes
+    pub fn upsert_search_attributes(&self, indexed_fields: Vec<Payload>) {
+        let seq = self.seq_nums.write().next_upsert_search_attrs_seq();
+        let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::UpsertSearchAttributes(seq));
+        self.send(
+            CommandCreateRequest {
+                cmd: UpsertWorkflowSearchAttributes {
+                    seq,
+                    indexed_fields: Some(indexed_fields.into()),
+                }
+                .into(),
+                unblocker,
+            }
+            .into(),
+        );
+        cmd
     }
 
     /// Send a signal to an external workflow. May resolve as a failure if the signal didn't work

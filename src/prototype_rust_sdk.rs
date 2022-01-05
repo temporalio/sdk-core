@@ -513,6 +513,8 @@ pub enum CancellableID {
         /// Set to true if this workflow is a child of the issuing workflow
         only_child: bool,
     },
+    /// Upsert workflow search attributes
+    UpsertSearchAttributes(u32),
 }
 
 #[derive(derive_more::From)]

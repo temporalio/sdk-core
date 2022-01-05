@@ -87,3 +87,42 @@ impl UpsertCommandCreated {
 
 #[derive(Default, Clone)]
 pub(super) struct UpsertCommandRecorded {}
+
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{
+        prototype_rust_sdk::{CancellableFuture, WfContext, WorkflowFunction},
+        test_help::{canned_histories, TestHistoryBuilder},
+        workflow::managed_wf::ManagedWFFunc,
+    };
+    use rstest::{fixture, rstest};
+    use std::{mem::discriminant, time::Duration};
+
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upsert_search_attributes() {
+        let func = WorkflowFunction::new(|ctx: WfContext| async move {
+            let upsert_fut = ctx.upsert_search_attributes(
+                vec![Payload {
+                    CustomStringField: b"hello ".to_vec(),
+                }]
+            );
+            upsert_fut.await;
+            Ok(().into())
+        });
+
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_workflow_execution_completed();
+        let mut wfm = ManagedWFFunc::new(t, func, vec![]);
+
+        wfm.process_all_activations().await.unwrap();
+        let commands = wfm.get_server_commands().commands;
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].command_type, CommandType::UpsertWorkflowSearchAttributes as i32);
+        wfm.shutdown().await.unwrap();
+    }
+}
