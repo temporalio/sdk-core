@@ -230,7 +230,8 @@ impl HistoryUpdate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{pollers::MockServerGatewayApis, test_help::canned_histories};
+    use crate::test_help::{canned_histories, mock_gateway};
+    use temporal_client::MockServerGatewayApis;
 
     #[tokio::test]
     async fn consumes_standard_wft_sequence() {
@@ -286,7 +287,7 @@ mod tests {
         let long_hist = canned_histories::long_sequential_timers(wft_count);
         let initial_hist = long_hist.get_history_info(10).unwrap();
         let prev_started = initial_hist.previous_started_event_id;
-        let mut mock_gateway = MockServerGatewayApis::new();
+        let mut mock_gateway = mock_gateway();
 
         let mut npt = 2;
         mock_gateway

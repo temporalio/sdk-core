@@ -1,7 +1,7 @@
 use crate::{
-    pollers::MockServerGatewayApis,
     test_help::{
-        canned_histories, hist_to_poll_resp, mock_core, MocksHolder, ResponseType, TEST_Q,
+        canned_histories, hist_to_poll_resp, mock_core, mock_gateway, MocksHolder, ResponseType,
+        TEST_Q,
     },
     Core,
 };
@@ -9,6 +9,7 @@ use std::{
     collections::{HashMap, VecDeque},
     time::Duration,
 };
+use temporal_client::MockServerGatewayApis;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{wf_activation_job, WfActivationJob},
@@ -50,7 +51,7 @@ async fn legacy_query(#[case] include_history: bool) {
         },
         hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()),
     ]);
-    let mut mock_gateway = MockServerGatewayApis::new();
+    let mut mock_gateway = mock_gateway();
     mock_gateway
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
@@ -163,7 +164,7 @@ async fn new_queries(#[case] num_queries: usize) {
             pr
         },
     ]);
-    let mut mock_gateway = MockServerGatewayApis::new();
+    let mut mock_gateway = mock_gateway();
     mock_gateway
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
@@ -240,7 +241,7 @@ async fn legacy_query_failure_on_wft_failure() {
         },
         hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()),
     ]);
-    let mut mock_gateway = MockServerGatewayApis::new();
+    let mut mock_gateway = mock_gateway();
     mock_gateway
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
@@ -320,7 +321,7 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
         query_with_hist_task.clone(),
         query_with_hist_task,
     ]);
-    let mut mock_gateway = MockServerGatewayApis::new();
+    let mut mock_gateway = mock_gateway();
     mock_gateway
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));

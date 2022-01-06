@@ -41,7 +41,7 @@ use tokio::sync::{
 };
 
 impl WorkflowFunction {
-    pub(crate) fn start_workflow(
+    pub fn start_workflow(
         &self,
         namespace: String,
         task_queue: String,

@@ -644,30 +644,3 @@ where
         Arc::new(wrapper)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_help::{build_fake_core, canned_histories, DEFAULT_WORKFLOW_TYPE, TEST_Q};
-
-    pub async fn timer_wf(ctx: WfContext) -> WorkflowResult<()> {
-        ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
-    }
-
-    #[tokio::test]
-    async fn new_test_wf_core() {
-        let wf_id = "fakeid";
-        let wf_type = DEFAULT_WORKFLOW_TYPE;
-        let t = canned_histories::single_timer("1");
-        let core = build_fake_core(wf_id, t, [2]);
-        let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
-
-        worker.register_wf(wf_type.to_owned(), timer_wf);
-        worker
-            .submit_wf(wf_id.to_owned(), wf_type.to_owned(), vec![])
-            .await
-            .unwrap();
-        worker.run_until_done().await.unwrap();
-    }
-}

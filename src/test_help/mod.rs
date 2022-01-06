@@ -6,13 +6,9 @@ mod history_info;
 pub(crate) use history_builder::{TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE};
 
 use crate::{
-    pollers::{
-        BoxedActPoller, BoxedPoller, BoxedWFPoller, MockManualPoller, MockPoller,
-        MockServerGatewayApis,
-    },
-    task_token::TaskToken,
+    pollers::{BoxedActPoller, BoxedPoller, BoxedWFPoller, MockManualPoller, MockPoller},
     workflow::WorkflowCachingPolicy,
-    Core, CoreInitOptionsBuilder, CoreSDK, ServerGatewayApis, ServerGatewayOptions, Url,
+    Core, CoreInitOptionsBuilder, CoreSDK, ServerGatewayApis, ServerGatewayOptions, TaskToken, Url,
     WorkerConfig, WorkerConfigBuilder,
 };
 use bimap::BiMap;
@@ -26,6 +22,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+use temporal_client::{MockServerGatewayApis, ServerGatewayOptionsBuilder};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::WfActivation,
@@ -170,11 +167,7 @@ pub struct MockWorker {
 
 impl Default for MockWorker {
     fn default() -> Self {
-        Self {
-            wf_poller: Box::from(mock_poller()),
-            act_poller: None,
-            config: WorkerConfig::default_test_q(),
-        }
+        Self::for_queue(TEST_Q)
     }
 }
 
@@ -183,15 +176,14 @@ impl MockWorker {
         Self {
             wf_poller,
             act_poller: None,
-            config: WorkerConfig::default(q),
+            config: WorkerConfigBuilder::default()
+                .task_queue(q)
+                .build()
+                .unwrap(),
         }
     }
     pub fn for_queue(q: &str) -> Self {
-        Self {
-            wf_poller: Box::from(mock_poller()),
-            act_poller: None,
-            config: WorkerConfig::default(q),
-        }
+        Self::new(q, Box::from(mock_poller()))
     }
 }
 
@@ -336,7 +328,7 @@ impl MockPollCfg {
             hists,
             enforce_correct_number_of_polls,
             num_expected_fails,
-            mock_gateway: MockServerGatewayApis::new(),
+            mock_gateway: mock_gateway(),
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
         }
     }
@@ -512,18 +504,21 @@ pub fn hist_to_poll_resp(
     }
 }
 
+pub fn mock_gateway() -> MockServerGatewayApis {
+    let mut mg = MockServerGatewayApis::new();
+    mg.expect_get_options().return_const(fake_sg_opts());
+    mg
+}
+
 pub fn fake_sg_opts() -> ServerGatewayOptions {
-    ServerGatewayOptions {
-        target_url: Url::from_str("https://fake").unwrap(),
-        namespace: "".to_string(),
-        client_name: "".to_string(),
-        client_version: "".to_string(),
-        static_headers: Default::default(),
-        identity: "".to_string(),
-        worker_binary_id: "".to_string(),
-        tls_cfg: None,
-        retry_config: Default::default(),
-    }
+    ServerGatewayOptionsBuilder::default()
+        .target_url(Url::from_str("https://fake").unwrap())
+        .namespace("test_namespace".to_string())
+        .client_name("fake_client".to_string())
+        .client_version("fake_version".to_string())
+        .worker_binary_id("fake_binid".to_string())
+        .build()
+        .unwrap()
 }
 
 type AsserterWithReply<'a> = (&'a dyn Fn(&WfActivation), wf_activation_completion::Status);

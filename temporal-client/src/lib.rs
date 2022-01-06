@@ -6,7 +6,7 @@ mod retry;
 pub use crate::retry::RetryGateway;
 
 use backoff::{ExponentialBackoff, SystemClock};
-use futures::{future::BoxFuture, task::Context, FutureExt};
+use futures::{future::BoxFuture, task::Context, Future, FutureExt};
 use http::uri::InvalidUri;
 use std::{
     collections::HashMap,
@@ -196,7 +196,7 @@ impl ServerGatewayOptions {
         let channel = self.add_tls_to_channel(channel).await?;
         let channel = channel.connect().await?;
         let service = ServiceBuilder::new()
-            .layer_fn(|c| GrpcMetricSvc::new(c)) //, MetricsContext::top_level(self.namespace.clone())))
+            .layer_fn(GrpcMetricSvc::new) //, MetricsContext::top_level(self.namespace.clone())))
             .service(channel);
         let interceptor = ServiceCallInterceptor { opts: self.clone() };
         let service = WorkflowServiceClient::with_interceptor(service, interceptor);
@@ -232,7 +232,7 @@ impl ServerGatewayOptions {
                 tls = tls.identity(client_identity);
             }
 
-            return Ok(channel.tls_config(tls)?);
+            return channel.tls_config(tls);
         }
         Ok(channel)
     }
@@ -346,7 +346,7 @@ pub struct ServerGateway {
 }
 
 /// This trait provides ways to call the temporal server
-#[cfg_attr(test, mockall::automock)]
+#[cfg_attr(any(feature = "mocks", test), mockall::automock)]
 #[async_trait::async_trait]
 pub trait ServerGatewayApis {
     /// Starts workflow execution.
@@ -901,7 +901,7 @@ impl ServerGatewayApis for ServerGateway {
 // Need a version of the mock that can return futures so we can return potentially pending
 // results. This is really annoying b/c of the async trait stuff. Need
 // https://github.com/asomers/mockall/issues/189 to be fixed for it to go away.
-#[cfg(test)]
+#[cfg(any(feature = "mocks", test))]
 mockall::mock! {
     pub ManualGateway {}
     impl ServerGatewayApis for ManualGateway {
@@ -1029,5 +1029,7 @@ mockall::mock! {
             &self,
         ) -> impl Future<Output = Result<ListNamespacesResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
+
+        fn get_options(&self) -> &ServerGatewayOptions;
     }
 }

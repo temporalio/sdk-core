@@ -1,16 +1,16 @@
 use crate::{
-    pollers::{MockManualGateway, MockServerGatewayApis},
     test_help::{
         build_fake_core, build_mock_pollers, build_multihist_mock_sg, canned_histories,
-        hist_to_poll_resp, mock_core, mock_core_with_opts_no_workers, mock_manual_poller,
-        register_mock_workers, single_hist_mock_sg, FakeWfResponses, MockPollCfg, MockWorker,
-        MocksHolder, ResponseType, TEST_Q,
+        hist_to_poll_resp, mock_core, mock_core_with_opts_no_workers, mock_gateway,
+        mock_manual_poller, register_mock_workers, single_hist_mock_sg, FakeWfResponses,
+        MockPollCfg, MockWorker, MocksHolder, ResponseType, TEST_Q,
     },
     Core, CoreInitOptionsBuilder, CoreSDK, PollActivityError, PollWfError, WorkerConfigBuilder,
 };
 use futures::FutureExt;
 use rstest::{fixture, rstest};
 use std::time::Duration;
+use temporal_client::{MockManualGateway, MockServerGatewayApis};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::wf_activation_job,
@@ -204,7 +204,7 @@ async fn after_shutdown_of_worker_can_be_reregistered() {
         .unwrap();
     core.shutdown_worker(TEST_Q).await;
     // Need to recreate mock to re-register worker
-    let mocks = single_hist_mock_sg("fake_wf_id", t, &[1], MockServerGatewayApis::new(), true);
+    let mocks = single_hist_mock_sg("fake_wf_id", t, &[1], mock_gateway(), true);
     let pollers = mocks.take_pollers().into_values();
     register_mock_workers(&mut core, pollers);
     // Worker is replaced and the different mock returns a new wft
@@ -279,7 +279,7 @@ fn worker_shutdown() -> (CoreSDK, watch::Sender<bool>) {
         });
         mock_pollers.push(MockWorker::new(&tq, Box::from(mock_poller)));
     }
-    let mut mock_gateway = MockServerGatewayApis::new();
+    let mut mock_gateway = mock_gateway();
     mock_gateway
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
@@ -341,7 +341,7 @@ async fn can_shutdown_local_act_only_worker_when_act_polling(
     #[values(true, false)] whole_core_shutdown: bool,
 ) {
     let t = canned_histories::single_timer("1");
-    let mock = MockServerGatewayApis::new();
+    let mock = mock_gateway();
     let mh = MockPollCfg::from_resp_batches("fakeid", t, [1], mock);
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(TEST_Q, |w| {

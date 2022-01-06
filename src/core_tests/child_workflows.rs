@@ -1,12 +1,12 @@
 use crate::{
-    pollers::MockServerGatewayApis,
     test_help::{
-        build_mock_pollers, canned_histories, mock_core, MockPollCfg, ResponseType,
+        build_mock_pollers, canned_histories, mock_core, mock_gateway, MockPollCfg, ResponseType,
         DEFAULT_WORKFLOW_TYPE, TEST_Q,
     },
     workflow::managed_wf::ManagedWFFunc,
 };
 use std::sync::Arc;
+use temporal_client::MockServerGatewayApis;
 use temporal_sdk::{
     ChildWorkflowOptions, TestRustWorker, WfContext, WorkflowFunction, WorkflowResult,
 };
@@ -25,7 +25,7 @@ async fn signal_child_workflow(#[case] serial: bool) {
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let t = canned_histories::single_child_workflow_signaled("child-id-1", SIGNAME);
-    let mock = MockServerGatewayApis::new();
+    let mock = mock_gateway();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::AllHistory], mock);
     let mock = build_mock_pollers(mh);
     let core = mock_core(mock);

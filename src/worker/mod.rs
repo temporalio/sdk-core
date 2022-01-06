@@ -805,12 +805,13 @@ struct WFTReportOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{pollers::MockServerGatewayApis, test_help::fake_sg_opts};
+    use crate::test_help::{fake_sg_opts, mock_gateway};
+    use temporal_client::MockServerGatewayApis;
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 
     #[tokio::test]
     async fn activity_timeouts_dont_eat_permits() {
-        let mut mock_gateway = MockServerGatewayApis::new();
+        let mut mock_gateway = mock_gateway();
         mock_gateway
             .expect_poll_activity_task()
             .returning(|_| Ok(PollActivityTaskQueueResponse::default()));
@@ -828,7 +829,7 @@ mod tests {
 
     #[tokio::test]
     async fn workflow_timeouts_dont_eat_permits() {
-        let mut mock_gateway = MockServerGatewayApis::new();
+        let mut mock_gateway = mock_gateway();
         mock_gateway
             .expect_poll_workflow_task()
             .returning(|_, _| Ok(PollWorkflowTaskQueueResponse::default()));
@@ -846,7 +847,7 @@ mod tests {
 
     #[tokio::test]
     async fn activity_errs_dont_eat_permits() {
-        let mut mock_gateway = MockServerGatewayApis::new();
+        let mut mock_gateway = mock_gateway();
         mock_gateway
             .expect_poll_activity_task()
             .returning(|_| Err(tonic::Status::internal("ahhh")));
@@ -864,7 +865,7 @@ mod tests {
 
     #[tokio::test]
     async fn workflow_errs_dont_eat_permits() {
-        let mut mock_gateway = MockServerGatewayApis::new();
+        let mut mock_gateway = mock_gateway();
         mock_gateway
             .expect_poll_workflow_task()
             .returning(|_, _| Err(tonic::Status::internal("ahhh")));

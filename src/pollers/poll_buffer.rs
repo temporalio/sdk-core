@@ -236,9 +236,9 @@ pub fn new_activity_task_buffer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pollers::MockManualGateway;
     use futures::FutureExt;
     use std::time::Duration;
+    use temporal_client::MockManualGateway;
     use tokio::{select, sync::mpsc::channel};
 
     #[tokio::test]

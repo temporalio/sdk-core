@@ -79,10 +79,11 @@ version = "0.1"
 [dev-dependencies]
 assert_matches = "1.4"
 bimap = "0.6.1"
-mockall = "0.10"
+mockall = "0.11"
 rstest = "0.10"
 test_utils = { path = "test_utils" }
 temporal-sdk = { path = "temporal-sdk" }
+temporal-client = { features = ["mocks"],  path = "temporal-client" }
 
 [build-dependencies]
 tonic-build = "0.6"

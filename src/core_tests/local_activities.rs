@@ -1,8 +1,7 @@
 use crate::{
-    pollers::MockServerGatewayApis,
     test_help::{
-        build_mock_pollers, history_builder::default_wes_attribs, mock_core, MockPollCfg,
-        ResponseType, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE, TEST_Q,
+        build_mock_pollers, history_builder::default_wes_attribs, mock_core, mock_gateway,
+        MockPollCfg, ResponseType, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE, TEST_Q,
     },
     Core,
 };
@@ -15,6 +14,7 @@ use std::{
     },
     time::Duration,
 };
+use temporal_client::MockServerGatewayApis;
 use temporal_sdk::{LocalActivityOptions, TestRustWorker, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{common::RetryPolicy, AsJsonPayloadExt},
@@ -46,7 +46,7 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: 
     t.add_workflow_execution_completed();
 
     let wf_id = "fakeid";
-    let mock = MockServerGatewayApis::new();
+    let mock = mock_gateway();
     let resps = if replay {
         vec![ResponseType::AllHistory]
     } else {
@@ -113,7 +113,7 @@ async fn local_act_many_concurrent() {
     t.add_workflow_execution_completed();
 
     let wf_id = "fakeid";
-    let mock = MockServerGatewayApis::new();
+    let mock = mock_gateway();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 3], mock);
     let mock = build_mock_pollers(mh);
     let core = mock_core(mock);
@@ -153,7 +153,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     t.add_workflow_task_scheduled_and_started();
 
     let wf_id = "fakeid";
-    let mock = MockServerGatewayApis::new();
+    let mock = mock_gateway();
     // Allow returning incomplete history more than once, as the wft timeout can be timing sensitive
     // and might poll an extra time
     let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 2, 2, 2], mock);
@@ -210,7 +210,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
     t.add_workflow_task_scheduled_and_started();
 
     let wf_id = "fakeid";
-    let mock = MockServerGatewayApis::new();
+    let mock = mock_gateway();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [1], mock);
     let mock = build_mock_pollers(mh);
     let core = mock_core(mock);
@@ -283,7 +283,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
     t.add_workflow_execution_completed();
 
     let wf_id = "fakeid";
-    let mock = MockServerGatewayApis::new();
+    let mock = mock_gateway();
     let mh = MockPollCfg::from_resp_batches(
         wf_id,
         t,

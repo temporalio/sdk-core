@@ -59,9 +59,6 @@ pub enum ActivityHeartbeatError {
     /// Heartbeat referenced an activity that we don't think exists. It may have completed already.
     #[error("Heartbeat has been sent for activity that either completed or never started on this worker.")]
     UnknownActivity,
-    /// There was no heartbeat timeout set for the activity, but one is required to heartbeat.
-    #[error("Heartbeat is only allowed on activities with heartbeat timeout.")]
-    HeartbeatTimeoutNotSet,
     /// There was a set heartbeat timeout, but it was not parseable. A valid timeout is requried
     /// to heartbeat.
     #[error("Unable to parse activity heartbeat timeout.")]
@@ -350,8 +347,9 @@ impl ActivityHeartbeatManager {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{pollers::MockServerGatewayApis, test_help::TEST_Q};
+    use crate::test_help::{mock_gateway, TEST_Q};
     use std::time::Duration;
+    use temporal_client::MockServerGatewayApis;
     use temporal_sdk_core_protos::{
         coresdk::common::Payload,
         temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
@@ -362,7 +360,7 @@ mod test {
     /// every 1/2 of the heartbeat timeout.
     #[tokio::test]
     async fn process_heartbeats_and_shutdown() {
-        let mut mock_gateway = MockServerGatewayApis::new();
+        let mut mock_gateway = mock_gateway();
         mock_gateway
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
@@ -383,7 +381,7 @@ mod test {
 
     #[tokio::test]
     async fn send_heartbeats_less_frequently_than_throttle_interval() {
-        let mut mock_gateway = MockServerGatewayApis::new();
+        let mut mock_gateway = mock_gateway();
         mock_gateway
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
@@ -403,7 +401,7 @@ mod test {
     /// interactions with the server - one immediately and one after 500ms after the throttle_interval.
     #[tokio::test]
     async fn process_tight_loop_and_shutdown() {
-        let mut mock_gateway = MockServerGatewayApis::new();
+        let mut mock_gateway = mock_gateway();
         mock_gateway
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
@@ -422,7 +420,7 @@ mod test {
     /// This test reports one heartbeat and waits for the throttle_interval to elapse before sending another
     #[tokio::test]
     async fn report_heartbeat_after_timeout() {
-        let mut mock_gateway = MockServerGatewayApis::new();
+        let mut mock_gateway = mock_gateway();
         mock_gateway
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
@@ -439,7 +437,7 @@ mod test {
 
     #[tokio::test]
     async fn evict_works() {
-        let mut mock_gateway = MockServerGatewayApis::new();
+        let mut mock_gateway = mock_gateway();
         mock_gateway
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
@@ -460,7 +458,7 @@ mod test {
     /// Recording new heartbeats after shutdown is not allowed, and will result in error.
     #[tokio::test]
     async fn record_after_shutdown() {
-        let mut mock_gateway = MockServerGatewayApis::new();
+        let mut mock_gateway = mock_gateway();
         mock_gateway
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))

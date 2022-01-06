@@ -1,10 +1,9 @@
 use crate::{
     job_assert,
-    pollers::{MockManualGateway, MockServerGatewayApis},
     test_help::{
         build_fake_core, canned_histories, fake_sg_opts, gen_assert_and_reply, mock_core,
-        mock_core_with_opts_no_workers, mock_manual_poller, mock_poller, mock_poller_from_resps,
-        poll_and_reply, MockWorker, MocksHolder, TEST_Q,
+        mock_core_with_opts_no_workers, mock_gateway, mock_manual_poller, mock_poller,
+        mock_poller_from_resps, poll_and_reply, MockWorker, MocksHolder, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::NonSticky,
     ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
@@ -19,6 +18,7 @@ use std::{
     },
     time::Duration,
 };
+use temporal_client::{MockManualGateway, MockServerGatewayApis};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{activity_resolution, ActivityExecutionResult, ActivityResolution},
@@ -58,7 +58,7 @@ async fn max_activities_respected() {
             ..Default::default()
         },
     ]);
-    let mut mock_gateway = MockServerGatewayApis::new();
+    let mut mock_gateway = mock_gateway();
     mock_gateway
         .expect_poll_activity_task()
         .times(3)
@@ -109,7 +109,7 @@ async fn max_activities_respected() {
 
 #[tokio::test]
 async fn activity_not_found_returns_ok() {
-    let mut mock_gateway = MockServerGatewayApis::new();
+    let mut mock_gateway = mock_gateway();
     // Mock won't even be called, since we weren't tracking activity
     mock_gateway.expect_complete_activity_task().times(0);
 
@@ -131,7 +131,7 @@ async fn activity_not_found_returns_ok() {
 
 #[tokio::test]
 async fn heartbeats_report_cancels_only_once() {
-    let mut mock_gateway = MockServerGatewayApis::new();
+    let mut mock_gateway = mock_gateway();
     mock_gateway
         .expect_record_activity_heartbeat()
         .times(2)
@@ -305,7 +305,7 @@ async fn activity_cancel_interrupts_poll() {
 
 #[tokio::test]
 async fn activity_poll_timeout_retries() {
-    let mock_gateway = MockServerGatewayApis::new();
+    let mock_gateway = mock_gateway();
     let mut calls = 0;
     let mut mock_act_poller = mock_poller();
     mock_act_poller.expect_poll().times(3).returning(move || {
@@ -499,7 +499,7 @@ async fn activity_timeout_no_double_resolve() {
 
 #[tokio::test]
 async fn only_returns_cancels_for_desired_queue() {
-    let mut mock_gateway = MockServerGatewayApis::new();
+    let mut mock_gateway = mock_gateway();
     let seen_cancel = Arc::new(Notify::new());
     let sc = seen_cancel.clone();
     mock_gateway
@@ -573,7 +573,7 @@ async fn only_returns_cancels_for_desired_queue() {
 
 #[tokio::test]
 async fn can_heartbeat_acts_during_shutdown() {
-    let mut mock_gateway = MockServerGatewayApis::new();
+    let mut mock_gateway = mock_gateway();
     mock_gateway
         .expect_record_activity_heartbeat()
         .times(1)
