@@ -9,7 +9,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::MockServerGatewayApis;
+
 use temporal_sdk::{TestRustWorker, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
 

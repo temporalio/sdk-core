@@ -806,7 +806,7 @@ struct WFTReportOutcome {
 mod tests {
     use super::*;
     use crate::test_help::{fake_sg_opts, mock_gateway};
-    use temporal_client::MockServerGatewayApis;
+    
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 
     #[tokio::test]

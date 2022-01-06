@@ -17,7 +17,7 @@ use std::{
     sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_client::MockServerGatewayApis;
+
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_resolution, ActivityResolution},

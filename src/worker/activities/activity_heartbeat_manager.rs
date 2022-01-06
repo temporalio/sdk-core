@@ -349,7 +349,7 @@ mod test {
     use super::*;
     use crate::test_help::{mock_gateway, TEST_Q};
     use std::time::Duration;
-    use temporal_client::MockServerGatewayApis;
+    
     use temporal_sdk_core_protos::{
         coresdk::common::Payload,
         temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,

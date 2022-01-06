@@ -231,7 +231,7 @@ impl HistoryUpdate {
 mod tests {
     use super::*;
     use crate::test_help::{canned_histories, mock_gateway};
-    use temporal_client::MockServerGatewayApis;
+    
 
     #[tokio::test]
     async fn consumes_standard_wft_sequence() {
