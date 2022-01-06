@@ -10,7 +10,7 @@ use crate::{
 use futures::FutureExt;
 use rstest::{fixture, rstest};
 use std::time::Duration;
-use temporal_client::{MockManualGateway};
+use temporal_client::MockManualGateway;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::wf_activation_job,

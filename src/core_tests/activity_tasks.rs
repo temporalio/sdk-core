@@ -18,7 +18,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{MockManualGateway};
+use temporal_client::MockManualGateway;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{activity_resolution, ActivityExecutionResult, ActivityResolution},

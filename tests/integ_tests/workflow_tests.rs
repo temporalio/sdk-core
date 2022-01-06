@@ -20,11 +20,8 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core::{
-    errors::PollWfError,
-    prototype_rust_sdk::{WfContext, WorkflowResult},
-    Core,
-};
+use temporal_sdk::{WfContext, WorkflowResult};
+use temporal_sdk_core_api::{errors::PollWfError, Core};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
