@@ -51,7 +51,7 @@ mod integ_tests {
             })
             .build()
             .unwrap();
-        let con = sgo.connect().await.unwrap();
+        let con = sgo.connect(None).await.unwrap();
         con.list_namespaces().await.unwrap();
     }
 }

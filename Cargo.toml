@@ -51,7 +51,6 @@ tokio = { version = "1.1", features = ["rt", "rt-multi-thread", "parking_lot", "
 tokio-util = { version = "0.6.9" }
 tokio-stream = "0.1"
 tonic = { version = "0.6", features = ["tls", "tls-roots"] }
-tower = "0.4"
 tracing = { version = "0.1", features = ["log-always"] }
 tracing-futures = "0.2"
 tracing-opentelemetry = "0.15"

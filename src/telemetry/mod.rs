@@ -66,7 +66,7 @@ impl Default for TelemetryOptions {
 
 /// Things that need to not be dropped while telemetry is ongoing
 #[derive(Default)]
-struct GlobalTelemDat {
+pub(crate) struct GlobalTelemDat {
     metric_push_controller: Option<PushController>,
     core_export_logger: Option<CoreExportLogger>,
     runtime: Option<tokio::runtime::Runtime>,
@@ -92,14 +92,16 @@ impl GlobalTelemDat {
 /// called more than once, subsequent calls do nothing.
 ///
 /// See [TelemetryOptions] docs for more on configuration.
-pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<(), anyhow::Error> {
+pub(crate) fn telemetry_init(
+    opts: &TelemetryOptions,
+) -> Result<&'static GlobalTelemDat, anyhow::Error> {
     // TODO: Per-layer filtering has been implemented but does not yet support
     //   env-filter. When it does, allow filtering logs/telemetry separately.
 
     // Ensure we don't pointlessly spawn threads that won't do anything or call telem dat's init 2x
     let guard = TELETM_MUTEX.lock();
-    if GLOBAL_TELEM_DAT.get().is_some() {
-        return Ok(());
+    if let Some(gtd) = GLOBAL_TELEM_DAT.get() {
+        return Ok(gtd);
     }
 
     // This is a bit odd, but functional. It's desirable to create a separate tokio runtime for
@@ -202,12 +204,10 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<(), anyhow::Erro
         })?;
 
         res.init();
-        Result::<_, anyhow::Error>::Ok(())
+        Result::<_, anyhow::Error>::Ok(res)
     })
     .join()
-    .expect("Telemetry initialization panicked")?;
-
-    Ok(())
+    .expect("Telemetry initialization panicked")
 }
 
 /// Returned buffered logs for export to lang from the global logging instance

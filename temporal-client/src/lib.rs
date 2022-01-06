@@ -1,13 +1,16 @@
 #[macro_use]
 extern crate tracing;
 
+mod metrics;
 mod retry;
 
 pub use crate::retry::RetryGateway;
 
+use crate::metrics::{svc_operation, MetricsContext};
 use backoff::{ExponentialBackoff, SystemClock};
 use futures::{future::BoxFuture, task::Context, Future, FutureExt};
 use http::uri::InvalidUri;
+use opentelemetry::metrics::Meter;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
@@ -191,12 +194,20 @@ pub enum GatewayInitError {
 
 impl ServerGatewayOptions {
     /// Attempt to establish a connection to the Temporal server
-    pub async fn connect(&self) -> Result<RetryGateway<ServerGateway>, GatewayInitError> {
+    pub async fn connect(
+        &self,
+        metrics_meter: Option<&Meter>,
+    ) -> Result<RetryGateway<ServerGateway>, GatewayInitError> {
         let channel = Channel::from_shared(self.target_url.to_string())?;
         let channel = self.add_tls_to_channel(channel).await?;
         let channel = channel.connect().await?;
         let service = ServiceBuilder::new()
-            .layer_fn(GrpcMetricSvc::new) //, MetricsContext::top_level(self.namespace.clone())))
+            .layer_fn(|channel| {
+                GrpcMetricSvc::new(
+                    channel,
+                    metrics_meter.map(|mm| MetricsContext::top_level(self.namespace.clone(), mm)),
+                )
+            })
             .service(channel);
         let interceptor = ServiceCallInterceptor { opts: self.clone() };
         let service = WorkflowServiceClient::with_interceptor(service, interceptor);
@@ -295,8 +306,8 @@ impl Interceptor for ServiceCallInterceptor {
 #[derive(derive_more::Constructor, Debug, Clone)]
 pub(crate) struct GrpcMetricSvc {
     inner: Channel,
-    // TODO: Fix metrics
-    // metrics: MetricsContext,
+    // If set to none, metrics are a no-op
+    metrics: Option<MetricsContext>,
 }
 
 impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
@@ -309,27 +320,27 @@ impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
     }
 
     fn call(&mut self, req: http::Request<BoxBody>) -> Self::Future {
-        // let metrics = req.uri().to_string().rsplit_once('/').map(|split_tup| {
-        //     let method_name = split_tup.1;
-        //     let mut metrics = self
-        //         .metrics
-        //         .with_new_attrs([svc_operation(method_name.to_string())]);
-        //     if LONG_POLL_METHOD_NAMES.contains(&method_name) {
-        //         metrics.set_is_long_poll();
-        //     }
-        //     metrics.svc_request();
-        //     metrics
-        // });
+        let metrics = self.metrics.as_ref().and_then(|metrics| {
+            req.uri().to_string().rsplit_once('/').map(|split_tup| {
+                let method_name = split_tup.1;
+                let mut metrics = metrics.with_new_attrs([svc_operation(method_name.to_string())]);
+                if LONG_POLL_METHOD_NAMES.contains(&method_name) {
+                    metrics.set_is_long_poll();
+                }
+                metrics.svc_request();
+                metrics
+            })
+        });
         let callfut = self.inner.call(req);
         async move {
-            // let started = Instant::now();
+            let started = Instant::now();
             let res = callfut.await;
-            // if let Some(metrics) = metrics {
-            //     metrics.record_svc_req_latency(started.elapsed());
-            //     if res.is_err() {
-            //         metrics.svc_request_failed();
-            //     }
-            // }
+            if let Some(metrics) = metrics {
+                metrics.record_svc_req_latency(started.elapsed());
+                if res.is_err() {
+                    metrics.svc_request_failed();
+                }
+            }
             res
         }
         .boxed()

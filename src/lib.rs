@@ -60,7 +60,7 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_completion::WfActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
 };
 
-use crate::telemetry::metrics::MetricsContext;
+use crate::telemetry::metrics::{MetricsContext, METRIC_METER};
 #[cfg(test)]
 use crate::test_help::MockWorker;
 
@@ -93,7 +93,7 @@ pub struct CoreInitOptions {
 pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
     telemetry_init(&opts.telemetry_opts).map_err(CoreInitError::TelemetryInitError)?;
     // Initialize server client
-    let server_gateway = opts.gateway_opts.connect().await?;
+    let server_gateway = opts.gateway_opts.connect(Some(&METRIC_METER)).await?;
 
     Ok(CoreSDK::new(server_gateway, opts))
 }
