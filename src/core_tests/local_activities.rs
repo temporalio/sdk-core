@@ -1,6 +1,5 @@
 use crate::{
     pollers::MockServerGatewayApis,
-    prototype_rust_sdk::{LocalActivityOptions, TestRustWorker, WfContext, WorkflowResult},
     test_help::{
         build_mock_pollers, history_builder::default_wes_attribs, mock_core, MockPollCfg,
         ResponseType, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE, TEST_Q,
@@ -16,6 +15,7 @@ use std::{
     },
     time::Duration,
 };
+use temporal_sdk::{LocalActivityOptions, TestRustWorker, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{common::RetryPolicy, AsJsonPayloadExt},
     temporal::api::{enums::v1::EventType, failure::v1::Failure},

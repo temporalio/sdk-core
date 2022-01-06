@@ -223,7 +223,6 @@ impl TryFrom<HistoryEvent> for PatchMachineEvents {
 #[cfg(test)]
 mod tests {
     use crate::{
-        prototype_rust_sdk::{ActivityOptions, WfContext, WorkflowFunction},
         test_help::TestHistoryBuilder,
         workflow::{
             machines::{WFMachinesError, HAS_CHANGE_MARKER_NAME},
@@ -232,6 +231,7 @@ mod tests {
     };
     use rstest::rstest;
     use std::time::Duration;
+    use temporal_sdk::{ActivityOptions, WfContext, WorkflowFunction};
     use temporal_sdk_core_protos::{
         coresdk::{
             common::decode_change_marker_details,

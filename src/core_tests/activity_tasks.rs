@@ -10,8 +10,8 @@ use crate::{
     ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
 };
 use futures::FutureExt;
-use std::cell::RefCell;
 use std::{
+    cell::RefCell,
     collections::{hash_map::Entry, HashMap, VecDeque},
     sync::{
         atomic::{AtomicUsize, Ordering},

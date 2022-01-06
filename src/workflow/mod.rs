@@ -25,17 +25,6 @@ pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub(crate) enum CommandID {
-    Timer(u32),
-    Activity(u32),
-    LocalActivity(u32),
-    ChildWorkflowStart(u32),
-    ChildWorkflowComplete(u32),
-    SignalExternal(u32),
-    CancelExternal(u32),
-}
-
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
 /// associated with that specific workflow run.
 pub(crate) struct WorkflowManager {
@@ -268,15 +257,25 @@ impl TryFrom<WorkflowCommand> for WFCommand {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+enum CommandID {
+    Timer(u32),
+    Activity(u32),
+    LocalActivity(u32),
+    ChildWorkflowStart(u32),
+    SignalExternal(u32),
+    CancelExternal(u32),
+}
+
 #[cfg(test)]
 pub mod managed_wf {
     use super::*;
     use crate::{
-        prototype_rust_sdk::{WorkflowFunction, WorkflowResult},
         test_help::{TestHistoryBuilder, TEST_Q},
         workflow::{WFCommand, WorkflowFetcher},
     };
     use std::{convert::TryInto, time::Duration};
+    use temporal_sdk::{WorkflowFunction, WorkflowResult};
     use temporal_sdk_core_protos::coresdk::{
         activity_result::ActivityExecutionResult,
         common::Payload,

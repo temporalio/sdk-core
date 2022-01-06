@@ -1,4 +1,4 @@
-use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
+use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::common::NamespacedWorkflowExecution;
 use test_utils::CoreWfStarter;
 

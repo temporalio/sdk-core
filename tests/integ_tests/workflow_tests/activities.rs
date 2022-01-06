@@ -1,6 +1,6 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporal_sdk_core::prototype_rust_sdk::{ActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{

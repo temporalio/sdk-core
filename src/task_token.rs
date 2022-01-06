@@ -3,6 +3,7 @@ use std::fmt::{Debug, Display, Formatter};
 static LOCAL_ACT_TASK_TOKEN_PREFIX: &[u8] = b"local_act_";
 
 #[derive(Hash, Eq, PartialEq, Clone, derive_more::From, derive_more::Into)]
+/// Type-safe wrapper for task token bytes
 pub struct TaskToken(pub Vec<u8>);
 
 impl TaskToken {

@@ -1,6 +1,5 @@
 use crate::{
     pollers::MockServerGatewayApis,
-    prototype_rust_sdk::{TestRustWorker, WfContext, WorkflowResult},
     test_help::{
         build_mock_pollers, canned_histories, mock_core, MockPollCfg, ResponseType,
         DEFAULT_WORKFLOW_TYPE, TEST_Q,
@@ -13,6 +12,7 @@ use std::{
     },
     time::Duration,
 };
+use temporal_sdk::{TestRustWorker, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
 
 static DID_FAIL: AtomicBool = AtomicBool::new(false);

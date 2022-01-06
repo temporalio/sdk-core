@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use futures::future::join_all;
 use std::time::Duration;
-use temporal_sdk_core::prototype_rust_sdk::{
+use temporal_sdk::{
     act_cancelled, act_is_cancelled, ActivityCancelledError, CancellableFuture,
     LocalActivityOptions, WfContext, WorkflowResult,
 };

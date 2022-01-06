@@ -4,6 +4,9 @@
 //!
 //! Needs lots of love to be production ready but the basis is there
 
+#[macro_use]
+extern crate tracing;
+
 mod conversions;
 mod payload_converter;
 mod workflow_context;
@@ -14,10 +17,7 @@ pub use workflow_context::{
     WfContext,
 };
 
-use crate::{
-    prototype_rust_sdk::workflow_context::{ChildWfCommon, PendingChildWorkflow},
-    Core, PollActivityError, PollWfError, TaskToken,
-};
+use crate::workflow_context::{ChildWfCommon, PendingChildWorkflow};
 use anyhow::{anyhow, bail};
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use std::{
@@ -29,6 +29,10 @@ use std::{
         Arc,
     },
     time::Duration,
+};
+use temporal_sdk_core::{
+    errors::{PollActivityError, PollWfError},
+    Core, TaskToken,
 };
 use temporal_sdk_core_protos::{
     coresdk::{

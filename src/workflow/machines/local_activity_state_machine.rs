@@ -3,7 +3,7 @@ use super::{
     WFMachinesAdapter, WFMachinesError,
 };
 use crate::{
-    protosext::{CompleteLocalActivityData, HistoryEventExt, TryIntoOrNone, ValidScheduleLA},
+    protosext::{CompleteLocalActivityData, HistoryEventExt, ValidScheduleLA},
     worker::LocalActivityExecutionResult,
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
@@ -27,6 +27,7 @@ use temporal_sdk_core_protos::{
         failure::v1::failure::FailureInfo,
         history::v1::HistoryEvent,
     },
+    utilities::TryIntoOrNone,
 };
 
 pub const LOCAL_ACTIVITY_MARKER_NAME: &str = "core_local_activity";
@@ -784,14 +785,14 @@ impl From<LocalActivityExecutionResult> for ActivityResolution {
 mod tests {
     use super::*;
     use crate::{
-        prototype_rust_sdk::{
-            CancellableFuture, LocalActivityOptions, WfContext, WorkflowFunction, WorkflowResult,
-        },
         test_help::{canned_histories, TestHistoryBuilder},
         workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::rstest;
     use std::time::Duration;
+    use temporal_sdk::{
+        CancellableFuture, LocalActivityOptions, WfContext, WorkflowFunction, WorkflowResult,
+    };
     use temporal_sdk_core_protos::{
         coresdk::{
             activity_result::ActivityExecutionResult,

@@ -1,6 +1,5 @@
-use crate::protosext::TryIntoOrNone;
 use std::time::Duration;
-use temporal_sdk_core_protos::coresdk::common::RetryPolicy;
+use temporal_sdk_core_protos::{coresdk::common::RetryPolicy, utilities::TryIntoOrNone};
 
 pub(crate) trait RetryPolicyExt {
     /// Ask this retry policy if a retry should be performed. Caller provides the current attempt

@@ -11,7 +11,6 @@ pub extern crate assert_matches;
 extern crate tracing;
 
 pub mod errors;
-pub mod prototype_rust_sdk;
 
 mod log_export;
 mod pending_activations;
@@ -34,6 +33,7 @@ pub use pollers::{
     ClientTlsConfig, RetryConfig, RetryGateway, ServerGateway, ServerGatewayApis,
     ServerGatewayOptions, ServerGatewayOptionsBuilder, TlsConfig,
 };
+pub use task_token::TaskToken;
 pub use telemetry::{TelemetryOptions, TelemetryOptionsBuilder};
 pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
@@ -44,7 +44,6 @@ use crate::{
         PollActivityError, PollWfError, WorkerRegistrationError,
     },
     pollers::GatewayRef,
-    task_token::TaskToken,
     telemetry::{fetch_global_buffered_logs, telemetry_init},
     worker::{Worker, WorkerDispatcher},
 };

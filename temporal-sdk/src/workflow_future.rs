@@ -1,11 +1,6 @@
 use crate::{
-    protosext::TryIntoOrNone,
-    prototype_rust_sdk::{
-        conversions::anyhow_to_fail, workflow_context::WfContextSharedData, CancellableID,
-        RustWfCmd, TimerResult, UnblockEvent, WfContext, WfExitValue, WorkflowFunction,
-        WorkflowResult,
-    },
-    workflow::CommandID,
+    conversions::anyhow_to_fail, workflow_context::WfContextSharedData, CancellableID, RustWfCmd,
+    TimerResult, UnblockEvent, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
 };
 use anyhow::{anyhow, bail, Context as AnyhowContext, Error};
 use crossbeam::channel::Receiver;
@@ -38,6 +33,7 @@ use temporal_sdk_core_protos::{
         workflow_completion::WfActivationCompletion,
     },
     temporal::api::failure::v1::Failure,
+    utilities::TryIntoOrNone,
 };
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -492,4 +488,14 @@ impl Future for WorkflowFuture {
             // and it allows us to rely on evictions for death and cache management
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+enum CommandID {
+    Timer(u32),
+    Activity(u32),
+    ChildWorkflowStart(u32),
+    ChildWorkflowComplete(u32),
+    SignalExternal(u32),
+    CancelExternal(u32),
 }

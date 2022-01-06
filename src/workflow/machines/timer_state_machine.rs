@@ -274,12 +274,12 @@ impl Cancellable for TimerMachine {
 mod test {
     use super::*;
     use crate::{
-        prototype_rust_sdk::{CancellableFuture, WfContext, WorkflowFunction},
         test_help::{canned_histories, TestHistoryBuilder},
         workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::{fixture, rstest};
     use std::{mem::discriminant, time::Duration};
+    use temporal_sdk::{CancellableFuture, WfContext, WorkflowFunction};
 
     #[fixture]
     fn happy_wfm() -> ManagedWFFunc {

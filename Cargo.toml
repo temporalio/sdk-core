@@ -1,6 +1,6 @@
 [package]
 name = "temporal-sdk-core"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 authors = ["Spencer Judge <spencer@temporal.io>", "Vitaly Arbuzov <vitaly@temporal.io>"]
 edition = "2021"
 license-file = "LICENSE.txt"
@@ -10,6 +10,9 @@ repository = "https://github.com/temporalio/sdk-core"
 keywords = ["temporal", "workflow"]
 categories = ["development-tools"]
 resolver = "2"
+
+[workspace]
+members = [".", "fsm", "test_utils", "sdk-core-protos", "temporal-sdk"]
 
 [lib]
 
@@ -72,12 +75,10 @@ bimap = "0.6.1"
 mockall = "0.10"
 rstest = "0.10"
 test_utils = { path = "test_utils" }
+temporal-sdk = { path = "temporal-sdk" }
 
 [build-dependencies]
 tonic-build = "0.6"
-
-[workspace]
-members = [".", "fsm", "test_utils", "sdk-core-protos"]
 
 [[test]]
 name = "integ_tests"

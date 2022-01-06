@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use temporal_sdk_core::prototype_rust_sdk::{ChildWorkflowOptions, WfContext, WorkflowResult};
+use temporal_sdk::{ChildWorkflowOptions, WfContext, WorkflowResult};
 use test_utils::CoreWfStarter;
 use uuid::Uuid;
 

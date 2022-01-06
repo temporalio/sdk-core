@@ -1,5 +1,5 @@
 use std::time::Duration;
-use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
+use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{
     workflow_commands::{CancelTimer, CompleteWorkflowExecution, StartTimer},
     workflow_completion::WfActivationCompletion,

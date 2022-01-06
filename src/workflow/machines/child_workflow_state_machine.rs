@@ -617,15 +617,15 @@ fn convert_payloads(
 mod test {
     use super::*;
     use crate::{
-        prototype_rust_sdk::{
-            CancellableFuture, ChildWorkflowOptions, WfContext, WorkflowFunction, WorkflowResult,
-        },
         test_help::{canned_histories, TestHistoryBuilder},
         workflow::managed_wf::ManagedWFFunc,
     };
     use anyhow::anyhow;
     use rstest::{fixture, rstest};
     use std::mem::discriminant;
+    use temporal_sdk::{
+        CancellableFuture, ChildWorkflowOptions, WfContext, WorkflowFunction, WorkflowResult,
+    };
     use temporal_sdk_core_protos::coresdk::{
         child_workflow::child_workflow_result,
         workflow_activation::resolve_child_workflow_execution_start::Status as StartStatus,

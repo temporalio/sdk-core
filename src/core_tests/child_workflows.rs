@@ -1,8 +1,5 @@
 use crate::{
     pollers::MockServerGatewayApis,
-    prototype_rust_sdk::{
-        ChildWorkflowOptions, TestRustWorker, WfContext, WorkflowFunction, WorkflowResult,
-    },
     test_help::{
         build_mock_pollers, canned_histories, mock_core, MockPollCfg, ResponseType,
         DEFAULT_WORKFLOW_TYPE, TEST_Q,
@@ -10,6 +7,9 @@ use crate::{
     workflow::managed_wf::ManagedWFFunc,
 };
 use std::sync::Arc;
+use temporal_sdk::{
+    ChildWorkflowOptions, TestRustWorker, WfContext, WorkflowFunction, WorkflowResult,
+};
 use temporal_sdk_core_protos::coresdk::child_workflow::{
     child_workflow_result, ChildWorkflowCancellationType,
 };

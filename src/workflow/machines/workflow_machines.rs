@@ -13,7 +13,7 @@ use super::{
     TemporalStateMachine,
 };
 use crate::{
-    protosext::{HistoryEventExt, TryIntoOrNone, ValidScheduleLA},
+    protosext::{HistoryEventExt, ValidScheduleLA},
     telemetry::{metrics::MetricsContext, VecDisplayer},
     worker::{
         ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
@@ -50,6 +50,7 @@ use temporal_sdk_core_protos::{
         enums::v1::EventType,
         history::v1::{history_event, HistoryEvent, WorkflowExecutionStartedEventAttributes},
     },
+    utilities::TryIntoOrNone,
 };
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;

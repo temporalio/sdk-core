@@ -2,7 +2,7 @@ mod options;
 
 pub use options::{ActivityOptions, ChildWorkflowOptions, LocalActivityOptions};
 
-use crate::prototype_rust_sdk::{
+use crate::{
     workflow_context::options::IntoWorkflowCommand, CancelExternalWfResult, CancellableID,
     CommandCreateRequest, CommandSubscribeChildWorkflowCompletion, RustWfCmd,
     SignalExternalWfResult, TimerResult, UnblockEvent, Unblockable,

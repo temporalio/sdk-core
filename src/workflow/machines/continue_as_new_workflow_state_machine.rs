@@ -121,12 +121,9 @@ impl Cancellable for ContinueAsNewWorkflowMachine {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        prototype_rust_sdk::{WfContext, WfExitValue, WorkflowFunction, WorkflowResult},
-        test_help::canned_histories,
-        workflow::managed_wf::ManagedWFFunc,
-    };
+    use crate::{test_help::canned_histories, workflow::managed_wf::ManagedWFFunc};
     use std::time::Duration;
+    use temporal_sdk::{WfContext, WfExitValue, WorkflowFunction, WorkflowResult};
 
     async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(500)).await;
