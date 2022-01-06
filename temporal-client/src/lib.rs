@@ -1,3 +1,9 @@
+#![warn(missing_docs)] // error if there are missing docs
+
+//! This crate contains client implementations that can be used to contact the Temporal service.
+//!
+//! It implements auto-retry behavior and metrics collection.
+
 #[macro_use]
 extern crate tracing;
 
@@ -253,7 +259,7 @@ impl ServerGatewayOptions {
 /// server client
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkflowTaskCompletion {
-    /// The task token that would've been received from [crate::Core::poll_workflow_activation] API.
+    /// The task token that would've been received from polling for a workflow activation
     pub task_token: TaskToken,
     /// A list of new commands to send to the server, such as starting a timer.
     pub commands: Vec<Command>,
@@ -261,12 +267,14 @@ pub struct WorkflowTaskCompletion {
     pub sticky_attributes: Option<StickyExecutionAttributes>,
     /// Responses to queries in the `queries` field of the workflow task.
     pub query_responses: Vec<QueryResult>,
+    /// Indicate that the task completion should return a new WFT if one is available
     pub return_new_workflow_task: bool,
+    /// Force a new WFT to be created after this completion
     pub force_create_new_workflow_task: bool,
 }
 
 #[derive(Clone)]
-pub struct ServiceCallInterceptor {
+struct ServiceCallInterceptor {
     opts: ServerGatewayOptions,
 }
 
@@ -383,8 +391,8 @@ pub trait ServerGatewayApis {
     async fn poll_activity_task(&self, task_queue: String)
         -> Result<PollActivityTaskQueueResponse>;
 
-    /// Notifies the server that workflow tasks for a given workflow should be sent to the normal non-sticky task queue.
-    /// This normally happens when workflow has been evicted from the cache.
+    /// Notifies the server that workflow tasks for a given workflow should be sent to the normal
+    /// non-sticky task queue. This normally happens when workflow has been evicted from the cache.
     async fn reset_sticky_task_queue(
         &self,
         workflow_id: String,
@@ -398,17 +406,18 @@ pub trait ServerGatewayApis {
     ) -> Result<RespondWorkflowTaskCompletedResponse>;
 
     /// Complete activity task by sending response to the server. `task_token` contains activity
-    /// identifier that would've been received from [crate::Core::poll_activity_task] API. `result`
-    /// is a blob that contains activity response.
+    /// identifier that would've been received from polling for an activity task. `result` is a blob
+    /// that contains activity response.
     async fn complete_activity_task(
         &self,
         task_token: TaskToken,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse>;
 
-    /// Report activity task heartbeat by sending details to the server. `task_token` contains activity
-    /// identifier that would've been received from [crate::Core::poll_activity_task] API.
-    /// `result` contains `cancel_requested` flag, which if set to true indicates that activity has been cancelled.
+    /// Report activity task heartbeat by sending details to the server. `task_token` contains
+    /// activity identifier that would've been received from polling for an activity task. `result`
+    /// contains `cancel_requested` flag, which if set to true indicates that activity has been
+    /// cancelled.
     async fn record_activity_heartbeat(
         &self,
         task_token: TaskToken,
@@ -416,8 +425,8 @@ pub trait ServerGatewayApis {
     ) -> Result<RecordActivityTaskHeartbeatResponse>;
 
     /// Cancel activity task by sending response to the server. `task_token` contains activity
-    /// identifier that would've been received from [crate::Core::poll_activity_task] API. `details`
-    /// is a blob that provides arbitrary user defined cancellation info.
+    /// identifier that would've been received from polling for an activity task. `details` is a
+    /// blob that provides arbitrary user defined cancellation info.
     async fn cancel_activity_task(
         &self,
         task_token: TaskToken,
@@ -425,8 +434,8 @@ pub trait ServerGatewayApis {
     ) -> Result<RespondActivityTaskCanceledResponse>;
 
     /// Fail activity task by sending response to the server. `task_token` contains activity
-    /// identifier that would've been received from [crate::Core::poll_activity_task] API. `failure`
-    /// provides failure details, such as message, cause and stack trace.
+    /// identifier that would've been received from polling for an activity task. `failure` provides
+    /// failure details, such as message, cause and stack trace.
     async fn fail_activity_task(
         &self,
         task_token: TaskToken,
@@ -434,7 +443,7 @@ pub trait ServerGatewayApis {
     ) -> Result<RespondActivityTaskFailedResponse>;
 
     /// Fail task by sending the failure to the server. `task_token` is the task token that would've
-    /// been received from [crate::Core::poll_workflow_activation].
+    /// been received from polling for a workflow activation.
     async fn fail_workflow_task(
         &self,
         task_token: TaskToken,

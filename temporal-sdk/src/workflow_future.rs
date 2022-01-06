@@ -41,6 +41,9 @@ use tokio::sync::{
 };
 
 impl WorkflowFunction {
+    /// Start a workflow function, returning a future that will resolve when the workflow does,
+    /// and a channel that can be used to send it activations.
+    #[doc(hidden)]
     pub fn start_workflow(
         &self,
         namespace: String,

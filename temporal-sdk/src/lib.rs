@@ -1,4 +1,6 @@
-//! This module is a rough prototype Rust SDK. It can be used to create closures that look sort of
+#![warn(missing_docs)] // error if there are missing docs
+
+//! This crate is a rough prototype Rust SDK. It can be used to create closures that look sort of
 //! like normal workflow code. It should only depend on things in the core crate that are already
 //! publicly exposed.
 //!
