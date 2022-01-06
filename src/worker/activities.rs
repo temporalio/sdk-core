@@ -30,7 +30,8 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::PollActivityTaskQueueResponse,
     },
 };
-use tokio::sync::{Notify, Semaphore};
+use tokio::sync::{watch, Semaphore};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, derive_more::Constructor)]
 struct PendingActivityCancel {
@@ -88,8 +89,12 @@ pub(crate) struct WorkerActivityTasks {
     poller: BoxedActPoller,
     /// Ensures we stay at or below this worker's maximum concurrent activity limit
     activities_semaphore: Semaphore,
-    /// Wakes every time an activity is removed from the outstanding map
-    complete_notify: Notify,
+    /// Updated when the number of outstanding tasks changes.
+    /// Used for waiting for all outstanding tasks to be drained.
+    outstanding_watch_rx: watch::Receiver<usize>,
+    outstanding_watch_tx: watch::Sender<usize>,
+    /// Used to notify when poller completes (not as a CancellationToken)
+    poller_finished_token: CancellationToken,
 
     metrics: MetricsContext,
 
@@ -106,26 +111,31 @@ impl WorkerActivityTasks {
         max_heartbeat_throttle_interval: Duration,
         default_heartbeat_throttle_interval: Duration,
     ) -> Self {
+        let (outstanding_watch_tx, outstanding_watch_rx) = tokio::sync::watch::channel(0);
         Self {
             heartbeat_manager: ActivityHeartbeatManager::new(sg),
             outstanding_activity_tasks: Default::default(),
             poller,
             activities_semaphore: Semaphore::new(max_activity_tasks),
-            complete_notify: Notify::new(),
+            outstanding_watch_rx,
+            outstanding_watch_tx,
             metrics,
             max_heartbeat_throttle_interval,
             default_heartbeat_throttle_interval,
+            poller_finished_token: Default::default(),
         }
     }
 
-    pub(crate) fn notify_shutdown(&self) {
-        self.poller.notify_shutdown();
-    }
-
     /// Wait for all outstanding activity tasks to finish
-    pub(crate) async fn wait_all_finished(&self) {
-        while !self.outstanding_activity_tasks.is_empty() {
-            self.complete_notify.notified().await
+    pub(crate) async fn prepare_for_shutdown(&self) {
+        self.poller.notify_shutdown();
+        self.poller_finished_token.cancelled().await;
+        let mut watcher = self.outstanding_watch_rx.clone();
+        while *watcher.borrow() > 0 {
+            watcher
+                .changed()
+                .await
+                .expect("watch channel should not be dropped");
         }
     }
 
@@ -178,11 +188,13 @@ impl WorkerActivityTasks {
                                 work.heartbeat_timeout.clone()
                             ),
                         );
+                        self.outstanding_watch_tx.send(self.outstanding_activity_tasks.len()).expect("watch channel should not be dropped");
                         // Only permanently take a permit in the event the poll finished properly
                         sem.forget();
                         Ok(Some(ActivityTask::start_from_poll_resp(work)))
                     }
                     None => {
+                        self.poller_finished_token.cancel();
                         Err(PollActivityError::ShutDown)
                     }
                     Some(Err(e)) => Err(e.into())
@@ -207,7 +219,9 @@ impl WorkerActivityTasks {
             self.heartbeat_manager.evict(task_token.clone());
             let known_not_found = act_info.known_not_found;
             drop(act_info); // TODO: Get rid of dashmap. If we hold ref across await, bad stuff.
-            self.complete_notify.notify_waiters();
+            self.outstanding_watch_tx
+                .send(self.outstanding_activity_tasks.len())
+                .expect("watch channel should not be dropped");
 
             // No need to report activities which we already know the server doesn't care about
             if !known_not_found {

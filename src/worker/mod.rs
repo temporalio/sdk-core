@@ -203,27 +203,30 @@ impl Worker {
     /// completed
     pub(crate) async fn shutdown(&self) {
         let _ = self.shutdown_sender.send(true);
-        // First, we want to stop polling of both activity and workflow tasks
-        if let Some(atm) = self.at_task_mgr.as_ref() {
-            atm.notify_shutdown();
-        }
-        self.wf_task_source.stop_pollers();
-        // Next we need to wait for all local activities to finish so no more workflow task
-        // heartbeats will be generated
-        self.local_act_mgr.shutdown_and_wait_all_finished().await;
-        // Then we need to wait for any tasks generated as a result of completing WFTs, which
-        // heartbeating generates
-        self.wf_task_source
-            .wait_for_tasks_from_complete_to_drain()
-            .await;
-        // wait until all outstanding workflow tasks have been completed
-        while !self.all_wfts_drained() {
-            self.wfts_drained_notify.notified().await;
-        }
-        // Wait for activities to finish
-        if let Some(acts) = self.at_task_mgr.as_ref() {
-            acts.wait_all_finished().await;
-        }
+        // Stop polling and wait for activities to finish
+        tokio::join!(
+            async {
+                if let Some(atm) = self.at_task_mgr.as_ref() {
+                    atm.prepare_for_shutdown().await;
+                }
+            },
+            async {
+                // Stop polling of workflow tasks
+                self.wf_task_source.stop_pollers();
+                // Next we need to wait for all local activities to finish so no more workflow task
+                // heartbeats will be generated
+                self.local_act_mgr.shutdown_and_wait_all_finished().await;
+                // Then we need to wait for any tasks generated as a result of completing WFTs, which
+                // heartbeating generates
+                self.wf_task_source
+                    .wait_for_tasks_from_complete_to_drain()
+                    .await;
+                // wait until all outstanding workflow tasks have been completed
+                while !self.all_wfts_drained() {
+                    self.wfts_drained_notify.notified().await;
+                }
+            }
+        );
     }
 
     /// Finish shutting down by consuming the background pollers and freeing all resources
