@@ -1,23 +1,27 @@
 [package]
-name = "test_utils"
+name = "temporal-client"
 version = "0.1.0"
-authors = ["Spencer Judge <spencer@temporal.io>"]
 edition = "2021"
-resolver = "2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 async-trait = "0.1"
-base64 = "0.13"
+backoff = "0.3.0"
+derive_builder = "0.10"
+derive_more = "0.99"
 futures = "0.3"
-log = "0.4"
-rand = "0.8"
-temporal-sdk-core = { path = ".." }
-temporal-sdk-core-api = { path = "../core-api" }
-temporal-sdk = { path = "../temporal-sdk" }
+futures-retry = "0.6.0"
+http = "0.2"
+prost-types = "0.9"
+thiserror = "1.0"
+tonic = "0.6"
+tower = "0.4"
+tracing = "0.1"
 url = "2.2"
+uuid = { version = "0.8.2", features = ["v4"] }
 
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"
 version = "0.1"
+

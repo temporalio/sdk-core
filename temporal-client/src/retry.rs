@@ -1,11 +1,4 @@
-use crate::{
-    pollers::{
-        gateway::{RetryConfig, ServerGatewayApis},
-        Result, RETRYABLE_ERROR_CODES,
-    },
-    protosext::WorkflowTaskCompletion,
-    task_token::TaskToken,
-};
+use crate::{Result, RetryConfig, ServerGatewayApis, ServerGatewayOptions, WorkflowTaskCompletion};
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use std::{fmt::Debug, future::Future, time::Duration};
@@ -15,8 +8,20 @@ use temporal_sdk_core_protos::{
         common::v1::Payloads, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
         query::v1::WorkflowQuery, workflowservice::v1::*,
     },
+    TaskToken,
 };
 use tonic::Code;
+
+/// List of gRPC error codes that client will retry.
+pub const RETRYABLE_ERROR_CODES: [Code; 7] = [
+    Code::DataLoss,
+    Code::Internal,
+    Code::Unknown,
+    Code::ResourceExhausted,
+    Code::Aborted,
+    Code::OutOfRange,
+    Code::Unavailable,
+];
 
 #[derive(Debug)]
 /// A wrapper for a [ServerGatewayApis] implementor which performs auto-retries
@@ -394,5 +399,9 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
 
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse> {
         retry_call!(self, CallType::Normal, list_namespaces,)
+    }
+
+    fn get_options(&self) -> &ServerGatewayOptions {
+        self.gateway.get_options()
     }
 }

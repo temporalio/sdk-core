@@ -1,45 +1,17 @@
 //! Error types exposed by public APIs
 
-use crate::{workflow::WFMachinesError, WorkerLookupErr};
+use prost_types::TimestampOutOfSystemRangeError;
+use temporal_client::GatewayInitError;
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityExecutionResult, workflow_completion::WfActivationCompletion,
 };
-use tonic::codegen::http::uri::InvalidUri;
-
-#[derive(Debug)]
-pub(crate) struct WorkflowUpdateError {
-    /// Underlying workflow error
-    pub source: WFMachinesError,
-    /// The run id of the erring workflow
-    #[allow(dead_code)] // Useful in debug output
-    pub run_id: String,
-}
-
-impl From<WorkflowMissingError> for WorkflowUpdateError {
-    fn from(wme: WorkflowMissingError) -> Self {
-        Self {
-            source: WFMachinesError::Fatal("Workflow machines missing".to_string()),
-            run_id: wme.run_id,
-        }
-    }
-}
-
-/// The workflow machines were expected to be in the cache but were not
-#[derive(Debug)]
-pub(crate) struct WorkflowMissingError {
-    /// The run id of the erring workflow
-    pub run_id: String,
-}
 
 /// Errors thrown during initialization of [crate::Core]
 #[derive(thiserror::Error, Debug)]
 pub enum CoreInitError {
-    /// Invalid URI. Configuration error, fatal.
-    #[error("Invalid URI: {0:?}")]
-    InvalidUri(#[from] InvalidUri),
     /// Server connection error. Crashing and restarting the worker is likely best.
     #[error("Server connection error: {0:?}")]
-    TonicTransportError(#[from] tonic::transport::Error),
+    GatewayInitError(#[from] GatewayInitError),
     /// There was a problem initializing telemetry
     #[error("Telemetry initialization error: {0:?}")]
     TelemetryInitError(anyhow::Error),
@@ -67,15 +39,6 @@ pub enum PollWfError {
     NoWorkerForQueue(String),
 }
 
-impl From<WorkerLookupErr> for PollWfError {
-    fn from(e: WorkerLookupErr) -> Self {
-        match e {
-            WorkerLookupErr::Shutdown(_) => Self::ShutDown,
-            WorkerLookupErr::NoWorker(s) => Self::NoWorkerForQueue(s),
-        }
-    }
-}
-
 /// Errors thrown by [crate::Core::poll_activity_task]
 #[derive(thiserror::Error, Debug)]
 pub enum PollActivityError {
@@ -90,15 +53,6 @@ pub enum PollActivityError {
     /// There is no worker registered for the queue being polled
     #[error("No worker registered for queue: {0}")]
     NoWorkerForQueue(String),
-}
-
-impl From<WorkerLookupErr> for PollActivityError {
-    fn from(e: WorkerLookupErr) -> Self {
-        match e {
-            WorkerLookupErr::Shutdown(_) => Self::ShutDown,
-            WorkerLookupErr::NoWorker(s) => Self::NoWorkerForQueue(s),
-        }
-    }
 }
 
 /// Errors thrown by [crate::Core::complete_workflow_activation]
@@ -122,16 +76,6 @@ pub enum CompleteWfError {
     TonicError(#[from] tonic::Status),
 }
 
-impl From<WorkerLookupErr> for CompleteWfError {
-    fn from(e: WorkerLookupErr) -> Self {
-        match e {
-            WorkerLookupErr::Shutdown(s) | WorkerLookupErr::NoWorker(s) => {
-                Self::NoWorkerForQueue(s)
-            }
-        }
-    }
-}
-
 /// Errors thrown by [crate::Core::complete_activity_task]
 #[derive(thiserror::Error, Debug)]
 pub enum CompleteActivityError {
@@ -152,38 +96,32 @@ pub enum CompleteActivityError {
     NoWorkerForQueue(String),
 }
 
-impl From<WorkerLookupErr> for CompleteActivityError {
-    fn from(e: WorkerLookupErr) -> Self {
-        match e {
-            WorkerLookupErr::Shutdown(s) | WorkerLookupErr::NoWorker(s) => {
-                Self::NoWorkerForQueue(s)
-            }
-        }
-    }
-}
-
-/// Errors thrown by [crate::Core::record_activity_heartbeat]
-#[derive(thiserror::Error, Debug)]
-pub enum ActivityHeartbeatError {
-    /// Heartbeat referenced an activity that we don't think exists. It may have completed already.
-    #[error("Heartbeat has been sent for activity that either completed or never started on this worker.")]
-    UnknownActivity,
-    /// There was no heartbeat timeout set for the activity, but one is required to heartbeat.
-    #[error("Heartbeat is only allowed on activities with heartbeat timeout.")]
-    HeartbeatTimeoutNotSet,
-    /// There was a set heartbeat timeout, but it was not parseable. A valid timeout is requried
-    /// to heartbeat.
-    #[error("Unable to parse activity heartbeat timeout.")]
-    InvalidHeartbeatTimeout,
-    /// Core is shutting down and thus new heartbeats are not accepted
-    #[error("New heartbeat requests are not accepted while shutting down")]
-    ShuttingDown,
-}
-
 /// Errors thrown by [crate::Core::register_worker]
 #[derive(thiserror::Error, Debug)]
 pub enum WorkerRegistrationError {
     /// A worker has already been registered on this queue
     #[error("Worker already registered for queue: {0}")]
     WorkerAlreadyRegisteredForQueue(String),
+}
+
+/// Errors thrown inside of workflow machines
+#[derive(thiserror::Error, Debug)]
+pub enum WFMachinesError {
+    #[error("Nondeterminism error: {0}")]
+    Nondeterminism(String),
+    #[error("Fatal error in workflow machines: {0}")]
+    Fatal(String),
+
+    #[error("Unrecoverable network error while fetching history: {0}")]
+    HistoryFetchingError(tonic::Status),
+
+    /// Should always be caught internally and turned into a workflow task failure
+    #[error("Unable to process partial event history because workflow is no longer cached.")]
+    CacheMiss,
+}
+
+impl From<TimestampOutOfSystemRangeError> for WFMachinesError {
+    fn from(_: TimestampOutOfSystemRangeError) -> Self {
+        Self::Fatal("Could not decode timestamp".to_string())
+    }
 }

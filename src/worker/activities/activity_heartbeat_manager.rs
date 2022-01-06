@@ -1,7 +1,4 @@
-use crate::{
-    errors::ActivityHeartbeatError, pollers::ServerGatewayApis, task_token::TaskToken,
-    worker::activities::PendingActivityCancel,
-};
+use crate::{pollers::ServerGatewayApis, worker::activities::PendingActivityCancel, TaskToken};
 use futures::StreamExt;
 use std::{
     collections::{hash_map::Entry, HashMap},
@@ -54,6 +51,24 @@ enum HeartbeatExecutorAction {
     Sleep(TaskToken, Duration, CancellationToken),
     /// Report heartbeat to the server
     Report(TaskToken, Vec<common::Payload>),
+}
+
+/// Errors thrown when heartbeating
+#[derive(thiserror::Error, Debug)]
+pub enum ActivityHeartbeatError {
+    /// Heartbeat referenced an activity that we don't think exists. It may have completed already.
+    #[error("Heartbeat has been sent for activity that either completed or never started on this worker.")]
+    UnknownActivity,
+    /// There was no heartbeat timeout set for the activity, but one is required to heartbeat.
+    #[error("Heartbeat is only allowed on activities with heartbeat timeout.")]
+    HeartbeatTimeoutNotSet,
+    /// There was a set heartbeat timeout, but it was not parseable. A valid timeout is requried
+    /// to heartbeat.
+    #[error("Unable to parse activity heartbeat timeout.")]
+    InvalidHeartbeatTimeout,
+    /// Core is shutting down and thus new heartbeats are not accepted
+    #[error("New heartbeat requests are not accepted while shutting down")]
+    ShuttingDown,
 }
 
 /// Handle that is used by the core for all interactions with the manager, allows sending new

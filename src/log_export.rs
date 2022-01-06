@@ -1,31 +1,7 @@
-use log::{Level, LevelFilter, Log, Metadata, Record};
+use log::{LevelFilter, Log, Metadata, Record};
 use ringbuf::{Consumer, Producer, RingBuffer};
-use std::{
-    sync::Mutex,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
-
-/// A log line (which ultimately came from a tracing event) exported from Core->Lang
-#[derive(Debug)]
-pub struct CoreLog {
-    /// Log message
-    pub message: String,
-    /// Time log was generated (not when it was exported to lang)
-    pub timestamp: SystemTime,
-    /// Message level
-    pub level: Level,
-    // KV pairs aren't meaningfully exposed yet to the log interface by tracing
-}
-
-impl CoreLog {
-    /// Return timestamp as ms since epoch
-    pub fn millis_since_epoch(&self) -> u128 {
-        self.timestamp
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO)
-            .as_millis()
-    }
-}
+use std::{sync::Mutex, time::SystemTime};
+use temporal_sdk_core_api::CoreLog;
 
 pub(crate) struct CoreExportLogger {
     logs_in: Mutex<Producer<CoreLog>>,

@@ -1,5 +1,7 @@
 mod local_acts;
 
+pub(crate) use temporal_sdk_core_api::errors::WFMachinesError;
+
 use super::{
     activity_state_machine::new_activity, cancel_external_state_machine::new_external_cancel,
     cancel_workflow_state_machine::cancel_workflow,
@@ -22,7 +24,6 @@ use crate::{
         CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WFCommand, WorkflowFetcher,
     },
 };
-use prost_types::TimestampOutOfSystemRangeError;
 use slotmap::SlotMap;
 use std::{
     borrow::{Borrow, BorrowMut},
@@ -190,27 +191,6 @@ where
 {
     fn from(v: T) -> Self {
         Self::PushWFJob(v.into())
-    }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub(crate) enum WFMachinesError {
-    #[error("Nondeterminism error: {0}")]
-    Nondeterminism(String),
-    #[error("Fatal error in workflow machines: {0}")]
-    Fatal(String),
-
-    #[error("Unrecoverable network error while fetching history: {0}")]
-    HistoryFetchingError(tonic::Status),
-
-    /// Should always be caught internally and turned into a workflow task failure
-    #[error("Unable to process partial event history because workflow is no longer cached.")]
-    CacheMiss,
-}
-
-impl From<TimestampOutOfSystemRangeError> for WFMachinesError {
-    fn from(_: TimestampOutOfSystemRangeError) -> Self {
-        Self::Fatal("Could not decode timestamp".to_string())
     }
 }
 

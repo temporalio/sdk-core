@@ -1,8 +1,5 @@
 use std::time::Duration;
 
-#[cfg(test)]
-use crate::test_help::TEST_Q;
-
 /// Defines per-worker configuration options
 #[derive(Debug, Clone, derive_builder::Builder)]
 #[builder(setter(into), build_fn(validate = "Self::validate"))]
@@ -68,29 +65,23 @@ pub struct WorkerConfig {
     pub default_heartbeat_throttle_interval: Duration,
 }
 
+impl WorkerConfig {
+    pub fn max_nonsticky_polls(&self) -> usize {
+        ((self.max_concurrent_wft_polls as f32 * self.nonsticky_to_sticky_poll_ratio) as usize)
+            .max(1)
+    }
+    pub fn max_sticky_polls(&self) -> usize {
+        self.max_concurrent_wft_polls
+            .saturating_sub(self.max_nonsticky_polls())
+            .max(1)
+    }
+}
+
 impl WorkerConfigBuilder {
     fn validate(&self) -> Result<(), String> {
         if self.max_concurrent_wft_polls == Some(0) {
             return Err("`max_concurrent_wft_polls` must be at least 1".to_owned());
         }
         Ok(())
-    }
-}
-
-impl WorkerConfig {
-    #[cfg(test)]
-    pub fn default_test_q() -> Self {
-        WorkerConfigBuilder::default()
-            .task_queue(TEST_Q)
-            .build()
-            .unwrap()
-    }
-
-    #[cfg(test)]
-    pub fn default(queue: &str) -> Self {
-        WorkerConfigBuilder::default()
-            .task_queue(queue)
-            .build()
-            .unwrap()
     }
 }

@@ -1,8 +1,7 @@
 use crate::{
-    task_token::TaskToken,
     worker::LocalActivityExecutionResult,
     workflow::{HAS_CHANGE_MARKER_NAME, LEGACY_QUERY_ID, LOCAL_ACTIVITY_MARKER_NAME},
-    CompleteActivityError,
+    CompleteActivityError, TaskToken,
 };
 use anyhow::anyhow;
 use std::{
@@ -26,13 +25,11 @@ use temporal_sdk_core_protos::{
         workflow_completion, FromPayloadsExt,
     },
     temporal::api::{
-        command::v1::Command as ProtoCommand,
         common::v1::{Payload, WorkflowExecution},
         enums::v1::EventType,
         failure::v1::Failure,
         history::v1::{history_event, History, HistoryEvent, MarkerRecordedEventAttributes},
         query::v1::WorkflowQuery,
-        taskqueue::v1::StickyExecutionAttributes,
         workflowservice::v1::PollWorkflowTaskQueueResponse,
     },
     utilities::TryIntoOrNone,
@@ -108,22 +105,6 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
             _ => Err(value),
         }
     }
-}
-
-/// A version of [RespondWorkflowTaskCompletedRequest] that will finish being filled out by the
-/// server client
-#[derive(Debug, Clone, PartialEq)]
-pub struct WorkflowTaskCompletion {
-    /// The task token that would've been received from [crate::Core::poll_workflow_activation] API.
-    pub task_token: TaskToken,
-    /// A list of new commands to send to the server, such as starting a timer.
-    pub commands: Vec<ProtoCommand>,
-    /// If set, indicate that next task should be queued on sticky queue with given attributes.
-    pub sticky_attributes: Option<StickyExecutionAttributes>,
-    /// Responses to queries in the `queries` field of the workflow task.
-    pub query_responses: Vec<QueryResult>,
-    pub return_new_workflow_task: bool,
-    pub force_create_new_workflow_task: bool,
 }
 
 pub(crate) trait WfActivationExt {

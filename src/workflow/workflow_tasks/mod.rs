@@ -4,11 +4,9 @@ mod cache_manager;
 mod concurrency_manager;
 
 use crate::{
-    errors::{WorkflowMissingError, WorkflowUpdateError},
     pending_activations::PendingActivations,
     pollers::GatewayRef,
     protosext::{ValidPollWFTQResponse, WfActivationExt},
-    task_token::TaskToken,
     telemetry::metrics::MetricsContext,
     worker::{LocalActRequest, LocalActivityResolution},
     workflow::{
@@ -38,6 +36,7 @@ use temporal_sdk_core_protos::{
         FromPayloadsExt,
     },
     temporal::api::command::v1::Command as ProtoCommand,
+    TaskToken,
 };
 use tokio::{sync::Notify, time::timeout_at};
 
@@ -780,4 +779,29 @@ impl WorkflowTaskManager {
             .await;
         }
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct WorkflowUpdateError {
+    /// Underlying workflow error
+    pub source: WFMachinesError,
+    /// The run id of the erring workflow
+    #[allow(dead_code)] // Useful in debug output
+    pub run_id: String,
+}
+
+impl From<WorkflowMissingError> for WorkflowUpdateError {
+    fn from(wme: WorkflowMissingError) -> Self {
+        Self {
+            source: WFMachinesError::Fatal("Workflow machines missing".to_string()),
+            run_id: wme.run_id,
+        }
+    }
+}
+
+/// The workflow machines were expected to be in the cache but were not
+#[derive(Debug)]
+pub(crate) struct WorkflowMissingError {
+    /// The run id of the erring workflow
+    pub run_id: String,
 }

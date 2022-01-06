@@ -1,33 +1,37 @@
-use crate::{
-    pollers::{retry::RetryGateway, Result},
-    protosext::WorkflowTaskCompletion,
-    task_token::TaskToken,
-    telemetry::metrics::{svc_operation, MetricsContext},
-    CoreInitError,
-};
+#[macro_use]
+extern crate tracing;
+
+mod retry;
+
+pub use crate::retry::RetryGateway;
+
 use backoff::{ExponentialBackoff, SystemClock};
 use futures::{future::BoxFuture, task::Context, FutureExt};
+use http::uri::InvalidUri;
 use std::{
+    collections::HashMap,
     fmt::{Debug, Formatter},
-    ops::Deref,
-    sync::Arc,
+    str::FromStr,
     task::Poll,
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
     coresdk::{common::Payload, workflow_commands::QueryResult, IntoPayloadsExt},
     temporal::api::{
+        command::v1::Command,
         common::v1::{Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
         query::v1::{WorkflowQuery, WorkflowQueryResult},
-        taskqueue::v1::TaskQueue,
+        taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
         workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
     },
+    TaskToken,
 };
 use tonic::{
     body::BoxBody,
     codegen::{InterceptedService, Service},
+    metadata::{MetadataKey, MetadataValue},
     service::Interceptor,
     transport::{Certificate, Channel, Endpoint, Identity},
     IntoRequest, Status,
@@ -36,37 +40,12 @@ use tower::ServiceBuilder;
 use url::Url;
 use uuid::Uuid;
 
-#[cfg(test)]
-use futures::Future;
-use std::{collections::HashMap, str::FromStr};
-use tonic::metadata::{MetadataKey, MetadataValue};
-
 static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivityTaskQueue"];
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
 const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub struct GatewayRef {
-    pub gw: Arc<dyn ServerGatewayApis + Send + Sync>,
-    pub options: ServerGatewayOptions,
-}
-
-impl GatewayRef {
-    pub fn new<SG: ServerGatewayApis + Send + Sync + 'static>(
-        gw: Arc<SG>,
-        options: ServerGatewayOptions,
-    ) -> Self {
-        Self { gw, options }
-    }
-}
-
-impl Deref for GatewayRef {
-    type Target = dyn ServerGatewayApis + Send + Sync;
-
-    fn deref(&self) -> &Self::Target {
-        self.gw.as_ref()
-    }
-}
+type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
 /// Options for the connection to the temporal server. Construct with [ServerGatewayOptionsBuilder]
 #[derive(Clone, Debug, derive_builder::Builder)]
@@ -199,14 +178,25 @@ impl Debug for ClientTlsConfig {
     }
 }
 
+/// Errors thrown while attempting to establish a connection to the server
+#[derive(thiserror::Error, Debug)]
+pub enum GatewayInitError {
+    /// Invalid URI. Configuration error, fatal.
+    #[error("Invalid URI: {0:?}")]
+    InvalidUri(#[from] InvalidUri),
+    /// Server connection error. Crashing and restarting the worker is likely best.
+    #[error("Server connection error: {0:?}")]
+    TonicTransportError(#[from] tonic::transport::Error),
+}
+
 impl ServerGatewayOptions {
     /// Attempt to establish a connection to the Temporal server
-    pub async fn connect(&self) -> Result<RetryGateway<ServerGateway>, CoreInitError> {
+    pub async fn connect(&self) -> Result<RetryGateway<ServerGateway>, GatewayInitError> {
         let channel = Channel::from_shared(self.target_url.to_string())?;
         let channel = self.add_tls_to_channel(channel).await?;
         let channel = channel.connect().await?;
         let service = ServiceBuilder::new()
-            .layer_fn(|c| GrpcMetricSvc::new(c, MetricsContext::top_level(self.namespace.clone())))
+            .layer_fn(|c| GrpcMetricSvc::new(c)) //, MetricsContext::top_level(self.namespace.clone())))
             .service(channel);
         let interceptor = ServiceCallInterceptor { opts: self.clone() };
         let service = WorkflowServiceClient::with_interceptor(service, interceptor);
@@ -220,7 +210,10 @@ impl ServerGatewayOptions {
 
     /// If TLS is configured, set the appropriate options on the provided channel and return it.
     /// Passes it through if TLS options not set.
-    async fn add_tls_to_channel(&self, channel: Endpoint) -> Result<Endpoint, CoreInitError> {
+    async fn add_tls_to_channel(
+        &self,
+        channel: Endpoint,
+    ) -> Result<Endpoint, tonic::transport::Error> {
         if let Some(tls_cfg) = &self.tls_cfg {
             let mut tls = tonic::transport::ClientTlsConfig::new();
 
@@ -243,6 +236,22 @@ impl ServerGatewayOptions {
         }
         Ok(channel)
     }
+}
+
+/// A version of [RespondWorkflowTaskCompletedRequest] that will finish being filled out by the
+/// server client
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowTaskCompletion {
+    /// The task token that would've been received from [crate::Core::poll_workflow_activation] API.
+    pub task_token: TaskToken,
+    /// A list of new commands to send to the server, such as starting a timer.
+    pub commands: Vec<Command>,
+    /// If set, indicate that next task should be queued on sticky queue with given attributes.
+    pub sticky_attributes: Option<StickyExecutionAttributes>,
+    /// Responses to queries in the `queries` field of the workflow task.
+    pub query_responses: Vec<QueryResult>,
+    pub return_new_workflow_task: bool,
+    pub force_create_new_workflow_task: bool,
 }
 
 #[derive(Clone)]
@@ -286,7 +295,8 @@ impl Interceptor for ServiceCallInterceptor {
 #[derive(derive_more::Constructor, Debug, Clone)]
 pub(crate) struct GrpcMetricSvc {
     inner: Channel,
-    metrics: MetricsContext,
+    // TODO: Fix metrics
+    // metrics: MetricsContext,
 }
 
 impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
@@ -299,27 +309,27 @@ impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
     }
 
     fn call(&mut self, req: http::Request<BoxBody>) -> Self::Future {
-        let metrics = req.uri().to_string().rsplit_once('/').map(|split_tup| {
-            let method_name = split_tup.1;
-            let mut metrics = self
-                .metrics
-                .with_new_attrs([svc_operation(method_name.to_string())]);
-            if LONG_POLL_METHOD_NAMES.contains(&method_name) {
-                metrics.set_is_long_poll();
-            }
-            metrics.svc_request();
-            metrics
-        });
+        // let metrics = req.uri().to_string().rsplit_once('/').map(|split_tup| {
+        //     let method_name = split_tup.1;
+        //     let mut metrics = self
+        //         .metrics
+        //         .with_new_attrs([svc_operation(method_name.to_string())]);
+        //     if LONG_POLL_METHOD_NAMES.contains(&method_name) {
+        //         metrics.set_is_long_poll();
+        //     }
+        //     metrics.svc_request();
+        //     metrics
+        // });
         let callfut = self.inner.call(req);
         async move {
-            let started = Instant::now();
+            // let started = Instant::now();
             let res = callfut.await;
-            if let Some(metrics) = metrics {
-                metrics.record_svc_req_latency(started.elapsed());
-                if res.is_err() {
-                    metrics.svc_request_failed();
-                }
-            }
+            // if let Some(metrics) = metrics {
+            //     metrics.record_svc_req_latency(started.elapsed());
+            //     if res.is_err() {
+            //         metrics.svc_request_failed();
+            //     }
+            // }
             res
         }
         .boxed()
@@ -476,6 +486,9 @@ pub trait ServerGatewayApis {
 
     /// Lists all available namespaces
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse>;
+
+    /// Returns options that were used to initialze the gateway
+    fn get_options(&self) -> &ServerGatewayOptions;
 }
 
 #[async_trait::async_trait]
@@ -878,6 +891,10 @@ impl ServerGatewayApis for ServerGateway {
             .list_namespaces(ListNamespacesRequest::default())
             .await?
             .into_inner())
+    }
+
+    fn get_options(&self) -> &ServerGatewayOptions {
+        &self.opts
     }
 }
 

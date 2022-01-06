@@ -9,9 +9,9 @@ pub(crate) use local_activities::{
 
 use crate::{
     pollers::BoxedActPoller,
-    task_token::TaskToken,
     telemetry::metrics::{activity_type, workflow_type, MetricsContext},
-    ActivityHeartbeatError, CompleteActivityError, PollActivityError, ServerGatewayApis,
+    worker::activities::activity_heartbeat_manager::ActivityHeartbeatError,
+    CompleteActivityError, PollActivityError, ServerGatewayApis, TaskToken,
 };
 use activity_heartbeat_manager::ActivityHeartbeatManager;
 use dashmap::DashMap;

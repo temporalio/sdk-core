@@ -30,9 +30,9 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core::{
+use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
-    Core, TaskToken,
+    Core,
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -49,6 +49,7 @@ use temporal_sdk_core_protos::{
         ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
     },
     temporal::api::failure::v1::Failure,
+    TaskToken,
 };
 use tokio::{
     sync::{
@@ -283,7 +284,7 @@ impl WorkflowHalf {
                 .ok_or_else(|| anyhow!("Workflow type not found"))?;
 
             let (wff, activations) = wf_function.start_workflow(
-                core.get_init_options().gateway_opts.namespace.clone(),
+                core.server_gateway().get_options().namespace.clone(),
                 task_queue.to_string(),
                 // NOTE: Don't clone args if this gets ported to be a non-test rust worker
                 sw.arguments.clone(),

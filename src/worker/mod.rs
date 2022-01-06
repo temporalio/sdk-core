@@ -1,9 +1,8 @@
 mod activities;
-mod config;
 mod dispatcher;
 mod wft_delivery;
 
-pub use config::{WorkerConfig, WorkerConfigBuilder};
+pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
 
 pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
@@ -17,8 +16,7 @@ use crate::{
         new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, BoxedWFPoller,
         GatewayRef, Poller, WorkflowTaskPoller,
     },
-    protosext::{legacy_query_failure, ValidPollWFTQResponse, WorkflowTaskCompletion},
-    task_token::TaskToken,
+    protosext::{legacy_query_failure, ValidPollWFTQResponse},
     telemetry::metrics::{
         activity_poller, workflow_poller, workflow_sticky_poller, MetricsContext,
     },
@@ -38,6 +36,7 @@ use crate::{
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
 use futures::{Future, TryFutureExt};
 use std::{convert::TryInto, future, sync::Arc};
+use temporal_client::WorkflowTaskCompletion;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::activity_execution_result,
@@ -51,6 +50,7 @@ use temporal_sdk_core_protos::{
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
         workflowservice::v1::{PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse},
     },
+    TaskToken,
 };
 use tokio::sync::{watch, Notify, Semaphore};
 use tonic::Code;
@@ -794,18 +794,6 @@ impl Worker {
     /// Returns true if shutdown has been requested and there are no more outstanding WFTs
     fn all_wfts_drained(&self) -> bool {
         *self.shutdown_requested.borrow() && self.outstanding_workflow_tasks() == 0
-    }
-}
-
-impl WorkerConfig {
-    fn max_nonsticky_polls(&self) -> usize {
-        ((self.max_concurrent_wft_polls as f32 * self.nonsticky_to_sticky_poll_ratio) as usize)
-            .max(1)
-    }
-    fn max_sticky_polls(&self) -> usize {
-        self.max_concurrent_wft_polls
-            .saturating_sub(self.max_nonsticky_polls())
-            .max(1)
     }
 }
 
