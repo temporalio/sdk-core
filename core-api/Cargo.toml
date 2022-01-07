@@ -19,5 +19,5 @@ path = "../sdk-core-protos"
 version = "0.1"
 
 [dependencies.temporal-client]
-path = "../temporal-client"
+path = "../client"
 version = "0.1"

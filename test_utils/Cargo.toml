@@ -14,7 +14,7 @@ log = "0.4"
 rand = "0.8"
 temporal-sdk-core = { path = "../core" }
 temporal-sdk-core-api = { path = "../core-api" }
-temporal-sdk = { path = "../temporal-sdk" }
+temporal-sdk = { path = "../sdk" }
 url = "2.2"
 
 [dependencies.temporal-sdk-core-protos]

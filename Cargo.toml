@@ -1,3 +1,2 @@
 [workspace]
-members = ["core", "temporal-client", "core-api", "fsm", "test_utils",
-           "sdk-core-protos", "temporal-sdk"]
+members = ["core", "client", "core-api", "fsm", "test_utils", "sdk-core-protos", "sdk"]

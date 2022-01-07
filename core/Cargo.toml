@@ -63,7 +63,7 @@ path = "../sdk-core-protos"
 version = "0.1"
 
 [dependencies.temporal-client]
-path = "../temporal-client"
+path = "../client"
 version = "0.1"
 
 [dependencies.rustfsm]
@@ -76,8 +76,8 @@ bimap = "0.6.1"
 mockall = "0.11"
 rstest = "0.12"
 test_utils = { path = "../test_utils" }
-temporal-sdk = { path = "../temporal-sdk" }
-temporal-client = { path = "../temporal-client", features = ["mocks"] }
+temporal-sdk = { path = "../sdk" }
+temporal-client = { path = "../client", features = ["mocks"] }
 
 [build-dependencies]
 tonic-build = "0.6"
