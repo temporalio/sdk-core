@@ -126,19 +126,19 @@ use syn::{
 /// either case the function is expected to return a `TransitionResult` to the appropriate state.
 ///
 /// The first transition can be interpreted as "If the machine is in the locked state, when a
-/// `CardReadable` event is seen, call `on_card_readable` (pasing in `CardData`) and transition to
+/// `CardReadable` event is seen, call `on_card_readable` (passing in `CardData`) and transition to
 /// the `ReadingCard` state.
 ///
 /// The macro will generate a few things:
 /// * A struct for the overall state machine, named with the provided name. Here:
-///   ```ignore
+///   ```text
 ///   struct CardMachine {
 ///       state: CardMachineState,
 ///       shared_state: CardId,
 ///   }
 ///   ```
 /// * An enum with a variant for each state, named with the provided name + "State".
-///   ```ignore
+///   ```text
 ///   enum CardMachineState {
 ///       Locked(Locked),
 ///       ReadingCard(ReadingCard),
@@ -153,7 +153,7 @@ use syn::{
 ///   generated. This enum must be used as the destination "state" from those handlers.
 /// * An enum with a variant for each event. You are expected to define the type (if any) contained
 ///   in the event variant.
-///   ```ignore
+///   ```text
 ///   enum CardMachineEvents {
 ///     CardReadable(CardData)
 ///   }
