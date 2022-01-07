@@ -20,7 +20,7 @@ tonic = "0.6"
 tracing = { version = "0.1", features = ["log-always"] }
 
 [dependencies.temporal-sdk-core]
-path = ".."
+path = "../core"
 version = "0.1"
 
 [dependencies.temporal-sdk-core-protos]
