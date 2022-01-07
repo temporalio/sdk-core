@@ -12,6 +12,7 @@ categories = ["development-tools"]
 
 [dependencies]
 anyhow = "1.0"
+base64 = "0.13"
 derive_more = "0.99"
 prost = "0.9"
 prost-types = "0.9"

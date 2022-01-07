@@ -2,6 +2,12 @@
 //! the Temporal Core SDK. Language SDK authors can generate structs using the proto definitions
 //! that will match the generated structs in this module.
 
+pub mod utilities;
+
+mod task_token;
+
+pub use task_token::TaskToken;
+
 #[allow(clippy::large_enum_variant)]
 // I'd prefer not to do this, but there are some generated things that just don't need it.
 #[allow(missing_docs)]

@@ -2,7 +2,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_sdk_core::prototype_rust_sdk::{ActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{ActivityOptions, WfContext, WorkflowResult};
 use test_utils::CoreWfStarter;
 
 static RUN_CT: AtomicUsize = AtomicUsize::new(1);

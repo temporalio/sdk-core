@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use futures::future::join_all;
 use std::time::{Duration, Instant};
-use temporal_sdk_core::prototype_rust_sdk::{ActivityOptions, WfContext};
+use temporal_sdk::{ActivityOptions, WfContext};
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityExecutionResult, activity_task::activity_task as act_task,
     workflow_commands::ActivityCancellationType, ActivityTaskCompletion,

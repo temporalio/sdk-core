@@ -2,7 +2,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
-use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
+use temporal_sdk::{WfContext, WorkflowResult};
 use test_utils::CoreWfStarter;
 
 const MY_PATCH_ID: &str = "integ_test_change_name";

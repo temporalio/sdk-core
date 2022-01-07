@@ -2,11 +2,13 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use log::LevelFilter;
 use rand::{distributions::Standard, Rng};
 use std::{convert::TryFrom, env, future::Future, net::SocketAddr, sync::Arc, time::Duration};
+use temporal_sdk::TestRustWorker;
 use temporal_sdk_core::{
-    prototype_rust_sdk::TestRustWorker, Core, CoreInitOptions, CoreInitOptionsBuilder,
-    ServerGatewayApis, ServerGatewayOptions, ServerGatewayOptionsBuilder, TelemetryOptions,
-    TelemetryOptionsBuilder, WorkerConfig, WorkerConfigBuilder,
+    CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayApis, ServerGatewayOptions,
+    ServerGatewayOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder, WorkerConfig,
+    WorkerConfigBuilder,
 };
+use temporal_sdk_core_api::Core;
 use temporal_sdk_core_protos::coresdk::{
     workflow_commands::{
         workflow_command, ActivityCancellationType, CompleteWorkflowExecution, ScheduleActivity,

@@ -3,7 +3,7 @@ use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
+use temporal_sdk::{WfContext, WorkflowResult};
 use test_utils::CoreWfStarter;
 use tokio::sync::Barrier;
 

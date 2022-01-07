@@ -1,0 +1,80 @@
+mod poll_buffer;
+
+// #[cfg(test)]
+// pub use gateway::{MockManualGateway, MockServerGatewayApis};
+
+pub use poll_buffer::{
+    new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
+    PollWorkflowTaskBuffer, WorkflowTaskPoller,
+};
+use std::{ops::Deref, sync::Arc};
+pub use temporal_client::{
+    ClientTlsConfig, RetryConfig, RetryGateway, ServerGateway, ServerGatewayApis,
+    ServerGatewayOptions, ServerGatewayOptionsBuilder, TlsConfig,
+};
+
+use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
+    PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
+};
+
+#[cfg(test)]
+use futures::Future;
+
+pub type Result<T, E = tonic::Status> = std::result::Result<T, E>;
+
+pub struct GatewayRef {
+    pub gw: Arc<dyn ServerGatewayApis + Send + Sync>,
+    pub options: ServerGatewayOptions,
+}
+
+impl GatewayRef {
+    pub fn new<SG: ServerGatewayApis + Send + Sync + 'static>(
+        gw: Arc<SG>,
+        options: ServerGatewayOptions,
+    ) -> Self {
+        Self { gw, options }
+    }
+}
+
+impl Deref for GatewayRef {
+    type Target = dyn ServerGatewayApis + Send + Sync;
+
+    fn deref(&self) -> &Self::Target {
+        self.gw.as_ref()
+    }
+}
+
+/// A trait for things that poll the server. Hides complexity of concurrent polling or polling
+/// on sticky/nonsticky queues simultaneously.
+#[cfg_attr(test, mockall::automock)]
+#[async_trait::async_trait]
+pub trait Poller<PollResult>
+where
+    PollResult: Send + Sync + 'static,
+{
+    async fn poll(&self) -> Option<Result<PollResult>>;
+    fn notify_shutdown(&self);
+    async fn shutdown(self);
+    /// Need a separate shutdown to be able to consume boxes :(
+    async fn shutdown_box(self: Box<Self>);
+}
+pub type BoxedPoller<T> = Box<dyn Poller<T> + Send + Sync + 'static>;
+pub type BoxedWFPoller = BoxedPoller<PollWorkflowTaskQueueResponse>;
+pub type BoxedActPoller = BoxedPoller<PollActivityTaskQueueResponse>;
+
+#[cfg(test)]
+mockall::mock! {
+    pub ManualPoller<T: Send + Sync + 'static> {}
+    impl<T: Send + Sync + 'static> Poller<T> for ManualPoller<T> {
+        fn poll<'a, 'b>(&self)
+          -> impl Future<Output = Option<Result<T>>> + Send + 'b
+            where 'a: 'b, Self: 'b;
+        fn notify_shutdown(&self);
+        fn shutdown<'a>(self)
+          -> impl Future<Output = ()> + Send + 'a
+            where Self: 'a;
+        fn shutdown_box<'a>(self: Box<Self>)
+          -> impl Future<Output = ()> + Send + 'a
+            where Self: 'a;
+    }
+}

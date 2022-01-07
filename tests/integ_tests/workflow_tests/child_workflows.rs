@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use temporal_sdk_core::prototype_rust_sdk::{ChildWorkflowOptions, WfContext, WorkflowResult};
+use temporal_sdk::{ChildWorkflowOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::child_workflow::{child_workflow_result, Success};
 use test_utils::CoreWfStarter;
 

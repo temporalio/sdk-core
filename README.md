@@ -6,16 +6,26 @@ Core SDK that can be used as a base for all other Temporal SDKs.
 
 See the [Architecture](ARCHITECTURE.md) doc for some high-level information.
 
-This repo uses a subtree for upstream protobuf files. The path `protos/api_upstream` is a 
-subtree. To update it, use:
-`git subtree pull --prefix protos/api_upstream/ git://github.com/temporalio/api.git master --squash`
-
 ## Dependencies
 * Protobuf compiler
 
 # Development
 
-All of the following commands are enforced for each pull request.
+This repo is composed of multiple crates:
+* temporal-sdk-core-protos `./sdk-core-protos` - Holds the generated proto code and extensions
+* temporal-client `./client` - Defines client(s) for interacting with the Temporal gRPC service
+* temporal-sdk-core-api `./core-api` - Defines the API surface exposed by Core
+* temporal-sdk-core `./core` - The Core implementation
+* temporal-sdk `./sdk` - A (currently prototype) Rust SDK built on top of Core. Used for testing.
+* rustfsm `./fsm` - Implements a procedural macro used by core for defining state machines
+    (contains subcrates). It is temporal agnostic.
+
+Visualized (dev dependencies are in blue):
+
+![Crate dependency graph](./etc/deps.svg)
+
+
+All the following commands are enforced for each pull request:
 
 ## Building and testing
 
@@ -52,9 +62,15 @@ To run integ tests with OTel collection on, you can use `integ-with-otel.sh`. Yo
 sure you are running the collector via docker, which can be done like so:
 `docker-compose -f .buildkite/docker/docker-compose.yaml -f .buildkite/docker/docker-compose-telem.yaml up`
 
-
 If you are working on a language SDK, you are expected to initialize tracing early in your `main`
 equivalent.
+
+### Proto files
+
+This repo uses a subtree for upstream protobuf files. The path `protos/api_upstream` is a
+subtree. To update it, use:
+`git subtree pull --prefix protos/api_upstream/ git://github.com/temporalio/api.git master --squash`
+
 
 ## Style Guidelines
 

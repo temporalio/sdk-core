@@ -1,0 +1,23 @@
+[package]
+name = "temporal-sdk-core-api"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+derive_builder = "0.10"
+log = "0.4"
+prost-types = "0.9"
+thiserror = "1.0"
+tonic = "0.6"
+
+[dependencies.temporal-sdk-core-protos]
+path = "../sdk-core-protos"
+version = "0.1"
+
+[dependencies.temporal-client]
+path = "../client"
+version = "0.1"

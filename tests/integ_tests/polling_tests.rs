@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use futures::future::join_all;
 use std::time::Duration;
-use temporal_sdk_core::prototype_rust_sdk::{WfContext, WorkflowResult};
+use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{
     activity_task::activity_task as act_task,
     workflow_activation::{wf_activation_job, FireTimer, WfActivationJob},
