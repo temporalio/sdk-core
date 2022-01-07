@@ -12,15 +12,16 @@ See the [Architecture](ARCHITECTURE.md) doc for some high-level information.
 # Development
 
 This repo is composed of multiple crates:
-* temporal-sdk-core-protos (./sdk-core-protos) - Holds the generated proto code and extensions
-* temporal-client (./client) - Defines client(s) for interacting with the Temporal gRPC service
-* temporal-sdk-core-api (./core-api) - Defines the API surface exposed by Core
-* temporal-sdk-core (./core) - The Core implementation
-* temporal-sdk (./sdk) - A (currently prototype) Rust SDK built on top of Core. Used for testing.
-* rustfsm (./fsm) - Implements a procedural macro used by core for defining state machines
+* temporal-sdk-core-protos `./sdk-core-protos` - Holds the generated proto code and extensions
+* temporal-client `./client` - Defines client(s) for interacting with the Temporal gRPC service
+* temporal-sdk-core-api `./core-api` - Defines the API surface exposed by Core
+* temporal-sdk-core `./core` - The Core implementation
+* temporal-sdk `./sdk` - A (currently prototype) Rust SDK built on top of Core. Used for testing.
+* rustfsm `./fsm` - Implements a procedural macro used by core for defining state machines
     (contains subcrates). It is temporal agnostic.
 
 Visualized (dev dependencies are in blue):
+
 ![Crate dependency graph](./etc/deps.svg)
 
 
