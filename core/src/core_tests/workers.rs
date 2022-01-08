@@ -408,7 +408,6 @@ async fn complete_with_task_not_found_during_shutdwn() {
         complete_order.borrow_mut().push(2);
     };
     let complete_fut = async {
-        tokio::time::sleep(Duration::from_millis(50)).await;
         core.complete_workflow_activation(WfActivationCompletion::from_cmds(
             TEST_Q,
             res.run_id,

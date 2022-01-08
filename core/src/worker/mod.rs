@@ -797,9 +797,9 @@ impl Worker {
             })
     }
 
-    /// Resolves when shutdown has been requested and there are no more outstanding WFTs
+    /// Resolves when there are no more outstanding WFTs
     async fn all_wfts_drained(&self) {
-        while !(*self.shutdown_requested.borrow() && self.outstanding_workflow_tasks() == 0) {
+        while self.outstanding_workflow_tasks() != 0 {
             self.wfts_drained_notify.notified().await;
         }
     }
