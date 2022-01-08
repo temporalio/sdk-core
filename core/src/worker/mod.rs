@@ -219,9 +219,7 @@ impl Worker {
             .wait_for_tasks_from_complete_to_drain()
             .await;
         // wait until all outstanding workflow tasks have been completed
-        while !self.all_wfts_drained() {
-            self.wfts_drained_notify.notified().await;
-        }
+        self.all_wfts_drained().await;
         // Wait for activities to finish
         if let Some(acts) = self.at_task_mgr.as_ref() {
             acts.wait_all_finished().await;
@@ -422,7 +420,15 @@ impl Worker {
             tokio::select! {
                 biased;
 
-                r = self.workflow_poll().map_err(Into::into) => return r,
+                r = self.workflow_poll().map_err(Into::into) => {
+                    if matches!(r, Err(PollWfError::ShutDown)) {
+                        // Don't actually return shutdown until workflow tasks are drained.
+                        // Outstanding tasks being completed will generate new pending activations
+                        // which will cause us to abort this function.
+                        self.all_wfts_drained().await;
+                    }
+                    return r
+                },
                 _ = shutdown_requested.changed() => {},
             }
         }
@@ -791,9 +797,11 @@ impl Worker {
             })
     }
 
-    /// Returns true if shutdown has been requested and there are no more outstanding WFTs
-    fn all_wfts_drained(&self) -> bool {
-        *self.shutdown_requested.borrow() && self.outstanding_workflow_tasks() == 0
+    /// Resolves when there are no more outstanding WFTs
+    async fn all_wfts_drained(&self) {
+        while self.outstanding_workflow_tasks() != 0 {
+            self.wfts_drained_notify.notified().await;
+        }
     }
 }
 

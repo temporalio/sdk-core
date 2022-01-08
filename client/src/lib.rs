@@ -14,7 +14,7 @@ pub use crate::retry::RetryGateway;
 
 use crate::metrics::{svc_operation, MetricsContext};
 use backoff::{ExponentialBackoff, SystemClock};
-use futures::{future::BoxFuture, task::Context, Future, FutureExt};
+use futures::{future::BoxFuture, task::Context, FutureExt};
 use http::uri::InvalidUri;
 use opentelemetry::metrics::Meter;
 use std::{
@@ -48,6 +48,9 @@ use tonic::{
 use tower::ServiceBuilder;
 use url::Url;
 use uuid::Uuid;
+
+#[cfg(any(feature = "mocks", test))]
+use futures::Future;
 
 static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivityTaskQueue"];
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.

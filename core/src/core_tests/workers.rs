@@ -9,6 +9,7 @@ use crate::{
 };
 use futures::FutureExt;
 use rstest::{fixture, rstest};
+use std::cell::RefCell;
 use std::time::Duration;
 use temporal_client::MockManualGateway;
 use temporal_sdk_core_protos::{
@@ -372,4 +373,50 @@ async fn can_shutdown_local_act_only_worker_when_act_polling(
             );
         }
     );
+}
+
+#[tokio::test]
+async fn complete_with_task_not_found_during_shutdwn() {
+    let t = canned_histories::single_timer("1");
+    let mut mock = mock_gateway();
+    mock.expect_complete_workflow_task()
+        .times(1)
+        .returning(|_| Err(tonic::Status::not_found("Workflow task not found.")));
+    let mh = MockPollCfg::from_resp_batches("fakeid", t, [1], mock);
+    let core = mock_core(build_mock_pollers(mh));
+
+    let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    assert_eq!(res.jobs.len(), 1);
+
+    let complete_order = RefCell::new(vec![]);
+    // Initiate shutdown before completing the activation
+    let shutdown_fut = async {
+        core.shutdown().await;
+        complete_order.borrow_mut().push(3);
+    };
+    let poll_fut = async {
+        // This should *not* return shutdown, but instead should do nothing until the complete
+        // goes through, at which point it will return the eviction.
+        let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        assert_matches!(
+            res.jobs[0].variant,
+            Some(wf_activation_job::Variant::RemoveFromCache(_))
+        );
+        core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, res.run_id))
+            .await
+            .unwrap();
+        complete_order.borrow_mut().push(2);
+    };
+    let complete_fut = async {
+        core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+            TEST_Q,
+            res.run_id,
+            vec![start_timer_cmd(1, Duration::from_secs(1))],
+        ))
+        .await
+        .unwrap();
+        complete_order.borrow_mut().push(1);
+    };
+    tokio::join!(shutdown_fut, poll_fut, complete_fut);
+    assert_eq!(&complete_order.into_inner(), &[1, 2, 3])
 }
