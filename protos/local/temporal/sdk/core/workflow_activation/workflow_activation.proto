@@ -6,16 +6,15 @@ syntax = "proto3";
  */
 package coresdk.workflow_activation;
 
-import "common.proto";
-import "activity_result.proto";
-import "child_workflow.proto";
-
-import "temporal/api/failure/v1/message.proto";
 import "google/protobuf/timestamp.proto";
+import "temporal/api/failure/v1/message.proto";
+import "temporal/sdk/core/activity_result/activity_result.proto";
+import "temporal/sdk/core/child_workflow/child_workflow.proto";
+import "temporal/sdk/core/common/common.proto";
 
 /// An instruction to the lang sdk to run some workflow code, whether for the first time or from
 /// a cached state.
-message WFActivation {
+message WorkflowActivation {
     /// The id of the currently active run of the workflow. Also used as a cache key. There may
     /// only ever be one active workflow task (and hence activation) of a run at one time.
     string run_id = 1;
@@ -24,10 +23,10 @@ message WFActivation {
     /// Whether or not the activation is replaying past events
     bool is_replaying = 3;
     /// The things to do upon activating the workflow
-    repeated WFActivationJob jobs = 4;
+    repeated WorkflowActivationJob jobs = 4;
 }
 
-message WFActivationJob {
+message WorkflowActivationJob {
     oneof variant {
         /// Begin a workflow for the first time
         StartWorkflow start_workflow = 1;
@@ -55,7 +54,7 @@ message WFActivationJob {
         ResolveSignalExternalWorkflow resolve_signal_external_workflow = 12;
         /// An attempt to cancel an external workflow resolved
         ResolveRequestCancelExternalWorkflow resolve_request_cancel_external_workflow = 13;
-        /// Remove the workflow identified by the [WFActivation] containing this job from the cache
+        /// Remove the workflow identified by the [WorkflowActivation] containing this job from the cache
         /// after performing the activation.
         ///
         /// If other job variant are present in the list, this variant will be the last job in the

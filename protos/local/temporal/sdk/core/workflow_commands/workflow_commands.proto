@@ -7,11 +7,11 @@ syntax = "proto3";
  */
 package coresdk.workflow_commands;
 
-import "common.proto";
-import "child_workflow.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 import "temporal/api/failure/v1/message.proto";
+import "temporal/sdk/core/child_workflow/child_workflow.proto";
+import "temporal/sdk/core/common/common.proto";
 
 message WorkflowCommand {
     oneof variant {
