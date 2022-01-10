@@ -12,9 +12,9 @@ use std::{
 
 use temporal_sdk_core_protos::{
     coresdk::{
-        workflow_activation::{wf_activation_job, WfActivationJob},
+        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
         workflow_commands::{CompleteWorkflowExecution, QueryResult, QuerySuccess},
-        workflow_completion::WfActivationCompletion,
+        workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{
         failure::v1::Failure,
@@ -68,7 +68,7 @@ async fn legacy_query(#[case] include_history: bool) {
 
     let first_wft = || async {
         let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
-        core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             TEST_Q,
             task.run_id,
             start_timer_cmd(1, Duration::from_secs(1)),
@@ -78,7 +78,7 @@ async fn legacy_query(#[case] include_history: bool) {
     };
     let clear_eviction = || async {
         let t = core.poll_workflow_activation(TEST_Q).await.unwrap();
-        core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, t.run_id))
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, t.run_id))
             .await
             .unwrap();
     };
@@ -94,12 +94,12 @@ async fn legacy_query(#[case] include_history: bool) {
     // Poll again, and we end up getting a `query` field query response
     let query = assert_matches!(
         task.jobs.as_slice(),
-        [WfActivationJob {
-            variant: Some(wf_activation_job::Variant::QueryWorkflow(q)),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
         }] => q
     );
     // Complete the query
-    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         TEST_Q,
         task.run_id,
         QueryResult {
@@ -124,11 +124,11 @@ async fn legacy_query(#[case] include_history: bool) {
     let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
-        [WfActivationJob {
-            variant: Some(wf_activation_job::Variant::FireTimer(_)),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::FireTimer(_)),
         }]
     );
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         TEST_Q,
         task.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
@@ -175,7 +175,7 @@ async fn new_queries(#[case] num_queries: usize) {
     let core = mock_core(mock);
 
     let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         TEST_Q,
         task.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
@@ -186,15 +186,15 @@ async fn new_queries(#[case] num_queries: usize) {
     let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_matches!(
         task.jobs[0],
-        WfActivationJob {
-            variant: Some(wf_activation_job::Variant::FireTimer(_)),
+        WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::FireTimer(_)),
         }
     );
     for i in 1..=num_queries {
         assert_matches!(
             task.jobs[i],
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::QueryWorkflow(_)),
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::QueryWorkflow(_)),
             }
         );
     }
@@ -213,7 +213,7 @@ async fn new_queries(#[case] num_queries: usize) {
         })
         .collect();
     qresults.push(CompleteWorkflowExecution { result: None }.into());
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         TEST_Q,
         task.run_id,
         qresults,
@@ -255,7 +255,7 @@ async fn legacy_query_failure_on_wft_failure() {
     let core = mock_core(mock);
 
     let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         TEST_Q,
         task.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
@@ -267,12 +267,12 @@ async fn legacy_query_failure_on_wft_failure() {
     // Poll again, and we end up getting a `query` field query response
     assert_matches!(
         task.jobs.as_slice(),
-        [WfActivationJob {
-            variant: Some(wf_activation_job::Variant::QueryWorkflow(q)),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
         }] => q
     );
     // Fail wft which should result in query being failed
-    core.complete_workflow_activation(WfActivationCompletion::fail(
+    core.complete_workflow_activation(WorkflowActivationCompletion::fail(
         TEST_Q,
         task.run_id,
         Failure {
@@ -335,7 +335,7 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
     let core = mock_core(mock);
 
     let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         TEST_Q,
         task.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
@@ -343,7 +343,7 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
     .await
     .unwrap();
     let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         TEST_Q,
         task.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
@@ -356,11 +356,11 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
         let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
         let query = assert_matches!(
             task.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::QueryWorkflow(q)),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
             }] => q
         );
-        core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             TEST_Q,
             task.run_id,
             QueryResult {

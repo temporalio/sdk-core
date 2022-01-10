@@ -3,9 +3,9 @@ use futures::{prelude::stream::FuturesUnordered, FutureExt, StreamExt};
 use std::time::Duration;
 use temporal_sdk_core_protos::{
     coresdk::{
-        workflow_activation::{wf_activation_job, WfActivationJob},
+        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
         workflow_commands::{QueryResult, QuerySuccess, StartTimer},
-        workflow_completion::WfActivationCompletion,
+        workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{failure::v1::Failure, query::v1::WorkflowQuery},
 };
@@ -17,7 +17,7 @@ async fn simple_query_legacy() {
     let query_resp = b"response";
     let (core, task_q) = init_core_and_create_wf(workflow_id).await;
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         &task_q,
         task.run_id.clone(),
         vec![
@@ -58,11 +58,11 @@ async fn simple_query_legacy() {
         let task = core.poll_workflow_activation(&task_q).await.unwrap();
         assert_matches!(
             task.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::FireTimer(_)),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::FireTimer(_)),
             }]
         );
-        core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
             &task_q,
             task.run_id,
             vec![],
@@ -73,12 +73,12 @@ async fn simple_query_legacy() {
         // Poll again, and we end up getting a `query` field query response
         let query = assert_matches!(
             task.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::QueryWorkflow(q)),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
             }] => q
         );
         // Complete the query
-        core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             &task_q,
             task.run_id,
             QueryResult {
@@ -118,11 +118,11 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
 
             // When we see the query, handle it.
             if go_until_query {
-                if let [WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::QueryWorkflow(query)),
+                if let [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::QueryWorkflow(query)),
                 }] = task.jobs.as_slice()
                 {
-                    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+                    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
                         task_q,
                         task.run_id,
                         QueryResult {
@@ -144,11 +144,11 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
 
             if matches!(
                 task.jobs.as_slice(),
-                [WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
                 }]
             ) {
-                core.complete_workflow_activation(WfActivationCompletion::empty(
+                core.complete_workflow_activation(WorkflowActivationCompletion::empty(
                     task_q,
                     task.run_id,
                 ))
@@ -158,8 +158,8 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
             }
             assert_matches!(
                 task.jobs.as_slice(),
-                [WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::StartWorkflow(_)),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
                 }]
             );
             let run_id = task.run_id.clone();
@@ -230,7 +230,7 @@ async fn repros_query_dropped_on_floor() {
     let task = core.poll_workflow_activation(task_q).await.unwrap();
     tokio::time::sleep(Duration::from_secs(2)).await;
     // Complete now-timed-out task (add a new timer)
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task_q,
         task.run_id.clone(),
         vec![],
@@ -278,8 +278,8 @@ async fn repros_query_dropped_on_floor() {
 
             if matches!(
                 task.jobs[0],
-                WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
                 }
             ) {
                 let task = core.poll_workflow_activation(task_q).await.unwrap();
@@ -290,8 +290,8 @@ async fn repros_query_dropped_on_floor() {
 
             if matches!(
                 task.jobs[0],
-                WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::FireTimer(_)),
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::FireTimer(_)),
                 }
             ) {
                 // If we get the timer firing after replay, be done.
@@ -301,8 +301,8 @@ async fn repros_query_dropped_on_floor() {
             // There should be a query job (really, there should be both... server only sends one?)
             let query = assert_matches!(
                 task.jobs.as_slice(),
-                [WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::QueryWorkflow(q)),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
                 }] => q
             );
             let resp = if query.query_type == "query_1" {
@@ -313,7 +313,7 @@ async fn repros_query_dropped_on_floor() {
                 q2_resp
             };
             // Complete the query
-            core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+            core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
                 task_q,
                 task.run_id,
                 vec![QueryResult {
@@ -343,7 +343,7 @@ async fn fail_legacy_query() {
     let query_err = "oh no broken";
     let (core, task_q) = init_core_and_create_wf(workflow_id).await;
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         &task_q,
         task.run_id.clone(),
         vec![
@@ -384,11 +384,11 @@ async fn fail_legacy_query() {
         let task = core.poll_workflow_activation(&task_q).await.unwrap();
         assert_matches!(
             task.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::FireTimer(_)),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::FireTimer(_)),
             }]
         );
-        core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
             &task_q,
             task.run_id,
             vec![],
@@ -399,12 +399,12 @@ async fn fail_legacy_query() {
         // Poll again, and we end up getting a `query` field query response
         assert_matches!(
             task.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::QueryWorkflow(q)),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
             }] => q
         );
         // Fail this task
-        core.complete_workflow_activation(WfActivationCompletion::fail(
+        core.complete_workflow_activation(WorkflowActivationCompletion::fail(
             &task_q,
             task.run_id,
             Failure {

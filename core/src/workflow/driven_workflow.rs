@@ -2,7 +2,7 @@ use crate::workflow::WFCommand;
 use std::collections::VecDeque;
 use temporal_sdk_core_protos::{
     coresdk::workflow_activation::{
-        wf_activation_job, CancelWorkflow, SignalWorkflow, WfActivationJob,
+        workflow_activation_job, CancelWorkflow, SignalWorkflow, WorkflowActivationJob,
     },
     temporal::api::history::v1::WorkflowExecutionStartedEventAttributes,
 };
@@ -13,7 +13,7 @@ pub struct DrivenWorkflow {
     started_attrs: Option<WorkflowExecutionStartedEventAttributes>,
     fetcher: Box<dyn WorkflowFetcher>,
     /// Outgoing activation jobs that need to be sent to the lang sdk
-    outgoing_wf_activation_jobs: VecDeque<wf_activation_job::Variant>,
+    outgoing_wf_activation_jobs: VecDeque<workflow_activation_job::Variant>,
 }
 
 impl<WF> From<Box<WF>> for DrivenWorkflow
@@ -42,7 +42,7 @@ impl DrivenWorkflow {
     }
 
     /// Enqueue a new job to be sent to the driven workflow
-    pub fn send_job(&mut self, job: wf_activation_job::Variant) {
+    pub fn send_job(&mut self, job: workflow_activation_job::Variant) {
         self.outgoing_wf_activation_jobs.push_back(job);
     }
 
@@ -52,7 +52,7 @@ impl DrivenWorkflow {
     }
 
     /// Drain all pending jobs, so that they may be sent to the driven workflow
-    pub fn drain_jobs(&mut self) -> Vec<WfActivationJob> {
+    pub fn drain_jobs(&mut self) -> Vec<WorkflowActivationJob> {
         self.outgoing_wf_activation_jobs
             .drain(..)
             .map(Into::into)
@@ -61,12 +61,12 @@ impl DrivenWorkflow {
 
     /// Signal the workflow
     pub fn signal(&mut self, signal: SignalWorkflow) {
-        self.send_job(wf_activation_job::Variant::SignalWorkflow(signal));
+        self.send_job(workflow_activation_job::Variant::SignalWorkflow(signal));
     }
 
     /// Cancel the workflow
     pub fn cancel(&mut self, attribs: CancelWorkflow) {
-        self.send_job(wf_activation_job::Variant::CancelWorkflow(attribs));
+        self.send_job(workflow_activation_job::Variant::CancelWorkflow(attribs));
     }
 }
 

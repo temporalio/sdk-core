@@ -9,7 +9,7 @@ use crate::{
         NO_MORE_WORK_ERROR_MSG, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
-    Core, CoreSDK, WfActivationCompletion,
+    Core, CoreSDK, WorkflowActivationCompletion,
 };
 use rstest::{fixture, rstest};
 use std::{
@@ -22,8 +22,8 @@ use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_resolution, ActivityResolution},
         workflow_activation::{
-            wf_activation_job, FireTimer, ResolveActivity, StartWorkflow, UpdateRandomSeed,
-            WfActivationJob,
+            workflow_activation_job, FireTimer, ResolveActivity, StartWorkflow, UpdateRandomSeed,
+            WorkflowActivationJob,
         },
         workflow_commands::{
             ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
@@ -75,11 +75,11 @@ async fn single_timer(#[case] core: CoreSDK, #[case] evict: WorkflowCachingPolic
         evict,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![start_timer_cmd(1, Duration::from_secs(1))],
             ),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::FireTimer(_)),
+                &job_assert!(workflow_activation_job::Variant::FireTimer(_)),
                 vec![CompleteWorkflowExecution { result: None }.into()],
             ),
         ],
@@ -100,7 +100,7 @@ async fn single_activity_completion(core: CoreSDK) {
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
                     activity_id: "fake_activity".to_string(),
                     ..Default::default()
@@ -108,7 +108,7 @@ async fn single_activity_completion(core: CoreSDK) {
                 .into()],
             ),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                &job_assert!(workflow_activation_job::Variant::ResolveActivity(_)),
                 vec![CompleteWorkflowExecution { result: None }.into()],
             ),
         ],
@@ -134,7 +134,7 @@ async fn parallel_timer_test_across_wf_bridge(hist_batches: &'static [usize]) {
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![
                     start_timer_cmd(timer_1_id, Duration::from_secs(1)),
                     start_timer_cmd(timer_2_id, Duration::from_secs(1)),
@@ -145,13 +145,13 @@ async fn parallel_timer_test_across_wf_bridge(hist_batches: &'static [usize]) {
                     assert_matches!(
                         res.jobs.as_slice(),
                         [
-                            WfActivationJob {
-                                variant: Some(wf_activation_job::Variant::FireTimer(
+                            WorkflowActivationJob {
+                                variant: Some(workflow_activation_job::Variant::FireTimer(
                                     FireTimer { seq: t1_id }
                                 )),
                             },
-                            WfActivationJob {
-                                variant: Some(wf_activation_job::Variant::FireTimer(
+                            WorkflowActivationJob {
+                                variant: Some(workflow_activation_job::Variant::FireTimer(
                                     FireTimer { seq: t2_id }
                                 )),
                             }
@@ -186,14 +186,14 @@ async fn timer_cancel(hist_batches: &'static [usize]) {
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![
                     start_timer_cmd(cancel_timer_id, Duration::from_secs(1)),
                     start_timer_cmd(timer_id, Duration::from_secs(1)),
                 ],
             ),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::FireTimer(_)),
+                &job_assert!(workflow_activation_job::Variant::FireTimer(_)),
                 vec![
                     CancelTimer {
                         seq: cancel_timer_id,
@@ -223,7 +223,7 @@ async fn scheduled_activity_cancellation_try_cancel(hist_batches: &'static [usiz
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
                     seq: activity_seq,
                     activity_id: activity_id.to_string(),
@@ -233,12 +233,12 @@ async fn scheduled_activity_cancellation_try_cancel(hist_batches: &'static [usiz
                 .into()],
             ),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::SignalWorkflow(_)),
                 vec![RequestCancelActivity { seq: activity_seq }.into()],
             ),
             // Activity is getting resolved right away as we are in the TryCancel mode.
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::ResolveActivity(_)),
+                &job_assert!(workflow_activation_job::Variant::ResolveActivity(_)),
                 vec![CompleteWorkflowExecution { result: None }.into()],
             ),
         ],
@@ -260,7 +260,7 @@ async fn scheduled_activity_timeout(hist_batches: &'static [usize]) {
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
                     seq: activity_seq,
                     activity_id: activity_id.to_string(),
@@ -274,8 +274,8 @@ async fn scheduled_activity_timeout(hist_batches: &'static [usize]) {
                     assert_matches!(
                     res.jobs.as_slice(),
                     [
-                        WfActivationJob {
-                            variant: Some(wf_activation_job::Variant::ResolveActivity(
+                        WorkflowActivationJob {
+                            variant: Some(workflow_activation_job::Variant::ResolveActivity(
                                 ResolveActivity {
                                     seq,
                                     result: Some(ActivityResolution {
@@ -313,7 +313,7 @@ async fn started_activity_timeout(hist_batches: &'static [usize]) {
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
                     seq: activity_seq,
                     activity_id: activity_seq.to_string(),
@@ -327,8 +327,8 @@ async fn started_activity_timeout(hist_batches: &'static [usize]) {
                 assert_matches!(
                     res.jobs.as_slice(),
                     [
-                        WfActivationJob {
-                            variant: Some(wf_activation_job::Variant::ResolveActivity(
+                        WorkflowActivationJob {
+                            variant: Some(workflow_activation_job::Variant::ResolveActivity(
                                 ResolveActivity {
                                     seq,
                                     result: Some(ActivityResolution {
@@ -368,7 +368,7 @@ async fn cancelled_activity_timeout(hist_batches: &'static [usize]) {
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
                     seq: activity_seq,
                     activity_id: activity_id.to_string(),
@@ -377,12 +377,12 @@ async fn cancelled_activity_timeout(hist_batches: &'static [usize]) {
                 .into()],
             ),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::SignalWorkflow(_)),
                 vec![RequestCancelActivity { seq: activity_seq }.into()],
             ),
             // Activity is resolved right away as it has timed out.
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::ResolveActivity(
+                &job_assert!(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         seq: _,
                         result: Some(ActivityResolution {
@@ -472,7 +472,7 @@ async fn verify_activity_cancellation(
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
                     seq: activity_seq,
                     activity_id: activity_seq.to_string(),
@@ -482,12 +482,12 @@ async fn verify_activity_cancellation(
                 .into()],
             ),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::SignalWorkflow(_)),
                 vec![RequestCancelActivity { seq: activity_seq }.into()],
             ),
             // Activity should be resolved right away
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::ResolveActivity(
+                &job_assert!(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         seq: _,
                         result: Some(ActivityResolution {
@@ -540,7 +540,7 @@ async fn verify_activity_cancellation_wait_for_cancellation(activity_id: u32, co
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
                     seq: activity_id,
                     activity_id: activity_id.to_string(),
@@ -550,17 +550,17 @@ async fn verify_activity_cancellation_wait_for_cancellation(activity_id: u32, co
                 .into()],
             ),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::SignalWorkflow(_)),
                 vec![RequestCancelActivity { seq: activity_id }.into()],
             ),
             // Making sure that activity is not resolved until it's cancelled.
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::SignalWorkflow(_)),
                 vec![],
             ),
             // Now ActivityTaskCanceled has been processed and activity can be resolved.
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::ResolveActivity(
+                &job_assert!(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         seq: _,
                         result: Some(ActivityResolution {
@@ -596,8 +596,8 @@ async fn workflow_update_random_seed_on_workflow_reset() {
                 &|res| {
                     assert_matches!(
                         res.jobs.as_slice(),
-                        [WfActivationJob {
-                            variant: Some(wf_activation_job::Variant::StartWorkflow(
+                        [WorkflowActivationJob {
+                            variant: Some(workflow_activation_job::Variant::StartWorkflow(
                             StartWorkflow{randomness_seed, ..}
                             )),
                         }] => {
@@ -611,11 +611,11 @@ async fn workflow_update_random_seed_on_workflow_reset() {
                 &|res| {
                     assert_matches!(
                         res.jobs.as_slice(),
-                        [WfActivationJob {
-                            variant: Some(wf_activation_job::Variant::FireTimer(_),),
+                        [WorkflowActivationJob {
+                            variant: Some(workflow_activation_job::Variant::FireTimer(_),),
                         },
-                        WfActivationJob {
-                            variant: Some(wf_activation_job::Variant::UpdateRandomSeed(
+                        WorkflowActivationJob {
+                            variant: Some(workflow_activation_job::Variant::UpdateRandomSeed(
                                 UpdateRandomSeed{randomness_seed})),
                         }] => {
                             assert_ne!(randomness_seed_from_start.load(Ordering::SeqCst),
@@ -646,7 +646,7 @@ async fn cancel_timer_before_sent_wf_bridge() {
         &core,
         NonSticky,
         &[gen_assert_and_reply(
-            &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+            &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
             vec![
                 start_timer_cmd(cancel_timer_id, Duration::from_secs(1)),
                 CancelTimer {
@@ -695,7 +695,7 @@ async fn complete_activation_with_failure(
             ),
             gen_assert_and_fail(&|_| {}),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::FireTimer(_)),
+                &job_assert!(workflow_activation_job::Variant::FireTimer(_)),
                 vec![CompleteWorkflowExecution { result: None }.into()],
             ),
         ],
@@ -718,11 +718,11 @@ async fn simple_timer_fail_wf_execution(hist_batches: &'static [usize]) {
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![start_timer_cmd(timer_id, Duration::from_secs(1))],
             ),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::FireTimer(_)),
+                &job_assert!(workflow_activation_job::Variant::FireTimer(_)),
                 vec![FailWorkflowExecution {
                     failure: Some(Failure {
                         message: "I'm ded".to_string(),
@@ -749,14 +749,14 @@ async fn two_signals(hist_batches: &'static [usize]) {
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 // Task is completed with no commands
                 vec![],
             ),
             gen_assert_and_reply(
                 &job_assert!(
-                    wf_activation_job::Variant::SignalWorkflow(_),
-                    wf_activation_job::Variant::SignalWorkflow(_)
+                    workflow_activation_job::Variant::SignalWorkflow(_),
+                    workflow_activation_job::Variant::SignalWorkflow(_)
                 ),
                 vec![],
             ),
@@ -809,14 +809,14 @@ async fn workflow_failures_only_reported_once() {
             gen_assert_and_fail(&|_| {}),
             gen_assert_and_fail(&|_| {}),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::FireTimer(_)),
+                &job_assert!(workflow_activation_job::Variant::FireTimer(_)),
                 vec![start_timer_cmd(timer_2, Duration::from_secs(1))],
             ),
             // Again (a new fail should be reported here)
             gen_assert_and_fail(&|_| {}),
             gen_assert_and_fail(&|_| {}),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::FireTimer(_)),
+                &job_assert!(workflow_activation_job::Variant::FireTimer(_)),
                 vec![CompleteWorkflowExecution { result: None }.into()],
             ),
         ],
@@ -865,7 +865,7 @@ async fn max_concurrent_wft_respected() {
     let last_finisher = AtomicUsize::new(0);
     let (_, mut r1) = tokio::join! {
         async {
-            core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+            core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
                 TEST_Q,
                 r1.run_id,
                 start_timer_cmd(1, Duration::from_secs(1)))
@@ -883,7 +883,7 @@ async fn max_concurrent_wft_respected() {
 
     // Since we never did anything with r2, all subsequent activations should be for wf1
     for i in 2..=20 {
-        core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             TEST_Q,
             r1.run_id,
             start_timer_cmd(i, Duration::from_secs(1)),
@@ -894,7 +894,7 @@ async fn max_concurrent_wft_respected() {
         assert_eq!(r1.run_id, r1_run_id);
     }
     // Finish the tasks so we can shut down
-    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         TEST_Q,
         r1.run_id,
         CompleteWorkflowExecution { result: None }.into(),
@@ -906,7 +906,7 @@ async fn max_concurrent_wft_respected() {
     // We have to properly complete the outstanding task (or the mock will be confused why a task
     // failure was reported)
     let _ = core
-        .complete_workflow_activation(WfActivationCompletion::from_cmd(
+        .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             TEST_Q,
             r2.run_id,
             start_timer_cmd(1, Duration::from_secs(1)),
@@ -915,7 +915,7 @@ async fn max_concurrent_wft_respected() {
     // Get and complete eviction
     let r2 = core.poll_workflow_activation(TEST_Q).await.unwrap();
     let _ = core
-        .complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, r2.run_id))
+        .complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, r2.run_id))
         .await;
     core.shutdown().await;
 }
@@ -933,7 +933,7 @@ async fn activity_not_canceled_on_replay_repro(hist_batches: &'static [usize]) {
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 // Start timer and activity
                 vec![
                     ScheduleActivity {
@@ -947,11 +947,11 @@ async fn activity_not_canceled_on_replay_repro(hist_batches: &'static [usize]) {
                 ],
             ),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::FireTimer(_)),
+                &job_assert!(workflow_activation_job::Variant::FireTimer(_)),
                 vec![RequestCancelActivity { seq: activity_id }.into()],
             ),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::ResolveActivity(
+                &job_assert!(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         result: Some(ActivityResolution {
                             status: Some(activity_resolution::Status::Cancelled(..)),
@@ -979,7 +979,7 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static 
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
                     seq: activity_id,
                     activity_id: activity_id.to_string(),
@@ -989,14 +989,14 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static 
                 .into()],
             ),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::SignalWorkflow(_)),
                 vec![
                     RequestCancelActivity { seq: activity_id }.into(),
                     start_timer_cmd(2, Duration::from_secs(1)),
                 ],
             ),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::ResolveActivity(
+                &job_assert!(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         result: Some(ActivityResolution {
                             status: Some(activity_resolution::Status::Cancelled(..)),
@@ -1030,11 +1030,11 @@ async fn lots_of_workflows() {
         while let Ok(wft) = core.poll_workflow_activation(TEST_Q).await {
             let job = &wft.jobs[0];
             let reply = match job.variant {
-                Some(wf_activation_job::Variant::StartWorkflow(_)) => {
+                Some(workflow_activation_job::Variant::StartWorkflow(_)) => {
                     start_timer_cmd(1, Duration::from_secs(1))
                 }
-                Some(wf_activation_job::Variant::RemoveFromCache(_)) => {
-                    core.complete_workflow_activation(WfActivationCompletion::empty(
+                Some(workflow_activation_job::Variant::RemoveFromCache(_)) => {
+                    core.complete_workflow_activation(WorkflowActivationCompletion::empty(
                         TEST_Q, wft.run_id,
                     ))
                     .await
@@ -1043,7 +1043,7 @@ async fn lots_of_workflows() {
                 }
                 _ => CompleteWorkflowExecution { result: None }.into(),
             };
-            core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+            core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
                 TEST_Q, wft.run_id, reply,
             ))
             .await
@@ -1074,7 +1074,7 @@ async fn wft_timeout_repro(hist_batches: &'static [usize]) {
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
                     seq: activity_id,
                     activity_id: activity_id.to_string(),
@@ -1085,9 +1085,9 @@ async fn wft_timeout_repro(hist_batches: &'static [usize]) {
             ),
             gen_assert_and_reply(
                 &job_assert!(
-                    wf_activation_job::Variant::SignalWorkflow(_),
-                    wf_activation_job::Variant::SignalWorkflow(_),
-                    wf_activation_job::Variant::ResolveActivity(ResolveActivity {
+                    workflow_activation_job::Variant::SignalWorkflow(_),
+                    workflow_activation_job::Variant::SignalWorkflow(_),
+                    workflow_activation_job::Variant::ResolveActivity(ResolveActivity {
                         result: Some(ActivityResolution {
                             status: Some(activity_resolution::Status::Completed(..)),
                         }),
@@ -1114,7 +1114,7 @@ async fn complete_after_eviction() {
     // We just got start workflow, immediately evict
     core.request_workflow_eviction(TEST_Q, &activation.run_id);
     // Original task must be completed before we get the eviction
-    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         TEST_Q,
         activation.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
@@ -1125,16 +1125,16 @@ async fn complete_after_eviction() {
     assert_matches!(
         eviction_activation.jobs.as_slice(),
         [
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::FireTimer(_)),
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::FireTimer(_)),
             },
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
             }
         ]
     );
     // Complete the activation containing the eviction, the way we normally would have
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         TEST_Q,
         eviction_activation.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
@@ -1161,7 +1161,7 @@ async fn sends_appropriate_sticky_task_queue_responses() {
     let core = mock_core(mock);
 
     let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         TEST_Q,
         activation.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
@@ -1180,7 +1180,7 @@ async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation(
 
     // Poll for and complete first workflow task
     let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         TEST_Q,
         activation.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
@@ -1190,8 +1190,8 @@ async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation(
     let eviction_activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_matches!(
         eviction_activation.jobs.as_slice(),
-        [WfActivationJob {
-            variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
         }]
     );
     // Poll again. We should not overwrite the eviction with the new work from the server to fire
@@ -1251,7 +1251,7 @@ async fn buffered_work_drained_on_shutdown() {
         // Now poll again, which will start spinning, and buffer the next WFT with timer fired in it
         // - it won't stop spinning until the first task is complete
         let t = core.poll_workflow_activation(TEST_Q).await.unwrap();
-        core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
             TEST_Q,
             t.run_id,
             vec![CompleteWorkflowExecution { result: None }.into()],
@@ -1260,7 +1260,7 @@ async fn buffered_work_drained_on_shutdown() {
         .unwrap();
     };
     let complete_first = async move {
-        core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             TEST_Q,
             act1.run_id,
             start_timer_cmd(1, Duration::from_secs(1)),
@@ -1328,7 +1328,7 @@ async fn fail_wft_then_recover() {
 
     let act = core.poll_workflow_activation(TEST_Q).await.unwrap();
     // Start an activity instead of a timer, triggering nondeterminism error
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         TEST_Q,
         act.run_id.clone(),
         vec![ScheduleActivity {
@@ -1344,17 +1344,20 @@ async fn fail_wft_then_recover() {
     assert_eq!(evict_act.run_id, act.run_id);
     assert_matches!(
         evict_act.jobs.as_slice(),
-        [WfActivationJob {
-            variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
         }]
     );
-    core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, evict_act.run_id))
-        .await
-        .unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(
+        TEST_Q,
+        evict_act.run_id,
+    ))
+    .await
+    .unwrap();
 
     // Workflow starting over, this time issue the right command
     let act = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         TEST_Q,
         act.run_id,
         vec![start_timer_cmd(1, Duration::from_secs(1))],
@@ -1364,11 +1367,11 @@ async fn fail_wft_then_recover() {
     let act = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_matches!(
         act.jobs.as_slice(),
-        [WfActivationJob {
-            variant: Some(wf_activation_job::Variant::FireTimer(_)),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::FireTimer(_)),
         },]
     );
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         TEST_Q,
         act.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
@@ -1435,27 +1438,27 @@ async fn lang_slower_than_wft_timeouts() {
                     if err.message() == NO_MORE_WORK_ERROR_MSG);
     // This completion runs into a workflow task not found error, since it's completing a stale
     // task.
-    core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, wf_task.run_id))
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, wf_task.run_id))
         .await
         .unwrap();
     // Now we should get an eviction
     let wf_task = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_matches!(
         wf_task.jobs.as_slice(),
-        [WfActivationJob {
-            variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
         }]
     );
-    core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, wf_task.run_id))
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, wf_task.run_id))
         .await
         .unwrap();
     // The last WFT buffered should be applied now
     let start_again = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_matches!(
         start_again.jobs[0].variant,
-        Some(wf_activation_job::Variant::StartWorkflow(_))
+        Some(workflow_activation_job::Variant::StartWorkflow(_))
     );
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         TEST_Q,
         start_again.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
@@ -1482,7 +1485,7 @@ async fn tries_cancel_of_completed_activity() {
     let core = mock_core(mock);
 
     let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         TEST_Q,
         activation.run_id,
         ScheduleActivity {
@@ -1498,15 +1501,15 @@ async fn tries_cancel_of_completed_activity() {
     assert_matches!(
         activation.jobs.as_slice(),
         [
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
             },
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(_)),
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(_)),
             }
         ]
     );
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         TEST_Q,
         activation.run_id,
         vec![
@@ -1541,7 +1544,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
     for _ in 1..=2 {
         let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
         // Issue a nonsense completion that will trigger a WFT failure
-        core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             TEST_Q,
             activation.run_id,
             RequestCancelActivity { seq: 1 }.into(),
@@ -1551,14 +1554,17 @@ async fn failing_wft_doesnt_eat_permit_forever() {
         let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
         assert_matches!(
             activation.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
             },]
         );
         run_id = activation.run_id.clone();
-        core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, activation.run_id))
-            .await
-            .unwrap();
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(
+            TEST_Q,
+            activation.run_id,
+        ))
+        .await
+        .unwrap();
         assert_eq!(core.outstanding_wfts(TEST_Q), 0);
         assert_eq!(core.available_wft_permits(TEST_Q), 2);
     }
@@ -1572,7 +1578,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
         .write()
         .remove_by_left(&run_id);
     let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         TEST_Q,
         activation.run_id,
         CompleteWorkflowExecution { result: None }.into(),
@@ -1620,20 +1626,26 @@ async fn cache_miss_doesnt_eat_permit_forever() {
     for _ in 1..=3 {
         // Start
         let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
-        core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, activation.run_id))
-            .await
-            .unwrap();
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(
+            TEST_Q,
+            activation.run_id,
+        ))
+        .await
+        .unwrap();
         // Evict
         let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
         assert_matches!(
             activation.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::RemoveFromCache(_)),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
             },]
         );
-        core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, activation.run_id))
-            .await
-            .unwrap();
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(
+            TEST_Q,
+            activation.run_id,
+        ))
+        .await
+        .unwrap();
         assert_eq!(core.outstanding_wfts(TEST_Q), 0);
         assert_eq!(core.available_wft_permits(TEST_Q), 2);
         // When we loop back up, the poll will trigger a cache miss, which we should immediately
@@ -1641,7 +1653,7 @@ async fn cache_miss_doesnt_eat_permit_forever() {
         // history
     }
     let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WfActivationCompletion::from_cmd(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         TEST_Q,
         activation.run_id,
         CompleteWorkflowExecution { result: None }.into(),
@@ -1691,17 +1703,17 @@ async fn tasks_from_completion_are_delivered() {
     let core = mock_core(mock);
 
     let wf_task = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, wf_task.run_id))
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, wf_task.run_id))
         .await
         .unwrap();
     let wf_task = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_matches!(
         wf_task.jobs.as_slice(),
-        [WfActivationJob {
-            variant: Some(wf_activation_job::Variant::SignalWorkflow(_)),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
         },]
     );
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         TEST_Q,
         wf_task.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],

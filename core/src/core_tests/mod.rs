@@ -19,7 +19,7 @@ use futures::FutureExt;
 use std::time::Duration;
 use temporal_client::MockManualGateway;
 use temporal_sdk_core_protos::{
-    coresdk::workflow_completion::WfActivationCompletion,
+    coresdk::workflow_completion::WorkflowActivationCompletion,
     temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
 };
 use tokio::{sync::Barrier, time::sleep};
@@ -30,7 +30,7 @@ async fn after_shutdown_server_is_not_polled() {
     let core = build_fake_core("fake_wf_id", t, &[1]);
     let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
-    core.complete_workflow_activation(WfActivationCompletion::empty(TEST_Q, res.run_id))
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, res.run_id))
         .await
         .unwrap();
     core.shutdown().await;

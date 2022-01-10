@@ -56,8 +56,8 @@ use temporal_sdk_core_api::{
     Core, CoreLog,
 };
 use temporal_sdk_core_protos::coresdk::{
-    activity_task::ActivityTask, workflow_activation::WfActivation,
-    workflow_completion::WfActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
+    activity_task::ActivityTask, workflow_activation::WorkflowActivation,
+    workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
 };
 
 use crate::telemetry::metrics::{MetricsContext, METRIC_METER};
@@ -133,7 +133,7 @@ impl Core for CoreSDK {
     async fn poll_workflow_activation(
         &self,
         task_queue: &str,
-    ) -> Result<WfActivation, PollWfError> {
+    ) -> Result<WorkflowActivation, PollWfError> {
         let worker = self.worker(task_queue)?;
         worker.next_workflow_activation().await
     }
@@ -162,7 +162,7 @@ impl Core for CoreSDK {
       fields(completion=%&completion, run_id=%completion.run_id))]
     async fn complete_workflow_activation(
         &self,
-        completion: WfActivationCompletion,
+        completion: WorkflowActivationCompletion,
     ) -> Result<(), CompleteWfError> {
         let worker = self.worker(&completion.task_queue)?;
         worker.complete_workflow_activation(completion).await

@@ -36,8 +36,8 @@ use temporal_sdk_core_protos::{
     coresdk::{
         common::{NamespacedWorkflowExecution, Payload},
         workflow_activation::{
-            wf_activation_job::{self, Variant},
-            NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WfActivation,
+            workflow_activation_job::{self, Variant},
+            NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WorkflowActivation,
         },
         workflow_commands::{
             request_cancel_external_workflow_execution as cancel_we,
@@ -154,7 +154,7 @@ struct ChangeInfo {
 #[allow(clippy::large_enum_variant)]
 pub enum MachineResponse {
     #[display(fmt = "PushWFJob({})", "_0")]
-    PushWFJob(wf_activation_job::Variant),
+    PushWFJob(workflow_activation_job::Variant),
 
     IssueNewCommand(ProtoCommand),
     #[display(fmt = "IssueFakeLocalActivityMarker({})", "_0")]
@@ -187,7 +187,7 @@ pub enum MachineResponse {
 
 impl<T> From<T> for MachineResponse
 where
-    T: Into<wf_activation_job::Variant>,
+    T: Into<workflow_activation_job::Variant>,
 {
     fn from(v: T) -> Self {
         Self::PushWFJob(v.into())
@@ -562,9 +562,9 @@ impl WorkflowMachines {
     ///
     /// The job list may be empty, in which case it is expected the caller handles what to do in a
     /// "no work" situation. Possibly, it may know about some work the machines don't, like queries.
-    pub(crate) fn get_wf_activation(&mut self) -> WfActivation {
+    pub(crate) fn get_wf_activation(&mut self) -> WorkflowActivation {
         let jobs = self.drive_me.drain_jobs();
-        WfActivation {
+        WorkflowActivation {
             timestamp: self.current_wf_time.map(Into::into),
             is_replaying: self.replaying,
             run_id: self.run_id.clone(),
@@ -675,9 +675,9 @@ impl WorkflowMachines {
                 );
                 // Found a patch marker
                 self.drive_me
-                    .send_job(wf_activation_job::Variant::NotifyHasPatch(NotifyHasPatch {
-                        patch_id,
-                    }));
+                    .send_job(workflow_activation_job::Variant::NotifyHasPatch(
+                        NotifyHasPatch { patch_id },
+                    ));
             } else if e.is_local_activity_marker() {
                 self.local_activity_data.process_peekahead_marker(e)?;
             }
@@ -756,7 +756,7 @@ impl WorkflowMachines {
                     // TODO: Should this also update self.run_id? Should we track orig/current
                     //   separately?
                     self.drive_me
-                        .send_job(wf_activation_job::Variant::UpdateRandomSeed(
+                        .send_job(workflow_activation_job::Variant::UpdateRandomSeed(
                             UpdateRandomSeed {
                                 randomness_seed: str_to_randomness_seed(&new_run_id),
                             },
@@ -805,7 +805,7 @@ impl WorkflowMachines {
     fn handle_driven_results(
         &mut self,
         results: Vec<WFCommand>,
-    ) -> Result<Vec<wf_activation_job::Variant>> {
+    ) -> Result<Vec<workflow_activation_job::Variant>> {
         let mut jobs = vec![];
         for cmd in results {
             match cmd {
