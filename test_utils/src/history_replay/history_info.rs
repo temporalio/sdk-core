@@ -1,11 +1,10 @@
-use crate::workflow::HistoryUpdate;
 use temporal_sdk_core_protos::temporal::api::{
     enums::v1::EventType,
     history::v1::{History, HistoryEvent},
 };
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct HistoryInfo {
+pub struct HistoryInfo {
     pub previous_started_event_id: i64,
     pub workflow_task_started_event_id: i64,
     // This needs to stay private so the struct can't be instantiated outside of the constructor,
@@ -115,19 +114,13 @@ impl HistoryInfo {
         self.events.drain(0..=last_complete_ix);
     }
 
-    pub(crate) fn events(&self) -> &[HistoryEvent] {
+    pub fn events(&self) -> &[HistoryEvent] {
         &self.events
     }
 
     /// Non-test code should *not* rely on just counting workflow tasks b/c of pagination
-    pub(crate) const fn wf_task_count(&self) -> usize {
+    pub const fn wf_task_count(&self) -> usize {
         self.wf_task_count
-    }
-}
-
-impl From<HistoryInfo> for HistoryUpdate {
-    fn from(v: HistoryInfo) -> Self {
-        Self::new_from_events(v.events, v.previous_started_event_id)
     }
 }
 
@@ -139,7 +132,7 @@ impl From<HistoryInfo> for History {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_help::canned_histories;
+    use crate::canned_histories;
 
     #[test]
     fn history_info_constructs_properly() {

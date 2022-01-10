@@ -11,6 +11,7 @@ use std::{
     convert::TryFrom,
     time::{Duration, SystemTime},
 };
+use temporal_sdk_core_protos::constants::LOCAL_ACTIVITY_MARKER_NAME;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
@@ -29,8 +30,6 @@ use temporal_sdk_core_protos::{
     },
     utilities::TryIntoOrNone,
 };
-
-pub const LOCAL_ACTIVITY_MARKER_NAME: &str = "core_local_activity";
 
 fsm! {
     pub(super) name LocalActivityMachine;

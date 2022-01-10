@@ -1,3 +1,6 @@
+pub mod canned_histories;
+pub mod history_replay;
+
 use futures::{stream::FuturesUnordered, StreamExt};
 use log::LevelFilter;
 use rand::{distributions::Standard, Rng};

@@ -8,7 +8,7 @@ mod machines;
 pub(crate) use bridge::WorkflowBridge;
 pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
 pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
-pub(crate) use machines::{WFMachinesError, HAS_CHANGE_MARKER_NAME, LOCAL_ACTIVITY_MARKER_NAME};
+pub(crate) use machines::WFMachinesError;
 
 use crate::{
     telemetry::metrics::MetricsContext,
@@ -272,7 +272,7 @@ pub mod managed_wf {
     use super::*;
     use crate::{
         test_help::{TestHistoryBuilder, TEST_Q},
-        workflow::{WFCommand, WorkflowFetcher},
+        workflow::{history_update::tests::TestHBExt, WFCommand, WorkflowFetcher},
     };
     use std::{convert::TryInto, time::Duration};
     use temporal_sdk::{WorkflowFunction, WorkflowResult};

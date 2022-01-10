@@ -1,9 +1,7 @@
-pub mod canned_histories;
-pub mod history_builder;
-
-mod history_info;
-
-pub(crate) use history_builder::{TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE};
+pub(crate) use test_utils::{
+    canned_histories,
+    history_replay::{TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE},
+};
 
 use crate::{
     pollers::{BoxedActPoller, BoxedPoller, BoxedWFPoller, MockManualPoller, MockPoller},
@@ -42,7 +40,6 @@ use temporal_sdk_core_protos::{
     },
 };
 
-pub type Result<T, E = anyhow::Error> = std::result::Result<T, E>;
 pub const TEST_Q: &str = "q";
 pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";
 
@@ -182,6 +179,7 @@ impl MockWorker {
                 .unwrap(),
         }
     }
+
     pub fn for_queue(q: &str) -> Self {
         Self::new(q, Box::from(mock_poller()))
     }
@@ -627,8 +625,7 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
     }
 
     assert_eq!(expected_fail_count, executed_failures.len());
-    // TODO: Really need a worker abstraction for testing
-    // assert_eq!(core.wft_manager.outstanding_wft(), 0);
+    assert_eq!(core.outstanding_wfts(TEST_Q), 0);
 }
 
 pub(crate) fn gen_assert_and_reply(
