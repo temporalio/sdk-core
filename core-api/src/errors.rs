@@ -1,6 +1,6 @@
 //! Error types exposed by public APIs
 
-use prost_types::TimestampOutOfSystemRangeError;
+use prost_wkt_types::TimestampOutOfSystemRangeError;
 use temporal_client::GatewayInitError;
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityExecutionResult, workflow_completion::WorkflowActivationCompletion,

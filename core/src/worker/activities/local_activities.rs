@@ -65,7 +65,7 @@ pub(crate) struct LocalActivityResolution {
     pub result: LocalActivityExecutionResult,
     pub runtime: Duration,
     pub attempt: u32,
-    pub backoff: Option<prost_types::Duration>,
+    pub backoff: Option<prost_wkt_types::Duration>,
     pub original_schedule_time: Option<SystemTime>,
 }
 
@@ -465,7 +465,7 @@ pub(crate) enum LACompleteAction {
     /// Caller should report the status to the workflow
     Report(LocalInFlightActInfo),
     /// Lang needs to be told to do the schedule-a-timer-then-rerun hack
-    LangDoesTimerBackoff(prost_types::Duration, LocalInFlightActInfo),
+    LangDoesTimerBackoff(prost_wkt_types::Duration, LocalInFlightActInfo),
     /// The activity will be re-enqueued for another attempt (and so status should not be reported
     /// to the workflow)
     WillBeRetried,

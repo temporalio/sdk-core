@@ -24,8 +24,8 @@ use super::{
 use crate::protosext::HistoryEventExt;
 use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
-use temporal_sdk_core_protos::constants::PATCH_MARKER_NAME;
 use temporal_sdk_core_protos::{
+    constants::PATCH_MARKER_NAME,
     coresdk::common::build_has_change_marker_details,
     temporal::api::{
         command::v1::{Command, RecordMarkerCommandAttributes},

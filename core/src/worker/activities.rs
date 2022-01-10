@@ -52,7 +52,7 @@ struct InFlightActInfo {
 struct RemoteInFlightActInfo {
     pub base: InFlightActInfo,
     /// Used to calculate aggregation delay between activity heartbeats.
-    pub heartbeat_timeout: Option<prost_types::Duration>,
+    pub heartbeat_timeout: Option<prost_wkt_types::Duration>,
     /// Set to true if we have already issued a cancellation activation to lang for this activity
     pub issued_cancel_to_lang: bool,
     /// Set to true if we have already learned from the server this activity doesn't exist. EX:
@@ -64,7 +64,7 @@ impl RemoteInFlightActInfo {
     fn new(
         activity_type: String,
         workflow_type: String,
-        heartbeat_timeout: Option<prost_types::Duration>,
+        heartbeat_timeout: Option<prost_wkt_types::Duration>,
     ) -> Self {
         Self {
             base: InFlightActInfo {

@@ -101,7 +101,7 @@ pub struct LocalActivityOptions {
     pub attempt: Option<u32>,
     /// Override schedule time when doing timer backoff.
     /// Ideally we would not expose this in a released Rust SDK, but it's needed for test.
-    pub original_schedule_time: Option<prost_types::Timestamp>,
+    pub original_schedule_time: Option<prost_wkt_types::Timestamp>,
     /// Retry backoffs over this amount will use a timer rather than a local retry
     pub timer_backoff_threshold: Option<Duration>,
     /// How the activity will cancel

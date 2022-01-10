@@ -755,7 +755,7 @@ impl Worker {
         &self,
         la_res: LocalActivityExecutionResult,
         info: LocalInFlightActInfo,
-        backoff: Option<prost_types::Duration>,
+        backoff: Option<prost_wkt_types::Duration>,
     ) {
         self.notify_local_result(
             &info.la_info.workflow_exec_info.run_id,
