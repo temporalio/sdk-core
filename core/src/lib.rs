@@ -98,6 +98,15 @@ pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
     Ok(CoreSDK::new(server_gateway, opts))
 }
 
+/// Initialize core using a provided gateway instance, which is typically a mock
+pub fn init_mock_gateway<SG: ServerGatewayApis + Send + Sync + 'static>(
+    opts: CoreInitOptions,
+    server_gateway: SG,
+) -> Result<impl Core, CoreInitError> {
+    telemetry_init(&opts.telemetry_opts).map_err(CoreInitError::TelemetryInitError)?;
+    Ok(CoreSDK::new(server_gateway, opts))
+}
+
 struct CoreSDK {
     /// Options provided at initialization time
     init_options: CoreInitOptions,

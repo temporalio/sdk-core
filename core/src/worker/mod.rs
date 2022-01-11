@@ -813,9 +813,10 @@ struct WFTReportOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_help::{fake_sg_opts, mock_gateway};
+    use crate::test_help::mock_gateway;
 
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
+    use test_utils::fake_sg_opts;
 
     #[tokio::test]
     async fn activity_timeouts_dont_eat_permits() {

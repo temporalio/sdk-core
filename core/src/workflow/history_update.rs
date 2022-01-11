@@ -109,7 +109,13 @@ impl HistoryUpdate {
     }
 
     #[cfg(test)]
-    pub fn new_from_events(events: Vec<HistoryEvent>, previous_wft_started_id: i64) -> Self {
+    pub fn new_from_events<I: IntoIterator<Item = HistoryEvent>>(
+        events: I,
+        previous_wft_started_id: i64,
+    ) -> Self
+    where
+        <I as IntoIterator>::IntoIter: Send + 'static,
+    {
         Self {
             events: stream::iter(events.into_iter().map(Ok)).boxed(),
             buffered: VecDeque::new(),
@@ -228,9 +234,26 @@ impl HistoryUpdate {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
-    use crate::test_help::{canned_histories, mock_gateway};
+    use crate::test_help::{canned_histories, mock_gateway, TestHistoryBuilder};
+    use test_utils::history_replay::HistoryInfo;
+
+    impl From<HistoryInfo> for HistoryUpdate {
+        fn from(v: HistoryInfo) -> Self {
+            Self::new_from_events(v.events().to_vec(), v.previous_started_event_id)
+        }
+    }
+
+    pub trait TestHBExt {
+        fn as_history_update(&self) -> HistoryUpdate;
+    }
+
+    impl TestHBExt for TestHistoryBuilder {
+        fn as_history_update(&self) -> HistoryUpdate {
+            self.get_full_history_info().unwrap().into()
+        }
+    }
 
     #[tokio::test]
     async fn consumes_standard_wft_sequence() {

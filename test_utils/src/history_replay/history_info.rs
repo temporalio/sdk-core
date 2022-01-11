@@ -1,11 +1,15 @@
-use crate::workflow::HistoryUpdate;
+use crate::history_replay::DEFAULT_WORKFLOW_TYPE;
+use rand::{thread_rng, Rng};
 use temporal_sdk_core_protos::temporal::api::{
-    enums::v1::EventType,
-    history::v1::{History, HistoryEvent},
+    common::v1::WorkflowType,
+    enums::v1::{EventType, TaskQueueKind},
+    history::v1::{history_event, History, HistoryEvent},
+    taskqueue::v1::TaskQueue,
+    workflowservice::v1::PollWorkflowTaskQueueResponse,
 };
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct HistoryInfo {
+pub struct HistoryInfo {
     pub previous_started_event_id: i64,
     pub workflow_task_started_event_id: i64,
     // This needs to stay private so the struct can't be instantiated outside of the constructor,
@@ -115,19 +119,48 @@ impl HistoryInfo {
         self.events.drain(0..=last_complete_ix);
     }
 
-    pub(crate) fn events(&self) -> &[HistoryEvent] {
+    pub fn events(&self) -> &[HistoryEvent] {
         &self.events
     }
 
-    /// Non-test code should *not* rely on just counting workflow tasks b/c of pagination
-    pub(crate) const fn wf_task_count(&self) -> usize {
+    /// Attempt to extract run id from internal events. If the first event is not workflow execution
+    /// started, it will panic.
+    pub fn orig_run_id(&self) -> &str {
+        if let Some(history_event::Attributes::WorkflowExecutionStartedEventAttributes(wes)) =
+            &self.events[0].attributes
+        {
+            &wes.original_execution_run_id
+        } else {
+            panic!("First event is wrong type")
+        }
+    }
+
+    /// Return total workflow task count in this history
+    pub const fn wf_task_count(&self) -> usize {
         self.wf_task_count
     }
-}
 
-impl From<HistoryInfo> for HistoryUpdate {
-    fn from(v: HistoryInfo) -> Self {
-        Self::new_from_events(v.events, v.previous_started_event_id)
+    /// Create a workflow task polling response containing all the events in this history and a
+    /// randomly generated task token. Caller should attach a meaningful `workflow_execution` if
+    /// needed.
+    pub fn as_poll_wft_response(&self, task_q: impl Into<String>) -> PollWorkflowTaskQueueResponse {
+        let task_token: [u8; 16] = thread_rng().gen();
+        PollWorkflowTaskQueueResponse {
+            history: Some(History {
+                events: self.events.clone(),
+            }),
+            task_token: task_token.to_vec(),
+            workflow_type: Some(WorkflowType {
+                name: DEFAULT_WORKFLOW_TYPE.to_owned(),
+            }),
+            workflow_execution_task_queue: Some(TaskQueue {
+                name: task_q.into(),
+                kind: TaskQueueKind::Normal as i32,
+            }),
+            previous_started_event_id: self.previous_started_event_id,
+            started_event_id: self.workflow_task_started_event_id,
+            ..Default::default()
+        }
     }
 }
 
@@ -139,7 +172,7 @@ impl From<HistoryInfo> for History {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_help::canned_histories;
+    use crate::canned_histories;
 
     #[test]
     fn history_info_constructs_properly() {

@@ -10,9 +10,7 @@ mod workflow_tasks;
 
 use crate::{
     errors::{PollActivityError, PollWfError},
-    test_help::{
-        build_fake_core, canned_histories, fake_sg_opts, hist_to_poll_resp, ResponseType, TEST_Q,
-    },
+    test_help::{build_fake_core, canned_histories, hist_to_poll_resp, ResponseType, TEST_Q},
     Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
 };
 use futures::FutureExt;
@@ -22,6 +20,7 @@ use temporal_sdk_core_protos::{
     coresdk::workflow_completion::WorkflowActivationCompletion,
     temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
 };
+use test_utils::fake_sg_opts;
 use tokio::{sync::Barrier, time::sleep};
 
 #[tokio::test]

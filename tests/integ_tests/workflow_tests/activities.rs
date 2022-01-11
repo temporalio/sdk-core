@@ -668,8 +668,8 @@ async fn async_activity_completion_workflow() {
 
 #[tokio::test]
 async fn activity_cancelled_after_heartbeat_times_out() {
-    let test_name = "activity_cancelled_after_heartbeat_times_out";
-    let (core, task_q) = init_core_and_create_wf(test_name).await;
+    let (core, task_q) =
+        init_core_and_create_wf("activity_cancelled_after_heartbeat_times_out").await;
     let activity_id = "act-1";
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     // Complete workflow task and schedule activity
@@ -721,7 +721,7 @@ async fn activity_cancelled_after_heartbeat_times_out() {
     core.shutdown().await;
     // Cleanup just in case
     core.server_gateway()
-        .terminate_workflow_execution(test_name.to_string(), None)
+        .terminate_workflow_execution(task_q, None)
         .await
         .unwrap();
 }

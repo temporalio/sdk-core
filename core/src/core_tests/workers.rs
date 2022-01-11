@@ -9,8 +9,7 @@ use crate::{
 };
 use futures::FutureExt;
 use rstest::{fixture, rstest};
-use std::cell::RefCell;
-use std::time::Duration;
+use std::{cell::RefCell, time::Duration};
 use temporal_client::MockManualGateway;
 use temporal_sdk_core_protos::{
     coresdk::{

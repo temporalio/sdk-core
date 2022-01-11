@@ -1,7 +1,7 @@
 use crate::{
     job_assert,
     test_help::{
-        build_fake_core, canned_histories, fake_sg_opts, gen_assert_and_reply, mock_core,
+        build_fake_core, canned_histories, gen_assert_and_reply, mock_core,
         mock_core_with_opts_no_workers, mock_gateway, mock_manual_poller, mock_poller,
         mock_poller_from_resps, poll_and_reply, MockWorker, MocksHolder, TEST_Q,
     },
@@ -35,7 +35,7 @@ use temporal_sdk_core_protos::{
         RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedResponse,
     },
 };
-use test_utils::{fanout_tasks, start_timer_cmd};
+use test_utils::{fake_sg_opts, fanout_tasks, start_timer_cmd};
 use tokio::{join, sync::Notify, time::sleep};
 
 #[tokio::test]
