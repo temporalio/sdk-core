@@ -9,9 +9,11 @@ use temporal_sdk_core_protos::{
         },
         activity_task::activity_task as act_task,
         common::Payload,
-        workflow_activation::{wf_activation_job, FireTimer, ResolveActivity, WfActivationJob},
+        workflow_activation::{
+            workflow_activation_job, FireTimer, ResolveActivity, WorkflowActivationJob,
+        },
         workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
-        workflow_completion::WfActivationCompletion,
+        workflow_completion::WorkflowActivationCompletion,
         ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
     },
     temporal::api::{
@@ -96,8 +98,8 @@ async fn activity_workflow() {
     assert_matches!(
         task.jobs.as_slice(),
         [
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {seq, result: Some(ActivityResolution{
                       status: Some(
                         act_res::Status::Completed(activity_result::Success{result: Some(r)})),
@@ -154,8 +156,8 @@ async fn activity_non_retryable_failure() {
     assert_matches!(
         task.jobs.as_slice(),
         [
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {seq, result: Some(ActivityResolution{
                     status: Some(act_res::Status::Failed(activity_result::Failure{
                         failure: Some(f),
@@ -245,8 +247,8 @@ async fn activity_retry() {
     assert_matches!(
         task.jobs.as_slice(),
         [
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {seq, result: Some(ActivityResolution{
                     status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)}))})}
                 )),
@@ -299,8 +301,8 @@ async fn activity_cancellation_try_cancel() {
     assert_matches!(
         task.jobs.as_slice(),
         [
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::FireTimer(
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::FireTimer(
                     FireTimer { seq }
                 )),
             },
@@ -308,7 +310,7 @@ async fn activity_cancellation_try_cancel() {
             assert_eq!(*seq, 1);
         }
     );
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
         vec![RequestCancelActivity { seq: 0 }.into()],
@@ -351,11 +353,11 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
-        [WfActivationJob {
-            variant: Some(wf_activation_job::Variant::FireTimer(_)),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::FireTimer(_)),
         }]
     );
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
         vec![RequestCancelActivity { seq: 0 }.into()],
@@ -366,8 +368,8 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     // Should get cancel task
     assert_matches!(
         task.jobs.as_slice(),
-        [WfActivationJob {
-            variant: Some(wf_activation_job::Variant::ResolveActivity(
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::ResolveActivity(
                 ResolveActivity {
                     result: Some(ActivityResolution {
                         status: Some(activity_resolution::Status::Cancelled(_))
@@ -379,7 +381,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     );
     // We need to complete the wf task to send the activity cancel command to the server, so start
     // another short timer
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
         vec![StartTimer {
@@ -404,8 +406,8 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
-        [WfActivationJob {
-            variant: Some(wf_activation_job::Variant::FireTimer(_)),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::FireTimer(_)),
         }]
     );
     core.complete_execution(&task_q, &task.run_id).await;
@@ -443,8 +445,8 @@ async fn started_activity_timeout() {
     assert_matches!(
         task.jobs.as_slice(),
         [
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         seq,
                         result: Some(ActivityResolution{
@@ -506,8 +508,8 @@ async fn activity_cancellation_wait_cancellation_completed() {
     assert_matches!(
         task.jobs.as_slice(),
         [
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::FireTimer(
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::FireTimer(
                     FireTimer { seq }
                 )),
             },
@@ -515,7 +517,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
             assert_eq!(*seq, 1);
         }
     );
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
         vec![RequestCancelActivity { seq: 0 }.into()],
@@ -573,8 +575,8 @@ async fn activity_cancellation_abandon() {
     assert_matches!(
         task.jobs.as_slice(),
         [
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::FireTimer(
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::FireTimer(
                     FireTimer { seq }
                 )),
             },
@@ -582,7 +584,7 @@ async fn activity_cancellation_abandon() {
             assert_eq!(*seq, 1);
         }
     );
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
         vec![RequestCancelActivity { seq: 0 }.into()],
@@ -649,8 +651,8 @@ async fn async_activity_completion_workflow() {
     assert_matches!(
         task.jobs.as_slice(),
         [
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {seq, result: Some(ActivityResolution {
                     status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)})),
                      ..})}

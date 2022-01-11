@@ -25,9 +25,9 @@ use std::{
 use temporal_client::{MockServerGatewayApis, ServerGatewayOptionsBuilder};
 use temporal_sdk_core_protos::{
     coresdk::{
-        workflow_activation::WfActivation,
+        workflow_activation::WorkflowActivation,
         workflow_commands::workflow_command,
-        workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
+        workflow_completion::{self, workflow_activation_completion, WorkflowActivationCompletion},
     },
     temporal::api::{
         common::v1::{WorkflowExecution, WorkflowType},
@@ -521,7 +521,10 @@ pub fn fake_sg_opts() -> ServerGatewayOptions {
         .unwrap()
 }
 
-type AsserterWithReply<'a> = (&'a dyn Fn(&WfActivation), wf_activation_completion::Status);
+type AsserterWithReply<'a> = (
+    &'a dyn Fn(&WorkflowActivation),
+    workflow_activation_completion::Status,
+);
 
 /// This function accepts a list of asserts and replies to workflow activations to run against the
 /// provided instance of fake core.
@@ -587,10 +590,10 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
 
             let reply = if res.jobs.is_empty() {
                 // Just an eviction
-                WfActivationCompletion::empty(TEST_Q, res.run_id.clone())
+                WorkflowActivationCompletion::empty(TEST_Q, res.run_id.clone())
             } else {
                 // Eviction plus some work, we still want to issue the reply
-                WfActivationCompletion {
+                WorkflowActivationCompletion {
                     task_queue: TEST_Q.to_string(),
                     run_id: res.run_id.clone(),
                     status: Some(reply.clone()),
@@ -629,7 +632,7 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
 }
 
 pub(crate) fn gen_assert_and_reply(
-    asserter: &dyn Fn(&WfActivation),
+    asserter: &dyn Fn(&WorkflowActivation),
     reply_commands: Vec<workflow_command::Variant>,
 ) -> AsserterWithReply<'_> {
     (
@@ -638,7 +641,7 @@ pub(crate) fn gen_assert_and_reply(
     )
 }
 
-pub(crate) fn gen_assert_and_fail(asserter: &dyn Fn(&WfActivation)) -> AsserterWithReply<'_> {
+pub(crate) fn gen_assert_and_fail(asserter: &dyn Fn(&WorkflowActivation)) -> AsserterWithReply<'_> {
     (
         asserter,
         workflow_completion::Failure {
@@ -658,7 +661,7 @@ macro_rules! job_assert {
         |res| {
             assert_matches!(
                 res.jobs.as_slice(),
-                [$(WfActivationJob {
+                [$(WorkflowActivationJob {
                     variant: Some($pat),
                 }),+]
             );

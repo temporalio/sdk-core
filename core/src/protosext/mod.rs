@@ -18,7 +18,9 @@ use temporal_sdk_core_protos::{
             extract_local_activity_marker_details, Payload as SDKPayload, RetryPolicy,
         },
         external_data::LocalActivityMarkerData,
-        workflow_activation::{wf_activation_job, QueryWorkflow, WfActivation, WfActivationJob},
+        workflow_activation::{
+            workflow_activation_job, QueryWorkflow, WorkflowActivation, WorkflowActivationJob,
+        },
         workflow_commands::{
             query_result, ActivityCancellationType, QueryResult, ScheduleLocalActivity,
         },
@@ -107,15 +109,15 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
     }
 }
 
-pub(crate) trait WfActivationExt {
+pub(crate) trait WorkflowActivationExt {
     /// Returns true if this activation has one and only one job to perform a legacy query
     fn is_legacy_query(&self) -> bool;
 }
 
-impl WfActivationExt for WfActivation {
+impl WorkflowActivationExt for WorkflowActivation {
     fn is_legacy_query(&self) -> bool {
-        matches!(&self.jobs.as_slice(), &[WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::QueryWorkflow(qr))
+        matches!(&self.jobs.as_slice(), &[WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::QueryWorkflow(qr))
                 }] if qr.query_id == LEGACY_QUERY_ID)
     }
 }

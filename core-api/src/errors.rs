@@ -3,7 +3,7 @@
 use prost_types::TimestampOutOfSystemRangeError;
 use temporal_client::GatewayInitError;
 use temporal_sdk_core_protos::coresdk::{
-    activity_result::ActivityExecutionResult, workflow_completion::WfActivationCompletion,
+    activity_result::ActivityExecutionResult, workflow_completion::WorkflowActivationCompletion,
 };
 
 /// Errors thrown during initialization of [crate::Core]
@@ -65,7 +65,7 @@ pub enum CompleteWfError {
         /// Reason the completion was malformed
         reason: String,
         /// The completion, which may not be included to avoid unnecessary copies.
-        completion: Option<WfActivationCompletion>,
+        completion: Option<WorkflowActivationCompletion>,
     },
     /// There is no worker registered for the queue being polled
     #[error("No worker registered for queue: {0}")]

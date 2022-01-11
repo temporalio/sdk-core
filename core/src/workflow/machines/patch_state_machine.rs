@@ -235,7 +235,7 @@ mod tests {
     use temporal_sdk_core_protos::{
         coresdk::{
             common::decode_change_marker_details,
-            workflow_activation::{wf_activation_job, NotifyHasPatch, WfActivationJob},
+            workflow_activation::{workflow_activation_job, NotifyHasPatch, WorkflowActivationJob},
         },
         temporal::api::{
             command::v1::{
@@ -442,8 +442,8 @@ mod tests {
             // Activity is resolved
             assert_matches!(
                 act.jobs.as_slice(),
-                [WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::ResolveActivity(_))
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::ResolveActivity(_))
                 }]
             );
         } else {
@@ -479,8 +479,8 @@ mod tests {
         if replaying && marker_type != MarkerType::NoMarker {
             assert_matches!(
                 &act.jobs[1],
-                 WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::NotifyHasPatch(
+                 WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::NotifyHasPatch(
                         NotifyHasPatch {
                             patch_id,
                         }
@@ -535,8 +535,8 @@ mod tests {
         // Activity is resolved
         assert_matches!(
             act.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(_))
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(_))
             }]
         );
 

@@ -2,10 +2,10 @@ syntax = "proto3";
 
 package coresdk.activity_result;
 
-import "common.proto";
-import "temporal/api/failure/v1/message.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
+import "temporal/api/failure/v1/message.proto";
+import "temporal/sdk/core/common/common.proto";
 
 /**
  * Used to report activity completions to core

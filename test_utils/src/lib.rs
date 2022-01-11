@@ -14,7 +14,7 @@ use temporal_sdk_core_protos::coresdk::{
         workflow_command, ActivityCancellationType, CompleteWorkflowExecution, ScheduleActivity,
         StartTimer,
     },
-    workflow_completion::WfActivationCompletion,
+    workflow_completion::WorkflowActivationCompletion,
 };
 use url::Url;
 
@@ -271,7 +271,7 @@ where
     T: Core + ?Sized,
 {
     async fn complete_execution(&self, task_q: &str, run_id: &str) {
-        self.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        self.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
             task_q.to_string(),
             run_id.to_string(),
             vec![CompleteWorkflowExecution { result: None }.into()],
@@ -281,7 +281,7 @@ where
     }
 
     async fn complete_timer(&self, task_q: &str, run_id: &str, seq: u32, duration: Duration) {
-        self.complete_workflow_activation(WfActivationCompletion::from_cmds(
+        self.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
             task_q.to_string(),
             run_id.to_string(),
             vec![StartTimer {
