@@ -1,5 +1,6 @@
-//! Use this binary to fetch histories as proto-encoded binary. The only provided argument is a
-//! workflow ID. The history is written to `{workflow_id}_history.bin`.
+//! Use this binary to fetch histories as proto-encoded binary. The first argument must be a
+//! workflow ID. A run id may optionally be provided as the second arg. The history is written to
+//! `{workflow_id}_history.bin`.
 //!
 //! We can use `clap` if this needs more arguments / other stuff later on.
 
@@ -14,8 +15,9 @@ async fn main() -> Result<(), anyhow::Error> {
     let wf_id = std::env::args()
         .nth(1)
         .expect("must provide workflow id as only argument");
+    let run_id = std::env::args().nth(2);
     let hist = gateway
-        .get_workflow_execution_history(wf_id.clone(), None, vec![])
+        .get_workflow_execution_history(wf_id.clone(), run_id, vec![])
         .await?
         .history
         .expect("history field must be populated");
