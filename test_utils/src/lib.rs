@@ -39,7 +39,7 @@ const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
 const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
 
 /// Create a core instance which will use the provided test name to base the task queue and wf id
-/// upon. Returns the instance and the task queue name.
+/// upon. Returns the instance and the task queue name (which is also the workflow id).
 pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn Core>, String) {
     let mut starter = CoreWfStarter::new(test_name);
     let core = starter.get_core().await;

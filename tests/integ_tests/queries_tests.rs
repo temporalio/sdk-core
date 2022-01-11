@@ -13,9 +13,9 @@ use test_utils::{init_core_and_create_wf, with_gw, CoreTestHelpers, CoreWfStarte
 
 #[tokio::test]
 async fn simple_query_legacy() {
-    let workflow_id = "simple_query";
     let query_resp = b"response";
-    let (core, task_q) = init_core_and_create_wf(workflow_id).await;
+    let (core, task_q) = init_core_and_create_wf("simple_query_legacy").await;
+    let workflow_id = task_q.clone();
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         &task_q,
@@ -39,7 +39,7 @@ async fn simple_query_legacy() {
     // Query after timer should have fired and there should be new WFT
     let query_fut = with_gw(core.as_ref(), |gw: GwApi| async move {
         gw.query_workflow_execution(
-            workflow_id.to_string(),
+            workflow_id,
             task.run_id.to_string(),
             WorkflowQuery {
                 query_type: "myquery".to_string(),
@@ -108,9 +108,10 @@ async fn simple_query_legacy() {
 #[case::with_eviction(true)]
 #[tokio::test]
 async fn query_after_execution_complete(#[case] do_evict: bool) {
-    let workflow_id = &format!("after_done_query_evict-{}", do_evict);
     let query_resp = b"response";
-    let (ref core, ref task_q) = init_core_and_create_wf(workflow_id).await;
+    let (ref core, ref task_q) =
+        init_core_and_create_wf(&format!("after_done_query_evict-{}", do_evict)).await;
+    let workflow_id = task_q.as_str();
 
     let do_workflow = |go_until_query: bool| async move {
         loop {
@@ -211,11 +212,9 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
 #[tokio::test]
 async fn repros_query_dropped_on_floor() {
     // This test reliably repros the server dropping one of the two simultaneously issued queries.
-
-    let workflow_id = "queries_in_wf_task";
     let q1_resp = b"query_1_resp";
     let q2_resp = b"query_2_resp";
-    let mut wf_starter = CoreWfStarter::new(workflow_id);
+    let mut wf_starter = CoreWfStarter::new("repros_query_dropped_on_floor");
     // Easiest way I discovered to reliably trigger new query path is with a WFT timeout
     wf_starter.wft_timeout(Duration::from_secs(1));
     let core = wf_starter.get_core().await;
@@ -242,7 +241,7 @@ async fn repros_query_dropped_on_floor() {
     let q1_fut = with_gw(core.as_ref(), |gw: GwApi| async move {
         let res = gw
             .query_workflow_execution(
-                workflow_id.to_string(),
+                task_q.to_string(),
                 run_id,
                 WorkflowQuery {
                     query_type: "query_1".to_string(),
@@ -258,7 +257,7 @@ async fn repros_query_dropped_on_floor() {
     let q2_fut = with_gw(core.as_ref(), |gw: GwApi| async move {
         let res = gw
             .query_workflow_execution(
-                workflow_id.to_string(),
+                task_q.to_string(),
                 run_id,
                 WorkflowQuery {
                     query_type: "query_2".to_string(),
@@ -339,9 +338,9 @@ async fn repros_query_dropped_on_floor() {
 
 #[tokio::test]
 async fn fail_legacy_query() {
-    let workflow_id = "fail_legacy_query";
     let query_err = "oh no broken";
-    let (core, task_q) = init_core_and_create_wf(workflow_id).await;
+    let (core, task_q) = init_core_and_create_wf("fail_legacy_query").await;
+    let workflow_id = task_q.clone();
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         &task_q,

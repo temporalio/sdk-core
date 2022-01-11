@@ -238,8 +238,8 @@ async fn fail_workflow_execution() {
 
 #[tokio::test]
 async fn signal_workflow() {
-    let workflow_id = "signal_workflow";
-    let (core, task_q) = init_core_and_create_wf(workflow_id).await;
+    let (core, task_q) = init_core_and_create_wf("signal_workflow").await;
+    let workflow_id = task_q.clone();
 
     let signal_id_1 = "signal1";
     let signal_id_2 = "signal2";
@@ -316,8 +316,9 @@ async fn signal_workflow() {
 
 #[tokio::test]
 async fn signal_workflow_signal_not_handled_on_workflow_completion() {
-    let workflow_id = "signal_workflow_signal_not_handled_on_workflow_completion";
-    let (core, task_q) = init_core_and_create_wf(workflow_id).await;
+    let (core, task_q) =
+        init_core_and_create_wf("signal_workflow_signal_not_handled_on_workflow_completion").await;
+    let workflow_id = task_q.as_str();
     let signal_id_1 = "signal1";
     for i in 1..=2 {
         let res = core.poll_workflow_activation(&task_q).await.unwrap();
