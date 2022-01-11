@@ -4,9 +4,11 @@ pub mod history_replay;
 use crate::history_replay::mock_gateway_from_history;
 use futures::{stream::FuturesUnordered, StreamExt};
 use log::LevelFilter;
+use prost::Message;
 use rand::{distributions::Standard, Rng};
 use std::{
-    convert::TryFrom, env, future::Future, net::SocketAddr, str::FromStr, sync::Arc, time::Duration,
+    convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc,
+    time::Duration,
 };
 use temporal_client::MockServerGatewayApis;
 use temporal_sdk::TestRustWorker;
@@ -45,6 +47,8 @@ pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn Core>, String)
     (core, starter.get_task_queue().to_string())
 }
 
+/// Create a core instance that will use the provided history to return a workflow task containing
+/// all of it, for testing replay.
 pub async fn init_core_replay(history: &History) -> Arc<dyn Core> {
     let mut starter = CoreWfStarter::new_tq_name(TEST_Q);
     let core_fakehist = init_mock_gateway(
@@ -60,6 +64,15 @@ pub async fn init_core_replay(history: &History) -> Arc<dyn Core> {
     let core = starter.get_core().await;
     starter.start_wf().await;
     core
+}
+
+/// Load history from a file containing the protobuf serialization of it
+pub async fn history_from_proto_binary(path_from_root: &str) -> Result<History, anyhow::Error> {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("..");
+    path.push(path_from_root);
+    let bytes = tokio::fs::read(path).await?;
+    Ok(History::decode(&*bytes)?)
 }
 
 /// Implements a builder pattern to help integ tests initialize core and create workflows
