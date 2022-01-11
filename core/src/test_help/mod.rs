@@ -1,26 +1,25 @@
 pub(crate) use test_utils::{
     canned_histories,
     history_replay::{TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE},
+    mock_gateway,
 };
 
 use crate::{
     pollers::{BoxedActPoller, BoxedPoller, BoxedWFPoller, MockManualPoller, MockPoller},
     workflow::WorkflowCachingPolicy,
-    Core, CoreInitOptionsBuilder, CoreSDK, ServerGatewayApis, ServerGatewayOptions, TaskToken, Url,
-    WorkerConfig, WorkerConfigBuilder,
+    Core, CoreInitOptionsBuilder, CoreSDK, ServerGatewayApis, TaskToken, WorkerConfig,
+    WorkerConfigBuilder,
 };
 use bimap::BiMap;
 use futures::FutureExt;
 use mockall::TimesRange;
 use parking_lot::RwLock;
-use rand::{thread_rng, Rng};
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     ops::RangeFull,
-    str::FromStr,
     sync::Arc,
 };
-use temporal_client::{MockServerGatewayApis, ServerGatewayOptionsBuilder};
+use temporal_client::MockServerGatewayApis;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::WorkflowActivation,
@@ -28,17 +27,16 @@ use temporal_sdk_core_protos::{
         workflow_completion::{self, workflow_activation_completion, WorkflowActivationCompletion},
     },
     temporal::api::{
-        common::v1::{WorkflowExecution, WorkflowType},
-        enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
+        common::v1::WorkflowExecution,
+        enums::v1::WorkflowTaskFailedCause,
         failure::v1::Failure,
-        history::v1::History,
-        taskqueue::v1::TaskQueue,
         workflowservice::v1::{
             PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
             RespondWorkflowTaskCompletedResponse,
         },
     },
 };
+use test_utils::fake_sg_opts;
 
 pub const TEST_Q: &str = "q";
 pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";
@@ -483,40 +481,9 @@ pub fn hist_to_poll_resp(
         ResponseType::OneTask(tn) => t.get_one_wft(tn).unwrap(),
         ResponseType::AllHistory => t.get_full_history_info().unwrap(),
     };
-    let batch = hist_info.events().to_vec();
-    let task_token: [u8; 16] = thread_rng().gen();
-    PollWorkflowTaskQueueResponse {
-        history: Some(History { events: batch }),
-        workflow_execution: Some(wf),
-        task_token: task_token.to_vec(),
-        workflow_type: Some(WorkflowType {
-            name: DEFAULT_WORKFLOW_TYPE.to_owned(),
-        }),
-        workflow_execution_task_queue: Some(TaskQueue {
-            name: task_queue,
-            kind: TaskQueueKind::Normal as i32,
-        }),
-        previous_started_event_id: hist_info.previous_started_event_id,
-        started_event_id: hist_info.workflow_task_started_event_id,
-        ..Default::default()
-    }
-}
-
-pub fn mock_gateway() -> MockServerGatewayApis {
-    let mut mg = MockServerGatewayApis::new();
-    mg.expect_get_options().return_const(fake_sg_opts());
-    mg
-}
-
-pub fn fake_sg_opts() -> ServerGatewayOptions {
-    ServerGatewayOptionsBuilder::default()
-        .target_url(Url::from_str("https://fake").unwrap())
-        .namespace("test_namespace".to_string())
-        .client_name("fake_client".to_string())
-        .client_version("fake_version".to_string())
-        .worker_binary_id("fake_binid".to_string())
-        .build()
-        .unwrap()
+    let mut resp = hist_info.as_poll_wft_response(task_queue);
+    resp.workflow_execution = Some(wf);
+    resp
 }
 
 type AsserterWithReply<'a> = (

@@ -4,7 +4,9 @@ version = "0.1.0"
 authors = ["Spencer Judge <spencer@temporal.io>"]
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "histfetch"
+path = "src/histfetch.rs"
 
 [dependencies]
 anyhow = "1.0"
@@ -12,13 +14,16 @@ async-trait = "0.1"
 base64 = "0.13"
 futures = "0.3"
 log = "0.4"
+prost = "0.9"
 prost-wkt-types = "0.3"
 rand = "0.8"
 serde_json = "1.0"
+temporal-client = { path = "../client", features = ["mocks"] }
 temporal-sdk = { path = "../sdk" }
 temporal-sdk-core = { path = "../core" }
 temporal-sdk-core-api = { path = "../core-api" }
 thiserror = "1.0"
+tokio = "1.1"
 url = "2.2"
 uuid = "0.8"
 
