@@ -75,7 +75,7 @@ subtree. To update it, use:
 Tests which would like to replay stored histories rely on that history being made available in
 binary format. You can fetch histories in that format like so (from a local docker server):
 
-`cargo run --bin histfetch {workflow_id}`
+`cargo run --bin histfetch {workflow_id} [{run_id}]`
 
 You can change the `TEMPORAL_SERVICE_ADDRESS` env var to fetch from a different address.
 
