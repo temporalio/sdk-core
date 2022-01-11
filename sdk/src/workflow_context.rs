@@ -454,7 +454,7 @@ struct LATimerBackoffFut<'a> {
     timer_fut: Option<Pin<Box<dyn CancellableFuture<TimerResult> + Send + Unpin + 'a>>>,
     ctx: &'a WfContext,
     next_attempt: u32,
-    next_sched_time: Option<prost_wkt_types::Timestamp>,
+    next_sched_time: Option<prost_types::Timestamp>,
     did_cancel: AtomicBool,
 }
 impl<'a> LATimerBackoffFut<'a> {

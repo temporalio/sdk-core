@@ -97,7 +97,7 @@ pub(super) struct ResolveDat {
     pub(super) result: LocalActivityExecutionResult,
     pub(super) complete_time: Option<SystemTime>,
     pub(super) attempt: u32,
-    pub(super) backoff: Option<prost_wkt_types::Duration>,
+    pub(super) backoff: Option<prost_types::Duration>,
     pub(super) original_schedule_time: Option<SystemTime>,
 }
 
@@ -230,7 +230,7 @@ impl LocalActivityMachine {
         result: LocalActivityExecutionResult,
         runtime: Duration,
         attempt: u32,
-        backoff: Option<prost_wkt_types::Duration>,
+        backoff: Option<prost_types::Duration>,
         original_schedule_time: Option<SystemTime>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         self.try_resolve_with_dat(ResolveDat {

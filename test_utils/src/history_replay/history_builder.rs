@@ -1,7 +1,7 @@
 use super::history_info::{HistoryInfo, HistoryInfoError};
 use crate::history_replay::DEFAULT_WORKFLOW_TYPE;
 use anyhow::bail;
-use prost_wkt_types::Timestamp;
+use prost_types::Timestamp;
 use std::time::{Duration, SystemTime};
 use temporal_sdk_core_protos::{
     constants::{LOCAL_ACTIVITY_MARKER_NAME, PATCH_MARKER_NAME},
@@ -427,7 +427,7 @@ impl TestHistoryBuilder {
     }
 
     /// Return most recent wft start time or panic if unset
-    pub fn wft_start_time(&self) -> prost_wkt_types::Timestamp {
+    pub fn wft_start_time(&self) -> prost_types::Timestamp {
         self.events[(self.workflow_task_scheduled_event_id + 1) as usize]
             .event_time
             .clone()

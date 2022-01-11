@@ -10,7 +10,7 @@ anyhow = "1.0"
 async-trait = "0.1"
 derive_builder = "0.10"
 log = "0.4"
-prost-wkt-types = "0.3"
+prost-types = "0.9"
 thiserror = "1.0"
 tonic = "0.6"
 
