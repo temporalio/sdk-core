@@ -1,0 +1,5 @@
+# Don't commit example generated protos
+/corepb
+
+# Don't commit example static library
+lib/*/libtemporal_*

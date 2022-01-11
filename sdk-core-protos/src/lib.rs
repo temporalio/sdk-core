@@ -170,6 +170,10 @@ pub mod coresdk {
         }
     }
 
+    pub mod bridge {
+        tonic::include_proto!("coresdk.bridge");
+    }
+
     pub mod common {
         tonic::include_proto!("coresdk.common");
         use super::external_data::LocalActivityMarkerData;
