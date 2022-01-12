@@ -510,7 +510,7 @@ pub trait ServerGatewayApis {
     /// Lists all available namespaces
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse>;
 
-    /// Returns options that were used to initialze the gateway
+    /// Returns options that were used to initialize the gateway
     fn get_options(&self) -> &ServerGatewayOptions;
 }
 

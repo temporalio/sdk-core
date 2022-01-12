@@ -177,11 +177,15 @@ async fn local_act_retry_timer_backoff() {
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
 
-    worker
+    let run_id = worker
         .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
+    starter
+        .fetch_history_and_replay(wf_name, run_id, &mut worker)
+        .await
+        .unwrap();
 }
 
 #[rstest::rstest]

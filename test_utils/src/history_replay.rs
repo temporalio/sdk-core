@@ -53,6 +53,7 @@ impl ReplayCore for ReplayCoreImpl {
         let mock_g = mock_gateway_from_history(history);
         let config = WorkerConfigBuilder::default()
             .task_queue(task_queue)
+            .no_remote_activities(true)
             .build()
             .expect("Worker config constructs properly");
         self.inner
@@ -103,7 +104,7 @@ impl Core for ReplayCoreImpl {
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
-        todo!()
+        self.inner.server_gateway()
     }
 
     async fn shutdown(&self) {

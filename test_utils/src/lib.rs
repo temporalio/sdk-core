@@ -81,7 +81,8 @@ pub async fn history_from_proto_binary(path_from_root: &str) -> Result<History, 
 
 /// Implements a builder pattern to help integ tests initialize core and create workflows
 pub struct CoreWfStarter {
-    test_name: String,
+    /// Used for both the task queue and workflow id
+    task_queue_name: String,
     core_options: CoreInitOptions,
     worker_config: WorkerConfig,
     wft_timeout: Option<Duration>,
@@ -98,7 +99,7 @@ impl CoreWfStarter {
 
     pub fn new_tq_name(task_queue: &str) -> Self {
         Self {
-            test_name: task_queue.to_owned(),
+            task_queue_name: task_queue.to_owned(),
             core_options: CoreInitOptionsBuilder::default()
                 .gateway_opts(get_integ_server_options())
                 .telemetry_opts(get_integ_telem_options())
@@ -140,7 +141,7 @@ impl CoreWfStarter {
 
     /// Start the workflow defined by the builder and return run id
     pub async fn start_wf(&self) -> String {
-        self.start_wf_with_id(self.test_name.clone()).await
+        self.start_wf_with_id(self.task_queue_name.clone()).await
     }
 
     pub async fn start_wf_with_id(&self, workflow_id: String) -> String {
@@ -156,7 +157,7 @@ impl CoreWfStarter {
                 vec![],
                 self.worker_config.task_queue.clone(),
                 workflow_id,
-                self.test_name.clone(),
+                self.task_queue_name.clone(),
                 self.wft_timeout,
             )
             .await
@@ -164,12 +165,36 @@ impl CoreWfStarter {
             .run_id
     }
 
+    /// Fetch the history for the indicated workflow and replay it using the provided worker.
+    /// Can be used after completing workflows normally to ensure replay works as well.
+    pub async fn fetch_history_and_replay(
+        &mut self,
+        wf_id: impl Into<String>,
+        run_id: impl Into<String>,
+        worker: &mut TestRustWorker,
+    ) -> Result<(), anyhow::Error> {
+        // Fetch history and replay it
+        let history = self
+            .get_core()
+            .await
+            .server_gateway()
+            .get_workflow_execution_history(wf_id.into(), Some(run_id.into()), vec![])
+            .await?
+            .history
+            .expect("history field must be populated");
+        let (replay_core, _) = init_core_replay_preloaded(worker.task_queue(), &history);
+        let mut replay_worker = worker.swap_core(replay_core);
+        replay_worker.incr_expected_run_count(1);
+        replay_worker.run_until_done().await.unwrap();
+        Ok(())
+    }
+
     pub fn get_task_queue(&self) -> &str {
         &self.worker_config.task_queue
     }
 
     pub fn get_wf_id(&self) -> &str {
-        &self.test_name
+        &self.task_queue_name
     }
 
     pub fn max_cached_workflows(&mut self, num: usize) -> &mut Self {
