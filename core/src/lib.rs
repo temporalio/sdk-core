@@ -87,7 +87,7 @@ pub struct CoreInitOptions {
 
 /// Initializes an instance of the core sdk and establishes a connection to the temporal server.
 /// Expects that a tokio runtime exists.
-pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
+pub async fn init(opts: CoreInitOptions) -> Result<CoreSDK, CoreInitError> {
     telemetry_init(&opts.telemetry_opts).map_err(CoreInitError::TelemetryInitError)?;
     // Initialize server client
     let server_gateway = opts.gateway_opts.connect(Some(&METRIC_METER)).await?;
@@ -99,7 +99,7 @@ pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
 pub fn init_mock_gateway<SG: ServerGatewayApis + Send + Sync + 'static>(
     opts: CoreInitOptions,
     server_gateway: SG,
-) -> Result<impl Core, CoreInitError> {
+) -> Result<CoreSDK, CoreInitError> {
     telemetry_init(&opts.telemetry_opts).map_err(CoreInitError::TelemetryInitError)?;
     Ok(CoreSDK::new(server_gateway, opts))
 }

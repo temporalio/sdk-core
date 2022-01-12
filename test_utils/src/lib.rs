@@ -1,7 +1,7 @@
 pub mod canned_histories;
 pub mod history_replay;
 
-use crate::history_replay::mock_gateway_from_history;
+use crate::history_replay::{ReplayCore, ReplayCoreImpl};
 use futures::{stream::FuturesUnordered, StreamExt};
 use log::LevelFilter;
 use prost::Message;
@@ -47,22 +47,28 @@ pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn Core>, String)
     (core, starter.get_task_queue().to_string())
 }
 
-/// Create a core instance that will use the provided history to return a workflow task containing
-/// all of it, for testing replay.
-pub async fn init_core_replay(history: &History) -> Arc<dyn Core> {
-    let mut starter = CoreWfStarter::new_tq_name(TEST_Q);
-    let core_fakehist = init_mock_gateway(
-        starter.core_options.clone(),
-        mock_gateway_from_history(history),
-    )
-    .unwrap();
-    core_fakehist
-        .register_worker(starter.worker_config.clone())
-        .unwrap();
-    starter.initted_core = Some(Arc::new(core_fakehist));
-    let core = starter.get_core().await;
-    starter.start_wf().await;
-    core
+/// Create a core instance that can be used for replay. See the [ReplayCore] trait for adding
+/// canned history.
+pub fn init_core_replay() -> impl Core + ReplayCore {
+    let shared_mock_gateway = mock_gateway();
+    let init_opts = CoreInitOptionsBuilder::default()
+        .gateway_opts(shared_mock_gateway.get_options().clone())
+        .telemetry_opts(get_integ_telem_options())
+        .build()
+        .expect("replay core options init properly");
+    let replay_core =
+        init_mock_gateway(init_opts, shared_mock_gateway).expect("init replay core works");
+    ReplayCoreImpl { inner: replay_core }
+}
+
+/// Create a core replay instance preloaded with just one provided history. Returns the core impl
+/// and the task queue name as in [init_core_and_create_wf].
+pub fn init_core_replay_preloaded(test_name: &str, history: &History) -> (Arc<dyn Core>, String) {
+    let replay_core = init_core_replay();
+    replay_core
+        .make_replay_worker(test_name, history)
+        .expect("Worker registration works");
+    (Arc::new(replay_core), test_name.to_string())
 }
 
 /// Load history from a file containing the protobuf serialization of it

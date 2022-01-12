@@ -31,6 +31,8 @@ use temporal_sdk_core_protos::{
 pub static DEFAULT_WORKFLOW_TYPE: &str = "not_specified";
 
 pub trait ReplayCore {
+    /// Make a fake worker for the provided task queue name which will use the provided history
+    /// to simulate poll responses containing that entire history.
     fn make_replay_worker(
         &self,
         task_queue: impl Into<String>,
@@ -38,8 +40,8 @@ pub trait ReplayCore {
     ) -> Result<(), WorkerRegistrationError>;
 }
 
-struct ReplayCoreImpl {
-    inner: CoreSDK,
+pub(crate) struct ReplayCoreImpl {
+    pub inner: CoreSDK,
 }
 
 impl ReplayCore for ReplayCoreImpl {
