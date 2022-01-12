@@ -10,7 +10,9 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_commands::ActivityCancellationType,
     ActivityHeartbeat, ActivityTaskCompletion, IntoCompletion,
 };
-use test_utils::{init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers};
+use temporal_sdk_core_test_utils::{
+    init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers,
+};
 use tokio::time::sleep;
 
 #[tokio::test]

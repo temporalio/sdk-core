@@ -237,7 +237,7 @@ impl HistoryUpdate {
 pub mod tests {
     use super::*;
     use crate::test_help::{canned_histories, mock_gateway, TestHistoryBuilder};
-    use test_utils::history_replay::HistoryInfo;
+    use temporal_sdk_core_test_utils::history_replay::HistoryInfo;
 
     impl From<HistoryInfo> for HistoryUpdate {
         fn from(v: HistoryInfo) -> Self {

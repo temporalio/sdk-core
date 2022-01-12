@@ -8,7 +8,7 @@ use temporal_sdk::{
 use temporal_sdk_core_protos::coresdk::{
     common::RetryPolicy, workflow_commands::ActivityCancellationType, AsJsonPayloadExt,
 };
-use test_utils::CoreWfStarter;
+use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio_util::sync::CancellationToken;
 
 pub async fn echo(e: String) -> anyhow::Result<String> {

@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk::{WfContext, WorkflowResult};
-use test_utils::CoreWfStarter;
+use temporal_sdk_core_test_utils::CoreWfStarter;
 
 const MY_PATCH_ID: &str = "integ_test_change_name";
 

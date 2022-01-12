@@ -1,4 +1,4 @@
-pub(crate) use test_utils::{
+pub(crate) use temporal_sdk_core_test_utils::{
     canned_histories,
     history_replay::{TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE},
     mock_gateway,
@@ -36,7 +36,7 @@ use temporal_sdk_core_protos::{
         },
     },
 };
-use test_utils::fake_sg_opts;
+use temporal_sdk_core_test_utils::fake_sg_opts;
 
 pub const TEST_Q: &str = "q";
 pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";

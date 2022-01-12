@@ -1,3 +1,6 @@
+//! This crate contains testing functionality that can be useful when building SDKs against Core,
+//! or even when testing workflows written in SDKs that use Core.
+
 pub mod canned_histories;
 pub mod history_replay;
 

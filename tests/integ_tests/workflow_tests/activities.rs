@@ -22,7 +22,9 @@ use temporal_sdk_core_protos::{
         failure::v1::{failure::FailureInfo, ActivityFailureInfo, Failure},
     },
 };
-use test_utils::{init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers, CoreWfStarter};
+use temporal_sdk_core_test_utils::{
+    init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers, CoreWfStarter,
+};
 use tokio::time::sleep;
 
 pub async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<()> {

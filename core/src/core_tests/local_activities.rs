@@ -14,7 +14,7 @@ use std::{
     },
     time::Duration,
 };
-use test_utils::history_replay::default_wes_attribs;
+use temporal_sdk_core_test_utils::history_replay::default_wes_attribs;
 
 use temporal_sdk::{LocalActivityOptions, TestRustWorker, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{

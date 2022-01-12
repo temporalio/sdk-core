@@ -32,7 +32,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::failure::v1::Failure,
 };
-use test_utils::{
+use temporal_sdk_core_test_utils::{
     history_from_proto_binary, init_core_and_create_wf, init_core_replay_preloaded,
     schedule_activity_cmd, CoreTestHelpers, CoreWfStarter,
 };

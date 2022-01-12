@@ -37,7 +37,7 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::RespondWorkflowTaskCompletedResponse,
     },
 };
-use test_utils::{fanout_tasks, start_timer_cmd};
+use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
 
 #[fixture(hist_batches = &[])]
 fn single_timer_setup(hist_batches: &'static [usize]) -> CoreSDK {

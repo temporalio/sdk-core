@@ -6,7 +6,7 @@ use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityExecutionResult, activity_task::activity_task as act_task,
     workflow_commands::ActivityCancellationType, ActivityTaskCompletion,
 };
-use test_utils::CoreWfStarter;
+use temporal_sdk_core_test_utils::CoreWfStarter;
 
 const CONCURRENCY: usize = 1000;
 

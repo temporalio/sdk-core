@@ -25,7 +25,7 @@ use temporal_sdk_core_protos::{
         },
     },
 };
-use test_utils::start_timer_cmd;
+use temporal_sdk_core_test_utils::start_timer_cmd;
 
 #[rstest::rstest]
 #[case::with_history(true)]

@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use temporal_sdk::{ChildWorkflowOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::child_workflow::{child_workflow_result, Success};
-use test_utils::CoreWfStarter;
+use temporal_sdk_core_test_utils::CoreWfStarter;
 
 static PARENT_WF_TYPE: &str = "parent_wf";
 static CHILD_WF_TYPE: &str = "child_wf";

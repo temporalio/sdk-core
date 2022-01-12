@@ -34,7 +34,9 @@ use temporal_sdk_core_protos::{
         RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedResponse,
     },
 };
-use test_utils::{fake_sg_opts, fanout_tasks, mock_manual_gateway, start_timer_cmd};
+use temporal_sdk_core_test_utils::{
+    fake_sg_opts, fanout_tasks, mock_manual_gateway, start_timer_cmd,
+};
 use tokio::{join, sync::Notify, time::sleep};
 
 #[tokio::test]

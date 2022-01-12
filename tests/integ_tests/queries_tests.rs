@@ -9,7 +9,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{failure::v1::Failure, query::v1::WorkflowQuery},
 };
-use test_utils::{init_core_and_create_wf, CoreTestHelpers, CoreWfStarter};
+use temporal_sdk_core_test_utils::{init_core_and_create_wf, CoreTestHelpers, CoreWfStarter};
 
 #[tokio::test]
 async fn simple_query_legacy() {

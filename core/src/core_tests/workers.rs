@@ -21,7 +21,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::workflowservice::v1::RespondWorkflowTaskCompletedResponse,
 };
-use test_utils::{mock_manual_gateway, start_timer_cmd};
+use temporal_sdk_core_test_utils::{mock_manual_gateway, start_timer_cmd};
 use tokio::sync::{watch, Barrier};
 
 #[tokio::test]
