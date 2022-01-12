@@ -32,7 +32,6 @@ use url::Url;
 
 pub const NAMESPACE: &str = "default";
 pub const TEST_Q: &str = "q";
-pub type GwApi = Arc<dyn ServerGatewayApis>;
 /// If set, turn export traces and metrics to the OTel collector at the given URL
 const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
 /// If set, enable direct scraping of prom metrics on the specified port
@@ -145,28 +144,24 @@ impl CoreWfStarter {
     }
 
     pub async fn start_wf_with_id(&self, workflow_id: String) -> String {
-        with_gw(
-            self.initted_core
-                .as_ref()
-                .expect(
-                    "Core must be initted before starting a workflow.\
+        self.initted_core
+            .as_ref()
+            .expect(
+                "Core must be initted before starting a workflow.\
                              Tests must call `get_core` first.",
-                )
-                .as_ref(),
-            |gw: GwApi| async move {
-                gw.start_workflow(
-                    vec![],
-                    self.worker_config.task_queue.clone(),
-                    workflow_id,
-                    self.test_name.clone(),
-                    self.wft_timeout,
-                )
-                .await
-                .unwrap()
-                .run_id
-            },
-        )
-        .await
+            )
+            .as_ref()
+            .server_gateway()
+            .start_workflow(
+                vec![],
+                self.worker_config.task_queue.clone(),
+                workflow_id,
+                self.test_name.clone(),
+                self.wft_timeout,
+            )
+            .await
+            .unwrap()
+            .run_id
     }
 
     pub fn get_task_queue(&self) -> &str {
@@ -206,15 +201,6 @@ impl CoreWfStarter {
         self.wft_timeout = Some(timeout);
         self
     }
-}
-
-// TODO: This should get removed. Pretty pointless now that gateway is exported
-pub async fn with_gw<F: FnOnce(GwApi) -> Fout, Fout: Future>(
-    core: &dyn Core,
-    fun: F,
-) -> Fout::Output {
-    let gw = core.server_gateway();
-    fun(gw).await
 }
 
 pub fn get_integ_server_options() -> ServerGatewayOptions {

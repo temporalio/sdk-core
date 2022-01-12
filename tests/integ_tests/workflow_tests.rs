@@ -34,7 +34,7 @@ use temporal_sdk_core_protos::{
 };
 use test_utils::{
     history_from_proto_binary, init_core_and_create_wf, init_core_replay_preloaded,
-    schedule_activity_cmd, with_gw, CoreTestHelpers, CoreWfStarter, GwApi,
+    schedule_activity_cmd, CoreTestHelpers, CoreWfStarter,
 };
 use tokio::time::sleep;
 use uuid::Uuid;
@@ -251,8 +251,8 @@ async fn signal_workflow() {
     .unwrap();
 
     // Send the signals to the server
-    with_gw(core.as_ref(), |gw: GwApi| async move {
-        gw.signal_workflow_execution(
+    core.server_gateway()
+        .signal_workflow_execution(
             workflow_id.to_string(),
             res.run_id.to_string(),
             signal_id_1.to_string(),
@@ -260,7 +260,8 @@ async fn signal_workflow() {
         )
         .await
         .unwrap();
-        gw.signal_workflow_execution(
+    core.server_gateway()
+        .signal_workflow_execution(
             workflow_id.to_string(),
             res.run_id.to_string(),
             signal_id_2.to_string(),
@@ -268,8 +269,6 @@ async fn signal_workflow() {
         )
         .await
         .unwrap();
-    })
-    .await;
 
     let mut res = core.poll_workflow_activation(&task_q).await.unwrap();
     // Sometimes both signals are complete at once, sometimes only one, depending on server
@@ -345,9 +344,9 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
 
             let run_id = res.run_id.clone();
 
-            // Send the signals to the server
-            with_gw(core.as_ref(), |gw: GwApi| async move {
-                gw.signal_workflow_execution(
+            // Send the signal to the server
+            core.server_gateway()
+                .signal_workflow_execution(
                     workflow_id.to_string(),
                     res.run_id.to_string(),
                     signal_id_1.to_string(),
@@ -355,8 +354,6 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
                 )
                 .await
                 .unwrap();
-            })
-            .await;
 
             // Send completion - not having seen a poll response with a signal in it yet (unhandled
             // command error will be logged as a warning and an eviction will be issued)
@@ -458,12 +455,10 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     let rid = wf_task.run_id.clone();
     // Send the signals to the server & resolve activity -- sometimes this happens too fast
     sleep(Duration::from_millis(200)).await;
-    with_gw(core.as_ref(), |gw: GwApi| async move {
-        gw.signal_workflow_execution(wf_id.to_string(), rid, signal_at_start.to_string(), None)
-            .await
-            .unwrap();
-    })
-    .await;
+    core.server_gateway()
+        .signal_workflow_execution(wf_id.to_string(), rid, signal_at_start.to_string(), None)
+        .await
+        .unwrap();
     // Complete activity successfully.
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: ac_task.task_token,
@@ -473,12 +468,10 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     .await
     .unwrap();
     let rid = wf_task.run_id.clone();
-    with_gw(core.as_ref(), |gw: GwApi| async move {
-        gw.signal_workflow_execution(wf_id.to_string(), rid, signal_at_complete.to_string(), None)
-            .await
-            .unwrap();
-    })
-    .await;
+    core.server_gateway()
+        .signal_workflow_execution(wf_id.to_string(), rid, signal_at_complete.to_string(), None)
+        .await
+        .unwrap();
     // Now poll again, it will be an eviction b/c non-sticky mode.
     let wf_task = core.poll_workflow_activation(task_q).await.unwrap();
     assert_matches!(
