@@ -30,6 +30,24 @@ typedef struct tmprl_bytes_t {
 } tmprl_bytes_t;
 
 /**
+ * Callback called by tmprl_core_init on completion. The first parameter of the
+ * callback is user data passed into the original function. The second
+ * parameter is a core instance if the call is successful or null if not. If
+ * present, the core instance must be freed via tmprl_core_shutdown when no
+ * longer in use. The third parameter of the callback is a byte array for a
+ * InitResponse protobuf message which must be freed via tmprl_bytes_free.
+ */
+typedef void (*tmprl_core_init_callback)(void *user_data, struct tmprl_core_t *core, const struct tmprl_bytes_t *resp);
+
+/**
+ * Callback called on function completion. The first parameter of the callback
+ * is user data passed into the original function. The second parameter of the
+ * callback is a never-null byte array for a response protobuf message which
+ * must be freed via tmprl_bytes_free.
+ */
+typedef void (*tmprl_callback)(void *user_data, const struct tmprl_bytes_t *core);
+
+/**
  * Free a set of bytes. The first parameter can be null in cases where a
  * tmprl_core_t instance isn't available. If the second parameter is null, this
  * is a no-op.
@@ -51,47 +69,63 @@ void tmprl_runtime_free(struct tmprl_runtime_t *runtime);
  * Create a new core instance.
  *
  * The runtime is required and must outlive this instance. The req_proto and
- * req_proto_len represent a byte array for a InitRequest protobuf message.
- *
- * The callback is invoked on completion. The first parameter of the callback
- * is a core instance if the call is successful or null if not. If present, the
- * core instance must be freed via tmprl_core_shutdown when no longer in use.
- * The second parameter of the callback is a byte array for a InitResponse
- * protobuf message which must be freed via tmprl_bytes_free.
+ * req_proto_len represent a byte array for a InitRequest protobuf message. The
+ * callback is invoked on completion.
  */
 void tmprl_core_init(struct tmprl_runtime_t *runtime,
                      const uint8_t *req_proto,
                      size_t req_proto_len,
                      void *user_data,
-                     void (*callback)(void *user_data, struct tmprl_core_t *core, const struct tmprl_bytes_t *resp));
+                     tmprl_core_init_callback callback);
 
 /**
  * Shutdown and free a core instance.
  *
  * The req_proto and req_proto_len represent a byte array for a ShutdownRequest
- * protobuf message.
- *
- * The callback is invoked on completion with a never-null byte array for a
- * ShutdownResponse protobuf message which must be freed via tmprl_bytes_free.
+ * protobuf message. The callback is invoked on completion with a
+ * ShutdownResponse protobuf message.
  */
 void tmprl_core_shutdown(struct tmprl_core_t *core,
                          const uint8_t *req_proto,
                          size_t req_proto_len,
                          void *user_data,
-                         void (*callback)(void*, const struct tmprl_bytes_t*));
+                         tmprl_callback callback);
 
 /**
  * Register a worker.
  *
  * The req_proto and req_proto_len represent a byte array for a RegisterWorker
- * protobuf message.
- *
- * The callback is invoked on completion with a never-null byte array for a
- * RegisterWorkflowResponse protobuf message which must be freed via
- * tmprl_bytes_free.
+ * protobuf message. The callback is invoked on completion with a
+ * RegisterWorkerResponse protobuf message.
  */
 void tmprl_register_worker(struct tmprl_core_t *core,
                            const uint8_t *req_proto,
                            size_t req_proto_len,
                            void *user_data,
-                           void (*callback)(void*, const struct tmprl_bytes_t*));
+                           tmprl_callback callback);
+
+/**
+ * Poll workflow activation.
+ *
+ * The req_proto and req_proto_len represent a byte array for a
+ * PollWorkflowActivationRequest protobuf message. The callback is invoked on
+ * completion with a PollWorkflowActivationResponse protobuf message.
+ */
+void tmprl_poll_workflow_activation(struct tmprl_core_t *core,
+                                    const uint8_t *req_proto,
+                                    size_t req_proto_len,
+                                    void *user_data,
+                                    tmprl_callback callback);
+
+/**
+ * Poll activity task.
+ *
+ * The req_proto and req_proto_len represent a byte array for a
+ * PollActivityTaskRequest protobuf message. The callback is invoked on
+ * completion with a PollActivityTaskResponse protobuf message.
+ */
+void tmprl_poll_activity_task(struct tmprl_core_t *core,
+                              const uint8_t *req_proto,
+                              size_t req_proto_len,
+                              void *user_data,
+                              tmprl_callback callback);

@@ -143,23 +143,37 @@ pub struct tmprl_core_t {
     core: std::sync::Arc<dyn temporal_sdk_core_api::Core>,
 }
 
+/// Callback called by tmprl_core_init on completion. The first parameter of the
+/// callback is user data passed into the original function. The second
+/// parameter is a core instance if the call is successful or null if not. If
+/// present, the core instance must be freed via tmprl_core_shutdown when no
+/// longer in use. The third parameter of the callback is a byte array for a
+/// InitResponse protobuf message which must be freed via tmprl_bytes_free.
+type tmprl_core_init_callback = unsafe extern "C" fn(
+    user_data: *mut libc::c_void,
+    core: *mut tmprl_core_t,
+    resp: *const tmprl_bytes_t,
+);
+
+// TODO(cretz): Catch unwind for badly behaved callbacks?
+/// Callback called on function completion. The first parameter of the callback
+/// is user data passed into the original function. The second parameter of the
+/// callback is a never-null byte array for a response protobuf message which
+/// must be freed via tmprl_bytes_free.
+type tmprl_callback = unsafe extern "C" fn(user_data: *mut libc::c_void, core: *const tmprl_bytes_t);
+
 /// Create a new core instance.
-/// 
+///
 /// The runtime is required and must outlive this instance. The req_proto and
-/// req_proto_len represent a byte array for a InitRequest protobuf message.
-/// 
-/// The callback is invoked on completion. The first parameter of the callback
-/// is a core instance if the call is successful or null if not. If present, the
-/// core instance must be freed via tmprl_core_shutdown when no longer in use.
-/// The second parameter of the callback is a byte array for a InitResponse
-/// protobuf message which must be freed via tmprl_bytes_free.
+/// req_proto_len represent a byte array for a InitRequest protobuf message. The
+/// callback is invoked on completion.
 #[no_mangle]
 pub extern "C" fn tmprl_core_init(
     runtime: *mut tmprl_runtime_t,
     req_proto: *const u8,
     req_proto_len: libc::size_t,
     user_data: *mut libc::c_void,
-    callback: unsafe extern "C" fn(user_data: *mut libc::c_void, core: *mut tmprl_core_t, resp: *const tmprl_bytes_t),
+    callback: tmprl_core_init_callback,
 ) {
     let runtime = unsafe { &*runtime };
     let req = match tmprl_core_t::decode_proto::<bridge::InitRequest>(req_proto, req_proto_len) {
@@ -182,7 +196,11 @@ pub extern "C" fn tmprl_core_init(
     runtime.tokio_runtime.spawn(async move {
         match tmprl_core_t::new(runtime.tokio_runtime.clone(), req).await {
             Ok(core) => unsafe {
-                callback(user_data.0, Box::into_raw(Box::new(core)), &*DEFAULT_INIT_RESPONSE_BYTES);
+                callback(
+                    user_data.0,
+                    Box::into_raw(Box::new(core)),
+                    &*DEFAULT_INIT_RESPONSE_BYTES,
+                );
             },
             Err(message) => {
                 let resp = bridge::InitResponse {
@@ -201,12 +219,10 @@ pub extern "C" fn tmprl_core_init(
 }
 
 /// Shutdown and free a core instance.
-/// 
+///
 /// The req_proto and req_proto_len represent a byte array for a ShutdownRequest
-/// protobuf message.
-/// 
-/// The callback is invoked on completion with a never-null byte array for a
-/// ShutdownResponse protobuf message which must be freed via tmprl_bytes_free.
+/// protobuf message. The callback is invoked on completion with a
+/// ShutdownResponse protobuf message.
 #[no_mangle]
 #[allow(unused_variables)]
 pub extern "C" fn tmprl_core_shutdown(
@@ -214,7 +230,7 @@ pub extern "C" fn tmprl_core_shutdown(
     req_proto: *const u8,
     req_proto_len: libc::size_t,
     user_data: *mut libc::c_void,
-    callback: unsafe extern "C" fn(*mut libc::c_void, *const tmprl_bytes_t),
+    callback: tmprl_callback,
 ) {
     // Re-own the object so it can be dropped
     let core = unsafe { Box::from_raw(core) };
@@ -228,20 +244,17 @@ pub extern "C" fn tmprl_core_shutdown(
 }
 
 /// Register a worker.
-/// 
+///
 /// The req_proto and req_proto_len represent a byte array for a RegisterWorker
-/// protobuf message.
-/// 
-/// The callback is invoked on completion with a never-null byte array for a
-/// RegisterWorkflowResponse protobuf message which must be freed via
-/// tmprl_bytes_free.
+/// protobuf message. The callback is invoked on completion with a
+/// RegisterWorkerResponse protobuf message.
 #[no_mangle]
 pub extern "C" fn tmprl_register_worker(
     core: *mut tmprl_core_t,
     req_proto: *const u8,
     req_proto_len: libc::size_t,
     user_data: *mut libc::c_void,
-    callback: unsafe extern "C" fn(*mut libc::c_void, *const tmprl_bytes_t),
+    callback: tmprl_callback,
 ) {
     let core = unsafe { &mut *core };
     let req =
@@ -275,14 +288,90 @@ pub extern "C" fn tmprl_register_worker(
     });
 }
 
-fn register_worker_error(
-    message: String,
-    worker_already_registered: bool,
-) -> bridge::register_worker_response::Error {
-    bridge::register_worker_response::Error {
-        message,
-        worker_already_registered,
-    }
+/// Poll workflow activation.
+///
+/// The req_proto and req_proto_len represent a byte array for a
+/// PollWorkflowActivationRequest protobuf message. The callback is invoked on
+/// completion with a PollWorkflowActivationResponse protobuf message.
+#[no_mangle]
+pub extern "C" fn tmprl_poll_workflow_activation(
+    core: *mut tmprl_core_t,
+    req_proto: *const u8,
+    req_proto_len: libc::size_t,
+    user_data: *mut libc::c_void,
+    callback: tmprl_callback,
+) {
+    let core = unsafe { &mut *core };
+    let req = match tmprl_core_t::decode_proto::<bridge::PollWorkflowActivationRequest>(
+        req_proto,
+        req_proto_len,
+    ) {
+        Ok(req) => req,
+        Err(message) => {
+            let resp = bridge::PollWorkflowActivationResponse {
+                response: Some(bridge::poll_workflow_activation_response::Response::Error(
+                    bridge::poll_workflow_activation_response::Error { message },
+                )),
+            };
+            unsafe {
+                callback(user_data, core.encode_proto(&resp).into_raw());
+            }
+            return;
+        }
+    };
+    let user_data = Box::new(UserDataHandle(user_data));
+    core.tokio_runtime.clone().spawn(async move {
+        let resp = bridge::PollWorkflowActivationResponse {
+            response: Some(match core.poll_workflow_activation(req).await {
+                Ok(act) => bridge::poll_workflow_activation_response::Response::Activation(act),
+                Err(err) => bridge::poll_workflow_activation_response::Response::Error(err),
+            }),
+        };
+        unsafe { callback(user_data.0, core.encode_proto(&resp).into_raw()) };
+    });
+}
+
+/// Poll activity task.
+///
+/// The req_proto and req_proto_len represent a byte array for a
+/// PollActivityTaskRequest protobuf message. The callback is invoked on
+/// completion with a PollActivityTaskResponse protobuf message.
+#[no_mangle]
+pub extern "C" fn tmprl_poll_activity_task(
+    core: *mut tmprl_core_t,
+    req_proto: *const u8,
+    req_proto_len: libc::size_t,
+    user_data: *mut libc::c_void,
+    callback: tmprl_callback,
+) {
+    let core = unsafe { &mut *core };
+    let req = match tmprl_core_t::decode_proto::<bridge::PollActivityTaskRequest>(
+        req_proto,
+        req_proto_len,
+    ) {
+        Ok(req) => req,
+        Err(message) => {
+            let resp = bridge::PollActivityTaskResponse {
+                response: Some(bridge::poll_activity_task_response::Response::Error(
+                    bridge::poll_activity_task_response::Error { message },
+                )),
+            };
+            unsafe {
+                callback(user_data, core.encode_proto(&resp).into_raw());
+            }
+            return;
+        }
+    };
+    let user_data = Box::new(UserDataHandle(user_data));
+    core.tokio_runtime.clone().spawn(async move {
+        let resp = bridge::PollActivityTaskResponse {
+            response: Some(match core.poll_activity_task(req).await {
+                Ok(task) => bridge::poll_activity_task_response::Response::Task(task),
+                Err(err) => bridge::poll_activity_task_response::Response::Error(err),
+            }),
+        };
+        unsafe { callback(user_data.0, core.encode_proto(&resp).into_raw()) };
+    });
 }
 
 impl tmprl_core_t {
@@ -491,12 +580,42 @@ impl tmprl_core_t {
         })
     }
 
+    async fn poll_workflow_activation(
+        &self,
+        req: bridge::PollWorkflowActivationRequest,
+    ) -> Result<
+        temporal_sdk_core_protos::coresdk::workflow_activation::WorkflowActivation,
+        bridge::poll_workflow_activation_response::Error,
+    > {
+        self.core
+            .poll_workflow_activation(&req.task_queue)
+            .await
+            .map_err(|err| bridge::poll_workflow_activation_response::Error {
+                message: format!("{}", err),
+            })
+    }
+
+    async fn poll_activity_task(
+        &self,
+        req: bridge::PollActivityTaskRequest,
+    ) -> Result<
+        temporal_sdk_core_protos::coresdk::activity_task::ActivityTask,
+        bridge::poll_activity_task_response::Error,
+    > {
+        self.core
+            .poll_activity_task(&req.task_queue)
+            .await
+            .map_err(|err| bridge::poll_activity_task_response::Error {
+                message: format!("{}", err),
+            })
+    }
+
     fn borrow_buf(&mut self) -> Vec<u8> {
         // TODO(cretz): Implement thread-safe byte pool?
         Vec::new()
     }
 
-    fn return_buf(&mut self, vec: Vec<u8>) {
+    fn return_buf(&mut self, _vec: Vec<u8>) {
         // TODO(cretz): Implement thread-safe byte pool?
     }
 
@@ -517,5 +636,15 @@ impl tmprl_core_t {
     {
         P::decode(unsafe { std::slice::from_raw_parts(bytes, bytes_len) })
             .map_err(|err| format!("failed decoding proto: {}", err))
+    }
+}
+
+fn register_worker_error(
+    message: String,
+    worker_already_registered: bool,
+) -> bridge::register_worker_response::Error {
+    bridge::register_worker_response::Error {
+        message,
+        worker_already_registered,
     }
 }

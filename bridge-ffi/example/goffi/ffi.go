@@ -10,11 +10,7 @@ package goffi
 #cgo windows,amd64 LDFLAGS:-L${SRCDIR}/lib/windows-x86_64
 #include <sdk-core-bridge.h>
 
-typedef void (*core_init_callback_fn)(void* user_data, struct tmprl_core_t* core, struct tmprl_bytes_t* bytes);
-
 extern void callback_core_init(void* user_data, struct tmprl_core_t* core, struct tmprl_bytes_t* bytes);
-
-typedef void (*core_callback_fn)(void* user_data, struct tmprl_bytes_t* bytes);
 
 extern void callback_core(void* user_data, struct tmprl_bytes_t* bytes);
 */
@@ -26,6 +22,7 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	bridgepb "github.com/temporalio/sdk-core/bridge-ffi/example/goffi/corepb/bridgepb"
+	workflowactivationpb "github.com/temporalio/sdk-core/bridge-ffi/example/goffi/corepb/workflowactivationpb"
 )
 
 type Runtime struct {
@@ -64,6 +61,39 @@ func (c *Core) Shutdown() {
 	req, inPtr, inLen, reqHandle := c.newRequest(nil, nil)
 	C.tmprl_core_shutdown(c.core, inPtr, inLen, reqHandle, callback)
 	<-req.ch
+}
+
+type ErrCore struct {
+	Proto interface {
+		proto.Message
+		GetMessage() string
+	}
+}
+
+func (e ErrCore) Error() string { return e.Proto.GetMessage() }
+
+func (c *Core) RegisterWorker(in *bridgepb.RegisterWorkerRequest) error {
+	var resp bridgepb.RegisterWorkerResponse
+	req, inPtr, inLen, reqHandle := c.newRequest(in, &resp)
+	C.tmprl_register_worker(c.core, inPtr, inLen, reqHandle, callback)
+	<-req.ch
+	if err := resp.GetError(); err != nil {
+		return ErrCore{err}
+	}
+	return nil
+}
+
+func (c *Core) PollWorkflowActivation(
+	in *bridgepb.PollWorkflowActivationRequest,
+) (*workflowactivationpb.WorkflowActivation, error) {
+	var resp bridgepb.PollWorkflowActivationResponse
+	req, inPtr, inLen, reqHandle := c.newRequest(in, &resp)
+	C.tmprl_poll_workflow_activation(c.core, inPtr, inLen, reqHandle, callback)
+	<-req.ch
+	if err := resp.GetError(); err != nil {
+		return nil, ErrCore{err}
+	}
+	return resp.GetActivation(), nil
 }
 
 func (c *Core) newRequest(
@@ -113,8 +143,8 @@ func go_callback_core_init(user_data C.uintptr_t, core *C.tmprl_core_t, bytes *C
 	go_callback_core(user_data, bytes)
 }
 
-var initCallback = C.core_init_callback_fn(C.callback_core_init)
-var callback = C.core_callback_fn(C.callback_core)
+var initCallback = C.tmprl_core_init_callback(C.callback_core_init)
+var callback = C.tmprl_callback(C.callback_core)
 
 //export go_callback_core
 func go_callback_core(user_data C.uintptr_t, bytes *C.tmprl_bytes_t) {
