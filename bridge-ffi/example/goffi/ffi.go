@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
+	activitytaskpb "github.com/temporalio/sdk-core/bridge-ffi/example/goffi/corepb/activitytaskpb"
 	bridgepb "github.com/temporalio/sdk-core/bridge-ffi/example/goffi/corepb/bridgepb"
 	workflowactivationpb "github.com/temporalio/sdk-core/bridge-ffi/example/goffi/corepb/workflowactivationpb"
 )
@@ -38,6 +39,24 @@ func (r *Runtime) Close() {
 		C.tmprl_runtime_free(r.runtime)
 		r.runtime = nil
 	}
+}
+
+type ErrCore struct {
+	Proto interface {
+		proto.Message
+		GetMessage() string
+	}
+}
+
+func (e ErrCore) Error() string { return e.Proto.GetMessage() }
+
+func IsPollErrShutdown(err error) bool {
+	if err, ok := err.(ErrCore); ok {
+		if get, _ := err.Proto.(interface{ GetShutdown() bool }); get != nil {
+			return get.GetShutdown()
+		}
+	}
+	return false
 }
 
 type Core struct {
@@ -63,17 +82,19 @@ func (c *Core) Shutdown() {
 	<-req.ch
 }
 
-type ErrCore struct {
-	Proto interface {
-		proto.Message
-		GetMessage() string
-	}
-}
-
-func (e ErrCore) Error() string { return e.Proto.GetMessage() }
-
 func (c *Core) RegisterWorker(in *bridgepb.RegisterWorkerRequest) error {
 	var resp bridgepb.RegisterWorkerResponse
+	req, inPtr, inLen, reqHandle := c.newRequest(in, &resp)
+	C.tmprl_register_worker(c.core, inPtr, inLen, reqHandle, callback)
+	<-req.ch
+	if err := resp.GetError(); err != nil {
+		return ErrCore{err}
+	}
+	return nil
+}
+
+func (c *Core) ShutdownWorker(in *bridgepb.ShutdownWorkerRequest) error {
+	var resp bridgepb.ShutdownWorkerResponse
 	req, inPtr, inLen, reqHandle := c.newRequest(in, &resp)
 	C.tmprl_register_worker(c.core, inPtr, inLen, reqHandle, callback)
 	<-req.ch
@@ -94,6 +115,75 @@ func (c *Core) PollWorkflowActivation(
 		return nil, ErrCore{err}
 	}
 	return resp.GetActivation(), nil
+}
+
+func (c *Core) PollActivityTask(
+	in *bridgepb.PollActivityTaskRequest,
+) (*activitytaskpb.ActivityTask, error) {
+	var resp bridgepb.PollActivityTaskResponse
+	req, inPtr, inLen, reqHandle := c.newRequest(in, &resp)
+	C.tmprl_poll_activity_task(c.core, inPtr, inLen, reqHandle, callback)
+	<-req.ch
+	if err := resp.GetError(); err != nil {
+		return nil, ErrCore{err}
+	}
+	return resp.GetTask(), nil
+}
+
+func (c *Core) CompleteWorkflowActivation(in *bridgepb.CompleteWorkflowActivationRequest) error {
+	var resp bridgepb.CompleteWorkflowActivationResponse
+	req, inPtr, inLen, reqHandle := c.newRequest(in, &resp)
+	C.tmprl_complete_workflow_activation(c.core, inPtr, inLen, reqHandle, callback)
+	<-req.ch
+	if err := resp.GetError(); err != nil {
+		return ErrCore{err}
+	}
+	return nil
+}
+
+func (c *Core) CompleteActivityTask(in *bridgepb.CompleteActivityTaskRequest) error {
+	var resp bridgepb.CompleteActivityTaskResponse
+	req, inPtr, inLen, reqHandle := c.newRequest(in, &resp)
+	C.tmprl_complete_activity_task(c.core, inPtr, inLen, reqHandle, callback)
+	<-req.ch
+	if err := resp.GetError(); err != nil {
+		return ErrCore{err}
+	}
+	return nil
+}
+
+func (c *Core) RecordActivityHeartbeat(in *bridgepb.RecordActivityHeartbeatRequest) error {
+	var resp bridgepb.RecordActivityHeartbeatResponse
+	req, inPtr, inLen, reqHandle := c.newRequest(in, &resp)
+	C.tmprl_record_activity_heartbeat(c.core, inPtr, inLen, reqHandle, callback)
+	<-req.ch
+	if err := resp.GetError(); err != nil {
+		return ErrCore{err}
+	}
+	return nil
+}
+
+func (c *Core) RequestWorkflowEviction(in *bridgepb.RequestWorkflowEvictionRequest) error {
+	var resp bridgepb.RequestWorkflowEvictionResponse
+	req, inPtr, inLen, reqHandle := c.newRequest(in, &resp)
+	C.tmprl_request_workflow_eviction(c.core, inPtr, inLen, reqHandle, callback)
+	<-req.ch
+	if err := resp.GetError(); err != nil {
+		return ErrCore{err}
+	}
+	return nil
+}
+
+func (c *Core) FetchBufferedLogs(
+	in *bridgepb.FetchBufferedLogsRequest,
+) ([]*bridgepb.FetchBufferedLogsResponse_LogEntry, error) {
+	var resp bridgepb.FetchBufferedLogsResponse
+	req, inPtr, inLen, reqHandle := c.newRequest(in, &resp)
+	C.tmprl_fetch_buffered_logs(c.core, inPtr, inLen, reqHandle, callback)
+	<-req.ch
+	// Never an error, but we keep the error in the signature for compatibility
+	// and future proofing
+	return resp.Entries, nil
 }
 
 func (c *Core) newRequest(

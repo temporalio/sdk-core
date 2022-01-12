@@ -104,6 +104,7 @@ message PollWorkflowActivationResponse {
 
   message Error {
     string message = 1;
+    bool shutdown = 2;
   }
 }
 
@@ -119,6 +120,7 @@ message PollActivityTaskResponse {
 
   message Error {
     string message = 1;
+    bool shutdown = 2;
   }
 }
 
@@ -151,6 +153,11 @@ message RecordActivityHeartbeatRequest {
 }
 
 message RecordActivityHeartbeatResponse {
+  Error error = 1;
+
+  message Error {
+    string message = 1;
+  }
 }
 
 message RequestWorkflowEvictionRequest {
@@ -159,6 +166,11 @@ message RequestWorkflowEvictionRequest {
 }
 
 message RequestWorkflowEvictionResponse {
+  Error error = 1;
+
+  message Error {
+    string message = 1;
+  }
 }
 
 message ShutdownRequest {
@@ -172,6 +184,11 @@ message ShutdownWorkerRequest {
 }
 
 message ShutdownWorkerResponse {
+  Error error = 1;
+
+  message Error {
+    string message = 1;
+  }
 }
 
 message FetchBufferedLogsRequest {

@@ -19,13 +19,20 @@ typedef struct tmprl_core_t tmprl_core_t;
 typedef struct tmprl_runtime_t tmprl_runtime_t;
 
 /**
- * A set of bytes owned by Core. This must always be passed to
+ * A set of bytes owned by Core. No fields within nor any bytes references must
+ * ever be mutated outside of Core. This must always be passed to
  * tmprl_bytes_free when no longer in use.
  */
 typedef struct tmprl_bytes_t {
   const uint8_t *bytes;
   size_t len;
+  /**
+   * For internal use only.
+   */
   size_t cap;
+  /**
+   * For internal use only.
+   */
   bool disable_free;
 } tmprl_bytes_t;
 
@@ -105,6 +112,19 @@ void tmprl_register_worker(struct tmprl_core_t *core,
                            tmprl_callback callback);
 
 /**
+ * Shutdown registered worker.
+ *
+ * The req_proto and req_proto_len represent a byte array for a
+ * ShutdownWorkerRequest protobuf message. The callback is invoked on
+ * completion with a ShutdownWorkerResponse protobuf message.
+ */
+void tmprl_shutdown_worker(struct tmprl_core_t *core,
+                           const uint8_t *req_proto,
+                           size_t req_proto_len,
+                           void *user_data,
+                           tmprl_callback callback);
+
+/**
  * Poll workflow activation.
  *
  * The req_proto and req_proto_len represent a byte array for a
@@ -129,3 +149,68 @@ void tmprl_poll_activity_task(struct tmprl_core_t *core,
                               size_t req_proto_len,
                               void *user_data,
                               tmprl_callback callback);
+
+/**
+ * Complete workflow activation.
+ *
+ * The req_proto and req_proto_len represent a byte array for a
+ * CompleteWorkflowActivationRequest protobuf message. The callback is invoked
+ * on completion with a CompleteWorkflowActivationResponse protobuf message.
+ */
+void tmprl_complete_workflow_activation(struct tmprl_core_t *core,
+                                        const uint8_t *req_proto,
+                                        size_t req_proto_len,
+                                        void *user_data,
+                                        tmprl_callback callback);
+
+/**
+ * Complete activity task.
+ *
+ * The req_proto and req_proto_len represent a byte array for a
+ * CompleteActivityTaskRequest protobuf message. The callback is invoked
+ * on completion with a CompleteActivityTaskResponse protobuf message.
+ */
+void tmprl_complete_activity_task(struct tmprl_core_t *core,
+                                  const uint8_t *req_proto,
+                                  size_t req_proto_len,
+                                  void *user_data,
+                                  tmprl_callback callback);
+
+/**
+ * Record activity heartbeat.
+ *
+ * The req_proto and req_proto_len represent a byte array for a
+ * RecordActivityHeartbeatRequest protobuf message. The callback is invoked
+ * on completion with a RecordActivityHeartbeatResponse protobuf message.
+ */
+void tmprl_record_activity_heartbeat(struct tmprl_core_t *core,
+                                     const uint8_t *req_proto,
+                                     size_t req_proto_len,
+                                     void *user_data,
+                                     tmprl_callback callback);
+
+/**
+ * Request workflow eviction.
+ *
+ * The req_proto and req_proto_len represent a byte array for a
+ * RequestWorkflowEvictionRequest protobuf message. The callback is invoked
+ * on completion with a RequestWorkflowEvictionResponse protobuf message.
+ */
+void tmprl_request_workflow_eviction(struct tmprl_core_t *core,
+                                     const uint8_t *req_proto,
+                                     size_t req_proto_len,
+                                     void *user_data,
+                                     tmprl_callback callback);
+
+/**
+ * Fetch buffered logs.
+ *
+ * The req_proto and req_proto_len represent a byte array for a
+ * FetchBufferedLogsRequest protobuf message. The callback is invoked
+ * on completion with a FetchBufferedLogsResponse protobuf message.
+ */
+void tmprl_fetch_buffered_logs(struct tmprl_core_t *core,
+                               const uint8_t *req_proto,
+                               size_t req_proto_len,
+                               void *user_data,
+                               tmprl_callback callback);
