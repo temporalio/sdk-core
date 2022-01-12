@@ -27,7 +27,7 @@ pub trait Core: Send + Sync {
     /// Register a worker with core. Workers poll on a specific task queue, and when calling core's
     /// poll functions, you must provide a task queue name. If there was already a worker registered
     /// with the same task queue name, it will be shut down and a new one will be created.
-    async fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError>;
+    fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError>;
 
     /// Ask the core for some work, returning a [WorkflowActivation]. It is then the language SDK's
     /// responsibility to call the appropriate workflow code with the provided inputs. Blocks

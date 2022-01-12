@@ -5,7 +5,6 @@ mod concurrency_manager;
 
 use crate::{
     pending_activations::PendingActivations,
-    pollers::GatewayRef,
     protosext::{ValidPollWFTQResponse, WorkflowActivationExt},
     telemetry::metrics::MetricsContext,
     worker::{LocalActRequest, LocalActivityResolution},
@@ -27,6 +26,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use temporal_client::ServerGatewayApis;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
@@ -282,7 +282,7 @@ impl WorkflowTaskManager {
     pub(crate) async fn apply_new_poll_resp(
         &self,
         work: ValidPollWFTQResponse,
-        gateway: &GatewayRef,
+        gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
     ) -> NewWfTaskOutcome {
         let mut work = if let Some(w) = self.workflow_machines.buffer_resp_if_outstanding_work(work)
         {
@@ -563,7 +563,7 @@ impl WorkflowTaskManager {
     async fn instantiate_or_update_workflow(
         &self,
         poll_wf_resp: ValidPollWFTQResponse,
-        gateway: &GatewayRef,
+        gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
     ) -> Result<(WorkflowTaskInfo, WorkflowActivation), WorkflowUpdateError> {
         let run_id = poll_wf_resp.workflow_execution.run_id.clone();
 
@@ -582,12 +582,12 @@ impl WorkflowTaskManager {
                         poll_wf_resp.workflow_execution.workflow_id.clone(),
                         poll_wf_resp.workflow_execution.run_id.clone(),
                         poll_wf_resp.next_page_token,
-                        gateway.gw.clone(),
+                        gateway.clone(),
                     ),
                     poll_wf_resp.previous_started_event_id,
                 ),
                 &poll_wf_resp.workflow_execution.workflow_id,
-                &gateway.options.namespace,
+                &gateway.get_options().namespace,
                 &poll_wf_resp.workflow_type,
                 &self.metrics,
             )

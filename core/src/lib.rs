@@ -37,8 +37,11 @@ pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
 use crate::{
-    pollers::GatewayRef,
-    telemetry::{fetch_global_buffered_logs, telemetry_init},
+    telemetry::{
+        fetch_global_buffered_logs,
+        metrics::{MetricsContext, METRIC_METER},
+        telemetry_init,
+    },
     worker::{Worker, WorkerDispatcher},
 };
 use std::{
@@ -60,7 +63,6 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
 };
 
-use crate::telemetry::metrics::{MetricsContext, METRIC_METER};
 #[cfg(test)]
 use crate::test_help::MockWorker;
 
@@ -84,12 +86,7 @@ pub struct CoreInitOptions {
 }
 
 /// Initializes an instance of the core sdk and establishes a connection to the temporal server.
-///
-/// Note: Also creates a tokio runtime that will be used for all client-server interactions.
-///
-/// # Panics
-/// * Will panic if called from within an async context, as it will construct a runtime and you
-///   cannot construct a runtime from within a runtime.
+/// Expects that a tokio runtime exists.
 pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
     telemetry_init(&opts.telemetry_opts).map_err(CoreInitError::TelemetryInitError)?;
     // Initialize server client
@@ -107,11 +104,12 @@ pub fn init_mock_gateway<SG: ServerGatewayApis + Send + Sync + 'static>(
     Ok(CoreSDK::new(server_gateway, opts))
 }
 
-struct CoreSDK {
+/// Implements the [Core] trait
+pub struct CoreSDK {
     /// Options provided at initialization time
     init_options: CoreInitOptions,
-    /// Provides work in the form of responses the server would send from polling task Qs
-    server_gateway: Arc<GatewayRef>,
+    /// A client for interacting with the Temporal service.
+    server_gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
     /// Controls access to workers
     workers: WorkerDispatcher,
     /// Has shutdown been called and all workers drained of tasks?
@@ -122,20 +120,8 @@ struct CoreSDK {
 
 #[async_trait::async_trait]
 impl Core for CoreSDK {
-    async fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError> {
-        info!(
-            task_queue = config.task_queue.as_str(),
-            "Registering worker"
-        );
-        let sticky_q = self.get_sticky_q_name_for_worker(&config);
-        self.workers
-            .new_worker(
-                config,
-                sticky_q,
-                self.server_gateway.clone(),
-                self.metrics.clone(),
-            )
-            .await
+    fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError> {
+        self.register_worker_with_gateway(config, self.server_gateway.clone())
     }
 
     #[instrument(level = "debug", skip(self), fields(run_id))]
@@ -209,7 +195,7 @@ impl Core for CoreSDK {
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
-        self.server_gateway.gw.clone()
+        self.server_gateway.clone()
     }
 
     async fn shutdown(&self) {
@@ -231,15 +217,31 @@ impl CoreSDK {
         server_gateway: SG,
         init_options: CoreInitOptions,
     ) -> Self {
-        let sg = GatewayRef::new(Arc::new(server_gateway), init_options.gateway_opts.clone());
+        let server_gateway = Arc::new(server_gateway);
         let workers = WorkerDispatcher::default();
         Self {
             workers,
             init_options,
             whole_core_shutdown: AtomicBool::new(false),
-            metrics: MetricsContext::top_level(sg.options.namespace.clone()),
-            server_gateway: Arc::new(sg),
+            metrics: MetricsContext::top_level(server_gateway.get_options().namespace.clone()),
+            server_gateway,
         }
+    }
+
+    /// Register a worker with a specific client instance. Can be used to provide the worker with
+    /// a mock client, for example.
+    pub fn register_worker_with_gateway(
+        &self,
+        config: WorkerConfig,
+        gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+    ) -> Result<(), WorkerRegistrationError> {
+        info!(
+            task_queue = config.task_queue.as_str(),
+            "Registering worker"
+        );
+        let sticky_q = self.get_sticky_q_name_for_worker(&config);
+        self.workers
+            .new_worker(config, sticky_q, gateway, self.metrics.clone())
     }
 
     /// Allow construction of workers with mocked poll responses during testing

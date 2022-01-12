@@ -10,7 +10,6 @@ use crate::{
 use futures::FutureExt;
 use rstest::{fixture, rstest};
 use std::{cell::RefCell, time::Duration};
-use temporal_client::MockManualGateway;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::workflow_activation_job,
@@ -22,7 +21,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::workflowservice::v1::RespondWorkflowTaskCompletedResponse,
 };
-use test_utils::start_timer_cmd;
+use test_utils::{mock_manual_gateway, start_timer_cmd};
 use tokio::sync::{watch, Barrier};
 
 #[tokio::test]
@@ -92,7 +91,6 @@ async fn worker_double_register_is_err() {
                 .build()
                 .unwrap(),
         )
-        .await
         .is_err());
 }
 
@@ -150,7 +148,7 @@ async fn pending_activities_only_returned_for_their_queue() {
 #[tokio::test]
 async fn nonexistent_worker_poll_returns_not_registered() {
     let core =
-        mock_core_with_opts_no_workers(MockManualGateway::new(), CoreInitOptionsBuilder::default());
+        mock_core_with_opts_no_workers(mock_manual_gateway(), CoreInitOptionsBuilder::default());
     assert_matches!(
         core.poll_workflow_activation(TEST_Q).await.unwrap_err(),
         PollWfError::NoWorkerForQueue(_)

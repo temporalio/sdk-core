@@ -15,12 +15,11 @@ use crate::{
 };
 use futures::FutureExt;
 use std::time::Duration;
-use temporal_client::MockManualGateway;
 use temporal_sdk_core_protos::{
     coresdk::workflow_completion::WorkflowActivationCompletion,
     temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
 };
-use test_utils::fake_sg_opts;
+use test_utils::{fake_sg_opts, mock_manual_gateway};
 use tokio::{sync::Barrier, time::sleep};
 
 #[tokio::test]
@@ -45,7 +44,7 @@ lazy_static::lazy_static! {
 }
 #[tokio::test]
 async fn shutdown_interrupts_both_polls() {
-    let mut mock_gateway = MockManualGateway::new();
+    let mut mock_gateway = mock_manual_gateway();
     mock_gateway
         .expect_poll_activity_task()
         .times(1)
@@ -95,7 +94,6 @@ async fn shutdown_interrupts_both_polls() {
             .build()
             .unwrap(),
     )
-    .await
     .unwrap();
     tokio::join! {
         async {

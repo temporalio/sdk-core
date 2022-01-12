@@ -10,7 +10,7 @@ use std::{
     convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc,
     time::Duration,
 };
-use temporal_client::MockServerGatewayApis;
+use temporal_client::{MockManualGateway, MockServerGatewayApis};
 use temporal_sdk::TestRustWorker;
 use temporal_sdk_core::{
     init_mock_gateway, CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayApis,
@@ -58,7 +58,6 @@ pub async fn init_core_replay(history: &History) -> Arc<dyn Core> {
     .unwrap();
     core_fakehist
         .register_worker(starter.worker_config.clone())
-        .await
         .unwrap();
     starter.initted_core = Some(Arc::new(core_fakehist));
     let core = starter.get_core().await;
@@ -128,9 +127,7 @@ impl CoreWfStarter {
                 .await
                 .unwrap();
             // Register a worker for the task queue
-            core.register_worker(self.worker_config.clone())
-                .await
-                .unwrap();
+            core.register_worker(self.worker_config.clone()).unwrap();
             self.initted_core = Some(Arc::new(core));
         }
         self.initted_core.as_ref().unwrap().clone()
@@ -342,6 +339,13 @@ where
 /// Create a mock client primed with basic necessary expectations
 pub fn mock_gateway() -> MockServerGatewayApis {
     let mut mg = MockServerGatewayApis::new();
+    mg.expect_get_options().return_const(fake_sg_opts());
+    mg
+}
+
+/// Create a mock manual client primed with basic necessary expectations
+pub fn mock_manual_gateway() -> MockManualGateway {
+    let mut mg = MockManualGateway::new();
     mg.expect_get_options().return_const(fake_sg_opts());
     mg
 }
