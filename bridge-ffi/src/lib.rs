@@ -17,8 +17,6 @@ mod wrappers;
 use prost::Message;
 use temporal_sdk_core_protos::coresdk::bridge;
 
-extern crate libc;
-
 /// A set of bytes owned by Core. No fields within nor any bytes references must
 /// ever be mutated outside of Core. This must always be passed to
 /// tmprl_bytes_free when no longer in use.
