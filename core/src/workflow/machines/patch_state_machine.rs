@@ -25,6 +25,7 @@ use crate::protosext::HistoryEventExt;
 use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
+    constants::PATCH_MARKER_NAME,
     coresdk::common::build_has_change_marker_details,
     temporal::api::{
         command::v1::{Command, RecordMarkerCommandAttributes},
@@ -32,8 +33,6 @@ use temporal_sdk_core_protos::{
         history::v1::HistoryEvent,
     },
 };
-
-pub const HAS_CHANGE_MARKER_NAME: &str = "core_patch";
 
 fsm! {
     pub(super) name PatchMachine;
@@ -100,7 +99,7 @@ impl PatchMachine {
             command_type: CommandType::RecordMarker as i32,
             attributes: Some(
                 RecordMarkerCommandAttributes {
-                    marker_name: HAS_CHANGE_MARKER_NAME.to_string(),
+                    marker_name: PATCH_MARKER_NAME.to_string(),
                     details: build_has_change_marker_details(&state.patch_id, deprecated),
                     header: None,
                     failure: None,
@@ -224,15 +223,13 @@ impl TryFrom<HistoryEvent> for PatchMachineEvents {
 mod tests {
     use crate::{
         test_help::TestHistoryBuilder,
-        workflow::{
-            machines::{WFMachinesError, HAS_CHANGE_MARKER_NAME},
-            managed_wf::ManagedWFFunc,
-        },
+        workflow::{machines::WFMachinesError, managed_wf::ManagedWFFunc},
     };
     use rstest::rstest;
     use std::time::Duration;
     use temporal_sdk::{ActivityOptions, WfContext, WorkflowFunction};
     use temporal_sdk_core_protos::{
+        constants::PATCH_MARKER_NAME,
         coresdk::{
             common::decode_change_marker_details,
             workflow_activation::{workflow_activation_job, NotifyHasPatch, WorkflowActivationJob},
@@ -498,7 +495,7 @@ mod tests {
             Attributes::RecordMarkerCommandAttributes(
                 RecordMarkerCommandAttributes { marker_name, details,.. })
 
-            if marker_name == HAS_CHANGE_MARKER_NAME
+            if marker_name == PATCH_MARKER_NAME
               && decode_change_marker_details(details).unwrap().1 == dep_flag_expected
         );
         // The only time the "old" timer should fire is in v2, replaying, without a marker.

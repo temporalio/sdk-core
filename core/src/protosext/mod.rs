@@ -1,7 +1,6 @@
 use crate::{
-    worker::LocalActivityExecutionResult,
-    workflow::{HAS_CHANGE_MARKER_NAME, LEGACY_QUERY_ID, LOCAL_ACTIVITY_MARKER_NAME},
-    CompleteActivityError, TaskToken,
+    worker::LocalActivityExecutionResult, workflow::LEGACY_QUERY_ID, CompleteActivityError,
+    TaskToken,
 };
 use anyhow::anyhow;
 use std::{
@@ -11,6 +10,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use temporal_sdk_core_protos::{
+    constants::{LOCAL_ACTIVITY_MARKER_NAME, PATCH_MARKER_NAME},
     coresdk::{
         activity_result::{activity_execution_result, activity_execution_result::Status},
         common::{
@@ -156,9 +156,7 @@ impl HistoryEventExt for HistoryEvent {
                         details,
                         ..
                     },
-                )) if marker_name == HAS_CHANGE_MARKER_NAME => {
-                    decode_change_marker_details(details)
-                }
+                )) if marker_name == PATCH_MARKER_NAME => decode_change_marker_details(details),
                 _ => None,
             }
         } else {

@@ -1,14 +1,10 @@
-use crate::{
-    test_help::{
-        history_info::{HistoryInfo, HistoryInfoError},
-        Result,
-    },
-    workflow::{HistoryUpdate, HAS_CHANGE_MARKER_NAME, LOCAL_ACTIVITY_MARKER_NAME},
-};
+use super::history_info::{HistoryInfo, HistoryInfoError};
+use crate::history_replay::DEFAULT_WORKFLOW_TYPE;
 use anyhow::bail;
 use prost_types::Timestamp;
 use std::time::{Duration, SystemTime};
 use temporal_sdk_core_protos::{
+    constants::{LOCAL_ACTIVITY_MARKER_NAME, PATCH_MARKER_NAME},
     coresdk::{
         common::{
             build_has_change_marker_details, build_local_activity_marker_details,
@@ -25,6 +21,8 @@ use temporal_sdk_core_protos::{
     },
 };
 use uuid::Uuid;
+
+type Result<T, E = anyhow::Error> = std::result::Result<T, E>;
 
 #[derive(Default, Clone, Debug)]
 pub struct TestHistoryBuilder {
@@ -101,7 +99,7 @@ impl TestHistoryBuilder {
         self.previous_task_completed_id = id;
     }
 
-    pub(crate) fn add_workflow_task_timed_out(&mut self) {
+    pub fn add_workflow_task_timed_out(&mut self) {
         let attrs = WorkflowTaskTimedOutEventAttributes {
             scheduled_event_id: self.workflow_task_scheduled_event_id,
             ..Default::default()
@@ -241,9 +239,9 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowExecutionSignaled, attrs.into());
     }
 
-    pub(crate) fn add_has_change_marker(&mut self, patch_id: &str, deprecated: bool) {
+    pub fn add_has_change_marker(&mut self, patch_id: &str, deprecated: bool) {
         let attrs = MarkerRecordedEventAttributes {
-            marker_name: HAS_CHANGE_MARKER_NAME.to_string(),
+            marker_name: PATCH_MARKER_NAME.to_string(),
             details: build_has_change_marker_details(patch_id, deprecated),
             workflow_task_completed_event_id: self.previous_task_completed_id,
             ..Default::default()
@@ -280,7 +278,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::MarkerRecorded, attrs.into());
     }
 
-    pub(crate) fn add_local_activity_result_marker(
+    pub fn add_local_activity_result_marker(
         &mut self,
         seq: u32,
         activity_id: &str,
@@ -289,7 +287,7 @@ impl TestHistoryBuilder {
         self.add_local_activity_marker(seq, activity_id, Some(payload), None, None);
     }
 
-    pub(crate) fn add_local_activity_result_marker_with_time(
+    pub fn add_local_activity_result_marker_with_time(
         &mut self,
         seq: u32,
         activity_id: &str,
@@ -299,7 +297,7 @@ impl TestHistoryBuilder {
         self.add_local_activity_marker(seq, activity_id, Some(payload), None, Some(complete_time));
     }
 
-    pub(crate) fn add_local_activity_fail_marker(
+    pub fn add_local_activity_fail_marker(
         &mut self,
         seq: u32,
         activity_id: &str,
@@ -308,7 +306,7 @@ impl TestHistoryBuilder {
         self.add_local_activity_marker(seq, activity_id, None, Some(failure), None);
     }
 
-    pub(crate) fn add_local_activity_cancel_marker(&mut self, seq: u32, activity_id: &str) {
+    pub fn add_local_activity_cancel_marker(&mut self, seq: u32, activity_id: &str) {
         self.add_local_activity_marker(
             seq,
             activity_id,
@@ -326,7 +324,7 @@ impl TestHistoryBuilder {
         );
     }
 
-    pub(crate) fn add_signal_wf(
+    pub fn add_signal_wf(
         &mut self,
         signal_name: impl Into<String>,
         workflow_id: impl Into<String>,
@@ -348,7 +346,7 @@ impl TestHistoryBuilder {
         )
     }
 
-    pub(crate) fn add_external_signal_completed(&mut self, initiated_id: i64) {
+    pub fn add_external_signal_completed(&mut self, initiated_id: i64) {
         let attrs = ExternalWorkflowExecutionSignaledEventAttributes {
             initiated_event_id: initiated_id,
             ..Default::default()
@@ -356,7 +354,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::ExternalWorkflowExecutionSignaled, attrs.into());
     }
 
-    pub(crate) fn add_external_signal_failed(&mut self, initiated_id: i64) {
+    pub fn add_external_signal_failed(&mut self, initiated_id: i64) {
         let attrs = SignalExternalWorkflowExecutionFailedEventAttributes {
             initiated_event_id: initiated_id,
             ..Default::default()
@@ -367,7 +365,7 @@ impl TestHistoryBuilder {
         );
     }
 
-    pub(crate) fn add_cancel_external_wf(&mut self, execution: NamespacedWorkflowExecution) -> i64 {
+    pub fn add_cancel_external_wf(&mut self, execution: NamespacedWorkflowExecution) -> i64 {
         let attrs = RequestCancelExternalWorkflowExecutionInitiatedEventAttributes {
             workflow_task_completed_event_id: self.previous_task_completed_id,
             namespace: execution.namespace,
@@ -383,7 +381,7 @@ impl TestHistoryBuilder {
         )
     }
 
-    pub(crate) fn add_cancel_external_wf_completed(&mut self, initiated_id: i64) {
+    pub fn add_cancel_external_wf_completed(&mut self, initiated_id: i64) {
         let attrs = ExternalWorkflowExecutionCancelRequestedEventAttributes {
             initiated_event_id: initiated_id,
             ..Default::default()
@@ -394,7 +392,7 @@ impl TestHistoryBuilder {
         );
     }
 
-    pub(crate) fn add_cancel_external_wf_failed(&mut self, initiated_id: i64) {
+    pub fn add_cancel_external_wf_failed(&mut self, initiated_id: i64) {
         let attrs = RequestCancelExternalWorkflowExecutionFailedEventAttributes {
             initiated_event_id: initiated_id,
             ..Default::default()
@@ -405,33 +403,23 @@ impl TestHistoryBuilder {
         );
     }
 
-    pub(crate) fn as_history_update(&self) -> HistoryUpdate {
-        self.get_full_history_info().unwrap().into()
-    }
-
     pub fn get_orig_run_id(&self) -> &str {
         &self.original_run_id
     }
 
     /// Iterates over the events in this builder to return a [HistoryInfo] including events up to
     /// the provided `to_wf_task_num`
-    pub(crate) fn get_history_info(
-        &self,
-        to_wf_task_num: usize,
-    ) -> Result<HistoryInfo, HistoryInfoError> {
+    pub fn get_history_info(&self, to_wf_task_num: usize) -> Result<HistoryInfo, HistoryInfoError> {
         HistoryInfo::new_from_history(&self.events.clone().into(), Some(to_wf_task_num))
     }
 
     /// Iterates over the events in this builder to return a [HistoryInfo] representing *all*
     /// events in the history
-    pub(crate) fn get_full_history_info(&self) -> Result<HistoryInfo, HistoryInfoError> {
+    pub fn get_full_history_info(&self) -> Result<HistoryInfo, HistoryInfoError> {
         HistoryInfo::new_from_history(&self.events.clone().into(), None)
     }
 
-    pub(crate) fn get_one_wft(
-        &self,
-        from_wft_number: usize,
-    ) -> Result<HistoryInfo, HistoryInfoError> {
+    pub fn get_one_wft(&self, from_wft_number: usize) -> Result<HistoryInfo, HistoryInfoError> {
         let mut histinfo =
             HistoryInfo::new_from_history(&self.events.clone().into(), Some(from_wft_number))?;
         histinfo.make_incremental();
@@ -439,7 +427,7 @@ impl TestHistoryBuilder {
     }
 
     /// Return most recent wft start time or panic if unset
-    pub(crate) fn wft_start_time(&self) -> prost_types::Timestamp {
+    pub fn wft_start_time(&self) -> prost_types::Timestamp {
         self.events[(self.workflow_task_scheduled_event_id + 1) as usize]
             .event_time
             .clone()
@@ -468,8 +456,6 @@ impl TestHistoryBuilder {
     }
 }
 
-pub static DEFAULT_WORKFLOW_TYPE: &str = "not_specified";
-
 fn default_attribs(et: EventType) -> Result<Attributes> {
     Ok(match et {
         EventType::WorkflowExecutionStarted => default_wes_attribs().into(),
@@ -479,7 +465,7 @@ fn default_attribs(et: EventType) -> Result<Attributes> {
     })
 }
 
-pub(crate) fn default_wes_attribs() -> WorkflowExecutionStartedEventAttributes {
+pub fn default_wes_attribs() -> WorkflowExecutionStartedEventAttributes {
     WorkflowExecutionStartedEventAttributes {
         original_execution_run_id: Uuid::new_v4().to_string(),
         workflow_type: Some(WorkflowType {

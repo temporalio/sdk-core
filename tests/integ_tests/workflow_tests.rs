@@ -33,7 +33,8 @@ use temporal_sdk_core_protos::{
     temporal::api::failure::v1::Failure,
 };
 use test_utils::{
-    init_core_and_create_wf, schedule_activity_cmd, with_gw, CoreTestHelpers, CoreWfStarter, GwApi,
+    history_from_proto_binary, init_core_and_create_wf, init_core_replay, schedule_activity_cmd,
+    with_gw, CoreTestHelpers, CoreWfStarter, GwApi, TEST_Q,
 };
 use tokio::time::sleep;
 use uuid::Uuid;
@@ -155,9 +156,22 @@ async fn shutdown_aborts_actively_blocked_poll() {
     );
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn fail_wf_task() {
-    let (core, task_q) = init_core_and_create_wf("fail_wf_task").await;
+async fn fail_wf_task(#[values(true, false)] replay: bool) {
+    let (core, task_q) = if replay {
+        (
+            init_core_replay(
+                &history_from_proto_binary("histories/fail_wf_task.bin")
+                    .await
+                    .unwrap(),
+            )
+            .await,
+            TEST_Q.to_string(),
+        )
+    } else {
+        init_core_and_create_wf("fail_wf_task").await
+    };
     // Start with a timer
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     core.complete_timer(&task_q, &task.run_id, 0, Duration::from_millis(200))
@@ -224,8 +238,8 @@ async fn fail_workflow_execution() {
 
 #[tokio::test]
 async fn signal_workflow() {
-    let workflow_id = "signal_workflow";
-    let (core, task_q) = init_core_and_create_wf(workflow_id).await;
+    let (core, task_q) = init_core_and_create_wf("signal_workflow").await;
+    let workflow_id = task_q.clone();
 
     let signal_id_1 = "signal1";
     let signal_id_2 = "signal2";
@@ -302,8 +316,9 @@ async fn signal_workflow() {
 
 #[tokio::test]
 async fn signal_workflow_signal_not_handled_on_workflow_completion() {
-    let workflow_id = "signal_workflow_signal_not_handled_on_workflow_completion";
-    let (core, task_q) = init_core_and_create_wf(workflow_id).await;
+    let (core, task_q) =
+        init_core_and_create_wf("signal_workflow_signal_not_handled_on_workflow_completion").await;
+    let workflow_id = task_q.as_str();
     let signal_id_1 = "signal1";
     for i in 1..=2 {
         let res = core.poll_workflow_activation(&task_q).await.unwrap();
