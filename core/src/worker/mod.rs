@@ -35,7 +35,7 @@ use crate::{
 };
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
 use futures::{Future, TryFutureExt};
-use std::{convert::TryInto, future, sync::Arc};
+use std::{convert::TryInto, sync::Arc};
 use temporal_client::{ServerGatewayApis, WorkflowTaskCompletion};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -67,8 +67,8 @@ pub struct Worker {
     /// Buffers workflow task polling in the event we need to return a pending activation while
     /// a poll is ongoing. Sticky and nonsticky polling happens inside of it.
     wf_task_source: WFTSource,
-    /// Workflow task management
-    wft_manager: WorkflowTaskManager,
+    /// Workflow task management TODO: No pub
+    pub(crate) wft_manager: WorkflowTaskManager,
     /// Manages activity tasks for this worker/task queue
     at_task_mgr: Option<WorkerActivityTasks>,
     /// Manages local activities
@@ -84,6 +84,8 @@ pub struct Worker {
     /// Has shutdown been called?
     shutdown_requested: watch::Receiver<bool>,
     shutdown_sender: watch::Sender<bool>,
+    /// Will be called at the end of each activation completion
+    post_activate_hook: Option<Box<dyn Fn(&Self) + Send + Sync>>,
 
     metrics: MetricsContext,
 }
@@ -195,21 +197,27 @@ impl Worker {
             config,
             shutdown_requested: shut_rx,
             shutdown_sender: shut_tx,
+            post_activate_hook: None,
             pending_activations_notify: pa_notif,
             wfts_drained_notify,
             metrics,
         }
     }
 
-    /// Will shutdown the worker. Does not resolve until all outstanding workflow tasks have been
-    /// completed
-    pub(crate) async fn shutdown(&self) {
+    /// Begins the shutdown process, tells pollers they should stop. Is idempotent.
+    pub(crate) fn initiate_shutdown(&self) {
         let _ = self.shutdown_sender.send(true);
         // First, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.notify_shutdown();
         }
         self.wf_task_source.stop_pollers();
+    }
+
+    /// Will shutdown the worker. Does not resolve until all outstanding workflow tasks have been
+    /// completed
+    pub(crate) async fn shutdown(&self) {
+        self.initiate_shutdown();
         // Next we need to wait for all local activities to finish so no more workflow task
         // heartbeats will be generated
         self.local_act_mgr.shutdown_and_wait_all_finished().await;
@@ -254,7 +262,8 @@ impl Worker {
             if let Some(ref act_mgr) = self.at_task_mgr {
                 act_mgr.poll().await
             } else {
-                future::pending().await
+                let _ = self.shutdown_requested.clone().changed().await;
+                Err(PollActivityError::ShutDown)
             }
         };
 
@@ -398,7 +407,21 @@ impl Worker {
                 })
             }
         }?;
-        self.after_workflow_activation(&completion.run_id, report_outcome);
+
+        self.wft_manager
+            .after_wft_report(&completion.run_id, report_outcome.reported_to_server);
+        if report_outcome.reported_to_server || report_outcome.failed {
+            // If we failed the WFT but didn't report anything, we still want to release the WFT
+            // permit since the server will eventually time out the task and we've already evicted
+            // the run.
+            self.return_workflow_task_permit();
+        }
+        self.wfts_drained_notify.notify_waiters();
+
+        if let Some(h) = &self.post_activate_hook {
+            h(self);
+        }
+
         Ok(())
     }
 
@@ -409,6 +432,14 @@ impl Worker {
 
     pub(crate) fn request_wf_eviction(&self, run_id: &str, reason: impl Into<String>) {
         self.wft_manager.request_eviction(run_id, reason);
+    }
+
+    /// Sets a function to be called at the end of each activation completion
+    pub(crate) fn set_post_activate_hook(
+        &mut self,
+        callback: impl Fn(&Self) + Send + Sync + 'static,
+    ) {
+        self.post_activate_hook = Some(Box::new(callback))
     }
 
     /// Resolves with WFT poll response or `PollWfError::ShutDown` if WFTs have been drained
@@ -702,18 +733,6 @@ impl Worker {
         })
     }
 
-    fn after_workflow_activation(&self, run_id: &str, report_outcome: WFTReportOutcome) {
-        self.wft_manager
-            .after_wft_report(run_id, report_outcome.reported_to_server);
-        if report_outcome.reported_to_server || report_outcome.failed {
-            // If we failed the WFT but didn't report anything, we still want to release the WFT
-            // permit since the server will eventually time out the task and we've already evicted
-            // the run.
-            self.return_workflow_task_permit();
-        }
-        self.wfts_drained_notify.notify_waiters();
-    }
-
     /// Handle server errors from either completing or failing a workflow task. Returns any errors
     /// that can't be automatically handled.
     async fn handle_wft_reporting_errs<T, Fut>(
@@ -813,8 +832,7 @@ struct WFTReportOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_help::mock_gateway;
-
+    use temporal_client::mocks::mock_gateway;
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 
     #[tokio::test]

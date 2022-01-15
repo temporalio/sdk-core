@@ -6,6 +6,7 @@ mod continue_as_new;
 mod determinism;
 mod local_activities;
 mod patches;
+mod replay;
 mod signals;
 mod stickyness;
 mod timers;

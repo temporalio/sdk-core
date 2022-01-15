@@ -15,11 +15,11 @@ use crate::{
 };
 use futures::FutureExt;
 use std::time::Duration;
+use temporal_client::mocks::{fake_sg_opts, mock_manual_gateway};
 use temporal_sdk_core_protos::{
     coresdk::workflow_completion::WorkflowActivationCompletion,
     temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
 };
-use temporal_sdk_core_test_utils::{fake_sg_opts, mock_manual_gateway};
 use tokio::{sync::Barrier, time::sleep};
 
 #[tokio::test]

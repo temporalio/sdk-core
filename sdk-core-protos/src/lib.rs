@@ -1447,10 +1447,24 @@ pub mod temporal {
                 use crate::temporal::api::{
                     enums::v1::EventType, history::v1::history_event::Attributes,
                 };
+                use anyhow::bail;
                 use prost::alloc::fmt::Formatter;
                 use std::fmt::Display;
 
                 tonic::include_proto!("temporal.api.history.v1");
+
+                impl History {
+                    pub fn extract_run_id_from_start(&self) -> Result<&str, anyhow::Error> {
+                        if let Some(
+                            history_event::Attributes::WorkflowExecutionStartedEventAttributes(wes),
+                        ) = self.events.get(0).and_then(|x| x.attributes.as_ref())
+                        {
+                            Ok(&wes.original_execution_run_id)
+                        } else {
+                            bail!("First event is not WorkflowExecutionStarted?!?")
+                        }
+                    }
+                }
 
                 impl HistoryEvent {
                     /// Returns true if this is an event created to mirror a command

@@ -10,10 +10,10 @@ use log::LevelFilter;
 use prost::Message;
 use rand::{distributions::Standard, Rng};
 use std::{
-    convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc,
+    convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, sync::Arc,
     time::Duration,
 };
-use temporal_client::{MockManualGateway, MockServerGatewayApis};
+use temporal_client::mocks::mock_gateway;
 use temporal_sdk::TestRustWorker;
 use temporal_sdk_core::{
     init_mock_gateway, CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayApis,
@@ -51,11 +51,11 @@ pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn Core>, String)
 
 /// Create a core instance that can be used for replay. See the [ReplayCore] trait for adding
 /// canned history.
-pub fn init_core_replay() -> impl Core + ReplayCore {
+pub fn init_core_replay(opts: TelemetryOptions) -> ReplayCoreImpl {
     let shared_mock_gateway = mock_gateway();
     let init_opts = CoreInitOptionsBuilder::default()
         .gateway_opts(shared_mock_gateway.get_options().clone())
-        .telemetry_opts(get_integ_telem_options())
+        .telemetry_opts(opts)
         .build()
         .expect("replay core options init properly");
     let replay_core =
@@ -66,9 +66,13 @@ pub fn init_core_replay() -> impl Core + ReplayCore {
 /// Create a core replay instance preloaded with just one provided history. Returns the core impl
 /// and the task queue name as in [init_core_and_create_wf].
 pub fn init_core_replay_preloaded(test_name: &str, history: &History) -> (Arc<dyn Core>, String) {
-    let replay_core = init_core_replay();
+    let replay_core = init_core_replay(get_integ_telem_options());
+    let worker_cfg = WorkerConfigBuilder::default()
+        .task_queue(test_name)
+        .build()
+        .expect("Configuration options construct properly");
     replay_core
-        .make_replay_worker(test_name, history)
+        .make_replay_worker(worker_cfg, history)
         .expect("Worker registration works");
     (Arc::new(replay_core), test_name.to_string())
 }
@@ -354,30 +358,4 @@ where
         .await
         .unwrap();
     }
-}
-
-/// Create a mock client primed with basic necessary expectations
-pub fn mock_gateway() -> MockServerGatewayApis {
-    let mut mg = MockServerGatewayApis::new();
-    mg.expect_get_options().return_const(fake_sg_opts());
-    mg
-}
-
-/// Create a mock manual client primed with basic necessary expectations
-pub fn mock_manual_gateway() -> MockManualGateway {
-    let mut mg = MockManualGateway::new();
-    mg.expect_get_options().return_const(fake_sg_opts());
-    mg
-}
-
-/// Returns some totally fake client options for use with mock clients
-pub fn fake_sg_opts() -> ServerGatewayOptions {
-    ServerGatewayOptionsBuilder::default()
-        .target_url(Url::from_str("https://fake").unwrap())
-        .namespace("test_namespace".to_string())
-        .client_name("fake_client".to_string())
-        .client_version("fake_version".to_string())
-        .worker_binary_id("fake_binid".to_string())
-        .build()
-        .unwrap()
 }

@@ -1,15 +1,16 @@
 use crate::{
     test_help::{
         build_fake_core, build_mock_pollers, build_multihist_mock_sg, canned_histories,
-        hist_to_poll_resp, mock_core, mock_core_with_opts_no_workers, mock_gateway,
-        mock_manual_poller, register_mock_workers, single_hist_mock_sg, FakeWfResponses,
-        MockPollCfg, MockWorker, MocksHolder, ResponseType, TEST_Q,
+        hist_to_poll_resp, mock_core, mock_core_with_opts_no_workers, mock_manual_poller,
+        register_mock_workers, single_hist_mock_sg, FakeWfResponses, MockPollCfg, MockWorker,
+        MocksHolder, ResponseType, TEST_Q,
     },
     Core, CoreInitOptionsBuilder, CoreSDK, PollActivityError, PollWfError, WorkerConfigBuilder,
 };
 use futures::FutureExt;
 use rstest::{fixture, rstest};
 use std::{cell::RefCell, time::Duration};
+use temporal_client::mocks::{mock_gateway, mock_manual_gateway};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::workflow_activation_job,
@@ -21,7 +22,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::workflowservice::v1::RespondWorkflowTaskCompletedResponse,
 };
-use temporal_sdk_core_test_utils::{mock_manual_gateway, start_timer_cmd};
+use temporal_sdk_core_test_utils::start_timer_cmd;
 use tokio::sync::{watch, Barrier};
 
 #[tokio::test]

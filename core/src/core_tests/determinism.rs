@@ -1,5 +1,5 @@
 use crate::test_help::{
-    build_mock_pollers, canned_histories, mock_core, mock_gateway, MockPollCfg, ResponseType,
+    build_mock_pollers, canned_histories, mock_core, MockPollCfg, ResponseType,
     DEFAULT_WORKFLOW_TYPE, TEST_Q,
 };
 use std::{
@@ -9,7 +9,7 @@ use std::{
     },
     time::Duration,
 };
-
+use temporal_client::mocks::mock_gateway;
 use temporal_sdk::{TestRustWorker, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
 

@@ -3,10 +3,9 @@ use crate::{
     job_assert,
     test_help::{
         build_fake_core, build_mock_pollers, build_multihist_mock_sg, canned_histories,
-        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_core, mock_gateway,
-        poll_and_reply, poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg,
-        FakeWfResponses, MockPollCfg, MocksHolder, ResponseType, TestHistoryBuilder,
-        NO_MORE_WORK_ERROR_MSG, TEST_Q,
+        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_core, poll_and_reply,
+        poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, FakeWfResponses,
+        MockPollCfg, MocksHolder, ResponseType, TestHistoryBuilder, NO_MORE_WORK_ERROR_MSG, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
     Core, CoreSDK, WorkflowActivationCompletion,
@@ -17,6 +16,7 @@ use std::{
     sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     time::Duration,
 };
+use temporal_client::mocks::mock_gateway;
 
 use temporal_sdk_core_protos::{
     coresdk::{

@@ -1,6 +1,6 @@
 use crate::{
     test_help::{
-        build_mock_pollers, mock_core, mock_gateway, MockPollCfg, ResponseType, TestHistoryBuilder,
+        build_mock_pollers, mock_core, MockPollCfg, ResponseType, TestHistoryBuilder,
         DEFAULT_WORKFLOW_TYPE, TEST_Q,
     },
     Core,
@@ -14,13 +14,13 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_test_utils::history_replay::default_wes_attribs;
-
+use temporal_client::mocks::mock_gateway;
 use temporal_sdk::{LocalActivityOptions, TestRustWorker, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{common::RetryPolicy, AsJsonPayloadExt},
     temporal::api::{enums::v1::EventType, failure::v1::Failure},
 };
+use temporal_sdk_core_test_utils::history_replay::default_wes_attribs;
 use tokio::sync::Barrier;
 
 async fn echo(e: String) -> anyhow::Result<String> {

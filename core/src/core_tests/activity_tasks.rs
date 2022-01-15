@@ -2,8 +2,8 @@ use crate::{
     job_assert,
     test_help::{
         build_fake_core, canned_histories, gen_assert_and_reply, mock_core,
-        mock_core_with_opts_no_workers, mock_gateway, mock_manual_poller, mock_poller,
-        mock_poller_from_resps, poll_and_reply, MockWorker, MocksHolder, TEST_Q,
+        mock_core_with_opts_no_workers, mock_manual_poller, mock_poller, mock_poller_from_resps,
+        poll_and_reply, MockWorker, MocksHolder, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::NonSticky,
     ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
@@ -18,6 +18,7 @@ use std::{
     },
     time::Duration,
 };
+use temporal_client::mocks::{fake_sg_opts, mock_gateway, mock_manual_gateway};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{activity_resolution, ActivityExecutionResult, ActivityResolution},
@@ -34,9 +35,7 @@ use temporal_sdk_core_protos::{
         RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedResponse,
     },
 };
-use temporal_sdk_core_test_utils::{
-    fake_sg_opts, fanout_tasks, mock_manual_gateway, start_timer_cmd,
-};
+use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
 use tokio::{join, sync::Notify, time::sleep};
 
 #[tokio::test]

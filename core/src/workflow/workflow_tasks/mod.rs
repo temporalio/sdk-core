@@ -230,6 +230,15 @@ impl WorkflowTaskManager {
         self.workflow_machines.outstanding_wft()
     }
 
+    /// Returns the event id of the most recently processed event for the provided run id.
+    pub(crate) fn most_recently_processed_event(
+        &self,
+        run_id: &str,
+    ) -> Result<i64, WorkflowMissingError> {
+        self.workflow_machines
+            .access_sync(run_id, |wfm| wfm.machines.last_processed_event)
+    }
+
     /// Request a workflow eviction. This will queue up an activation to evict the workflow from
     /// the lang side. Workflow will not *actually* be evicted until lang replies to that activation
     ///

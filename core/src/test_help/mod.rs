@@ -1,7 +1,6 @@
 pub(crate) use temporal_sdk_core_test_utils::{
     canned_histories,
     history_replay::{TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE},
-    mock_gateway,
 };
 
 use crate::{
@@ -19,7 +18,10 @@ use std::{
     ops::RangeFull,
     sync::Arc,
 };
-use temporal_client::MockServerGatewayApis;
+use temporal_client::{
+    mocks::{fake_sg_opts, mock_gateway},
+    MockServerGatewayApis,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::WorkflowActivation,
@@ -36,7 +38,6 @@ use temporal_sdk_core_protos::{
         },
     },
 };
-use temporal_sdk_core_test_utils::fake_sg_opts;
 
 pub const TEST_Q: &str = "q";
 pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";

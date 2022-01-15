@@ -4,15 +4,23 @@ mod history_info;
 pub use history_builder::{default_wes_attribs, TestHistoryBuilder};
 pub use history_info::HistoryInfo;
 
-use crate::{mock_gateway, ServerGatewayApis, TEST_Q};
-use std::sync::Arc;
+use crate::{ServerGatewayApis, TEST_Q};
+use futures::FutureExt;
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use temporal_client::mocks::mock_manual_gateway;
 use temporal_sdk_core::CoreSDK;
 use temporal_sdk_core_api::{
     errors::{
         CompleteActivityError, CompleteWfError, PollActivityError, PollWfError,
         WorkerRegistrationError,
     },
-    worker::{WorkerConfig, WorkerConfigBuilder},
+    worker::WorkerConfig,
     Core, CoreLog,
 };
 use temporal_sdk_core_protos::{
@@ -30,34 +38,36 @@ use temporal_sdk_core_protos::{
 
 pub static DEFAULT_WORKFLOW_TYPE: &str = "not_specified";
 
-pub trait ReplayCore {
-    /// Make a fake worker for the provided task queue name which will use the provided history
-    /// to simulate poll responses containing that entire history.
+pub trait ReplayCore: Core {
+    /// Make a fake worker which will use the provided history to simulate poll responses containing
+    /// that entire history. The configuration should have a unique task queue name.
+    ///
+    /// Note that some of the worker config options do not apply, and some will be overridden.
+    /// Replay workers always are cached, have only 1 poller, and do not poll for activities.
     fn make_replay_worker(
         &self,
-        task_queue: impl Into<String>,
+        config: WorkerConfig,
         history: &History,
-    ) -> Result<(), WorkerRegistrationError>;
+    ) -> Result<(), anyhow::Error>;
 }
 
-pub(crate) struct ReplayCoreImpl {
-    pub inner: CoreSDK,
+/// Implements [ReplayCore] functionality
+pub struct ReplayCoreImpl {
+    pub(crate) inner: CoreSDK,
 }
 
 impl ReplayCore for ReplayCoreImpl {
     fn make_replay_worker(
         &self,
-        task_queue: impl Into<String>,
+        mut config: WorkerConfig,
         history: &History,
-    ) -> Result<(), WorkerRegistrationError> {
+    ) -> Result<(), anyhow::Error> {
         let mock_g = mock_gateway_from_history(history);
-        let config = WorkerConfigBuilder::default()
-            .task_queue(task_queue)
-            .no_remote_activities(true)
-            .build()
-            .expect("Worker config constructs properly");
+        config.max_cached_workflows = 1;
+        config.max_concurrent_wft_polls = 1;
+        config.no_remote_activities = true;
         self.inner
-            .register_worker_with_gateway(config, Arc::new(mock_g))
+            .register_replay_worker(config, Arc::new(mock_g), history)
     }
 }
 
@@ -121,7 +131,7 @@ impl Core for ReplayCoreImpl {
 }
 
 pub fn mock_gateway_from_history(history: &History) -> impl ServerGatewayApis {
-    let mut mg = mock_gateway();
+    let mut mg = mock_manual_gateway();
 
     let hist_info = HistoryInfo::new_from_history(history, None).unwrap();
     let wf = WorkflowExecution {
@@ -131,19 +141,37 @@ pub fn mock_gateway_from_history(history: &History) -> impl ServerGatewayApis {
 
     let wf_clone = wf.clone();
     mg.expect_start_workflow().returning(move |_, _, _, _, _| {
-        Ok(StartWorkflowExecutionResponse {
-            run_id: wf_clone.run_id.clone(),
-        })
+        let wf_clone = wf_clone.clone();
+        async move {
+            Ok(StartWorkflowExecutionResponse {
+                run_id: wf_clone.run_id.clone(),
+            })
+        }
+        .boxed()
     });
 
+    static DID_SEND: AtomicBool = AtomicBool::new(false);
     mg.expect_poll_workflow_task().returning(move |_, _| {
-        let mut resp = hist_info.as_poll_wft_response(TEST_Q);
-        resp.workflow_execution = Some(wf.clone());
-        Ok(resp)
+        let hist_info = hist_info.clone();
+        let wf = wf.clone();
+        async move {
+            if !DID_SEND.swap(true, Ordering::AcqRel) {
+                let mut resp = hist_info.as_poll_wft_response(TEST_Q);
+                resp.workflow_execution = Some(wf.clone());
+                Ok(resp)
+            } else {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                Ok(Default::default())
+            }
+        }
+        .boxed()
     });
 
-    mg.expect_fail_workflow_task()
-        .returning(|_, _, _| Ok(RespondWorkflowTaskFailedResponse {}));
+    mg.expect_fail_workflow_task().returning(|_, _, _| {
+        // We'll need to re-send the history if WFT fails
+        DID_SEND.store(false, Ordering::Release);
+        async move { Ok(RespondWorkflowTaskFailedResponse {}) }.boxed()
+    });
 
     mg
 }
