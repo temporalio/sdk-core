@@ -58,9 +58,13 @@ use temporal_sdk_core_api::{
     },
     Core, CoreLog,
 };
-use temporal_sdk_core_protos::coresdk::{
-    activity_task::ActivityTask, workflow_activation::WorkflowActivation,
-    workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
+use temporal_sdk_core_protos::{
+    coresdk::{
+        activity_task::ActivityTask, workflow_activation::WorkflowActivation,
+        workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat,
+        ActivityTaskCompletion,
+    },
+    temporal::api::history::v1::History,
 };
 
 #[cfg(test)]
@@ -121,7 +125,17 @@ pub struct CoreSDK {
 #[async_trait::async_trait]
 impl Core for CoreSDK {
     fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError> {
-        self.register_worker_with_gateway(config, self.server_gateway.clone())
+        info!(
+            task_queue = config.task_queue.as_str(),
+            "Registering worker"
+        );
+        let sticky_q = self.get_sticky_q_name_for_worker(&config);
+        self.workers.new_worker(
+            config,
+            sticky_q,
+            self.server_gateway.clone(),
+            self.metrics.clone(),
+        )
     }
 
     #[instrument(level = "debug", skip(self), fields(run_id))]
@@ -228,25 +242,44 @@ impl CoreSDK {
         }
     }
 
-    /// Register a worker with a specific client instance. Can be used to provide the worker with
-    /// a mock client, for example.
-    pub fn register_worker_with_gateway(
+    /// Register a worker for replaying a specific history. The worker should use a unique task
+    /// queue name. It will auto-shutdown as soon as the history has finished being replayed. The
+    /// provided gateway should be a mock, and this should only be used for workflow testing
+    /// purposes.
+    pub fn register_replay_worker(
         &self,
         config: WorkerConfig,
         gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
-    ) -> Result<(), WorkerRegistrationError> {
+        history: &History,
+    ) -> Result<(), anyhow::Error> {
         info!(
             task_queue = config.task_queue.as_str(),
-            "Registering worker"
+            "Registering replay worker"
         );
-        let sticky_q = self.get_sticky_q_name_for_worker(&config);
-        self.workers
-            .new_worker(config, sticky_q, gateway, self.metrics.clone())
+        // TODO Possibly just use mocked pollers here, but they'd need to be un-test-moded
+        let run_id = history.extract_run_id_from_start()?.to_string();
+        // TODO: SHould be get last event id
+        let last_event = history.events.len() as i64;
+        let tq = config.task_queue.clone();
+        let mut worker = Worker::new(config, None, gateway, self.metrics.clone());
+        worker.set_post_activate_hook(move |worker| {
+            if worker
+                .wft_manager
+                .most_recently_processed_event(&run_id)
+                .unwrap_or_default()
+                >= last_event
+            {
+                worker.initiate_shutdown();
+            }
+        });
+
+        self.workers.set_worker_for_task_queue(tq, worker)?;
+        Ok(())
     }
 
     /// Allow construction of workers with mocked poll responses during testing
     #[cfg(test)]
-    pub(crate) fn reg_worker_sync(&mut self, worker: MockWorker) {
+    pub(crate) fn reg_worker_sync(&self, worker: MockWorker) {
         let sticky_q = self.get_sticky_q_name_for_worker(&worker.config);
         let tq = worker.config.task_queue.clone();
         let worker = Worker::new_with_pollers(
