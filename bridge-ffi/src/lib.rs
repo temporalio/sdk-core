@@ -319,17 +319,15 @@ pub extern "C" fn tmprl_register_worker(
             }
         };
     let user_data = UserDataHandle(user_data);
-    core.tokio_runtime.clone().spawn(async move {
-        match core.register_worker(wrappers::WorkerConfig(req)).await {
-            Ok(()) => unsafe {
-                callback(user_data.into(), &*DEFAULT_REGISTER_WORKER_RESPONSE_BYTES);
-            },
-            Err(err) => {
-                let resp = bridge::RegisterWorkerResponse { error: Some(err) };
-                unsafe { callback(user_data.into(), core.encode_proto(&resp).into_raw()) };
-            }
+    match core.register_worker(wrappers::WorkerConfig(req)) {
+        Ok(()) => unsafe {
+            callback(user_data.into(), &*DEFAULT_REGISTER_WORKER_RESPONSE_BYTES);
+        },
+        Err(err) => {
+            let resp = bridge::RegisterWorkerResponse { error: Some(err) };
+            unsafe { callback(user_data.into(), core.encode_proto(&resp).into_raw()) };
         }
-    });
+    }
 }
 
 /// Shutdown registered worker.
@@ -683,7 +681,7 @@ impl tmprl_core_t {
         self.core.shutdown().await;
     }
 
-    async fn register_worker(
+    fn register_worker(
         &self,
         config: wrappers::WorkerConfig,
     ) -> Result<(), bridge::register_worker_response::Error> {
@@ -694,7 +692,7 @@ impl tmprl_core_t {
                     message,
                     worker_already_registered: false,
                 })?;
-        self.core.register_worker(config).await.map_err(|err| {
+        self.core.register_worker(config).map_err(|err| {
             bridge::register_worker_response::Error {
                 message: format!("{}", err),
                 worker_already_registered: matches!(
