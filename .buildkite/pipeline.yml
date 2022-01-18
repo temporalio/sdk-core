@@ -25,6 +25,8 @@ steps:
           config:
             - .buildkite/docker/docker-compose.yaml
             - .buildkite/docker/docker-compose-ci.yaml
+          env:
+            - TEMPORAL_SDK_CORE_BRIDGE_FFI_DISABLE_HEADER_CHANGE=true
   - label: "test"
     agents:
       queue: "default"

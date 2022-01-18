@@ -1,0 +1,24 @@
+[package]
+name = "temporal-sdk-core-bridge-ffi"
+version = "0.1.0"
+edition = "2021"
+license-file = "LICENSE.txt"
+description = "FFI Bridge for Core"
+homepage = "https://temporal.io/"
+repository = "https://github.com/temporalio/sdk-core"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+lazy_static = "1.4"
+libc = "0.2"
+log = "0.4"
+prost = "0.9"
+temporal-sdk-core = { version = "0.1", path = "../core" }
+temporal-sdk-core-api = { version = "0.1", path = "../core-api" }
+temporal-sdk-core-protos = { version = "0.1", path = "../sdk-core-protos" }
+tokio = "1"
+
+[build-dependencies]
+cbindgen = "0.20.0"

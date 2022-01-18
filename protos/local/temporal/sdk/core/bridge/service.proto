@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package coresdk.bridge;
+
+import "temporal/sdk/core/bridge/bridge.proto";
+
+service Bridge {
+  // Starts an isolated core instance unique to this stream that will
+  // automatically be shutdown on completion of the stream. The caller must
+  // provide the first message and it must be an "init". No other calls can be
+  // made until the init response has been received by the client.
+  //
+  // Every request message will have a single correlated response message,
+  // though not necessarily in a particular order or timeframe.
+  //
+  // There is no requst for "shutdown", because it is implied on stream
+  // completion.
+  //
+  // The stream approach is chosen because core is inherently stateful while
+  // gRPC unary RPCs are not. Upon abnormal stream close, the caller should
+  // reattempt, performing the init again.
+  rpc Stream(stream StreamRequest) returns (stream StreamResponse);
+}
+
+message StreamRequest {
+  // The ID sent in the response. This is not technically required nor must it
+  // be unique if the caller, say, knows they only have one message outstanding
+  // of a certain type. However, it is recommended that this always be present
+  // and unique to avoid confusion.
+  string id = 1;
+
+  oneof request {
+    InitRequest init = 2;
+    RegisterWorkerRequest register_worker = 3;
+    PollWorkflowActivationRequest poll_workflow_activation = 4;
+    PollActivityTaskRequest poll_activity_task = 5;
+    CompleteWorkflowActivationRequest complete_workflow_activation = 6;
+    CompleteActivityTaskRequest complete_activity_task = 7;
+    RecordActivityHeartbeatRequest record_activity_heartbeat = 8;
+    RequestWorkflowEvictionRequest request_workflow_eviction = 9;
+    ShutdownWorkerRequest shutdown_worker = 10;
+    FetchBufferedLogsRequest fetch_buffered_logs = 11;
+  }
+}
+
+message StreamResponse {
+  string request_id = 1;
+
+  oneof response {
+    InitResponse init = 2;
+    RegisterWorkerResponse register_worker = 3;
+    PollWorkflowActivationResponse poll_workflow_activation = 4;
+    PollActivityTaskResponse poll_activity_task = 5;
+    CompleteWorkflowActivationResponse complete_workflow_activation = 6;
+    CompleteActivityTaskResponse complete_activity_task = 7;
+    RecordActivityHeartbeatResponse record_activity_heartbeat = 8;
+    RequestWorkflowEvictionResponse request_workflow_eviction = 9;
+    ShutdownWorkerResponse shutdown_worker = 10;
+    FetchBufferedLogsResponse fetch_buffered_logs = 11;
+  }
+}
