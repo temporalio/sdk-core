@@ -41,7 +41,7 @@ use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::activity_execution_result,
         activity_task::ActivityTask,
-        workflow_activation::WorkflowActivation,
+        workflow_activation::{remove_from_cache::EvictionReason, WorkflowActivation},
         workflow_completion::{self, workflow_activation_completion, WorkflowActivationCompletion},
     },
     temporal::api::{
@@ -396,6 +396,7 @@ impl Worker {
                 self.wf_activation_failed(
                     &completion.run_id,
                     WorkflowTaskFailedCause::Unspecified,
+                    EvictionReason::LangFail,
                     failure,
                 )
                 .await
@@ -419,6 +420,7 @@ impl Worker {
         self.wfts_drained_notify.notify_waiters();
 
         if let Some(h) = &self.post_activate_hook {
+            warn!("Post activate hook ran {:?}", report_outcome.failed);
             h(self);
         }
 
@@ -430,8 +432,13 @@ impl Worker {
         self.workflows_semaphore.add_permits(1);
     }
 
-    pub(crate) fn request_wf_eviction(&self, run_id: &str, reason: impl Into<String>) {
-        self.wft_manager.request_eviction(run_id, reason);
+    pub(crate) fn request_wf_eviction(
+        &self,
+        run_id: &str,
+        message: impl Into<String>,
+        reason: EvictionReason,
+    ) {
+        self.wft_manager.request_eviction(run_id, message, reason);
     }
 
     /// Sets a function to be called at the end of each activation completion
@@ -579,6 +586,7 @@ impl Worker {
                 self.request_wf_eviction(
                     &we.run_id,
                     format!("Error while applying poll response to workflow: {:?}", e),
+                    e.evict_reason(),
                 );
                 None
             }
@@ -686,6 +694,7 @@ impl Worker {
                 self.wf_activation_failed(
                     run_id,
                     fail_cause,
+                    update_err.evict_reason(),
                     Failure::application_failure(wft_fail_str.clone(), false).into(),
                 )
                 .await
@@ -700,37 +709,44 @@ impl Worker {
         &self,
         run_id: &str,
         cause: WorkflowTaskFailedCause,
+        reason: EvictionReason,
         failure: workflow_completion::Failure,
     ) -> Result<WFTReportOutcome, CompleteWfError> {
-        Ok(match self.wft_manager.failed_activation(run_id) {
-            FailedActivationOutcome::Report(tt) => {
-                warn!(run_id, failure=?failure, "Failing workflow activation");
-                self.handle_wft_reporting_errs(run_id, || async {
-                    self.server_gateway
-                        .fail_workflow_task(tt, cause, failure.failure.map(Into::into))
-                        .await
-                })
-                .await?;
-                WFTReportOutcome {
-                    reported_to_server: true,
-                    failed: true,
-                }
-            }
-            FailedActivationOutcome::ReportLegacyQueryFailure(task_token) => {
-                warn!(run_id, failure=?failure, "Failing legacy query request");
-                self.server_gateway
-                    .respond_legacy_query(task_token, legacy_query_failure(failure))
+        Ok(
+            match self.wft_manager.failed_activation(
+                run_id,
+                reason,
+                format!("Workflow activation completion failed: {:?}", failure),
+            ) {
+                FailedActivationOutcome::Report(tt) => {
+                    warn!(run_id, failure=?failure, "Failing workflow activation");
+                    self.handle_wft_reporting_errs(run_id, || async {
+                        self.server_gateway
+                            .fail_workflow_task(tt, cause, failure.failure.map(Into::into))
+                            .await
+                    })
                     .await?;
-                WFTReportOutcome {
-                    reported_to_server: true,
-                    failed: true,
+                    WFTReportOutcome {
+                        reported_to_server: true,
+                        failed: true,
+                    }
                 }
-            }
-            FailedActivationOutcome::NoReport => WFTReportOutcome {
-                reported_to_server: false,
-                failed: true,
+                FailedActivationOutcome::ReportLegacyQueryFailure(task_token) => {
+                    warn!(run_id, failure=?failure, "Failing legacy query request");
+                    self.server_gateway
+                        .respond_legacy_query(task_token, legacy_query_failure(failure))
+                        .await?;
+                    WFTReportOutcome {
+                        reported_to_server: true,
+                        failed: true,
+                    }
+                }
+                FailedActivationOutcome::NoReport => WFTReportOutcome {
+                    reported_to_server: false,
+                    failed: true,
+                },
             },
-        })
+        )
     }
 
     /// Handle server errors from either completing or failing a workflow task. Returns any errors
@@ -743,7 +759,7 @@ impl Worker {
     where
         Fut: Future<Output = Result<T, tonic::Status>>,
     {
-        let mut should_evict = false;
+        let mut should_evict = None;
         let res = match completer().await {
             Err(err) => {
                 match err.code() {
@@ -751,12 +767,12 @@ impl Worker {
                     // them besides poll again, which it will do anyway.
                     tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
                         warn!(error = %err, run_id, "Unhandled command response when completing");
-                        should_evict = true;
+                        should_evict = Some(EvictionReason::UnhandledCommand);
                         Ok(())
                     }
                     tonic::Code::NotFound => {
                         warn!(error = %err, run_id, "Task not found when completing");
-                        should_evict = true;
+                        should_evict = Some(EvictionReason::TaskNotFound);
                         Ok(())
                     }
                     _ => Err(err),
@@ -764,8 +780,8 @@ impl Worker {
             }
             _ => Ok(()),
         };
-        if should_evict {
-            self.request_wf_eviction(run_id, "Error reporting WFT to server");
+        if let Some(reason) = should_evict {
+            self.request_wf_eviction(run_id, "Error reporting WFT to server", reason);
         }
         res.map_err(Into::into)
     }
@@ -796,7 +812,11 @@ impl Worker {
                 "Problem with local resolution on run {}: {:?} -- will evict the workflow",
                 run_id, e
             );
-            self.request_wf_eviction(run_id, "Issue while processing local resolution");
+            self.request_wf_eviction(
+                run_id,
+                "Issue while processing local resolution",
+                e.evict_reason(),
+            );
         }
     }
 

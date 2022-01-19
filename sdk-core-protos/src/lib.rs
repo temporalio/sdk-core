@@ -336,7 +336,7 @@ pub mod coresdk {
 
     pub mod workflow_activation {
         use crate::{
-            coresdk::FromPayloadsExt,
+            coresdk::{workflow_activation::remove_from_cache::EvictionReason, FromPayloadsExt},
             temporal::api::history::v1::{
                 WorkflowExecutionCancelRequestedEventAttributes,
                 WorkflowExecutionSignaledEventAttributes,
@@ -345,13 +345,21 @@ pub mod coresdk {
         use std::fmt::{Display, Formatter};
 
         tonic::include_proto!("coresdk.workflow_activation");
-        pub fn create_evict_activation(run_id: String, reason: String) -> WorkflowActivation {
+
+        pub fn create_evict_activation(
+            run_id: String,
+            message: String,
+            reason: EvictionReason,
+        ) -> WorkflowActivation {
             WorkflowActivation {
                 timestamp: None,
                 run_id,
                 is_replaying: false,
                 jobs: vec![WorkflowActivationJob::from(
-                    workflow_activation_job::Variant::RemoveFromCache(RemoveFromCache { reason }),
+                    workflow_activation_job::Variant::RemoveFromCache(RemoveFromCache {
+                        message,
+                        reason: reason as i32,
+                    }),
                 )],
             }
         }
@@ -390,8 +398,21 @@ pub mod coresdk {
                 self.jobs.len() == 1 && self.eviction_index().is_some()
             }
 
+            /// Returns eviction reason if this activation has an evict job
+            pub fn eviction_reason(&self) -> Option<EvictionReason> {
+                self.jobs.iter().find_map(|j| {
+                    if let Some(workflow_activation_job::Variant::RemoveFromCache(ref rj)) =
+                        j.variant
+                    {
+                        EvictionReason::from_i32(rj.reason)
+                    } else {
+                        None
+                    }
+                })
+            }
+
             /// Append an eviction job to the joblist
-            pub fn append_evict_job(&mut self, reason: impl Into<String>) {
+            pub fn append_evict_job(&mut self, evict_job: RemoveFromCache) {
                 if let Some(last_job) = self.jobs.last() {
                     if matches!(
                         last_job.variant,
@@ -401,11 +422,15 @@ pub mod coresdk {
                     }
                 }
                 let evict_job = WorkflowActivationJob::from(
-                    workflow_activation_job::Variant::RemoveFromCache(RemoveFromCache {
-                        reason: reason.into(),
-                    }),
+                    workflow_activation_job::Variant::RemoveFromCache(evict_job),
                 );
                 self.jobs.push(evict_job);
+            }
+        }
+
+        impl Display for EvictionReason {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{:?}", self)
             }
         }
 

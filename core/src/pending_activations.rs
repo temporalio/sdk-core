@@ -1,6 +1,9 @@
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 use std::collections::{HashMap, VecDeque};
+use temporal_sdk_core_protos::coresdk::workflow_activation::{
+    remove_from_cache::EvictionReason, RemoveFromCache,
+};
 
 /// Tracks pending activations using an internal queue, while also allowing lookup and removal of
 /// any pending activations by run ID.
@@ -20,8 +23,7 @@ struct PaInner {
 }
 
 pub struct PendingActInfo {
-    /// The value is the eviciton reason, if present
-    pub needs_eviction: Option<String>,
+    pub needs_eviction: Option<RemoveFromCache>,
     pub run_id: String,
 }
 
@@ -39,18 +41,23 @@ impl PendingActivations {
             inner.queue.push_back(key);
         };
     }
-    pub fn notify_needs_eviction(&self, run_id: &str, reason: String) {
+    pub fn notify_needs_eviction(&self, run_id: &str, message: String, reason: EvictionReason) {
         let mut inner = self.inner.write();
+
+        let evictjob = RemoveFromCache {
+            message,
+            reason: reason as i32,
+        };
 
         if let Some(key) = inner.by_run_id.get(run_id).copied() {
             let act = inner
                 .activations
                 .get_mut(key)
                 .expect("PA run id mapping is always in sync with slot map");
-            act.needs_eviction = Some(reason);
+            act.needs_eviction = Some(evictjob);
         } else {
             let key = inner.activations.insert(PendingActInfo {
-                needs_eviction: Some(reason),
+                needs_eviction: Some(evictjob),
                 run_id: run_id.to_string(),
             });
             inner.by_run_id.insert(run_id.to_string(), key);
@@ -111,8 +118,8 @@ mod tests {
         let rid1 = "1";
         let rid2 = "2";
         pas.notify_needs_activation(rid1);
-        pas.notify_needs_eviction(rid1, "whatever".to_string());
-        pas.notify_needs_eviction(rid2, "whatever".to_string());
+        pas.notify_needs_eviction(rid1, "whatever".to_string(), EvictionReason::Unspecified);
+        pas.notify_needs_eviction(rid2, "whatever".to_string(), EvictionReason::Unspecified);
         pas.notify_needs_activation(rid2);
         assert!(pas.has_pending(rid1));
         assert!(pas.has_pending(rid2));

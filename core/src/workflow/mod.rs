@@ -279,7 +279,7 @@ pub mod managed_wf {
     use temporal_sdk_core_protos::coresdk::{
         activity_result::ActivityExecutionResult,
         common::Payload,
-        workflow_activation::create_evict_activation,
+        workflow_activation::{create_evict_activation, remove_from_cache::EvictionReason},
         workflow_completion::{
             workflow_activation_completion::Status, WorkflowActivationCompletion,
         },
@@ -432,6 +432,7 @@ pub mod managed_wf {
             let _ = self.activation_tx.send(create_evict_activation(
                 "not actually important".to_string(),
                 "force shutdown".to_string(),
+                EvictionReason::Unspecified,
             ));
             self.future_handle.take().unwrap().await.unwrap()
         }

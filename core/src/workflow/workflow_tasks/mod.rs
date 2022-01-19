@@ -30,7 +30,8 @@ use temporal_client::ServerGatewayApis;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
-            create_query_activation, workflow_activation_job, QueryWorkflow, WorkflowActivation,
+            create_query_activation, remove_from_cache::EvictionReason, workflow_activation_job,
+            QueryWorkflow, WorkflowActivation,
         },
         workflow_commands::QueryResult,
         FromPayloadsExt,
@@ -213,6 +214,7 @@ impl WorkflowTaskManager {
                 self.request_eviction(
                     &pending_info.run_id,
                     "Tried to apply pending activation for missing run",
+                    EvictionReason::Fatal,
                 );
                 // Continue trying to return a valid pending activation
                 self.next_pending_activation()
@@ -243,14 +245,19 @@ impl WorkflowTaskManager {
     /// the lang side. Workflow will not *actually* be evicted until lang replies to that activation
     ///
     /// Returns, if found, the number of attempts on the current workflow task
-    pub(crate) fn request_eviction(&self, run_id: &str, reason: impl Into<String>) -> Option<u32> {
+    pub(crate) fn request_eviction(
+        &self,
+        run_id: &str,
+        message: impl Into<String>,
+        reason: EvictionReason,
+    ) -> Option<u32> {
         if self.workflow_machines.exists(run_id) {
             if !self.activation_has_eviction(run_id) {
-                let reason = reason.into();
-                debug!(%run_id, %reason, "Eviction requested");
+                let message = message.into();
+                debug!(%run_id, %message, "Eviction requested");
                 // Queue up an eviction activation
                 self.pending_activations
-                    .notify_needs_eviction(run_id, reason);
+                    .notify_needs_eviction(run_id, message, reason);
                 self.pending_activations_notifier.notify_waiters();
             }
             self.workflow_machines
@@ -530,7 +537,12 @@ impl WorkflowTaskManager {
 
     /// Record that an activation failed, returns enum that indicates if failure should be reported
     /// to the server
-    pub(crate) fn failed_activation(&self, run_id: &str) -> FailedActivationOutcome {
+    pub(crate) fn failed_activation(
+        &self,
+        run_id: &str,
+        reason: EvictionReason,
+        failstr: String,
+    ) -> FailedActivationOutcome {
         let tt = if let Some(tt) = self
             .workflow_machines
             .get_task(run_id)
@@ -555,7 +567,7 @@ impl WorkflowTaskManager {
         } else {
             // Blow up any cached data associated with the workflow
             let should_report = self
-                .request_eviction(run_id, "Activation failed")
+                .request_eviction(run_id, failstr, reason)
                 .map_or(true, |attempt| attempt <= 1);
             if should_report {
                 FailedActivationOutcome::Report(tt)
@@ -657,7 +669,11 @@ impl WorkflowTaskManager {
                 // Evict run id if cache is full. Non-sticky will always evict.
                 let maybe_evicted = self.cache_manager.lock().insert(run_id);
                 if let Some(evicted_run_id) = maybe_evicted {
-                    self.request_eviction(&evicted_run_id, "Workflow cache full");
+                    self.request_eviction(
+                        &evicted_run_id,
+                        "Workflow cache full",
+                        EvictionReason::CacheFull,
+                    );
                 }
 
                 // If there was a buffered poll response from the server, it is now ready to
@@ -797,6 +813,12 @@ pub(crate) struct WorkflowUpdateError {
     /// The run id of the erring workflow
     #[allow(dead_code)] // Useful in debug output
     pub run_id: String,
+}
+
+impl WorkflowUpdateError {
+    pub fn evict_reason(&self) -> EvictionReason {
+        self.source.evict_reason()
+    }
 }
 
 impl From<WorkflowMissingError> for WorkflowUpdateError {

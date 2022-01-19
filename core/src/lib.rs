@@ -60,9 +60,10 @@ use temporal_sdk_core_api::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_task::ActivityTask, workflow_activation::WorkflowActivation,
-        workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat,
-        ActivityTaskCompletion,
+        activity_task::ActivityTask,
+        workflow_activation::{remove_from_cache::EvictionReason, WorkflowActivation},
+        workflow_completion::WorkflowActivationCompletion,
+        ActivityHeartbeat, ActivityTaskCompletion,
     },
     temporal::api::history::v1::History,
 };
@@ -204,7 +205,11 @@ impl Core for CoreSDK {
 
     fn request_workflow_eviction(&self, task_queue: &str, run_id: &str) {
         if let Ok(w) = self.worker(task_queue) {
-            w.request_wf_eviction(run_id, "Eviction explicitly requested by lang");
+            w.request_wf_eviction(
+                run_id,
+                "Eviction explicitly requested by lang",
+                EvictionReason::LangRequested,
+            );
         }
     }
 

@@ -3,7 +3,11 @@ use std::time::Duration;
 use temporal_sdk_core::ServerGatewayApis;
 use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_protos::{
-    coresdk::{workflow_commands::StartTimer, workflow_completion::WorkflowActivationCompletion},
+    coresdk::{
+        workflow_activation::remove_from_cache::EvictionReason,
+        workflow_commands::{ScheduleActivity, StartTimer},
+        workflow_completion::WorkflowActivationCompletion,
+    },
     temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
 };
 use temporal_sdk_core_test_utils::{
@@ -15,7 +19,7 @@ use tokio::join;
 #[tokio::test]
 async fn timer_workflow_replay() {
     let (core, task_q) = init_core_replay_preloaded(
-        "fail_wf_task",
+        "timer_workflow_replay",
         &history_from_proto_binary("histories/timer_workflow_history.bin")
             .await
             .unwrap(),
@@ -82,5 +86,41 @@ async fn two_cores_replay() {
             .await
             .unwrap(),
         PollWorkflowTaskQueueResponse::default()
+    );
+}
+
+#[tokio::test]
+async fn workflow_nondeterministic_replay() {
+    let (core, task_q) = init_core_replay_preloaded(
+        "timer_workflow_replay",
+        &history_from_proto_binary("histories/timer_workflow_history.bin")
+            .await
+            .unwrap(),
+    );
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        &task_q,
+        task.run_id,
+        vec![ScheduleActivity {
+            seq: 0,
+            activity_id: "0".to_string(),
+            activity_type: "fake_act".to_string(),
+            ..Default::default()
+        }
+        .into()],
+    ))
+    .await
+    .unwrap();
+    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    assert_eq!(task.eviction_reason(), Some(EvictionReason::Nondeterminism));
+    // Complete eviction
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(&task_q, task.run_id))
+        .await
+        .unwrap();
+    // Call shutdown explicitly because we saw a nondeterminism eviction
+    core.shutdown().await;
+    assert_matches!(
+        core.poll_workflow_activation(&task_q).await,
+        Err(PollWfError::ShutDown)
     );
 }

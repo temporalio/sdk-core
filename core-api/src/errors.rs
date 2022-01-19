@@ -3,7 +3,9 @@
 use prost_types::TimestampOutOfSystemRangeError;
 use temporal_client::GatewayInitError;
 use temporal_sdk_core_protos::coresdk::{
-    activity_result::ActivityExecutionResult, workflow_completion::WorkflowActivationCompletion,
+    activity_result::ActivityExecutionResult,
+    workflow_activation::remove_from_cache::EvictionReason,
+    workflow_completion::WorkflowActivationCompletion,
 };
 
 /// Errors thrown during initialization of [crate::Core]
@@ -118,6 +120,18 @@ pub enum WFMachinesError {
     /// Should always be caught internally and turned into a workflow task failure
     #[error("Unable to process partial event history because workflow is no longer cached.")]
     CacheMiss,
+}
+
+impl WFMachinesError {
+    pub fn evict_reason(&self) -> EvictionReason {
+        match self {
+            WFMachinesError::Nondeterminism(_) => EvictionReason::Nondeterminism,
+            WFMachinesError::Fatal(_) | WFMachinesError::HistoryFetchingError(_) => {
+                EvictionReason::Fatal
+            }
+            WFMachinesError::CacheMiss => EvictionReason::CacheMiss,
+        }
+    }
 }
 
 impl From<TimestampOutOfSystemRangeError> for WFMachinesError {
