@@ -1,11 +1,14 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
+use temporal_sdk_core::ServerGatewayApis;
 use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
-use temporal_sdk_core_protos::coresdk::{
-    workflow_commands::StartTimer, workflow_completion::WorkflowActivationCompletion,
+use temporal_sdk_core_protos::{
+    coresdk::{workflow_commands::StartTimer, workflow_completion::WorkflowActivationCompletion},
+    temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
 };
 use temporal_sdk_core_test_utils::{
-    history_from_proto_binary, init_core_replay_preloaded, CoreTestHelpers,
+    history_from_proto_binary, history_replay::mock_gateway_from_history,
+    init_core_replay_preloaded, CoreTestHelpers,
 };
 use tokio::join;
 
@@ -55,4 +58,29 @@ async fn timer_workflow_replay() {
     );
 
     core.shutdown().await;
+}
+
+// Regression test to verify mock replayers don't interfere with each other
+#[tokio::test]
+async fn two_cores_replay() {
+    let hist = history_from_proto_binary("histories/fail_wf_task.bin")
+        .await
+        .unwrap();
+
+    let mock_1 = mock_gateway_from_history(&hist);
+    let mock_2 = mock_gateway_from_history(&hist);
+    assert_ne!(
+        mock_1
+            .poll_workflow_task("a".to_string(), false)
+            .await
+            .unwrap(),
+        PollWorkflowTaskQueueResponse::default()
+    );
+    assert_ne!(
+        mock_2
+            .poll_workflow_task("b".to_string(), false)
+            .await
+            .unwrap(),
+        PollWorkflowTaskQueueResponse::default()
+    );
 }

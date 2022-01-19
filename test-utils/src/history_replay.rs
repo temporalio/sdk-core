@@ -150,12 +150,14 @@ pub fn mock_gateway_from_history(history: &History) -> impl ServerGatewayApis {
         .boxed()
     });
 
-    static DID_SEND: AtomicBool = AtomicBool::new(false);
+    let did_send = Arc::new(AtomicBool::new(false));
+    let did_send_clone = did_send.clone();
     mg.expect_poll_workflow_task().returning(move |_, _| {
         let hist_info = hist_info.clone();
         let wf = wf.clone();
+        let did_send_clone = did_send_clone.clone();
         async move {
-            if !DID_SEND.swap(true, Ordering::AcqRel) {
+            if !did_send_clone.swap(true, Ordering::AcqRel) {
                 let mut resp = hist_info.as_poll_wft_response(TEST_Q);
                 resp.workflow_execution = Some(wf.clone());
                 Ok(resp)
@@ -167,9 +169,9 @@ pub fn mock_gateway_from_history(history: &History) -> impl ServerGatewayApis {
         .boxed()
     });
 
-    mg.expect_fail_workflow_task().returning(|_, _, _| {
+    mg.expect_fail_workflow_task().returning(move |_, _, _| {
         // We'll need to re-send the history if WFT fails
-        DID_SEND.store(false, Ordering::Release);
+        did_send.store(false, Ordering::Release);
         async move { Ok(RespondWorkflowTaskFailedResponse {}) }.boxed()
     });
 
