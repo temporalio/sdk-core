@@ -1,11 +1,12 @@
 use crate::{
     errors::PollWfError,
     job_assert,
+    replay::TestHistoryBuilder,
     test_help::{
         build_fake_core, build_mock_pollers, build_multihist_mock_sg, canned_histories,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_core, poll_and_reply,
         poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, FakeWfResponses,
-        MockPollCfg, MocksHolder, ResponseType, TestHistoryBuilder, NO_MORE_WORK_ERROR_MSG, TEST_Q,
+        MockPollCfg, MocksHolder, ResponseType, NO_MORE_WORK_ERROR_MSG, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
     Core, CoreSDK, WorkflowActivationCompletion,
@@ -17,7 +18,6 @@ use std::{
     time::Duration,
 };
 use temporal_client::mocks::mock_gateway;
-
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_resolution, ActivityResolution},

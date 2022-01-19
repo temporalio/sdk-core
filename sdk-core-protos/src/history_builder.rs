@@ -1,9 +1,4 @@
-use super::history_info::{HistoryInfo, HistoryInfoError};
-use crate::history_replay::DEFAULT_WORKFLOW_TYPE;
-use anyhow::bail;
-use prost_types::Timestamp;
-use std::time::{Duration, SystemTime};
-use temporal_sdk_core_protos::{
+use crate::{
     constants::{LOCAL_ACTIVITY_MARKER_NAME, PATCH_MARKER_NAME},
     coresdk::{
         common::{
@@ -19,8 +14,14 @@ use temporal_sdk_core_protos::{
         failure::v1::{failure, CanceledFailureInfo, Failure},
         history::v1::{history_event::Attributes, *},
     },
+    HistoryInfo,
 };
+use anyhow::bail;
+use prost_types::Timestamp;
+use std::time::{Duration, SystemTime};
 use uuid::Uuid;
+
+pub static DEFAULT_WORKFLOW_TYPE: &str = "default_wf_type";
 
 type Result<T, E = anyhow::Error> = std::result::Result<T, E>;
 
@@ -409,17 +410,17 @@ impl TestHistoryBuilder {
 
     /// Iterates over the events in this builder to return a [HistoryInfo] including events up to
     /// the provided `to_wf_task_num`
-    pub fn get_history_info(&self, to_wf_task_num: usize) -> Result<HistoryInfo, HistoryInfoError> {
+    pub fn get_history_info(&self, to_wf_task_num: usize) -> Result<HistoryInfo, anyhow::Error> {
         HistoryInfo::new_from_history(&self.events.clone().into(), Some(to_wf_task_num))
     }
 
     /// Iterates over the events in this builder to return a [HistoryInfo] representing *all*
     /// events in the history
-    pub fn get_full_history_info(&self) -> Result<HistoryInfo, HistoryInfoError> {
+    pub fn get_full_history_info(&self) -> Result<HistoryInfo, anyhow::Error> {
         HistoryInfo::new_from_history(&self.events.clone().into(), None)
     }
 
-    pub fn get_one_wft(&self, from_wft_number: usize) -> Result<HistoryInfo, HistoryInfoError> {
+    pub fn get_one_wft(&self, from_wft_number: usize) -> Result<HistoryInfo, anyhow::Error> {
         let mut histinfo =
             HistoryInfo::new_from_history(&self.events.clone().into(), Some(from_wft_number))?;
         histinfo.make_incremental();

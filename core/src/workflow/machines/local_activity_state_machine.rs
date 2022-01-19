@@ -784,7 +784,7 @@ impl From<LocalActivityExecutionResult> for ActivityResolution {
 mod tests {
     use super::*;
     use crate::{
-        test_help::{canned_histories, TestHistoryBuilder},
+        replay::TestHistoryBuilder, test_help::canned_histories,
         workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::rstest;

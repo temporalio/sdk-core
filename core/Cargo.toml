@@ -61,6 +61,7 @@ version = "0.1"
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"
 version = "0.1"
+features = ["history_builders"]
 
 [dependencies.temporal-client]
 path = "../client"

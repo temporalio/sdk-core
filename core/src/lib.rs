@@ -14,6 +14,7 @@ mod log_export;
 mod pending_activations;
 mod pollers;
 mod protosext;
+pub mod replay;
 pub(crate) mod retry_logic;
 pub(crate) mod telemetry;
 mod worker;

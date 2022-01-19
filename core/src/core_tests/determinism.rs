@@ -1,6 +1,8 @@
-use crate::test_help::{
-    build_mock_pollers, canned_histories, mock_core, MockPollCfg, ResponseType,
-    DEFAULT_WORKFLOW_TYPE, TEST_Q,
+use crate::{
+    replay::DEFAULT_WORKFLOW_TYPE,
+    test_help::{
+        build_mock_pollers, canned_histories, mock_core, MockPollCfg, ResponseType, TEST_Q,
+    },
 };
 use std::{
     sync::{

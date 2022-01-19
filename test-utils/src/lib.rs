@@ -2,9 +2,7 @@
 //! or even when testing workflows written in SDKs that use Core.
 
 pub mod canned_histories;
-pub mod history_replay;
 
-use crate::history_replay::{ReplayCore, ReplayCoreImpl};
 use futures::{stream::FuturesUnordered, StreamExt};
 use log::LevelFilter;
 use prost::Message;
@@ -13,12 +11,11 @@ use std::{
     convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, sync::Arc,
     time::Duration,
 };
-use temporal_client::mocks::mock_gateway;
 use temporal_sdk::TestRustWorker;
 use temporal_sdk_core::{
-    init_mock_gateway, CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayApis,
-    ServerGatewayOptions, ServerGatewayOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
-    WorkerConfig, WorkerConfigBuilder,
+    replay::{init_core_replay, ReplayCore},
+    CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayOptions, ServerGatewayOptionsBuilder,
+    TelemetryOptions, TelemetryOptionsBuilder, WorkerConfig, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::Core;
 use temporal_sdk_core_protos::{
@@ -47,20 +44,6 @@ pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn Core>, String)
     let core = starter.get_core().await;
     starter.start_wf().await;
     (core, starter.get_task_queue().to_string())
-}
-
-/// Create a core instance that can be used for replay. See the [ReplayCore] trait for adding
-/// canned history.
-pub fn init_core_replay(opts: TelemetryOptions) -> ReplayCoreImpl {
-    let shared_mock_gateway = mock_gateway();
-    let init_opts = CoreInitOptionsBuilder::default()
-        .gateway_opts(shared_mock_gateway.get_options().clone())
-        .telemetry_opts(opts)
-        .build()
-        .expect("replay core options init properly");
-    let replay_core =
-        init_mock_gateway(init_opts, shared_mock_gateway).expect("init replay core works");
-    ReplayCoreImpl { inner: replay_core }
 }
 
 /// Create a core replay instance preloaded with just one provided history. Returns the core impl

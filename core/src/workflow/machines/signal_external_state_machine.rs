@@ -285,7 +285,7 @@ impl Cancellable for SignalExternalMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test_help::TestHistoryBuilder, workflow::managed_wf::ManagedWFFunc};
+    use crate::{replay::TestHistoryBuilder, workflow::managed_wf::ManagedWFFunc};
     use std::mem::discriminant;
     use temporal_sdk::{CancellableFuture, WfContext, WorkflowFunction, WorkflowResult};
     use temporal_sdk_core_protos::coresdk::workflow_activation::{

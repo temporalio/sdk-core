@@ -1,10 +1,8 @@
-mod history_builder;
-mod history_info;
+//! This module implements support for creating special core instances and workers which can be used
+//! to replay canned histories. It should be used by Lang SDKs to provide replay capabilities to
+//! users during testing.
 
-pub use history_builder::{default_wes_attribs, TestHistoryBuilder};
-pub use history_info::HistoryInfo;
-
-use crate::{ServerGatewayApis, TEST_Q};
+use crate::{init_mock_gateway, CoreInitOptionsBuilder, CoreSDK, TelemetryOptions};
 use futures::FutureExt;
 use std::{
     sync::{
@@ -13,8 +11,10 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::mocks::mock_manual_gateway;
-use temporal_sdk_core::CoreSDK;
+use temporal_client::{
+    mocks::{mock_gateway, mock_manual_gateway},
+    ServerGatewayApis,
+};
 use temporal_sdk_core_api::{
     errors::{
         CompleteActivityError, CompleteWfError, PollActivityError, PollWfError,
@@ -36,8 +36,25 @@ use temporal_sdk_core_protos::{
     },
 };
 
-pub static DEFAULT_WORKFLOW_TYPE: &str = "not_specified";
+pub use temporal_sdk_core_protos::{
+    default_wes_attribs, HistoryInfo, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
+};
 
+/// Create a core instance that can be used for replay. See the [ReplayCore] trait for adding
+/// canned history.
+pub fn init_core_replay(opts: TelemetryOptions) -> ReplayCoreImpl {
+    let shared_mock_gateway = mock_gateway();
+    let init_opts = CoreInitOptionsBuilder::default()
+        .gateway_opts(shared_mock_gateway.get_options().clone())
+        .telemetry_opts(opts)
+        .build()
+        .expect("replay core options init properly");
+    let replay_core =
+        init_mock_gateway(init_opts, shared_mock_gateway).expect("init replay core works");
+    ReplayCoreImpl { inner: replay_core }
+}
+
+/// An extension of the [Core] trait to be used for testing workflows against canned histories.
 pub trait ReplayCore: Core {
     /// Make a fake worker which will use the provided history to simulate poll responses containing
     /// that entire history. The configuration should have a unique task queue name.
@@ -62,7 +79,7 @@ impl ReplayCore for ReplayCoreImpl {
         mut config: WorkerConfig,
         history: &History,
     ) -> Result<(), anyhow::Error> {
-        let mock_g = mock_gateway_from_history(history);
+        let mock_g = mock_gateway_from_history(history, config.task_queue.clone());
         config.max_cached_workflows = 1;
         config.max_concurrent_wft_polls = 1;
         config.no_remote_activities = true;
@@ -130,7 +147,14 @@ impl Core for ReplayCoreImpl {
     }
 }
 
-pub fn mock_gateway_from_history(history: &History) -> impl ServerGatewayApis {
+/// Create a mock gateway which can be used by a replay worker to serve up canned history.
+/// It will return the entire history in one workflow task, after that it will return default
+/// responses (with a 10s wait). If a workflow task failure is sent to the mock, it will send
+/// the complete response again.
+pub fn mock_gateway_from_history(
+    history: &History,
+    task_queue: impl Into<String>,
+) -> impl ServerGatewayApis {
     let mut mg = mock_manual_gateway();
 
     let hist_info = HistoryInfo::new_from_history(history, None).unwrap();
@@ -152,13 +176,15 @@ pub fn mock_gateway_from_history(history: &History) -> impl ServerGatewayApis {
 
     let did_send = Arc::new(AtomicBool::new(false));
     let did_send_clone = did_send.clone();
+    let tq = task_queue.into();
     mg.expect_poll_workflow_task().returning(move |_, _| {
         let hist_info = hist_info.clone();
         let wf = wf.clone();
         let did_send_clone = did_send_clone.clone();
+        let tq = tq.clone();
         async move {
             if !did_send_clone.swap(true, Ordering::AcqRel) {
-                let mut resp = hist_info.as_poll_wft_response(TEST_Q);
+                let mut resp = hist_info.as_poll_wft_response(tq);
                 resp.workflow_execution = Some(wf.clone());
                 Ok(resp)
             } else {

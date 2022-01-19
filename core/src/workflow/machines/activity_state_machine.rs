@@ -748,7 +748,7 @@ fn convert_payloads(
 mod test {
     use super::*;
     use crate::{
-        test_help::{canned_histories, TestHistoryBuilder},
+        replay::TestHistoryBuilder, test_help::canned_histories,
         workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::{fixture, rstest};

@@ -5,8 +5,16 @@
 pub mod constants;
 pub mod utilities;
 
+#[cfg(feature = "history_builders")]
+mod history_builder;
+#[cfg(feature = "history_builders")]
+mod history_info;
 mod task_token;
 
+#[cfg(feature = "history_builders")]
+pub use history_builder::{default_wes_attribs, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE};
+#[cfg(feature = "history_builders")]
+pub use history_info::HistoryInfo;
 pub use task_token::TaskToken;
 
 #[allow(clippy::large_enum_variant)]

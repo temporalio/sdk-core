@@ -1,10 +1,8 @@
-pub(crate) use temporal_sdk_core_test_utils::{
-    canned_histories,
-    history_replay::{TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE},
-};
+pub(crate) use temporal_sdk_core_test_utils::canned_histories;
 
 use crate::{
     pollers::{BoxedActPoller, BoxedPoller, BoxedWFPoller, MockManualPoller, MockPoller},
+    replay::TestHistoryBuilder,
     workflow::WorkflowCachingPolicy,
     Core, CoreInitOptionsBuilder, CoreSDK, ServerGatewayApis, TaskToken, WorkerConfig,
     WorkerConfigBuilder,

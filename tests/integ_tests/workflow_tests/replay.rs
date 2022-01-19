@@ -1,6 +1,6 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporal_sdk_core::ServerGatewayApis;
+use temporal_sdk_core::{replay::mock_gateway_from_history, ServerGatewayApis};
 use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -11,8 +11,7 @@ use temporal_sdk_core_protos::{
     temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
 };
 use temporal_sdk_core_test_utils::{
-    history_from_proto_binary, history_replay::mock_gateway_from_history,
-    init_core_replay_preloaded, CoreTestHelpers,
+    history_from_proto_binary, init_core_replay_preloaded, CoreTestHelpers,
 };
 use tokio::join;
 
@@ -71,8 +70,8 @@ async fn two_cores_replay() {
         .await
         .unwrap();
 
-    let mock_1 = mock_gateway_from_history(&hist);
-    let mock_2 = mock_gateway_from_history(&hist);
+    let mock_1 = mock_gateway_from_history(&hist, "a");
+    let mock_2 = mock_gateway_from_history(&hist, "b");
     assert_ne!(
         mock_1
             .poll_workflow_task("a".to_string(), false)

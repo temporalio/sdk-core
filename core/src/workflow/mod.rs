@@ -271,8 +271,9 @@ enum CommandID {
 pub mod managed_wf {
     use super::*;
     use crate::{
-        test_help::{TestHistoryBuilder, TEST_Q},
-        workflow::{history_update::tests::TestHBExt, WFCommand, WorkflowFetcher},
+        replay::TestHistoryBuilder,
+        test_help::TEST_Q,
+        workflow::{history_update::TestHBExt, WFCommand, WorkflowFetcher},
     };
     use std::{convert::TryInto, time::Duration};
     use temporal_sdk::{WorkflowFunction, WorkflowResult};
