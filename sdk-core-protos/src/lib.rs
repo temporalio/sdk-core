@@ -1493,6 +1493,12 @@ pub mod temporal {
                             bail!("First event is not WorkflowExecutionStarted?!?")
                         }
                     }
+
+                    /// Returns the event id of the final event in the history. Will return 0 if
+                    /// there are no events.
+                    pub fn last_event_id(&self) -> i64 {
+                        self.events.last().map(|e| e.event_id).unwrap_or_default()
+                    }
                 }
 
                 impl HistoryEvent {

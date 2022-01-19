@@ -261,10 +261,9 @@ impl CoreSDK {
             task_queue = config.task_queue.as_str(),
             "Registering replay worker"
         );
-        // TODO Possibly just use mocked pollers here, but they'd need to be un-test-moded
+        // Could possibly just use mocked pollers here, but they'd need to be un-test-moded
         let run_id = history.extract_run_id_from_start()?.to_string();
-        // TODO: SHould be get last event id
-        let last_event = history.events.len() as i64;
+        let last_event = history.last_event_id();
         let tq = config.task_queue.clone();
         let mut worker = Worker::new(config, None, gateway, self.metrics.clone());
         worker.set_post_activate_hook(move |worker| {
