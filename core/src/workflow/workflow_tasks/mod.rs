@@ -6,7 +6,7 @@ mod concurrency_manager;
 use crate::{
     pending_activations::PendingActivations,
     pollers::GatewayRef,
-    protosext::{ValidPollWFTQResponse, WfActivationExt},
+    protosext::{ValidPollWFTQResponse, WorkflowActivationExt},
     telemetry::metrics::MetricsContext,
     worker::{LocalActRequest, LocalActivityResolution},
     workflow::{
@@ -30,7 +30,7 @@ use std::{
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
-            create_query_activation, wf_activation_job, QueryWorkflow, WfActivation,
+            create_query_activation, workflow_activation_job, QueryWorkflow, WorkflowActivation,
         },
         workflow_commands::QueryResult,
         FromPayloadsExt,
@@ -57,7 +57,7 @@ pub struct WorkflowTaskManager {
     pending_activations: PendingActivations,
     /// Holds activations which are purely query activations needed to respond to legacy queries.
     /// Activations may only be added here for runs which do not have other pending activations.
-    pending_legacy_queries: SegQueue<WfActivation>,
+    pending_legacy_queries: SegQueue<WorkflowActivation>,
     /// Holds poll wft responses from the server that need to be applied
     ready_buffered_wft: SegQueue<ValidPollWFTQResponse>,
     /// Used to wake blocked workflow task polling
@@ -113,7 +113,7 @@ pub struct WorkflowTaskInfo {
 #[derive(Debug, derive_more::From)]
 pub(crate) enum NewWfTaskOutcome {
     /// A new activation for the workflow should be issued to lang
-    IssueActivation(WfActivation),
+    IssueActivation(WorkflowActivation),
     /// The poll loop should be restarted, there is nothing to do
     TaskBuffered,
     /// The workflow task should be auto-completed with an empty command list, as it must be replied
@@ -182,7 +182,7 @@ impl WorkflowTaskManager {
         }
     }
 
-    pub(crate) fn next_pending_activation(&self) -> Option<WfActivation> {
+    pub(crate) fn next_pending_activation(&self) -> Option<WorkflowActivation> {
         // Dispatch pending legacy queries first
         if let leg_q @ Some(_) = self.pending_legacy_queries.pop() {
             return leg_q;
@@ -324,7 +324,7 @@ impl WorkflowTaskManager {
                 debug!("Dispatching legacy query {:?}", &lq);
                 next_activation
                     .jobs
-                    .push(wf_activation_job::Variant::QueryWorkflow(lq).into());
+                    .push(workflow_activation_job::Variant::QueryWorkflow(lq).into());
             }
             None
         } else {
@@ -564,7 +564,7 @@ impl WorkflowTaskManager {
         &self,
         poll_wf_resp: ValidPollWFTQResponse,
         gateway: &GatewayRef,
-    ) -> Result<(WorkflowTaskInfo, WfActivation), WorkflowUpdateError> {
+    ) -> Result<(WorkflowTaskInfo, WorkflowActivation), WorkflowUpdateError> {
         let run_id = poll_wf_resp.workflow_execution.run_id.clone();
 
         let wft_info = WorkflowTaskInfo {
@@ -599,7 +599,7 @@ impl WorkflowTaskManager {
                     let query_jobs = poll_wf_resp
                         .query_requests
                         .into_iter()
-                        .map(|q| wf_activation_job::Variant::QueryWorkflow(q).into());
+                        .map(|q| workflow_activation_job::Variant::QueryWorkflow(q).into());
                     activation.jobs.extend(query_jobs);
                 }
 
@@ -709,7 +709,7 @@ impl WorkflowTaskManager {
 
     fn insert_outstanding_activation(
         &self,
-        act: &WfActivation,
+        act: &WorkflowActivation,
     ) -> Result<(), WorkflowMissingError> {
         let act_type = if act.is_legacy_query() {
             OutstandingActivation::LegacyQuery

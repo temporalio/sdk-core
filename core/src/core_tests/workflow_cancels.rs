@@ -8,7 +8,7 @@ use crate::{
 use rstest::rstest;
 use std::time::Duration;
 use temporal_sdk_core_protos::coresdk::{
-    workflow_activation::{wf_activation_job, WfActivationJob},
+    workflow_activation::{workflow_activation_job, WorkflowActivationJob},
     workflow_commands::{
         CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
     },
@@ -58,13 +58,13 @@ async fn timer_then_cancel_req(
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![start_timer_cmd(timer_seq, Duration::from_secs(1))],
             ),
             gen_assert_and_reply(
                 &job_assert!(
-                    wf_activation_job::Variant::FireTimer(_),
-                    wf_activation_job::Variant::CancelWorkflow(_)
+                    workflow_activation_job::Variant::FireTimer(_),
+                    workflow_activation_job::Variant::CancelWorkflow(_)
                 ),
                 vec![final_cmd],
             ),
@@ -84,18 +84,18 @@ async fn timer_then_cancel_req_then_timer_then_cancelled() {
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![start_timer_cmd(1, Duration::from_secs(1))],
             ),
             gen_assert_and_reply(
                 &job_assert!(
-                    wf_activation_job::Variant::FireTimer(_),
-                    wf_activation_job::Variant::CancelWorkflow(_)
+                    workflow_activation_job::Variant::FireTimer(_),
+                    workflow_activation_job::Variant::CancelWorkflow(_)
                 ),
                 vec![start_timer_cmd(2, Duration::from_secs(1))],
             ),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::FireTimer(_)),
+                &job_assert!(workflow_activation_job::Variant::FireTimer(_)),
                 vec![CancelWorkflowExecution::default().into()],
             ),
         ],
@@ -114,8 +114,8 @@ async fn immediate_cancel() {
         NonSticky,
         &[gen_assert_and_reply(
             &job_assert!(
-                wf_activation_job::Variant::StartWorkflow(_),
-                wf_activation_job::Variant::CancelWorkflow(_)
+                workflow_activation_job::Variant::StartWorkflow(_),
+                workflow_activation_job::Variant::CancelWorkflow(_)
             ),
             vec![CancelWorkflowExecution {}.into()],
         )],

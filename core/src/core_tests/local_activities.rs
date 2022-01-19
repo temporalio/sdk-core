@@ -1,7 +1,7 @@
 use crate::{
     test_help::{
-        build_mock_pollers, history_builder::default_wes_attribs, mock_core, mock_gateway,
-        MockPollCfg, ResponseType, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE, TEST_Q,
+        build_mock_pollers, mock_core, mock_gateway, MockPollCfg, ResponseType, TestHistoryBuilder,
+        DEFAULT_WORKFLOW_TYPE, TEST_Q,
     },
     Core,
 };
@@ -14,6 +14,7 @@ use std::{
     },
     time::Duration,
 };
+use test_utils::history_replay::default_wes_attribs;
 
 use temporal_sdk::{LocalActivityOptions, TestRustWorker, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{

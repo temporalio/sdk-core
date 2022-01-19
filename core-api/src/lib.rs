@@ -15,8 +15,8 @@ use std::{
 };
 use temporal_client::ServerGatewayApis;
 use temporal_sdk_core_protos::coresdk::{
-    activity_task::ActivityTask, workflow_activation::WfActivation,
-    workflow_completion::WfActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
+    activity_task::ActivityTask, workflow_activation::WorkflowActivation,
+    workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
 };
 
 /// This trait is the primary way by which language specific SDKs interact with the core SDK. It is
@@ -29,7 +29,7 @@ pub trait Core: Send + Sync {
     /// with the same task queue name, it will be shut down and a new one will be created.
     async fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError>;
 
-    /// Ask the core for some work, returning a [WfActivation]. It is then the language SDK's
+    /// Ask the core for some work, returning a [WorkflowActivation]. It is then the language SDK's
     /// responsibility to call the appropriate workflow code with the provided inputs. Blocks
     /// indefinitely until such work is available or [Core::shutdown] is called.
     ///
@@ -50,8 +50,10 @@ pub trait Core: Send + Sync {
     /// concurrently internally.
     ///
     /// TODO: Examples
-    async fn poll_workflow_activation(&self, task_queue: &str)
-        -> Result<WfActivation, PollWfError>;
+    async fn poll_workflow_activation(
+        &self,
+        task_queue: &str,
+    ) -> Result<WorkflowActivation, PollWfError>;
 
     /// Ask the core for some work, returning an [ActivityTask]. It is then the language SDK's
     /// responsibility to call the appropriate activity code with the provided inputs. Blocks
@@ -70,7 +72,7 @@ pub trait Core: Send + Sync {
     /// Tell the core that a workflow activation has completed. May be freely called concurrently.
     async fn complete_workflow_activation(
         &self,
-        completion: WfActivationCompletion,
+        completion: WorkflowActivationCompletion,
     ) -> Result<(), CompleteWfError>;
 
     /// Tell the core that an activity has finished executing. May be freely called concurrently.

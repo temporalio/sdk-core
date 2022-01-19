@@ -8,7 +8,7 @@ mod machines;
 pub(crate) use bridge::WorkflowBridge;
 pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
 pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
-pub(crate) use machines::{WFMachinesError, HAS_CHANGE_MARKER_NAME, LOCAL_ACTIVITY_MARKER_NAME};
+pub(crate) use machines::WFMachinesError;
 
 use crate::{
     telemetry::metrics::MetricsContext,
@@ -17,7 +17,7 @@ use crate::{
 use machines::WorkflowMachines;
 use std::{result, sync::mpsc::Sender};
 use temporal_sdk_core_protos::{
-    coresdk::{workflow_activation::WfActivation, workflow_commands::*},
+    coresdk::{workflow_activation::WorkflowActivation, workflow_commands::*},
     temporal::api::command::v1::Command as ProtoCommand,
 };
 
@@ -89,7 +89,7 @@ impl WorkflowManager {
     pub async fn feed_history_from_server(
         &mut self,
         update: HistoryUpdate,
-    ) -> Result<WfActivation> {
+    ) -> Result<WorkflowActivation> {
         self.machines.new_history_from_server(update).await?;
         self.get_next_activation().await
     }
@@ -105,7 +105,7 @@ impl WorkflowManager {
     ///
     /// Callers may also need to call [get_server_commands] after this to issue any pending commands
     /// to the server.
-    pub async fn get_next_activation(&mut self) -> Result<WfActivation> {
+    pub async fn get_next_activation(&mut self) -> Result<WorkflowActivation> {
         // First check if there are already some pending jobs, which can be a result of replay.
         let activation = self.machines.get_wf_activation();
         if !activation.jobs.is_empty() {
@@ -274,7 +274,7 @@ pub mod managed_wf {
     use super::*;
     use crate::{
         test_help::{TestHistoryBuilder, TEST_Q},
-        workflow::{WFCommand, WorkflowFetcher},
+        workflow::{history_update::tests::TestHBExt, WFCommand, WorkflowFetcher},
     };
     use std::{convert::TryInto, time::Duration};
     use temporal_sdk::{WorkflowFunction, WorkflowResult};
@@ -282,7 +282,9 @@ pub mod managed_wf {
         activity_result::ActivityExecutionResult,
         common::Payload,
         workflow_activation::create_evict_activation,
-        workflow_completion::{wf_activation_completion::Status, WfActivationCompletion},
+        workflow_completion::{
+            workflow_activation_completion::Status, WorkflowActivationCompletion,
+        },
     };
     use tokio::{
         sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -290,7 +292,7 @@ pub mod managed_wf {
     };
 
     pub(crate) struct WFFutureDriver {
-        completions_rx: UnboundedReceiver<WfActivationCompletion>,
+        completions_rx: UnboundedReceiver<WorkflowActivationCompletion>,
     }
 
     #[async_trait::async_trait]
@@ -319,7 +321,7 @@ pub mod managed_wf {
     #[must_use]
     pub struct ManagedWFFunc {
         mgr: WorkflowManager,
-        activation_tx: UnboundedSender<WfActivation>,
+        activation_tx: UnboundedSender<WorkflowActivation>,
         future_handle: Option<JoinHandle<WorkflowResult<()>>>,
         was_shutdown: bool,
     }
@@ -362,7 +364,7 @@ pub mod managed_wf {
         }
 
         #[instrument(level = "debug", skip(self))]
-        pub(crate) async fn get_next_activation(&mut self) -> Result<WfActivation> {
+        pub(crate) async fn get_next_activation(&mut self) -> Result<WorkflowActivation> {
             let res = self.mgr.get_next_activation().await?;
             debug!("Managed wf next activation: {}", &res);
             self.push_activation_to_wf(&res).await?;
@@ -380,7 +382,10 @@ pub mod managed_wf {
 
         /// Feed new history, as if received a new poll result. Returns new activation
         #[instrument(level = "debug", skip(self, update))]
-        pub(crate) async fn new_history(&mut self, update: HistoryUpdate) -> Result<WfActivation> {
+        pub(crate) async fn new_history(
+            &mut self,
+            update: HistoryUpdate,
+        ) -> Result<WorkflowActivation> {
             let res = self.mgr.feed_history_from_server(update).await?;
             self.push_activation_to_wf(&res).await?;
             Ok(res)
@@ -413,7 +418,7 @@ pub mod managed_wf {
         /// During testing it can be useful to run through all activations to simulate replay
         /// easily. Returns the last produced activation with jobs in it, or an activation with no
         /// jobs if the first call had no jobs.
-        pub(crate) async fn process_all_activations(&mut self) -> Result<WfActivation> {
+        pub(crate) async fn process_all_activations(&mut self) -> Result<WorkflowActivation> {
             let mut last_act = self.get_next_activation().await?;
             let mut next_act = self.get_next_activation().await?;
             while !next_act.jobs.is_empty() {
@@ -434,7 +439,7 @@ pub mod managed_wf {
         }
 
         #[instrument(level = "debug", skip(self, res))]
-        async fn push_activation_to_wf(&mut self, res: &WfActivation) -> Result<()> {
+        async fn push_activation_to_wf(&mut self, res: &WorkflowActivation) -> Result<()> {
             if res.jobs.is_empty() {
                 // Nothing to do here
                 return Ok(());

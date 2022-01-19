@@ -1,7 +1,6 @@
 use crate::{
-    worker::LocalActivityExecutionResult,
-    workflow::{HAS_CHANGE_MARKER_NAME, LEGACY_QUERY_ID, LOCAL_ACTIVITY_MARKER_NAME},
-    CompleteActivityError, TaskToken,
+    worker::LocalActivityExecutionResult, workflow::LEGACY_QUERY_ID, CompleteActivityError,
+    TaskToken,
 };
 use anyhow::anyhow;
 use std::{
@@ -11,6 +10,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use temporal_sdk_core_protos::{
+    constants::{LOCAL_ACTIVITY_MARKER_NAME, PATCH_MARKER_NAME},
     coresdk::{
         activity_result::{activity_execution_result, activity_execution_result::Status},
         common::{
@@ -18,7 +18,9 @@ use temporal_sdk_core_protos::{
             extract_local_activity_marker_details, Payload as SDKPayload, RetryPolicy,
         },
         external_data::LocalActivityMarkerData,
-        workflow_activation::{wf_activation_job, QueryWorkflow, WfActivation, WfActivationJob},
+        workflow_activation::{
+            workflow_activation_job, QueryWorkflow, WorkflowActivation, WorkflowActivationJob,
+        },
         workflow_commands::{
             query_result, ActivityCancellationType, QueryResult, ScheduleLocalActivity,
         },
@@ -107,15 +109,15 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
     }
 }
 
-pub(crate) trait WfActivationExt {
+pub(crate) trait WorkflowActivationExt {
     /// Returns true if this activation has one and only one job to perform a legacy query
     fn is_legacy_query(&self) -> bool;
 }
 
-impl WfActivationExt for WfActivation {
+impl WorkflowActivationExt for WorkflowActivation {
     fn is_legacy_query(&self) -> bool {
-        matches!(&self.jobs.as_slice(), &[WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::QueryWorkflow(qr))
+        matches!(&self.jobs.as_slice(), &[WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::QueryWorkflow(qr))
                 }] if qr.query_id == LEGACY_QUERY_ID)
     }
 }
@@ -154,9 +156,7 @@ impl HistoryEventExt for HistoryEvent {
                         details,
                         ..
                     },
-                )) if marker_name == HAS_CHANGE_MARKER_NAME => {
-                    decode_change_marker_details(details)
-                }
+                )) if marker_name == PATCH_MARKER_NAME => decode_change_marker_details(details),
                 _ => None,
             }
         } else {

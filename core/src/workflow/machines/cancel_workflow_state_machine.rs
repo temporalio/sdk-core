@@ -126,7 +126,7 @@ mod tests {
     use std::time::Duration;
     use temporal_sdk::{WfContext, WfExitValue, WorkflowFunction, WorkflowResult};
     use temporal_sdk_core_protos::coresdk::workflow_activation::{
-        wf_activation_job, WfActivationJob,
+        workflow_activation_job, WorkflowActivationJob,
     };
 
     async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<()> {
@@ -148,11 +148,11 @@ mod tests {
         assert_matches!(
             act.jobs.as_slice(),
             [
-                WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::FireTimer(_)),
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::FireTimer(_)),
                 },
-                WfActivationJob {
-                    variant: Some(wf_activation_job::Variant::CancelWorkflow(_)),
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::CancelWorkflow(_)),
                 }
             ]
         );

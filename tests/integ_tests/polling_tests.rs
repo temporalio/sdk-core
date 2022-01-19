@@ -4,9 +4,9 @@ use std::time::Duration;
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{
     activity_task::activity_task as act_task,
-    workflow_activation::{wf_activation_job, FireTimer, WfActivationJob},
+    workflow_activation::{workflow_activation_job, FireTimer, WorkflowActivationJob},
     workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
-    workflow_completion::WfActivationCompletion,
+    workflow_completion::WorkflowActivationCompletion,
     IntoCompletion,
 };
 use test_utils::{init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers, CoreWfStarter};
@@ -52,8 +52,8 @@ async fn out_of_order_completion_doesnt_hang() {
     assert_matches!(
         task.jobs.as_slice(),
         [
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::FireTimer(
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::FireTimer(
                     FireTimer { seq: t_seq }
                 )),
             },
@@ -73,8 +73,8 @@ async fn out_of_order_completion_doesnt_hang() {
             .unwrap();
         assert_matches!(
             task.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(_)),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(_)),
             }]
         );
         cc.complete_execution(&tq, &task.run_id).await;
@@ -83,7 +83,7 @@ async fn out_of_order_completion_doesnt_hang() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     // Then complete the (last) WFT with a request to cancel the AT, which should produce a
     // pending activation, unblocking the (already started) poll
-    core.complete_workflow_activation(WfActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         &task_q,
         task.run_id,
         vec![RequestCancelActivity { seq: 0 }.into()],

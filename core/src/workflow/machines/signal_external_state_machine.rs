@@ -289,7 +289,7 @@ mod tests {
     use std::mem::discriminant;
     use temporal_sdk::{CancellableFuture, WfContext, WorkflowFunction, WorkflowResult};
     use temporal_sdk_core_protos::coresdk::workflow_activation::{
-        wf_activation_job, WfActivationJob,
+        workflow_activation_job, WorkflowActivationJob,
     };
 
     const SIGNAME: &str = "signame";
@@ -368,8 +368,8 @@ mod tests {
         let act = wfm.get_next_activation().await.unwrap();
         assert_matches!(
             &act.jobs[0],
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveSignalExternalWorkflow(
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveSignalExternalWorkflow(
                     ResolveSignalExternalWorkflow {
                         failure: Some(c),
                         ..

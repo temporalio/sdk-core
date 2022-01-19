@@ -17,6 +17,7 @@ This repo is composed of multiple crates:
 * temporal-sdk-core-api `./core-api` - Defines the API surface exposed by Core
 * temporal-sdk-core `./core` - The Core implementation
 * temporal-sdk `./sdk` - A (currently prototype) Rust SDK built on top of Core. Used for testing.
+* temporal-sdk-core-bridge-ffi `./bridge-ffi` - C API wrapper for Core
 * rustfsm `./fsm` - Implements a procedural macro used by core for defining state machines
     (contains subcrates). It is temporal agnostic.
 
@@ -65,12 +66,19 @@ sure you are running the collector via docker, which can be done like so:
 If you are working on a language SDK, you are expected to initialize tracing early in your `main`
 equivalent.
 
-### Proto files
+## Proto files
 
 This repo uses a subtree for upstream protobuf files. The path `protos/api_upstream` is a
 subtree. To update it, use:
 `git subtree pull --prefix protos/api_upstream/ git://github.com/temporalio/api.git master --squash`
 
+## Fetching Histories
+Tests which would like to replay stored histories rely on that history being made available in
+binary format. You can fetch histories in that format like so (from a local docker server):
+
+`cargo run --bin histfetch {workflow_id} [{run_id}]`
+
+You can change the `TEMPORAL_SERVICE_ADDRESS` env var to fetch from a different address.
 
 ## Style Guidelines
 

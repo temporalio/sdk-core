@@ -757,7 +757,7 @@ mod test {
         ActivityOptions, CancellableFuture, WfContext, WorkflowFunction, WorkflowResult,
     };
     use temporal_sdk_core_protos::coresdk::workflow_activation::{
-        wf_activation_job, WfActivationJob,
+        workflow_activation_job, WorkflowActivationJob,
     };
 
     #[fixture]
@@ -843,8 +843,8 @@ mod test {
         wfm.get_server_commands();
         assert_matches!(
             activation.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         result: Some(ActivityResolution {
                             status: Some(activity_resolution::Status::Cancelled(_))

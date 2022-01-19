@@ -13,7 +13,7 @@ use std::{
     fmt::Debug,
     ops::{Deref, DerefMut},
 };
-use temporal_sdk_core_protos::coresdk::workflow_activation::WfActivation;
+use temporal_sdk_core_protos::coresdk::workflow_activation::WorkflowActivation;
 
 /// Provides a thread-safe way to access workflow machines for specific workflow runs
 pub(crate) struct WorkflowConcurrencyManager {
@@ -216,7 +216,7 @@ impl WorkflowConcurrencyManager {
         namespace: &str,
         wf_type: &str,
         parent_metrics: &MetricsContext,
-    ) -> Result<WfActivation> {
+    ) -> Result<WorkflowActivation> {
         let span = debug_span!("create_or_update machines", %run_id);
 
         if self.runs.read().contains_key(run_id) {

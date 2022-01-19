@@ -5,10 +5,9 @@ syntax = "proto3";
  */
 package coresdk.activity_task;
 
-import "common.proto";
-
-import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "temporal/sdk/core/common/common.proto";
 
 message ActivityTask {
     /// A unique identifier for this task

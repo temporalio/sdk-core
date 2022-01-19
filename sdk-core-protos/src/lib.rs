@@ -2,6 +2,7 @@
 //! the Temporal Core SDK. Language SDK authors can generate structs using the proto definitions
 //! that will match the generated structs in this module.
 
+pub mod constants;
 pub mod utilities;
 
 mod task_token;
@@ -30,9 +31,9 @@ pub mod coresdk {
         fmt::{Display, Formatter},
         iter::FromIterator,
     };
-    use workflow_activation::{wf_activation_job, WfActivationJob};
+    use workflow_activation::{workflow_activation_job, WorkflowActivationJob};
     use workflow_commands::{workflow_command, workflow_command::Variant, WorkflowCommand};
-    use workflow_completion::{wf_activation_completion, WfActivationCompletion};
+    use workflow_completion::{workflow_activation_completion, WorkflowActivationCompletion};
 
     #[allow(clippy::module_inception)]
     pub mod activity_task {
@@ -168,6 +169,10 @@ pub mod coresdk {
                 }
             }
         }
+    }
+
+    pub mod bridge {
+        tonic::include_proto!("coresdk.bridge");
     }
 
     pub mod common {
@@ -340,13 +345,13 @@ pub mod coresdk {
         use std::fmt::{Display, Formatter};
 
         tonic::include_proto!("coresdk.workflow_activation");
-        pub fn create_evict_activation(run_id: String, reason: String) -> WfActivation {
-            WfActivation {
+        pub fn create_evict_activation(run_id: String, reason: String) -> WorkflowActivation {
+            WorkflowActivation {
                 timestamp: None,
                 run_id,
                 is_replaying: false,
-                jobs: vec![WfActivationJob::from(
-                    wf_activation_job::Variant::RemoveFromCache(RemoveFromCache { reason }),
+                jobs: vec![WorkflowActivationJob::from(
+                    workflow_activation_job::Variant::RemoveFromCache(RemoveFromCache { reason }),
                 )],
             }
         }
@@ -354,27 +359,27 @@ pub mod coresdk {
         pub fn create_query_activation(
             run_id: String,
             queries: impl IntoIterator<Item = QueryWorkflow>,
-        ) -> WfActivation {
-            WfActivation {
+        ) -> WorkflowActivation {
+            WorkflowActivation {
                 timestamp: None,
                 run_id,
                 is_replaying: false,
                 jobs: queries
                     .into_iter()
-                    .map(|qr| wf_activation_job::Variant::QueryWorkflow(qr).into())
+                    .map(|qr| workflow_activation_job::Variant::QueryWorkflow(qr).into())
                     .collect(),
             }
         }
 
-        impl WfActivation {
+        impl WorkflowActivation {
             /// Returns the index of the eviction job if this activation contains one. If present
             /// it should always be the last job in the list.
             pub fn eviction_index(&self) -> Option<usize> {
                 self.jobs.iter().position(|j| {
                     matches!(
                         j,
-                        WfActivationJob {
-                            variant: Some(wf_activation_job::Variant::RemoveFromCache(_))
+                        WorkflowActivationJob {
+                            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_))
                         }
                     )
                 })
@@ -390,23 +395,23 @@ pub mod coresdk {
                 if let Some(last_job) = self.jobs.last() {
                     if matches!(
                         last_job.variant,
-                        Some(wf_activation_job::Variant::RemoveFromCache(_))
+                        Some(workflow_activation_job::Variant::RemoveFromCache(_))
                     ) {
                         return;
                     }
                 }
-                let evict_job = WfActivationJob::from(wf_activation_job::Variant::RemoveFromCache(
-                    RemoveFromCache {
+                let evict_job = WorkflowActivationJob::from(
+                    workflow_activation_job::Variant::RemoveFromCache(RemoveFromCache {
                         reason: reason.into(),
-                    },
-                ));
+                    }),
+                );
                 self.jobs.push(evict_job);
             }
         }
 
-        impl Display for WfActivation {
+        impl Display for WorkflowActivation {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                write!(f, "WfActivation(")?;
+                write!(f, "WorkflowActivation(")?;
                 write!(f, "run_id: {}, ", self.run_id)?;
                 write!(f, "is_replaying: {}, ", self.is_replaying)?;
                 write!(
@@ -422,7 +427,7 @@ pub mod coresdk {
             }
         }
 
-        impl Display for WfActivationJob {
+        impl Display for WorkflowActivationJob {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 match &self.variant {
                     None => write!(f, "empty"),
@@ -431,40 +436,46 @@ pub mod coresdk {
             }
         }
 
-        impl Display for wf_activation_job::Variant {
+        impl Display for workflow_activation_job::Variant {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 match self {
-                    wf_activation_job::Variant::StartWorkflow(_) => write!(f, "StartWorkflow"),
-                    wf_activation_job::Variant::FireTimer(t) => write!(f, "FireTimer({})", t.seq),
-                    wf_activation_job::Variant::UpdateRandomSeed(_) => {
+                    workflow_activation_job::Variant::StartWorkflow(_) => {
+                        write!(f, "StartWorkflow")
+                    }
+                    workflow_activation_job::Variant::FireTimer(t) => {
+                        write!(f, "FireTimer({})", t.seq)
+                    }
+                    workflow_activation_job::Variant::UpdateRandomSeed(_) => {
                         write!(f, "UpdateRandomSeed")
                     }
-                    wf_activation_job::Variant::QueryWorkflow(_) => write!(f, "QueryWorkflow"),
-                    wf_activation_job::Variant::CancelWorkflow(_) => {
+                    workflow_activation_job::Variant::QueryWorkflow(_) => {
+                        write!(f, "QueryWorkflow")
+                    }
+                    workflow_activation_job::Variant::CancelWorkflow(_) => {
                         write!(f, "CancelWorkflow")
                     }
-                    wf_activation_job::Variant::SignalWorkflow(_) => {
+                    workflow_activation_job::Variant::SignalWorkflow(_) => {
                         write!(f, "SignalWorkflow")
                     }
-                    wf_activation_job::Variant::ResolveActivity(r) => {
+                    workflow_activation_job::Variant::ResolveActivity(r) => {
                         write!(f, "ResolveActivity({})", r.seq)
                     }
-                    wf_activation_job::Variant::NotifyHasPatch(_) => {
+                    workflow_activation_job::Variant::NotifyHasPatch(_) => {
                         write!(f, "NotifyHasPatch")
                     }
-                    wf_activation_job::Variant::ResolveChildWorkflowExecutionStart(_) => {
+                    workflow_activation_job::Variant::ResolveChildWorkflowExecutionStart(_) => {
                         write!(f, "ResolveChildWorkflowExecutionStart")
                     }
-                    wf_activation_job::Variant::ResolveChildWorkflowExecution(_) => {
+                    workflow_activation_job::Variant::ResolveChildWorkflowExecution(_) => {
                         write!(f, "ResolveChildWorkflowExecution")
                     }
-                    wf_activation_job::Variant::ResolveSignalExternalWorkflow(_) => {
+                    workflow_activation_job::Variant::ResolveSignalExternalWorkflow(_) => {
                         write!(f, "ResolveSignalExternalWorkflow")
                     }
-                    wf_activation_job::Variant::RemoveFromCache(_) => {
+                    workflow_activation_job::Variant::RemoveFromCache(_) => {
                         write!(f, "RemoveFromCache")
                     }
-                    wf_activation_job::Variant::ResolveRequestCancelExternalWorkflow(_) => {
+                    workflow_activation_job::Variant::ResolveRequestCancelExternalWorkflow(_) => {
                         write!(f, "ResolveRequestCancelExternalWorkflow")
                     }
                 }
@@ -492,7 +503,7 @@ pub mod coresdk {
         use crate::temporal::api::failure;
         tonic::include_proto!("coresdk.workflow_completion");
 
-        impl wf_activation_completion::Status {
+        impl workflow_activation_completion::Status {
             pub const fn is_success(&self) -> bool {
                 match &self {
                     Self::Successful(_) => true,
@@ -680,8 +691,8 @@ pub mod coresdk {
 
     pub type HistoryEventId = i64;
 
-    impl From<wf_activation_job::Variant> for WfActivationJob {
-        fn from(a: wf_activation_job::Variant) -> Self {
+    impl From<workflow_activation_job::Variant> for WorkflowActivationJob {
+        fn from(a: workflow_activation_job::Variant) -> Self {
             Self { variant: Some(a) }
         }
     }
@@ -708,14 +719,14 @@ pub mod coresdk {
         }
     }
 
-    impl WfActivationCompletion {
+    impl WorkflowActivationCompletion {
         /// Create a successful activation with no commands in it
         pub fn empty(task_queue: impl Into<String>, run_id: impl Into<String>) -> Self {
             let success = workflow_completion::Success::from_variants(vec![]);
             Self {
                 run_id: run_id.into(),
                 task_queue: task_queue.into(),
-                status: Some(wf_activation_completion::Status::Successful(success)),
+                status: Some(workflow_activation_completion::Status::Successful(success)),
             }
         }
 
@@ -729,7 +740,7 @@ pub mod coresdk {
             Self {
                 run_id: run_id.into(),
                 task_queue: task_q.into(),
-                status: Some(wf_activation_completion::Status::Successful(success)),
+                status: Some(workflow_activation_completion::Status::Successful(success)),
             }
         }
 
@@ -743,7 +754,7 @@ pub mod coresdk {
             Self {
                 run_id: run_id.into(),
                 task_queue: task_q.into(),
-                status: Some(wf_activation_completion::Status::Successful(success)),
+                status: Some(workflow_activation_completion::Status::Successful(success)),
             }
         }
 
@@ -755,7 +766,7 @@ pub mod coresdk {
             Self {
                 run_id: run_id.into(),
                 task_queue: task_q.into(),
-                status: Some(wf_activation_completion::Status::Failed(
+                status: Some(workflow_activation_completion::Status::Failed(
                     workflow_completion::Failure {
                         failure: Some(failure),
                     },
@@ -774,7 +785,7 @@ pub mod coresdk {
 
         /// Returns true if the activation contains a fail workflow execution command
         pub fn has_fail_execution(&self) -> bool {
-            if let Some(wf_activation_completion::Status::Successful(s)) = &self.status {
+            if let Some(workflow_activation_completion::Status::Successful(s)) = &self.status {
                 return s.commands.iter().any(|wfc| {
                     matches!(
                         wfc,
@@ -789,7 +800,7 @@ pub mod coresdk {
 
         /// Returns true if the activation contains a cancel workflow execution command
         pub fn has_cancel_workflow_execution(&self) -> bool {
-            if let Some(wf_activation_completion::Status::Successful(s)) = &self.status {
+            if let Some(workflow_activation_completion::Status::Successful(s)) = &self.status {
                 return s.commands.iter().any(|wfc| {
                     matches!(
                         wfc,
@@ -804,7 +815,7 @@ pub mod coresdk {
 
         /// Returns true if the activation contains a continue as new workflow execution command
         pub fn has_continue_as_new(&self) -> bool {
-            if let Some(wf_activation_completion::Status::Successful(s)) = &self.status {
+            if let Some(workflow_activation_completion::Status::Successful(s)) = &self.status {
                 return s.commands.iter().any(|wfc| {
                     matches!(
                         wfc,
@@ -821,7 +832,7 @@ pub mod coresdk {
 
         /// Returns true if the activation contains a complete workflow execution command
         pub fn has_complete_workflow_execution(&self) -> bool {
-            if let Some(wf_activation_completion::Status::Successful(s)) = &self.status {
+            if let Some(workflow_activation_completion::Status::Successful(s)) = &self.status {
                 return s.commands.iter().any(|wfc| {
                     matches!(
                         wfc,
@@ -835,15 +846,23 @@ pub mod coresdk {
         }
     }
 
-    /// Makes converting outgoing lang commands into [WfActivationCompletion]s easier
+    /// Makes converting outgoing lang commands into [WorkflowActivationCompletion]s easier
     pub trait IntoCompletion {
         /// The conversion function
-        fn into_completion(self, task_queue: String, run_id: String) -> WfActivationCompletion;
+        fn into_completion(
+            self,
+            task_queue: String,
+            run_id: String,
+        ) -> WorkflowActivationCompletion;
     }
 
     impl IntoCompletion for workflow_command::Variant {
-        fn into_completion(self, task_queue: String, run_id: String) -> WfActivationCompletion {
-            WfActivationCompletion::from_cmd(task_queue, run_id, self)
+        fn into_completion(
+            self,
+            task_queue: String,
+            run_id: String,
+        ) -> WorkflowActivationCompletion {
+            WorkflowActivationCompletion::from_cmd(task_queue, run_id, self)
         }
     }
 
@@ -852,21 +871,25 @@ pub mod coresdk {
         I: IntoIterator<Item = V>,
         V: Into<WorkflowCommand>,
     {
-        fn into_completion(self, task_queue: String, run_id: String) -> WfActivationCompletion {
+        fn into_completion(
+            self,
+            task_queue: String,
+            run_id: String,
+        ) -> WorkflowActivationCompletion {
             let success = self.into_iter().map(Into::into).collect::<Vec<_>>().into();
-            WfActivationCompletion {
+            WorkflowActivationCompletion {
                 run_id,
                 task_queue,
-                status: Some(wf_activation_completion::Status::Successful(success)),
+                status: Some(workflow_activation_completion::Status::Successful(success)),
             }
         }
     }
 
-    impl Display for WfActivationCompletion {
+    impl Display for WorkflowActivationCompletion {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             write!(
                 f,
-                "WfActivationCompletion(run_id: {}, status: ",
+                "WorkflowActivationCompletion(run_id: {}, status: ",
                 &self.run_id
             )?;
             match &self.status {
@@ -877,12 +900,12 @@ pub mod coresdk {
         }
     }
 
-    impl Display for wf_activation_completion::Status {
+    impl Display for workflow_activation_completion::Status {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
-                wf_activation_completion::Status::Successful(workflow_completion::Success {
-                    commands,
-                }) => {
+                workflow_activation_completion::Status::Successful(
+                    workflow_completion::Success { commands },
+                ) => {
                     write!(f, "Success(")?;
                     let mut written = 0;
                     for c in commands {
@@ -895,7 +918,7 @@ pub mod coresdk {
                     }
                     write!(f, ")")
                 }
-                wf_activation_completion::Status::Failed(_) => {
+                workflow_activation_completion::Status::Failed(_) => {
                     write!(f, "Failed")
                 }
             }

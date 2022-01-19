@@ -1,0 +1,205 @@
+syntax = "proto3";
+
+package coresdk.bridge;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "temporal/sdk/core/core_interface.proto";
+import "temporal/sdk/core/activity_task/activity_task.proto";
+import "temporal/sdk/core/workflow_activation/workflow_activation.proto";
+import "temporal/sdk/core/workflow_completion/workflow_completion.proto";
+
+enum LogLevel {
+  LOG_LEVEL_UNSPECIFIED = 0;
+  OFF = 1;
+  ERROR = 2;
+  WARN = 3;
+  INFO = 4;
+  DEBUG = 5;
+  TRACE = 6;
+}
+
+message InitRequest {
+  GatewayOptions gateway_options = 1;
+  TelemetryOptions telemetry_options = 2;
+
+  message GatewayOptions {
+    string target_url = 1;
+    string namespace = 2;
+    string client_name = 3;
+    string client_version = 4;
+    map<string, string> static_headers = 5;
+    string identity = 6;
+    string worker_binary_id = 7;
+    TlsConfig tls_config = 8;
+    RetryConfig retry_config = 9;
+  }
+
+  message TlsConfig {
+    bytes server_root_ca_cert = 1;
+    string domain = 2;
+    bytes client_cert = 3;
+    bytes client_private_key = 4;
+  }
+
+  message RetryConfig {
+    google.protobuf.Duration initial_interval = 1;
+    google.protobuf.DoubleValue randomization_factor = 2;
+    google.protobuf.DoubleValue multiplier = 3;
+    google.protobuf.Duration max_interval = 4;
+    google.protobuf.Duration max_elapsed_time = 5;
+    google.protobuf.UInt32Value max_retries = 6;
+  }
+
+  message TelemetryOptions {
+    string otel_collector_url = 1;
+    string tracing_filter = 2;
+    LogLevel log_forwarding_level = 3;
+    string prometheus_export_bind_address = 4;
+  }
+}
+
+message InitResponse {
+  Error error = 1;
+
+  message Error {
+    string message = 1;
+  }
+}
+
+message RegisterWorkerRequest {
+  string task_queue = 1;
+  google.protobuf.UInt32Value max_cached_workflows = 2;
+  google.protobuf.UInt32Value max_outstanding_workflow_tasks = 3;
+  google.protobuf.UInt32Value max_outstanding_activities = 4;
+  google.protobuf.UInt32Value max_outstanding_local_activities = 5;
+  google.protobuf.UInt32Value max_concurrent_wft_polls = 6;
+  google.protobuf.FloatValue nonsticky_to_sticky_poll_ratio = 7;
+  google.protobuf.UInt32Value max_concurrent_at_polls = 8;
+  bool no_remote_activities = 9;
+  google.protobuf.Duration sticky_queue_schedule_to_start_timeout = 10;
+  google.protobuf.Duration max_heartbeat_throttle_interval = 11;
+  google.protobuf.Duration default_heartbeat_throttle_interval = 12;
+}
+
+message RegisterWorkerResponse {
+  Error error = 1;
+
+  message Error {
+    string message = 1;
+    bool worker_already_registered = 2;
+  }
+}
+
+message PollWorkflowActivationRequest {
+  string task_queue = 1;
+}
+
+message PollWorkflowActivationResponse {
+  oneof response {
+    coresdk.workflow_activation.WorkflowActivation activation = 1;
+    Error error = 2;
+  }
+
+  message Error {
+    string message = 1;
+    bool shutdown = 2;
+  }
+}
+
+message PollActivityTaskRequest {
+  string task_queue = 1;
+}
+
+message PollActivityTaskResponse {
+  oneof response {
+    coresdk.activity_task.ActivityTask task = 1;
+    Error error = 2;
+  }
+
+  message Error {
+    string message = 1;
+    bool shutdown = 2;
+  }
+}
+
+message CompleteWorkflowActivationRequest {
+  coresdk.workflow_completion.WorkflowActivationCompletion completion = 1;
+}
+
+message CompleteWorkflowActivationResponse {
+  Error error = 1;
+
+  message Error {
+    string message = 1;
+  }
+}
+
+message CompleteActivityTaskRequest {
+  coresdk.ActivityTaskCompletion completion = 1;
+}
+
+message CompleteActivityTaskResponse {
+  Error error = 1;
+
+  message Error {
+    string message = 1;
+  }
+}
+
+message RecordActivityHeartbeatRequest {
+  coresdk.ActivityHeartbeat heartbeat = 1;
+}
+
+message RecordActivityHeartbeatResponse {
+  Error error = 1;
+
+  message Error {
+    string message = 1;
+  }
+}
+
+message RequestWorkflowEvictionRequest {
+  string task_queue = 1;
+  string run_id = 2;
+}
+
+message RequestWorkflowEvictionResponse {
+  Error error = 1;
+
+  message Error {
+    string message = 1;
+  }
+}
+
+message ShutdownRequest {
+}
+
+message ShutdownResponse {
+}
+
+message ShutdownWorkerRequest {
+  string task_queue = 1;
+}
+
+message ShutdownWorkerResponse {
+  Error error = 1;
+
+  message Error {
+    string message = 1;
+  }
+}
+
+message FetchBufferedLogsRequest {
+}
+
+message FetchBufferedLogsResponse {
+  repeated LogEntry entries = 1;
+
+  message LogEntry {
+    string message = 1;
+    google.protobuf.Timestamp timestamp = 2;
+    LogLevel level = 3;
+  }
+}

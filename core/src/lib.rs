@@ -56,8 +56,8 @@ use temporal_sdk_core_api::{
     Core, CoreLog,
 };
 use temporal_sdk_core_protos::coresdk::{
-    activity_task::ActivityTask, workflow_activation::WfActivation,
-    workflow_completion::WfActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
+    activity_task::ActivityTask, workflow_activation::WorkflowActivation,
+    workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
 };
 
 use crate::telemetry::metrics::{MetricsContext, METRIC_METER};
@@ -98,6 +98,15 @@ pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
     Ok(CoreSDK::new(server_gateway, opts))
 }
 
+/// Initialize core using a provided gateway instance, which is typically a mock
+pub fn init_mock_gateway<SG: ServerGatewayApis + Send + Sync + 'static>(
+    opts: CoreInitOptions,
+    server_gateway: SG,
+) -> Result<impl Core, CoreInitError> {
+    telemetry_init(&opts.telemetry_opts).map_err(CoreInitError::TelemetryInitError)?;
+    Ok(CoreSDK::new(server_gateway, opts))
+}
+
 struct CoreSDK {
     /// Options provided at initialization time
     init_options: CoreInitOptions,
@@ -133,7 +142,7 @@ impl Core for CoreSDK {
     async fn poll_workflow_activation(
         &self,
         task_queue: &str,
-    ) -> Result<WfActivation, PollWfError> {
+    ) -> Result<WorkflowActivation, PollWfError> {
         let worker = self.worker(task_queue)?;
         worker.next_workflow_activation().await
     }
@@ -162,7 +171,7 @@ impl Core for CoreSDK {
       fields(completion=%&completion, run_id=%completion.run_id))]
     async fn complete_workflow_activation(
         &self,
-        completion: WfActivationCompletion,
+        completion: WorkflowActivationCompletion,
     ) -> Result<(), CompleteWfError> {
         let worker = self.worker(&completion.task_queue)?;
         worker.complete_workflow_activation(completion).await

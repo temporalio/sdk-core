@@ -2,8 +2,8 @@ syntax = "proto3";
 
 package coresdk.child_workflow;
 
-import "common.proto";
 import "temporal/api/failure/v1/message.proto";
+import "temporal/sdk/core/common/common.proto";
 
 /**
  * Used by core to resolve child workflow executions.

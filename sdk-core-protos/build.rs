@@ -46,15 +46,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[derive(::derive_more::From)]",
         )
         .type_attribute(
-            "coresdk.workflow_activation.wf_activation_job",
+            "coresdk.workflow_activation.workflow_activation_job",
             "#[derive(::derive_more::From)]",
         )
         .type_attribute(
-            "coresdk.workflow_activation.WFActivationJob.variant",
+            "coresdk.workflow_activation.WorkflowActivationJob.variant",
             "#[derive(::derive_more::From)]",
         )
         .type_attribute(
-            "coresdk.workflow_completion.WFActivationCompletion.status",
+            "coresdk.workflow_completion.WorkflowActivationCompletion.status",
             "#[derive(::derive_more::From)]",
         )
         .type_attribute(
@@ -89,7 +89,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .compile(
             &[
-                "../protos/local/core_interface.proto",
+                "../protos/local/temporal/sdk/core/core_interface.proto",
+                "../protos/local/temporal/sdk/core/bridge/bridge.proto",
                 "../protos/api_upstream/temporal/api/workflowservice/v1/service.proto",
             ],
             &["../protos/api_upstream", "../protos/local"],

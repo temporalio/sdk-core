@@ -6,7 +6,7 @@ use temporal_sdk_core_protos::coresdk::{
     },
     activity_task::activity_task as act_task,
     common::Payload,
-    workflow_activation::{wf_activation_job, ResolveActivity, WfActivationJob},
+    workflow_activation::{workflow_activation_job, ResolveActivity, WorkflowActivationJob},
     workflow_commands::ActivityCancellationType,
     ActivityHeartbeat, ActivityTaskCompletion, IntoCompletion,
 };
@@ -69,8 +69,8 @@ async fn activity_heartbeat() {
     assert_matches!(
         task.jobs.as_slice(),
         [
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {seq, result: Some(ActivityResolution {
                     status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)})),
                      ..})}

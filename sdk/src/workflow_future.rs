@@ -18,9 +18,9 @@ use temporal_sdk_core_protos::{
     coresdk::{
         common::Payload,
         workflow_activation::{
-            wf_activation_job::Variant, FireTimer, NotifyHasPatch, ResolveActivity,
-            ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart, WfActivation,
-            WfActivationJob,
+            workflow_activation_job::Variant, FireTimer, NotifyHasPatch, ResolveActivity,
+            ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart, WorkflowActivation,
+            WorkflowActivationJob,
         },
         workflow_commands::{
             request_cancel_external_workflow_execution as cancel_we, workflow_command,
@@ -30,7 +30,7 @@ use temporal_sdk_core_protos::{
             RequestCancelLocalActivity, ScheduleActivity, ScheduleLocalActivity,
             StartChildWorkflowExecution, StartTimer,
         },
-        workflow_completion::WfActivationCompletion,
+        workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::failure::v1::Failure,
     utilities::TryIntoOrNone,
@@ -49,10 +49,10 @@ impl WorkflowFunction {
         namespace: String,
         task_queue: String,
         args: Vec<Payload>,
-        outgoing_completions: UnboundedSender<WfActivationCompletion>,
+        outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
     ) -> (
         impl Future<Output = WorkflowResult<()>>,
-        UnboundedSender<WfActivation>,
+        UnboundedSender<WorkflowActivation>,
     ) {
         let (cancel_tx, cancel_rx) = watch::channel(false);
         let (wf_context, cmd_receiver) =
@@ -100,9 +100,9 @@ pub struct WorkflowFuture {
     /// Commands produced inside user's wf code
     incoming_commands: Receiver<RustWfCmd>,
     /// Once blocked or the workflow has finished or errored out, the result is sent here
-    outgoing_completions: UnboundedSender<WfActivationCompletion>,
+    outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
     /// Activations from core
-    incoming_activations: UnboundedReceiver<WfActivation>,
+    incoming_activations: UnboundedReceiver<WorkflowActivation>,
     /// Commands by ID -> blocked status
     command_status: HashMap<CommandID, WFCommandFutInfo>,
     /// Use to notify workflow code of cancellation
@@ -137,7 +137,7 @@ impl WorkflowFuture {
     fn fail_wft(&self, run_id: String, fail: Error) {
         warn!("Workflow task failed for {}: {}", run_id, fail);
         self.outgoing_completions
-            .send(WfActivationCompletion::fail(
+            .send(WorkflowActivationCompletion::fail(
                 &self.task_queue,
                 run_id,
                 anyhow_to_fail(fail),
@@ -147,7 +147,7 @@ impl WorkflowFuture {
 
     fn send_completion(&self, run_id: String, activation_cmds: Vec<workflow_command::Variant>) {
         self.outgoing_completions
-            .send(WfActivationCompletion::from_cmds(
+            .send(WorkflowActivationCompletion::from_cmds(
                 &self.task_queue,
                 run_id,
                 activation_cmds,
@@ -252,7 +252,7 @@ impl Future for WorkflowFuture {
             }
 
             let mut die_of_eviction_when_done = false;
-            for WfActivationJob { variant } in activation.jobs {
+            for WorkflowActivationJob { variant } in activation.jobs {
                 match self.handle_job(variant) {
                     Ok(true) => {
                         die_of_eviction_when_done = true;
@@ -268,7 +268,7 @@ impl Future for WorkflowFuture {
             if is_only_eviction {
                 // No need to do anything with the workflow code in this case
                 self.outgoing_completions
-                    .send(WfActivationCompletion::from_cmds(
+                    .send(WorkflowActivationCompletion::from_cmds(
                         &self.task_queue,
                         run_id,
                         vec![],
@@ -290,7 +290,7 @@ impl Future for WorkflowFuture {
                     );
                     warn!("{}", errmsg);
                     self.outgoing_completions
-                        .send(WfActivationCompletion::fail(
+                        .send(WorkflowActivationCompletion::fail(
                             &self.task_queue,
                             run_id,
                             Failure {

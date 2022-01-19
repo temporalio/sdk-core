@@ -44,10 +44,10 @@ use temporal_sdk_core_protos::{
         common::{NamespacedWorkflowExecution, Payload},
         workflow_activation::{
             resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
-            wf_activation_job::Variant, WfActivation, WfActivationJob,
+            workflow_activation_job::Variant, WorkflowActivation, WorkflowActivationJob,
         },
         workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution},
-        workflow_completion::WfActivationCompletion,
+        workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
     },
     temporal::api::failure::v1::Failure,
@@ -74,7 +74,7 @@ pub struct TestRustWorker {
 
 struct WorkflowHalf {
     /// Maps run id to the driver
-    workflows: HashMap<String, UnboundedSender<WfActivation>>,
+    workflows: HashMap<String, UnboundedSender<WorkflowActivation>>,
     /// Maps workflow type to the function for executing workflow runs with that ID
     workflow_fns: HashMap<String, WorkflowFunction>,
     /// Number of live workflows
@@ -270,13 +270,13 @@ impl WorkflowHalf {
         core: &dyn Core,
         task_queue: &str,
         shutdown_rx: &Receiver<bool>,
-        completions_tx: &UnboundedSender<WfActivationCompletion>,
-        completions_rx: &mut UnboundedReceiver<WfActivationCompletion>,
-        activation: WfActivation,
+        completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
+        completions_rx: &mut UnboundedReceiver<WorkflowActivationCompletion>,
+        activation: WorkflowActivation,
     ) -> Result<(), anyhow::Error> {
         // If the activation is to start a workflow, create a new workflow driver for it,
         // using the function associated with that workflow id
-        if let Some(WfActivationJob {
+        if let Some(WorkflowActivationJob {
             variant: Some(Variant::StartWorkflow(sw)),
         }) = activation.jobs.get(0)
         {

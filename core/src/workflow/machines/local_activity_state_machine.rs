@@ -12,6 +12,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use temporal_sdk_core_protos::{
+    constants::LOCAL_ACTIVITY_MARKER_NAME,
     coresdk::{
         activity_result::{
             ActivityResolution, Cancellation, DoBackoff, Failure as ActFail, Success,
@@ -29,8 +30,6 @@ use temporal_sdk_core_protos::{
     },
     utilities::TryIntoOrNone,
 };
-
-pub const LOCAL_ACTIVITY_MARKER_NAME: &str = "core_local_activity";
 
 fsm! {
     pub(super) name LocalActivityMachine;
@@ -796,7 +795,7 @@ mod tests {
     use temporal_sdk_core_protos::{
         coresdk::{
             activity_result::ActivityExecutionResult,
-            workflow_activation::{wf_activation_job, WfActivationJob},
+            workflow_activation::{workflow_activation_job, WorkflowActivationJob},
             workflow_commands::ActivityCancellationType::WaitCancellationCompleted,
         },
         temporal::api::{
@@ -957,8 +956,8 @@ mod tests {
         assert_eq!(act.timestamp.unwrap().seconds, first_act_ts.seconds + 1);
         assert_matches!(
             act.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(ra))
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(ra))
             }] => assert_eq!(ra.seq, 1)
         );
         let ready_to_execute_las = wfm.drain_queued_local_activities();
@@ -977,8 +976,8 @@ mod tests {
         assert_eq!(act.timestamp.unwrap().seconds, first_act_ts.seconds + 2);
         assert_matches!(
             act.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(ra))
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(ra))
             }] => assert_eq!(ra.seq, 2)
         );
         let commands = wfm.get_server_commands().commands;
@@ -1053,11 +1052,11 @@ mod tests {
         assert_eq!(act.timestamp.unwrap().seconds, first_act_ts.seconds + 1);
         assert_matches!(
             act.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(ra))
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(ra))
             },
-            WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(ra2))
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(ra2))
             }] => {assert_eq!(ra.seq, 1); assert_eq!(ra2.seq, 2)}
         );
         let ready_to_execute_las = wfm.drain_queued_local_activities();
@@ -1131,8 +1130,8 @@ mod tests {
         let act = wfm.get_next_activation().await.unwrap();
         assert_matches!(
             act.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(ra))
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(ra))
             }] => assert_eq!(ra.seq, 1)
         );
         let ready_to_execute_las = wfm.drain_queued_local_activities();
@@ -1157,8 +1156,8 @@ mod tests {
         };
         assert_matches!(
             act.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::FireTimer(_))
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::FireTimer(_))
             }]
         );
         let ready_to_execute_las = wfm.drain_queued_local_activities();
@@ -1172,8 +1171,8 @@ mod tests {
         let act = wfm.get_next_activation().await.unwrap();
         assert_matches!(
             act.jobs.as_slice(),
-            [WfActivationJob {
-                variant: Some(wf_activation_job::Variant::ResolveActivity(ra))
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(ra))
             }] => assert_eq!(ra.seq, 2)
         );
 

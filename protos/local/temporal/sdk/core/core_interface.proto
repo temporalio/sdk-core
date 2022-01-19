@@ -2,20 +2,19 @@ syntax = "proto3";
 
 package coresdk;
 
-import "activity_result.proto";
-import "activity_task.proto";
-import "common.proto";
-import "external_data.proto";
-import "workflow_activation.proto";
-import "workflow_commands.proto";
-import "workflow_completion.proto";
-
-// Note: Intellij will think these imports don't work because of the slightly odd nature of
+// Note: Intellij will think the Google imports don't work because of the slightly odd nature of
 // the include paths. You can make it work by going to the "Protobuf Support" settings section
 // and adding the "api_upstream" subdir as an include path.
-import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "temporal/sdk/core/activity_result/activity_result.proto";
+import "temporal/sdk/core/activity_task/activity_task.proto";
+import "temporal/sdk/core/common/common.proto";
+import "temporal/sdk/core/external_data/external_data.proto";
+import "temporal/sdk/core/workflow_activation/workflow_activation.proto";
+import "temporal/sdk/core/workflow_commands/workflow_commands.proto";
+import "temporal/sdk/core/workflow_completion/workflow_completion.proto";
 
 // A request as given to `record_activity_heartbeat`
 message ActivityHeartbeat {

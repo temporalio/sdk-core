@@ -41,8 +41,8 @@ use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::activity_execution_result,
         activity_task::ActivityTask,
-        workflow_activation::WfActivation,
-        workflow_completion::{self, wf_activation_completion, WfActivationCompletion},
+        workflow_activation::WorkflowActivation,
+        workflow_completion::{self, workflow_activation_completion, WorkflowActivationCompletion},
     },
     temporal::api::{
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
@@ -327,7 +327,7 @@ impl Worker {
             Ok(())
         }
     }
-    pub(crate) async fn next_workflow_activation(&self) -> Result<WfActivation, PollWfError> {
+    pub(crate) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
         // The poll needs to be in a loop because we can't guarantee tail call optimization in Rust
         // (simply) and we really, really need that for long-poll retries.
         loop {
@@ -374,16 +374,16 @@ impl Worker {
 
     pub(crate) async fn complete_workflow_activation(
         &self,
-        completion: WfActivationCompletion,
+        completion: WorkflowActivationCompletion,
     ) -> Result<(), CompleteWfError> {
         let wfstatus = completion.status;
         let report_outcome = match wfstatus {
-            Some(wf_activation_completion::Status::Successful(success)) => {
+            Some(workflow_activation_completion::Status::Successful(success)) => {
                 self.wf_activation_success(&completion.run_id, success)
                     .await
             }
 
-            Some(wf_activation_completion::Status::Failed(failure)) => {
+            Some(workflow_activation_completion::Status::Failed(failure)) => {
                 self.wf_activation_failed(
                     &completion.run_id,
                     WorkflowTaskFailedCause::Unspecified,
@@ -496,7 +496,7 @@ impl Worker {
     async fn apply_server_work(
         &self,
         work: ValidPollWFTQResponse,
-    ) -> Result<Option<WfActivation>, PollWfError> {
+    ) -> Result<Option<WorkflowActivation>, PollWfError> {
         let we = work.workflow_execution.clone();
         let tt = work.task_token.clone();
         let res = self
@@ -517,7 +517,7 @@ impl Worker {
             NewWfTaskOutcome::Autocomplete | NewWfTaskOutcome::LocalActsOutstanding => {
                 debug!(workflow_execution=?we,
                        "No new work for lang to perform after polling server");
-                self.complete_workflow_activation(WfActivationCompletion {
+                self.complete_workflow_activation(WorkflowActivationCompletion {
                     task_queue: self.config.task_queue.clone(),
                     run_id: we.run_id,
                     status: Some(workflow_completion::Success::from_variants(vec![]).into()),
@@ -813,9 +813,10 @@ struct WFTReportOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_help::{fake_sg_opts, mock_gateway};
+    use crate::test_help::mock_gateway;
 
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
+    use test_utils::fake_sg_opts;
 
     #[tokio::test]
     async fn activity_timeouts_dont_eat_permits() {

@@ -1,7 +1,7 @@
 use crate::{
     job_assert,
     test_help::{
-        build_fake_core, canned_histories, fake_sg_opts, gen_assert_and_reply, mock_core,
+        build_fake_core, canned_histories, gen_assert_and_reply, mock_core,
         mock_core_with_opts_no_workers, mock_gateway, mock_manual_poller, mock_poller,
         mock_poller_from_resps, poll_and_reply, MockWorker, MocksHolder, TEST_Q,
     },
@@ -23,7 +23,7 @@ use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{activity_resolution, ActivityExecutionResult, ActivityResolution},
         activity_task::activity_task,
-        workflow_activation::{wf_activation_job, ResolveActivity, WfActivationJob},
+        workflow_activation::{workflow_activation_job, ResolveActivity, WorkflowActivationJob},
         workflow_commands::{
             ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity,
             ScheduleActivity,
@@ -35,7 +35,7 @@ use temporal_sdk_core_protos::{
         RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedResponse,
     },
 };
-use test_utils::{fanout_tasks, start_timer_cmd};
+use test_utils::{fake_sg_opts, fanout_tasks, start_timer_cmd};
 use tokio::{join, sync::Notify, time::sleep};
 
 #[tokio::test]
@@ -456,7 +456,7 @@ async fn activity_timeout_no_double_resolve() {
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
                     seq: activity_id,
                     activity_id: activity_id.to_string(),
@@ -466,14 +466,14 @@ async fn activity_timeout_no_double_resolve() {
                 .into()],
             ),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::SignalWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::SignalWorkflow(_)),
                 vec![
                     RequestCancelActivity { seq: activity_id }.into(),
                     start_timer_cmd(2, Duration::from_secs(1)),
                 ],
             ),
             gen_assert_and_reply(
-                &job_assert!(wf_activation_job::Variant::ResolveActivity(
+                &job_assert!(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
                         result: Some(ActivityResolution {
                             status: Some(activity_resolution::Status::Cancelled(..)),
@@ -485,8 +485,8 @@ async fn activity_timeout_no_double_resolve() {
             ),
             gen_assert_and_reply(
                 &job_assert!(
-                    wf_activation_job::Variant::SignalWorkflow(_),
-                    wf_activation_job::Variant::FireTimer(_)
+                    workflow_activation_job::Variant::SignalWorkflow(_),
+                    workflow_activation_job::Variant::FireTimer(_)
                 ),
                 vec![CompleteWorkflowExecution { result: None }.into()],
             ),
