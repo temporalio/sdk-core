@@ -16,7 +16,7 @@ use tokio::join;
 async fn timer_workflow_replay() {
     let (core, task_q) = init_core_replay_preloaded(
         "fail_wf_task",
-        &history_from_proto_binary("histories/fail_wf_task.bin")
+        &history_from_proto_binary("histories/timer_workflow_history.bin")
             .await
             .unwrap(),
     );
