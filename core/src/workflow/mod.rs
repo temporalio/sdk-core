@@ -254,7 +254,7 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::RequestCancelLocalActivity(s) => {
                 Ok(Self::RequestCancelLocalActivity(s))
             }
-            workflow_command::Variant::UpsertSearchAttributes(s) => Ok(Self::UpsertWorkflowSearchAttributes(s))
+            workflow_command::Variant::UpsertWorkflowSearchAttributesCommandAttributes(s) => Ok(Self::UpsertSearchAttributes(s))
         }
     }
 }

@@ -718,6 +718,12 @@ pub mod coresdk {
             }
         }
 
+        impl Display for UpsertWorkflowSearchAttributes {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "UpsertWorkflowSearchAttributes({})", self.seq) // todo: customize this better
+            }
+        }
+
         impl Display for SignalExternalWorkflowExecution {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(f, "SignalExternalWorkflowExecution({})", self.seq)
@@ -1306,6 +1312,14 @@ pub mod temporal {
                         Self::StartTimerCommandAttributes(StartTimerCommandAttributes {
                             timer_id: s.seq.to_string(),
                             start_to_fire_timeout: s.start_to_fire_timeout,
+                        })
+                    }
+                }
+
+                impl From<workflow_commands::UpsertWorkflowSearchAttributes> for command::Attributes {
+                    fn from(s: workflow_commands::UpsertWorkflowSearchAttributes) -> Self {
+                        Self::UpsertWorkflowSearchAttributesCommandAttributes(UpsertWorkflowSearchAttributesCommandAttributes {
+                            search_attributes: Some(s.search_attributes.into()),
                         })
                     }
                 }
