@@ -66,6 +66,7 @@ features = ["history_builders"]
 [dependencies.temporal-client]
 path = "../client"
 version = "0.1"
+features = ["mocks"]
 
 [dependencies.rustfsm]
 path = "../fsm"
@@ -78,7 +79,6 @@ mockall = "0.11"
 rstest = "0.12"
 temporal-sdk-core-test-utils = { path = "../test-utils" }
 temporal-sdk = { path = "../sdk" }
-temporal-client = { path = "../client", features = ["mocks"] }
 
 [build-dependencies]
 tonic-build = "0.6"
