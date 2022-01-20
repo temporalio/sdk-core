@@ -1,5 +1,5 @@
 use std::time::Duration;
-use test_utils::CoreWfStarter;
+use temporal_sdk_core_test_utils::CoreWfStarter;
 
 #[tokio::test]
 async fn can_use_retry_gateway() {

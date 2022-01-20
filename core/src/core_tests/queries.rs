@@ -1,7 +1,6 @@
 use crate::{
     test_help::{
-        canned_histories, hist_to_poll_resp, mock_core, mock_gateway, MocksHolder, ResponseType,
-        TEST_Q,
+        canned_histories, hist_to_poll_resp, mock_core, MocksHolder, ResponseType, TEST_Q,
     },
     Core,
 };
@@ -9,6 +8,7 @@ use std::{
     collections::{HashMap, VecDeque},
     time::Duration,
 };
+use temporal_client::mocks::mock_gateway;
 
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -25,7 +25,7 @@ use temporal_sdk_core_protos::{
         },
     },
 };
-use test_utils::start_timer_cmd;
+use temporal_sdk_core_test_utils::start_timer_cmd;
 
 #[rstest::rstest]
 #[case::with_history(true)]

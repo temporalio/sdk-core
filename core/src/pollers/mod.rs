@@ -1,13 +1,9 @@
 mod poll_buffer;
 
-// #[cfg(test)]
-// pub use gateway::{MockManualGateway, MockServerGatewayApis};
-
 pub use poll_buffer::{
     new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
     PollWorkflowTaskBuffer, WorkflowTaskPoller,
 };
-use std::{ops::Deref, sync::Arc};
 pub use temporal_client::{
     ClientTlsConfig, RetryConfig, RetryGateway, ServerGateway, ServerGatewayApis,
     ServerGatewayOptions, ServerGatewayOptionsBuilder, TlsConfig,
@@ -21,28 +17,6 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
 use futures::Future;
 
 pub type Result<T, E = tonic::Status> = std::result::Result<T, E>;
-
-pub struct GatewayRef {
-    pub gw: Arc<dyn ServerGatewayApis + Send + Sync>,
-    pub options: ServerGatewayOptions,
-}
-
-impl GatewayRef {
-    pub fn new<SG: ServerGatewayApis + Send + Sync + 'static>(
-        gw: Arc<SG>,
-        options: ServerGatewayOptions,
-    ) -> Self {
-        Self { gw, options }
-    }
-}
-
-impl Deref for GatewayRef {
-    type Target = dyn ServerGatewayApis + Send + Sync;
-
-    fn deref(&self) -> &Self::Target {
-        self.gw.as_ref()
-    }
-}
 
 /// A trait for things that poll the server. Hides complexity of concurrent polling or polling
 /// on sticky/nonsticky queues simultaneously.

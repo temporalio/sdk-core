@@ -6,7 +6,7 @@
 
 use prost::Message;
 use temporal_client::ServerGatewayApis;
-use test_utils::get_integ_server_options;
+use temporal_sdk_core_test_utils::get_integ_server_options;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {

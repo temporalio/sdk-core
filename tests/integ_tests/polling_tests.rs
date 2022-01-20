@@ -9,7 +9,9 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_completion::WorkflowActivationCompletion,
     IntoCompletion,
 };
-use test_utils::{init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers, CoreWfStarter};
+use temporal_sdk_core_test_utils::{
+    init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers, CoreWfStarter,
+};
 use tokio::time::timeout;
 
 #[tokio::test]

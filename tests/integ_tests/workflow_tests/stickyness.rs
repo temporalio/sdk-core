@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk::{WfContext, WorkflowResult};
-use test_utils::CoreWfStarter;
+use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio::sync::Barrier;
 
 #[tokio::test]

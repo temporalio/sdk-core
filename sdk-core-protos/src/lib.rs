@@ -5,8 +5,16 @@
 pub mod constants;
 pub mod utilities;
 
+#[cfg(feature = "history_builders")]
+mod history_builder;
+#[cfg(feature = "history_builders")]
+mod history_info;
 mod task_token;
 
+#[cfg(feature = "history_builders")]
+pub use history_builder::{default_wes_attribs, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE};
+#[cfg(feature = "history_builders")]
+pub use history_info::HistoryInfo;
 pub use task_token::TaskToken;
 
 #[allow(clippy::large_enum_variant)]
@@ -336,7 +344,7 @@ pub mod coresdk {
 
     pub mod workflow_activation {
         use crate::{
-            coresdk::FromPayloadsExt,
+            coresdk::{workflow_activation::remove_from_cache::EvictionReason, FromPayloadsExt},
             temporal::api::history::v1::{
                 WorkflowExecutionCancelRequestedEventAttributes,
                 WorkflowExecutionSignaledEventAttributes,
@@ -345,13 +353,21 @@ pub mod coresdk {
         use std::fmt::{Display, Formatter};
 
         tonic::include_proto!("coresdk.workflow_activation");
-        pub fn create_evict_activation(run_id: String, reason: String) -> WorkflowActivation {
+
+        pub fn create_evict_activation(
+            run_id: String,
+            message: String,
+            reason: EvictionReason,
+        ) -> WorkflowActivation {
             WorkflowActivation {
                 timestamp: None,
                 run_id,
                 is_replaying: false,
                 jobs: vec![WorkflowActivationJob::from(
-                    workflow_activation_job::Variant::RemoveFromCache(RemoveFromCache { reason }),
+                    workflow_activation_job::Variant::RemoveFromCache(RemoveFromCache {
+                        message,
+                        reason: reason as i32,
+                    }),
                 )],
             }
         }
@@ -390,8 +406,21 @@ pub mod coresdk {
                 self.jobs.len() == 1 && self.eviction_index().is_some()
             }
 
+            /// Returns eviction reason if this activation has an evict job
+            pub fn eviction_reason(&self) -> Option<EvictionReason> {
+                self.jobs.iter().find_map(|j| {
+                    if let Some(workflow_activation_job::Variant::RemoveFromCache(ref rj)) =
+                        j.variant
+                    {
+                        EvictionReason::from_i32(rj.reason)
+                    } else {
+                        None
+                    }
+                })
+            }
+
             /// Append an eviction job to the joblist
-            pub fn append_evict_job(&mut self, reason: impl Into<String>) {
+            pub fn append_evict_job(&mut self, evict_job: RemoveFromCache) {
                 if let Some(last_job) = self.jobs.last() {
                     if matches!(
                         last_job.variant,
@@ -401,11 +430,15 @@ pub mod coresdk {
                     }
                 }
                 let evict_job = WorkflowActivationJob::from(
-                    workflow_activation_job::Variant::RemoveFromCache(RemoveFromCache {
-                        reason: reason.into(),
-                    }),
+                    workflow_activation_job::Variant::RemoveFromCache(evict_job),
                 );
                 self.jobs.push(evict_job);
+            }
+        }
+
+        impl Display for EvictionReason {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{:?}", self)
             }
         }
 
@@ -1451,10 +1484,30 @@ pub mod temporal {
                 use crate::temporal::api::{
                     enums::v1::EventType, history::v1::history_event::Attributes,
                 };
+                use anyhow::bail;
                 use prost::alloc::fmt::Formatter;
                 use std::fmt::Display;
 
                 tonic::include_proto!("temporal.api.history.v1");
+
+                impl History {
+                    pub fn extract_run_id_from_start(&self) -> Result<&str, anyhow::Error> {
+                        if let Some(
+                            history_event::Attributes::WorkflowExecutionStartedEventAttributes(wes),
+                        ) = self.events.get(0).and_then(|x| x.attributes.as_ref())
+                        {
+                            Ok(&wes.original_execution_run_id)
+                        } else {
+                            bail!("First event is not WorkflowExecutionStarted?!?")
+                        }
+                    }
+
+                    /// Returns the event id of the final event in the history. Will return 0 if
+                    /// there are no events.
+                    pub fn last_event_id(&self) -> i64 {
+                        self.events.last().map(|e| e.event_id).unwrap_or_default()
+                    }
+                }
 
                 impl HistoryEvent {
                     /// Returns true if this is an event created to mirror a command

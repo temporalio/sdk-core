@@ -347,9 +347,10 @@ impl ActivityHeartbeatManager {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_help::{mock_gateway, TEST_Q};
+    use crate::test_help::TEST_Q;
     use std::time::Duration;
 
+    use temporal_client::mocks::mock_gateway;
     use temporal_sdk_core_protos::{
         coresdk::common::Payload,
         temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,

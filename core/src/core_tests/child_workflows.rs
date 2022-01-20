@@ -1,12 +1,12 @@
 use crate::{
+    replay::DEFAULT_WORKFLOW_TYPE,
     test_help::{
-        build_mock_pollers, canned_histories, mock_core, mock_gateway, MockPollCfg, ResponseType,
-        DEFAULT_WORKFLOW_TYPE, TEST_Q,
+        build_mock_pollers, canned_histories, mock_core, MockPollCfg, ResponseType, TEST_Q,
     },
     workflow::managed_wf::ManagedWFFunc,
 };
 use std::sync::Arc;
-
+use temporal_client::mocks::mock_gateway;
 use temporal_sdk::{
     ChildWorkflowOptions, TestRustWorker, WfContext, WorkflowFunction, WorkflowResult,
 };

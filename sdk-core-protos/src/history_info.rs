@@ -1,46 +1,34 @@
-use crate::history_replay::DEFAULT_WORKFLOW_TYPE;
-use rand::{thread_rng, Rng};
-use temporal_sdk_core_protos::temporal::api::{
+use crate::temporal::api::{
     common::v1::WorkflowType,
     enums::v1::{EventType, TaskQueueKind},
     history::v1::{history_event, History, HistoryEvent},
     taskqueue::v1::TaskQueue,
     workflowservice::v1::PollWorkflowTaskQueueResponse,
 };
+use anyhow::{anyhow, bail};
+use rand::{thread_rng, Rng};
 
+/// Contains information about a validated history. Used for replay and other testing.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HistoryInfo {
-    pub previous_started_event_id: i64,
-    pub workflow_task_started_event_id: i64,
+    previous_started_event_id: i64,
+    workflow_task_started_event_id: i64,
     // This needs to stay private so the struct can't be instantiated outside of the constructor,
     // which enforces some invariants regarding history structure that need to be upheld.
     events: Vec<HistoryEvent>,
     wf_task_count: usize,
+    wf_type: String,
 }
 
-type Result<T, E = HistoryInfoError> = std::result::Result<T, E>;
-
-#[derive(thiserror::Error, Debug)]
-#[allow(clippy::large_enum_variant)]
-pub enum HistoryInfoError {
-    #[error("Latest wf started id and previous one are equal! ${previous_started_event_id:?}")]
-    UnexpectedEventId {
-        previous_started_event_id: i64,
-        workflow_task_started_event_id: i64,
-    },
-    #[error("Invalid history! Event {0:?} should be WF task completed, failed, or timed out")]
-    FailedOrTimeout(HistoryEvent),
-    #[error("Last item in history wasn't WorkflowTaskStarted")]
-    HistoryEndsUnexpectedly,
-}
+type Result<T, E = anyhow::Error> = std::result::Result<T, E>;
 
 impl HistoryInfo {
     /// Constructs a new instance, retaining only enough events to reach the provided workflow
     /// task number. If not provided, all events are retained.
-    pub(crate) fn new_from_history(h: &History, to_wf_task_num: Option<usize>) -> Result<Self> {
+    pub fn new_from_history(h: &History, to_wf_task_num: Option<usize>) -> Result<Self> {
         let events = &h.events;
         if events.is_empty() {
-            return Err(HistoryInfoError::HistoryEndsUnexpectedly);
+            bail!("History is empty!");
         }
 
         let is_all_hist = to_wf_task_num.is_none();
@@ -48,8 +36,22 @@ impl HistoryInfo {
         let mut workflow_task_started_event_id = 0;
         let mut wf_task_count = 0;
         let mut history = events.iter().peekable();
-        let mut events = vec![];
 
+        let wf_type = match &events.get(0).unwrap().attributes {
+            Some(history_event::Attributes::WorkflowExecutionStartedEventAttributes(attrs)) => {
+                attrs
+                    .workflow_type
+                    .as_ref()
+                    .ok_or(anyhow!(
+                        "No workflow type defined in execution started attributes"
+                    ))?
+                    .name
+                    .clone()
+            }
+            _ => bail!("First event in history was not workflow execution started!"),
+        };
+
+        let mut events = vec![];
         while let Some(event) = history.next() {
             events.push(event.clone());
             let next_event = history.peek();
@@ -67,10 +69,10 @@ impl HistoryInfo {
                     let previous_started_event_id = workflow_task_started_event_id;
                     workflow_task_started_event_id = event.event_id;
                     if workflow_task_started_event_id == previous_started_event_id {
-                        return Err(HistoryInfoError::UnexpectedEventId {
-                            previous_started_event_id,
-                            workflow_task_started_event_id,
-                        });
+                        bail!(
+                            "Latest wf started id {workflow_task_started_event_id} and previous \
+                             one {previous_started_event_id} are equal!"
+                        );
                     }
                     wf_task_count += 1;
                     if wf_task_count == to_wf_task_num || next_event.is_none() {
@@ -79,10 +81,14 @@ impl HistoryInfo {
                             workflow_task_started_event_id,
                             events,
                             wf_task_count,
+                            wf_type,
                         });
                     }
                 } else if next_event.is_some() && !next_is_failed_or_timeout {
-                    return Err(HistoryInfoError::FailedOrTimeout(event.clone()));
+                    bail!(
+                        "Invalid history! Event {event:?} should be WFT \
+                           completed, failed, or timed out"
+                    );
                 }
             }
 
@@ -96,11 +102,12 @@ impl HistoryInfo {
                         workflow_task_started_event_id,
                         events,
                         wf_task_count,
+                        wf_type,
                     });
                 }
                 // No more events
                 if workflow_task_started_event_id != event.event_id {
-                    return Err(HistoryInfoError::HistoryEndsUnexpectedly);
+                    bail!("History ends unexpectedly");
                 }
             }
         }
@@ -110,7 +117,7 @@ impl HistoryInfo {
     /// Remove events from the beginning of this history such that it looks like what would've been
     /// delivered on a sticky queue where the previously started task was the one before the last
     /// task in this history.
-    pub(crate) fn make_incremental(&mut self) {
+    pub fn make_incremental(&mut self) {
         let last_complete_ix = self
             .events
             .iter()
@@ -151,7 +158,7 @@ impl HistoryInfo {
             }),
             task_token: task_token.to_vec(),
             workflow_type: Some(WorkflowType {
-                name: DEFAULT_WORKFLOW_TYPE.to_owned(),
+                name: self.wf_type.clone(),
             }),
             workflow_execution_task_queue: Some(TaskQueue {
                 name: task_q.into(),
@@ -161,6 +168,11 @@ impl HistoryInfo {
             started_event_id: self.workflow_task_started_event_id,
             ..Default::default()
         }
+    }
+
+    /// Returns the last workflow task started event id
+    pub fn previous_started_event_id(&self) -> i64 {
+        self.previous_started_event_id
     }
 }
 
@@ -172,23 +184,33 @@ impl From<HistoryInfo> for History {
 
 #[cfg(test)]
 mod tests {
-    use crate::canned_histories;
+    use crate::{temporal::api::enums::v1::EventType, TestHistoryBuilder};
+
+    fn single_timer(timer_id: &str) -> TestHistoryBuilder {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        t.add_timer_fired(timer_started_event_id, timer_id.to_string());
+        t.add_workflow_task_scheduled_and_started();
+        t
+    }
 
     #[test]
     fn history_info_constructs_properly() {
-        let t = canned_histories::single_timer("timer1");
+        let t = single_timer("timer1");
 
         let history_info = t.get_history_info(1).unwrap();
-        assert_eq!(3, history_info.events.len());
+        assert_eq!(3, history_info.events().len());
         let history_info = t.get_history_info(2).unwrap();
-        assert_eq!(8, history_info.events.len());
+        assert_eq!(8, history_info.events().len());
     }
 
     #[test]
     fn incremental_works() {
-        let t = canned_histories::single_timer("timer1");
+        let t = single_timer("timer1");
         let hi = t.get_one_wft(2).unwrap();
-        assert_eq!(hi.events.len(), 4);
-        assert_eq!(hi.events[0].event_id, 5);
+        assert_eq!(hi.events().len(), 4);
+        assert_eq!(hi.events()[0].event_id, 5);
     }
 }

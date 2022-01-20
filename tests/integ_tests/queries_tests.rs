@@ -9,7 +9,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{failure::v1::Failure, query::v1::WorkflowQuery},
 };
-use test_utils::{init_core_and_create_wf, with_gw, CoreTestHelpers, CoreWfStarter, GwApi};
+use temporal_sdk_core_test_utils::{init_core_and_create_wf, CoreTestHelpers, CoreWfStarter};
 
 #[tokio::test]
 async fn simple_query_legacy() {
@@ -37,19 +37,20 @@ async fn simple_query_legacy() {
     .unwrap();
     tokio::time::sleep(Duration::from_secs(1)).await;
     // Query after timer should have fired and there should be new WFT
-    let query_fut = with_gw(core.as_ref(), |gw: GwApi| async move {
-        gw.query_workflow_execution(
-            workflow_id,
-            task.run_id.to_string(),
-            WorkflowQuery {
-                query_type: "myquery".to_string(),
-                query_args: Some(b"hi".into()),
-                header: None,
-            },
-        )
-        .await
-        .unwrap()
-    });
+    let query_fut = async {
+        core.server_gateway()
+            .query_workflow_execution(
+                workflow_id,
+                task.run_id.to_string(),
+                WorkflowQuery {
+                    query_type: "myquery".to_string(),
+                    query_args: Some(b"hi".into()),
+                    header: None,
+                },
+            )
+            .await
+            .unwrap()
+    };
     let workflow_completions_future = async {
         // Give query a beat to get going
         tokio::time::sleep(Duration::from_millis(400)).await;
@@ -238,8 +239,8 @@ async fn repros_query_dropped_on_floor() {
     .unwrap();
 
     let run_id = task.run_id.to_string();
-    let q1_fut = with_gw(core.as_ref(), |gw: GwApi| async move {
-        let res = gw
+    let q1_fut = async {
+        core.server_gateway()
             .query_workflow_execution(
                 task_q.to_string(),
                 run_id,
@@ -250,12 +251,11 @@ async fn repros_query_dropped_on_floor() {
                 },
             )
             .await
-            .unwrap();
-        res
-    });
+            .unwrap()
+    };
     let run_id = task.run_id.to_string();
-    let q2_fut = with_gw(core.as_ref(), |gw: GwApi| async move {
-        let res = gw
+    let q2_fut = async {
+        core.server_gateway()
             .query_workflow_execution(
                 task_q.to_string(),
                 run_id,
@@ -266,9 +266,8 @@ async fn repros_query_dropped_on_floor() {
                 },
             )
             .await
-            .unwrap();
-        res
-    });
+            .unwrap()
+    };
     let workflow_completions_future = async {
         let mut seen_q1 = false;
         let mut seen_q2 = false;
@@ -362,19 +361,20 @@ async fn fail_legacy_query() {
     .unwrap();
     tokio::time::sleep(Duration::from_secs(1)).await;
     // Query after timer should have fired and there should be new WFT
-    let query_fut = with_gw(core.as_ref(), |gw: GwApi| async move {
-        gw.query_workflow_execution(
-            workflow_id.to_string(),
-            task.run_id.to_string(),
-            WorkflowQuery {
-                query_type: "myquery".to_string(),
-                query_args: Some(b"hi".into()),
-                header: None,
-            },
-        )
-        .await
-        .unwrap_err()
-    });
+    let query_fut = async {
+        core.server_gateway()
+            .query_workflow_execution(
+                workflow_id.to_string(),
+                task.run_id.to_string(),
+                WorkflowQuery {
+                    query_type: "myquery".to_string(),
+                    query_args: Some(b"hi".into()),
+                    header: None,
+                },
+            )
+            .await
+            .unwrap_err()
+    };
     let workflow_completions_future = async {
         // Give query a beat to get going
         tokio::time::sleep(Duration::from_millis(400)).await;

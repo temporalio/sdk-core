@@ -1,21 +1,21 @@
-pub mod canned_histories;
-pub mod history_replay;
+//! This crate contains testing functionality that can be useful when building SDKs against Core,
+//! or even when testing workflows written in SDKs that use Core.
 
-use crate::history_replay::mock_gateway_from_history;
+pub mod canned_histories;
+
 use futures::{stream::FuturesUnordered, StreamExt};
 use log::LevelFilter;
 use prost::Message;
 use rand::{distributions::Standard, Rng};
 use std::{
-    convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc,
+    convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, sync::Arc,
     time::Duration,
 };
-use temporal_client::MockServerGatewayApis;
 use temporal_sdk::TestRustWorker;
 use temporal_sdk_core::{
-    init_mock_gateway, CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayApis,
-    ServerGatewayOptions, ServerGatewayOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
-    WorkerConfig, WorkerConfigBuilder,
+    replay::{init_core_replay, ReplayCore},
+    CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayOptions, ServerGatewayOptionsBuilder,
+    TelemetryOptions, TelemetryOptionsBuilder, WorkerConfig, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::Core;
 use temporal_sdk_core_protos::{
@@ -32,7 +32,6 @@ use url::Url;
 
 pub const NAMESPACE: &str = "default";
 pub const TEST_Q: &str = "q";
-pub type GwApi = Arc<dyn ServerGatewayApis>;
 /// If set, turn export traces and metrics to the OTel collector at the given URL
 const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
 /// If set, enable direct scraping of prom metrics on the specified port
@@ -47,23 +46,18 @@ pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn Core>, String)
     (core, starter.get_task_queue().to_string())
 }
 
-/// Create a core instance that will use the provided history to return a workflow task containing
-/// all of it, for testing replay.
-pub async fn init_core_replay(history: &History) -> Arc<dyn Core> {
-    let mut starter = CoreWfStarter::new_tq_name(TEST_Q);
-    let core_fakehist = init_mock_gateway(
-        starter.core_options.clone(),
-        mock_gateway_from_history(history),
-    )
-    .unwrap();
-    core_fakehist
-        .register_worker(starter.worker_config.clone())
-        .await
-        .unwrap();
-    starter.initted_core = Some(Arc::new(core_fakehist));
-    let core = starter.get_core().await;
-    starter.start_wf().await;
-    core
+/// Create a core replay instance preloaded with just one provided history. Returns the core impl
+/// and the task queue name as in [init_core_and_create_wf].
+pub fn init_core_replay_preloaded(test_name: &str, history: &History) -> (Arc<dyn Core>, String) {
+    let replay_core = init_core_replay(get_integ_telem_options());
+    let worker_cfg = WorkerConfigBuilder::default()
+        .task_queue(test_name)
+        .build()
+        .expect("Configuration options construct properly");
+    replay_core
+        .make_replay_worker(worker_cfg, history)
+        .expect("Worker registration works");
+    (Arc::new(replay_core), test_name.to_string())
 }
 
 /// Load history from a file containing the protobuf serialization of it
@@ -77,7 +71,8 @@ pub async fn history_from_proto_binary(path_from_root: &str) -> Result<History, 
 
 /// Implements a builder pattern to help integ tests initialize core and create workflows
 pub struct CoreWfStarter {
-    test_name: String,
+    /// Used for both the task queue and workflow id
+    task_queue_name: String,
     core_options: CoreInitOptions,
     worker_config: WorkerConfig,
     wft_timeout: Option<Duration>,
@@ -94,7 +89,7 @@ impl CoreWfStarter {
 
     pub fn new_tq_name(task_queue: &str) -> Self {
         Self {
-            test_name: task_queue.to_owned(),
+            task_queue_name: task_queue.to_owned(),
             core_options: CoreInitOptionsBuilder::default()
                 .gateway_opts(get_integ_server_options())
                 .telemetry_opts(get_integ_telem_options())
@@ -128,9 +123,7 @@ impl CoreWfStarter {
                 .await
                 .unwrap();
             // Register a worker for the task queue
-            core.register_worker(self.worker_config.clone())
-                .await
-                .unwrap();
+            core.register_worker(self.worker_config.clone()).unwrap();
             self.initted_core = Some(Arc::new(core));
         }
         self.initted_core.as_ref().unwrap().clone()
@@ -138,32 +131,52 @@ impl CoreWfStarter {
 
     /// Start the workflow defined by the builder and return run id
     pub async fn start_wf(&self) -> String {
-        self.start_wf_with_id(self.test_name.clone()).await
+        self.start_wf_with_id(self.task_queue_name.clone()).await
     }
 
     pub async fn start_wf_with_id(&self, workflow_id: String) -> String {
-        with_gw(
-            self.initted_core
-                .as_ref()
-                .expect(
-                    "Core must be initted before starting a workflow.\
+        self.initted_core
+            .as_ref()
+            .expect(
+                "Core must be initted before starting a workflow.\
                              Tests must call `get_core` first.",
-                )
-                .as_ref(),
-            |gw: GwApi| async move {
-                gw.start_workflow(
-                    vec![],
-                    self.worker_config.task_queue.clone(),
-                    workflow_id,
-                    self.test_name.clone(),
-                    self.wft_timeout,
-                )
-                .await
-                .unwrap()
-                .run_id
-            },
-        )
-        .await
+            )
+            .as_ref()
+            .server_gateway()
+            .start_workflow(
+                vec![],
+                self.worker_config.task_queue.clone(),
+                workflow_id,
+                self.task_queue_name.clone(),
+                self.wft_timeout,
+            )
+            .await
+            .unwrap()
+            .run_id
+    }
+
+    /// Fetch the history for the indicated workflow and replay it using the provided worker.
+    /// Can be used after completing workflows normally to ensure replay works as well.
+    pub async fn fetch_history_and_replay(
+        &mut self,
+        wf_id: impl Into<String>,
+        run_id: impl Into<String>,
+        worker: &mut TestRustWorker,
+    ) -> Result<(), anyhow::Error> {
+        // Fetch history and replay it
+        let history = self
+            .get_core()
+            .await
+            .server_gateway()
+            .get_workflow_execution_history(wf_id.into(), Some(run_id.into()), vec![])
+            .await?
+            .history
+            .expect("history field must be populated");
+        let (replay_core, _) = init_core_replay_preloaded(worker.task_queue(), &history);
+        let mut replay_worker = worker.swap_core(replay_core);
+        replay_worker.incr_expected_run_count(1);
+        replay_worker.run_until_done().await.unwrap();
+        Ok(())
     }
 
     pub fn get_task_queue(&self) -> &str {
@@ -171,7 +184,7 @@ impl CoreWfStarter {
     }
 
     pub fn get_wf_id(&self) -> &str {
-        &self.test_name
+        &self.task_queue_name
     }
 
     pub fn max_cached_workflows(&mut self, num: usize) -> &mut Self {
@@ -203,15 +216,6 @@ impl CoreWfStarter {
         self.wft_timeout = Some(timeout);
         self
     }
-}
-
-// TODO: This should get removed. Pretty pointless now that gateway is exported
-pub async fn with_gw<F: FnOnce(GwApi) -> Fout, Fout: Future>(
-    core: &dyn Core,
-    fun: F,
-) -> Fout::Output {
-    let gw = core.server_gateway();
-    fun(gw).await
 }
 
 pub fn get_integ_server_options() -> ServerGatewayOptions {
@@ -337,23 +341,4 @@ where
         .await
         .unwrap();
     }
-}
-
-/// Create a mock client primed with basic necessary expectations
-pub fn mock_gateway() -> MockServerGatewayApis {
-    let mut mg = MockServerGatewayApis::new();
-    mg.expect_get_options().return_const(fake_sg_opts());
-    mg
-}
-
-/// Returns some totally fake client options for use with mock clients
-pub fn fake_sg_opts() -> ServerGatewayOptions {
-    ServerGatewayOptionsBuilder::default()
-        .target_url(Url::from_str("https://fake").unwrap())
-        .namespace("test_namespace".to_string())
-        .client_name("fake_client".to_string())
-        .client_version("fake_version".to_string())
-        .worker_binary_id("fake_binid".to_string())
-        .build()
-        .unwrap()
 }

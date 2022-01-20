@@ -2,8 +2,8 @@ use crate::{
     job_assert,
     test_help::{
         build_fake_core, canned_histories, gen_assert_and_reply, mock_core,
-        mock_core_with_opts_no_workers, mock_gateway, mock_manual_poller, mock_poller,
-        mock_poller_from_resps, poll_and_reply, MockWorker, MocksHolder, TEST_Q,
+        mock_core_with_opts_no_workers, mock_manual_poller, mock_poller, mock_poller_from_resps,
+        poll_and_reply, MockWorker, MocksHolder, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::NonSticky,
     ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
@@ -18,7 +18,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::MockManualGateway;
+use temporal_client::mocks::{fake_sg_opts, mock_gateway, mock_manual_gateway};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{activity_resolution, ActivityExecutionResult, ActivityResolution},
@@ -35,7 +35,7 @@ use temporal_sdk_core_protos::{
         RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedResponse,
     },
 };
-use test_utils::{fake_sg_opts, fanout_tasks, start_timer_cmd};
+use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
 use tokio::{join, sync::Notify, time::sleep};
 
 #[tokio::test]
@@ -81,7 +81,6 @@ async fn max_activities_respected() {
             .build()
             .unwrap(),
     )
-    .await
     .unwrap();
 
     // We allow two outstanding activities, therefore first two polls should return right away
@@ -249,7 +248,7 @@ async fn activity_cancel_interrupts_poll() {
         .times(2)
         .returning(move || poll_resps.pop_front().unwrap());
 
-    let mut mock_gateway = MockManualGateway::new();
+    let mut mock_gateway = mock_manual_gateway();
     mock_gateway
         .expect_record_activity_heartbeat()
         .times(1)
@@ -334,7 +333,7 @@ async fn many_concurrent_heartbeat_cancels() {
     // them after a few successful heartbeats
     const CONCURRENCY_NUM: usize = 5;
 
-    let mut mock_gateway = MockManualGateway::new();
+    let mut mock_gateway = mock_manual_gateway();
     let mut poll_resps = VecDeque::from(
         (0..CONCURRENCY_NUM)
             .map(|i| {
@@ -400,7 +399,6 @@ async fn many_concurrent_heartbeat_cancels() {
             .build()
             .unwrap(),
     )
-    .await
     .unwrap();
 
     // Poll all activities first so they are registered

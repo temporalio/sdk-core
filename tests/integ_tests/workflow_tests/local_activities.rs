@@ -8,7 +8,7 @@ use temporal_sdk::{
 use temporal_sdk_core_protos::coresdk::{
     common::RetryPolicy, workflow_commands::ActivityCancellationType, AsJsonPayloadExt,
 };
-use test_utils::CoreWfStarter;
+use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio_util::sync::CancellationToken;
 
 pub async fn echo(e: String) -> anyhow::Result<String> {
@@ -177,11 +177,15 @@ async fn local_act_retry_timer_backoff() {
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
 
-    worker
+    let run_id = worker
         .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
+    starter
+        .fetch_history_and_replay(wf_name, run_id, &mut worker)
+        .await
+        .unwrap();
 }
 
 #[rstest::rstest]

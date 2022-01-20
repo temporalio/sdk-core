@@ -74,7 +74,7 @@ pub(crate) struct WorkflowMachines {
     /// The event id of the most recent event processed. It's possible in some situations (ex legacy
     /// queries) to receive a history with no new workflow tasks. If the last history we processed
     /// also had no new tasks, we need a way to know not to apply the same events over again.
-    last_processed_event: i64,
+    pub last_processed_event: i64,
     /// True if the workflow is replaying from history
     pub replaying: bool,
     /// Namespace this workflow exists in

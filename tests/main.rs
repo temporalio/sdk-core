@@ -6,7 +6,7 @@ mod integ_tests {
     use temporal_sdk_core::{
         ClientTlsConfig, ServerGatewayApis, ServerGatewayOptionsBuilder, TlsConfig,
     };
-    use test_utils::NAMESPACE;
+    use temporal_sdk_core_test_utils::NAMESPACE;
     use url::Url;
 
     mod client_tests;

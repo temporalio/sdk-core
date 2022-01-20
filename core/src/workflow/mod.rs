@@ -271,15 +271,16 @@ enum CommandID {
 pub mod managed_wf {
     use super::*;
     use crate::{
-        test_help::{TestHistoryBuilder, TEST_Q},
-        workflow::{history_update::tests::TestHBExt, WFCommand, WorkflowFetcher},
+        replay::TestHistoryBuilder,
+        test_help::TEST_Q,
+        workflow::{history_update::TestHBExt, WFCommand, WorkflowFetcher},
     };
     use std::{convert::TryInto, time::Duration};
     use temporal_sdk::{WorkflowFunction, WorkflowResult};
     use temporal_sdk_core_protos::coresdk::{
         activity_result::ActivityExecutionResult,
         common::Payload,
-        workflow_activation::create_evict_activation,
+        workflow_activation::{create_evict_activation, remove_from_cache::EvictionReason},
         workflow_completion::{
             workflow_activation_completion::Status, WorkflowActivationCompletion,
         },
@@ -432,6 +433,7 @@ pub mod managed_wf {
             let _ = self.activation_tx.send(create_evict_activation(
                 "not actually important".to_string(),
                 "force shutdown".to_string(),
+                EvictionReason::Unspecified,
             ));
             self.future_handle.take().unwrap().await.unwrap()
         }

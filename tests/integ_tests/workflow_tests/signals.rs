@@ -1,6 +1,6 @@
 use futures::StreamExt;
 use temporal_sdk::{ChildWorkflowOptions, WfContext, WorkflowResult};
-use test_utils::CoreWfStarter;
+use temporal_sdk_core_test_utils::CoreWfStarter;
 use uuid::Uuid;
 
 const SIGNAME: &str = "signame";

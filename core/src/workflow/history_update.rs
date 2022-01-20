@@ -1,4 +1,7 @@
-use crate::ServerGatewayApis;
+use crate::{
+    replay::{HistoryInfo, TestHistoryBuilder},
+    ServerGatewayApis,
+};
 use futures::{future::BoxFuture, stream, stream::BoxStream, FutureExt, Stream, StreamExt};
 use std::{
     collections::VecDeque,
@@ -108,7 +111,7 @@ impl HistoryUpdate {
         }
     }
 
-    #[cfg(test)]
+    /// Create an instance of an update directly from events - should only be used for replaying.
     pub fn new_from_events<I: IntoIterator<Item = HistoryEvent>>(
         events: I,
         previous_wft_started_id: i64,
@@ -233,27 +236,27 @@ impl HistoryUpdate {
     }
 }
 
+impl From<HistoryInfo> for HistoryUpdate {
+    fn from(v: HistoryInfo) -> Self {
+        Self::new_from_events(v.events().to_vec(), v.previous_started_event_id())
+    }
+}
+
+pub trait TestHBExt {
+    fn as_history_update(&self) -> HistoryUpdate;
+}
+
+impl TestHBExt for TestHistoryBuilder {
+    fn as_history_update(&self) -> HistoryUpdate {
+        self.get_full_history_info().unwrap().into()
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::test_help::{canned_histories, mock_gateway, TestHistoryBuilder};
-    use test_utils::history_replay::HistoryInfo;
-
-    impl From<HistoryInfo> for HistoryUpdate {
-        fn from(v: HistoryInfo) -> Self {
-            Self::new_from_events(v.events().to_vec(), v.previous_started_event_id)
-        }
-    }
-
-    pub trait TestHBExt {
-        fn as_history_update(&self) -> HistoryUpdate;
-    }
-
-    impl TestHBExt for TestHistoryBuilder {
-        fn as_history_update(&self) -> HistoryUpdate {
-            self.get_full_history_info().unwrap().into()
-        }
-    }
+    use crate::test_help::canned_histories;
+    use temporal_client::mocks::mock_gateway;
 
     #[tokio::test]
     async fn consumes_standard_wft_sequence() {
@@ -308,7 +311,7 @@ pub mod tests {
         let wft_count = 500;
         let long_hist = canned_histories::long_sequential_timers(wft_count);
         let initial_hist = long_hist.get_history_info(10).unwrap();
-        let prev_started = initial_hist.previous_started_event_id;
+        let prev_started = initial_hist.previous_started_event_id();
         let mut mock_gateway = mock_gateway();
 
         let mut npt = 2;

@@ -13,8 +13,8 @@ pub(crate) use dispatcher::WorkerDispatcher;
 use crate::{
     errors::CompleteWfError,
     pollers::{
-        new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, BoxedWFPoller,
-        GatewayRef, Poller, WorkflowTaskPoller,
+        new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, BoxedWFPoller, Poller,
+        WorkflowTaskPoller,
     },
     protosext::{legacy_query_failure, ValidPollWFTQResponse},
     telemetry::metrics::{
@@ -35,13 +35,13 @@ use crate::{
 };
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
 use futures::{Future, TryFutureExt};
-use std::{convert::TryInto, future, sync::Arc};
-use temporal_client::WorkflowTaskCompletion;
+use std::{convert::TryInto, sync::Arc};
+use temporal_client::{ServerGatewayApis, WorkflowTaskCompletion};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::activity_execution_result,
         activity_task::ActivityTask,
-        workflow_activation::WorkflowActivation,
+        workflow_activation::{remove_from_cache::EvictionReason, WorkflowActivation},
         workflow_completion::{self, workflow_activation_completion, WorkflowActivationCompletion},
     },
     temporal::api::{
@@ -59,7 +59,7 @@ use tracing_futures::Instrument;
 /// A worker polls on a certain task queue
 pub struct Worker {
     config: WorkerConfig,
-    server_gateway: Arc<GatewayRef>,
+    server_gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
 
     /// Will be populated when this worker should poll on a sticky WFT queue
     sticky_name: Option<String>,
@@ -67,8 +67,8 @@ pub struct Worker {
     /// Buffers workflow task polling in the event we need to return a pending activation while
     /// a poll is ongoing. Sticky and nonsticky polling happens inside of it.
     wf_task_source: WFTSource,
-    /// Workflow task management
-    wft_manager: WorkflowTaskManager,
+    /// Workflow task management TODO: No pub
+    pub(crate) wft_manager: WorkflowTaskManager,
     /// Manages activity tasks for this worker/task queue
     at_task_mgr: Option<WorkerActivityTasks>,
     /// Manages local activities
@@ -84,6 +84,8 @@ pub struct Worker {
     /// Has shutdown been called?
     shutdown_requested: watch::Receiver<bool>,
     shutdown_sender: watch::Sender<bool>,
+    /// Will be called at the end of each activation completion
+    post_activate_hook: Option<Box<dyn Fn(&Self) + Send + Sync>>,
 
     metrics: MetricsContext,
 }
@@ -92,7 +94,7 @@ impl Worker {
     pub(crate) fn new(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
-        sg: Arc<GatewayRef>,
+        sg: Arc<dyn ServerGatewayApis + Send + Sync>,
         metrics: MetricsContext,
     ) -> Self {
         metrics.worker_registered();
@@ -105,7 +107,7 @@ impl Worker {
         let max_sticky_polls = config.max_sticky_polls();
         let wft_metrics = metrics.with_new_attrs([workflow_poller()]);
         let mut wf_task_poll_buffer = new_workflow_task_buffer(
-            sg.gw.clone(),
+            sg.clone(),
             config.task_queue.clone(),
             false,
             max_nonsticky_polls,
@@ -115,7 +117,7 @@ impl Worker {
         let sticky_queue_poller = sticky_queue_name.as_ref().map(|sqn| {
             let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
             let mut sp = new_workflow_task_buffer(
-                sg.gw.clone(),
+                sg.clone(),
                 sqn.clone(),
                 true,
                 max_sticky_polls,
@@ -128,7 +130,7 @@ impl Worker {
             None
         } else {
             let mut ap = new_activity_task_buffer(
-                sg.gw.clone(),
+                sg.clone(),
                 config.task_queue.clone(),
                 config.max_concurrent_at_polls,
                 config.max_concurrent_at_polls * 2,
@@ -157,7 +159,7 @@ impl Worker {
     pub(crate) fn new_with_pollers(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
-        sg: Arc<GatewayRef>,
+        sg: Arc<dyn ServerGatewayApis + Send + Sync>,
         wft_poller: BoxedWFPoller,
         act_poller: Option<BoxedActPoller>,
         metrics: MetricsContext,
@@ -181,7 +183,7 @@ impl Worker {
                 WorkerActivityTasks::new(
                     config.max_outstanding_activities,
                     ap,
-                    sg.gw.clone(),
+                    sg.clone(),
                     metrics.clone(),
                     config.max_heartbeat_throttle_interval,
                     config.default_heartbeat_throttle_interval,
@@ -189,27 +191,33 @@ impl Worker {
             }),
             local_act_mgr: LocalActivityManager::new(
                 config.max_outstanding_local_activities,
-                sg.options.namespace.clone(),
+                sg.get_options().namespace.clone(),
             ),
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             config,
             shutdown_requested: shut_rx,
             shutdown_sender: shut_tx,
+            post_activate_hook: None,
             pending_activations_notify: pa_notif,
             wfts_drained_notify,
             metrics,
         }
     }
 
-    /// Will shutdown the worker. Does not resolve until all outstanding workflow tasks have been
-    /// completed
-    pub(crate) async fn shutdown(&self) {
+    /// Begins the shutdown process, tells pollers they should stop. Is idempotent.
+    pub(crate) fn initiate_shutdown(&self) {
         let _ = self.shutdown_sender.send(true);
         // First, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.notify_shutdown();
         }
         self.wf_task_source.stop_pollers();
+    }
+
+    /// Will shutdown the worker. Does not resolve until all outstanding workflow tasks have been
+    /// completed
+    pub(crate) async fn shutdown(&self) {
+        self.initiate_shutdown();
         // Next we need to wait for all local activities to finish so no more workflow task
         // heartbeats will be generated
         self.local_act_mgr.shutdown_and_wait_all_finished().await;
@@ -254,7 +262,8 @@ impl Worker {
             if let Some(ref act_mgr) = self.at_task_mgr {
                 act_mgr.poll().await
             } else {
-                future::pending().await
+                let _ = self.shutdown_requested.clone().changed().await;
+                Err(PollActivityError::ShutDown)
             }
         };
 
@@ -317,7 +326,7 @@ impl Worker {
         }
 
         if let Some(atm) = &self.at_task_mgr {
-            atm.complete(task_token, status, self.server_gateway.gw.as_ref())
+            atm.complete(task_token, status, self.server_gateway.as_ref())
                 .await
         } else {
             error!(
@@ -387,6 +396,7 @@ impl Worker {
                 self.wf_activation_failed(
                     &completion.run_id,
                     WorkflowTaskFailedCause::Unspecified,
+                    EvictionReason::LangFail,
                     failure,
                 )
                 .await
@@ -398,7 +408,22 @@ impl Worker {
                 })
             }
         }?;
-        self.after_workflow_activation(&completion.run_id, report_outcome);
+
+        self.wft_manager
+            .after_wft_report(&completion.run_id, report_outcome.reported_to_server);
+        if report_outcome.reported_to_server || report_outcome.failed {
+            // If we failed the WFT but didn't report anything, we still want to release the WFT
+            // permit since the server will eventually time out the task and we've already evicted
+            // the run.
+            self.return_workflow_task_permit();
+        }
+        self.wfts_drained_notify.notify_waiters();
+
+        if let Some(h) = &self.post_activate_hook {
+            warn!("Post activate hook ran {:?}", report_outcome.failed);
+            h(self);
+        }
+
         Ok(())
     }
 
@@ -407,8 +432,21 @@ impl Worker {
         self.workflows_semaphore.add_permits(1);
     }
 
-    pub(crate) fn request_wf_eviction(&self, run_id: &str, reason: impl Into<String>) {
-        self.wft_manager.request_eviction(run_id, reason);
+    pub(crate) fn request_wf_eviction(
+        &self,
+        run_id: &str,
+        message: impl Into<String>,
+        reason: EvictionReason,
+    ) {
+        self.wft_manager.request_eviction(run_id, message, reason);
+    }
+
+    /// Sets a function to be called at the end of each activation completion
+    pub(crate) fn set_post_activate_hook(
+        &mut self,
+        callback: impl Fn(&Self) + Send + Sync + 'static,
+    ) {
+        self.post_activate_hook = Some(Box::new(callback))
     }
 
     /// Resolves with WFT poll response or `PollWfError::ShutDown` if WFTs have been drained
@@ -501,7 +539,7 @@ impl Worker {
         let tt = work.task_token.clone();
         let res = self
             .wft_manager
-            .apply_new_poll_resp(work, &self.server_gateway)
+            .apply_new_poll_resp(work, self.server_gateway.clone())
             .await;
         Ok(match res {
             NewWfTaskOutcome::IssueActivation(a) => {
@@ -548,6 +586,7 @@ impl Worker {
                 self.request_wf_eviction(
                     &we.run_id,
                     format!("Error while applying poll response to workflow: {:?}", e),
+                    e.evict_reason(),
                 );
                 None
             }
@@ -655,6 +694,7 @@ impl Worker {
                 self.wf_activation_failed(
                     run_id,
                     fail_cause,
+                    update_err.evict_reason(),
                     Failure::application_failure(wft_fail_str.clone(), false).into(),
                 )
                 .await
@@ -669,49 +709,44 @@ impl Worker {
         &self,
         run_id: &str,
         cause: WorkflowTaskFailedCause,
+        reason: EvictionReason,
         failure: workflow_completion::Failure,
     ) -> Result<WFTReportOutcome, CompleteWfError> {
-        Ok(match self.wft_manager.failed_activation(run_id) {
-            FailedActivationOutcome::Report(tt) => {
-                warn!(run_id, failure=?failure, "Failing workflow activation");
-                self.handle_wft_reporting_errs(run_id, || async {
-                    self.server_gateway
-                        .fail_workflow_task(tt, cause, failure.failure.map(Into::into))
-                        .await
-                })
-                .await?;
-                WFTReportOutcome {
-                    reported_to_server: true,
-                    failed: true,
-                }
-            }
-            FailedActivationOutcome::ReportLegacyQueryFailure(task_token) => {
-                warn!(run_id, failure=?failure, "Failing legacy query request");
-                self.server_gateway
-                    .respond_legacy_query(task_token, legacy_query_failure(failure))
+        Ok(
+            match self.wft_manager.failed_activation(
+                run_id,
+                reason,
+                format!("Workflow activation completion failed: {:?}", failure),
+            ) {
+                FailedActivationOutcome::Report(tt) => {
+                    warn!(run_id, failure=?failure, "Failing workflow activation");
+                    self.handle_wft_reporting_errs(run_id, || async {
+                        self.server_gateway
+                            .fail_workflow_task(tt, cause, failure.failure.map(Into::into))
+                            .await
+                    })
                     .await?;
-                WFTReportOutcome {
-                    reported_to_server: true,
-                    failed: true,
+                    WFTReportOutcome {
+                        reported_to_server: true,
+                        failed: true,
+                    }
                 }
-            }
-            FailedActivationOutcome::NoReport => WFTReportOutcome {
-                reported_to_server: false,
-                failed: true,
+                FailedActivationOutcome::ReportLegacyQueryFailure(task_token) => {
+                    warn!(run_id, failure=?failure, "Failing legacy query request");
+                    self.server_gateway
+                        .respond_legacy_query(task_token, legacy_query_failure(failure))
+                        .await?;
+                    WFTReportOutcome {
+                        reported_to_server: true,
+                        failed: true,
+                    }
+                }
+                FailedActivationOutcome::NoReport => WFTReportOutcome {
+                    reported_to_server: false,
+                    failed: true,
+                },
             },
-        })
-    }
-
-    fn after_workflow_activation(&self, run_id: &str, report_outcome: WFTReportOutcome) {
-        self.wft_manager
-            .after_wft_report(run_id, report_outcome.reported_to_server);
-        if report_outcome.reported_to_server || report_outcome.failed {
-            // If we failed the WFT but didn't report anything, we still want to release the WFT
-            // permit since the server will eventually time out the task and we've already evicted
-            // the run.
-            self.return_workflow_task_permit();
-        }
-        self.wfts_drained_notify.notify_waiters();
+        )
     }
 
     /// Handle server errors from either completing or failing a workflow task. Returns any errors
@@ -724,7 +759,7 @@ impl Worker {
     where
         Fut: Future<Output = Result<T, tonic::Status>>,
     {
-        let mut should_evict = false;
+        let mut should_evict = None;
         let res = match completer().await {
             Err(err) => {
                 match err.code() {
@@ -732,12 +767,12 @@ impl Worker {
                     // them besides poll again, which it will do anyway.
                     tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
                         warn!(error = %err, run_id, "Unhandled command response when completing");
-                        should_evict = true;
+                        should_evict = Some(EvictionReason::UnhandledCommand);
                         Ok(())
                     }
                     tonic::Code::NotFound => {
                         warn!(error = %err, run_id, "Task not found when completing");
-                        should_evict = true;
+                        should_evict = Some(EvictionReason::TaskNotFound);
                         Ok(())
                     }
                     _ => Err(err),
@@ -745,8 +780,8 @@ impl Worker {
             }
             _ => Ok(()),
         };
-        if should_evict {
-            self.request_wf_eviction(run_id, "Error reporting WFT to server");
+        if let Some(reason) = should_evict {
+            self.request_wf_eviction(run_id, "Error reporting WFT to server", reason);
         }
         res.map_err(Into::into)
     }
@@ -777,7 +812,11 @@ impl Worker {
                 "Problem with local resolution on run {}: {:?} -- will evict the workflow",
                 run_id, e
             );
-            self.request_wf_eviction(run_id, "Issue while processing local resolution");
+            self.request_wf_eviction(
+                run_id,
+                "Issue while processing local resolution",
+                e.evict_reason(),
+            );
         }
     }
 
@@ -813,10 +852,8 @@ struct WFTReportOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_help::mock_gateway;
-
+    use temporal_client::mocks::mock_gateway;
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
-    use test_utils::fake_sg_opts;
 
     #[tokio::test]
     async fn activity_timeouts_dont_eat_permits() {
@@ -824,14 +861,13 @@ mod tests {
         mock_gateway
             .expect_poll_activity_task()
             .returning(|_| Ok(PollActivityTaskQueueResponse::default()));
-        let gwref = GatewayRef::new(Arc::new(mock_gateway), fake_sg_opts());
 
         let cfg = WorkerConfigBuilder::default()
             .task_queue("whatever")
             .max_outstanding_activities(5_usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
+        let worker = Worker::new(cfg, None, Arc::new(mock_gateway), Default::default());
         assert_eq!(worker.activity_poll().await.unwrap(), None);
         assert_eq!(worker.at_task_mgr.unwrap().remaining_activity_capacity(), 5);
     }
@@ -842,14 +878,13 @@ mod tests {
         mock_gateway
             .expect_poll_workflow_task()
             .returning(|_, _| Ok(PollWorkflowTaskQueueResponse::default()));
-        let gwref = GatewayRef::new(Arc::new(mock_gateway), fake_sg_opts());
 
         let cfg = WorkerConfigBuilder::default()
             .task_queue("whatever")
             .max_outstanding_workflow_tasks(5_usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
+        let worker = Worker::new(cfg, None, Arc::new(mock_gateway), Default::default());
         assert_eq!(worker.workflow_poll().await.unwrap(), None);
         assert_eq!(worker.workflows_semaphore.available_permits(), 5);
     }
@@ -860,14 +895,13 @@ mod tests {
         mock_gateway
             .expect_poll_activity_task()
             .returning(|_| Err(tonic::Status::internal("ahhh")));
-        let gwref = GatewayRef::new(Arc::new(mock_gateway), fake_sg_opts());
 
         let cfg = WorkerConfigBuilder::default()
             .task_queue("whatever")
             .max_outstanding_activities(5_usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
+        let worker = Worker::new(cfg, None, Arc::new(mock_gateway), Default::default());
         assert!(worker.activity_poll().await.is_err());
         assert_eq!(worker.at_task_mgr.unwrap().remaining_activity_capacity(), 5);
     }
@@ -878,14 +912,13 @@ mod tests {
         mock_gateway
             .expect_poll_workflow_task()
             .returning(|_, _| Err(tonic::Status::internal("ahhh")));
-        let gwref = GatewayRef::new(Arc::new(mock_gateway), fake_sg_opts());
 
         let cfg = WorkerConfigBuilder::default()
             .task_queue("whatever")
             .max_outstanding_workflow_tasks(5_usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, None, Arc::new(gwref), Default::default());
+        let worker = Worker::new(cfg, None, Arc::new(mock_gateway), Default::default());
         assert!(worker.workflow_poll().await.is_err());
         assert_eq!(worker.workflows_semaphore.available_permits(), 5);
     }

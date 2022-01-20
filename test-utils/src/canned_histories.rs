@@ -1,4 +1,4 @@
-use crate::history_replay::TestHistoryBuilder;
+use temporal_sdk_core::replay::TestHistoryBuilder;
 use temporal_sdk_core_protos::{
     coresdk::common::NamespacedWorkflowExecution,
     temporal::api::{

@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk::{ActivityOptions, WfContext, WorkflowResult};
-use test_utils::CoreWfStarter;
+use temporal_sdk_core_test_utils::CoreWfStarter;
 
 static RUN_CT: AtomicUsize = AtomicUsize::new(1);
 pub async fn timer_wf_nondeterministic(ctx: WfContext) -> WorkflowResult<()> {

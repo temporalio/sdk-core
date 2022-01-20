@@ -14,6 +14,7 @@ mod log_export;
 mod pending_activations;
 mod pollers;
 mod protosext;
+pub mod replay;
 pub(crate) mod retry_logic;
 pub(crate) mod telemetry;
 mod worker;
@@ -32,13 +33,18 @@ pub use pollers::{
     ServerGatewayOptions, ServerGatewayOptionsBuilder, TlsConfig,
 };
 pub use telemetry::{TelemetryOptions, TelemetryOptionsBuilder};
+pub use temporal_sdk_core_api as api;
+pub use temporal_sdk_core_protos as protos;
 pub use temporal_sdk_core_protos::TaskToken;
 pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
 use crate::{
-    pollers::GatewayRef,
-    telemetry::{fetch_global_buffered_logs, telemetry_init},
+    telemetry::{
+        fetch_global_buffered_logs,
+        metrics::{MetricsContext, METRIC_METER},
+        telemetry_init,
+    },
     worker::{Worker, WorkerDispatcher},
 };
 use std::{
@@ -55,12 +61,16 @@ use temporal_sdk_core_api::{
     },
     Core, CoreLog,
 };
-use temporal_sdk_core_protos::coresdk::{
-    activity_task::ActivityTask, workflow_activation::WorkflowActivation,
-    workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
+use temporal_sdk_core_protos::{
+    coresdk::{
+        activity_task::ActivityTask,
+        workflow_activation::{remove_from_cache::EvictionReason, WorkflowActivation},
+        workflow_completion::WorkflowActivationCompletion,
+        ActivityHeartbeat, ActivityTaskCompletion,
+    },
+    temporal::api::history::v1::History,
 };
 
-use crate::telemetry::metrics::{MetricsContext, METRIC_METER};
 #[cfg(test)]
 use crate::test_help::MockWorker;
 
@@ -84,13 +94,8 @@ pub struct CoreInitOptions {
 }
 
 /// Initializes an instance of the core sdk and establishes a connection to the temporal server.
-///
-/// Note: Also creates a tokio runtime that will be used for all client-server interactions.
-///
-/// # Panics
-/// * Will panic if called from within an async context, as it will construct a runtime and you
-///   cannot construct a runtime from within a runtime.
-pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
+/// Expects that a tokio runtime exists.
+pub async fn init(opts: CoreInitOptions) -> Result<CoreSDK, CoreInitError> {
     telemetry_init(&opts.telemetry_opts).map_err(CoreInitError::TelemetryInitError)?;
     // Initialize server client
     let server_gateway = opts.gateway_opts.connect(Some(&METRIC_METER)).await?;
@@ -102,16 +107,17 @@ pub async fn init(opts: CoreInitOptions) -> Result<impl Core, CoreInitError> {
 pub fn init_mock_gateway<SG: ServerGatewayApis + Send + Sync + 'static>(
     opts: CoreInitOptions,
     server_gateway: SG,
-) -> Result<impl Core, CoreInitError> {
+) -> Result<CoreSDK, CoreInitError> {
     telemetry_init(&opts.telemetry_opts).map_err(CoreInitError::TelemetryInitError)?;
     Ok(CoreSDK::new(server_gateway, opts))
 }
 
-struct CoreSDK {
+/// Implements the [Core] trait
+pub struct CoreSDK {
     /// Options provided at initialization time
     init_options: CoreInitOptions,
-    /// Provides work in the form of responses the server would send from polling task Qs
-    server_gateway: Arc<GatewayRef>,
+    /// A client for interacting with the Temporal service.
+    server_gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
     /// Controls access to workers
     workers: WorkerDispatcher,
     /// Has shutdown been called and all workers drained of tasks?
@@ -122,20 +128,18 @@ struct CoreSDK {
 
 #[async_trait::async_trait]
 impl Core for CoreSDK {
-    async fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError> {
+    fn register_worker(&self, config: WorkerConfig) -> Result<(), WorkerRegistrationError> {
         info!(
             task_queue = config.task_queue.as_str(),
             "Registering worker"
         );
         let sticky_q = self.get_sticky_q_name_for_worker(&config);
-        self.workers
-            .new_worker(
-                config,
-                sticky_q,
-                self.server_gateway.clone(),
-                self.metrics.clone(),
-            )
-            .await
+        self.workers.new_worker(
+            config,
+            sticky_q,
+            self.server_gateway.clone(),
+            self.metrics.clone(),
+        )
     }
 
     #[instrument(level = "debug", skip(self), fields(run_id))]
@@ -204,12 +208,16 @@ impl Core for CoreSDK {
 
     fn request_workflow_eviction(&self, task_queue: &str, run_id: &str) {
         if let Ok(w) = self.worker(task_queue) {
-            w.request_wf_eviction(run_id, "Eviction explicitly requested by lang");
+            w.request_wf_eviction(
+                run_id,
+                "Eviction explicitly requested by lang",
+                EvictionReason::LangRequested,
+            );
         }
     }
 
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
-        self.server_gateway.gw.clone()
+        self.server_gateway.clone()
     }
 
     async fn shutdown(&self) {
@@ -231,20 +239,54 @@ impl CoreSDK {
         server_gateway: SG,
         init_options: CoreInitOptions,
     ) -> Self {
-        let sg = GatewayRef::new(Arc::new(server_gateway), init_options.gateway_opts.clone());
+        let server_gateway = Arc::new(server_gateway);
         let workers = WorkerDispatcher::default();
         Self {
             workers,
             init_options,
             whole_core_shutdown: AtomicBool::new(false),
-            metrics: MetricsContext::top_level(sg.options.namespace.clone()),
-            server_gateway: Arc::new(sg),
+            metrics: MetricsContext::top_level(server_gateway.get_options().namespace.clone()),
+            server_gateway,
         }
+    }
+
+    /// Register a worker for replaying a specific history. The worker should use a unique task
+    /// queue name. It will auto-shutdown as soon as the history has finished being replayed. The
+    /// provided gateway should be a mock, and this should only be used for workflow testing
+    /// purposes.
+    pub fn register_replay_worker(
+        &self,
+        config: WorkerConfig,
+        gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+        history: &History,
+    ) -> Result<(), anyhow::Error> {
+        info!(
+            task_queue = config.task_queue.as_str(),
+            "Registering replay worker"
+        );
+        // Could possibly just use mocked pollers here, but they'd need to be un-test-moded
+        let run_id = history.extract_run_id_from_start()?.to_string();
+        let last_event = history.last_event_id();
+        let tq = config.task_queue.clone();
+        let mut worker = Worker::new(config, None, gateway, self.metrics.clone());
+        worker.set_post_activate_hook(move |worker| {
+            if worker
+                .wft_manager
+                .most_recently_processed_event(&run_id)
+                .unwrap_or_default()
+                >= last_event
+            {
+                worker.initiate_shutdown();
+            }
+        });
+
+        self.workers.set_worker_for_task_queue(tq, worker)?;
+        Ok(())
     }
 
     /// Allow construction of workers with mocked poll responses during testing
     #[cfg(test)]
-    pub(crate) fn reg_worker_sync(&mut self, worker: MockWorker) {
+    pub(crate) fn reg_worker_sync(&self, worker: MockWorker) {
         let sticky_q = self.get_sticky_q_name_for_worker(&worker.config);
         let tq = worker.config.task_queue.clone();
         let worker = Worker::new_with_pollers(

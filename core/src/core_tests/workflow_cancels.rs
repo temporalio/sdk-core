@@ -13,7 +13,7 @@ use temporal_sdk_core_protos::coresdk::{
         CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
     },
 };
-use test_utils::start_timer_cmd;
+use temporal_sdk_core_test_utils::start_timer_cmd;
 
 enum CompletionType {
     Complete,

@@ -26,6 +26,7 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display, Formatter},
     future::Future,
+    ops::{Deref, DerefMut},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -110,6 +111,11 @@ impl TestRustWorker {
         }
     }
 
+    /// Returns the task queue name this worker polls on
+    pub fn task_queue(&self) -> &str {
+        &self.task_queue
+    }
+
     /// Create a workflow, asking the server to start it with the provided workflow ID and using the
     /// provided workflow function.
     ///
@@ -165,6 +171,10 @@ impl TestRustWorker {
         );
     }
 
+    // TODO: Should be removed before making this worker prod ready. There can be a test worker
+    //   which wraps this one and implements the workflow counting / run_until_done concepts.
+    //   This worker can expose an interceptor for completions that could be used to assist with
+    //   workflow tracking
     /// Increment the expected Workflow run count on this Worker. The Worker tracks the run count
     /// and will resolve `run_until_done` when it goes down to 0.
     /// You do not have to increment if scheduled a Workflow with `submit_wf`.
@@ -177,7 +187,7 @@ impl TestRustWorker {
     /// See [Self::run_until_done], except calls the provided callback just before performing core
     /// shutdown.
     pub async fn run_until_done_shutdown_hook(
-        mut self,
+        &mut self,
         before_shutdown: impl FnOnce(),
     ) -> Result<(), anyhow::Error> {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -239,19 +249,31 @@ impl TestRustWorker {
             Result::<_, anyhow::Error>::Ok(self)
         };
 
-        let mut myself = pollers.await?;
+        let myself = pollers.await?;
         while let Some(h) = myself.workflow_half.join_handles.next().await {
             h??;
         }
         before_shutdown();
         myself.core.shutdown().await;
+        myself.workflow_half.workflows.clear();
         Ok(())
     }
 
     /// Drives all workflows & activities until they have all finished, repeatedly polls server to
     /// fetch work for them.
-    pub async fn run_until_done(self) -> Result<(), anyhow::Error> {
+    pub async fn run_until_done(&mut self) -> Result<(), anyhow::Error> {
         self.run_until_done_shutdown_hook(|| {}).await
+    }
+
+    /// Temporarily swap the core implementation used by this worker. When the returned value is
+    /// dropped, the old core implementation will be restored. This can be used to run against
+    /// mocked-out core instances.
+    pub fn swap_core(&mut self, other_core: Arc<dyn Core>) -> impl DerefMut<Target = Self> + '_ {
+        let old_core = std::mem::replace(&mut self.core, other_core);
+        RustWorkerSwappedCore {
+            old_core: Some(old_core),
+            worker: self,
+        }
     }
 
     fn split_apart(&mut self) -> (Arc<dyn Core>, &str, &mut WorkflowHalf, &mut ActivityHalf) {
@@ -644,5 +666,34 @@ where
             }
         };
         Arc::new(wrapper)
+    }
+}
+
+/// Allows the worker to swap back to an original core instance upon Drop
+struct RustWorkerSwappedCore<'a> {
+    old_core: Option<Arc<dyn Core>>,
+    worker: &'a mut TestRustWorker,
+}
+
+impl<'a> Deref for RustWorkerSwappedCore<'a> {
+    type Target = TestRustWorker;
+
+    fn deref(&self) -> &Self::Target {
+        self.worker
+    }
+}
+
+impl<'a> DerefMut for RustWorkerSwappedCore<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.worker
+    }
+}
+
+impl<'a> Drop for RustWorkerSwappedCore<'a> {
+    fn drop(&mut self) {
+        let _ = std::mem::replace(
+            &mut self.worker.core,
+            self.old_core.take().expect("Old core always exists"),
+        );
     }
 }

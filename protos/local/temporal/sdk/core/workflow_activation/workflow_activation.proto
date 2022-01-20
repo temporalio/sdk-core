@@ -187,5 +187,30 @@ message ResolveRequestCancelExternalWorkflow {
 }
 
 message RemoveFromCache {
-    string reason = 1;
+    string message = 1;
+
+    enum EvictionReason {
+        UNSPECIFIED = 0;
+        // Workflow cache is full
+        CACHE_FULL = 1;
+        // Workflow received a partial task but was not in the cache. Typically it won't be in the
+        // lang cache either at this point, but we send an eviction to be sure.
+        CACHE_MISS = 2;
+        // The workflow produced results inconsistent with history.
+        NONDETERMINISM = 3;
+        // The lang side completed the workflow activation with a failure.
+        LANG_FAIL = 4;
+        // The lang side explicitly requested this workflow be evicted.
+        LANG_REQUESTED = 5;
+        // The workflow task we tried to respond to didn't exist. The workflow might have already
+        // finished, or the WFT timed out but we didn't learn about that yet.
+        TASK_NOT_FOUND = 6;
+        // There was new work that must be handled while we attempted to complete the WFT. Ex:
+        // a new signal came in while trying to complete the workflow.
+        UNHANDLED_COMMAND = 7;
+        // There was some fatal error processing the workflow, typically an internal error, but
+        // can also happen if then network drops out while paginating. Check message string.
+        FATAL = 8;
+    }
+    EvictionReason reason = 2;
 }
