@@ -420,7 +420,6 @@ impl Worker {
         self.wfts_drained_notify.notify_waiters();
 
         if let Some(h) = &self.post_activate_hook {
-            warn!("Post activate hook ran {:?}", report_outcome.failed);
             h(self);
         }
 
