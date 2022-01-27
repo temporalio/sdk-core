@@ -98,10 +98,21 @@ pub struct CoreInitOptions {
 pub struct WorkerImpl {}
 
 /// Initialize a worker bound to a task queue
-pub async fn init_worker<SG: WorkflowServiceClientTrait + Send + Sync + 'static>(
+pub fn init_worker<SG: WorkflowServiceClientTrait + Send + Sync + 'static>(
     _worker_config: WorkerConfig,
     _client: SG,
 ) -> WorkerImpl {
+    todo!()
+}
+
+/// Create a worker for replaying a specific history. It will auto-shutdown as soon as the history
+/// has finished being replayed. The provided gateway should be a mock, and this should only be used
+/// for workflow testing purposes.
+pub fn init_replay_worker(
+    config: WorkerConfig,
+    gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+    history: &History,
+) -> Result<Worker, anyhow::Error> {
     todo!()
 }
 
