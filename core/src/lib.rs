@@ -33,9 +33,9 @@ pub use pollers::{
     ServerGatewayOptions, ServerGatewayOptionsBuilder, TlsConfig,
 };
 pub use telemetry::{TelemetryOptions, TelemetryOptionsBuilder};
+pub use temporal_client as client;
 pub use temporal_sdk_core_api as api;
-pub use temporal_sdk_core_protos as protos;
-pub use temporal_sdk_core_protos::TaskToken;
+pub use temporal_sdk_core_protos::{temporal_sdk_core_protos as protos, TaskToken};
 pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
@@ -54,6 +54,7 @@ use std::{
         Arc,
     },
 };
+use temporal_client::WorkflowServiceClientTrait;
 use temporal_sdk_core_api::{
     errors::{
         CompleteActivityError, CompleteWfError, CoreInitError, PollActivityError, PollWfError,
@@ -97,7 +98,7 @@ pub struct CoreInitOptions {
 pub struct WorkerImpl {}
 
 /// Initialize a worker bound to a task queue
-pub async fn init_worker<SG: ServerGatewayApis + Send + Sync + 'static>(
+pub async fn init_worker<SG: WorkflowServiceClientTrait + Send + Sync + 'static>(
     _worker_config: WorkerConfig,
     _client: SG,
 ) -> WorkerImpl {

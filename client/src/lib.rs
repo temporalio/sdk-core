@@ -63,6 +63,18 @@ const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
+/// Options for a namespace-bound connection to the temporal server
+pub struct NamespacedServerGatewayOptions {
+    pub namespace: String,
+    pub opts: ServerGatewayOptions,
+}
+
+impl NamespacedServerGatewayOptions {
+    pub fn new(namespace: impl Into<String>, opts: ServerGatewayOptions) -> Self {
+        Self { namespace, opts }
+    }
+}
+
 /// Options for the connection to the temporal server. Construct with [ServerGatewayOptionsBuilder]
 #[derive(Clone, Debug, derive_builder::Builder)]
 #[non_exhaustive]
@@ -70,9 +82,6 @@ pub struct ServerGatewayOptions {
     /// The URL of the Temporal server to connect to
     #[builder(setter(into))]
     pub target_url: Url,
-
-    /// What namespace will we operate under
-    pub namespace: String,
 
     /// The name of the SDK being implemented on top of core. Is set as `client-name` header in
     /// all RPC calls
@@ -203,6 +212,16 @@ pub enum GatewayInitError {
     /// Server connection error. Crashing and restarting the worker is likely best.
     #[error("Server connection error: {0:?}")]
     TonicTransportError(#[from] tonic::transport::Error),
+}
+
+impl NamespacedServerGatewayOptions {
+    /// Attempt to establish a connection to the Temporal server
+    pub async fn connect(
+        &self,
+        _metrics_meter: Option<&Meter>,
+    ) -> Result<RetryGateway<NamespacedServerGateway>, GatewayInitError> {
+        todo!()
+    }
 }
 
 impl ServerGatewayOptions {
@@ -360,6 +379,14 @@ impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
         }
         .boxed()
     }
+}
+/// Contains an instance of a client for interacting with the temporal server
+#[derive(Debug)]
+pub struct NamespacedServerGateway {
+    /// Client for interacting with workflow service
+    service: WorkflowServiceClient<InterceptedService<GrpcMetricSvc, ServiceCallInterceptor>>,
+    /// Options gateway was initialized with
+    pub opts: NamespacedServerGatewayOptions,
 }
 
 /// Contains an instance of a client for interacting with the temporal server
@@ -527,9 +554,13 @@ impl WorkflowServiceClientTrait for ServerGateway {
     // TODO: Will implement 1:1 generated client methods. Boilerplate bonanza
 }
 
+impl WorkflowServiceClientTrait for NamespacedServerGateway {
+    // TODO: Will implement 1:1 generated client methods. Boilerplate bonanza
+}
+
 // TODO: Proposal note - This will change to be implemented in terms of WorkflowServiceClientTrait
 #[async_trait::async_trait]
-impl ServerGatewayApis for ServerGateway {
+impl ServerGatewayApis for NamespacedServerGateway {
     async fn start_workflow(
         &self,
         input: Vec<Payload>,
