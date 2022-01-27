@@ -98,7 +98,7 @@ pub struct WorkerImpl {}
 
 /// Initialize a worker bound to a task queue
 pub async fn init_worker<SG: ServerGatewayApis + Send + Sync + 'static>(
-    _task_queue: impl Into<String>,
+    _worker_config: WorkerConfig,
     _client: SG,
 ) -> WorkerImpl {
     todo!()
