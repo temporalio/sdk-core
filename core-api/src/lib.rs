@@ -104,6 +104,9 @@ pub trait Worker: Send + Sync {
     /// Returns this worker's instance of the [ServerGatewayApis] implementor it is using.
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync>;
 
+    /// Returns the config this worker was created with
+    fn config(&self) -> &WorkerConfig;
+
     /// Initiates async shutdown procedure, eventually ceases all polling of the server and shuts
     /// down this worker. [Worker::poll_workflow_activation] should be called until it
     /// returns [PollWfError::ShutDown] to ensure that any workflows which are still undergoing
