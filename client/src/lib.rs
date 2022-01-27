@@ -402,11 +402,11 @@ pub struct ServerGateway {
 pub trait WorkflowServiceClientTrait {}
 
 // TODO: Proposal note: This needs to still exist to avoid refactoring a totally insane amount of
-//   test & rust SDK code.
+//   test & rust SDK code. Note it requires implementors to also implement the raw trait
 /// This trait provides ways to call the temporal server
 #[cfg_attr(any(feature = "mocks", test), mockall::automock)]
 #[async_trait::async_trait]
-pub trait ServerGatewayApis {
+pub trait ServerGatewayApis: WorkflowServiceClientTrait {
     /// Starts workflow execution.
     async fn start_workflow(
         &self,

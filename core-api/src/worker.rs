@@ -6,6 +6,8 @@ use std::time::Duration;
 #[non_exhaustive]
 // TODO: per-second queue limits
 pub struct WorkerConfig {
+    /// Namespace this worker connects to
+    pub namespace: String,
     /// What task queue will this worker poll from? This task queue name will be used for both
     /// workflow and activity polling.
     pub task_queue: String,
