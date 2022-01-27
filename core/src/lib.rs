@@ -93,6 +93,17 @@ pub struct CoreInitOptions {
     pub telemetry_opts: TelemetryOptions,
 }
 
+/// TODO:  This holds an actual worker now. Lang keeps track of taskq->worker mapping
+pub struct WorkerImpl {}
+
+/// Initialize a worker bound to a task queue
+pub async fn init_worker<SG: ServerGatewayApis + Send + Sync + 'static>(
+    _task_queue: impl Into<String>,
+    _client: SG,
+) -> WorkerImpl {
+    todo!()
+}
+
 /// Initializes an instance of the core sdk and establishes a connection to the temporal server.
 /// Expects that a tokio runtime exists.
 pub async fn init(opts: CoreInitOptions) -> Result<CoreSDK, CoreInitError> {

@@ -87,6 +87,7 @@ impl GlobalTelemDat {
     }
 }
 
+// TODO: This would be come publicly exposed & changed to return a `CoreTelemetry` implementor
 /// Initialize tracing subscribers and output. Core [crate::init] calls this, but it may be called
 /// separately so that tests may choose to initialize tracing differently. If this function is
 /// called more than once, subsequent calls do nothing.
