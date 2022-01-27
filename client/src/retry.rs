@@ -23,6 +23,12 @@ pub const RETRYABLE_ERROR_CODES: [Code; 7] = [
     Code::Unavailable,
 ];
 
+// TODO: Proposal note - the retrier currently can only operate on the higher level gateway trait,
+//   which lang may or may not want to use. It needs to be able to wrap the `WorkflowServiceClient`
+//   directly. This presents problems for mocking, which is all done on the trait level right now.
+//   The solution is to either make a trait that is 1:1 with the generated client, or change my
+//   entire mocking solution to work at the channel level, which is almost certainly way too much
+//   work.
 #[derive(Debug)]
 /// A wrapper for a [ServerGatewayApis] implementor which performs auto-retries
 pub struct RetryGateway<SG> {
@@ -40,6 +46,8 @@ impl<SG> RetryGateway<SG> {
     }
 }
 
+// TODO: Proposal note - Assuming the 1:1 trait approach, this trait bound changes to be a
+//   `WorkflowServiceClientTrait` rather than a `ServerGatewayApis`
 impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
     async fn call_with_retry<R, F, Fut>(
         &self,

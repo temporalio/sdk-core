@@ -91,7 +91,7 @@ impl GlobalTelemDat {
 
 impl CoreTelemetry for GlobalTelemDat {
     fn fetch_buffered_logs(&self) -> Vec<CoreLog> {
-        return fetch_global_buffered_logs();
+        fetch_global_buffered_logs()
     }
 
     fn get_metric_meter(&self) -> Option<&Meter> {

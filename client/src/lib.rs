@@ -371,6 +371,11 @@ pub struct ServerGateway {
     pub opts: ServerGatewayOptions,
 }
 
+/// This trait maps 1:1 to the generated grpc client for the workflow service.
+pub trait WorkflowServiceClientTrait {}
+
+// TODO: Proposal note: This needs to still exist to avoid refactoring a totally insane amount of
+//   test & rust SDK code.
 /// This trait provides ways to call the temporal server
 #[cfg_attr(any(feature = "mocks", test), mockall::automock)]
 #[async_trait::async_trait]
@@ -518,6 +523,11 @@ pub trait ServerGatewayApis {
     fn get_options(&self) -> &ServerGatewayOptions;
 }
 
+impl WorkflowServiceClientTrait for ServerGateway {
+    // TODO: Will implement 1:1 generated client methods. Boilerplate bonanza
+}
+
+// TODO: Proposal note - This will change to be implemented in terms of WorkflowServiceClientTrait
 #[async_trait::async_trait]
 impl ServerGatewayApis for ServerGateway {
     async fn start_workflow(
