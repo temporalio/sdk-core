@@ -4,11 +4,12 @@ mod prometheus_server;
 use crate::{
     log_export::CoreExportLogger,
     telemetry::{metrics::SDKAggSelector, prometheus_server::PromServer},
-    CoreLog,
+    CoreLog, METRIC_METER,
 };
 use itertools::Itertools;
 use log::LevelFilter;
 use once_cell::sync::OnceCell;
+use opentelemetry::metrics::Meter;
 use opentelemetry::{
     global,
     sdk::{metrics::PushController, trace::Config, Resource},
@@ -18,6 +19,7 @@ use opentelemetry::{
 use opentelemetry_otlp::WithExportConfig;
 use parking_lot::{const_mutex, Mutex};
 use std::{collections::VecDeque, net::SocketAddr, time::Duration};
+use temporal_sdk_core_api::CoreTelemetry;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter};
 use url::Url;
 
@@ -66,7 +68,7 @@ impl Default for TelemetryOptions {
 
 /// Things that need to not be dropped while telemetry is ongoing
 #[derive(Default)]
-pub(crate) struct GlobalTelemDat {
+pub struct GlobalTelemDat {
     metric_push_controller: Option<PushController>,
     core_export_logger: Option<CoreExportLogger>,
     runtime: Option<tokio::runtime::Runtime>,
@@ -87,15 +89,26 @@ impl GlobalTelemDat {
     }
 }
 
+impl CoreTelemetry for GlobalTelemDat {
+    fn fetch_buffered_logs(&self) -> Vec<CoreLog> {
+        return fetch_global_buffered_logs();
+    }
+
+    fn get_metric_meter(&self) -> Option<&Meter> {
+        if GLOBAL_TELEM_DAT.get().is_some() {
+            return Some(&METRIC_METER);
+        }
+        None
+    }
+}
+
 // TODO: This would be come publicly exposed & changed to return a `CoreTelemetry` implementor
 /// Initialize tracing subscribers and output. Core [crate::init] calls this, but it may be called
 /// separately so that tests may choose to initialize tracing differently. If this function is
 /// called more than once, subsequent calls do nothing.
 ///
 /// See [TelemetryOptions] docs for more on configuration.
-pub(crate) fn telemetry_init(
-    opts: &TelemetryOptions,
-) -> Result<&'static GlobalTelemDat, anyhow::Error> {
+pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat, anyhow::Error> {
     // TODO: Per-layer filtering has been implemented but does not yet support
     //   env-filter. When it does, allow filtering logs/telemetry separately.
 

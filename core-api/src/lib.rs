@@ -9,6 +9,7 @@ use crate::{
     worker::WorkerConfig,
 };
 use log::Level;
+use opentelemetry::metrics::Meter;
 use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -124,8 +125,14 @@ pub trait CoreTelemetry {
     /// Returns the list of logs from oldest to newest. Returns an empty vec if the feature is not
     /// configured.
     fn fetch_buffered_logs(&self) -> Vec<CoreLog>;
+
+    /// If metrics gathering is enabled, returns the OTel meter for core telemetry, which can be
+    /// used to create metrics instruments, or passed to things that create/record metrics (ex:
+    /// clients).
+    fn get_metric_meter(&self) -> Option<&Meter>;
 }
 
+// TODO: Proposal review note - will be deleted
 /// This trait is the primary way by which language specific SDKs interact with the core SDK. It is
 /// expected that only one instance of an implementation will exist for the lifetime of the
 /// worker(s) using it.
