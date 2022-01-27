@@ -59,7 +59,8 @@ use tracing_futures::Instrument;
 /// A worker polls on a certain task queue
 pub struct Worker {
     config: WorkerConfig,
-    server_gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+    // TODO: Probably move impl of worker trait in this module
+    pub(crate) server_gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
 
     /// Will be populated when this worker should poll on a sticky WFT queue
     sticky_name: Option<String>,
