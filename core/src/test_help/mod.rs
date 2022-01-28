@@ -554,7 +554,7 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
 
             let reply = if res.jobs.is_empty() {
                 // Just an eviction
-                WorkflowActivationCompletion::empty(TEST_Q, res.run_id.clone())
+                WorkflowActivationCompletion::empty(res.run_id.clone())
             } else {
                 // Eviction plus some work, we still want to issue the reply
                 WorkflowActivationCompletion {

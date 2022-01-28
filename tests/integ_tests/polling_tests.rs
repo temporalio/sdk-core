@@ -10,7 +10,7 @@ use temporal_sdk_core_protos::coresdk::{
     IntoCompletion,
 };
 use temporal_sdk_core_test_utils::{
-    init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers, CoreWfStarter,
+    init_core_and_create_wf, schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
 };
 use tokio::time::timeout;
 
@@ -36,7 +36,7 @@ async fn out_of_order_completion_doesnt_hang() {
             }
             .into(),
         ]
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -79,14 +79,13 @@ async fn out_of_order_completion_doesnt_hang() {
                 variant: Some(workflow_activation_job::Variant::ResolveActivity(_)),
             }]
         );
-        cc.complete_execution(&tq, &task.run_id).await;
+        cc.complete_execution(&task.run_id).await;
     });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
     // Then complete the (last) WFT with a request to cancel the AT, which should produce a
     // pending activation, unblocking the (already started) poll
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![RequestCancelActivity { seq: 0 }.into()],
     ))

@@ -884,7 +884,6 @@ async fn max_concurrent_wft_respected() {
     // Since we never did anything with r2, all subsequent activations should be for wf1
     for i in 2..=20 {
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-            TEST_Q,
             r1.run_id,
             start_timer_cmd(i, Duration::from_secs(1)),
         ))
@@ -895,7 +894,6 @@ async fn max_concurrent_wft_respected() {
     }
     // Finish the tasks so we can shut down
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         r1.run_id,
         CompleteWorkflowExecution { result: None }.into(),
     ))
@@ -907,7 +905,6 @@ async fn max_concurrent_wft_respected() {
     // failure was reported)
     let _ = core
         .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-            TEST_Q,
             r2.run_id,
             start_timer_cmd(1, Duration::from_secs(1)),
         ))
@@ -915,7 +912,7 @@ async fn max_concurrent_wft_respected() {
     // Get and complete eviction
     let r2 = core.poll_workflow_activation(TEST_Q).await.unwrap();
     let _ = core
-        .complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, r2.run_id))
+        .complete_workflow_activation(WorkflowActivationCompletion::empty(r2.run_id))
         .await;
     core.shutdown().await;
 }
@@ -1035,7 +1032,7 @@ async fn lots_of_workflows() {
                 }
                 Some(workflow_activation_job::Variant::RemoveFromCache(_)) => {
                     core.complete_workflow_activation(WorkflowActivationCompletion::empty(
-                        TEST_Q, wft.run_id,
+                        wft.run_id,
                     ))
                     .await
                     .unwrap();
@@ -1044,7 +1041,7 @@ async fn lots_of_workflows() {
                 _ => CompleteWorkflowExecution { result: None }.into(),
             };
             core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-                TEST_Q, wft.run_id, reply,
+                wft.run_id, reply,
             ))
             .await
             .unwrap();
@@ -1115,7 +1112,6 @@ async fn complete_after_eviction() {
     core.request_workflow_eviction(TEST_Q, &activation.run_id);
     // Original task must be completed before we get the eviction
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         activation.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
     ))
@@ -1135,7 +1131,6 @@ async fn complete_after_eviction() {
     );
     // Complete the activation containing the eviction, the way we normally would have
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         eviction_activation.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
     ))
@@ -1162,7 +1157,6 @@ async fn sends_appropriate_sticky_task_queue_responses() {
 
     let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         activation.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
     ))
@@ -1181,7 +1175,6 @@ async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation(
     // Poll for and complete first workflow task
     let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         activation.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
     ))
@@ -1252,7 +1245,6 @@ async fn buffered_work_drained_on_shutdown() {
         // - it won't stop spinning until the first task is complete
         let t = core.poll_workflow_activation(TEST_Q).await.unwrap();
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            TEST_Q,
             t.run_id,
             vec![CompleteWorkflowExecution { result: None }.into()],
         ))
@@ -1261,7 +1253,6 @@ async fn buffered_work_drained_on_shutdown() {
     };
     let complete_first = async move {
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-            TEST_Q,
             act1.run_id,
             start_timer_cmd(1, Duration::from_secs(1)),
         ))
@@ -1329,7 +1320,6 @@ async fn fail_wft_then_recover() {
     let act = core.poll_workflow_activation(TEST_Q).await.unwrap();
     // Start an activity instead of a timer, triggering nondeterminism error
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         act.run_id.clone(),
         vec![ScheduleActivity {
             activity_id: "fake_activity".to_string(),
@@ -1348,17 +1338,13 @@ async fn fail_wft_then_recover() {
             variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
         }]
     );
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(
-        TEST_Q,
-        evict_act.run_id,
-    ))
-    .await
-    .unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(evict_act.run_id))
+        .await
+        .unwrap();
 
     // Workflow starting over, this time issue the right command
     let act = core.poll_workflow_activation(TEST_Q).await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         act.run_id,
         vec![start_timer_cmd(1, Duration::from_secs(1))],
     ))
@@ -1372,7 +1358,6 @@ async fn fail_wft_then_recover() {
         },]
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         act.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
     ))
@@ -1438,7 +1423,7 @@ async fn lang_slower_than_wft_timeouts() {
                     if err.message() == NO_MORE_WORK_ERROR_MSG);
     // This completion runs into a workflow task not found error, since it's completing a stale
     // task.
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, wf_task.run_id))
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
         .await
         .unwrap();
     // Now we should get an eviction
@@ -1449,7 +1434,7 @@ async fn lang_slower_than_wft_timeouts() {
             variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
         }]
     );
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, wf_task.run_id))
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
         .await
         .unwrap();
     // The last WFT buffered should be applied now
@@ -1459,7 +1444,6 @@ async fn lang_slower_than_wft_timeouts() {
         Some(workflow_activation_job::Variant::StartWorkflow(_))
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         start_again.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
     ))
@@ -1486,7 +1470,6 @@ async fn tries_cancel_of_completed_activity() {
 
     let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         activation.run_id,
         ScheduleActivity {
             seq: 1,
@@ -1510,7 +1493,6 @@ async fn tries_cancel_of_completed_activity() {
         ]
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         activation.run_id,
         vec![
             RequestCancelActivity { seq: 1 }.into(),
@@ -1545,7 +1527,6 @@ async fn failing_wft_doesnt_eat_permit_forever() {
         let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
         // Issue a nonsense completion that will trigger a WFT failure
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-            TEST_Q,
             activation.run_id,
             RequestCancelActivity { seq: 1 }.into(),
         ))
@@ -1559,12 +1540,9 @@ async fn failing_wft_doesnt_eat_permit_forever() {
             },]
         );
         run_id = activation.run_id.clone();
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(
-            TEST_Q,
-            activation.run_id,
-        ))
-        .await
-        .unwrap();
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
+            .await
+            .unwrap();
         assert_eq!(core.outstanding_wfts(TEST_Q), 0);
         assert_eq!(core.available_wft_permits(TEST_Q), 2);
     }
@@ -1579,7 +1557,6 @@ async fn failing_wft_doesnt_eat_permit_forever() {
         .remove_by_left(&run_id);
     let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         activation.run_id,
         CompleteWorkflowExecution { result: None }.into(),
     ))
@@ -1626,12 +1603,9 @@ async fn cache_miss_doesnt_eat_permit_forever() {
     for _ in 1..=3 {
         // Start
         let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(
-            TEST_Q,
-            activation.run_id,
-        ))
-        .await
-        .unwrap();
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
+            .await
+            .unwrap();
         // Evict
         let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
         assert_matches!(
@@ -1640,12 +1614,9 @@ async fn cache_miss_doesnt_eat_permit_forever() {
                 variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
             },]
         );
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(
-            TEST_Q,
-            activation.run_id,
-        ))
-        .await
-        .unwrap();
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
+            .await
+            .unwrap();
         assert_eq!(core.outstanding_wfts(TEST_Q), 0);
         assert_eq!(core.available_wft_permits(TEST_Q), 2);
         // When we loop back up, the poll will trigger a cache miss, which we should immediately
@@ -1654,7 +1625,6 @@ async fn cache_miss_doesnt_eat_permit_forever() {
     }
     let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         activation.run_id,
         CompleteWorkflowExecution { result: None }.into(),
     ))
@@ -1703,7 +1673,7 @@ async fn tasks_from_completion_are_delivered() {
     let core = mock_core(mock);
 
     let wf_task = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, wf_task.run_id))
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
         .await
         .unwrap();
     let wf_task = core.poll_workflow_activation(TEST_Q).await.unwrap();
@@ -1714,7 +1684,6 @@ async fn tasks_from_completion_are_delivered() {
         },]
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         wf_task.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
     ))

@@ -28,7 +28,7 @@ async fn after_shutdown_server_is_not_polled() {
     let core = build_fake_core("fake_wf_id", t, &[1]);
     let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, res.run_id))
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
         .await
         .unwrap();
     core.shutdown().await;

@@ -23,7 +23,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_test_utils::{
-    init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers, CoreWfStarter,
+    init_core_and_create_wf, schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
 };
 use tokio::time::sleep;
 
@@ -71,7 +71,7 @@ async fn activity_workflow() {
             Duration::from_secs(60),
             Duration::from_secs(60),
         )
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -114,7 +114,7 @@ async fn activity_workflow() {
             assert_eq!(r, &response_payload);
         }
     );
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -132,7 +132,7 @@ async fn activity_non_retryable_failure() {
             Duration::from_secs(60),
             Duration::from_secs(60),
         )
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -185,7 +185,7 @@ async fn activity_non_retryable_failure() {
             });
         }
     );
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -203,7 +203,7 @@ async fn activity_retry() {
             Duration::from_secs(60),
             Duration::from_secs(60),
         )
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -260,7 +260,7 @@ async fn activity_retry() {
             assert_eq!(r, &response_payload);
         }
     );
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -285,7 +285,7 @@ async fn activity_cancellation_try_cancel() {
             }
             .into(),
         ]
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -313,14 +313,13 @@ async fn activity_cancellation_try_cancel() {
         }
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![RequestCancelActivity { seq: 0 }.into()],
     ))
     .await
     .unwrap();
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -346,7 +345,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
             }
             .into(),
         ]
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -360,7 +359,6 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
         }]
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![RequestCancelActivity { seq: 0 }.into()],
     ))
@@ -384,7 +382,6 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     // We need to complete the wf task to send the activity cancel command to the server, so start
     // another short timer
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![StartTimer {
             seq: 2,
@@ -412,7 +409,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
             variant: Some(workflow_activation_job::Variant::FireTimer(_)),
         }]
     );
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -430,7 +427,7 @@ async fn started_activity_timeout() {
             Duration::from_secs(1),
             Duration::from_secs(60),
         )
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -466,7 +463,7 @@ async fn started_activity_timeout() {
             assert_eq!(*seq, 0);
         }
     );
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -492,7 +489,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
             }
             .into(),
         ]
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -520,7 +517,6 @@ async fn activity_cancellation_wait_cancellation_completed() {
         }
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![RequestCancelActivity { seq: 0 }.into()],
     ))
@@ -534,7 +530,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
     .await
     .unwrap();
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -559,7 +555,7 @@ async fn activity_cancellation_abandon() {
             }
             .into(),
         ]
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -587,7 +583,6 @@ async fn activity_cancellation_abandon() {
         }
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![RequestCancelActivity { seq: 0 }.into()],
     ))
@@ -596,7 +591,7 @@ async fn activity_cancellation_abandon() {
     // Poll workflow task expecting that activation has been created by the state machine
     // immediately after the cancellation request.
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -614,7 +609,7 @@ async fn async_activity_completion_workflow() {
             Duration::from_secs(60),
             Duration::from_secs(60),
         )
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -665,7 +660,7 @@ async fn async_activity_completion_workflow() {
             assert_eq!(r, &response_payload);
         }
     );
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -684,7 +679,7 @@ async fn activity_cancelled_after_heartbeat_times_out() {
             Duration::from_secs(60),
             Duration::from_secs(1),
         )
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();

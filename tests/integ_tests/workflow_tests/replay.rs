@@ -11,7 +11,7 @@ use temporal_sdk_core_protos::{
     temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
 };
 use temporal_sdk_core_test_utils::{
-    history_from_proto_binary, init_core_replay_preloaded, CoreTestHelpers,
+    history_from_proto_binary, init_core_replay_preloaded, WorkerTestHelpers,
 };
 use tokio::join;
 
@@ -25,7 +25,6 @@ async fn timer_workflow_replay() {
     );
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![StartTimer {
             seq: 0,
@@ -50,7 +49,7 @@ async fn timer_workflow_replay() {
         );
     };
     let complete_fut = async {
-        core.complete_execution(&task_q, &task.run_id).await;
+        core.complete_execution(&task.run_id).await;
     };
     join!(act_poll_fut, poll_fut, complete_fut);
 
@@ -98,7 +97,6 @@ async fn workflow_nondeterministic_replay() {
     );
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![ScheduleActivity {
             seq: 0,
@@ -113,7 +111,7 @@ async fn workflow_nondeterministic_replay() {
     let task = core.poll_workflow_activation(&task_q).await.unwrap();
     assert_eq!(task.eviction_reason(), Some(EvictionReason::Nondeterminism));
     // Complete eviction
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(&task_q, task.run_id))
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
         .await
         .unwrap();
     // Call shutdown explicitly because we saw a nondeterminism eviction

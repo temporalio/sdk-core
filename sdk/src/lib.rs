@@ -33,10 +33,8 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_api::{
-    errors::{PollActivityError, PollWfError},
-    Core,
-};
+use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
+use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{ActivityExecutionResult, ActivityResolution},
@@ -66,7 +64,7 @@ use tokio_util::sync::CancellationToken;
 
 /// A worker that can poll for and respond to workflow tasks by using [WorkflowFunction]s
 pub struct TestRustWorker {
-    core: Arc<dyn Core>,
+    worker: Arc<dyn Worker>,
     task_queue: String,
     task_timeout: Option<Duration>,
     workflow_half: WorkflowHalf,
@@ -93,9 +91,13 @@ struct ActivityHalf {
 
 impl TestRustWorker {
     /// Create a new rust worker
-    pub fn new(core: Arc<dyn Core>, task_queue: String, task_timeout: Option<Duration>) -> Self {
+    pub fn new(
+        worker: Arc<dyn Worker>,
+        task_queue: String,
+        task_timeout: Option<Duration>,
+    ) -> Self {
         Self {
-            core,
+            worker,
             task_queue,
             task_timeout,
             workflow_half: WorkflowHalf {
@@ -129,7 +131,7 @@ impl TestRustWorker {
         input: Vec<Payload>,
     ) -> Result<String, tonic::Status> {
         let res = self
-            .core
+            .worker
             .server_gateway()
             .start_workflow(
                 input,
@@ -192,13 +194,13 @@ impl TestRustWorker {
     ) -> Result<(), anyhow::Error> {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let pollers = async move {
-            let (core, task_q, wf_half, act_half) = self.split_apart();
+            let (worker, task_q, wf_half, act_half) = self.split_apart();
             let (completions_tx, mut completions_rx) = unbounded_channel();
             let (wf_poll_res, act_poll_res) = tokio::join!(
                 // Workflow polling loop
                 async {
                     loop {
-                        let activation = match core.poll_workflow_activation(task_q).await {
+                        let activation = match worker.poll_workflow_activation().await {
                             Err(PollWfError::ShutDown) => {
                                 break Result::<_, anyhow::Error>::Ok(());
                             }
@@ -206,7 +208,7 @@ impl TestRustWorker {
                         };
                         wf_half
                             .workflow_activation_handler(
-                                core.as_ref(),
+                                worker.as_ref(),
                                 task_q,
                                 &shutdown_rx,
                                 &completions_tx,
@@ -229,11 +231,11 @@ impl TestRustWorker {
                     if !act_half.activity_fns.is_empty() {
                         loop {
                             tokio::select! {
-                                activity = core.poll_activity_task(task_q) => {
+                                activity = worker.poll_activity_task() => {
                                     if matches!(activity, Err(PollActivityError::ShutDown)) {
                                         break;
                                     }
-                                    act_half.activity_task_handler(core.clone(), task_q,
+                                    act_half.activity_task_handler(worker.clone(),
                                                                    activity?)?;
                                 },
                                 _ = shutdown_rx.changed() => { break }
@@ -254,7 +256,7 @@ impl TestRustWorker {
             h??;
         }
         before_shutdown();
-        myself.core.shutdown().await;
+        myself.worker.shutdown().await;
         myself.workflow_half.workflows.clear();
         Ok(())
     }
@@ -265,20 +267,21 @@ impl TestRustWorker {
         self.run_until_done_shutdown_hook(|| {}).await
     }
 
+    // TODO: Probably no point in this any more
     /// Temporarily swap the core implementation used by this worker. When the returned value is
     /// dropped, the old core implementation will be restored. This can be used to run against
     /// mocked-out core instances.
-    pub fn swap_core(&mut self, other_core: Arc<dyn Core>) -> impl DerefMut<Target = Self> + '_ {
-        let old_core = std::mem::replace(&mut self.core, other_core);
-        RustWorkerSwappedCore {
-            old_core: Some(old_core),
-            worker: self,
-        }
-    }
+    // pub fn swap_core(&mut self, other_core: Arc<dyn Core>) -> impl DerefMut<Target = Self> + '_ {
+    //     let old_core = std::mem::replace(&mut self.worker, other_core);
+    //     RustWorkerSwappedCore {
+    //         old_core: Some(old_core),
+    //         worker: self,
+    //     }
+    // }
 
-    fn split_apart(&mut self) -> (Arc<dyn Core>, &str, &mut WorkflowHalf, &mut ActivityHalf) {
+    fn split_apart(&mut self) -> (Arc<dyn Worker>, &str, &mut WorkflowHalf, &mut ActivityHalf) {
         (
-            self.core.clone(),
+            self.worker.clone(),
             &self.task_queue,
             &mut self.workflow_half,
             &mut self.activity_half,
@@ -289,7 +292,7 @@ impl TestRustWorker {
 impl WorkflowHalf {
     async fn workflow_activation_handler(
         &mut self,
-        core: &dyn Core,
+        worker: &dyn Worker,
         task_queue: &str,
         shutdown_rx: &Receiver<bool>,
         completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
@@ -308,7 +311,8 @@ impl WorkflowHalf {
                 .ok_or_else(|| anyhow!("Workflow type not found"))?;
 
             let (wff, activations) = wf_function.start_workflow(
-                core.server_gateway().get_options().namespace.clone(),
+                // TODO: Probably can get namespace from worker options now. And task Q?
+                worker.server_gateway().get_options().namespace.clone(),
                 task_queue.to_string(),
                 // NOTE: Don't clone args if this gets ported to be a non-test rust worker
                 sw.arguments.clone(),
@@ -340,7 +344,7 @@ impl WorkflowHalf {
             debug!("Workflow {} says it's finishing", &completion.run_id);
             self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
         }
-        core.complete_workflow_activation(completion).await?;
+        worker.complete_workflow_activation(completion).await?;
         Ok(())
     }
 }
@@ -365,13 +369,11 @@ impl ActivityHalf {
     /// Spawns off a task to handle the provided activity task
     fn activity_task_handler(
         &mut self,
-        core: Arc<dyn Core>,
-        task_queue: &str,
+        worker: Arc<dyn Worker>,
         activity: ActivityTask,
     ) -> Result<(), anyhow::Error> {
         match activity.variant {
             Some(activity_task::Variant::Start(start)) => {
-                let task_queue = task_queue.to_string();
                 let act_fn = self
                     .activity_fns
                     .get(&start.activity_type)
@@ -397,12 +399,12 @@ impl ActivityHalf {
                             Err(other_err) => ActivityExecutionResult::fail(other_err.into()),
                         },
                     };
-                    core.complete_activity_task(ActivityTaskCompletion {
-                        task_token: activity.task_token,
-                        task_queue,
-                        result: Some(result),
-                    })
-                    .await?;
+                    worker
+                        .complete_activity_task(ActivityTaskCompletion {
+                            task_token: activity.task_token,
+                            result: Some(result),
+                        })
+                        .await?;
                     Result::<_, anyhow::Error>::Ok(())
                 }));
             }
@@ -666,34 +668,5 @@ where
             }
         };
         Arc::new(wrapper)
-    }
-}
-
-/// Allows the worker to swap back to an original core instance upon Drop
-struct RustWorkerSwappedCore<'a> {
-    old_core: Option<Arc<dyn Core>>,
-    worker: &'a mut TestRustWorker,
-}
-
-impl<'a> Deref for RustWorkerSwappedCore<'a> {
-    type Target = TestRustWorker;
-
-    fn deref(&self) -> &Self::Target {
-        self.worker
-    }
-}
-
-impl<'a> DerefMut for RustWorkerSwappedCore<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.worker
-    }
-}
-
-impl<'a> Drop for RustWorkerSwappedCore<'a> {
-    fn drop(&mut self) {
-        let _ = std::mem::replace(
-            &mut self.worker.core,
-            self.old_core.take().expect("Old core always exists"),
-        );
     }
 }

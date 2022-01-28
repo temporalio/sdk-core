@@ -556,7 +556,6 @@ impl Worker {
                 debug!(workflow_execution=?we,
                        "No new work for lang to perform after polling server");
                 self.complete_workflow_activation(WorkflowActivationCompletion {
-                    task_queue: self.config.task_queue.clone(),
                     run_id: we.run_id,
                     status: Some(workflow_completion::Success::from_variants(vec![]).into()),
                 })

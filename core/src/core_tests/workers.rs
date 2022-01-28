@@ -49,7 +49,7 @@ async fn multi_workers() {
             res.jobs[0].variant,
             Some(workflow_activation_job::Variant::StartWorkflow(_))
         );
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(tq, res.run_id))
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
             .await
             .unwrap();
     }
@@ -118,7 +118,6 @@ async fn pending_activities_only_returned_for_their_queue() {
     // Create a pending activation by cancelling a try-cancel activity
     let res = core.poll_workflow_activation("q-1").await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        "q-1",
         res.run_id,
         vec![ScheduleActivity {
             seq: act_id,
@@ -132,7 +131,6 @@ async fn pending_activities_only_returned_for_their_queue() {
     .unwrap();
     let res = core.poll_workflow_activation("q-1").await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        "q-1",
         res.run_id,
         vec![RequestCancelActivity { seq: act_id }.into()],
     ))
@@ -201,7 +199,7 @@ async fn after_shutdown_of_worker_can_be_reregistered() {
     let mut core = build_fake_core("fake_wf_id", t.clone(), &[1]);
     let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
     assert_eq!(res.jobs.len(), 1);
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, res.run_id))
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
         .await
         .unwrap();
     core.shutdown_worker(TEST_Q).await;
@@ -211,7 +209,7 @@ async fn after_shutdown_of_worker_can_be_reregistered() {
     register_mock_workers(&mut core, pollers);
     // Worker is replaced and the different mock returns a new wft
     let res = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, res.run_id))
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
         .await
         .unwrap();
     core.shutdown().await;
@@ -225,7 +223,6 @@ async fn shutdown_worker_can_complete_pending_activation() {
     assert_eq!(res.jobs.len(), 1);
     // Complete the timer, will queue PA
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         res.run_id,
         vec![start_timer_cmd(1, Duration::from_secs(1))],
     ))
@@ -324,7 +321,7 @@ async fn worker_shutdown_during_multiple_poll_doesnt_deadlock(
     };
     let poll2fut = async {
         let res = core.poll_workflow_activation("q2").await.unwrap();
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty("q2", res.run_id))
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
             .await
             .unwrap();
     };
@@ -405,14 +402,13 @@ async fn complete_with_task_not_found_during_shutdwn() {
             res.jobs[0].variant,
             Some(workflow_activation_job::Variant::RemoveFromCache(_))
         );
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, res.run_id))
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
             .await
             .unwrap();
         complete_order.borrow_mut().push(2);
     };
     let complete_fut = async {
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            TEST_Q,
             res.run_id,
             vec![start_timer_cmd(1, Duration::from_secs(1))],
         ))

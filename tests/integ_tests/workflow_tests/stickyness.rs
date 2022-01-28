@@ -72,7 +72,7 @@ async fn cache_miss_ok() {
         .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
         .await
         .unwrap();
-    let core = starter.get_core().await;
+    let core = starter.get_worker().await;
     let tq = starter.get_task_queue();
     let (r1, _) = tokio::join!(worker.run_until_done(), async move {
         barr.wait().await;

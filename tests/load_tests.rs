@@ -66,7 +66,7 @@ async fn activity_load() {
     dbg!(starting.elapsed());
 
     let running = Instant::now();
-    let core = starter.get_core().await;
+    let core = starter.get_worker().await;
 
     // Poll for and complete all activities
     let c2 = core.clone();

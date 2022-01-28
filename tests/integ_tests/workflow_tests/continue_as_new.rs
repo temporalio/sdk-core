@@ -31,7 +31,7 @@ async fn continue_as_new_happy_path() {
 
     // Terminate the continued workflow
     starter
-        .get_core()
+        .get_worker()
         .await
         .server_gateway()
         .terminate_workflow_execution(wf_name.to_owned(), None)

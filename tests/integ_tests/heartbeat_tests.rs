@@ -11,7 +11,7 @@ use temporal_sdk_core_protos::coresdk::{
     ActivityHeartbeat, ActivityTaskCompletion, IntoCompletion,
 };
 use temporal_sdk_core_test_utils::{
-    init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers,
+    init_core_and_create_wf, schedule_activity_cmd, WorkerTestHelpers,
 };
 use tokio::time::sleep;
 
@@ -30,7 +30,7 @@ async fn activity_heartbeat() {
             Duration::from_secs(60),
             Duration::from_secs(1),
         )
-        .into_completion(task_q.to_string(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
@@ -83,5 +83,5 @@ async fn activity_heartbeat() {
             assert_eq!(r, &response_payload);
         }
     );
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }

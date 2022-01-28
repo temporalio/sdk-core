@@ -138,7 +138,6 @@ impl WorkflowFuture {
         warn!("Workflow task failed for {}: {}", run_id, fail);
         self.outgoing_completions
             .send(WorkflowActivationCompletion::fail(
-                &self.task_queue,
                 run_id,
                 anyhow_to_fail(fail),
             ))
@@ -148,7 +147,6 @@ impl WorkflowFuture {
     fn send_completion(&self, run_id: String, activation_cmds: Vec<workflow_command::Variant>) {
         self.outgoing_completions
             .send(WorkflowActivationCompletion::from_cmds(
-                &self.task_queue,
                 run_id,
                 activation_cmds,
             ))
@@ -268,11 +266,7 @@ impl Future for WorkflowFuture {
             if is_only_eviction {
                 // No need to do anything with the workflow code in this case
                 self.outgoing_completions
-                    .send(WorkflowActivationCompletion::from_cmds(
-                        &self.task_queue,
-                        run_id,
-                        vec![],
-                    ))
+                    .send(WorkflowActivationCompletion::from_cmds(run_id, vec![]))
                     .expect("Completion channel intact");
                 return Ok(WfExitValue::Evicted).into();
             }
@@ -291,7 +285,6 @@ impl Future for WorkflowFuture {
                     warn!("{}", errmsg);
                     self.outgoing_completions
                         .send(WorkflowActivationCompletion::fail(
-                            &self.task_queue,
                             run_id,
                             Failure {
                                 message: errmsg,

@@ -69,7 +69,6 @@ async fn legacy_query(#[case] include_history: bool) {
     let first_wft = || async {
         let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-            TEST_Q,
             task.run_id,
             start_timer_cmd(1, Duration::from_secs(1)),
         ))
@@ -78,7 +77,7 @@ async fn legacy_query(#[case] include_history: bool) {
     };
     let clear_eviction = || async {
         let t = core.poll_workflow_activation(TEST_Q).await.unwrap();
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, t.run_id))
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(t.run_id))
             .await
             .unwrap();
     };
@@ -100,7 +99,6 @@ async fn legacy_query(#[case] include_history: bool) {
     );
     // Complete the query
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         task.run_id,
         QueryResult {
             query_id: query.query_id.clone(),
@@ -129,7 +127,6 @@ async fn legacy_query(#[case] include_history: bool) {
         }]
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         task.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
     ))
@@ -176,7 +173,6 @@ async fn new_queries(#[case] num_queries: usize) {
 
     let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         task.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
     ))
@@ -214,7 +210,6 @@ async fn new_queries(#[case] num_queries: usize) {
         .collect();
     qresults.push(CompleteWorkflowExecution { result: None }.into());
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         task.run_id,
         qresults,
     ))
@@ -256,7 +251,6 @@ async fn legacy_query_failure_on_wft_failure() {
 
     let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         task.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
     ))
@@ -273,7 +267,6 @@ async fn legacy_query_failure_on_wft_failure() {
     );
     // Fail wft which should result in query being failed
     core.complete_workflow_activation(WorkflowActivationCompletion::fail(
-        TEST_Q,
         task.run_id,
         Failure {
             message: "Ahh i broke".to_string(),
@@ -336,7 +329,6 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
 
     let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         task.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
     ))
@@ -344,7 +336,6 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
     .unwrap();
     let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         task.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
     ))
@@ -361,7 +352,6 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
             }] => q
         );
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-            TEST_Q,
             task.run_id,
             QueryResult {
                 query_id: query.query_id.clone(),
