@@ -1,13 +1,11 @@
 use crate::{
     test_help::{
-        build_fake_worker, build_mock_pollers, canned_histories, hist_to_poll_resp,
-        mock_manual_poller, mock_worker, MockPollCfg, MockWorker, MocksHolder, ResponseType,
+        build_fake_worker, build_mock_pollers, canned_histories, mock_manual_poller, mock_worker,
+        MockPollCfg, MockWorker, MocksHolder,
     },
     PollActivityError, PollWfError,
 };
 use futures::FutureExt;
-
-use crate::test_help::TEST_Q;
 use std::{cell::RefCell, time::Duration};
 use temporal_client::mocks::mock_gateway;
 use temporal_sdk_core_api::Worker;
@@ -52,18 +50,6 @@ async fn multi_workers() {
     //         .unwrap();
     // }
     // core.shutdown().await;
-}
-
-#[tokio::test]
-async fn shutdown_worker_stays_shutdown_not_no_worker() {
-    let t = canned_histories::single_timer("1");
-    // Empty batches to specify 0 calls to poll expectation
-    let core = build_fake_worker("fake_wf_id", t, Vec::<ResponseType>::new());
-
-    let fake_q = "not a registered queue";
-    let res = core.poll_workflow_activation().await.unwrap_err();
-    assert_matches!(res, PollWfError::NoWorkerForQueue(err_q) => err_q == fake_q);
-    core.shutdown().await;
 }
 
 #[tokio::test]
@@ -147,19 +133,15 @@ async fn worker_shutdown_during_poll_doesnt_deadlock() {
     mock_poller.expect_poll().returning(move || {
         let mut rx = rx.clone();
         async move {
-            let t = canned_histories::single_timer("1");
             // Don't resolve polls until worker shuts down
             rx.changed().await.unwrap();
-            Some(Ok(hist_to_poll_resp(
-                &t,
-                "wf".to_string(),
-                ResponseType::ToTaskNum(1),
-                TEST_Q,
-            )))
+            // We don't want to return a real response here because it would get buffered and
+            // then we'd have real work to do to be able to finish shutdown.
+            Some(Ok(Default::default()))
         }
         .boxed()
     });
-    let mw = MockWorker::default();
+    let mw = MockWorker::new(Box::new(mock_poller));
     let mut mock_gateway = mock_gateway();
     mock_gateway
         .expect_complete_workflow_task()
@@ -174,7 +156,7 @@ async fn worker_shutdown_during_poll_doesnt_deadlock() {
     };
     let (pollres, _) = tokio::join!(pollfut, shutdownfut);
     assert_matches!(pollres.unwrap_err(), PollWfError::ShutDown);
-    worker.shutdown().await;
+    worker.finalize_shutdown().await;
 }
 
 #[tokio::test]

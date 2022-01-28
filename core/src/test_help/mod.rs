@@ -79,7 +79,7 @@ pub(crate) fn build_fake_worker(
     response_batches: impl IntoIterator<Item = impl Into<ResponseType>>,
 ) -> Worker {
     let response_batches = response_batches.into_iter().map(Into::into).collect();
-    let mock_gateway = build_multihist_mock_sg(
+    let mock_holder = build_multihist_mock_sg(
         vec![FakeWfResponses {
             wf_id: wf_id.to_owned(),
             hist: t,
@@ -88,7 +88,7 @@ pub(crate) fn build_fake_worker(
         true,
         None,
     );
-    mock_worker(mock_gateway)
+    mock_worker(mock_holder)
 }
 
 pub(crate) fn mock_worker<SG>(mocks: MocksHolder<SG>) -> Worker

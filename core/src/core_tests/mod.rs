@@ -12,13 +12,13 @@ use crate::{
     errors::{PollActivityError, PollWfError},
     init_worker,
     test_help::{
-        build_fake_worker, canned_histories, hist_to_poll_resp, test_worker_cfg, ResponseType,
-        TEST_Q,
+        build_mock_pollers, canned_histories, hist_to_poll_resp, mock_worker, test_worker_cfg,
+        MockPollCfg, ResponseType, TEST_Q,
     },
 };
 use futures::FutureExt;
 use std::time::Duration;
-use temporal_client::mocks::{fake_sg_opts, mock_manual_gateway};
+use temporal_client::mocks::{mock_gateway, mock_manual_gateway};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::workflow_completion::WorkflowActivationCompletion,
@@ -29,17 +29,24 @@ use tokio::{sync::Barrier, time::sleep};
 #[tokio::test]
 async fn after_shutdown_server_is_not_polled() {
     let t = canned_histories::single_timer("fake_timer");
-    let core = build_fake_worker("fake_wf_id", t, &[1]);
-    let res = core.poll_workflow_activation().await.unwrap();
+    let mh = MockPollCfg::from_resp_batches("fake_wf_id", t, [1], mock_gateway());
+    let mut mock = build_mock_pollers(mh);
+    // Just so we don't have to deal w/ cache overflow
+    mock.worker_cfg(|cfg| cfg.max_cached_workflows = 1);
+    let worker = mock_worker(mock);
+
+    let res = worker.poll_workflow_activation().await.unwrap();
     assert_eq!(res.jobs.len(), 1);
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
         .await
         .unwrap();
-    core.shutdown().await;
+    worker.shutdown().await;
     assert_matches!(
-        core.poll_workflow_activation().await.unwrap_err(),
+        worker.poll_workflow_activation().await.unwrap_err(),
         PollWfError::ShutDown
     );
+    worker.finalize_shutdown().await;
 }
 
 // Better than cloning a billion arcs...
@@ -89,7 +96,7 @@ async fn shutdown_interrupts_both_polls() {
             .max_concurrent_at_polls(1_usize)
             .build()
             .unwrap(),
-        fake_sg_opts().connect(None).await.unwrap(),
+        mock_gateway,
     );
     tokio::join! {
         async {

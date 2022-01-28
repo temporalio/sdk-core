@@ -110,8 +110,7 @@ pub trait Worker: Send + Sync {
     /// Completes shutdown and frees all resources. You should avoid simply dropping workers, as
     /// this does not allow async tasks to report any panics that may have occurred cleanly.
     ///
-    /// This may be called once [Worker::shutdown] resolves. If it has not been called, this
-    /// function will call it and wait for it to complete.
+    /// This should be called only after [Worker::shutdown] has resolved.
     async fn finalize_shutdown(self);
 }
 
