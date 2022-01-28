@@ -19,7 +19,7 @@ use tokio::time::sleep;
 async fn activity_heartbeat() {
     let (core, task_q) = init_core_and_create_wf("activity_heartbeat").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
@@ -67,7 +67,7 @@ async fn activity_heartbeat() {
     .await
     .unwrap();
     // Poll workflow task and verify that activity has succeeded.
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [

@@ -1,13 +1,7 @@
 pub mod errors;
 pub mod worker;
 
-use crate::{
-    errors::{
-        CompleteActivityError, CompleteWfError, PollActivityError, PollWfError,
-        WorkerRegistrationError,
-    },
-    worker::WorkerConfig,
-};
+use crate::errors::{CompleteActivityError, CompleteWfError, PollActivityError, PollWfError};
 use log::Level;
 use opentelemetry::metrics::Meter;
 use std::{

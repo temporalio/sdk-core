@@ -2,7 +2,7 @@
 //! to replay canned histories. It should be used by Lang SDKs to provide replay capabilities to
 //! users during testing.
 
-use crate::{CoreInitOptionsBuilder, TelemetryOptions};
+
 use futures::FutureExt;
 use std::{
     sync::{
@@ -12,23 +12,11 @@ use std::{
     time::Duration,
 };
 use temporal_client::{
-    mocks::{mock_gateway, mock_manual_gateway},
+    mocks::{mock_manual_gateway},
     ServerGatewayApis,
 };
-use temporal_sdk_core_api::{
-    errors::{
-        CompleteActivityError, CompleteWfError, PollActivityError, PollWfError,
-        WorkerRegistrationError,
-    },
-    worker::WorkerConfig,
-    CoreLog,
-};
+
 use temporal_sdk_core_protos::{
-    coresdk::{
-        activity_task::ActivityTask, workflow_activation::WorkflowActivation,
-        workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat,
-        ActivityTaskCompletion,
-    },
     temporal::api::{
         common::v1::WorkflowExecution,
         history::v1::History,

@@ -405,7 +405,7 @@ pub extern "C" fn tmprl_poll_workflow_activation(
     let user_data = UserDataHandle(user_data);
     core.tokio_runtime.clone().spawn(async move {
         let resp = bridge::PollWorkflowActivationResponse {
-            response: Some(match core.poll_workflow_activation(req).await {
+            response: Some(match core.poll_workflow_activation().await {
                 Ok(act) => bridge::poll_workflow_activation_response::Response::Activation(act),
                 Err(err) => bridge::poll_workflow_activation_response::Response::Error(err),
             }),

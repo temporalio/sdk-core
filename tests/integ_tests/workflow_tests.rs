@@ -84,7 +84,7 @@ async fn parallel_workflows_same_queue() {
         .collect();
 
     for _ in 0..num_workflows * 2 {
-        let task = core.poll_workflow_activation(&task_q).await.unwrap();
+        let task = core.poll_workflow_activation().await.unwrap();
         send_chans
             .get(&task.run_id)
             .unwrap()
@@ -145,14 +145,14 @@ async fn shutdown_aborts_actively_blocked_poll() {
         tcore.shutdown().await;
     });
     assert_matches!(
-        core.poll_workflow_activation(task_q).await.unwrap_err(),
+        core.poll_workflow_activation().await.unwrap_err(),
         PollWfError::ShutDown
     );
     handle.await.unwrap();
     // Ensure double-shutdown doesn't explode
     core.shutdown().await;
     assert_matches!(
-        core.poll_workflow_activation(task_q).await.unwrap_err(),
+        core.poll_workflow_activation().await.unwrap_err(),
         PollWfError::ShutDown
     );
 }
@@ -171,12 +171,12 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
         init_core_and_create_wf("fail_wf_task").await
     };
     // Start with a timer
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_timer(&task.run_id, 0, Duration::from_millis(200))
         .await;
 
     // Then break for whatever reason
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::fail(
         task.run_id,
         Failure::application_failure("I did an oopsie".to_string(), false),
@@ -186,7 +186,7 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
 
     // The server will want to retry the task. This time we finish the workflow -- but we need
     // to poll a couple of times as there will be more than one required workflow activation.
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // The first poll response will tell us to evict
     assert_matches!(
         task.jobs.as_slice(),
@@ -198,7 +198,7 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
         .await
         .unwrap();
 
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
         vec![StartTimer {
@@ -209,17 +209,17 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
 async fn fail_workflow_execution() {
     let (core, task_q) = init_core_and_create_wf("fail_workflow_execution").await;
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_timer(&task.run_id, 0, Duration::from_secs(1))
         .await;
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
         vec![FailWorkflowExecution {
@@ -238,7 +238,7 @@ async fn signal_workflow() {
 
     let signal_id_1 = "signal1";
     let signal_id_2 = "signal2";
-    let res = core.poll_workflow_activation(&task_q).await.unwrap();
+    let res = core.poll_workflow_activation().await.unwrap();
     // Task is completed with no commands
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         res.run_id.clone(),
@@ -267,7 +267,7 @@ async fn signal_workflow() {
         .await
         .unwrap();
 
-    let mut res = core.poll_workflow_activation(&task_q).await.unwrap();
+    let mut res = core.poll_workflow_activation().await.unwrap();
     // Sometimes both signals are complete at once, sometimes only one, depending on server
     // Converting test to wf function type would make this shorter
     if res.jobs.len() == 2 {
@@ -295,7 +295,7 @@ async fn signal_workflow() {
         ))
         .await
         .unwrap();
-        res = core.poll_workflow_activation(&task_q).await.unwrap();
+        res = core.poll_workflow_activation().await.unwrap();
         assert_matches!(
             res.jobs.as_slice(),
             [WorkflowActivationJob {
@@ -313,7 +313,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
     let workflow_id = task_q.as_str();
     let signal_id_1 = "signal1";
     for i in 1..=2 {
-        let res = core.poll_workflow_activation(&task_q).await.unwrap();
+        let res = core.poll_workflow_activation().await.unwrap();
         // Task is completed with a timer
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
             res.run_id,
@@ -326,7 +326,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
         .await
         .unwrap();
 
-        let res = core.poll_workflow_activation(&task_q).await.unwrap();
+        let res = core.poll_workflow_activation().await.unwrap();
 
         if i == 1 {
             // First attempt we should only see the timer being fired
@@ -355,7 +355,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
             core.complete_execution(&run_id).await;
 
             // We should be told to evict
-            let res = core.poll_workflow_activation(&task_q).await.unwrap();
+            let res = core.poll_workflow_activation().await.unwrap();
             assert_matches!(
                 res.jobs.as_slice(),
                 [WorkflowActivationJob {
@@ -401,7 +401,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
 
     // Set up some helpers for polling and completing
     let poll_sched_act = || async {
-        let wf_task = core.poll_workflow_activation(task_q).await.unwrap();
+        let wf_task = core.poll_workflow_activation().await.unwrap();
         core.complete_workflow_activation(
             schedule_activity_cmd(
                 0,
@@ -419,7 +419,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     };
     let poll_sched_act_poll = || async {
         poll_sched_act().await;
-        let wf_task = core.poll_workflow_activation(task_q).await.unwrap();
+        let wf_task = core.poll_workflow_activation().await.unwrap();
         assert_matches!(
             wf_task.jobs.as_slice(),
             [
@@ -465,7 +465,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         .await
         .unwrap();
     // Now poll again, it will be an eviction b/c non-sticky mode.
-    let wf_task = core.poll_workflow_activation(task_q).await.unwrap();
+    let wf_task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         wf_task.jobs.as_slice(),
         [WorkflowActivationJob {
@@ -482,7 +482,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     // Poll again, which should not have any work to do and spin, until the complete goes through.
     // Which will be rejected with not found, producing an eviction.
     let (wf_task, _) = tokio::join!(
-        async { core.poll_workflow_activation(task_q).await.unwrap() },
+        async { core.poll_workflow_activation().await.unwrap() },
         async {
             sleep(Duration::from_millis(500)).await;
             // Reply to the first one, finally

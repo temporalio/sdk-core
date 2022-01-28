@@ -30,7 +30,7 @@ async fn timer_workflow_workflow_driver() {
 #[tokio::test]
 async fn timer_workflow_manual() {
     let (core, task_q) = init_core_and_create_wf("timer_workflow").await;
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
         vec![StartTimer {
@@ -41,7 +41,7 @@ async fn timer_workflow_manual() {
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_execution(&task.run_id).await;
     core.shutdown().await;
 }
@@ -49,7 +49,7 @@ async fn timer_workflow_manual() {
 #[tokio::test]
 async fn timer_cancel_workflow() {
     let (core, task_q) = init_core_and_create_wf("timer_cancel_workflow").await;
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
         vec![
@@ -67,7 +67,7 @@ async fn timer_cancel_workflow() {
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
         vec![
@@ -82,7 +82,7 @@ async fn timer_cancel_workflow() {
 #[tokio::test]
 async fn timer_immediate_cancel_workflow() {
     let (core, task_q) = init_core_and_create_wf("timer_immediate_cancel_workflow").await;
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
         vec![

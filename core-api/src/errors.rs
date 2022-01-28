@@ -98,14 +98,6 @@ pub enum CompleteActivityError {
     NoWorkerForQueue(String),
 }
 
-/// Errors thrown by [crate::Core::register_worker]
-#[derive(thiserror::Error, Debug)]
-pub enum WorkerRegistrationError {
-    /// A worker has already been registered on this queue
-    #[error("Worker already registered for queue: {0}")]
-    WorkerAlreadyRegisteredForQueue(String),
-}
-
 /// Errors thrown inside of workflow machines
 #[derive(thiserror::Error, Debug)]
 pub enum WFMachinesError {

@@ -18,7 +18,7 @@ use tokio::time::timeout;
 async fn out_of_order_completion_doesnt_hang() {
     let (core, task_q) = init_core_and_create_wf("out_of_order_completion_doesnt_hang").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
     core.complete_workflow_activation(
         vec![
@@ -50,7 +50,7 @@ async fn out_of_order_completion_doesnt_hang() {
         }
     );
     // Poll workflow task and verify that activity has failed.
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [

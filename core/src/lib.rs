@@ -39,25 +39,10 @@ pub use temporal_sdk_core_protos::TaskToken;
 pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
-use crate::{
-    telemetry::{
-        fetch_global_buffered_logs,
-        metrics::{MetricsContext, METRIC_METER},
-    },
-    worker::{Worker, WorkerDispatcher},
-};
-use std::{
-    ops::Deref,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
+use crate::{telemetry::metrics::METRIC_METER, worker::Worker};
+use std::sync::Arc;
 use temporal_sdk_core_api::{
-    errors::{
-        CompleteActivityError, CompleteWfError, CoreInitError, PollActivityError, PollWfError,
-        WorkerRegistrationError,
-    },
+    errors::{CompleteActivityError, CompleteWfError, PollActivityError, PollWfError},
     CoreLog, Worker as WorkerTrait,
 };
 use temporal_sdk_core_protos::{
@@ -97,17 +82,6 @@ pub fn init_worker<SG: ServerGatewayApis + Send + Sync + 'static>(
     _worker_config: WorkerConfig,
     _client: SG,
 ) -> Worker {
-    // fn get_sticky_q_name_for_worker(&self, config: &WorkerConfig) -> Option<String> {
-    //     if config.max_cached_workflows > 0 {
-    //         Some(format!(
-    //             "{}-{}-{}",
-    //             &self.init_options.gateway_opts.identity, &config.task_queue, *PROCCESS_UNIQ_ID
-    //         ))
-    //     } else {
-    //         None
-    //     }
-    // }
-
     todo!()
 }
 
@@ -205,6 +179,20 @@ impl WorkerTrait for Worker {
 
     async fn shutdown(&self) {
         self.shutdown().await;
+    }
+}
+
+pub(crate) fn sticky_q_name_for_worker(
+    process_identity: &str,
+    config: &WorkerConfig,
+) -> Option<String> {
+    if config.max_cached_workflows > 0 {
+        Some(format!(
+            "{}-{}-{}",
+            &process_identity, &config.task_queue, *PROCCESS_UNIQ_ID
+        ))
+    } else {
+        None
     }
 }
 

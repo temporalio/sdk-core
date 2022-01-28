@@ -23,7 +23,7 @@ async fn timer_workflow_replay() {
             .await
             .unwrap(),
     );
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
         vec![StartTimer {
@@ -34,7 +34,7 @@ async fn timer_workflow_replay() {
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Verify that an in-progress poll is interrupted by completion finishing processing history
     let act_poll_fut = async {
         assert_matches!(
@@ -44,7 +44,7 @@ async fn timer_workflow_replay() {
     };
     let poll_fut = async {
         assert_matches!(
-            core.poll_workflow_activation(&task_q).await,
+            core.poll_workflow_activation().await,
             Err(PollWfError::ShutDown)
         );
     };
@@ -55,7 +55,7 @@ async fn timer_workflow_replay() {
 
     // Subsequent polls should still return shutdown
     assert_matches!(
-        core.poll_workflow_activation(&task_q).await,
+        core.poll_workflow_activation().await,
         Err(PollWfError::ShutDown)
     );
 
@@ -95,7 +95,7 @@ async fn workflow_nondeterministic_replay() {
             .await
             .unwrap(),
     );
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
         vec![ScheduleActivity {
@@ -108,7 +108,7 @@ async fn workflow_nondeterministic_replay() {
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     assert_eq!(task.eviction_reason(), Some(EvictionReason::Nondeterminism));
     // Complete eviction
     core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
@@ -117,7 +117,7 @@ async fn workflow_nondeterministic_replay() {
     // Call shutdown explicitly because we saw a nondeterminism eviction
     core.shutdown().await;
     assert_matches!(
-        core.poll_workflow_activation(&task_q).await,
+        core.poll_workflow_activation().await,
         Err(PollWfError::ShutDown)
     );
 }

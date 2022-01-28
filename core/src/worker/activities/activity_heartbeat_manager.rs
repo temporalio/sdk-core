@@ -469,7 +469,6 @@ mod test {
         match hm.record(
             ActivityHeartbeat {
                 task_token: vec![1, 2, 3],
-                task_queue: TEST_Q.to_string(),
                 details: vec![Payload {
                     // payload doesn't matter in this case, as it shouldn't get sent anyways.
                     ..Default::default()
@@ -495,7 +494,6 @@ mod test {
         hm.record(
             ActivityHeartbeat {
                 task_token,
-                task_queue: TEST_Q.to_string(),
                 details: vec![Payload {
                     metadata: Default::default(),
                     data: vec![payload_data],

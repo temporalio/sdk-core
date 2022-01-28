@@ -26,7 +26,6 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display, Formatter},
     future::Future,
-    ops::{Deref, DerefMut},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,

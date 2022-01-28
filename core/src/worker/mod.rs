@@ -1,5 +1,4 @@
 mod activities;
-mod dispatcher;
 mod wft_delivery;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
@@ -8,7 +7,6 @@ pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     NewLocalAct,
 };
-pub(crate) use dispatcher::WorkerDispatcher;
 
 use crate::{
     errors::CompleteWfError,
