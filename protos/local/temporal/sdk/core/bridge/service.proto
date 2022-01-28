@@ -31,7 +31,7 @@ message StreamRequest {
 
   oneof request {
     InitRequest init = 2;
-    RegisterWorkerRequest register_worker = 3;
+    CreateWorkerRequest register_worker = 3;
     PollWorkflowActivationRequest poll_workflow_activation = 4;
     PollActivityTaskRequest poll_activity_task = 5;
     CompleteWorkflowActivationRequest complete_workflow_activation = 6;

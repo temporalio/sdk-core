@@ -65,18 +65,6 @@ lazy_static::lazy_static! {
     };
 }
 
-/// Holds various configuration information required to call [init]
-#[derive(Debug, Clone, derive_builder::Builder)]
-#[builder(setter(into))]
-#[non_exhaustive]
-pub struct CoreInitOptions {
-    /// Options for the connection to the temporal server
-    pub gateway_opts: ServerGatewayOptions,
-    /// Options for telemetry (traces and metrics)
-    #[builder(default)]
-    pub telemetry_opts: TelemetryOptions,
-}
-
 /// Initialize a worker bound to a task queue
 pub fn init_worker<SG: ServerGatewayApis + Send + Sync + 'static>(
     worker_config: WorkerConfig,

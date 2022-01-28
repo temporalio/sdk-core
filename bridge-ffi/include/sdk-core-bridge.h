@@ -6,17 +6,17 @@
 #include <stdlib.h>
 
 /**
- * A core instance owned by Core. This must be passed to tmprl_core_shutdown
- * when no longer in use which will free the resources.
- */
-typedef struct tmprl_core_t tmprl_core_t;
-
-/**
  * A runtime owned by Core. This must be passed to tmprl_runtime_free when no
  * longer in use. This must not be freed until every call to every tmprl_core_t
  * instance created with this runtime has been shutdown.
  */
 typedef struct tmprl_runtime_t tmprl_runtime_t;
+
+/**
+ * A worker instance owned by Core. This must be passed to tmprl_core_shutdown
+ * when no longer in use which will free the resources.
+ */
+typedef struct tmprl_worker_t tmprl_worker_t;
 
 /**
  * A set of bytes owned by Core. No fields within nor any bytes references must
@@ -37,14 +37,14 @@ typedef struct tmprl_bytes_t {
 } tmprl_bytes_t;
 
 /**
- * Callback called by tmprl_core_init on completion. The first parameter of the
+ * Callback called by [tmprl_worker_init] on completion. The first parameter of the
  * callback is user data passed into the original function. The second
- * parameter is a core instance if the call is successful or null if not. If
- * present, the core instance must be freed via tmprl_core_shutdown when no
+ * parameter is a worker instance if the call is successful or null if not. If
+ * present, the worker instance must be freed via [tmprl_worker_shutdown] when no
  * longer in use. The third parameter of the callback is a byte array for a
- * InitResponse protobuf message which must be freed via tmprl_bytes_free.
+ * [InitResponse] protobuf message which must be freed via tmprl_bytes_free.
  */
-typedef void (*tmprl_core_init_callback)(void *user_data, struct tmprl_core_t *core, const struct tmprl_bytes_t *resp);
+typedef void (*tmprl_worker_init_callback)(void *user_data, struct tmprl_worker_t *core, const struct tmprl_bytes_t *resp);
 
 /**
  * Callback called on function completion. The first parameter of the callback
@@ -59,7 +59,7 @@ typedef void (*tmprl_callback)(void *user_data, const struct tmprl_bytes_t *core
  * tmprl_core_t instance isn't available. If the second parameter is null, this
  * is a no-op.
  */
-void tmprl_bytes_free(struct tmprl_core_t *core, const struct tmprl_bytes_t *bytes);
+void tmprl_bytes_free(struct tmprl_worker_t *core, const struct tmprl_bytes_t *bytes);
 
 /**
  * Create a new runtime. The result is never null and must be freed via
@@ -79,46 +79,22 @@ void tmprl_runtime_free(struct tmprl_runtime_t *runtime);
  * req_proto_len represent a byte array for a InitRequest protobuf message. The
  * callback is invoked on completion.
  */
-void tmprl_core_init(struct tmprl_runtime_t *runtime,
-                     const uint8_t *req_proto,
-                     size_t req_proto_len,
-                     void *user_data,
-                     tmprl_core_init_callback callback);
+void tmprl_worker_init(struct tmprl_runtime_t *runtime,
+                       const uint8_t *req_proto,
+                       size_t req_proto_len,
+                       void *user_data,
+                       tmprl_worker_init_callback callback);
 
 /**
- * Shutdown and free a core instance.
+ * Shutdown a previously created worker.
  *
- * The req_proto and req_proto_len represent a byte array for a ShutdownRequest
- * protobuf message. The callback is invoked on completion with a
- * ShutdownResponse protobuf message.
- */
-void tmprl_core_shutdown(struct tmprl_core_t *core,
-                         const uint8_t *req_proto,
-                         size_t req_proto_len,
-                         void *user_data,
-                         tmprl_callback callback);
-
-/**
- * Register a worker.
+ * The req_proto and req_proto_len represent a byte array for a [bridge::ShutdownWorkerRequest]
+ * protobuf message, which currently contains nothing and is unused, but the parameters are kept
+ * for now.
  *
- * The req_proto and req_proto_len represent a byte array for a RegisterWorker
- * protobuf message. The callback is invoked on completion with a
- * RegisterWorkerResponse protobuf message.
+ * The callback is invoked on completion with a ShutdownWorkerResponse protobuf message.
  */
-void tmprl_register_worker(struct tmprl_core_t *core,
-                           const uint8_t *req_proto,
-                           size_t req_proto_len,
-                           void *user_data,
-                           tmprl_callback callback);
-
-/**
- * Shutdown registered worker.
- *
- * The req_proto and req_proto_len represent a byte array for a
- * ShutdownWorkerRequest protobuf message. The callback is invoked on
- * completion with a ShutdownWorkerResponse protobuf message.
- */
-void tmprl_shutdown_worker(struct tmprl_core_t *core,
+void tmprl_shutdown_worker(struct tmprl_worker_t *worker,
                            const uint8_t *req_proto,
                            size_t req_proto_len,
                            void *user_data,
@@ -131,7 +107,7 @@ void tmprl_shutdown_worker(struct tmprl_core_t *core,
  * PollWorkflowActivationRequest protobuf message. The callback is invoked on
  * completion with a PollWorkflowActivationResponse protobuf message.
  */
-void tmprl_poll_workflow_activation(struct tmprl_core_t *core,
+void tmprl_poll_workflow_activation(struct tmprl_worker_t *worker,
                                     const uint8_t *req_proto,
                                     size_t req_proto_len,
                                     void *user_data,
@@ -140,11 +116,12 @@ void tmprl_poll_workflow_activation(struct tmprl_core_t *core,
 /**
  * Poll activity task.
  *
- * The req_proto and req_proto_len represent a byte array for a
- * PollActivityTaskRequest protobuf message. The callback is invoked on
- * completion with a PollActivityTaskResponse protobuf message.
+ * The req_proto and req_proto_len represent a byte array for a PollActivityTaskRequest protobuf
+ * message, which currently contains nothing and is unused, but the parameters are kept for now.
+ *
+ * The callback is invoked on completion with a PollActivityTaskResponse protobuf message.
  */
-void tmprl_poll_activity_task(struct tmprl_core_t *core,
+void tmprl_poll_activity_task(struct tmprl_worker_t *core,
                               const uint8_t *req_proto,
                               size_t req_proto_len,
                               void *user_data,
@@ -157,7 +134,7 @@ void tmprl_poll_activity_task(struct tmprl_core_t *core,
  * CompleteWorkflowActivationRequest protobuf message. The callback is invoked
  * on completion with a CompleteWorkflowActivationResponse protobuf message.
  */
-void tmprl_complete_workflow_activation(struct tmprl_core_t *core,
+void tmprl_complete_workflow_activation(struct tmprl_worker_t *core,
                                         const uint8_t *req_proto,
                                         size_t req_proto_len,
                                         void *user_data,
@@ -170,7 +147,7 @@ void tmprl_complete_workflow_activation(struct tmprl_core_t *core,
  * CompleteActivityTaskRequest protobuf message. The callback is invoked
  * on completion with a CompleteActivityTaskResponse protobuf message.
  */
-void tmprl_complete_activity_task(struct tmprl_core_t *core,
+void tmprl_complete_activity_task(struct tmprl_worker_t *core,
                                   const uint8_t *req_proto,
                                   size_t req_proto_len,
                                   void *user_data,
@@ -183,7 +160,7 @@ void tmprl_complete_activity_task(struct tmprl_core_t *core,
  * RecordActivityHeartbeatRequest protobuf message. The callback is invoked
  * on completion with a RecordActivityHeartbeatResponse protobuf message.
  */
-void tmprl_record_activity_heartbeat(struct tmprl_core_t *core,
+void tmprl_record_activity_heartbeat(struct tmprl_worker_t *core,
                                      const uint8_t *req_proto,
                                      size_t req_proto_len,
                                      void *user_data,
@@ -196,7 +173,7 @@ void tmprl_record_activity_heartbeat(struct tmprl_core_t *core,
  * RequestWorkflowEvictionRequest protobuf message. The callback is invoked
  * on completion with a RequestWorkflowEvictionResponse protobuf message.
  */
-void tmprl_request_workflow_eviction(struct tmprl_core_t *core,
+void tmprl_request_workflow_eviction(struct tmprl_worker_t *core,
                                      const uint8_t *req_proto,
                                      size_t req_proto_len,
                                      void *user_data,
@@ -209,7 +186,7 @@ void tmprl_request_workflow_eviction(struct tmprl_core_t *core,
  * FetchBufferedLogsRequest protobuf message. The callback is invoked
  * on completion with a FetchBufferedLogsResponse protobuf message.
  */
-void tmprl_fetch_buffered_logs(struct tmprl_core_t *core,
+void tmprl_fetch_buffered_logs(struct tmprl_worker_t *core,
                                const uint8_t *req_proto,
                                size_t req_proto_len,
                                void *user_data,

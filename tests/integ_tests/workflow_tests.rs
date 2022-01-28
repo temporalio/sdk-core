@@ -22,8 +22,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk::{WfContext, WorkflowResult};
-use temporal_sdk_core_api::errors::PollWfError;
-use temporal_sdk_core_api::Worker;
+use temporal_sdk_core_api::{errors::PollWfError, Worker};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
