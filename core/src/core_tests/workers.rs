@@ -1,22 +1,20 @@
 use crate::{
     test_help::{
-        build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
-        hist_to_poll_resp, mock_manual_poller, mock_worker, single_hist_mock_sg, FakeWfResponses,
-        MockPollCfg, MockWorker, MocksHolder, ResponseType, TEST_Q,
-    },
-    CoreInitOptionsBuilder, PollActivityError, PollWfError, WorkerConfigBuilder,
+        build_fake_worker, build_mock_pollers, canned_histories,
+        hist_to_poll_resp, mock_manual_poller, mock_worker,
+        MockPollCfg, MockWorker, MocksHolder, ResponseType,
+    }, PollActivityError, PollWfError,
 };
 use futures::FutureExt;
-use rstest::{fixture, rstest};
+
 use std::{cell::RefCell, time::Duration};
-use temporal_client::mocks::{mock_gateway, mock_manual_gateway};
+use temporal_client::mocks::{mock_gateway};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::workflow_activation_job,
         workflow_commands::{
-            workflow_command, ActivityCancellationType, CompleteWorkflowExecution,
-            RequestCancelActivity, ScheduleActivity, StartTimer,
+            workflow_command, CompleteWorkflowExecution, StartTimer,
         },
         workflow_completion::WorkflowActivationCompletion,
     },

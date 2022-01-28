@@ -11,8 +11,7 @@ mod workflow_tasks;
 use crate::{
     errors::{PollActivityError, PollWfError},
     init_worker,
-    test_help::{build_fake_worker, canned_histories, hist_to_poll_resp, ResponseType, TEST_Q},
-    CoreInitOptionsBuilder, WorkerConfigBuilder,
+    test_help::{build_fake_worker, canned_histories, hist_to_poll_resp, ResponseType, TEST_Q}, WorkerConfigBuilder,
 };
 use futures::FutureExt;
 use std::time::Duration;

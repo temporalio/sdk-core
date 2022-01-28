@@ -1,11 +1,10 @@
 use crate::{
     init_worker, job_assert,
     test_help::{
-        build_fake_worker, canned_histories, gen_assert_and_reply, mock_manual_poller, mock_poller,
-        mock_poller_from_resps, mock_worker, poll_and_reply, MockWorker, MocksHolder, TEST_Q,
+        build_fake_worker, canned_histories, gen_assert_and_reply, mock_manual_poller, mock_poller, mock_worker, poll_and_reply, MockWorker, MocksHolder, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::NonSticky,
-    ActivityHeartbeat, ActivityTask, CoreInitOptionsBuilder, WorkerConfigBuilder,
+    ActivityHeartbeat, ActivityTask, WorkerConfigBuilder,
 };
 use futures::FutureExt;
 use std::{
@@ -13,7 +12,6 @@ use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
     },
     time::Duration,
 };
@@ -36,11 +34,11 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
-use tokio::{join, sync::Notify, time::sleep};
+use tokio::{join, time::sleep};
 
 #[tokio::test]
 async fn max_activities_respected() {
-    let task_q = "q";
+    let _task_q = "q";
     let mut tasks = VecDeque::from(vec![
         PollActivityTaskQueueResponse {
             task_token: vec![1],

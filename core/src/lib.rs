@@ -39,6 +39,7 @@ pub use temporal_sdk_core_protos::TaskToken;
 pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
+use crate::telemetry::metrics::MetricsContext;
 use crate::{telemetry::metrics::METRIC_METER, worker::Worker};
 use std::sync::Arc;
 use temporal_sdk_core_api::{
@@ -54,9 +55,6 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::history::v1::History,
 };
-
-#[cfg(test)]
-use crate::test_help::MockWorker;
 
 lazy_static::lazy_static! {
     /// A process-wide unique string, which will be different on every startup
@@ -100,7 +98,8 @@ pub fn init_replay_worker(
     // Could possibly just use mocked pollers here, but they'd need to be un-test-moded
     let run_id = history.extract_run_id_from_start()?.to_string();
     let last_event = history.last_event_id();
-    let mut worker = Worker::new(config, None, gateway, todo!());
+    // TODO: None default metrics context?
+    let mut worker = Worker::new(config, None, gateway, MetricsContext::default());
     worker.set_post_activate_hook(move |worker| {
         if worker
             .wft_manager
@@ -193,65 +192,5 @@ pub(crate) fn sticky_q_name_for_worker(
         ))
     } else {
         None
-    }
-}
-
-/// Allow construction of workers with mocked poll responses during testing
-// #[cfg(test)]
-// pub(crate) fn reg_worker_sync(&self, worker: MockWorker) {
-//     let sticky_q = self.get_sticky_q_name_for_worker(&worker.config);
-//     let tq = worker.config.task_queue.clone();
-//     let worker = Worker::new_with_pollers(
-//         worker.config,
-//         sticky_q,
-//         self.server_gateway.clone(),
-//         worker.wf_poller,
-//         worker.act_poller,
-//         self.metrics.clone(),
-//     );
-//     self.workers.set_worker_for_task_queue(tq, worker).unwrap();
-// }
-
-#[derive(Debug)]
-enum WorkerLookupErr {
-    Shutdown(String),
-    NoWorker(String),
-}
-
-impl From<WorkerLookupErr> for PollWfError {
-    fn from(e: WorkerLookupErr) -> Self {
-        match e {
-            WorkerLookupErr::Shutdown(_) => Self::ShutDown,
-            WorkerLookupErr::NoWorker(s) => Self::NoWorkerForQueue(s),
-        }
-    }
-}
-
-impl From<WorkerLookupErr> for PollActivityError {
-    fn from(e: WorkerLookupErr) -> Self {
-        match e {
-            WorkerLookupErr::Shutdown(_) => Self::ShutDown,
-            WorkerLookupErr::NoWorker(s) => Self::NoWorkerForQueue(s),
-        }
-    }
-}
-
-impl From<WorkerLookupErr> for CompleteWfError {
-    fn from(e: WorkerLookupErr) -> Self {
-        match e {
-            WorkerLookupErr::Shutdown(s) | WorkerLookupErr::NoWorker(s) => {
-                Self::NoWorkerForQueue(s)
-            }
-        }
-    }
-}
-
-impl From<WorkerLookupErr> for CompleteActivityError {
-    fn from(e: WorkerLookupErr) -> Self {
-        match e {
-            WorkerLookupErr::Shutdown(s) | WorkerLookupErr::NoWorker(s) => {
-                Self::NoWorkerForQueue(s)
-            }
-        }
     }
 }

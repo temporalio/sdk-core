@@ -4,8 +4,7 @@ use crate::{
     pollers::{BoxedActPoller, BoxedPoller, BoxedWFPoller, MockManualPoller, MockPoller},
     replay::TestHistoryBuilder,
     sticky_q_name_for_worker,
-    workflow::WorkflowCachingPolicy,
-    CoreInitOptionsBuilder, ServerGatewayApis, TaskToken, Worker, WorkerConfig,
+    workflow::WorkflowCachingPolicy, ServerGatewayApis, TaskToken, Worker, WorkerConfig,
     WorkerConfigBuilder,
 };
 use bimap::BiMap;
@@ -18,7 +17,7 @@ use std::{
     sync::Arc,
 };
 use temporal_client::{
-    mocks::{fake_sg_opts, mock_gateway},
+    mocks::{mock_gateway},
     MockServerGatewayApis,
 };
 use temporal_sdk_core_api::Worker as WorkerTrait;

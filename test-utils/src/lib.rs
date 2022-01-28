@@ -37,7 +37,6 @@ const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
 /// If set, enable direct scraping of prom metrics on the specified port
 const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
 
-// TODO: Both these can probably just return worker, since it can expose options w/ TQ name
 /// Create a worker instance which will use the provided test name to base the task queue and wf id
 /// upon. Returns the instance and the task queue name (which is also the workflow id).
 pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn Worker>, String) {
