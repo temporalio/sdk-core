@@ -17,7 +17,7 @@ use tokio::join;
 
 #[tokio::test]
 async fn timer_workflow_replay() {
-    let (core, task_q) = init_core_replay_preloaded(
+    let (core, _) = init_core_replay_preloaded(
         "timer_workflow_replay",
         &history_from_proto_binary("histories/timer_workflow_history.bin")
             .await
@@ -38,7 +38,7 @@ async fn timer_workflow_replay() {
     // Verify that an in-progress poll is interrupted by completion finishing processing history
     let act_poll_fut = async {
         assert_matches!(
-            core.poll_activity_task(&task_q).await,
+            core.poll_activity_task().await,
             Err(PollActivityError::ShutDown)
         );
     };
@@ -89,7 +89,7 @@ async fn two_cores_replay() {
 
 #[tokio::test]
 async fn workflow_nondeterministic_replay() {
-    let (core, task_q) = init_core_replay_preloaded(
+    let (core, _) = init_core_replay_preloaded(
         "timer_workflow_replay",
         &history_from_proto_binary("histories/timer_workflow_history.bin")
             .await

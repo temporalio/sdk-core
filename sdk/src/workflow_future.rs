@@ -55,12 +55,10 @@ impl WorkflowFunction {
         UnboundedSender<WorkflowActivation>,
     ) {
         let (cancel_tx, cancel_rx) = watch::channel(false);
-        let (wf_context, cmd_receiver) =
-            WfContext::new(namespace, task_queue.clone(), args, cancel_rx);
+        let (wf_context, cmd_receiver) = WfContext::new(namespace, task_queue, args, cancel_rx);
         let (tx, incoming_activations) = unbounded_channel();
         (
             WorkflowFuture {
-                task_queue,
                 ctx_shared: wf_context.get_shared_data(),
                 // We need to mark the workflow future as unconstrained, otherwise Tokio will impose
                 // an artificial limit on how many commands we can unblock in one poll round.
@@ -93,8 +91,6 @@ enum SigChanOrBuffer {
 }
 
 pub struct WorkflowFuture {
-    /// What task queue this workflow belongs to
-    task_queue: String,
     /// Future produced by calling the workflow function
     inner: BoxFuture<'static, WorkflowResult<()>>,
     /// Commands produced inside user's wf code

@@ -172,7 +172,7 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
     assert!(!run_id.is_empty());
 
     if do_evict {
-        core.request_workflow_eviction(task_q, run_id);
+        core.request_workflow_eviction(run_id);
     }
     // Spam some queries (sending multiple queries after WF closed covers a possible path where
     // we could screw-up re-applying the final WFT)

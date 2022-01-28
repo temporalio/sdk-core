@@ -268,17 +268,12 @@ impl TestRustWorker {
         self.run_until_done_shutdown_hook(|| {}).await
     }
 
-    // TODO: Probably no point in this any more
-    /// Temporarily swap the core implementation used by this worker. When the returned value is
-    /// dropped, the old core implementation will be restored. This can be used to run against
-    /// mocked-out core instances.
-    // pub fn swap_core(&mut self, other_core: Arc<dyn Core>) -> impl DerefMut<Target = Self> + '_ {
-    //     let old_core = std::mem::replace(&mut self.worker, other_core);
-    //     RustWorkerSwappedCore {
-    //         old_core: Some(old_core),
-    //         worker: self,
-    //     }
-    // }
+    /// Turns this rust worker into a new worker with all the same workflows and activities
+    /// registered, but with a new underlying core worker. Can be used to swap the worker for
+    /// a replay worker, change task queues, etc.
+    pub fn with_new_core_worker(&mut self, new_core_worker: Arc<dyn Worker>) {
+        self.worker = new_core_worker;
+    }
 
     fn split_apart(&mut self) -> (Arc<dyn Worker>, &str, &mut WorkflowHalf, &mut ActivityHalf) {
         (

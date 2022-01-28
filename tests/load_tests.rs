@@ -19,7 +19,6 @@ async fn activity_load() {
         .max_at_polls(10)
         .max_at(CONCURRENCY);
     let mut worker = starter.worker().await;
-    let task_q = starter.get_task_queue().to_owned();
 
     let activity_id = "act-1";
     let activity_timeout = Duration::from_secs(8);
@@ -73,8 +72,7 @@ async fn activity_load() {
     let all_acts = async move {
         let mut act_complete_futs = vec![];
         for _ in 0..CONCURRENCY {
-            let task_q = task_q.clone();
-            let task = c2.poll_activity_task(&task_q).await.unwrap();
+            let task = c2.poll_activity_task().await.unwrap();
             assert_matches!(
                 task.variant,
                 Some(act_task::Variant::Start(ref start_activity)) => {
@@ -86,7 +84,6 @@ async fn activity_load() {
             act_complete_futs.push(tokio::spawn(async move {
                 core.complete_activity_task(ActivityTaskCompletion {
                     task_token: task.task_token,
-                    task_queue: task_q,
                     result: Some(ActivityExecutionResult::ok(pd.into())),
                 })
                 .await

@@ -13,9 +13,9 @@ use std::{
 };
 use temporal_sdk::TestRustWorker;
 use temporal_sdk_core::{
-    init_replay_worker, init_worker, replay::mock_gateway_from_history, ServerGatewayOptions,
-    ServerGatewayOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder, WorkerConfig,
-    WorkerConfigBuilder,
+    init_replay_worker, init_worker, replay::mock_gateway_from_history, telemetry_init,
+    ServerGatewayOptions, ServerGatewayOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
+    WorkerConfig, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
@@ -116,8 +116,7 @@ impl CoreWfStarter {
 
     pub async fn get_worker(&mut self) -> Arc<dyn Worker> {
         if self.initted_worker.is_none() {
-            // TODO: ALso probably return result
-            // TODO: Metrics w/ other telem changes
+            telemetry_init(&self.telemetry_options).expect("Telemetry inits cleanly");
             let gateway = get_integ_server_options()
                 .connect(None)
                 .await
@@ -173,10 +172,9 @@ impl CoreWfStarter {
             .history
             .expect("history field must be populated");
         let (replay_worker, _) = init_core_replay_preloaded(worker.task_queue(), &history);
-        let mut replay_worker =
-            TestRustWorker::new(replay_worker, worker.task_queue().to_string(), None);
-        replay_worker.incr_expected_run_count(1);
-        replay_worker.run_until_done().await.unwrap();
+        worker.with_new_core_worker(replay_worker);
+        worker.incr_expected_run_count(1);
+        worker.run_until_done().await.unwrap();
         Ok(())
     }
 

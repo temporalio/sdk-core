@@ -35,7 +35,7 @@ async fn activity_heartbeat() {
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
-    let task = core.poll_activity_task(&task_q).await.unwrap();
+    let task = core.poll_activity_task().await.unwrap();
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -49,7 +49,6 @@ async fn activity_heartbeat() {
         sleep(Duration::from_millis(100)).await;
         core.record_activity_heartbeat(ActivityHeartbeat {
             task_token: task.task_token.clone(),
-            task_queue: task_q.to_string(),
             details: vec![],
         });
     }
@@ -61,7 +60,6 @@ async fn activity_heartbeat() {
     // Complete activity successfully.
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
-        task_queue: task_q.to_string(),
         result: Some(ActivityExecutionResult::ok(response_payload.clone())),
     })
     .await

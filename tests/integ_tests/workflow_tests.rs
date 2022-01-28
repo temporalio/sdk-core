@@ -22,7 +22,8 @@ use std::{
     time::Duration,
 };
 use temporal_sdk::{WfContext, WorkflowResult};
-use temporal_sdk_core_api::{errors::PollWfError, Core};
+use temporal_sdk_core_api::errors::PollWfError;
+use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
@@ -47,7 +48,6 @@ use uuid::Uuid;
 async fn parallel_workflows_same_queue() {
     let mut starter = CoreWfStarter::new("parallel_workflows_same_queue");
     let core = starter.get_worker().await;
-    let task_q = starter.get_task_queue().to_string();
     let num_workflows = 25usize;
 
     let run_ids: Vec<_> = future::join_all(
@@ -57,8 +57,7 @@ async fn parallel_workflows_same_queue() {
 
     let mut send_chans = HashMap::new();
     async fn wf_task(
-        core: Arc<dyn Core>,
-        task_q: String,
+        worker: Arc<dyn Worker>,
         mut task_chan: UnboundedReceiver<WorkflowActivation>,
     ) {
         let task = task_chan.next().await.unwrap();
@@ -68,10 +67,11 @@ async fn parallel_workflows_same_queue() {
                 variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
             }]
         );
-        core.complete_timer(&task.run_id, 1, Duration::from_secs(1))
+        worker
+            .complete_timer(&task.run_id, 1, Duration::from_secs(1))
             .await;
         let task = task_chan.next().await.unwrap();
-        core.complete_execution(&task.run_id).await;
+        worker.complete_execution(&task.run_id).await;
     }
 
     let handles: Vec<_> = run_ids
@@ -79,7 +79,7 @@ async fn parallel_workflows_same_queue() {
         .map(|run_id| {
             let (tx, rx) = futures::channel::mpsc::unbounded();
             send_chans.insert(run_id.clone(), tx);
-            tokio::spawn(wf_task(core.clone(), task_q.clone(), rx))
+            tokio::spawn(wf_task(core.clone(), rx))
         })
         .collect();
 
@@ -137,7 +137,6 @@ async fn workflow_lru_cache_evictions() {
 async fn shutdown_aborts_actively_blocked_poll() {
     let mut starter = CoreWfStarter::new("shutdown_aborts_actively_blocked_poll");
     let core = starter.get_worker().await;
-    let task_q = starter.get_task_queue();
     // Begin the poll, and request shutdown from another thread after a small period of time.
     let tcore = core.clone();
     let handle = tokio::spawn(async move {
@@ -160,7 +159,7 @@ async fn shutdown_aborts_actively_blocked_poll() {
 #[rstest::rstest]
 #[tokio::test]
 async fn fail_wf_task(#[values(true, false)] replay: bool) {
-    let (core, task_q) = if replay {
+    let (core, _) = if replay {
         init_core_replay_preloaded(
             "fail_wf_task",
             &history_from_proto_binary("histories/fail_wf_task.bin")
@@ -215,7 +214,7 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
 
 #[tokio::test]
 async fn fail_workflow_execution() {
-    let (core, task_q) = init_core_and_create_wf("fail_workflow_execution").await;
+    let (core, _) = init_core_and_create_wf("fail_workflow_execution").await;
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_timer(&task.run_id, 0, Duration::from_secs(1))
         .await;
@@ -443,7 +442,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     let wf_task = poll_sched_act().await;
     // Before polling for a task again, we start and complete the activity and send the
     // corresponding signals.
-    let ac_task = core.poll_activity_task(task_q).await.unwrap();
+    let ac_task = core.poll_activity_task().await.unwrap();
     let rid = wf_task.run_id.clone();
     // Send the signals to the server & resolve activity -- sometimes this happens too fast
     sleep(Duration::from_millis(200)).await;
@@ -454,7 +453,6 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     // Complete activity successfully.
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: ac_task.task_token,
-        task_queue: task_q.to_string(),
         result: Some(ActivityExecutionResult::ok(Default::default())),
     })
     .await
@@ -486,7 +484,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         async {
             sleep(Duration::from_millis(500)).await;
             // Reply to the first one, finally
-            core.complete_execution(task_q, &wf_task.run_id).await;
+            core.complete_execution(&wf_task.run_id).await;
         }
     );
     assert_matches!(

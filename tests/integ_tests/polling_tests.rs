@@ -42,7 +42,7 @@ async fn out_of_order_completion_doesnt_hang() {
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
     // complete it in this test as activity is try-cancelled.
-    let activity_task = core.poll_activity_task(&task_q).await.unwrap();
+    let activity_task = core.poll_activity_task().await.unwrap();
     assert_matches!(
         activity_task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -66,10 +66,9 @@ async fn out_of_order_completion_doesnt_hang() {
 
     // Start polling again *before* we complete the WFT
     let cc = core.clone();
-    let tq = task_q.clone();
     let jh = tokio::spawn(async move {
         // We want to fail the test if this takes too long -- we should not hit long poll timeout
-        let task = timeout(Duration::from_secs(1), cc.poll_workflow_activation(&tq))
+        let task = timeout(Duration::from_secs(1), cc.poll_workflow_activation())
             .await
             .expect("Poll should come back right away")
             .unwrap();
