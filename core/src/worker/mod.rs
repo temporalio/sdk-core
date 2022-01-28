@@ -50,7 +50,8 @@ use temporal_sdk_core_protos::{
     },
     TaskToken,
 };
-use tokio::sync::{watch, Notify, Semaphore};
+use tokio::sync::{Notify, Semaphore};
+use tokio_util::sync::CancellationToken;
 use tonic::Code;
 use tracing_futures::Instrument;
 
@@ -81,8 +82,7 @@ pub struct Worker {
     /// a WFT is completed.
     wfts_drained_notify: Arc<Notify>,
     /// Has shutdown been called?
-    shutdown_requested: watch::Receiver<bool>,
-    shutdown_sender: watch::Sender<bool>,
+    shutdown_token: CancellationToken,
     /// Will be called at the end of each activation completion
     post_activate_hook: Option<Box<dyn Fn(&Self) + Send + Sync>>,
 
@@ -172,7 +172,6 @@ impl Worker {
         };
         let pa_notif = Arc::new(Notify::new());
         let wfts_drained_notify = Arc::new(Notify::new());
-        let (shut_tx, shut_rx) = watch::channel(false);
         Self {
             server_gateway: sg.clone(),
             sticky_name: sticky_queue_name,
@@ -194,8 +193,7 @@ impl Worker {
             ),
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             config,
-            shutdown_requested: shut_rx,
-            shutdown_sender: shut_tx,
+            shutdown_token: CancellationToken::new(),
             post_activate_hook: None,
             pending_activations_notify: pa_notif,
             wfts_drained_notify,
@@ -205,7 +203,7 @@ impl Worker {
 
     /// Begins the shutdown process, tells pollers they should stop. Is idempotent.
     pub(crate) fn initiate_shutdown(&self) {
-        let _ = self.shutdown_sender.send(true);
+        self.shutdown_token.cancel();
         // First, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.notify_shutdown();
@@ -261,7 +259,7 @@ impl Worker {
             if let Some(ref act_mgr) = self.at_task_mgr {
                 act_mgr.poll().await
             } else {
-                let _ = self.shutdown_requested.clone().changed().await;
+                self.shutdown_token.cancelled().await;
                 Err(PollActivityError::ShutDown)
             }
         };
@@ -277,7 +275,12 @@ impl Worker {
                             &run_id, LocalResolution::LocalActivity(resolution)).await;
                         Ok(task)
                     },
-                    None => Ok(None)
+                    None => {
+                        if self.shutdown_token.is_cancelled() {
+                            return Err(PollActivityError::ShutDown);
+                        }
+                        Ok(None)
+                    }
                 }
             },
             r = act_mgr_poll => r,
@@ -451,7 +454,6 @@ impl Worker {
     async fn workflow_poll_or_wfts_drained(
         &self,
     ) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
-        let mut shutdown_requested = self.shutdown_requested.clone();
         loop {
             tokio::select! {
                 biased;
@@ -465,7 +467,7 @@ impl Worker {
                     }
                     return r
                 },
-                _ = shutdown_requested.changed() => {},
+                _ = self.shutdown_token.cancelled() => {},
             }
         }
     }
@@ -480,7 +482,7 @@ impl Worker {
         // heartbeating which is a "new" workflow task that we need to accept and process as long as
         // the LA is outstanding. Similarly, if we already have such tasks (from a WFT completion),
         // then we must fetch them from the source before we can say workflow polling is shutdown.
-        if *self.shutdown_requested.borrow()
+        if self.shutdown_token.is_cancelled()
             && !self.wf_task_source.has_tasks_from_complete()
             && self.local_act_mgr.num_outstanding() == 0
         {

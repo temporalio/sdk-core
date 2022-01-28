@@ -11,19 +11,13 @@ mod workflow_tasks;
 use crate::{
     errors::{PollActivityError, PollWfError},
     init_worker,
-    test_help::{
-        build_mock_pollers, canned_histories, hist_to_poll_resp, mock_worker, test_worker_cfg,
-        MockPollCfg, ResponseType, TEST_Q,
-    },
+    test_help::{build_mock_pollers, canned_histories, mock_worker, test_worker_cfg, MockPollCfg},
 };
 use futures::FutureExt;
 use std::time::Duration;
 use temporal_client::mocks::{mock_gateway, mock_manual_gateway};
 use temporal_sdk_core_api::Worker;
-use temporal_sdk_core_protos::{
-    coresdk::workflow_completion::WorkflowActivationCompletion,
-    temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
-};
+use temporal_sdk_core_protos::coresdk::workflow_completion::WorkflowActivationCompletion;
 use tokio::{sync::Barrier, time::sleep};
 
 #[tokio::test]
@@ -63,11 +57,7 @@ async fn shutdown_interrupts_both_polls() {
             async move {
                 BARR.wait().await;
                 sleep(Duration::from_secs(1)).await;
-                Ok(PollActivityTaskQueueResponse {
-                    task_token: vec![1],
-                    heartbeat_timeout: Some(Duration::from_secs(1).into()),
-                    ..Default::default()
-                })
+                Ok(Default::default())
             }
             .boxed()
         });
@@ -78,13 +68,7 @@ async fn shutdown_interrupts_both_polls() {
             async move {
                 BARR.wait().await;
                 sleep(Duration::from_secs(1)).await;
-                let t = canned_histories::single_timer("hi");
-                Ok(hist_to_poll_resp(
-                    &t,
-                    "wf".to_string(),
-                    ResponseType::AllHistory,
-                    TEST_Q.to_string(),
-                ))
+                Ok(Default::default())
             }
             .boxed()
         });

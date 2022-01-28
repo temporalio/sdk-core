@@ -13,9 +13,9 @@ use std::{
 };
 use temporal_sdk::TestRustWorker;
 use temporal_sdk_core::{
-    init_replay_worker, init_worker, replay::mock_gateway_from_history, telemetry_init,
-    ServerGatewayOptions, ServerGatewayOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
-    WorkerConfig, WorkerConfigBuilder,
+    init_replay_worker, init_worker, replay::mock_gateway_from_history, ServerGatewayOptions,
+    ServerGatewayOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder, WorkerConfig,
+    WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{

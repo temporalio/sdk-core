@@ -167,6 +167,7 @@ async fn can_shutdown_local_act_only_worker_when_act_polling() {
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|w| {
         w.no_remote_activities = true;
+        w.max_cached_workflows = 1;
     });
     let worker = mock_worker(mock);
     let barrier = Barrier::new(2);
@@ -174,6 +175,7 @@ async fn can_shutdown_local_act_only_worker_when_act_polling() {
     tokio::join!(
         async {
             barrier.wait().await;
+            dbg!("Doing shutdowen");
             worker.shutdown().await;
         },
         async {
@@ -190,6 +192,7 @@ async fn can_shutdown_local_act_only_worker_when_act_polling() {
             );
         }
     );
+    worker.finalize_shutdown().await;
 }
 
 #[tokio::test]
