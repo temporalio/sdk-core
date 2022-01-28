@@ -13,7 +13,7 @@ use std::{
 };
 use temporal_sdk::TestRustWorker;
 use temporal_sdk_core::{
-    init_replay_worker, init_worker, telemetry_init, CoreInitOptions, CoreInitOptionsBuilder,
+    init_replay_worker, init_worker, replay::mock_gateway_from_history, telemetry_init,
     ServerGatewayOptions, ServerGatewayOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
     WorkerConfig, WorkerConfigBuilder,
 };
@@ -50,12 +50,13 @@ pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn Worker>, Strin
 /// and the task queue name as in [init_core_and_create_wf].
 pub fn init_core_replay_preloaded(test_name: &str, history: &History) -> (Arc<dyn Worker>, String) {
     let worker_cfg = WorkerConfigBuilder::default()
+        .namespace(NAMESPACE)
         .task_queue(test_name)
         .build()
         .expect("Configuration options construct properly");
-    // TODO: should return result
-    let worker =
-        init_replay_worker(worker_cfg, todo!(), history).expect("Replay worker must init properly");
+    let gateway = mock_gateway_from_history(history, test_name.to_string());
+    let worker = init_replay_worker(worker_cfg, Arc::new(gateway), history)
+        .expect("Replay worker must init properly");
     (Arc::new(worker), test_name.to_string())
 }
 
@@ -91,6 +92,7 @@ impl CoreWfStarter {
             task_queue_name: task_queue.to_owned(),
             telemetry_options: get_integ_telem_options(),
             worker_config: WorkerConfigBuilder::default()
+                .namespace(NAMESPACE)
                 .task_queue(task_queue)
                 .max_cached_workflows(1000_usize)
                 .build()

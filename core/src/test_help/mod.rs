@@ -4,8 +4,8 @@ use crate::{
     pollers::{BoxedActPoller, BoxedPoller, BoxedWFPoller, MockManualPoller, MockPoller},
     replay::TestHistoryBuilder,
     sticky_q_name_for_worker,
-    workflow::WorkflowCachingPolicy, ServerGatewayApis, TaskToken, Worker, WorkerConfig,
-    WorkerConfigBuilder,
+    workflow::WorkflowCachingPolicy,
+    ServerGatewayApis, TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,
 };
 use bimap::BiMap;
 use futures::FutureExt;
@@ -16,10 +16,7 @@ use std::{
     ops::RangeFull,
     sync::Arc,
 };
-use temporal_client::{
-    mocks::{mock_gateway},
-    MockServerGatewayApis,
-};
+use temporal_client::{mocks::mock_gateway, MockServerGatewayApis};
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -40,6 +37,12 @@ use temporal_sdk_core_protos::{
 
 pub const TEST_Q: &str = "q";
 pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";
+
+pub fn test_worker_cfg() -> WorkerConfigBuilder {
+    let mut wcb = WorkerConfigBuilder::default();
+    wcb.namespace("default").task_queue(TEST_Q);
+    wcb
+}
 
 /// When constructing responses for mocks, indicates how a given response should be built
 #[derive(derive_more::From, Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -131,24 +134,17 @@ pub struct MockWorker {
 
 impl Default for MockWorker {
     fn default() -> Self {
-        Self::for_queue(TEST_Q)
+        Self::new(Box::from(mock_poller()))
     }
 }
 
 impl MockWorker {
-    pub fn new(q: &str, wf_poller: BoxedWFPoller) -> Self {
+    pub fn new(wf_poller: BoxedWFPoller) -> Self {
         Self {
             wf_poller,
             act_poller: None,
-            config: WorkerConfigBuilder::default()
-                .task_queue(q)
-                .build()
-                .unwrap(),
+            config: test_worker_cfg().build().unwrap(),
         }
-    }
-
-    pub fn for_queue(q: &str) -> Self {
-        Self::new(q, Box::from(mock_poller()))
     }
 }
 
@@ -177,10 +173,7 @@ where
         let mock_worker = MockWorker {
             wf_poller: mock_poller,
             act_poller: Some(mock_act_poller),
-            config: WorkerConfigBuilder::default()
-                .task_queue(TEST_Q)
-                .build()
-                .unwrap(),
+            config: test_worker_cfg().build().unwrap(),
         };
         Self {
             sg,
@@ -379,7 +372,7 @@ pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockServerGateway
             }
             Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG)))
         });
-    let mock_worker = MockWorker::new(TEST_Q, Box::from(mock_poller));
+    let mock_worker = MockWorker::new(Box::from(mock_poller));
 
     let outstanding = outstanding_wf_task_tokens.clone();
     cfg.mock_gateway

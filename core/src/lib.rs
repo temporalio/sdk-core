@@ -39,8 +39,10 @@ pub use temporal_sdk_core_protos::TaskToken;
 pub use url::Url;
 pub use worker::{WorkerConfig, WorkerConfigBuilder};
 
-use crate::telemetry::metrics::MetricsContext;
-use crate::{telemetry::metrics::METRIC_METER, worker::Worker};
+use crate::{
+    telemetry::metrics::{MetricsContext, METRIC_METER},
+    worker::Worker,
+};
 use std::sync::Arc;
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, CompleteWfError, PollActivityError, PollWfError},
@@ -77,17 +79,21 @@ pub struct CoreInitOptions {
 
 /// Initialize a worker bound to a task queue
 pub fn init_worker<SG: ServerGatewayApis + Send + Sync + 'static>(
-    _worker_config: WorkerConfig,
-    _client: SG,
+    worker_config: WorkerConfig,
+    client: SG,
 ) -> Worker {
-    todo!()
+    // TODO: Get identity from client
+    let sticky_q = sticky_q_name_for_worker("ident", &worker_config);
+    let metrics = MetricsContext::top_level(worker_config.namespace.clone())
+        .with_task_q(worker_config.task_queue.clone());
+    Worker::new(worker_config, sticky_q, Arc::new(client), metrics)
 }
 
 /// Create a worker for replaying a specific history. It will auto-shutdown as soon as the history
 /// has finished being replayed. The provided gateway should be a mock, and this should only be used
 /// for workflow testing purposes.
 pub fn init_replay_worker(
-    config: WorkerConfig,
+    mut config: WorkerConfig,
     gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
     history: &History,
 ) -> Result<Worker, anyhow::Error> {
@@ -95,6 +101,9 @@ pub fn init_replay_worker(
         task_queue = config.task_queue.as_str(),
         "Registering replay worker"
     );
+    config.max_cached_workflows = 1;
+    config.max_concurrent_wft_polls = 1;
+    config.no_remote_activities = true;
     // Could possibly just use mocked pollers here, but they'd need to be un-test-moded
     let run_id = history.extract_run_id_from_start()?.to_string();
     let last_event = history.last_event_id();
@@ -177,7 +186,12 @@ impl WorkerTrait for Worker {
     }
 
     async fn shutdown(&self) {
+        self.shutdown().await
+    }
+
+    async fn finalize_shutdown(self) {
         self.shutdown().await;
+        self.finalize_shutdown().await
     }
 }
 

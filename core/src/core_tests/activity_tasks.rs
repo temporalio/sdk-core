@@ -1,21 +1,20 @@
 use crate::{
     init_worker, job_assert,
     test_help::{
-        build_fake_worker, canned_histories, gen_assert_and_reply, mock_manual_poller, mock_poller, mock_worker, poll_and_reply, MockWorker, MocksHolder, TEST_Q,
+        build_fake_worker, canned_histories, gen_assert_and_reply, mock_manual_poller, mock_poller,
+        mock_worker, poll_and_reply, test_worker_cfg, MockWorker, MocksHolder,
     },
     workflow::WorkflowCachingPolicy::NonSticky,
-    ActivityHeartbeat, ActivityTask, WorkerConfigBuilder,
+    ActivityHeartbeat, ActivityTask,
 };
 use futures::FutureExt;
 use std::{
     cell::RefCell,
     collections::{hash_map::Entry, HashMap, VecDeque},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_client::mocks::{fake_sg_opts, mock_gateway, mock_manual_gateway};
+use temporal_client::mocks::{mock_gateway, mock_manual_gateway};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -66,12 +65,11 @@ async fn max_activities_respected() {
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
 
     let worker = init_worker(
-        WorkerConfigBuilder::default()
-            .task_queue(TEST_Q)
+        test_worker_cfg()
             .max_outstanding_activities(2_usize)
             .build()
             .unwrap(),
-        fake_sg_opts().connect(None).await.unwrap(),
+        mock_gateway,
     );
 
     // We allow two outstanding activities, therefore first two polls should return right away
@@ -376,8 +374,7 @@ async fn many_concurrent_heartbeat_cancels() {
         });
 
     let worker = &init_worker(
-        WorkerConfigBuilder::default()
-            .task_queue(TEST_Q)
+        test_worker_cfg()
             .max_outstanding_activities(CONCURRENCY_NUM)
             // Only 1 poll at a time to avoid over-polling and running out of responses
             .max_concurrent_at_polls(1_usize)

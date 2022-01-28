@@ -32,8 +32,10 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
-use temporal_sdk_core_api::Worker;
+use temporal_sdk_core_api::{
+    errors::{PollActivityError, PollWfError},
+    Worker,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{ActivityExecutionResult, ActivityResolution},

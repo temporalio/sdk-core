@@ -9,9 +9,9 @@ use crate::{
 use itertools::Itertools;
 use log::LevelFilter;
 use once_cell::sync::OnceCell;
-use opentelemetry::metrics::Meter;
 use opentelemetry::{
     global,
+    metrics::Meter,
     sdk::{metrics::PushController, trace::Config, Resource},
     util::tokio_interval_stream,
     KeyValue,

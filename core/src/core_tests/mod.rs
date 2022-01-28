@@ -11,7 +11,10 @@ mod workflow_tasks;
 use crate::{
     errors::{PollActivityError, PollWfError},
     init_worker,
-    test_help::{build_fake_worker, canned_histories, hist_to_poll_resp, ResponseType, TEST_Q}, WorkerConfigBuilder,
+    test_help::{
+        build_fake_worker, canned_histories, hist_to_poll_resp, test_worker_cfg, ResponseType,
+        TEST_Q,
+    },
 };
 use futures::FutureExt;
 use std::time::Duration;
@@ -80,8 +83,7 @@ async fn shutdown_interrupts_both_polls() {
         });
 
     let worker = init_worker(
-        WorkerConfigBuilder::default()
-            .task_queue(TEST_Q)
+        test_worker_cfg()
             // Need only 1 concurrent pollers for mock expectations to work here
             .max_concurrent_wft_polls(1_usize)
             .max_concurrent_at_polls(1_usize)

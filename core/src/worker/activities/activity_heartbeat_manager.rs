@@ -347,7 +347,7 @@ impl ActivityHeartbeatManager {
 #[cfg(test)]
 mod test {
     use super::*;
-    
+
     use std::time::Duration;
 
     use temporal_client::mocks::mock_gateway;

@@ -849,6 +849,7 @@ struct WFTReportOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_help::test_worker_cfg;
     use temporal_client::mocks::mock_gateway;
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 
@@ -859,8 +860,7 @@ mod tests {
             .expect_poll_activity_task()
             .returning(|_| Ok(PollActivityTaskQueueResponse::default()));
 
-        let cfg = WorkerConfigBuilder::default()
-            .task_queue("whatever")
+        let cfg = test_worker_cfg()
             .max_outstanding_activities(5_usize)
             .build()
             .unwrap();
@@ -876,8 +876,7 @@ mod tests {
             .expect_poll_workflow_task()
             .returning(|_, _| Ok(PollWorkflowTaskQueueResponse::default()));
 
-        let cfg = WorkerConfigBuilder::default()
-            .task_queue("whatever")
+        let cfg = test_worker_cfg()
             .max_outstanding_workflow_tasks(5_usize)
             .build()
             .unwrap();
@@ -893,8 +892,7 @@ mod tests {
             .expect_poll_activity_task()
             .returning(|_| Err(tonic::Status::internal("ahhh")));
 
-        let cfg = WorkerConfigBuilder::default()
-            .task_queue("whatever")
+        let cfg = test_worker_cfg()
             .max_outstanding_activities(5_usize)
             .build()
             .unwrap();
@@ -910,8 +908,7 @@ mod tests {
             .expect_poll_workflow_task()
             .returning(|_, _| Err(tonic::Status::internal("ahhh")));
 
-        let cfg = WorkerConfigBuilder::default()
-            .task_queue("whatever")
+        let cfg = test_worker_cfg()
             .max_outstanding_workflow_tasks(5_usize)
             .build()
             .unwrap();
@@ -922,18 +919,14 @@ mod tests {
 
     #[test]
     fn max_polls_calculated_properly() {
-        let cfg = WorkerConfigBuilder::default()
-            .task_queue("whatever")
-            .build()
-            .unwrap();
+        let cfg = test_worker_cfg().build().unwrap();
         assert_eq!(cfg.max_nonsticky_polls(), 1);
         assert_eq!(cfg.max_sticky_polls(), 4);
     }
 
     #[test]
     fn max_polls_zero_is_err() {
-        assert!(WorkerConfigBuilder::default()
-            .task_queue("whatever")
+        assert!(test_worker_cfg()
             .max_concurrent_wft_polls(0_usize)
             .build()
             .is_err());

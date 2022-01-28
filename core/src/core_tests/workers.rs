@@ -1,21 +1,20 @@
 use crate::{
     test_help::{
-        build_fake_worker, build_mock_pollers, canned_histories,
-        hist_to_poll_resp, mock_manual_poller, mock_worker,
-        MockPollCfg, MockWorker, MocksHolder, ResponseType,
-    }, PollActivityError, PollWfError,
+        build_fake_worker, build_mock_pollers, canned_histories, hist_to_poll_resp,
+        mock_manual_poller, mock_worker, MockPollCfg, MockWorker, MocksHolder, ResponseType,
+    },
+    PollActivityError, PollWfError,
 };
 use futures::FutureExt;
 
+use crate::test_help::TEST_Q;
 use std::{cell::RefCell, time::Duration};
-use temporal_client::mocks::{mock_gateway};
+use temporal_client::mocks::mock_gateway;
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::workflow_activation_job,
-        workflow_commands::{
-            workflow_command, CompleteWorkflowExecution, StartTimer,
-        },
+        workflow_commands::{workflow_command, CompleteWorkflowExecution, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::workflowservice::v1::RespondWorkflowTaskCompletedResponse,
@@ -143,13 +142,10 @@ async fn shutdown_worker_can_complete_pending_activation() {
 #[tokio::test]
 async fn worker_shutdown_during_poll_doesnt_deadlock() {
     let (tx, rx) = watch::channel(false);
-    let tq = "q1";
     let mut mock_poller = mock_manual_poller();
     let rx = rx.clone();
-    let tqc = tq.clone();
     mock_poller.expect_poll().returning(move || {
         let mut rx = rx.clone();
-        let tqc = tqc.to_string();
         async move {
             let t = canned_histories::single_timer("1");
             // Don't resolve polls until worker shuts down
@@ -158,12 +154,12 @@ async fn worker_shutdown_during_poll_doesnt_deadlock() {
                 &t,
                 "wf".to_string(),
                 ResponseType::ToTaskNum(1),
-                tqc,
+                TEST_Q,
             )))
         }
         .boxed()
     });
-    let mw = MockWorker::new(&tq, Box::from(mock_poller));
+    let mw = MockWorker::default();
     let mut mock_gateway = mock_gateway();
     mock_gateway
         .expect_complete_workflow_task()

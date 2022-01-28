@@ -2,7 +2,6 @@
 //! to replay canned histories. It should be used by Lang SDKs to provide replay capabilities to
 //! users during testing.
 
-
 use futures::FutureExt;
 use std::{
     sync::{
@@ -11,37 +10,17 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{
-    mocks::{mock_manual_gateway},
-    ServerGatewayApis,
-};
+use temporal_client::{mocks::mock_manual_gateway, ServerGatewayApis};
 
-use temporal_sdk_core_protos::{
-    temporal::api::{
-        common::v1::WorkflowExecution,
-        history::v1::History,
-        workflowservice::v1::{RespondWorkflowTaskFailedResponse, StartWorkflowExecutionResponse},
-    },
+use temporal_sdk_core_protos::temporal::api::{
+    common::v1::WorkflowExecution,
+    history::v1::History,
+    workflowservice::v1::{RespondWorkflowTaskFailedResponse, StartWorkflowExecutionResponse},
 };
 
 pub use temporal_sdk_core_protos::{
     default_wes_attribs, HistoryInfo, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
 };
-
-// impl ReplayCore for ReplayCoreImpl {
-//     fn make_replay_worker(
-//         &self,
-//         mut config: WorkerConfig,
-//         history: &History,
-//     ) -> Result<(), anyhow::Error> {
-//         let mock_g = mock_gateway_from_history(history, config.task_queue.clone());
-//         config.max_cached_workflows = 1;
-//         config.max_concurrent_wft_polls = 1;
-//         config.no_remote_activities = true;
-//         self.inner
-//             .register_replay_worker(config, Arc::new(mock_g), history)
-//     }
-// }
 
 /// Create a mock gateway which can be used by a replay worker to serve up canned history.
 /// It will return the entire history in one workflow task, after that it will return default
