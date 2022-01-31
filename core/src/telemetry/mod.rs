@@ -224,8 +224,9 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
     .expect("Telemetry initialization panicked")
 }
 
-/// Returned buffered logs for export to lang from the global logging instance
-pub(crate) fn fetch_global_buffered_logs() -> Vec<CoreLog> {
+/// Returned buffered logs for export to lang from the global logging instance.
+/// If [telemetry_init] has not been called, always returns an empty vec.
+pub fn fetch_global_buffered_logs() -> Vec<CoreLog> {
     if let Some(loggr) = GLOBAL_TELEM_DAT
         .get()
         .and_then(|gd| gd.core_export_logger.as_ref())

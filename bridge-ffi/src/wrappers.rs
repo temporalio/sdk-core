@@ -54,83 +54,84 @@ impl TryFrom<InitTelemetryRequest> for temporal_sdk_core::TelemetryOptions {
     }
 }
 
-/**
+pub struct ServerGatewayOptions(pub bridge::CreateGatewayRequest);
 
-if let Some(req_gateway_opts) = req.gateway_options {
-    let mut gateway_opts = temporal_sdk_core::ServerGatewayOptionsBuilder::default();
-    if !req_gateway_opts.target_url.is_empty() {
-        gateway_opts.target_url(
-            temporal_sdk_core::Url::parse(&req_gateway_opts.target_url)
-                .map_err(|err| format!("invalid target URL: {}", err))?,
-        );
-    }
-    if !req_gateway_opts.namespace.is_empty() {
-        gateway_opts.namespace(req_gateway_opts.namespace);
-    }
-    if !req_gateway_opts.client_name.is_empty() {
-        gateway_opts.client_name(req_gateway_opts.client_name);
-    }
-    if !req_gateway_opts.client_version.is_empty() {
-        gateway_opts.client_version(req_gateway_opts.client_version);
-    }
-    if !req_gateway_opts.static_headers.is_empty() {
-        gateway_opts.static_headers(req_gateway_opts.static_headers);
-    }
-    if !req_gateway_opts.identity.is_empty() {
-        gateway_opts.identity(req_gateway_opts.identity);
-    }
-    if !req_gateway_opts.worker_binary_id.is_empty() {
-        gateway_opts.worker_binary_id(req_gateway_opts.worker_binary_id);
-    }
-    if let Some(req_tls_config) = req_gateway_opts.tls_config {
-        let mut tls_config = temporal_sdk_core::TlsConfig::default();
-        if !req_tls_config.server_root_ca_cert.is_empty() {
-            tls_config.server_root_ca_cert = Some(req_tls_config.server_root_ca_cert);
+impl TryFrom<ServerGatewayOptions> for temporal_sdk_core::ServerGatewayOptions {
+    type Error = String;
+
+    fn try_from(ServerGatewayOptions(req): ServerGatewayOptions) -> Result<Self, Self::Error> {
+        let mut gateway_opts = temporal_sdk_core::ServerGatewayOptionsBuilder::default();
+        if !req.target_url.is_empty() {
+            gateway_opts.target_url(
+                temporal_sdk_core::Url::parse(&req.target_url)
+                    .map_err(|err| format!("invalid target URL: {}", err))?,
+            );
         }
-        if !req_tls_config.domain.is_empty() {
-            tls_config.domain = Some(req_tls_config.domain);
+        if !req.namespace.is_empty() {
+            gateway_opts.namespace(req.namespace);
         }
-        if !req_tls_config.client_cert.is_empty()
-            || !req_tls_config.client_private_key.is_empty()
-        {
-            tls_config.client_tls_config = Some(temporal_sdk_core::ClientTlsConfig {
-                client_cert: req_tls_config.client_cert,
-                client_private_key: req_tls_config.client_private_key,
-            })
+        if !req.client_name.is_empty() {
+            gateway_opts.client_name(req.client_name);
         }
-        gateway_opts.tls_cfg(tls_config);
-    }
-    if let Some(req_retry_config) = req_gateway_opts.retry_config {
-        let mut retry_config = temporal_sdk_core::RetryConfig::default();
-        if let Some(v) = req_retry_config.initial_interval {
-            retry_config.initial_interval =
-                v.try_into().map_err(|_| "invalid initial interval")?;
+        if !req.client_version.is_empty() {
+            gateway_opts.client_version(req.client_version);
         }
-        if let Some(v) = req_retry_config.randomization_factor {
-            retry_config.randomization_factor = v;
+        if !req.static_headers.is_empty() {
+            gateway_opts.static_headers(req.static_headers);
         }
-        if let Some(v) = req_retry_config.multiplier {
-            retry_config.multiplier = v;
+        if !req.identity.is_empty() {
+            gateway_opts.identity(req.identity);
         }
-        if let Some(v) = req_retry_config.max_interval {
-            retry_config.max_interval = v.try_into().map_err(|_| "invalid max interval")?;
+        if !req.worker_binary_id.is_empty() {
+            gateway_opts.worker_binary_id(req.worker_binary_id);
         }
-        if let Some(v) = req_retry_config.max_elapsed_time {
-            retry_config.max_elapsed_time =
-                Some(v.try_into().map_err(|_| "invalid max elapsed time")?);
+        if let Some(req_tls_config) = req.tls_config {
+            let mut tls_config = temporal_sdk_core::TlsConfig::default();
+            if !req_tls_config.server_root_ca_cert.is_empty() {
+                tls_config.server_root_ca_cert = Some(req_tls_config.server_root_ca_cert);
+            }
+            if !req_tls_config.domain.is_empty() {
+                tls_config.domain = Some(req_tls_config.domain);
+            }
+            if !req_tls_config.client_cert.is_empty()
+                || !req_tls_config.client_private_key.is_empty()
+            {
+                tls_config.client_tls_config = Some(temporal_sdk_core::ClientTlsConfig {
+                    client_cert: req_tls_config.client_cert,
+                    client_private_key: req_tls_config.client_private_key,
+                })
+            }
+            gateway_opts.tls_cfg(tls_config);
         }
-        if let Some(v) = req_retry_config.max_retries {
-            retry_config.max_retries = v as usize;
+        if let Some(req_retry_config) = req.retry_config {
+            let mut retry_config = temporal_sdk_core::RetryConfig::default();
+            if let Some(v) = req_retry_config.initial_interval {
+                retry_config.initial_interval =
+                    v.try_into().map_err(|_| "invalid initial interval")?;
+            }
+            if let Some(v) = req_retry_config.randomization_factor {
+                retry_config.randomization_factor = v;
+            }
+            if let Some(v) = req_retry_config.multiplier {
+                retry_config.multiplier = v;
+            }
+            if let Some(v) = req_retry_config.max_interval {
+                retry_config.max_interval = v.try_into().map_err(|_| "invalid max interval")?;
+            }
+            if let Some(v) = req_retry_config.max_elapsed_time {
+                retry_config.max_elapsed_time =
+                    Some(v.try_into().map_err(|_| "invalid max elapsed time")?);
+            }
+            if let Some(v) = req_retry_config.max_retries {
+                retry_config.max_retries = v as usize;
+            }
+            gateway_opts.retry_config(retry_config);
         }
-        gateway_opts.retry_config(retry_config);
-    }
-    core_opts.gateway_opts(
         gateway_opts
             .build()
-            .map_err(|err| format!("invalid gateway options: {}", err))?,
-    );
+            .map_err(|err| format!("invalid gateway options: {}", err))
+    }
 }
- */
 
 // Present for try-from only
 pub struct WorkerConfig(pub bridge::CreateWorkerRequest);

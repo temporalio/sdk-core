@@ -28,19 +28,15 @@ message InitTelemetryRequest {
 }
 
 message CreateGatewayRequest {
-  GatewayOptions gateway_options = 1;
-
-  message GatewayOptions {
-    string target_url = 1;
-    string namespace = 2;
-    string client_name = 3;
-    string client_version = 4;
-    map<string, string> static_headers = 5;
-    string identity = 6;
-    string worker_binary_id = 7;
-    TlsConfig tls_config = 8;
-    RetryConfig retry_config = 9;
-  }
+  string target_url = 1;
+  string namespace = 2;
+  string client_name = 3;
+  string client_version = 4;
+  map<string, string> static_headers = 5;
+  string identity = 6;
+  string worker_binary_id = 7;
+  TlsConfig tls_config = 8;
+  RetryConfig retry_config = 9;
 
   message TlsConfig {
     bytes server_root_ca_cert = 1;

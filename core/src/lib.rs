@@ -32,7 +32,9 @@ pub use pollers::{
     ClientTlsConfig, RetryConfig, RetryGateway, ServerGateway, ServerGatewayApis,
     ServerGatewayOptions, ServerGatewayOptionsBuilder, TlsConfig,
 };
-pub use telemetry::{telemetry_init, TelemetryOptions, TelemetryOptionsBuilder};
+pub use telemetry::{
+    fetch_global_buffered_logs, telemetry_init, TelemetryOptions, TelemetryOptionsBuilder,
+};
 pub use temporal_sdk_core_api as api;
 pub use temporal_sdk_core_protos as protos;
 pub use temporal_sdk_core_protos::TaskToken;
@@ -70,11 +72,21 @@ pub fn init_worker<SG: ServerGatewayApis + Send + Sync + 'static>(
     worker_config: WorkerConfig,
     client: SG,
 ) -> Worker {
+    init_worker_pre_arcd(worker_config, Arc::new(client))
+}
+
+/// Initialize a worker bound to a task queue, if the client is already behind an `Arc`.
+// Ideally this would be done with `impl Into<Arc<SG>>` but that imposes type clarifications
+// at the callsite sometimes.
+pub fn init_worker_pre_arcd<SG: ServerGatewayApis + Send + Sync + 'static>(
+    worker_config: WorkerConfig,
+    client: Arc<SG>,
+) -> Worker {
     // TODO: Get identity from client
     let sticky_q = sticky_q_name_for_worker("ident", &worker_config);
     let metrics = MetricsContext::top_level(worker_config.namespace.clone())
         .with_task_q(worker_config.task_queue.clone());
-    Worker::new(worker_config, sticky_q, Arc::new(client), metrics)
+    Worker::new(worker_config, sticky_q, client, metrics)
 }
 
 /// Create a worker for replaying a specific history. It will auto-shutdown as soon as the history
