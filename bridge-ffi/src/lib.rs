@@ -76,11 +76,10 @@ impl Drop for tmprl_bytes_t {
     }
 }
 
-/// Free a set of bytes. The first parameter can be null in cases where a
-/// tmprl_core_t instance isn't available. If the second parameter is null, this
-/// is a no-op.
+/// Free a set of bytes. The first parameter can be null in cases where a [tmprl_worker_t] instance
+/// isn't available. If the second parameter is null, this is a no-op.
 #[no_mangle]
-pub extern "C" fn tmprl_bytes_free(core: *mut tmprl_worker_t, bytes: *const tmprl_bytes_t) {
+pub extern "C" fn tmprl_bytes_free(worker: *mut tmprl_worker_t, bytes: *const tmprl_bytes_t) {
     // Bail if freeing is disabled
     unsafe {
         if bytes.is_null() || (*bytes).disable_free {
@@ -92,10 +91,10 @@ pub extern "C" fn tmprl_bytes_free(core: *mut tmprl_worker_t, bytes: *const tmpr
     let vec = unsafe { Vec::from_raw_parts((*bytes).bytes as *mut u8, (*bytes).len, (*bytes).cap) };
     // Set to null so the byte dropper doesn't try to free it
     unsafe { (*bytes).bytes = std::ptr::null_mut() };
-    // Return only if core is non-null
-    if !core.is_null() {
-        let core = unsafe { &mut *core };
-        core.return_buf(vec);
+    // Return only if worker is non-null
+    if !worker.is_null() {
+        let worker = unsafe { &mut *worker };
+        worker.return_buf(vec);
     }
     unsafe {
         Box::from_raw(bytes);
@@ -144,11 +143,12 @@ lazy_static::lazy_static! {
     };
 }
 
-/// A runtime owned by Core. This must be passed to tmprl_runtime_free when no
-/// longer in use. This must not be freed until every call to every tmprl_core_t
-/// instance created with this runtime has been shutdown.
+/// A runtime owned by Core. This must be passed to [tmprl_runtime_free] when no longer in use. This
+/// should not be freed until every call to every [tmprl_worker_t] instance created with this
+/// runtime has been shutdown. In practice, since the actual runtime is behind an [Arc], it's
+/// currently OK, but that's an implementation detail.
 pub struct tmprl_runtime_t {
-    // This is the same runtime shared with the core instance
+    // This is the same runtime shared with worker instances
     tokio_runtime: Arc<tokio::runtime::Runtime>,
 }
 
@@ -193,7 +193,7 @@ pub struct tmprl_worker_t {
 /// [InitResponse] protobuf message which must be freed via [tmprl_bytes_free].
 type tmprl_worker_init_callback = unsafe extern "C" fn(
     user_data: *mut libc::c_void,
-    core: *mut tmprl_worker_t,
+    worker: *mut tmprl_worker_t,
     resp: *const tmprl_bytes_t,
 );
 
@@ -204,7 +204,7 @@ type tmprl_worker_init_callback = unsafe extern "C" fn(
 type tmprl_callback =
     unsafe extern "C" fn(user_data: *mut libc::c_void, core: *const tmprl_bytes_t);
 
-/// Create a new core instance.
+/// Create a new worker instance.
 ///
 /// `runtime` and `client` are both required and must outlive this instance.
 /// `req_proto` and `req_proto_len` represent a byte array for a [CreateWorkerRequest] protobuf
@@ -351,7 +351,7 @@ impl tmprl_client_t {
 /// [InitResponse] protobuf message which must be freed via [tmprl_bytes_free].
 type tmprl_client_init_callback = unsafe extern "C" fn(
     user_data: *mut libc::c_void,
-    core: *mut tmprl_client_t,
+    client: *mut tmprl_client_t,
     resp: *const tmprl_bytes_t,
 );
 
@@ -423,13 +423,14 @@ pub extern "C" fn tmprl_client_free(client: *mut tmprl_client_t) {
     unsafe { drop(Box::from_raw(client)) };
 }
 
-/// Poll workflow activation.
+/// Poll for a workflow activation.
 ///
-/// The req_proto and req_proto_len represent a byte array for a PollWorkflowActivationRequest
-/// protobuf message, which currently contains nothing and is unused, but the parameters are kept
-/// for now.
+/// The `req_proto` and `req_proto_len` represent a byte array for a
+/// [bridge::PollWorkflowActivationRequest] protobuf message, which currently contains nothing and
+/// is unused, but the parameters are kept for now.
 ///
-/// The callback is invoked on completion with a PollWorkflowActivationResponse protobuf message.
+/// The callback is invoked on completion with a [bridge::PollWorkflowActivationResponse] protobuf
+/// message.
 #[no_mangle]
 pub extern "C" fn tmprl_poll_workflow_activation(
     worker: *mut tmprl_worker_t,
@@ -453,15 +454,17 @@ pub extern "C" fn tmprl_poll_workflow_activation(
     });
 }
 
-/// Poll activity task.
+/// Poll for an activity task.
 ///
-/// The req_proto and req_proto_len represent a byte array for a PollActivityTaskRequest protobuf
-/// message, which currently contains nothing and is unused, but the parameters are kept for now.
+/// The `req_proto` and `req_proto_len` represent a byte array for a
+/// [bridge::PollActivityTaskRequest] protobuf message, which currently contains nothing and is
+/// unused, but the parameters are kept for now.
 ///
-/// The callback is invoked on completion with a PollActivityTaskResponse protobuf message.
+/// The callback is invoked on completion with a [bridge::PollActivityTaskResponse] protobuf
+/// message.
 #[no_mangle]
 pub extern "C" fn tmprl_poll_activity_task(
-    core: *mut tmprl_worker_t,
+    worker: *mut tmprl_worker_t,
     #[allow(unused_variables)] // We intentionally ignore the request
     req_proto: *const u8,
     #[allow(unused_variables)] // We intentionally ignore the request
@@ -469,33 +472,33 @@ pub extern "C" fn tmprl_poll_activity_task(
     user_data: *mut libc::c_void,
     callback: tmprl_callback,
 ) {
-    let core = unsafe { &mut *core };
+    let worker = unsafe { &mut *worker };
     let user_data = UserDataHandle(user_data);
-    core.tokio_runtime.clone().spawn(async move {
+    worker.tokio_runtime.clone().spawn(async move {
         let resp = bridge::PollActivityTaskResponse {
-            response: Some(match core.poll_activity_task().await {
+            response: Some(match worker.poll_activity_task().await {
                 Ok(task) => bridge::poll_activity_task_response::Response::Task(task),
                 Err(err) => bridge::poll_activity_task_response::Response::Error(err),
             }),
         };
-        unsafe { callback(user_data.into(), core.encode_proto(&resp).into_raw()) };
+        unsafe { callback(user_data.into(), worker.encode_proto(&resp).into_raw()) };
     });
 }
 
-/// Complete workflow activation.
+/// Complete a workflow activation.
 ///
-/// The req_proto and req_proto_len represent a byte array for a
-/// CompleteWorkflowActivationRequest protobuf message. The callback is invoked
-/// on completion with a CompleteWorkflowActivationResponse protobuf message.
+/// The `req_proto` and `req_proto_len` represent a byte array for a
+/// [bridge::CompleteWorkflowActivationRequest] protobuf message. The callback is invoked on
+/// completion with a [bridge::CompleteWorkflowActivationResponse] protobuf message.
 #[no_mangle]
 pub extern "C" fn tmprl_complete_workflow_activation(
-    core: *mut tmprl_worker_t,
+    worker: *mut tmprl_worker_t,
     req_proto: *const u8,
     req_proto_len: libc::size_t,
     user_data: *mut libc::c_void,
     callback: tmprl_callback,
 ) {
-    let core = unsafe { &mut *core };
+    let worker = unsafe { &mut *worker };
     let req = match tmprl_worker_t::decode_proto::<bridge::CompleteWorkflowActivationRequest>(
         req_proto,
         req_proto_len,
@@ -506,14 +509,14 @@ pub extern "C" fn tmprl_complete_workflow_activation(
                 error: Some(bridge::complete_workflow_activation_response::Error { message }),
             };
             unsafe {
-                callback(user_data, core.encode_proto(&resp).into_raw());
+                callback(user_data, worker.encode_proto(&resp).into_raw());
             }
             return;
         }
     };
     let user_data = UserDataHandle(user_data);
-    core.tokio_runtime.clone().spawn(async move {
-        match core.complete_workflow_activation(req).await {
+    worker.tokio_runtime.clone().spawn(async move {
+        match worker.complete_workflow_activation(req).await {
             Ok(()) => unsafe {
                 callback(
                     user_data.into(),
@@ -522,26 +525,26 @@ pub extern "C" fn tmprl_complete_workflow_activation(
             },
             Err(err) => {
                 let resp = bridge::CompleteWorkflowActivationResponse { error: Some(err) };
-                unsafe { callback(user_data.into(), core.encode_proto(&resp).into_raw()) };
+                unsafe { callback(user_data.into(), worker.encode_proto(&resp).into_raw()) };
             }
         }
     });
 }
 
-/// Complete activity task.
+/// Complete an activity task.
 ///
-/// The req_proto and req_proto_len represent a byte array for a
-/// CompleteActivityTaskRequest protobuf message. The callback is invoked
-/// on completion with a CompleteActivityTaskResponse protobuf message.
+/// The `req_proto` and `req_proto_len` represent a byte array for a
+/// [bridge::CompleteActivityTaskRequest] protobuf message. The callback is invoked on completion
+/// with a [bridge::CompleteActivityTaskResponse] protobuf message.
 #[no_mangle]
 pub extern "C" fn tmprl_complete_activity_task(
-    core: *mut tmprl_worker_t,
+    worker: *mut tmprl_worker_t,
     req_proto: *const u8,
     req_proto_len: libc::size_t,
     user_data: *mut libc::c_void,
     callback: tmprl_callback,
 ) {
-    let core = unsafe { &mut *core };
+    let worker = unsafe { &mut *worker };
     let req = match tmprl_worker_t::decode_proto::<bridge::CompleteActivityTaskRequest>(
         req_proto,
         req_proto_len,
@@ -552,14 +555,14 @@ pub extern "C" fn tmprl_complete_activity_task(
                 error: Some(bridge::complete_activity_task_response::Error { message }),
             };
             unsafe {
-                callback(user_data, core.encode_proto(&resp).into_raw());
+                callback(user_data, worker.encode_proto(&resp).into_raw());
             }
             return;
         }
     };
     let user_data = UserDataHandle(user_data);
-    core.tokio_runtime.clone().spawn(async move {
-        match core.complete_activity_task(req).await {
+    worker.tokio_runtime.clone().spawn(async move {
+        match worker.complete_activity_task(req).await {
             Ok(()) => unsafe {
                 callback(
                     user_data.into(),
@@ -568,26 +571,26 @@ pub extern "C" fn tmprl_complete_activity_task(
             },
             Err(err) => {
                 let resp = bridge::CompleteActivityTaskResponse { error: Some(err) };
-                unsafe { callback(user_data.into(), core.encode_proto(&resp).into_raw()) };
+                unsafe { callback(user_data.into(), worker.encode_proto(&resp).into_raw()) };
             }
         }
     });
 }
 
-/// Record activity heartbeat.
+/// Record an activity heartbeat.
 ///
-/// The req_proto and req_proto_len represent a byte array for a
-/// RecordActivityHeartbeatRequest protobuf message. The callback is invoked
-/// on completion with a RecordActivityHeartbeatResponse protobuf message.
+/// `req_proto` and `req_proto_len` represent a byte array for a
+/// [bridge::RecordActivityHeartbeatRequest] protobuf message. The callback is invoked on completion
+/// with a RecordActivityHeartbeatResponse protobuf message.
 #[no_mangle]
 pub extern "C" fn tmprl_record_activity_heartbeat(
-    core: *mut tmprl_worker_t,
+    worker: *mut tmprl_worker_t,
     req_proto: *const u8,
     req_proto_len: libc::size_t,
     user_data: *mut libc::c_void,
     callback: tmprl_callback,
 ) {
-    let core = unsafe { &mut *core };
+    let worker = unsafe { &mut *worker };
     let req = match tmprl_worker_t::decode_proto::<bridge::RecordActivityHeartbeatRequest>(
         req_proto,
         req_proto_len,
@@ -598,7 +601,7 @@ pub extern "C" fn tmprl_record_activity_heartbeat(
                 error: Some(bridge::record_activity_heartbeat_response::Error { message }),
             };
             unsafe {
-                callback(user_data, core.encode_proto(&resp).into_raw());
+                callback(user_data, worker.encode_proto(&resp).into_raw());
             }
             return;
         }
@@ -606,8 +609,8 @@ pub extern "C" fn tmprl_record_activity_heartbeat(
     let user_data = UserDataHandle(user_data);
     // We intentionally spawn even though the core call is not async so the
     // callback can be made in the tokio runtime
-    core.tokio_runtime.clone().spawn(async move {
-        core.record_activity_heartbeat(req);
+    worker.tokio_runtime.clone().spawn(async move {
+        worker.record_activity_heartbeat(req);
         unsafe {
             callback(
                 user_data.into(),
@@ -617,20 +620,20 @@ pub extern "C" fn tmprl_record_activity_heartbeat(
     });
 }
 
-/// Request workflow eviction.
+/// Request a workflow eviction.
 ///
-/// The req_proto and req_proto_len represent a byte array for a
-/// RequestWorkflowEvictionRequest protobuf message. The callback is invoked
-/// on completion with a RequestWorkflowEvictionResponse protobuf message.
+/// The `req_proto` and `req_proto_len` represent a byte array for a
+/// [bridge::RequestWorkflowEvictionRequest] protobuf message. The callback is invoked on completion
+/// with a [bridge::RequestWorkflowEvictionResponse] protobuf message.
 #[no_mangle]
 pub extern "C" fn tmprl_request_workflow_eviction(
-    core: *mut tmprl_worker_t,
+    worker: *mut tmprl_worker_t,
     req_proto: *const u8,
     req_proto_len: libc::size_t,
     user_data: *mut libc::c_void,
     callback: tmprl_callback,
 ) {
-    let core = unsafe { &mut *core };
+    let worker = unsafe { &mut *worker };
     let req = match tmprl_worker_t::decode_proto::<bridge::RequestWorkflowEvictionRequest>(
         req_proto,
         req_proto_len,
@@ -641,7 +644,7 @@ pub extern "C" fn tmprl_request_workflow_eviction(
                 error: Some(bridge::request_workflow_eviction_response::Error { message }),
             };
             unsafe {
-                callback(user_data, core.encode_proto(&resp).into_raw());
+                callback(user_data, worker.encode_proto(&resp).into_raw());
             }
             return;
         }
@@ -649,8 +652,8 @@ pub extern "C" fn tmprl_request_workflow_eviction(
     let user_data = UserDataHandle(user_data);
     // We intentionally spawn even though the core call is not async so the
     // callback can be made in the tokio runtime
-    core.tokio_runtime.clone().spawn(async move {
-        core.request_workflow_eviction(req);
+    worker.tokio_runtime.clone().spawn(async move {
+        worker.request_workflow_eviction(req);
         unsafe {
             callback(
                 user_data.into(),
@@ -663,9 +666,9 @@ pub extern "C" fn tmprl_request_workflow_eviction(
 /// Fetch buffered logs. Blocks until complete. This is still using the callback since we might
 /// reasonably change log fetching to be async in the future.
 ///
-/// The req_proto and req_proto_len represent a byte array for a FetchBufferedLogsRequest protobuf
-/// message. The callback is invoked on completion with a FetchBufferedLogsResponse protobuf
-/// message.
+/// The `req_proto` and `req_proto_len` represent a byte array for a
+/// [bridge::FetchBufferedLogsRequest] protobuf message. The callback is invoked on completion with
+/// a [bridge::FetchBufferedLogsResponse] protobuf message.
 #[no_mangle]
 pub extern "C" fn tmprl_fetch_buffered_logs(
     #[allow(unused_variables)] // We intentionally ignore the request
