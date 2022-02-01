@@ -5,9 +5,8 @@ use opentelemetry::{
 use std::{sync::Arc, time::Duration};
 
 /// Used to track context associated with metrics, and record/update them
-///
-/// Possible improvement: make generic over some type tag so that methods are only exposed if the
-/// appropriate k/vs have already been set.
+// Possible improvement: make generic over some type tag so that methods are only exposed if the
+// appropriate k/vs have already been set.
 #[derive(Clone, Debug)]
 pub(crate) struct MetricsContext {
     kvs: Arc<Vec<KeyValue>>,
