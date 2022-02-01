@@ -9,10 +9,10 @@ use crate::{
     ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
 };
 use futures::FutureExt;
-use std::rc::Rc;
 use std::{
     cell::RefCell,
     collections::{hash_map::Entry, HashMap, VecDeque},
+    rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -20,7 +20,6 @@ use std::{
     time::Duration,
 };
 use temporal_client::mocks::{fake_sg_opts, mock_gateway, mock_manual_gateway};
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::RespondActivityTaskFailedResponse;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{activity_resolution, ActivityExecutionResult, ActivityResolution},
@@ -35,6 +34,7 @@ use temporal_sdk_core_protos::{
     temporal::api::workflowservice::v1::{
         PollActivityTaskQueueResponse, RecordActivityTaskHeartbeatResponse,
         RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedResponse,
+        RespondActivityTaskFailedResponse,
     },
 };
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
@@ -634,7 +634,8 @@ async fn complete_act_with_fail_flushes_heartbeat() {
     let lsp = last_seen_payload.clone();
     mock_gateway
         .expect_record_activity_heartbeat()
-        .times(1..)
+        // Two times b/c we always record the first heartbeat, and we'll flush the last
+        .times(2)
         .returning_st(move |_, payload| {
             *lsp.borrow_mut() = payload;
             Ok(RecordActivityTaskHeartbeatResponse {

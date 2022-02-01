@@ -9,11 +9,10 @@ use temporal_sdk_core_protos::{
     coresdk::{activity_task::ActivityCancelReason, common, ActivityHeartbeat, IntoPayloadsExt},
     temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
 };
-use tokio::sync::Notify;
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        Mutex,
+        Mutex, Notify,
     },
     task::JoinHandle,
 };
