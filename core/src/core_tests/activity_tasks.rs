@@ -1,4 +1,3 @@
-use crate::telemetry::test_telem_console;
 use crate::{
     job_assert,
     test_help::{
@@ -10,6 +9,7 @@ use crate::{
     ActivityHeartbeat, ActivityTask, Core, CoreInitOptionsBuilder, CoreSDK, WorkerConfigBuilder,
 };
 use futures::FutureExt;
+use std::rc::Rc;
 use std::{
     cell::RefCell,
     collections::{hash_map::Entry, HashMap, VecDeque},
@@ -628,14 +628,15 @@ async fn can_heartbeat_acts_during_shutdown() {
 /// activity, that we flush those details before reporting the failure completion.
 #[tokio::test]
 async fn complete_act_with_fail_flushes_heartbeat() {
-    test_telem_console();
     let last_hb = 50;
     let mut mock_gateway = mock_gateway();
+    let last_seen_payload = Rc::new(RefCell::new(None));
+    let lsp = last_seen_payload.clone();
     mock_gateway
         .expect_record_activity_heartbeat()
         .times(1..)
-        .returning(|_, payload| {
-            dbg!(payload);
+        .returning_st(move |_, payload| {
+            *lsp.borrow_mut() = payload;
             Ok(RecordActivityTaskHeartbeatResponse {
                 cancel_requested: false,
             })
@@ -673,4 +674,8 @@ async fn complete_act_with_fail_flushes_heartbeat() {
     .await
     .unwrap();
     core.shutdown().await;
+
+    // Verify the last seen call to record a heartbeat had the last detail payload
+    let last_seen_payload = &last_seen_payload.take().unwrap().payloads[0];
+    assert_eq!(last_seen_payload.data, &[last_hb]);
 }
