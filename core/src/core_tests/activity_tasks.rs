@@ -1,3 +1,4 @@
+use crate::telemetry::test_telem_console;
 use crate::{
     job_assert,
     test_help::{
@@ -627,6 +628,8 @@ async fn can_heartbeat_acts_during_shutdown() {
 /// activity, that we flush those details before reporting the failure completion.
 #[tokio::test]
 async fn complete_act_with_fail_flushes_heartbeat() {
+    test_telem_console();
+    let last_hb = 50;
     let mut mock_gateway = mock_gateway();
     mock_gateway
         .expect_record_activity_heartbeat()
@@ -654,8 +657,8 @@ async fn complete_act_with_fail_flushes_heartbeat() {
     ));
 
     let act = core.poll_activity_task(TEST_Q).await.unwrap();
-    // Record some heartbeats
-    for i in 1..=10 {
+    // Record a bunch of heartbeats
+    for i in 1..=last_hb {
         core.record_activity_heartbeat(ActivityHeartbeat {
             task_token: act.task_token.clone(),
             task_queue: TEST_Q.to_string(),
