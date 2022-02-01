@@ -177,7 +177,7 @@ pub extern "C" fn tmprl_runtime_free(runtime: *mut tmprl_runtime_t) {
     }
 }
 
-/// A worker instance owned by Core. This must be passed to tmprl_core_shutdown
+/// A worker instance owned by Core. This must be passed to [tmprl_worker_shutdown]
 /// when no longer in use which will free the resources.
 pub struct tmprl_worker_t {
     tokio_runtime: Arc<tokio::runtime::Runtime>,
@@ -242,10 +242,10 @@ pub extern "C" fn tmprl_worker_init(
         client.client.clone(),
         wrappers::WorkerConfig(req),
     ) {
-        Ok(core) => unsafe {
+        Ok(worker) => unsafe {
             callback(
                 user_data.into(),
-                Box::into_raw(Box::new(core)),
+                Box::into_raw(Box::new(worker)),
                 &*DEFAULT_INIT_RESPONSE_BYTES,
             );
         },
@@ -262,6 +262,36 @@ pub extern "C" fn tmprl_worker_init(
             }
         }
     };
+}
+
+/// Shutdown and free a previously created worker.
+///
+/// The req_proto and req_proto_len represent a byte array for a [bridge::ShutdownWorkerRequest]
+/// protobuf message, which currently contains nothing and are unused, but the parameters are kept
+/// for now.
+///
+/// The callback is invoked on completion with a ShutdownWorkerResponse protobuf message.
+///
+/// After the callback has been called, the worker struct will be freed and the pointer will no
+/// longer be valid.
+#[no_mangle]
+pub extern "C" fn tmprl_worker_shutdown(
+    worker: *mut tmprl_worker_t,
+    #[allow(unused_variables)] // We intentionally ignore the request
+    req_proto: *const u8,
+    #[allow(unused_variables)] req_proto_len: libc::size_t,
+    user_data: *mut libc::c_void,
+    callback: tmprl_callback,
+) {
+    let worker = unsafe { Box::from_raw(worker) };
+    let user_data = UserDataHandle(user_data);
+    worker.tokio_runtime.clone().spawn(async move {
+        worker.shutdown().await;
+        unsafe {
+            callback(user_data.into(), &*DEFAULT_SHUTDOWN_WORKER_RESPONSE_BYTES);
+        }
+        drop(worker);
+    });
 }
 
 /// Initialize process-wide telemetry. Should only be called once, subsequent calls will be ignored
@@ -387,30 +417,10 @@ pub extern "C" fn tmprl_client_init(
     });
 }
 
-/// Shutdown a previously created worker.
-///
-/// The req_proto and req_proto_len represent a byte array for a [bridge::ShutdownWorkerRequest]
-/// protobuf message, which currently contains nothing and is unused, but the parameters are kept
-/// for now.
-///
-/// The callback is invoked on completion with a ShutdownWorkerResponse protobuf message.
+/// Free a previously created client
 #[no_mangle]
-pub extern "C" fn tmprl_shutdown_worker(
-    worker: *mut tmprl_worker_t,
-    #[allow(unused_variables)] // We intentionally ignore the request
-    req_proto: *const u8,
-    #[allow(unused_variables)] req_proto_len: libc::size_t,
-    user_data: *mut libc::c_void,
-    callback: tmprl_callback,
-) {
-    let worker = unsafe { &mut *worker };
-    let user_data = UserDataHandle(user_data);
-    worker.tokio_runtime.clone().spawn(async move {
-        worker.shutdown().await;
-        unsafe {
-            callback(user_data.into(), &*DEFAULT_SHUTDOWN_WORKER_RESPONSE_BYTES);
-        }
-    });
+pub extern "C" fn tmprl_client_free(client: *mut tmprl_client_t) {
+    unsafe { drop(Box::from_raw(client)) };
 }
 
 /// Poll workflow activation.

@@ -19,7 +19,7 @@ typedef struct tmprl_client_t tmprl_client_t;
 typedef struct tmprl_runtime_t tmprl_runtime_t;
 
 /**
- * A worker instance owned by Core. This must be passed to tmprl_core_shutdown
+ * A worker instance owned by Core. This must be passed to [tmprl_worker_shutdown]
  * when no longer in use which will free the resources.
  */
 typedef struct tmprl_worker_t tmprl_worker_t;
@@ -53,6 +53,14 @@ typedef struct tmprl_bytes_t {
 typedef void (*tmprl_worker_init_callback)(void *user_data, struct tmprl_worker_t *core, const struct tmprl_bytes_t *resp);
 
 /**
+ * Callback called on function completion. The first parameter of the callback
+ * is user data passed into the original function. The second parameter of the
+ * callback is a never-null byte array for a response protobuf message which
+ * must be freed via [tmprl_bytes_free].
+ */
+typedef void (*tmprl_callback)(void *user_data, const struct tmprl_bytes_t *core);
+
+/**
  * Callback called by [tmprl_client_init] on completion. The first parameter of the
  * callback is user data passed into the original function. The second
  * parameter is a client instance if the call is successful or null if not. If
@@ -61,14 +69,6 @@ typedef void (*tmprl_worker_init_callback)(void *user_data, struct tmprl_worker_
  * [InitResponse] protobuf message which must be freed via [tmprl_bytes_free].
  */
 typedef void (*tmprl_client_init_callback)(void *user_data, struct tmprl_client_t *core, const struct tmprl_bytes_t *resp);
-
-/**
- * Callback called on function completion. The first parameter of the callback
- * is user data passed into the original function. The second parameter of the
- * callback is a never-null byte array for a response protobuf message which
- * must be freed via [tmprl_bytes_free].
- */
-typedef void (*tmprl_callback)(void *user_data, const struct tmprl_bytes_t *core);
 
 /**
  * Free a set of bytes. The first parameter can be null in cases where a
@@ -104,6 +104,24 @@ void tmprl_worker_init(struct tmprl_runtime_t *runtime,
                        tmprl_worker_init_callback callback);
 
 /**
+ * Shutdown and free a previously created worker.
+ *
+ * The req_proto and req_proto_len represent a byte array for a [bridge::ShutdownWorkerRequest]
+ * protobuf message, which currently contains nothing and are unused, but the parameters are kept
+ * for now.
+ *
+ * The callback is invoked on completion with a ShutdownWorkerResponse protobuf message.
+ *
+ * After the callback has been called, the worker struct will be freed and the pointer will no
+ * longer be valid.
+ */
+void tmprl_worker_shutdown(struct tmprl_worker_t *worker,
+                           const uint8_t *req_proto,
+                           size_t req_proto_len,
+                           void *user_data,
+                           tmprl_callback callback);
+
+/**
  * Initialize process-wide telemetry. Should only be called once, subsequent calls will be ignored
  * by core.
  *
@@ -129,19 +147,9 @@ void tmprl_client_init(struct tmprl_runtime_t *runtime,
                        tmprl_client_init_callback callback);
 
 /**
- * Shutdown a previously created worker.
- *
- * The req_proto and req_proto_len represent a byte array for a [bridge::ShutdownWorkerRequest]
- * protobuf message, which currently contains nothing and is unused, but the parameters are kept
- * for now.
- *
- * The callback is invoked on completion with a ShutdownWorkerResponse protobuf message.
+ * Free a previously created client
  */
-void tmprl_shutdown_worker(struct tmprl_worker_t *worker,
-                           const uint8_t *req_proto,
-                           size_t req_proto_len,
-                           void *user_data,
-                           tmprl_callback callback);
+void tmprl_client_free(struct tmprl_client_t *client);
 
 /**
  * Poll workflow activation.

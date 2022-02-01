@@ -19,12 +19,9 @@ use temporal_sdk_core_protos::coresdk::{
 /// and is bound to a specific task queue.
 #[async_trait::async_trait]
 pub trait Worker: Send + Sync {
-    /// Ask the core for some work, returning a [WorkflowActivation]. It is then the language SDK's
-    /// responsibility to call the appropriate workflow code with the provided inputs. Blocks
-    /// indefinitely until such work is available or [Core::shutdown] is called.
-    ///
-    /// The returned activation is guaranteed to be for the same task queue / worker which was
-    /// provided as the `task_queue` argument.
+    /// Ask the worker for some work, returning a [WorkflowActivation]. It is then the language
+    /// SDK's responsibility to call the appropriate workflow code with the provided inputs. Blocks
+    /// indefinitely until such work is available or [Worker::shutdown] is called.
     ///
     /// It is important to understand that all activations must be responded to. There can only
     /// be one outstanding activation for a particular run of a workflow at any time. If an
@@ -38,45 +35,41 @@ pub trait Worker: Send + Sync {
     ///
     /// It is rarely a good idea to call poll concurrently. It handles polling the server
     /// concurrently internally.
-    ///
-    /// TODO: Examples
     async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError>;
 
-    /// Ask the core for some work, returning an [ActivityTask]. It is then the language SDK's
+    /// Ask the worker for some work, returning an [ActivityTask]. It is then the language SDK's
     /// responsibility to call the appropriate activity code with the provided inputs. Blocks
-    /// indefinitely until such work is available or [Core::shutdown] is called.
+    /// indefinitely until such work is available or [Worker::shutdown] is called.
     ///
     /// The returned activation is guaranteed to be for the same task queue / worker which was
     /// provided as the `task_queue` argument.
     ///
     /// It is rarely a good idea to call poll concurrently. It handles polling the server
     /// concurrently internally.
-    ///
-    /// TODO: Examples
     async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError>;
 
-    /// Tell the core that a workflow activation has completed. May be freely called concurrently.
+    /// Tell the worker that a workflow activation has completed. May be freely called concurrently.
     async fn complete_workflow_activation(
         &self,
         completion: WorkflowActivationCompletion,
     ) -> Result<(), CompleteWfError>;
 
-    /// Tell the core that an activity has finished executing. May be freely called concurrently.
+    /// Tell the worker that an activity has finished executing. May be freely called concurrently.
     async fn complete_activity_task(
         &self,
         completion: ActivityTaskCompletion,
     ) -> Result<(), CompleteActivityError>;
 
-    /// Notify workflow that an activity is still alive. Long running activities that take longer
-    /// than `activity_heartbeat_timeout` to finish must call this function in order to report
-    /// progress, otherwise the activity will timeout and a new attempt will be scheduled.
+    /// Notify the Temporal service that an activity is still alive. Long running activities that
+    /// take longer than `activity_heartbeat_timeout` to finish must call this function in order to
+    /// report progress, otherwise the activity will timeout and a new attempt will be scheduled.
     ///
     /// The first heartbeat request will be sent immediately, subsequent rapid calls to this
     /// function will result in heartbeat requests being aggregated and the last one received during
     /// the aggregation period will be sent to the server, where that period is defined as half the
     /// heartbeat timeout.
     ///
-    /// Unlike java/go SDKs we do not return cancellation status as part of heartbeat response and
+    /// Unlike Java/Go SDKs we do not return cancellation status as part of heartbeat response and
     /// instead send it as a separate activity task to the lang, decoupling heartbeat and
     /// cancellation processing.
     ///
@@ -90,7 +83,7 @@ pub trait Worker: Send + Sync {
 
     /// Request that a workflow be evicted by its run id. This will generate a workflow activation
     /// with the eviction job inside it to be eventually returned by
-    /// [Core::poll_workflow_activation]. If the workflow had any existing outstanding activations,
+    /// [Worker::poll_workflow_activation]. If the workflow had any existing outstanding activations,
     /// such activations are invalidated and subsequent completions of them will do nothing and log
     /// a warning.
     fn request_workflow_eviction(&self, run_id: &str);
