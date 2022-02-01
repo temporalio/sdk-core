@@ -316,7 +316,7 @@ impl ActivityHeartbeatManager {
                     ))
                 }
             })
-                // TODO: ???
+            // Filters out `None`s
             .filter_map(|opt| async { opt })
             .for_each_concurrent(None, move |action| {
                 let heartbeat_tx = heartbeat_tx_source.clone();
