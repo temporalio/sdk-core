@@ -19,6 +19,7 @@ use std::{
     time::Duration,
 };
 use temporal_client::mocks::{fake_sg_opts, mock_gateway, mock_manual_gateway};
+use temporal_sdk_core_protos::temporal::api::workflowservice::v1::RespondActivityTaskFailedResponse;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{activity_resolution, ActivityExecutionResult, ActivityResolution},
@@ -620,4 +621,53 @@ async fn can_heartbeat_acts_during_shutdown() {
     };
     join!(shutdown_fut, complete_fut);
     assert_eq!(&complete_order.into_inner(), &[2, 1])
+}
+
+/// Verifies that if a user has tried to record a heartbeat and then immediately after failed the
+/// activity, that we flush those details before reporting the failure completion.
+#[tokio::test]
+async fn complete_act_with_fail_flushes_heartbeat() {
+    let mut mock_gateway = mock_gateway();
+    mock_gateway
+        .expect_record_activity_heartbeat()
+        .times(1..)
+        .returning(|_, payload| {
+            dbg!(payload);
+            Ok(RecordActivityTaskHeartbeatResponse {
+                cancel_requested: false,
+            })
+        });
+    mock_gateway
+        .expect_fail_activity_task()
+        .times(1)
+        .returning(|_, _| Ok(RespondActivityTaskFailedResponse::default()));
+
+    let core = mock_core(MocksHolder::from_gateway_with_responses(
+        mock_gateway,
+        [],
+        [PollActivityTaskQueueResponse {
+            task_token: vec![1],
+            activity_id: "act1".to_string(),
+            heartbeat_timeout: Some(Duration::from_millis(1).into()),
+            ..Default::default()
+        }],
+    ));
+
+    let act = core.poll_activity_task(TEST_Q).await.unwrap();
+    // Record some heartbeats
+    for i in 1..=10 {
+        core.record_activity_heartbeat(ActivityHeartbeat {
+            task_token: act.task_token.clone(),
+            task_queue: TEST_Q.to_string(),
+            details: vec![vec![i].into()],
+        });
+    }
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act.task_token.clone(),
+        task_queue: TEST_Q.to_string(),
+        result: Some(ActivityExecutionResult::fail("Ahh".into())),
+    })
+    .await
+    .unwrap();
+    core.shutdown().await;
 }
