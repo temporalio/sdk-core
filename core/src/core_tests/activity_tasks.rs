@@ -653,7 +653,7 @@ async fn complete_act_with_fail_flushes_heartbeat() {
         [PollActivityTaskQueueResponse {
             task_token: vec![1],
             activity_id: "act1".to_string(),
-            heartbeat_timeout: Some(Duration::from_millis(1).into()),
+            heartbeat_timeout: Some(Duration::from_secs(10).into()),
             ..Default::default()
         }],
     ));
