@@ -89,7 +89,7 @@ struct tmprl_runtime_t *tmprl_runtime_new(void);
 void tmprl_runtime_free(struct tmprl_runtime_t *runtime);
 
 /**
- * Create a new core instance.
+ * Create a new worker instance.
  *
  * `runtime` and `client` are both required and must outlive this instance.
  * `req_proto` and `req_proto_len` represent a byte array for a [CreateWorkerRequest] protobuf
@@ -229,7 +229,7 @@ void tmprl_record_activity_heartbeat(struct tmprl_worker_t *worker,
  * [bridge::RequestWorkflowEvictionRequest] protobuf message. The callback is invoked on completion
  * with a [bridge::RequestWorkflowEvictionResponse] protobuf message.
  */
-void tmprl_request_workflow_eviction(struct tmprl_worker_t *core,
+void tmprl_request_workflow_eviction(struct tmprl_worker_t *worker,
                                      const uint8_t *req_proto,
                                      size_t req_proto_len,
                                      void *user_data,

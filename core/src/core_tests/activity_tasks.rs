@@ -11,6 +11,7 @@ use futures::FutureExt;
 use std::{
     cell::RefCell,
     collections::{hash_map::Entry, HashMap, VecDeque},
+    rc::Rc,
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
@@ -30,6 +31,7 @@ use temporal_sdk_core_protos::{
     temporal::api::workflowservice::v1::{
         PollActivityTaskQueueResponse, RecordActivityTaskHeartbeatResponse,
         RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedResponse,
+        RespondActivityTaskFailedResponse,
     },
 };
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
@@ -527,4 +529,59 @@ async fn can_heartbeat_acts_during_shutdown() {
     };
     join!(shutdown_fut, complete_fut);
     assert_eq!(&complete_order.into_inner(), &[2, 1])
+}
+
+/// Verifies that if a user has tried to record a heartbeat and then immediately after failed the
+/// activity, that we flush those details before reporting the failure completion.
+#[tokio::test]
+async fn complete_act_with_fail_flushes_heartbeat() {
+    let last_hb = 50;
+    let mut mock_gateway = mock_gateway();
+    let last_seen_payload = Rc::new(RefCell::new(None));
+    let lsp = last_seen_payload.clone();
+    mock_gateway
+        .expect_record_activity_heartbeat()
+        // Two times b/c we always record the first heartbeat, and we'll flush the last
+        .times(2)
+        .returning_st(move |_, payload| {
+            *lsp.borrow_mut() = payload;
+            Ok(RecordActivityTaskHeartbeatResponse {
+                cancel_requested: false,
+            })
+        });
+    mock_gateway
+        .expect_fail_activity_task()
+        .times(1)
+        .returning(|_, _| Ok(RespondActivityTaskFailedResponse::default()));
+
+    let core = mock_worker(MocksHolder::from_gateway_with_responses(
+        mock_gateway,
+        [],
+        [PollActivityTaskQueueResponse {
+            task_token: vec![1],
+            activity_id: "act1".to_string(),
+            heartbeat_timeout: Some(Duration::from_secs(10).into()),
+            ..Default::default()
+        }],
+    ));
+
+    let act = core.poll_activity_task().await.unwrap();
+    // Record a bunch of heartbeats
+    for i in 1..=last_hb {
+        core.record_activity_heartbeat(ActivityHeartbeat {
+            task_token: act.task_token.clone(),
+            details: vec![vec![i].into()],
+        });
+    }
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act.task_token.clone(),
+        result: Some(ActivityExecutionResult::fail("Ahh".into())),
+    })
+    .await
+    .unwrap();
+    core.shutdown().await;
+
+    // Verify the last seen call to record a heartbeat had the last detail payload
+    let last_seen_payload = &last_seen_payload.take().unwrap().payloads[0];
+    assert_eq!(last_seen_payload.data, &[last_hb]);
 }

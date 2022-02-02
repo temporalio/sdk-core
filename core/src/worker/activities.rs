@@ -205,7 +205,7 @@ impl WorkerActivityTasks {
             ]);
             act_metrics.act_execution_latency(act_info.base.start_time.elapsed());
             self.activities_semaphore.add_permits(1);
-            self.heartbeat_manager.evict(task_token.clone());
+            self.heartbeat_manager.evict(task_token.clone()).await;
             let known_not_found = act_info.known_not_found;
             drop(act_info); // TODO: Get rid of dashmap. If we hold ref across await, bad stuff.
             self.complete_notify.notify_waiters();

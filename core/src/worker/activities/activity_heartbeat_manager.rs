@@ -12,7 +12,7 @@ use temporal_sdk_core_protos::{
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        Mutex,
+        Mutex, Notify,
     },
     task::JoinHandle,
 };
@@ -24,7 +24,7 @@ pub(crate) struct ActivityHeartbeatManager {
     /// Cancellations that have been received when heartbeating are queued here and can be consumed
     /// by [fetch_cancellations]
     incoming_cancels: Mutex<UnboundedReceiver<PendingActivityCancel>>,
-    cancellation_token: CancellationToken,
+    shutdown_token: CancellationToken,
     /// Used during `shutdown` to await until all inflight requests are sent.
     join_handle: Mutex<Option<JoinHandle<()>>>,
     heartbeat_tx: UnboundedSender<HeartbeatAction>,
@@ -33,7 +33,10 @@ pub(crate) struct ActivityHeartbeatManager {
 #[derive(Debug)]
 enum HeartbeatAction {
     SendHeartbeat(ValidActivityHeartbeat),
-    Evict(TaskToken),
+    Evict {
+        token: TaskToken,
+        on_complete: Arc<Notify>,
+    },
     CompleteReport(TaskToken),
     CompleteThrottle(TaskToken),
 }
@@ -50,7 +53,11 @@ enum HeartbeatExecutorAction {
     /// Heartbeats are throttled for this task token, sleep until duration or wait to be cancelled
     Sleep(TaskToken, Duration, CancellationToken),
     /// Report heartbeat to the server
-    Report(TaskToken, Vec<common::Payload>),
+    Report {
+        task_token: TaskToken,
+        details: Vec<common::Payload>,
+        on_reported: Option<Arc<Notify>>,
+    },
 }
 
 /// Errors thrown when heartbeating
@@ -68,9 +75,9 @@ pub enum ActivityHeartbeatError {
     ShuttingDown,
 }
 
-/// Handle that is used by the core for all interactions with the manager, allows sending new
-/// heartbeats or requesting and awaiting for the shutdown. When shutdown is requested, signal gets
-/// sent to all processors, which allows them to complete gracefully.
+/// Manages activity heartbeating for a worker. Allows sending new heartbeats or requesting and
+/// awaiting for the shutdown. When shutdown is requested, signal gets sent to all processors, which
+/// allows them to complete gracefully.
 impl ActivityHeartbeatManager {
     /// Records a new heartbeat, the first call will result in an immediate call to the server,
     /// while rapid successive calls would accumulate for up to `delay` and then latest heartbeat
@@ -84,7 +91,7 @@ impl ActivityHeartbeatManager {
         hb: ActivityHeartbeat,
         throttle_interval: Duration,
     ) -> Result<(), ActivityHeartbeatError> {
-        if self.cancellation_token.is_cancelled() {
+        if self.shutdown_token.is_cancelled() {
             return Err(ActivityHeartbeatError::ShuttingDown);
         }
         self.heartbeat_tx
@@ -99,9 +106,15 @@ impl ActivityHeartbeatManager {
     }
 
     /// Tell the heartbeat manager we are done forever with a certain task, so it may be forgotten.
+    /// This will also force-flush the most recently provided details.
     /// Record *should* not be called with the same TaskToken after calling this.
-    pub(super) fn evict(&self, task_token: TaskToken) {
-        let _ = self.heartbeat_tx.send(HeartbeatAction::Evict(task_token));
+    pub(super) async fn evict(&self, task_token: TaskToken) {
+        let completed = Arc::new(Notify::new());
+        let _ = self.heartbeat_tx.send(HeartbeatAction::Evict {
+            token: task_token,
+            on_complete: completed.clone(),
+        });
+        completed.notified().await;
     }
 
     /// Returns a future that resolves any time there is a new activity cancel that must be
@@ -114,7 +127,7 @@ impl ActivityHeartbeatManager {
     /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all in-flight
     /// heartbeat requests to be flushed to the server.
     pub(super) async fn shutdown(&self) {
-        let _ = self.cancellation_token.cancel();
+        let _ = self.shutdown_token.cancel();
         let mut handle = self.join_handle.lock().await;
         if let Some(h) = handle.take() {
             h.await.expect("shutdown should exit cleanly");
@@ -183,7 +196,11 @@ impl HeartbeatStreamState {
                     throttled_cancellation_token: None,
                 };
                 e.insert(state);
-                Some(HeartbeatExecutorAction::Report(hb.task_token, hb.details))
+                Some(HeartbeatExecutorAction::Report {
+                    task_token: hb.task_token,
+                    details: hb.details,
+                    on_reported: None,
+                })
             }
             Entry::Occupied(mut o) => {
                 let state = o.get_mut();
@@ -219,7 +236,11 @@ impl HeartbeatStreamState {
                     // Reset the cancellation token and schedule another report
                     state.throttled_cancellation_token = None;
                     state.last_send_requested = Instant::now();
-                    Some(HeartbeatExecutorAction::Report(tt, details))
+                    Some(HeartbeatExecutorAction::Report {
+                        task_token: tt,
+                        details,
+                        on_reported: None,
+                    })
                 } else {
                     // Nothing to report, forget this task token
                     e.remove();
@@ -230,15 +251,29 @@ impl HeartbeatStreamState {
         }
     }
 
-    /// Activity should not be tracked anymore, cancel throttle timer if running
-    fn evict(&mut self, tt: TaskToken) -> Option<HeartbeatExecutorAction> {
-        if let Some(token) = self
-            .tt_to_state
-            .remove(&tt)
-            .and_then(|st| st.throttled_cancellation_token)
-        {
-            let _ = token.cancel();
-        };
+    /// Activity should not be tracked anymore, cancel throttle timer if running.
+    ///
+    /// Will return a report action if there are recorded details present, to ensure we flush the
+    /// latest details before we cease tracking this activity.
+    fn evict(
+        &mut self,
+        tt: TaskToken,
+        on_complete: Arc<Notify>,
+    ) -> Option<HeartbeatExecutorAction> {
+        if let Some(state) = self.tt_to_state.remove(&tt) {
+            if let Some(cancel_tok) = state.throttled_cancellation_token {
+                let _ = cancel_tok.cancel();
+            }
+            if let Some(last_deets) = state.last_recorded_details {
+                return Some(HeartbeatExecutorAction::Report {
+                    task_token: tt,
+                    details: last_deets,
+                    on_reported: Some(on_complete),
+                });
+            }
+        }
+        // Since there's nothing to flush immediately report back that eviction is finished
+        on_complete.notify_one();
         None
     }
 }
@@ -247,14 +282,14 @@ impl ActivityHeartbeatManager {
     /// Creates a new instance of an activity heartbeat manager and returns a handle to the user,
     /// which allows to send new heartbeats and initiate the shutdown.
     pub fn new(sg: Arc<impl ServerGatewayApis + Send + Sync + 'static + ?Sized>) -> Self {
-        let (heartbeat_stream_state, heartbeat_tx_source, cancellation_token) =
+        let (heartbeat_stream_state, heartbeat_tx_source, shutdown_token) =
             HeartbeatStreamState::new();
         let (cancels_tx, cancels_rx) = unbounded_channel();
         let heartbeat_tx = heartbeat_tx_source.clone();
 
         let join_handle = tokio::spawn(
             // The stream of incoming heartbeats uses unfold to carry state across each item in the
-            // stream The closure checks if, for any given activity, we should heartbeat or not
+            // stream. The closure checks if, for any given activity, we should heartbeat or not
             // depending on its delay and when we last issued a heartbeat for it.
             futures::stream::unfold(heartbeat_stream_state, move |mut hb_states| {
                 async move {
@@ -275,12 +310,13 @@ impl ActivityHeartbeatManager {
                             HeartbeatAction::SendHeartbeat(hb) => hb_states.record(hb),
                             HeartbeatAction::CompleteReport(tt) => hb_states.handle_report_completed(tt),
                             HeartbeatAction::CompleteThrottle(tt) => hb_states.handle_throttle_completed(tt),
-                            HeartbeatAction::Evict(tt) => hb_states.evict(tt),
+                            HeartbeatAction::Evict{ token, on_complete } => hb_states.evict(token, on_complete),
                         },
                         hb_states,
                     ))
                 }
             })
+            // Filters out `None`s
             .filter_map(|opt| async { opt })
             .for_each_concurrent(None, move |action| {
                 let heartbeat_tx = heartbeat_tx_source.clone();
@@ -296,7 +332,7 @@ impl ActivityHeartbeatManager {
                                 },
                             };
                         }
-                        HeartbeatExecutorAction::Report(tt, details) => {
+                        HeartbeatExecutorAction::Report { task_token: tt, details, on_reported } => {
                             match sg
                                 .record_activity_heartbeat(tt.clone(), details.into_payloads())
                                 .await
@@ -313,9 +349,9 @@ impl ActivityHeartbeatManager {
                                             );
                                     }
                                 }
-                                // Send cancels for any activity that learns its workflow already finished
-                                // (which is one thing not found implies - other reasons would seem equally
-                                // valid).
+                                // Send cancels for any activity that learns its workflow already
+                                // finished (which is one thing not found implies - other reasons
+                                // would seem equally valid).
                                 Err(s) if s.code() == tonic::Code::NotFound => {
                                     cancels_tx
                                         .send(PendingActivityCancel::new(
@@ -328,6 +364,9 @@ impl ActivityHeartbeatManager {
                                     warn!("Error when recording heartbeat: {:?}", e);
                                 }
                             };
+                            if let Some(onrep) = on_reported {
+                                onrep.notify_one();
+                            }
                             let _ = heartbeat_tx.send(HeartbeatAction::CompleteReport(tt));
                         }
                     }
@@ -338,7 +377,7 @@ impl ActivityHeartbeatManager {
         Self {
             incoming_cancels: Mutex::new(cancels_rx),
             join_handle: Mutex::new(Some(join_handle)),
-            cancellation_token,
+            shutdown_token,
             heartbeat_tx,
         }
     }
@@ -448,7 +487,7 @@ mod test {
         record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
         // Let it propagate
         sleep(Duration::from_millis(10)).await;
-        hm.evict(fake_task_token.clone().into());
+        hm.evict(fake_task_token.clone().into()).await;
         record_heartbeat(&hm, fake_task_token, 0, Duration::from_millis(100));
         // Let it propagate
         sleep(Duration::from_millis(10)).await;

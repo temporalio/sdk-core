@@ -999,6 +999,12 @@ pub mod coresdk {
         }
     }
 
+    impl From<&str> for Failure {
+        fn from(v: &str) -> Self {
+            Failure::application_failure(v.to_string(), false)
+        }
+    }
+
     impl From<anyhow::Error> for Failure {
         fn from(ae: anyhow::Error) -> Self {
             Failure::application_failure(ae.to_string(), false)
