@@ -8,7 +8,7 @@ use std::{sync::Arc, time::Duration};
 // Possible improvement: make generic over some type tag so that methods are only exposed if the
 // appropriate k/vs have already been set.
 #[derive(Clone, Debug)]
-pub(crate) struct MetricsContext {
+pub struct MetricsContext {
     kvs: Arc<Vec<KeyValue>>,
     poll_is_long: bool,
 
@@ -35,15 +35,16 @@ impl MetricsContext {
         }
     }
 
-    pub(crate) fn top_level(namespace: String, meter: &Meter) -> Self {
-        Self::new(vec![KeyValue::new(KEY_NAMESPACE, namespace)], meter)
-    }
-
-    /// Extend an existing metrics context with new attributes
+    /// Extend an existing metrics context with new attributes, returning a new one
     pub(crate) fn with_new_attrs(&self, new_kvs: impl IntoIterator<Item = KeyValue>) -> Self {
         let mut r = self.clone();
-        Arc::make_mut(&mut r.kvs).extend(new_kvs);
+        r.add_new_attrs(new_kvs);
         r
+    }
+
+    /// Add new attributes to the context, mutating it
+    pub(crate) fn add_new_attrs(&mut self, new_kvs: impl IntoIterator<Item = KeyValue>) {
+        Arc::make_mut(&mut self.kvs).extend(new_kvs);
     }
 
     pub(crate) fn set_is_long_poll(&mut self) {
@@ -82,6 +83,10 @@ impl MetricsContext {
 
 const KEY_NAMESPACE: &str = "namespace";
 const KEY_SVC_METHOD: &str = "operation";
+
+pub(crate) fn namespace_kv(ns: String) -> KeyValue {
+    KeyValue::new(KEY_NAMESPACE, ns)
+}
 
 pub(crate) fn svc_operation(op: String) -> KeyValue {
     KeyValue::new(KEY_SVC_METHOD, op)

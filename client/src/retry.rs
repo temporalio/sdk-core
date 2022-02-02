@@ -70,6 +70,11 @@ impl<SG> RetryGateway<SG> {
     pub fn get_client(&self) -> &SG {
         &self.gateway
     }
+
+    /// Return the inner client type mutably
+    pub fn get_client_mut(&mut self) -> &mut SG {
+        &mut self.gateway
+    }
 }
 
 #[derive(Debug)]
