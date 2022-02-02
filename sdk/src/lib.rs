@@ -307,8 +307,7 @@ impl WorkflowHalf {
                 .ok_or_else(|| anyhow!("Workflow type not found"))?;
 
             let (wff, activations) = wf_function.start_workflow(
-                // TODO: Probably can get namespace from worker options now. And task Q?
-                worker.server_gateway().get_options().namespace.clone(),
+                worker.get_config().namespace.clone(),
                 task_queue.to_string(),
                 // NOTE: Don't clone args if this gets ported to be a non-test rust worker
                 sw.arguments.clone(),

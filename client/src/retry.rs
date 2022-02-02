@@ -412,6 +412,10 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     fn get_options(&self) -> &ServerGatewayOptions {
         self.gateway.get_options()
     }
+
+    fn namespace(&self) -> &str {
+        self.gateway.namespace()
+    }
 }
 
 #[cfg(test)]

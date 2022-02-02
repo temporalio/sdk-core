@@ -29,7 +29,7 @@ use crate::{
         },
         EmptyWorkflowCommandErr, LocalResolution, WFMachinesError, WorkflowCachingPolicy,
     },
-    ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError,
+    ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
 };
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
 use futures::{Future, TryFutureExt};
@@ -41,6 +41,7 @@ use temporal_sdk_core_protos::{
         activity_task::ActivityTask,
         workflow_activation::{remove_from_cache::EvictionReason, WorkflowActivation},
         workflow_completion::{self, workflow_activation_completion, WorkflowActivationCompletion},
+        ActivityTaskCompletion,
     },
     temporal::api::{
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
@@ -58,8 +59,7 @@ use tracing_futures::Instrument;
 /// A worker polls on a certain task queue
 pub struct Worker {
     config: WorkerConfig,
-    // TODO: Probably move impl of worker trait in this module
-    pub(crate) server_gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+    server_gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
 
     /// Will be populated when this worker should poll on a sticky WFT queue
     sticky_name: Option<String>,
@@ -67,8 +67,8 @@ pub struct Worker {
     /// Buffers workflow task polling in the event we need to return a pending activation while
     /// a poll is ongoing. Sticky and nonsticky polling happens inside of it.
     wf_task_source: WFTSource,
-    /// Workflow task management TODO: No pub
-    pub(crate) wft_manager: WorkflowTaskManager,
+    /// Workflow task management
+    wft_manager: WorkflowTaskManager,
     /// Manages activity tasks for this worker/task queue
     at_task_mgr: Option<WorkerActivityTasks>,
     /// Manages local activities
@@ -87,6 +87,83 @@ pub struct Worker {
     post_activate_hook: Option<Box<dyn Fn(&Self) + Send + Sync>>,
 
     metrics: MetricsContext,
+}
+
+#[async_trait::async_trait]
+impl WorkerTrait for Worker {
+    #[instrument(level = "debug", skip(self), fields(run_id))]
+    async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
+        self.next_workflow_activation().await
+    }
+
+    #[instrument(level = "debug", skip(self))]
+    async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError> {
+        loop {
+            match self.activity_poll().await.transpose() {
+                Some(r) => break r,
+                None => {
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+            }
+        }
+    }
+
+    #[instrument(level = "debug", skip(self, completion),
+    fields(completion=%&completion, run_id=%completion.run_id))]
+    async fn complete_workflow_activation(
+        &self,
+        completion: WorkflowActivationCompletion,
+    ) -> Result<(), CompleteWfError> {
+        self.complete_workflow_activation(completion).await
+    }
+
+    #[instrument(level = "debug", skip(self))]
+    async fn complete_activity_task(
+        &self,
+        completion: ActivityTaskCompletion,
+    ) -> Result<(), CompleteActivityError> {
+        let task_token = TaskToken(completion.task_token);
+        let status = if let Some(s) = completion.result.and_then(|r| r.status) {
+            s
+        } else {
+            return Err(CompleteActivityError::MalformedActivityCompletion {
+                reason: "Activity completion had empty result/status field".to_owned(),
+                completion: None,
+            });
+        };
+
+        self.complete_activity(task_token, status).await
+    }
+
+    fn record_activity_heartbeat(&self, details: ActivityHeartbeat) {
+        self.record_heartbeat(details);
+    }
+
+    fn request_workflow_eviction(&self, run_id: &str) {
+        self.request_wf_eviction(
+            run_id,
+            "Eviction explicitly requested by lang",
+            EvictionReason::LangRequested,
+        );
+    }
+
+    fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
+        self.server_gateway.clone()
+    }
+
+    fn get_config(&self) -> &WorkerConfig {
+        &self.config
+    }
+
+    async fn shutdown(&self) {
+        self.shutdown().await
+    }
+
+    async fn finalize_shutdown(self) {
+        self.shutdown().await;
+        self.finalize_shutdown().await
+    }
 }
 
 impl Worker {
@@ -189,7 +266,7 @@ impl Worker {
             }),
             local_act_mgr: LocalActivityManager::new(
                 config.max_outstanding_local_activities,
-                sg.get_options().namespace.clone(),
+                config.namespace.clone(),
             ),
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             config,
@@ -448,6 +525,19 @@ impl Worker {
         callback: impl Fn(&Self) + Send + Sync + 'static,
     ) {
         self.post_activate_hook = Some(Box::new(callback))
+    }
+
+    pub(crate) fn set_shutdown_on_run_reaches_event(&mut self, run_id: String, last_event: i64) {
+        self.set_post_activate_hook(move |worker| {
+            if worker
+                .wft_manager
+                .most_recently_processed_event(&run_id)
+                .unwrap_or_default()
+                >= last_event
+            {
+                worker.initiate_shutdown();
+            }
+        });
     }
 
     /// Resolves with WFT poll response or `PollWfError::ShutDown` if WFTs have been drained

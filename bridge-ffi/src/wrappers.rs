@@ -67,9 +67,6 @@ impl TryFrom<ServerGatewayOptions> for temporal_sdk_core::ServerGatewayOptions {
                     .map_err(|err| format!("invalid target URL: {}", err))?,
             );
         }
-        if !req.namespace.is_empty() {
-            gateway_opts.namespace(req.namespace);
-        }
         if !req.client_name.is_empty() {
             gateway_opts.client_name(req.client_name);
         }

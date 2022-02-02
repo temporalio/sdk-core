@@ -47,18 +47,10 @@ use crate::{
 };
 use std::sync::Arc;
 use temporal_sdk_core_api::{
-    errors::{CompleteActivityError, CompleteWfError, PollActivityError, PollWfError},
+    errors::{CompleteActivityError, PollActivityError, PollWfError},
     CoreLog, Worker as WorkerTrait,
 };
-use temporal_sdk_core_protos::{
-    coresdk::{
-        activity_task::ActivityTask,
-        workflow_activation::{remove_from_cache::EvictionReason, WorkflowActivation},
-        workflow_completion::WorkflowActivationCompletion,
-        ActivityHeartbeat, ActivityTaskCompletion,
-    },
-    temporal::api::history::v1::History,
-};
+use temporal_sdk_core_protos::{coresdk::ActivityHeartbeat, temporal::api::history::v1::History};
 
 lazy_static::lazy_static! {
     /// A process-wide unique string, which will be different on every startup
@@ -82,8 +74,7 @@ pub fn init_worker_pre_arcd<SG: ServerGatewayApis + Send + Sync + 'static>(
     worker_config: WorkerConfig,
     client: Arc<SG>,
 ) -> Worker {
-    // TODO: Get identity from client
-    let sticky_q = sticky_q_name_for_worker("ident", &worker_config);
+    let sticky_q = sticky_q_name_for_worker(&client.get_options().identity, &worker_config);
     let metrics = MetricsContext::top_level(worker_config.namespace.clone())
         .with_task_q(worker_config.task_queue.clone());
     Worker::new(worker_config, sticky_q, client, metrics)
@@ -109,90 +100,8 @@ pub fn init_replay_worker(
     let last_event = history.last_event_id();
     // TODO: None default metrics context?
     let mut worker = Worker::new(config, None, gateway, MetricsContext::default());
-    worker.set_post_activate_hook(move |worker| {
-        if worker
-            .wft_manager
-            .most_recently_processed_event(&run_id)
-            .unwrap_or_default()
-            >= last_event
-        {
-            worker.initiate_shutdown();
-        }
-    });
+    worker.set_shutdown_on_run_reaches_event(run_id, last_event);
     Ok(worker)
-}
-
-#[async_trait::async_trait]
-impl WorkerTrait for Worker {
-    #[instrument(level = "debug", skip(self), fields(run_id))]
-    async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
-        self.next_workflow_activation().await
-    }
-
-    #[instrument(level = "debug", skip(self))]
-    async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError> {
-        loop {
-            match self.activity_poll().await.transpose() {
-                Some(r) => break r,
-                None => {
-                    tokio::task::yield_now().await;
-                    continue;
-                }
-            }
-        }
-    }
-
-    #[instrument(level = "debug", skip(self, completion),
-      fields(completion=%&completion, run_id=%completion.run_id))]
-    async fn complete_workflow_activation(
-        &self,
-        completion: WorkflowActivationCompletion,
-    ) -> Result<(), CompleteWfError> {
-        self.complete_workflow_activation(completion).await
-    }
-
-    #[instrument(level = "debug", skip(self))]
-    async fn complete_activity_task(
-        &self,
-        completion: ActivityTaskCompletion,
-    ) -> Result<(), CompleteActivityError> {
-        let task_token = TaskToken(completion.task_token);
-        let status = if let Some(s) = completion.result.and_then(|r| r.status) {
-            s
-        } else {
-            return Err(CompleteActivityError::MalformedActivityCompletion {
-                reason: "Activity completion had empty result/status field".to_owned(),
-                completion: None,
-            });
-        };
-
-        self.complete_activity(task_token, status).await
-    }
-
-    fn record_activity_heartbeat(&self, details: ActivityHeartbeat) {
-        self.record_heartbeat(details);
-    }
-
-    fn request_workflow_eviction(&self, run_id: &str) {
-        self.request_wf_eviction(
-            run_id,
-            "Eviction explicitly requested by lang",
-            EvictionReason::LangRequested,
-        );
-    }
-
-    fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
-        self.server_gateway.clone()
-    }
-
-    async fn shutdown(&self) {
-        self.shutdown().await
-    }
-
-    async fn finalize_shutdown(self) {
-        self.shutdown().await;
-        self.finalize_shutdown().await
-    }
 }
 
 pub(crate) fn sticky_q_name_for_worker(

@@ -9,7 +9,7 @@ use crate::{
         MockPollCfg, MocksHolder, ResponseType, NO_MORE_WORK_ERROR_MSG, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
-    Worker, WorkflowActivationCompletion,
+    Worker,
 };
 use rstest::{fixture, rstest};
 use std::{
@@ -30,6 +30,7 @@ use temporal_sdk_core_protos::{
             ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
             FailWorkflowExecution, RequestCancelActivity, ScheduleActivity,
         },
+        workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{
         enums::v1::{EventType, WorkflowTaskFailedCause},

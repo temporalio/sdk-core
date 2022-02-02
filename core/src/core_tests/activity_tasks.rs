@@ -5,7 +5,7 @@ use crate::{
         mock_worker, poll_and_reply, test_worker_cfg, MockWorker, MocksHolder,
     },
     workflow::WorkflowCachingPolicy::NonSticky,
-    ActivityHeartbeat, ActivityTask,
+    ActivityHeartbeat,
 };
 use futures::FutureExt;
 use std::{
@@ -20,7 +20,7 @@ use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{activity_resolution, ActivityExecutionResult, ActivityResolution},
-        activity_task::activity_task,
+        activity_task::{activity_task, ActivityTask},
         workflow_activation::{workflow_activation_job, ResolveActivity, WorkflowActivationJob},
         workflow_commands::{
             ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity,

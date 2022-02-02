@@ -118,7 +118,7 @@ impl CoreWfStarter {
         if self.initted_worker.is_none() {
             telemetry_init(&self.telemetry_options).expect("Telemetry inits cleanly");
             let gateway = get_integ_server_options()
-                .connect(None)
+                .connect(self.worker_config.namespace.clone(), None)
                 .await
                 .expect("Must connect");
             let worker = init_worker(self.worker_config.clone(), gateway);
@@ -224,7 +224,6 @@ pub fn get_integ_server_options() -> ServerGatewayOptions {
     };
     let url = Url::try_from(&*temporal_server_address).unwrap();
     ServerGatewayOptionsBuilder::default()
-        .namespace(NAMESPACE.to_string())
         .identity("integ_tester".to_string())
         .worker_binary_id("fakebinaryid".to_string())
         .target_url(url)

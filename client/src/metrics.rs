@@ -22,7 +22,7 @@ pub(crate) struct MetricsContext {
 }
 
 impl MetricsContext {
-    fn new(kvs: Vec<KeyValue>, meter: &Meter) -> Self {
+    pub(crate) fn new(kvs: Vec<KeyValue>, meter: &Meter) -> Self {
         Self {
             kvs: Arc::new(kvs),
             poll_is_long: false,

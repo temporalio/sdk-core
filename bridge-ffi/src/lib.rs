@@ -21,8 +21,10 @@ use temporal_sdk_core::{
     fetch_global_buffered_logs, telemetry_init, RetryGateway, ServerGateway, ServerGatewayOptions,
 };
 use temporal_sdk_core_api::Worker;
-use temporal_sdk_core_protos::coresdk::bridge;
-use temporal_sdk_core_protos::coresdk::bridge::{CreateGatewayRequest, InitTelemetryRequest};
+use temporal_sdk_core_protos::coresdk::{
+    bridge,
+    bridge::{CreateGatewayRequest, InitTelemetryRequest},
+};
 
 /// A set of bytes owned by Core. No fields within nor any bytes references must
 /// ever be mutated outside of Core. This must always be passed to
@@ -369,10 +371,14 @@ pub extern "C" fn tmprl_client_init(
     callback: tmprl_client_init_callback,
 ) {
     let runtime = unsafe { &*runtime };
-    let req: ServerGatewayOptions =
+    let (namespace, req) =
         match tmprl_worker_t::decode_proto::<CreateGatewayRequest>(req_proto, req_proto_len)
-            .and_then(|cgr| wrappers::ServerGatewayOptions(cgr).try_into())
-        {
+            .and_then(|cgr| {
+                let ns = cgr.namespace.clone();
+                wrappers::ServerGatewayOptions(cgr)
+                    .try_into()
+                    .map(|sgo: ServerGatewayOptions| (ns, sgo))
+            }) {
             Ok(req) => req,
             Err(message) => {
                 let resp = InitResponse {
@@ -391,7 +397,7 @@ pub extern "C" fn tmprl_client_init(
 
     let user_data = UserDataHandle(user_data);
     runtime.tokio_runtime.spawn(async move {
-        match req.connect(None).await {
+        match req.connect(namespace, None).await {
             Ok(client) => unsafe {
                 callback(
                     user_data.into(),

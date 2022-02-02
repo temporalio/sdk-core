@@ -9,6 +9,8 @@ use url::Url;
 pub fn mock_gateway() -> MockServerGatewayApis {
     let mut mg = MockServerGatewayApis::new();
     mg.expect_get_options().return_const(fake_sg_opts());
+    mg.expect_namespace()
+        .return_const("fake_namespace".to_string());
     mg
 }
 
@@ -16,6 +18,8 @@ pub fn mock_gateway() -> MockServerGatewayApis {
 pub fn mock_manual_gateway() -> MockManualGateway {
     let mut mg = MockManualGateway::new();
     mg.expect_get_options().return_const(fake_sg_opts());
+    mg.expect_namespace()
+        .return_const("fake_namespace".to_string());
     mg
 }
 
@@ -23,7 +27,6 @@ pub fn mock_manual_gateway() -> MockManualGateway {
 pub fn fake_sg_opts() -> ServerGatewayOptions {
     ServerGatewayOptionsBuilder::default()
         .target_url(Url::from_str("https://fake").unwrap())
-        .namespace("test_namespace".to_string())
         .client_name("fake_client".to_string())
         .client_version("fake_version".to_string())
         .worker_binary_id("fake_binid".to_string())
@@ -163,5 +166,6 @@ mockall::mock! {
             where 'a: 'b, Self: 'b;
 
         fn get_options(&self) -> &ServerGatewayOptions;
+        fn namespace(&self) -> &str;
     }
 }

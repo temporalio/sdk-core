@@ -1,2 +1,3 @@
 [alias]
 integ-test = ["test", "--test", "integ_tests"]
+lint = ["clippy", "--all", "--test", "integ_tests", "--test", "load_tests"]

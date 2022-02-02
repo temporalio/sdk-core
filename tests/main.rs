@@ -39,7 +39,6 @@ mod integ_tests {
         .unwrap();
         let sgo = ServerGatewayOptionsBuilder::default()
             .target_url(Url::from_str("https://localhost:7233").unwrap())
-            .namespace(NAMESPACE.to_string())
             .worker_binary_id("binident".to_string())
             .tls_cfg(TlsConfig {
                 server_root_ca_cert: Some(root),
@@ -51,7 +50,7 @@ mod integ_tests {
             })
             .build()
             .unwrap();
-        let con = sgo.connect(None).await.unwrap();
+        let con = sgo.connect(NAMESPACE.to_string(), None).await.unwrap();
         con.list_namespaces().await.unwrap();
     }
 }

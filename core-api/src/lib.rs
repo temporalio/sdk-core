@@ -1,7 +1,10 @@
 pub mod errors;
 pub mod worker;
 
-use crate::errors::{CompleteActivityError, CompleteWfError, PollActivityError, PollWfError};
+use crate::{
+    errors::{CompleteActivityError, CompleteWfError, PollActivityError, PollWfError},
+    worker::WorkerConfig,
+};
 use log::Level;
 use opentelemetry::metrics::Meter;
 use std::{
@@ -90,6 +93,9 @@ pub trait Worker: Send + Sync {
 
     /// Returns this worker's instance of the [ServerGatewayApis] implementor it is using.
     fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync>;
+
+    /// Return this worker's config
+    fn get_config(&self) -> &WorkerConfig;
 
     /// Initiates async shutdown procedure, eventually ceases all polling of the server and shuts
     /// down this worker. [Worker::poll_workflow_activation] should be called until it
