@@ -83,9 +83,14 @@ impl MetricsContext {
 
 const KEY_NAMESPACE: &str = "namespace";
 const KEY_SVC_METHOD: &str = "operation";
+const KEY_TASK_QUEUE: &str = "task_queue";
 
 pub(crate) fn namespace_kv(ns: String) -> KeyValue {
     KeyValue::new(KEY_NAMESPACE, ns)
+}
+
+pub(crate) fn task_queue_kv(tq: String) -> KeyValue {
+    KeyValue::new(KEY_TASK_QUEUE, tq)
 }
 
 pub(crate) fn svc_operation(op: String) -> KeyValue {

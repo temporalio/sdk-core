@@ -2,8 +2,10 @@
 //! information we need via interceptors. This module contains the necessary stuff to make that
 //! happen.
 
+use crate::metrics::task_queue_kv;
 use crate::{metrics::namespace_kv, raw::sealed::RawClientLike, LONG_POLL_TIMEOUT};
 use futures::{future::BoxFuture, FutureExt};
+use temporal_sdk_core_protos::temporal::api::taskqueue::v1::TaskQueue;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::workflow_service_client::WorkflowServiceClient;
 use tonic::{body::BoxBody, client::GrpcService, metadata::KeyAndValueRef};
 
@@ -127,6 +129,15 @@ impl AttachMetricLabels {
     pub fn new(kvs: impl Into<Vec<opentelemetry::KeyValue>>) -> Self {
         Self { labels: kvs.into() }
     }
+    pub fn namespace(ns: impl Into<String>) -> Self {
+        AttachMetricLabels::new(vec![namespace_kv(ns.into())])
+    }
+    pub fn task_q(&mut self, tq: Option<TaskQueue>) -> &mut Self {
+        if let Some(tq) = tq {
+            self.labels.push(task_queue_kv(tq.name));
+        }
+        self
+    }
 }
 
 // Blanket impl the trait for all raw-client-like things. Since the trait default-implements
@@ -184,7 +195,7 @@ where
         RegisterNamespaceRequest,
         RegisterNamespaceResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -193,7 +204,7 @@ where
         DescribeNamespaceRequest,
         DescribeNamespaceResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -207,7 +218,7 @@ where
         UpdateNamespaceRequest,
         UpdateNamespaceResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -216,7 +227,7 @@ where
         DeprecateNamespaceRequest,
         DeprecateNamespaceResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -225,7 +236,8 @@ where
         StartWorkflowExecutionRequest,
         StartWorkflowExecutionResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -234,7 +246,7 @@ where
         GetWorkflowExecutionHistoryRequest,
         GetWorkflowExecutionHistoryResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -243,7 +255,8 @@ where
         PollWorkflowTaskQueueRequest,
         PollWorkflowTaskQueueResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
             r.set_timeout(LONG_POLL_TIMEOUT);
         }
@@ -253,7 +266,7 @@ where
         RespondWorkflowTaskCompletedRequest,
         RespondWorkflowTaskCompletedResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -262,7 +275,7 @@ where
         RespondWorkflowTaskFailedRequest,
         RespondWorkflowTaskFailedResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -271,7 +284,8 @@ where
         PollActivityTaskQueueRequest,
         PollActivityTaskQueueResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
             r.set_timeout(LONG_POLL_TIMEOUT);
         }
@@ -281,7 +295,7 @@ where
         RecordActivityTaskHeartbeatRequest,
         RecordActivityTaskHeartbeatResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -290,7 +304,7 @@ where
         RecordActivityTaskHeartbeatByIdRequest,
         RecordActivityTaskHeartbeatByIdResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -299,7 +313,7 @@ where
         RespondActivityTaskCompletedRequest,
         RespondActivityTaskCompletedResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -308,7 +322,7 @@ where
         RespondActivityTaskCompletedByIdRequest,
         RespondActivityTaskCompletedByIdResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -318,7 +332,7 @@ where
         RespondActivityTaskFailedRequest,
         RespondActivityTaskFailedResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -327,7 +341,7 @@ where
         RespondActivityTaskFailedByIdRequest,
         RespondActivityTaskFailedByIdResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -336,7 +350,7 @@ where
         RespondActivityTaskCanceledRequest,
         RespondActivityTaskCanceledResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -345,7 +359,7 @@ where
         RespondActivityTaskCanceledByIdRequest,
         RespondActivityTaskCanceledByIdResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -354,7 +368,7 @@ where
         RequestCancelWorkflowExecutionRequest,
         RequestCancelWorkflowExecutionResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -363,7 +377,7 @@ where
         SignalWorkflowExecutionRequest,
         SignalWorkflowExecutionResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -372,7 +386,8 @@ where
         SignalWithStartWorkflowExecutionRequest,
         SignalWithStartWorkflowExecutionResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -381,7 +396,7 @@ where
         ResetWorkflowExecutionRequest,
         ResetWorkflowExecutionResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -390,7 +405,7 @@ where
         TerminateWorkflowExecutionRequest,
         TerminateWorkflowExecutionResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -399,7 +414,7 @@ where
         ListOpenWorkflowExecutionsRequest,
         ListOpenWorkflowExecutionsResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -408,7 +423,7 @@ where
         ListClosedWorkflowExecutionsRequest,
         ListClosedWorkflowExecutionsResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -417,7 +432,7 @@ where
         ListWorkflowExecutionsRequest,
         ListWorkflowExecutionsResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -426,7 +441,7 @@ where
         ListArchivedWorkflowExecutionsRequest,
         ListArchivedWorkflowExecutionsResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -435,7 +450,7 @@ where
         ScanWorkflowExecutionsRequest,
         ScanWorkflowExecutionsResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -444,7 +459,7 @@ where
         CountWorkflowExecutionsRequest,
         CountWorkflowExecutionsResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -458,7 +473,7 @@ where
         RespondQueryTaskCompletedRequest,
         RespondQueryTaskCompletedResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -467,7 +482,7 @@ where
         ResetStickyTaskQueueRequest,
         ResetStickyTaskQueueResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -476,7 +491,7 @@ where
         QueryWorkflowRequest,
         QueryWorkflowResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -485,7 +500,7 @@ where
         DescribeWorkflowExecutionRequest,
         DescribeWorkflowExecutionResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -494,7 +509,8 @@ where
         DescribeTaskQueueRequest,
         DescribeTaskQueueResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
         }
     );
@@ -508,7 +524,8 @@ where
         ListTaskQueuePartitionsRequest,
         ListTaskQueuePartitionsResponse,
         |r| {
-            let labels = AttachMetricLabels::new(vec![namespace_kv(r.get_ref().namespace.clone())]);
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
         }
     );
