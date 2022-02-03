@@ -1,0 +1,85 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.taskqueue.v1;
+
+option go_package = "go.temporal.io/api/taskqueue/v1;taskqueue";
+option java_package = "io.temporal.api.taskqueue.v1";
+option java_multiple_files = true;
+option java_outer_classname = "MessageProto";
+option ruby_package = "Temporal::Api::TaskQueue::V1";
+option csharp_namespace = "Temporal.Api.TaskQueue.V1";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+import "dependencies/gogoproto/gogo.proto";
+
+import "temporal/api/enums/v1/task_queue.proto";
+
+// See https://docs.temporal.io/docs/concepts/task-queues/
+message TaskQueue {
+    string name = 1;
+    // Default: TASK_QUEUE_KIND_NORMAL.
+    temporal.api.enums.v1.TaskQueueKind kind = 2;
+}
+
+// Only applies to activity task queues
+message TaskQueueMetadata {
+    // Allows throttling dispatch of tasks from this queue
+    google.protobuf.DoubleValue max_tasks_per_second = 1;
+}
+
+message TaskQueueStatus {
+    int64 backlog_count_hint = 1;
+    int64 read_level = 2;
+    int64 ack_level = 3;
+    double rate_per_second = 4;
+    TaskIdBlock task_id_block = 5;
+}
+
+message TaskIdBlock {
+    int64 start_id = 1;
+    int64 end_id = 2;
+}
+
+message TaskQueuePartitionMetadata {
+    string key = 1;
+    string owner_host_name = 2;
+}
+
+message PollerInfo {
+    // Unix Nano
+    google.protobuf.Timestamp last_access_time = 1 [(gogoproto.stdtime) = true];
+    string identity = 2;
+    double rate_per_second = 3;
+}
+
+message StickyExecutionAttributes {
+    TaskQueue worker_task_queue = 1;
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration schedule_to_start_timeout = 2 [(gogoproto.stdduration) = true];
+}

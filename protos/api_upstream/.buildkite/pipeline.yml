@@ -1,0 +1,10 @@
+steps:
+  - label: "build"
+    agents:
+      queue: "default"
+      docker: "*"
+    command: "make ci-build"
+    plugins:
+      - docker-compose#v3.1.0:
+          run: build
+          config: ./.buildkite/docker-compose.yml
