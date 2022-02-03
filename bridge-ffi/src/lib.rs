@@ -721,10 +721,7 @@ impl tmprl_worker_t {
     ) -> Result<tmprl_worker_t, String> {
         Ok(tmprl_worker_t {
             tokio_runtime,
-            worker: Arc::new(temporal_sdk_core::init_worker_pre_arcd(
-                opts.try_into()?,
-                client,
-            )),
+            worker: Arc::new(temporal_sdk_core::init_worker(opts.try_into()?, client)),
         })
     }
 

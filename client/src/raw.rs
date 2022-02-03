@@ -9,13 +9,13 @@ use tonic::{body::BoxBody, client::GrpcService, metadata::KeyAndValueRef};
 
 pub(super) mod sealed {
     use super::*;
-    use crate::RetryGateway;
+    use crate::{ConfiguredClient, RetryGateway};
     use futures::TryFutureExt;
     use tonic::{Request, Response, Status};
 
     /// Something that has a workflow service client
     #[async_trait::async_trait]
-    pub trait RawClientLike {
+    pub trait RawClientLike: Send {
         type SvcType: Send + Sync + Clone + 'static;
 
         /// Return the actual client instance
@@ -23,29 +23,33 @@ pub(super) mod sealed {
 
         async fn do_call<F, Req, Resp>(
             &mut self,
-            call_name: &'static str,
+            _call_name: &'static str,
             mut callfn: F,
-            req: tonic::Request<Req>,
-        ) -> Result<tonic::Response<Resp>, tonic::Status>
+            req: Request<Req>,
+        ) -> Result<Response<Resp>, Status>
         where
             Req: Clone + Unpin + Send + Sync + 'static,
             F: FnMut(
                 &mut WorkflowServiceClient<Self::SvcType>,
-                tonic::Request<Req>,
-            )
-                -> BoxFuture<'static, Result<tonic::Response<Resp>, tonic::Status>>,
-            F: Send + Sync + Unpin + 'static;
+                Request<Req>,
+            ) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+            F: Send + Sync + Unpin + 'static,
+        {
+            callfn(self.client(), req).await
+        }
     }
 
+    // Here we implement retry on anything that is already RawClientLike
     #[async_trait::async_trait]
-    impl<T> RawClientLike for RetryGateway<WorkflowServiceClient<T>>
+    impl<RC, T> RawClientLike for RetryGateway<RC>
     where
+        RC: RawClientLike<SvcType = T> + 'static,
         T: Send + Sync + Clone + 'static,
     {
         type SvcType = T;
 
-        fn client(&mut self) -> &mut WorkflowServiceClient<T> {
-            self.get_client_mut()
+        fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+            self.get_client_mut().client()
         }
 
         async fn do_call<F, Req, Resp>(
@@ -57,7 +61,7 @@ pub(super) mod sealed {
         where
             Req: Clone + Unpin + Send + Sync + 'static,
             F: FnMut(
-                &mut WorkflowServiceClient<T>,
+                &mut WorkflowServiceClient<Self::SvcType>,
                 Request<Req>,
             ) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
             F: Send + Sync + Unpin + 'static,
@@ -73,32 +77,25 @@ pub(super) mod sealed {
         }
     }
 
-    #[async_trait::async_trait]
     impl<T> RawClientLike for WorkflowServiceClient<T>
     where
         T: Send + Sync + Clone + 'static,
     {
         type SvcType = T;
 
-        fn client(&mut self) -> &mut WorkflowServiceClient<T> {
+        fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
             self
         }
+    }
 
-        async fn do_call<F, Req, Resp>(
-            &mut self,
-            _call_name: &'static str,
-            mut callfn: F,
-            req: Request<Req>,
-        ) -> Result<Response<Resp>, Status>
-        where
-            Req: Clone + Unpin + Send + Sync,
-            F: FnMut(
-                &mut WorkflowServiceClient<T>,
-                Request<Req>,
-            ) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
-            F: Send + Sync + Unpin + 'static,
-        {
-            callfn(self.client(), req).await
+    impl<T> RawClientLike for ConfiguredClient<WorkflowServiceClient<T>>
+    where
+        T: Send + Sync + Clone + 'static,
+    {
+        type SvcType = T;
+
+        fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+            &mut self.client
         }
     }
 }
@@ -527,7 +524,7 @@ mod tests {
     #[allow(dead_code)]
     async fn raw_client_retry_compiles() {
         let opts = fake_sg_opts();
-        let raw_client = opts.connect_raw(None).await.unwrap();
+        let raw_client = opts.connect_no_namespace(None).await.unwrap();
         let mut retry_client = RetryGateway::new(raw_client, opts.retry_config);
 
         let the_request = ListNamespacesRequest::default();

@@ -46,6 +46,7 @@ use crate::{
     worker::Worker,
 };
 use std::sync::Arc;
+use temporal_client::{ConfiguredClient, GatewayArcable, WorkflowServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollActivityError, PollWfError},
     CoreLog, Worker as WorkerTrait,
@@ -60,24 +61,21 @@ lazy_static::lazy_static! {
 }
 
 /// Initialize a worker bound to a task queue
-pub fn init_worker<SG: ServerGatewayApis + Send + Sync + 'static>(
-    worker_config: WorkerConfig,
-    client: SG,
-) -> Worker {
-    init_worker_pre_arcd(worker_config, Arc::new(client))
-}
-
-/// Initialize a worker bound to a task queue, if the client is already behind an `Arc`.
-// Ideally this would be done with `impl Into<Arc<SG>>` but that imposes type clarifications
-// at the callsite sometimes.
-pub fn init_worker_pre_arcd<SG: ServerGatewayApis + Send + Sync + 'static>(
-    worker_config: WorkerConfig,
-    client: Arc<SG>,
-) -> Worker {
+pub fn init_worker(worker_config: WorkerConfig, client: impl GatewayArcable) -> Worker {
+    let client = client.into_gateway_arc();
     let sticky_q = sticky_q_name_for_worker(&client.get_options().identity, &worker_config);
     let metrics = MetricsContext::top_level(worker_config.namespace.clone())
         .with_task_q(worker_config.task_queue.clone());
     Worker::new(worker_config, sticky_q, client, metrics)
+}
+
+/// Initialize a worker from config and a lower-level client
+pub fn init_worker_from_upgradeable_client(
+    worker_config: WorkerConfig,
+    client: impl UpgradeableClient,
+) -> Worker {
+    let upgrayde = client.upgrade(worker_config.namespace.clone(), RetryConfig::default());
+    init_worker(worker_config, upgrayde)
 }
 
 /// Create a worker for replaying a specific history. It will auto-shutdown as soon as the history
@@ -98,7 +96,6 @@ pub fn init_replay_worker(
     // Could possibly just use mocked pollers here, but they'd need to be un-test-moded
     let run_id = history.extract_run_id_from_start()?.to_string();
     let last_event = history.last_event_id();
-    // TODO: None default metrics context?
     let mut worker = Worker::new(config, None, gateway, MetricsContext::default());
     worker.set_shutdown_on_run_reaches_event(run_id, last_event);
     Ok(worker)
@@ -115,5 +112,42 @@ pub(crate) fn sticky_q_name_for_worker(
         ))
     } else {
         None
+    }
+}
+
+#[doc(hidden)]
+pub trait UpgradeableClient {
+    fn upgrade(
+        self,
+        namespace: String,
+        retry_opts: RetryConfig,
+    ) -> NamespacedConfiguredClient<WorkflowServiceClientWithMetrics>;
+}
+impl UpgradeableClient for ConfiguredClient<WorkflowServiceClientWithMetrics> {
+    fn upgrade(
+        self,
+        namespace: String,
+        retry_opts: RetryConfig,
+    ) -> NamespacedConfiguredClient<WorkflowServiceClientWithMetrics> {
+        NamespacedConfiguredClient {
+            cc: self,
+            namespace,
+            retry_opts,
+        }
+    }
+}
+#[doc(hidden)]
+pub struct NamespacedConfiguredClient<C> {
+    cc: ConfiguredClient<C>,
+    namespace: String,
+    retry_opts: RetryConfig,
+}
+impl GatewayArcable for NamespacedConfiguredClient<WorkflowServiceClientWithMetrics> {
+    type Reified = RetryGateway<ServerGateway>;
+    fn into_gateway_arc(self) -> Arc<Self::Reified> {
+        let (c, opts) = self.cc.into_parts();
+        let gateway = ServerGateway::new(c, opts, self.namespace);
+        let retry_gateway = RetryGateway::new(gateway, self.retry_opts);
+        Arc::new(retry_gateway)
     }
 }

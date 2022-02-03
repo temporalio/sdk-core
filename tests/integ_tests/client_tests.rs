@@ -17,7 +17,7 @@ async fn can_use_retry_gateway() {
 #[tokio::test]
 async fn can_use_retry_gateway_raw_client() {
     let opts = get_integ_server_options();
-    let raw_client = opts.connect_raw(None).await.unwrap();
+    let raw_client = opts.connect_no_namespace(None).await.unwrap();
     let mut retry_client = RetryGateway::new(raw_client, opts.retry_config);
     retry_client
         .describe_namespace(DescribeNamespaceRequest {

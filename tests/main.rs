@@ -2,18 +2,52 @@
 
 #[cfg(test)]
 mod integ_tests {
-    use std::str::FromStr;
-    use temporal_sdk_core::{
-        ClientTlsConfig, ServerGatewayApis, ServerGatewayOptionsBuilder, TlsConfig,
-    };
-    use temporal_sdk_core_test_utils::NAMESPACE;
-    use url::Url;
-
     mod client_tests;
     mod heartbeat_tests;
     mod polling_tests;
     mod queries_tests;
     mod workflow_tests;
+
+    use std::str::FromStr;
+    use temporal_client::WorkflowService;
+    use temporal_sdk_core::{
+        init_worker_from_upgradeable_client, telemetry_init, ClientTlsConfig, ServerGatewayApis,
+        ServerGatewayOptionsBuilder, TlsConfig,
+    };
+    use temporal_sdk_core_api::{worker::WorkerConfigBuilder, CoreTelemetry};
+    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListNamespacesRequest;
+    use temporal_sdk_core_test_utils::{
+        get_integ_server_options, get_integ_telem_options, NAMESPACE,
+    };
+    use url::Url;
+
+    // Create a worker like a bridge would (unwraps aside)
+    #[tokio::test]
+    #[ignore] // Really a compile time check more than anything
+    async fn lang_bridge_example() {
+        let opts = get_integ_server_options();
+        let telem_d = telemetry_init(&get_integ_telem_options()).unwrap();
+        let mut retrying_client = opts
+            .connect_no_namespace(telem_d.get_metric_meter())
+            .await
+            .unwrap();
+
+        let _worker = init_worker_from_upgradeable_client(
+            WorkerConfigBuilder::default()
+                .namespace("default")
+                .task_queue("Wheee!")
+                .build()
+                .unwrap(),
+            // clone the client if you intend to use it later. Strip off the retry wrapper since
+            // worker will assert its own
+            retrying_client.clone().into_inner(),
+        );
+
+        // Do things with worker or client
+        let _ = retrying_client
+            .list_namespaces(ListNamespacesRequest::default())
+            .await;
+    }
 
     // TODO: Currently ignored because starting up the docker image with TLS requires some hoop
     //  jumping. We should upgrade CI to be able to do that but this was manually run against

@@ -23,9 +23,9 @@ pub const RETRYABLE_ERROR_CODES: [Code; 7] = [
     Code::Unavailable,
 ];
 
-#[derive(Debug)]
 /// A wrapper for a [ServerGatewayApis] or [crate::WorkflowService] implementor which performs
 /// auto-retries
+#[derive(Debug, Clone)]
 pub struct RetryGateway<SG> {
     gateway: SG,
     retry_config: RetryConfig,
@@ -50,6 +50,11 @@ impl<SG> RetryGateway<SG> {
     /// Return the inner client type mutably
     pub fn get_client_mut(&mut self) -> &mut SG {
         &mut self.gateway
+    }
+
+    /// Disable retry and return the inner client type
+    pub fn into_inner(self) -> SG {
+        self.gateway
     }
 
     /// Wraps a call to the underlying client with retry capability.
@@ -173,7 +178,6 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
     }
 }
 
-// Annoyingly, this needs to exist and
 macro_rules! retry_call {
     ($myself:ident, $call_name:ident) => { retry_call!($myself, $call_name,) };
     ($myself:ident, $call_name:ident, $($args:expr),*) => {{

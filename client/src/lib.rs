@@ -29,7 +29,9 @@ use opentelemetry::metrics::Meter;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
+    ops::{Deref, DerefMut},
     str::FromStr,
+    sync::Arc,
     task::Poll,
     time::{Duration, Instant},
 };
@@ -207,6 +209,67 @@ pub enum GatewayInitError {
     TonicTransportError(#[from] tonic::transport::Error),
 }
 
+/// Types which can turn into [ServerGatewayApis] implementing [Arc]s, which expose higher-level
+/// interactions and can be passed to workers when initializing them.
+pub trait GatewayArcable {
+    /// The concrete type
+    type Reified: ServerGatewayApis + Send + Sync + 'static;
+    /// Get an the arc'd gateway impl
+    fn into_gateway_arc(self) -> Arc<Self::Reified>;
+}
+impl<SGA> GatewayArcable for SGA
+where
+    SGA: ServerGatewayApis + Send + Sync + 'static,
+{
+    type Reified = SGA;
+    fn into_gateway_arc(self) -> Arc<Self::Reified> {
+        Arc::new(self)
+    }
+}
+impl<SGA> GatewayArcable for Arc<SGA>
+where
+    SGA: ServerGatewayApis + Send + Sync + 'static,
+{
+    type Reified = SGA;
+    fn into_gateway_arc(self) -> Arc<Self::Reified> {
+        self
+    }
+}
+
+/// A client with [ServerGatewayOptions] attached, which can be passed to initialize workers,
+/// or can be used directly.
+#[derive(Clone)]
+pub struct ConfiguredClient<C> {
+    client: C,
+    options: ServerGatewayOptions,
+}
+
+impl<C> ConfiguredClient<C> {
+    /// Returns the options the client is configured with
+    pub fn options(&self) -> &ServerGatewayOptions {
+        &self.options
+    }
+
+    /// De-constitute this type
+    pub fn into_parts(self) -> (C, ServerGatewayOptions) {
+        (self.client, self.options)
+    }
+}
+
+// The configured client is effectively a "smart" (dumb) pointer
+impl<C> Deref for ConfiguredClient<C> {
+    type Target = C;
+
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
+impl<C> DerefMut for ConfiguredClient<C> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.client
+    }
+}
+
 impl ServerGatewayOptions {
     /// Attempt to establish a connection to the Temporal server in a specific namespace. The
     /// returned client is bound to that namespace.
@@ -215,26 +278,29 @@ impl ServerGatewayOptions {
         namespace: impl Into<String>,
         metrics_meter: Option<&Meter>,
     ) -> Result<RetryGateway<ServerGateway>, GatewayInitError> {
-        let service = self.connect_raw(metrics_meter).await?;
+        let (service, opts) = self
+            .connect_no_namespace(metrics_meter)
+            .await?
+            .into_inner()
+            .into_parts();
         let gateway = ServerGateway {
             service,
             namespace: namespace.into(),
-            opts: self.clone(),
+            opts,
         };
         let retry_gateway = RetryGateway::new(gateway, self.retry_config.clone());
         Ok(retry_gateway)
     }
 
-    /// Attempt to establish a connection to the Temporal server and return the (mostly) raw gRPC
-    /// client (which is still intercepted with default headers functionality, and metrics if
-    /// provided).
+    /// Attempt to establish a connection to the Temporal server and return a gRPC client which is
+    /// intercepted with retry, default headers functionality, and metrics if provided.
     ///
-    /// If calling from a lang bridge, typically you will immediately want to pass this to
-    /// [RetryGateway::new] to enable retry functionality.
-    pub async fn connect_raw(
+    /// See [RetryGateway] for more
+    pub async fn connect_no_namespace(
         &self,
         metrics_meter: Option<&Meter>,
-    ) -> Result<WorkflowServiceClientWithMetrics, GatewayInitError> {
+    ) -> Result<RetryGateway<ConfiguredClient<WorkflowServiceClientWithMetrics>>, GatewayInitError>
+    {
         let channel = Channel::from_shared(self.target_url.to_string())?;
         let channel = self.add_tls_to_channel(channel).await?;
         let channel = channel.connect().await?;
@@ -245,9 +311,12 @@ impl ServerGatewayOptions {
             })
             .service(channel);
         let interceptor = ServiceCallInterceptor { opts: self.clone() };
-        Ok(WorkflowServiceClient::with_interceptor(
-            service,
-            interceptor,
+        Ok(RetryGateway::new(
+            ConfiguredClient {
+                client: WorkflowServiceClient::with_interceptor(service, interceptor),
+                options: self.clone(),
+            },
+            self.retry_config.clone(),
         ))
     }
 
@@ -399,7 +468,7 @@ pub type WorkflowServiceClientWithMetrics = WorkflowServiceClient<InterceptedMet
 type InterceptedMetricsSvc = InterceptedService<GrpcMetricSvc, ServiceCallInterceptor>;
 
 /// Contains an instance of a namespace-bound client for interacting with the Temporal server
-#[derive(Debug)]
+#[derive(derive_more::Constructor, Debug)]
 pub struct ServerGateway {
     /// Client for interacting with workflow service
     service: WorkflowServiceClientWithMetrics,
