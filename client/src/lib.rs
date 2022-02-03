@@ -18,7 +18,10 @@ pub use crate::retry::{CallType, RetryGateway};
 pub use mocks::MockManualGateway;
 pub use raw::WorkflowService;
 
-use crate::metrics::{svc_operation, MetricsContext};
+use crate::{
+    metrics::{svc_operation, MetricsContext},
+    raw::{sealed::RawClientLike, AttachMetricLabels},
+};
 use backoff::{ExponentialBackoff, SystemClock};
 use futures::{future::BoxFuture, task::Context, FutureExt};
 use http::uri::InvalidUri;
@@ -55,8 +58,6 @@ use tower::ServiceBuilder;
 use url::Url;
 use uuid::Uuid;
 
-use crate::raw::sealed::RawClientLike;
-use crate::raw::AttachMetricLabels;
 #[cfg(any(feature = "mocks", test))]
 use futures::Future;
 
@@ -433,12 +434,12 @@ impl ServerGateway {
     }
 
     /// Used to access the client as a [WorkflowService] implementor rather than the raw struct
-    fn wf_svc(&self) -> impl RawClientLike<InterceptedMetricsSvc> {
+    fn wf_svc(&self) -> impl RawClientLike<SvcType = InterceptedMetricsSvc> {
         self.service.clone()
     }
 }
 
-/// This trait provides ways to call the temporal server
+/// This trait provides higher-level friendlier interaction with the server
 #[cfg_attr(any(feature = "mocks", test), mockall::automock)]
 #[async_trait::async_trait]
 pub trait ServerGatewayApis {

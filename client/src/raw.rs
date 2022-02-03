@@ -5,7 +5,7 @@
 use crate::{metrics::namespace_kv, raw::sealed::RawClientLike, LONG_POLL_TIMEOUT};
 use futures::{future::BoxFuture, FutureExt};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::workflow_service_client::WorkflowServiceClient;
-use tonic::metadata::KeyAndValueRef;
+use tonic::{body::BoxBody, client::GrpcService, metadata::KeyAndValueRef};
 
 pub(super) mod sealed {
     use super::*;
@@ -15,9 +15,11 @@ pub(super) mod sealed {
 
     /// Something that has a workflow service client
     #[async_trait::async_trait]
-    pub trait RawClientLike<T> {
+    pub trait RawClientLike {
+        type SvcType: Send + Sync + Clone + 'static;
+
         /// Return the actual client instance
-        fn client(&mut self) -> &mut WorkflowServiceClient<T>;
+        fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType>;
 
         async fn do_call<F, Req, Resp>(
             &mut self,
@@ -28,7 +30,7 @@ pub(super) mod sealed {
         where
             Req: Clone + Unpin + Send + Sync + 'static,
             F: FnMut(
-                &mut WorkflowServiceClient<T>,
+                &mut WorkflowServiceClient<Self::SvcType>,
                 tonic::Request<Req>,
             )
                 -> BoxFuture<'static, Result<tonic::Response<Resp>, tonic::Status>>,
@@ -36,10 +38,12 @@ pub(super) mod sealed {
     }
 
     #[async_trait::async_trait]
-    impl<T> RawClientLike<T> for RetryGateway<WorkflowServiceClient<T>>
+    impl<T> RawClientLike for RetryGateway<WorkflowServiceClient<T>>
     where
         T: Send + Sync + Clone + 'static,
     {
+        type SvcType = T;
+
         fn client(&mut self) -> &mut WorkflowServiceClient<T> {
             self.get_client_mut()
         }
@@ -70,10 +74,12 @@ pub(super) mod sealed {
     }
 
     #[async_trait::async_trait]
-    impl<T> RawClientLike<T> for WorkflowServiceClient<T>
+    impl<T> RawClientLike for WorkflowServiceClient<T>
     where
         T: Send + Sync + Clone + 'static,
     {
+        type SvcType = T;
+
         fn client(&mut self) -> &mut WorkflowServiceClient<T> {
             self
         }
@@ -128,9 +134,9 @@ impl AttachMetricLabels {
 
 // Blanket impl the trait for all raw-client-like things. Since the trait default-implements
 // everything, there's nothing to actually implement.
-impl<RC, T> WorkflowService<T> for RC
+impl<RC, T> WorkflowService for RC
 where
-    RC: RawClientLike<T>,
+    RC: RawClientLike<SvcType = T>,
     T: tonic::client::GrpcService<tonic::body::BoxBody> + Send + Clone + 'static,
     T::ResponseBody: tonic::codegen::Body + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
@@ -148,7 +154,7 @@ macro_rules! proxy {
             request: impl tonic::IntoRequest<super::$req>,
         ) -> BoxFuture<Result<tonic::Response<super::$resp>, tonic::Status>> {
             #[allow(unused_mut)]
-            let fact = |c: &mut WorkflowServiceClient<T>, mut req: tonic::Request<super::$req>| {
+            let fact = |c: &mut WorkflowServiceClient<Self::SvcType>, mut req: tonic::Request<super::$req>| {
                 $( type_closure_arg(&mut req, $closure); )*
                 let mut c = c.clone();
                 async move { c.$method(req).await }.boxed()
@@ -164,14 +170,17 @@ fn type_closure_arg<T, R>(arg: T, f: impl FnOnce(T) -> R) -> R {
 
 /// Trait version of the generated workflow service client with modifications to attach appropriate
 /// metric labels or whatever else to requests
-#[async_trait::async_trait]
-pub trait WorkflowService<T>: RawClientLike<T>
+pub trait WorkflowService: RawClientLike
 where
-    T: tonic::client::GrpcService<tonic::body::BoxBody> + Send + Clone + 'static,
-    T::ResponseBody: tonic::codegen::Body + Send + 'static,
-    T::Error: Into<tonic::codegen::StdError>,
-    T::Future: Send,
-    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
+    // Yo this is wild
+    <Self as RawClientLike>::SvcType: GrpcService<BoxBody> + Send + Clone + 'static,
+    <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::ResponseBody:
+        tonic::codegen::Body + Send + 'static,
+    <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::Error:
+        Into<tonic::codegen::StdError>,
+    <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::Future: Send,
+    <<<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::ResponseBody as tonic::codegen::Body>::Error:
+         Into<tonic::codegen::StdError> + Send,
 {
     proxy!(
         register_namespace,
@@ -511,8 +520,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mocks::fake_sg_opts;
-    use crate::{RetryGateway, WorkflowServiceClientWithMetrics};
+    use crate::{mocks::fake_sg_opts, RetryGateway, WorkflowServiceClientWithMetrics};
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListNamespacesRequest;
 
     // Just to help me make sure some stuff compiles
