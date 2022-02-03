@@ -520,6 +520,11 @@ where
         GetClusterInfoResponse
     );
     proxy!(
+        get_system_info,
+        GetSystemInfoRequest,
+        GetSystemInfoResponse
+    );
+    proxy!(
         list_task_queue_partitions,
         ListTaskQueuePartitionsRequest,
         ListTaskQueuePartitionsResponse,
