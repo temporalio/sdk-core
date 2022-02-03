@@ -5,28 +5,115 @@
 use crate::{metrics::namespace_kv, raw::sealed::RawClientLike, LONG_POLL_TIMEOUT};
 use futures::{future::BoxFuture, FutureExt};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::workflow_service_client::WorkflowServiceClient;
+use tonic::metadata::KeyAndValueRef;
 
 pub(super) mod sealed {
-    use super::WorkflowServiceClient;
+    use super::*;
     use crate::RetryGateway;
+    use futures::TryFutureExt;
+    use tonic::{Request, Response, Status};
 
     /// Something that has a workflow service client
+    #[async_trait::async_trait]
     pub trait RawClientLike<T> {
         /// Return the actual client instance
         fn client(&mut self) -> &mut WorkflowServiceClient<T>;
+
+        async fn do_call<F, Req, Resp>(
+            &mut self,
+            call_name: &'static str,
+            mut callfn: F,
+            req: tonic::Request<Req>,
+        ) -> Result<tonic::Response<Resp>, tonic::Status>
+        where
+            Req: Clone + Unpin + Send + Sync + 'static,
+            F: FnMut(
+                &mut WorkflowServiceClient<T>,
+                tonic::Request<Req>,
+            )
+                -> BoxFuture<'static, Result<tonic::Response<Resp>, tonic::Status>>,
+            F: Send + Sync + Unpin + 'static;
     }
 
-    impl<T> RawClientLike<T> for RetryGateway<WorkflowServiceClient<T>> {
+    #[async_trait::async_trait]
+    impl<T> RawClientLike<T> for RetryGateway<WorkflowServiceClient<T>>
+    where
+        T: Send + Sync + Clone + 'static,
+    {
         fn client(&mut self) -> &mut WorkflowServiceClient<T> {
             self.get_client_mut()
         }
+
+        async fn do_call<F, Req, Resp>(
+            &mut self,
+            call_name: &'static str,
+            mut callfn: F,
+            req: Request<Req>,
+        ) -> Result<Response<Resp>, Status>
+        where
+            Req: Clone + Unpin + Send + Sync + 'static,
+            F: FnMut(
+                &mut WorkflowServiceClient<T>,
+                Request<Req>,
+            ) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+            F: Send + Sync + Unpin + 'static,
+        {
+            let rtc = self.get_retry_config(call_name);
+            let req = req_cloner(&req);
+            let fact = || {
+                let req_clone = req_cloner(&req);
+                callfn(self.client(), req_clone)
+            };
+            let res = Self::make_future_retry(rtc, fact, call_name);
+            res.map_err(|(e, _attempt)| e).map_ok(|x| x.0).await
+        }
     }
 
-    impl<T> RawClientLike<T> for WorkflowServiceClient<T> {
+    #[async_trait::async_trait]
+    impl<T> RawClientLike<T> for WorkflowServiceClient<T>
+    where
+        T: Send + Sync + Clone + 'static,
+    {
         fn client(&mut self) -> &mut WorkflowServiceClient<T> {
             self
         }
+
+        async fn do_call<F, Req, Resp>(
+            &mut self,
+            _call_name: &'static str,
+            mut callfn: F,
+            req: Request<Req>,
+        ) -> Result<Response<Resp>, Status>
+        where
+            Req: Clone + Unpin + Send + Sync,
+            F: FnMut(
+                &mut WorkflowServiceClient<T>,
+                Request<Req>,
+            ) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+            F: Send + Sync + Unpin + 'static,
+        {
+            callfn(self.client(), req).await
+        }
     }
+}
+
+/// Helper for cloning a tonic request as long as the inner message may be cloned.
+/// We drop extensions, so, lang bridges can't pass those in :shrug:
+fn req_cloner<T: Clone>(cloneme: &tonic::Request<T>) -> tonic::Request<T> {
+    let msg = cloneme.get_ref().clone();
+    let mut new_req = tonic::Request::new(msg);
+    let new_met = new_req.metadata_mut();
+    for kv in cloneme.metadata().iter() {
+        match kv {
+            KeyAndValueRef::Ascii(k, v) => {
+                new_met.insert(k, v.clone());
+            }
+            KeyAndValueRef::Binary(k, v) => {
+                new_met.insert_bin(k, v.clone());
+            }
+        }
+    }
+    new_req
 }
 
 #[derive(Debug)]
@@ -44,7 +131,7 @@ impl AttachMetricLabels {
 impl<RC, T> WorkflowService<T> for RC
 where
     RC: RawClientLike<T>,
-    T: tonic::client::GrpcService<tonic::body::BoxBody> + Send + 'static,
+    T: tonic::client::GrpcService<tonic::body::BoxBody> + Send + Clone + 'static,
     T::ResponseBody: tonic::codegen::Body + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     T::Future: Send,
@@ -61,9 +148,12 @@ macro_rules! proxy {
             request: impl tonic::IntoRequest<super::$req>,
         ) -> BoxFuture<Result<tonic::Response<super::$resp>, tonic::Status>> {
             #[allow(unused_mut)]
-            let mut r: tonic::Request<_> = request.into_request();
-            $( type_closure_arg(&mut r, $closure); )*
-            self.client().$method(r).boxed()
+            let fact = |c: &mut WorkflowServiceClient<T>, mut req: tonic::Request<super::$req>| {
+                $( type_closure_arg(&mut req, $closure); )*
+                let mut c = c.clone();
+                async move { c.$method(req).await }.boxed()
+            };
+            self.do_call(stringify!($method), fact, request.into_request())
         }
     };
 }
@@ -77,7 +167,7 @@ fn type_closure_arg<T, R>(arg: T, f: impl FnOnce(T) -> R) -> R {
 #[async_trait::async_trait]
 pub trait WorkflowService<T>: RawClientLike<T>
 where
-    T: tonic::client::GrpcService<tonic::body::BoxBody> + Send + 'static,
+    T: tonic::client::GrpcService<tonic::body::BoxBody> + Send + Clone + 'static,
     T::ResponseBody: tonic::codegen::Body + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     T::Future: Send,
@@ -416,4 +506,30 @@ where
             r.extensions_mut().insert(labels);
         }
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mocks::fake_sg_opts;
+    use crate::{RetryGateway, WorkflowServiceClientWithMetrics};
+    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListNamespacesRequest;
+
+    // Just to help me make sure some stuff compiles
+    #[allow(dead_code)]
+    async fn raw_client_retry_compiles() {
+        let opts = fake_sg_opts();
+        let raw_client = opts.connect_raw(None).await.unwrap();
+        let mut retry_client = RetryGateway::new(raw_client, opts.retry_config);
+
+        let the_request = ListNamespacesRequest::default();
+        let fact = |c: &mut WorkflowServiceClientWithMetrics, req| {
+            let mut c = c.clone();
+            async move { c.list_namespaces(req).await }.boxed()
+        };
+        retry_client
+            .do_call("whatever", fact, tonic::Request::new(the_request))
+            .await
+            .unwrap();
+    }
 }

@@ -44,26 +44,53 @@ impl<SG> RetryGateway<SG> {
     /// Do not use this directly! Use the [retry_call] macro!
     ///
     /// Wraps a call to the underlying client with retry capability.
-    pub async fn call_with_retry<R, F, Fut>(
-        &self,
+    pub async fn call_with_retry<R, F, Fut>(&self, factory: F, call_name: &'static str) -> Result<R>
+    where
+        F: Fn() -> Fut + Unpin,
+        Fut: Future<Output = Result<R>>,
+    {
+        let rtc = self.get_retry_config(call_name);
+        Self::do_retry_call(rtc, factory, call_name).await
+    }
+
+    pub(crate) fn get_retry_config(&self, call_name: &'static str) -> RetryConfig {
+        let call_type = match call_name {
+            "poll_workflow_task" | "poll_activity_task" => CallType::LongPoll,
+            _ => CallType::Normal,
+        };
+        match call_type {
+            CallType::Normal => self.retry_config.clone(),
+            CallType::LongPoll => RetryConfig::poll_retry_policy(),
+        }
+    }
+
+    pub(crate) async fn do_retry_call<R, F, Fut>(
+        rtc: RetryConfig,
         factory: F,
-        ct: CallType,
         call_name: &'static str,
     ) -> Result<R>
     where
         F: Fn() -> Fut + Unpin,
         Fut: Future<Output = Result<R>>,
     {
-        let rtc = match ct {
-            CallType::Normal => self.retry_config.clone(),
-            CallType::LongPoll => RetryConfig::poll_retry_policy(),
+        let res = Self::make_future_retry(rtc, factory, call_name).await;
+        Ok(res.map_err(|(e, _attempt)| e)?.0)
+    }
+
+    pub(crate) fn make_future_retry<R, F, Fut>(
+        rtc: RetryConfig,
+        factory: F,
+        call_name: &'static str,
+    ) -> FutureRetry<F, TonicErrorHandler>
+    where
+        F: FnMut() -> Fut + Unpin,
+        Fut: Future<Output = Result<R>>,
+    {
+        let call_type = match call_name {
+            "poll_workflow_task" | "poll_activity_task" => CallType::LongPoll,
+            _ => CallType::Normal,
         };
-        Ok(
-            FutureRetry::new(factory, TonicErrorHandler::new(rtc, ct, call_name))
-                .await
-                .map_err(|(e, _attempt)| e)?
-                .0,
-        )
+        FutureRetry::new(factory, TonicErrorHandler::new(rtc, call_type, call_name))
     }
 
     /// Return the inner client type
@@ -78,7 +105,7 @@ impl<SG> RetryGateway<SG> {
 }
 
 #[derive(Debug)]
-struct TonicErrorHandler {
+pub(crate) struct TonicErrorHandler {
     backoff: ExponentialBackoff,
     max_retries: usize,
     call_type: CallType,
@@ -165,26 +192,18 @@ macro_rules! retry_call {
     ($myself:ident, $call_name:ident) => { retry_call!($myself, $call_name,) };
     ($myself:ident, $call_name:ident, $($args:expr),*) => {{
         let call_name_str = stringify!($call_name);
-        let call_type = match call_name_str {
-            "poll_workflow_task" | "poll_activity_task" => $crate::CallType::LongPoll,
-            _ => $crate::CallType::Normal
-        };
         let fact = || {
             let mut rawc = $myself.get_client().clone();
             async move { rawc.$call_name($($args,)*).await }
         };
-        $myself.call_with_retry(fact, call_type, stringify!($call_name)).await
+        $myself.call_with_retry(fact, call_name_str).await
     }};
     // This noclone version is used when calling using our pretty trait, since it does internal
     // clones
     (@noclone, $myself:ident, $call_name:ident, $($args:expr),*) => {{
         let call_name_str = stringify!($call_name);
-        let call_type = match call_name_str {
-            "poll_workflow_task" | "poll_activity_task" => $crate::CallType::LongPoll,
-            _ => $crate::CallType::Normal
-        };
         let fact = || { $myself.get_client().$call_name($($args,)*)};
-        $myself.call_with_retry(fact, call_type, stringify!($call_name)).await
+        $myself.call_with_retry(fact, call_name_str).await
     }}
 }
 
