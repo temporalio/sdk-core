@@ -708,6 +708,7 @@ message DescribeWorkflowExecutionResponse {
     temporal.api.workflow.v1.WorkflowExecutionInfo workflow_execution_info = 2;
     repeated temporal.api.workflow.v1.PendingActivityInfo pending_activities = 3;
     repeated temporal.api.workflow.v1.PendingChildExecutionInfo pending_children = 4;
+    temporal.api.workflow.v1.PendingWorkflowTaskInfo pending_workflow_task = 5;
 }
 
 message DescribeTaskQueueRequest {
@@ -737,6 +738,30 @@ message GetClusterInfoResponse {
     int32 history_shard_count = 6;
     string persistence_store = 7;
     string visibility_store = 8;
+}
+
+message GetSystemInfoRequest {
+}
+
+message GetSystemInfoResponse {
+    // Version of the server.
+    string server_version = 1;
+
+    // All capabilities the system supports.
+    Capabilities capabilities = 2;
+
+    // System capability details.
+    message Capabilities {
+        // True if signal and query headers are supported.
+        bool signal_and_query_header = 1;
+
+        // True if internal errors are differentiated from other types of errors for purposes of
+        // retrying non-internal errors.
+        //
+        // When unset/false, clients retry all failures. When true, clients should only retry
+        // non-internal errors.
+        bool internal_error_differentiation = 2;
+    }
 }
 
 message ListTaskQueuePartitionsRequest {

@@ -3,13 +3,13 @@ use crate::{
     job_assert,
     replay::TestHistoryBuilder,
     test_help::{
-        build_fake_core, build_mock_pollers, build_multihist_mock_sg, canned_histories,
-        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_core, poll_and_reply,
+        build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
+        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_worker, poll_and_reply,
         poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, FakeWfResponses,
         MockPollCfg, MocksHolder, ResponseType, NO_MORE_WORK_ERROR_MSG, TEST_Q,
     },
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
-    Core, CoreSDK, WorkflowActivationCompletion,
+    Worker,
 };
 use rstest::{fixture, rstest};
 use std::{
@@ -18,6 +18,7 @@ use std::{
     time::Duration,
 };
 use temporal_client::mocks::mock_gateway;
+use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_resolution, ActivityResolution},
@@ -29,6 +30,7 @@ use temporal_sdk_core_protos::{
             ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
             FailWorkflowExecution, RequestCancelActivity, ScheduleActivity,
         },
+        workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{
         enums::v1::{EventType, WorkflowTaskFailedCause},
@@ -40,27 +42,27 @@ use temporal_sdk_core_protos::{
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
 
 #[fixture(hist_batches = &[])]
-fn single_timer_setup(hist_batches: &'static [usize]) -> CoreSDK {
+fn single_timer_setup(hist_batches: &'static [usize]) -> Worker {
     let wfid = "fake_wf_id";
 
     let t = canned_histories::single_timer("1");
-    build_fake_core(wfid, t, hist_batches)
+    build_fake_worker(wfid, t, hist_batches)
 }
 
 #[fixture(hist_batches = &[])]
-fn single_activity_setup(hist_batches: &'static [usize]) -> CoreSDK {
+fn single_activity_setup(hist_batches: &'static [usize]) -> Worker {
     let wfid = "fake_wf_id";
 
     let t = canned_histories::single_activity("fake_activity");
-    build_fake_core(wfid, t, hist_batches)
+    build_fake_worker(wfid, t, hist_batches)
 }
 
 #[fixture(hist_batches = &[])]
-fn single_activity_failure_setup(hist_batches: &'static [usize]) -> CoreSDK {
+fn single_activity_failure_setup(hist_batches: &'static [usize]) -> Worker {
     let wfid = "fake_wf_id";
 
     let t = canned_histories::single_failed_activity("fake_activity");
-    build_fake_core(wfid, t, hist_batches)
+    build_fake_worker(wfid, t, hist_batches)
 }
 
 #[rstest]
@@ -69,9 +71,9 @@ fn single_activity_failure_setup(hist_batches: &'static [usize]) -> CoreSDK {
 #[case::incremental_evict(single_timer_setup(&[1, 2]), AfterEveryReply)]
 #[case::replay_evict(single_timer_setup(&[2, 2]), AfterEveryReply)]
 #[tokio::test]
-async fn single_timer(#[case] core: CoreSDK, #[case] evict: WorkflowCachingPolicy) {
+async fn single_timer(#[case] worker: Worker, #[case] evict: WorkflowCachingPolicy) {
     poll_and_reply(
-        &core,
+        &worker,
         evict,
         &[
             gen_assert_and_reply(
@@ -87,16 +89,16 @@ async fn single_timer(#[case] core: CoreSDK, #[case] evict: WorkflowCachingPolic
     .await;
 }
 
-#[rstest(core,
+#[rstest(worker,
 case::incremental(single_activity_setup(&[1, 2])),
 case::incremental_activity_failure(single_activity_failure_setup(&[1, 2])),
 case::replay(single_activity_setup(&[2])),
 case::replay_activity_failure(single_activity_failure_setup(&[2]))
 )]
 #[tokio::test]
-async fn single_activity_completion(core: CoreSDK) {
+async fn single_activity_completion(worker: Worker) {
     poll_and_reply(
-        &core,
+        &worker,
         NonSticky,
         &[
             gen_assert_and_reply(
@@ -127,7 +129,7 @@ async fn parallel_timer_test_across_wf_bridge(hist_batches: &'static [usize]) {
         timer_1_id.to_string().as_str(),
         timer_2_id.to_string().as_str(),
     );
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
 
     poll_and_reply(
         &core,
@@ -179,7 +181,7 @@ async fn timer_cancel(hist_batches: &'static [usize]) {
         timer_id.to_string().as_str(),
         cancel_timer_id.to_string().as_str(),
     );
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
 
     poll_and_reply(
         &core,
@@ -216,7 +218,7 @@ async fn scheduled_activity_cancellation_try_cancel(hist_batches: &'static [usiz
     let signal_id = "signal";
 
     let t = canned_histories::cancel_scheduled_activity(activity_id, signal_id);
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
 
     poll_and_reply(
         &core,
@@ -254,7 +256,7 @@ async fn scheduled_activity_timeout(hist_batches: &'static [usize]) {
     let activity_id = "fake_activity";
 
     let t = canned_histories::scheduled_activity_timeout(activity_id);
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
     poll_and_reply(
         &core,
         NonSticky,
@@ -306,7 +308,7 @@ async fn started_activity_timeout(hist_batches: &'static [usize]) {
     let activity_seq = 1;
 
     let t = canned_histories::started_activity_timeout(activity_seq.to_string().as_str());
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
 
     poll_and_reply(
         &core,
@@ -361,7 +363,7 @@ async fn cancelled_activity_timeout(hist_batches: &'static [usize]) {
     let signal_id = "signal";
 
     let t = canned_histories::scheduled_cancelled_activity_timeout(activity_id, signal_id);
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
 
     poll_and_reply(
         &core,
@@ -408,7 +410,7 @@ async fn scheduled_activity_cancellation_abandon(hist_batches: &'static [usize])
         activity_id.to_string().as_str(),
         signal_id,
     );
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
 
     verify_activity_cancellation(&core, activity_id, ActivityCancellationType::Abandon).await;
 }
@@ -424,7 +426,7 @@ async fn started_activity_cancellation_abandon(hist_batches: &'static [usize]) {
         activity_id.to_string().as_str(),
         signal_id,
     );
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
 
     verify_activity_cancellation(&core, activity_id, ActivityCancellationType::Abandon).await;
 }
@@ -440,7 +442,7 @@ async fn scheduled_activity_cancellation_try_cancel_task_canceled(hist_batches: 
         activity_id.to_string().as_str(),
         signal_id,
     );
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
 
     verify_activity_cancellation(&core, activity_id, ActivityCancellationType::TryCancel).await;
 }
@@ -456,19 +458,19 @@ async fn started_activity_cancellation_try_cancel_task_canceled(hist_batches: &'
         activity_id.to_string().as_str(),
         signal_id,
     );
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
 
     verify_activity_cancellation(&core, activity_id, ActivityCancellationType::TryCancel).await;
 }
 
 /// Verification for try cancel & abandon histories
 async fn verify_activity_cancellation(
-    core: &CoreSDK,
+    worker: &Worker,
     activity_seq: u32,
     cancel_type: ActivityCancellationType,
 ) {
     poll_and_reply(
-        core,
+        worker,
         NonSticky,
         &[
             gen_assert_and_reply(
@@ -513,7 +515,7 @@ async fn scheduled_activity_cancellation_wait_for_cancellation(hist_batches: &'s
         activity_id.to_string().as_str(),
         signal_id,
     );
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
 
     verify_activity_cancellation_wait_for_cancellation(activity_id, &core).await;
 }
@@ -529,14 +531,14 @@ async fn started_activity_cancellation_wait_for_cancellation(hist_batches: &'sta
         activity_id.to_string().as_str(),
         signal_id,
     );
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
 
     verify_activity_cancellation_wait_for_cancellation(activity_id, &core).await;
 }
 
-async fn verify_activity_cancellation_wait_for_cancellation(activity_id: u32, core: &CoreSDK) {
+async fn verify_activity_cancellation_wait_for_cancellation(activity_id: u32, worker: &Worker) {
     poll_and_reply(
-        core,
+        worker,
         NonSticky,
         &[
             gen_assert_and_reply(
@@ -586,7 +588,7 @@ async fn workflow_update_random_seed_on_workflow_reset() {
         timer_1_id.to_string().as_str(),
         new_run_id,
     );
-    let core = build_fake_core(wfid, t, &[2]);
+    let core = build_fake_worker(wfid, t, &[2]);
 
     poll_and_reply(
         &core,
@@ -640,7 +642,7 @@ async fn cancel_timer_before_sent_wf_bridge() {
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
-    let core = build_fake_core(wfid, t, &[1]);
+    let core = build_fake_worker(wfid, t, &[1]);
 
     poll_and_reply(
         &core,
@@ -678,12 +680,11 @@ async fn complete_activation_with_failure(
             wf_id: wfid.to_string(),
             hist,
             response_batches: batches.iter().map(Into::into).collect(),
-            task_q: TEST_Q.to_owned(),
         }],
         true,
         Some(1),
     );
-    let core = mock_core(mock_sg);
+    let core = mock_worker(mock_sg);
 
     poll_and_reply(
         &core,
@@ -711,7 +712,7 @@ async fn simple_timer_fail_wf_execution(hist_batches: &'static [usize]) {
     let timer_id = 1;
 
     let t = canned_histories::single_timer(timer_id.to_string().as_str());
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
 
     poll_and_reply(
         &core,
@@ -742,7 +743,7 @@ async fn two_signals(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
 
     let t = canned_histories::two_signals("sig1", "sig2");
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
 
     poll_and_reply(
         &core,
@@ -786,14 +787,13 @@ async fn workflow_failures_only_reported_once() {
             wf_id: wfid.to_string(),
             hist,
             response_batches: response_batches.into_iter().map(Into::into).collect(),
-            task_q: TEST_Q.to_owned(),
         }],
         true,
         // We should only call the server to say we failed twice (once after each success)
         Some(2),
     );
     let omap = mocks.outstanding_task_map.clone();
-    let core = mock_core(mocks);
+    let core = mock_worker(mocks);
 
     poll_and_reply_clears_outstanding_evicts(
         &core,
@@ -835,13 +835,11 @@ async fn max_concurrent_wft_respected() {
                 wf_id: "wf1".to_string(),
                 hist: t1,
                 response_batches: vec![ResponseType::AllHistory],
-                task_q: TEST_Q.to_string(),
             },
             FakeWfResponses {
                 wf_id: "wf2".to_string(),
                 hist: t2,
                 response_batches: vec![ResponseType::AllHistory],
-                task_q: TEST_Q.to_string(),
             },
         ],
         true,
@@ -850,30 +848,29 @@ async fn max_concurrent_wft_respected() {
     let mut mock = build_mock_pollers(mh);
     // Limit the core to two outstanding workflow tasks, hence we should only see polling
     // happen twice, since we will not actually finish the two workflows
-    mock.worker_cfg(TEST_Q, |cfg| {
+    mock.worker_cfg(|cfg| {
         cfg.max_cached_workflows = 2;
         cfg.max_outstanding_workflow_tasks = 2;
     });
-    let core = mock_core(mock);
+    let core = mock_worker(mock);
 
     // Poll twice in a row before completing -- we should be at limit
-    let r1 = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let r1 = core.poll_workflow_activation().await.unwrap();
     let r1_run_id = r1.run_id.clone();
-    let r2 = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let r2 = core.poll_workflow_activation().await.unwrap();
     // Now we immediately poll for new work, and complete the r1 activation. The poll must not
     // unblock until the completion goes through.
     let last_finisher = AtomicUsize::new(0);
     let (_, mut r1) = tokio::join! {
         async {
             core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-                TEST_Q,
                 r1.run_id,
                 start_timer_cmd(1, Duration::from_secs(1)))
             ).await.unwrap();
             last_finisher.store(1, Ordering::SeqCst);
         },
         async {
-            let r = core.poll_workflow_activation(TEST_Q).await.unwrap();
+            let r = core.poll_workflow_activation().await.unwrap();
             last_finisher.store(2, Ordering::SeqCst);
             r
         }
@@ -884,38 +881,35 @@ async fn max_concurrent_wft_respected() {
     // Since we never did anything with r2, all subsequent activations should be for wf1
     for i in 2..=20 {
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-            TEST_Q,
             r1.run_id,
             start_timer_cmd(i, Duration::from_secs(1)),
         ))
         .await
         .unwrap();
-        r1 = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        r1 = core.poll_workflow_activation().await.unwrap();
         assert_eq!(r1.run_id, r1_run_id);
     }
     // Finish the tasks so we can shut down
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         r1.run_id,
         CompleteWorkflowExecution { result: None }.into(),
     ))
     .await
     .unwrap();
     // Evict r2
-    core.request_workflow_eviction(TEST_Q, &r2.run_id);
+    core.request_workflow_eviction(&r2.run_id);
     // We have to properly complete the outstanding task (or the mock will be confused why a task
     // failure was reported)
     let _ = core
         .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-            TEST_Q,
             r2.run_id,
             start_timer_cmd(1, Duration::from_secs(1)),
         ))
         .await;
     // Get and complete eviction
-    let r2 = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let r2 = core.poll_workflow_activation().await.unwrap();
     let _ = core
-        .complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, r2.run_id))
+        .complete_workflow_activation(WorkflowActivationCompletion::empty(r2.run_id))
         .await;
     core.shutdown().await;
 }
@@ -925,7 +919,7 @@ async fn max_concurrent_wft_respected() {
 async fn activity_not_canceled_on_replay_repro(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let t = canned_histories::unsent_at_cancel_repro();
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
     let activity_id = 1;
 
     poll_and_reply(
@@ -971,7 +965,7 @@ async fn activity_not_canceled_on_replay_repro(hist_batches: &'static [usize]) {
 async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let t = canned_histories::cancel_not_sent_when_also_complete_repro();
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
     let activity_id = 1;
 
     poll_and_reply(
@@ -1020,45 +1014,40 @@ async fn lots_of_workflows() {
             wf_id,
             hist,
             response_batches: vec![1.into(), 2.into()],
-            task_q: TEST_Q.to_owned(),
         }
     });
     let mock = build_multihist_mock_sg(hists, false, None);
-    let core = &mock_core(mock);
+    let worker = &mock_worker(mock);
 
     fanout_tasks(5, |_| async move {
-        while let Ok(wft) = core.poll_workflow_activation(TEST_Q).await {
+        while let Ok(wft) = worker.poll_workflow_activation().await {
             let job = &wft.jobs[0];
             let reply = match job.variant {
                 Some(workflow_activation_job::Variant::StartWorkflow(_)) => {
                     start_timer_cmd(1, Duration::from_secs(1))
                 }
                 Some(workflow_activation_job::Variant::RemoveFromCache(_)) => {
-                    core.complete_workflow_activation(WorkflowActivationCompletion::empty(
-                        TEST_Q, wft.run_id,
-                    ))
-                    .await
-                    .unwrap();
+                    worker
+                        .complete_workflow_activation(WorkflowActivationCompletion::empty(
+                            wft.run_id,
+                        ))
+                        .await
+                        .unwrap();
                     continue;
                 }
                 _ => CompleteWorkflowExecution { result: None }.into(),
             };
-            core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-                TEST_Q, wft.run_id, reply,
-            ))
-            .await
-            .unwrap();
+            worker
+                .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+                    wft.run_id, reply,
+                ))
+                .await
+                .unwrap();
         }
     })
     .await;
-    assert_eq!(
-        core.workers
-            .get(TEST_Q)
-            .unwrap()
-            .outstanding_workflow_tasks(),
-        0
-    );
-    core.shutdown().await;
+    assert_eq!(worker.outstanding_workflow_tasks(), 0);
+    worker.shutdown().await;
 }
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[2]))]
@@ -1066,7 +1055,7 @@ async fn lots_of_workflows() {
 async fn wft_timeout_repro(hist_batches: &'static [usize]) {
     let wfid = "fake_wf_id";
     let t = canned_histories::wft_timeout_repro();
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
     let activity_id = 1;
 
     poll_and_reply(
@@ -1108,20 +1097,19 @@ async fn complete_after_eviction() {
     let mut mock = mock_gateway();
     mock.expect_complete_workflow_task().times(0);
     let mock = single_hist_mock_sg(wfid, t, &[2], mock, true);
-    let core = mock_core(mock);
+    let core = mock_worker(mock);
 
-    let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let activation = core.poll_workflow_activation().await.unwrap();
     // We just got start workflow, immediately evict
-    core.request_workflow_eviction(TEST_Q, &activation.run_id);
+    core.request_workflow_eviction(&activation.run_id);
     // Original task must be completed before we get the eviction
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         activation.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
     ))
     .await
     .unwrap();
-    let eviction_activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let eviction_activation = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         eviction_activation.jobs.as_slice(),
         [
@@ -1135,7 +1123,6 @@ async fn complete_after_eviction() {
     );
     // Complete the activation containing the eviction, the way we normally would have
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         eviction_activation.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
     ))
@@ -1157,12 +1144,11 @@ async fn sends_appropriate_sticky_task_queue_responses() {
         .returning(|_| Ok(Default::default()));
     mock.expect_complete_workflow_task().times(0);
     let mut mock = single_hist_mock_sg(wfid, t, &[1], mock, false);
-    mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
-    let core = mock_core(mock);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = mock_worker(mock);
 
-    let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let activation = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         activation.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
     ))
@@ -1176,18 +1162,17 @@ async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation(
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("1");
     let mock = single_hist_mock_sg(wfid, t, &[1, 2], mock_gateway(), false);
-    let core = mock_core(mock);
+    let core = mock_worker(mock);
 
     // Poll for and complete first workflow task
-    let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let activation = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         activation.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
     ))
     .await
     .unwrap();
-    let eviction_activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let eviction_activation = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         eviction_activation.jobs.as_slice(),
         [WorkflowActivationJob {
@@ -1196,7 +1181,7 @@ async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation(
     );
     // Poll again. We should not overwrite the eviction with the new work from the server to fire
     // the timer, so polling will try again, and run into the mock being out of responses.
-    let act = core.poll_workflow_activation(TEST_Q).await;
+    let act = core.poll_workflow_activation().await;
     assert_matches!(act, Err(PollWfError::TonicError(err))
                     if err.message() == NO_MORE_WORK_ERROR_MSG);
     core.shutdown().await;
@@ -1242,17 +1227,16 @@ async fn buffered_work_drained_on_shutdown() {
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
     let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, []);
     // Cache on to avoid being super repetitive
-    mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
-    let core = &mock_core(mock);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = &mock_worker(mock);
 
     // Poll for first WFT
-    let act1 = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let act1 = core.poll_workflow_activation().await.unwrap();
     let poll_fut = async move {
         // Now poll again, which will start spinning, and buffer the next WFT with timer fired in it
         // - it won't stop spinning until the first task is complete
-        let t = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        let t = core.poll_workflow_activation().await.unwrap();
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            TEST_Q,
             t.run_id,
             vec![CompleteWorkflowExecution { result: None }.into()],
         ))
@@ -1261,7 +1245,6 @@ async fn buffered_work_drained_on_shutdown() {
     };
     let complete_first = async move {
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-            TEST_Q,
             act1.run_id,
             start_timer_cmd(1, Duration::from_secs(1)),
         ))
@@ -1292,17 +1275,17 @@ async fn buffering_tasks_doesnt_count_toward_outstanding_max() {
         .take(20),
     );
     let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, []);
-    mock.worker_cfg(TEST_Q, |wc| {
+    mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 10;
         wc.max_outstanding_workflow_tasks = 5;
     });
-    let core = mock_core(mock);
+    let core = mock_worker(mock);
     // Poll for first WFT
-    core.poll_workflow_activation(TEST_Q).await.unwrap();
+    core.poll_workflow_activation().await.unwrap();
     // This will error out when the mock runs out of responses. Otherwise it would hang when we
     // hit the max
     assert_matches!(
-        core.poll_workflow_activation(TEST_Q).await.unwrap_err(),
+        core.poll_workflow_activation().await.unwrap_err(),
         PollWfError::TonicError(_)
     );
 }
@@ -1321,15 +1304,14 @@ async fn fail_wft_then_recover() {
     mh.expect_fail_wft_matcher =
         Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::NonDeterministicError));
     let mut mock = build_mock_pollers(mh);
-    mock.worker_cfg(TEST_Q, |wc| {
+    mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 2;
     });
-    let core = mock_core(mock);
+    let core = mock_worker(mock);
 
-    let act = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let act = core.poll_workflow_activation().await.unwrap();
     // Start an activity instead of a timer, triggering nondeterminism error
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         act.run_id.clone(),
         vec![ScheduleActivity {
             activity_id: "fake_activity".to_string(),
@@ -1340,7 +1322,7 @@ async fn fail_wft_then_recover() {
     .await
     .unwrap();
     // We must handle an eviction now
-    let evict_act = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let evict_act = core.poll_workflow_activation().await.unwrap();
     assert_eq!(evict_act.run_id, act.run_id);
     assert_matches!(
         evict_act.jobs.as_slice(),
@@ -1348,23 +1330,19 @@ async fn fail_wft_then_recover() {
             variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
         }]
     );
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(
-        TEST_Q,
-        evict_act.run_id,
-    ))
-    .await
-    .unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(evict_act.run_id))
+        .await
+        .unwrap();
 
     // Workflow starting over, this time issue the right command
-    let act = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let act = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         act.run_id,
         vec![start_timer_cmd(1, Duration::from_secs(1))],
     ))
     .await
     .unwrap();
-    let act = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let act = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         act.jobs.as_slice(),
         [WorkflowActivationJob {
@@ -1372,7 +1350,6 @@ async fn fail_wft_then_recover() {
         },]
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         act.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
     ))
@@ -1396,9 +1373,9 @@ async fn poll_response_triggers_wf_error() {
     // Rather than panic on bad expectation we want to return the magic "no more work" error
     mh.enforce_correct_number_of_polls = false;
     let mock = build_mock_pollers(mh);
-    let core = mock_core(mock);
+    let core = mock_worker(mock);
     // Poll for first WFT, which is immediately an eviction
-    let act = core.poll_workflow_activation(TEST_Q).await;
+    let act = core.poll_workflow_activation().await;
     assert_matches!(act, Err(PollWfError::TonicError(err))
                     if err.message() == NO_MORE_WORK_ERROR_MSG);
 }
@@ -1427,39 +1404,38 @@ async fn lang_slower_than_wft_timeouts() {
         .times(1)
         .returning(|_| Ok(Default::default()));
     let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, []);
-    mock.worker_cfg(TEST_Q, |wc| {
+    mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 2;
     });
-    let core = mock_core(mock);
+    let core = mock_worker(mock);
 
-    let wf_task = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    let poll_until_no_work = core.poll_workflow_activation(TEST_Q).await;
+    let wf_task = core.poll_workflow_activation().await.unwrap();
+    let poll_until_no_work = core.poll_workflow_activation().await;
     assert_matches!(poll_until_no_work, Err(PollWfError::TonicError(err))
                     if err.message() == NO_MORE_WORK_ERROR_MSG);
     // This completion runs into a workflow task not found error, since it's completing a stale
     // task.
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, wf_task.run_id))
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
         .await
         .unwrap();
     // Now we should get an eviction
-    let wf_task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let wf_task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         wf_task.jobs.as_slice(),
         [WorkflowActivationJob {
             variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
         }]
     );
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, wf_task.run_id))
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
         .await
         .unwrap();
     // The last WFT buffered should be applied now
-    let start_again = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let start_again = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         start_again.jobs[0].variant,
         Some(workflow_activation_job::Variant::StartWorkflow(_))
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         start_again.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
     ))
@@ -1481,12 +1457,11 @@ async fn tries_cancel_of_completed_activity() {
 
     let mock = mock_gateway();
     let mut mock = single_hist_mock_sg("fake_wf_id", t, &[1, 2], mock, true);
-    mock.worker_cfg(TEST_Q, |cfg| cfg.max_cached_workflows = 1);
-    let core = mock_core(mock);
+    mock.worker_cfg(|cfg| cfg.max_cached_workflows = 1);
+    let core = mock_worker(mock);
 
-    let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let activation = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         activation.run_id,
         ScheduleActivity {
             seq: 1,
@@ -1497,7 +1472,7 @@ async fn tries_cancel_of_completed_activity() {
     ))
     .await
     .unwrap();
-    let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let activation = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         activation.jobs.as_slice(),
         [
@@ -1510,7 +1485,6 @@ async fn tries_cancel_of_completed_activity() {
         ]
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         activation.run_id,
         vec![
             RequestCancelActivity { seq: 1 }.into(),
@@ -1531,27 +1505,27 @@ async fn failing_wft_doesnt_eat_permit_forever() {
 
     let mock = mock_gateway();
     let mut mock = single_hist_mock_sg("fake_wf_id", t, [1, 1, 1], mock, true);
-    mock.worker_cfg(TEST_Q, |cfg| {
+    mock.worker_cfg(|cfg| {
         cfg.max_cached_workflows = 2;
         cfg.max_outstanding_workflow_tasks = 2;
     });
     let outstanding_mock_tasks = mock.outstanding_task_map.clone();
-    let core = mock_core(mock);
+    let worker = mock_worker(mock);
 
     let mut run_id = "".to_string();
     // Fail twice, verifying a permit is eaten. We cannot fail the same run more than twice in a row
     // because we purposefully time out rather than spamming.
     for _ in 1..=2 {
-        let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        let activation = worker.poll_workflow_activation().await.unwrap();
         // Issue a nonsense completion that will trigger a WFT failure
-        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-            TEST_Q,
-            activation.run_id,
-            RequestCancelActivity { seq: 1 }.into(),
-        ))
-        .await
-        .unwrap();
-        let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        worker
+            .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+                activation.run_id,
+                RequestCancelActivity { seq: 1 }.into(),
+            ))
+            .await
+            .unwrap();
+        let activation = worker.poll_workflow_activation().await.unwrap();
         assert_matches!(
             activation.jobs.as_slice(),
             [WorkflowActivationJob {
@@ -1559,14 +1533,12 @@ async fn failing_wft_doesnt_eat_permit_forever() {
             },]
         );
         run_id = activation.run_id.clone();
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(
-            TEST_Q,
-            activation.run_id,
-        ))
-        .await
-        .unwrap();
-        assert_eq!(core.outstanding_wfts(TEST_Q), 0);
-        assert_eq!(core.available_wft_permits(TEST_Q), 2);
+        worker
+            .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
+            .await
+            .unwrap();
+        assert_eq!(worker.outstanding_workflow_tasks(), 0);
+        assert_eq!(worker.available_wft_permits(), 2);
     }
     // We should be "out of work" because the mock service thinks we didn't complete the last task,
     // which we didn't, because we don't spam failures. The real server would eventually time out
@@ -1577,16 +1549,16 @@ async fn failing_wft_doesnt_eat_permit_forever() {
         .unwrap()
         .write()
         .remove_by_left(&run_id);
-    let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
-        activation.run_id,
-        CompleteWorkflowExecution { result: None }.into(),
-    ))
-    .await
-    .unwrap();
+    let activation = worker.poll_workflow_activation().await.unwrap();
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            activation.run_id,
+            CompleteWorkflowExecution { result: None }.into(),
+        ))
+        .await
+        .unwrap();
 
-    core.shutdown().await;
+    worker.shutdown().await;
 }
 
 #[tokio::test]
@@ -1617,51 +1589,47 @@ async fn cache_miss_doesnt_eat_permit_forever() {
     mh.expect_fail_wft_matcher =
         Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::ResetStickyTaskQueue));
     let mut mock = build_mock_pollers(mh);
-    mock.worker_cfg(TEST_Q, |cfg| {
+    mock.worker_cfg(|cfg| {
         cfg.max_outstanding_workflow_tasks = 2;
     });
-    let core = mock_core(mock);
+    let worker = mock_worker(mock);
 
     // Spin missing the cache to verify that we don't get stuck
     for _ in 1..=3 {
         // Start
-        let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(
-            TEST_Q,
-            activation.run_id,
-        ))
-        .await
-        .unwrap();
+        let activation = worker.poll_workflow_activation().await.unwrap();
+        worker
+            .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
+            .await
+            .unwrap();
         // Evict
-        let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        let activation = worker.poll_workflow_activation().await.unwrap();
         assert_matches!(
             activation.jobs.as_slice(),
             [WorkflowActivationJob {
                 variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
             },]
         );
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(
-            TEST_Q,
-            activation.run_id,
-        ))
-        .await
-        .unwrap();
-        assert_eq!(core.outstanding_wfts(TEST_Q), 0);
-        assert_eq!(core.available_wft_permits(TEST_Q), 2);
+        worker
+            .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
+            .await
+            .unwrap();
+        assert_eq!(worker.outstanding_workflow_tasks(), 0);
+        assert_eq!(worker.available_wft_permits(), 2);
         // When we loop back up, the poll will trigger a cache miss, which we should immediately
         // reply to WFT with failure, and then poll again, which will deliver the from-the-start
         // history
     }
-    let activation = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
-        activation.run_id,
-        CompleteWorkflowExecution { result: None }.into(),
-    ))
-    .await
-    .unwrap();
+    let activation = worker.poll_workflow_activation().await.unwrap();
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            activation.run_id,
+            CompleteWorkflowExecution { result: None }.into(),
+        ))
+        .await
+        .unwrap();
 
-    core.shutdown().await;
+    worker.shutdown().await;
 }
 
 /// This test verifies that WFTs which come as replies to completing a WFT are properly delivered
@@ -1699,14 +1667,14 @@ async fn tasks_from_completion_are_delivered() {
         .times(1)
         .returning(|_| Ok(Default::default()));
     let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, []);
-    mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 2);
-    let core = mock_core(mock);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 2);
+    let core = mock_worker(mock);
 
-    let wf_task = core.poll_workflow_activation(TEST_Q).await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, wf_task.run_id))
+    let wf_task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
         .await
         .unwrap();
-    let wf_task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let wf_task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         wf_task.jobs.as_slice(),
         [WorkflowActivationJob {
@@ -1714,7 +1682,6 @@ async fn tasks_from_completion_are_delivered() {
         },]
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         wf_task.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
     ))

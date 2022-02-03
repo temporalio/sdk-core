@@ -312,6 +312,10 @@ service WorkflowService {
     rpc GetClusterInfo(GetClusterInfoRequest) returns (GetClusterInfoResponse){
     }
 
+    // GetSystemInfo returns information about the system.
+    rpc GetSystemInfo(GetSystemInfoRequest) returns (GetSystemInfoResponse) {
+    }
+
     rpc ListTaskQueuePartitions(ListTaskQueuePartitionsRequest) returns (ListTaskQueuePartitionsResponse) {
     }
 }

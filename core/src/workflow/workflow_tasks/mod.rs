@@ -608,7 +608,7 @@ impl WorkflowTaskManager {
                     poll_wf_resp.previous_started_event_id,
                 ),
                 &poll_wf_resp.workflow_execution.workflow_id,
-                &gateway.get_options().namespace,
+                gateway.namespace(),
                 &poll_wf_resp.workflow_type,
                 &self.metrics,
             )

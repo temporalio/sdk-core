@@ -19,15 +19,11 @@ import "temporal/sdk/core/workflow_completion/workflow_completion.proto";
 // A request as given to `record_activity_heartbeat`
 message ActivityHeartbeat {
     bytes task_token = 1;
-    // The task queue / worker this activity is associated with
-    string task_queue = 2;
-    repeated common.Payload details = 3;
+    repeated common.Payload details = 2;
 }
 
 // A request as given to `complete_activity_task`
 message ActivityTaskCompletion {
     bytes task_token = 1;
-    // The task queue / worker this task is associated with
-    string task_queue = 2;
-    activity_result.ActivityExecutionResult result = 3;
+    activity_result.ActivityExecutionResult result = 2;
 }

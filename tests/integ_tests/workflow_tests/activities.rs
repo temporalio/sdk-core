@@ -23,7 +23,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_test_utils::{
-    init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers, CoreWfStarter,
+    init_core_and_create_wf, schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
 };
 use tokio::time::sleep;
 
@@ -60,7 +60,7 @@ async fn one_activity() {
 async fn activity_workflow() {
     let (core, task_q) = init_core_and_create_wf("activity_workflow").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
@@ -71,12 +71,12 @@ async fn activity_workflow() {
             Duration::from_secs(60),
             Duration::from_secs(60),
         )
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
-    let task = core.poll_activity_task(&task_q).await.unwrap();
+    let task = core.poll_activity_task().await.unwrap();
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -90,13 +90,12 @@ async fn activity_workflow() {
     // Complete activity successfully.
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
-        task_queue: task_q.to_string(),
         result: Some(ActivityExecutionResult::ok(response_payload.clone())),
     })
     .await
     .unwrap();
     // Poll workflow task and verify that activity has succeeded.
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -114,14 +113,14 @@ async fn activity_workflow() {
             assert_eq!(r, &response_payload);
         }
     );
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
 async fn activity_non_retryable_failure() {
     let (core, task_q) = init_core_and_create_wf("activity_non_retryable_failure").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
@@ -132,12 +131,12 @@ async fn activity_non_retryable_failure() {
             Duration::from_secs(60),
             Duration::from_secs(60),
         )
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
-    let task = core.poll_activity_task(&task_q).await.unwrap();
+    let task = core.poll_activity_task().await.unwrap();
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -148,13 +147,12 @@ async fn activity_non_retryable_failure() {
     let failure = Failure::application_failure("activity failed".to_string(), true);
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
-        task_queue: task_q.to_string(),
         result: Some(ActivityExecutionResult::fail(failure.clone())),
     })
     .await
     .unwrap();
     // Poll workflow task and verify that activity has failed.
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -185,14 +183,14 @@ async fn activity_non_retryable_failure() {
             });
         }
     );
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
 async fn activity_retry() {
     let (core, task_q) = init_core_and_create_wf("activity_retry").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
@@ -203,12 +201,12 @@ async fn activity_retry() {
             Duration::from_secs(60),
             Duration::from_secs(60),
         )
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
     // Poll activity 1st time
-    let task = core.poll_activity_task(&task_q).await.unwrap();
+    let task = core.poll_activity_task().await.unwrap();
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -219,13 +217,12 @@ async fn activity_retry() {
     let failure = Failure::application_failure("activity failed".to_string(), false);
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
-        task_queue: task_q.to_string(),
         result: Some(ActivityExecutionResult::fail(failure)),
     })
     .await
     .unwrap();
     // Poll 2nd time
-    let task = core.poll_activity_task(&task_q).await.unwrap();
+    let task = core.poll_activity_task().await.unwrap();
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -239,13 +236,12 @@ async fn activity_retry() {
     };
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
-        task_queue: task_q.to_string(),
         result: Some(ActivityExecutionResult::ok(response_payload.clone())),
     })
     .await
     .unwrap();
     // Poll workflow task and verify activity has succeeded.
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -260,14 +256,14 @@ async fn activity_retry() {
             assert_eq!(r, &response_payload);
         }
     );
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
 async fn activity_cancellation_try_cancel() {
     let (core, task_q) = init_core_and_create_wf("activity_cancellation_try_cancel").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
     core.complete_workflow_activation(
         vec![
@@ -285,13 +281,13 @@ async fn activity_cancellation_try_cancel() {
             }
             .into(),
         ]
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
     // complete it in this test as activity is try-cancelled.
-    let activity_task = core.poll_activity_task(&task_q).await.unwrap();
+    let activity_task = core.poll_activity_task().await.unwrap();
     assert_matches!(
         activity_task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -299,7 +295,7 @@ async fn activity_cancellation_try_cancel() {
         }
     );
     // Poll workflow task and verify that activity has failed.
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -313,14 +309,13 @@ async fn activity_cancellation_try_cancel() {
         }
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![RequestCancelActivity { seq: 0 }.into()],
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
-    core.complete_execution(&task_q, &task.run_id).await;
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -328,7 +323,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     let (core, task_q) =
         init_core_and_create_wf("activity_cancellation_plus_complete_doesnt_double_resolve").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
     core.complete_workflow_activation(
         vec![
@@ -346,13 +341,13 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
             }
             .into(),
         ]
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
-    let activity_task = core.poll_activity_task(&task_q).await.unwrap();
+    let activity_task = core.poll_activity_task().await.unwrap();
     assert_matches!(activity_task.variant, Some(act_task::Variant::Start(_)));
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [WorkflowActivationJob {
@@ -360,13 +355,12 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
         }]
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![RequestCancelActivity { seq: 0 }.into()],
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Should get cancel task
     assert_matches!(
         task.jobs.as_slice(),
@@ -384,7 +378,6 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     // We need to complete the wf task to send the activity cancel command to the server, so start
     // another short timer
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![StartTimer {
             seq: 2,
@@ -397,7 +390,6 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     // Now say the activity completes anyways
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: activity_task.task_token,
-        task_queue: task_q.to_string(),
         result: Some(ActivityExecutionResult::ok([1].into())),
     })
     .await
@@ -405,21 +397,21 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     // Ensure we do not get a wakeup with the activity being resolved completed, and instead get
     // the timer fired event (also wait for timer to fire)
     sleep(Duration::from_secs(1)).await;
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [WorkflowActivationJob {
             variant: Some(workflow_activation_job::Variant::FireTimer(_)),
         }]
     );
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
 async fn started_activity_timeout() {
     let (core, task_q) = init_core_and_create_wf("started_activity_timeout").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity that times out in 1 second.
     core.complete_workflow_activation(
         schedule_activity_cmd(
@@ -430,20 +422,20 @@ async fn started_activity_timeout() {
             Duration::from_secs(1),
             Duration::from_secs(60),
         )
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
     // complete it in this test as activity is timed out after 1 second.
-    let activity_task = core.poll_activity_task(&task_q).await.unwrap();
+    let activity_task = core.poll_activity_task().await.unwrap();
     assert_matches!(
         activity_task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
             assert_eq!(start_activity.activity_type, "test_activity".to_string())
         }
     );
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -466,7 +458,7 @@ async fn started_activity_timeout() {
             assert_eq!(*seq, 0);
         }
     );
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -474,7 +466,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
     let (core, task_q) =
         init_core_and_create_wf("activity_cancellation_wait_cancellation_completed").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
     core.complete_workflow_activation(
         vec![
@@ -492,13 +484,13 @@ async fn activity_cancellation_wait_cancellation_completed() {
             }
             .into(),
         ]
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
     // complete it in this test as activity is wait-cancelled.
-    let activity_task = core.poll_activity_task(&task_q).await.unwrap();
+    let activity_task = core.poll_activity_task().await.unwrap();
     assert_matches!(
         activity_task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -506,7 +498,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
         }
     );
     // Poll workflow task and verify that activity has failed.
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -520,7 +512,6 @@ async fn activity_cancellation_wait_cancellation_completed() {
         }
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![RequestCancelActivity { seq: 0 }.into()],
     ))
@@ -528,20 +519,19 @@ async fn activity_cancellation_wait_cancellation_completed() {
     .unwrap();
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: activity_task.task_token,
-        task_queue: task_q.to_string(),
         result: Some(ActivityExecutionResult::cancel_from_details(None)),
     })
     .await
     .unwrap();
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
-    core.complete_execution(&task_q, &task.run_id).await;
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
 async fn activity_cancellation_abandon() {
     let (core, task_q) = init_core_and_create_wf("activity_cancellation_abandon").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
     core.complete_workflow_activation(
         vec![
@@ -559,13 +549,13 @@ async fn activity_cancellation_abandon() {
             }
             .into(),
         ]
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
     // complete it in this test as activity is abandoned.
-    let activity_task = core.poll_activity_task(&task_q).await.unwrap();
+    let activity_task = core.poll_activity_task().await.unwrap();
     assert_matches!(
         activity_task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -573,7 +563,7 @@ async fn activity_cancellation_abandon() {
         }
     );
     // Poll workflow task and verify that activity has failed.
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -587,7 +577,6 @@ async fn activity_cancellation_abandon() {
         }
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![RequestCancelActivity { seq: 0 }.into()],
     ))
@@ -595,15 +584,15 @@ async fn activity_cancellation_abandon() {
     .unwrap();
     // Poll workflow task expecting that activation has been created by the state machine
     // immediately after the cancellation request.
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
-    core.complete_execution(&task_q, &task.run_id).await;
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
 async fn async_activity_completion_workflow() {
     let (core, task_q) = init_core_and_create_wf("async_activity_workflow").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
@@ -614,12 +603,12 @@ async fn async_activity_completion_workflow() {
             Duration::from_secs(60),
             Duration::from_secs(60),
         )
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
-    let task = core.poll_activity_task(&task_q).await.unwrap();
+    let task = core.poll_activity_task().await.unwrap();
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -633,7 +622,6 @@ async fn async_activity_completion_workflow() {
     // Complete activity asynchronously.
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token.clone(),
-        task_queue: task_q.to_string(),
         result: Some(ActivityExecutionResult::will_complete_async()),
     })
     .await
@@ -649,7 +637,7 @@ async fn async_activity_completion_workflow() {
     .unwrap();
 
     // Poll workflow task and verify that activity has succeeded.
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -665,7 +653,7 @@ async fn async_activity_completion_workflow() {
             assert_eq!(r, &response_payload);
         }
     );
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]
@@ -673,7 +661,7 @@ async fn activity_cancelled_after_heartbeat_times_out() {
     let (core, task_q) =
         init_core_and_create_wf("activity_cancelled_after_heartbeat_times_out").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
@@ -684,12 +672,12 @@ async fn activity_cancelled_after_heartbeat_times_out() {
             Duration::from_secs(60),
             Duration::from_secs(1),
         )
-        .into_completion(task_q.clone(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
-    let task = core.poll_activity_task(&task_q).await.unwrap();
+    let task = core.poll_activity_task().await.unwrap();
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -700,26 +688,23 @@ async fn activity_cancelled_after_heartbeat_times_out() {
     sleep(Duration::from_secs(2)).await;
     core.record_activity_heartbeat(ActivityHeartbeat {
         task_token: task.task_token.clone(),
-        task_queue: task_q.to_string(),
         details: vec![],
     });
 
     // Verify activity got cancelled
-    let cancel_task = core.poll_activity_task(&task_q).await.unwrap();
+    let cancel_task = core.poll_activity_task().await.unwrap();
     assert_eq!(cancel_task.task_token, task.task_token.clone());
     assert_matches!(cancel_task.variant, Some(act_task::Variant::Cancel(_)));
 
     // Complete activity with cancelled result
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token.clone(),
-        task_queue: task_q.to_string(),
         result: Some(ActivityExecutionResult::cancel_from_details(None)),
     })
     .await
     .unwrap();
 
     // Verify shutdown completes
-    core.shutdown_worker(task_q.as_str()).await;
     core.shutdown().await;
     // Cleanup just in case
     core.server_gateway()

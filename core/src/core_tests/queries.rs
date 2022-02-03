@@ -1,15 +1,12 @@
-use crate::{
-    test_help::{
-        canned_histories, hist_to_poll_resp, mock_core, MocksHolder, ResponseType, TEST_Q,
-    },
-    Core,
+use crate::test_help::{
+    canned_histories, hist_to_poll_resp, mock_worker, MocksHolder, ResponseType, TEST_Q,
 };
 use std::{
     collections::{HashMap, VecDeque},
     time::Duration,
 };
 use temporal_client::mocks::mock_gateway;
-
+use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{workflow_activation_job, WorkflowActivationJob},
@@ -62,23 +59,24 @@ async fn legacy_query(#[case] include_history: bool) {
 
     let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![]);
     if !include_history {
-        mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
+        mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     }
-    let core = mock_core(mock);
+    let worker = mock_worker(mock);
 
     let first_wft = || async {
-        let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
-        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-            TEST_Q,
-            task.run_id,
-            start_timer_cmd(1, Duration::from_secs(1)),
-        ))
-        .await
-        .unwrap();
+        let task = worker.poll_workflow_activation().await.unwrap();
+        worker
+            .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+                task.run_id,
+                start_timer_cmd(1, Duration::from_secs(1)),
+            ))
+            .await
+            .unwrap();
     };
     let clear_eviction = || async {
-        let t = core.poll_workflow_activation(TEST_Q).await.unwrap();
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(TEST_Q, t.run_id))
+        let t = worker.poll_workflow_activation().await.unwrap();
+        worker
+            .complete_workflow_activation(WorkflowActivationCompletion::empty(t.run_id))
             .await
             .unwrap();
     };
@@ -90,7 +88,7 @@ async fn legacy_query(#[case] include_history: bool) {
         first_wft().await;
     }
 
-    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let task = worker.poll_workflow_activation().await.unwrap();
     // Poll again, and we end up getting a `query` field query response
     let query = assert_matches!(
         task.jobs.as_slice(),
@@ -99,43 +97,43 @@ async fn legacy_query(#[case] include_history: bool) {
         }] => q
     );
     // Complete the query
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
-        task.run_id,
-        QueryResult {
-            query_id: query.query_id.clone(),
-            variant: Some(
-                QuerySuccess {
-                    response: Some(query_resp.into()),
-                }
-                .into(),
-            ),
-        }
-        .into(),
-    ))
-    .await
-    .unwrap();
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            task.run_id,
+            QueryResult {
+                query_id: query.query_id.clone(),
+                variant: Some(
+                    QuerySuccess {
+                        response: Some(query_resp.into()),
+                    }
+                    .into(),
+                ),
+            }
+            .into(),
+        ))
+        .await
+        .unwrap();
 
     if include_history {
         clear_eviction().await;
         first_wft().await;
     }
 
-    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let task = worker.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [WorkflowActivationJob {
             variant: Some(workflow_activation_job::Variant::FireTimer(_)),
         }]
     );
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
-        task.run_id,
-        vec![CompleteWorkflowExecution { result: None }.into()],
-    ))
-    .await
-    .unwrap();
-    core.shutdown().await;
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+            task.run_id,
+            vec![CompleteWorkflowExecution { result: None }.into()],
+        ))
+        .await
+        .unwrap();
+    worker.shutdown().await;
 }
 
 #[rstest::rstest]
@@ -171,19 +169,18 @@ async fn new_queries(#[case] num_queries: usize) {
     mock_gateway.expect_respond_legacy_query().times(0);
 
     let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![]);
-    mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
-    let core = mock_core(mock);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = mock_worker(mock);
 
-    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         task.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
     ))
     .await
     .unwrap();
 
-    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs[0],
         WorkflowActivationJob {
@@ -214,7 +211,6 @@ async fn new_queries(#[case] num_queries: usize) {
         .collect();
     qresults.push(CompleteWorkflowExecution { result: None }.into());
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         task.run_id,
         qresults,
     ))
@@ -251,19 +247,18 @@ async fn legacy_query_failure_on_wft_failure() {
         .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
 
     let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![]);
-    mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
-    let core = mock_core(mock);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = mock_worker(mock);
 
-    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         task.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
     ))
     .await
     .unwrap();
 
-    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Poll again, and we end up getting a `query` field query response
     assert_matches!(
         task.jobs.as_slice(),
@@ -273,7 +268,6 @@ async fn legacy_query_failure_on_wft_failure() {
     );
     // Fail wft which should result in query being failed
     core.complete_workflow_activation(WorkflowActivationCompletion::fail(
-        TEST_Q,
         task.run_id,
         Failure {
             message: "Ahh i broke".to_string(),
@@ -331,20 +325,18 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
         .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
 
     let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![]);
-    mock.worker_cfg(TEST_Q, |wc| wc.max_cached_workflows = 10);
-    let core = mock_core(mock);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = mock_worker(mock);
 
-    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        TEST_Q,
         task.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        TEST_Q,
         task.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
     ))
@@ -353,7 +345,7 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
 
     // We should get queries two times
     for _ in 1..=2 {
-        let task = core.poll_workflow_activation(TEST_Q).await.unwrap();
+        let task = core.poll_workflow_activation().await.unwrap();
         let query = assert_matches!(
             task.jobs.as_slice(),
             [WorkflowActivationJob {
@@ -361,7 +353,6 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
             }] => q
         );
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-            TEST_Q,
             task.run_id,
             QueryResult {
                 query_id: query.query_id.clone(),

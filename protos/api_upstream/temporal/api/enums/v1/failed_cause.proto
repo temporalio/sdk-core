@@ -82,3 +82,13 @@ enum SignalExternalWorkflowExecutionFailedCause {
     SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED_CAUSE_UNSPECIFIED = 0;
     SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED_CAUSE_EXTERNAL_WORKFLOW_EXECUTION_NOT_FOUND = 1;
 }
+
+enum ResourceExhaustedCause {
+    RESOURCE_EXHAUSTED_CAUSE_UNSPECIFIED = 0;
+    // Caller exceeds request per second limit.
+    RESOURCE_EXHAUSTED_CAUSE_RPS_LIMIT = 1;
+    // Caller exceeds max concurrent request limit.
+    RESOURCE_EXHAUSTED_CAUSE_CONCURRENT_LIMIT = 2;
+    // System overloaded.
+    RESOURCE_EXHAUSTED_CAUSE_SYSTEM_OVERLOADED = 3;
+}

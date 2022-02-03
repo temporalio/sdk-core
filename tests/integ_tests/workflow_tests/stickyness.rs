@@ -72,11 +72,10 @@ async fn cache_miss_ok() {
         .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
         .await
         .unwrap();
-    let core = starter.get_core().await;
-    let tq = starter.get_task_queue();
+    let core = starter.get_worker().await;
     let (r1, _) = tokio::join!(worker.run_until_done(), async move {
         barr.wait().await;
-        core.request_workflow_eviction(tq, &run_id);
+        core.request_workflow_eviction(&run_id);
         // We need to signal the barrier again since the wf gets evicted and will hit it again
         barr.wait().await;
     });

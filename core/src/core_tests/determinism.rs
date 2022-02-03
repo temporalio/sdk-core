@@ -1,7 +1,7 @@
 use crate::{
     replay::DEFAULT_WORKFLOW_TYPE,
     test_help::{
-        build_mock_pollers, canned_histories, mock_core, MockPollCfg, ResponseType, TEST_Q,
+        build_mock_pollers, canned_histories, mock_worker, MockPollCfg, ResponseType, TEST_Q,
     },
 };
 use std::{
@@ -42,7 +42,7 @@ async fn test_wf_task_rejected_properly() {
     mh.expect_fail_wft_matcher =
         Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::Unspecified));
     let mock = build_mock_pollers(mh);
-    let core = mock_core(mock);
+    let core = mock_worker(mock);
     let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
     worker.register_wf(wf_type.to_owned(), timer_wf_fails_once);
@@ -77,11 +77,11 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
         Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::NonDeterministicError));
     let mut mock = build_mock_pollers(mh);
     if use_cache {
-        mock.worker_cfg(TEST_Q, |cfg| {
+        mock.worker_cfg(|cfg| {
             cfg.max_cached_workflows = 2;
         });
     }
-    let core = mock_core(mock);
+    let core = mock_worker(mock);
     let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
     let started_count: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));

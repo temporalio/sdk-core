@@ -5,7 +5,7 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_completion::WorkflowActivationCompletion,
 };
 use temporal_sdk_core_test_utils::{
-    init_core_and_create_wf, start_timer_cmd, CoreTestHelpers, CoreWfStarter,
+    init_core_and_create_wf, start_timer_cmd, CoreWfStarter, WorkerTestHelpers,
 };
 
 pub async fn timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
@@ -29,10 +29,9 @@ async fn timer_workflow_workflow_driver() {
 
 #[tokio::test]
 async fn timer_workflow_manual() {
-    let (core, task_q) = init_core_and_create_wf("timer_workflow").await;
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let (core, _) = init_core_and_create_wf("timer_workflow").await;
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![StartTimer {
             seq: 0,
@@ -42,17 +41,16 @@ async fn timer_workflow_manual() {
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
-    core.complete_execution(&task_q, &task.run_id).await;
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_execution(&task.run_id).await;
     core.shutdown().await;
 }
 
 #[tokio::test]
 async fn timer_cancel_workflow() {
-    let (core, task_q) = init_core_and_create_wf("timer_cancel_workflow").await;
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let (core, _) = init_core_and_create_wf("timer_cancel_workflow").await;
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![
             StartTimer {
@@ -69,9 +67,8 @@ async fn timer_cancel_workflow() {
     ))
     .await
     .unwrap();
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![
             CancelTimer { seq: 1 }.into(),
@@ -84,10 +81,9 @@ async fn timer_cancel_workflow() {
 
 #[tokio::test]
 async fn timer_immediate_cancel_workflow() {
-    let (core, task_q) = init_core_and_create_wf("timer_immediate_cancel_workflow").await;
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let (core, _) = init_core_and_create_wf("timer_immediate_cancel_workflow").await;
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id,
         vec![
             start_timer_cmd(0, Duration::from_secs(1)),

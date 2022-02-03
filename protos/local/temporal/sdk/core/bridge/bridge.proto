@@ -20,21 +20,23 @@ enum LogLevel {
   TRACE = 6;
 }
 
-message InitRequest {
-  GatewayOptions gateway_options = 1;
-  TelemetryOptions telemetry_options = 2;
+message InitTelemetryRequest {
+  string otel_collector_url = 1;
+  string tracing_filter = 2;
+  LogLevel log_forwarding_level = 3;
+  string prometheus_export_bind_address = 4;
+}
 
-  message GatewayOptions {
-    string target_url = 1;
-    string namespace = 2;
-    string client_name = 3;
-    string client_version = 4;
-    map<string, string> static_headers = 5;
-    string identity = 6;
-    string worker_binary_id = 7;
-    TlsConfig tls_config = 8;
-    RetryConfig retry_config = 9;
-  }
+message CreateGatewayRequest {
+  string target_url = 1;
+  string namespace = 2;
+  string client_name = 3;
+  string client_version = 4;
+  map<string, string> static_headers = 5;
+  string identity = 6;
+  string worker_binary_id = 7;
+  TlsConfig tls_config = 8;
+  RetryConfig retry_config = 9;
 
   message TlsConfig {
     bytes server_root_ca_cert = 1;
@@ -51,13 +53,6 @@ message InitRequest {
     google.protobuf.Duration max_elapsed_time = 5;
     google.protobuf.UInt32Value max_retries = 6;
   }
-
-  message TelemetryOptions {
-    string otel_collector_url = 1;
-    string tracing_filter = 2;
-    LogLevel log_forwarding_level = 3;
-    string prometheus_export_bind_address = 4;
-  }
 }
 
 message InitResponse {
@@ -68,7 +63,7 @@ message InitResponse {
   }
 }
 
-message RegisterWorkerRequest {
+message CreateWorkerRequest {
   string task_queue = 1;
   google.protobuf.UInt32Value max_cached_workflows = 2;
   google.protobuf.UInt32Value max_outstanding_workflow_tasks = 3;
@@ -88,12 +83,10 @@ message RegisterWorkerResponse {
 
   message Error {
     string message = 1;
-    bool worker_already_registered = 2;
   }
 }
 
 message PollWorkflowActivationRequest {
-  string task_queue = 1;
 }
 
 message PollWorkflowActivationResponse {
@@ -109,7 +102,6 @@ message PollWorkflowActivationResponse {
 }
 
 message PollActivityTaskRequest {
-  string task_queue = 1;
 }
 
 message PollActivityTaskResponse {
@@ -161,8 +153,7 @@ message RecordActivityHeartbeatResponse {
 }
 
 message RequestWorkflowEvictionRequest {
-  string task_queue = 1;
-  string run_id = 2;
+  string run_id = 1;
 }
 
 message RequestWorkflowEvictionResponse {
@@ -173,14 +164,7 @@ message RequestWorkflowEvictionResponse {
   }
 }
 
-message ShutdownRequest {
-}
-
-message ShutdownResponse {
-}
-
 message ShutdownWorkerRequest {
-  string task_queue = 1;
 }
 
 message ShutdownWorkerResponse {

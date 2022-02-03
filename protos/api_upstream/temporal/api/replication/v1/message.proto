@@ -31,6 +31,8 @@ option java_outer_classname = "MessageProto";
 option ruby_package = "Temporal::Api::Replication::V1";
 option csharp_namespace = "Temporal.Api.Replication.V1";
 
+import "temporal/api/enums/v1/namespace.proto";
+
 message ClusterReplicationConfig {
     string cluster_name = 1;
 }
@@ -38,4 +40,5 @@ message ClusterReplicationConfig {
 message NamespaceReplicationConfig {
     string active_cluster_name = 1;
     repeated ClusterReplicationConfig clusters = 2;
+    temporal.api.enums.v1.ReplicationState state = 3;
 }

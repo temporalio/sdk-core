@@ -2,7 +2,6 @@
 //! to replay canned histories. It should be used by Lang SDKs to provide replay capabilities to
 //! users during testing.
 
-use crate::{init_mock_gateway, CoreInitOptionsBuilder, CoreSDK, TelemetryOptions};
 use futures::FutureExt;
 use std::{
     sync::{
@@ -11,141 +10,17 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{
-    mocks::{mock_gateway, mock_manual_gateway},
-    ServerGatewayApis,
-};
-use temporal_sdk_core_api::{
-    errors::{
-        CompleteActivityError, CompleteWfError, PollActivityError, PollWfError,
-        WorkerRegistrationError,
-    },
-    worker::WorkerConfig,
-    Core, CoreLog,
-};
-use temporal_sdk_core_protos::{
-    coresdk::{
-        activity_task::ActivityTask, workflow_activation::WorkflowActivation,
-        workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat,
-        ActivityTaskCompletion,
-    },
-    temporal::api::{
-        common::v1::WorkflowExecution,
-        history::v1::History,
-        workflowservice::v1::{RespondWorkflowTaskFailedResponse, StartWorkflowExecutionResponse},
-    },
+use temporal_client::{mocks::mock_manual_gateway, ServerGatewayApis};
+
+use temporal_sdk_core_protos::temporal::api::{
+    common::v1::WorkflowExecution,
+    history::v1::History,
+    workflowservice::v1::{RespondWorkflowTaskFailedResponse, StartWorkflowExecutionResponse},
 };
 
 pub use temporal_sdk_core_protos::{
     default_wes_attribs, HistoryInfo, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
 };
-
-/// Create a core instance that can be used for replay. See the [ReplayCore] trait for adding
-/// canned history.
-pub fn init_core_replay(opts: TelemetryOptions) -> ReplayCoreImpl {
-    let shared_mock_gateway = mock_gateway();
-    let init_opts = CoreInitOptionsBuilder::default()
-        .gateway_opts(shared_mock_gateway.get_options().clone())
-        .telemetry_opts(opts)
-        .build()
-        .expect("replay core options init properly");
-    let replay_core =
-        init_mock_gateway(init_opts, shared_mock_gateway).expect("init replay core works");
-    ReplayCoreImpl { inner: replay_core }
-}
-
-/// An extension of the [Core] trait to be used for testing workflows against canned histories.
-pub trait ReplayCore: Core {
-    /// Make a fake worker which will use the provided history to simulate poll responses containing
-    /// that entire history. The configuration should have a unique task queue name.
-    ///
-    /// Note that some of the worker config options do not apply, and some will be overridden.
-    /// Replay workers always are cached, have only 1 poller, and do not poll for activities.
-    fn make_replay_worker(
-        &self,
-        config: WorkerConfig,
-        history: &History,
-    ) -> Result<(), anyhow::Error>;
-}
-
-/// Implements [ReplayCore] functionality
-pub struct ReplayCoreImpl {
-    pub(crate) inner: CoreSDK,
-}
-
-impl ReplayCore for ReplayCoreImpl {
-    fn make_replay_worker(
-        &self,
-        mut config: WorkerConfig,
-        history: &History,
-    ) -> Result<(), anyhow::Error> {
-        let mock_g = mock_gateway_from_history(history, config.task_queue.clone());
-        config.max_cached_workflows = 1;
-        config.max_concurrent_wft_polls = 1;
-        config.no_remote_activities = true;
-        self.inner
-            .register_replay_worker(config, Arc::new(mock_g), history)
-    }
-}
-
-#[async_trait::async_trait]
-impl Core for ReplayCoreImpl {
-    fn register_worker(&self, _config: WorkerConfig) -> Result<(), WorkerRegistrationError> {
-        panic!("Do not use `register_worker` with a replay core instance")
-    }
-
-    async fn poll_workflow_activation(
-        &self,
-        task_queue: &str,
-    ) -> Result<WorkflowActivation, PollWfError> {
-        self.inner.poll_workflow_activation(task_queue).await
-    }
-
-    async fn poll_activity_task(
-        &self,
-        task_queue: &str,
-    ) -> Result<ActivityTask, PollActivityError> {
-        self.inner.poll_activity_task(task_queue).await
-    }
-
-    async fn complete_workflow_activation(
-        &self,
-        completion: WorkflowActivationCompletion,
-    ) -> Result<(), CompleteWfError> {
-        self.inner.complete_workflow_activation(completion).await
-    }
-
-    async fn complete_activity_task(
-        &self,
-        completion: ActivityTaskCompletion,
-    ) -> Result<(), CompleteActivityError> {
-        self.inner.complete_activity_task(completion).await
-    }
-
-    fn record_activity_heartbeat(&self, _details: ActivityHeartbeat) {
-        // do nothing
-    }
-
-    fn request_workflow_eviction(&self, task_queue: &str, run_id: &str) {
-        self.inner.request_workflow_eviction(task_queue, run_id)
-    }
-
-    fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
-        self.inner.server_gateway()
-    }
-
-    async fn shutdown(&self) {
-        self.inner.shutdown().await
-    }
-
-    async fn shutdown_worker(&self, task_queue: &str) {
-        self.inner.shutdown_worker(task_queue).await
-    }
-
-    fn fetch_buffered_logs(&self) -> Vec<CoreLog> {
-        self.inner.fetch_buffered_logs()
-    }
-}
 
 /// Create a mock gateway which can be used by a replay worker to serve up canned history.
 /// It will return the entire history in one workflow task, after that it will return default

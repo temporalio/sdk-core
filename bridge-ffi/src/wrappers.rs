@@ -1,142 +1,137 @@
-use std::str::FromStr;
+use log::LevelFilter;
+use std::{net::SocketAddr, str::FromStr};
+use temporal_sdk_core::{TelemetryOptionsBuilder, Url};
 use temporal_sdk_core_protos::coresdk::bridge;
 
 // Present for try-from only
-pub struct CoreInitOptions(pub bridge::InitRequest);
+pub struct InitTelemetryRequest(pub bridge::InitTelemetryRequest);
 
-impl TryFrom<CoreInitOptions> for temporal_sdk_core::CoreInitOptions {
+impl TryFrom<InitTelemetryRequest> for temporal_sdk_core::TelemetryOptions {
     type Error = String;
 
-    fn try_from(CoreInitOptions(req): CoreInitOptions) -> Result<Self, Self::Error> {
-        let mut core_opts = temporal_sdk_core::CoreInitOptionsBuilder::default();
-        if let Some(req_gateway_opts) = req.gateway_options {
-            let mut gateway_opts = temporal_sdk_core::ServerGatewayOptionsBuilder::default();
-            if !req_gateway_opts.target_url.is_empty() {
-                gateway_opts.target_url(
-                    temporal_sdk_core::Url::parse(&req_gateway_opts.target_url)
-                        .map_err(|err| format!("invalid target URL: {}", err))?,
-                );
-            }
-            if !req_gateway_opts.namespace.is_empty() {
-                gateway_opts.namespace(req_gateway_opts.namespace);
-            }
-            if !req_gateway_opts.client_name.is_empty() {
-                gateway_opts.client_name(req_gateway_opts.client_name);
-            }
-            if !req_gateway_opts.client_version.is_empty() {
-                gateway_opts.client_version(req_gateway_opts.client_version);
-            }
-            if !req_gateway_opts.static_headers.is_empty() {
-                gateway_opts.static_headers(req_gateway_opts.static_headers);
-            }
-            if !req_gateway_opts.identity.is_empty() {
-                gateway_opts.identity(req_gateway_opts.identity);
-            }
-            if !req_gateway_opts.worker_binary_id.is_empty() {
-                gateway_opts.worker_binary_id(req_gateway_opts.worker_binary_id);
-            }
-            if let Some(req_tls_config) = req_gateway_opts.tls_config {
-                let mut tls_config = temporal_sdk_core::TlsConfig::default();
-                if !req_tls_config.server_root_ca_cert.is_empty() {
-                    tls_config.server_root_ca_cert = Some(req_tls_config.server_root_ca_cert);
-                }
-                if !req_tls_config.domain.is_empty() {
-                    tls_config.domain = Some(req_tls_config.domain);
-                }
-                if !req_tls_config.client_cert.is_empty()
-                    || !req_tls_config.client_private_key.is_empty()
-                {
-                    tls_config.client_tls_config = Some(temporal_sdk_core::ClientTlsConfig {
-                        client_cert: req_tls_config.client_cert,
-                        client_private_key: req_tls_config.client_private_key,
-                    })
-                }
-                gateway_opts.tls_cfg(tls_config);
-            }
-            if let Some(req_retry_config) = req_gateway_opts.retry_config {
-                let mut retry_config = temporal_sdk_core::RetryConfig::default();
-                if let Some(v) = req_retry_config.initial_interval {
-                    retry_config.initial_interval =
-                        v.try_into().map_err(|_| "invalid initial interval")?;
-                }
-                if let Some(v) = req_retry_config.randomization_factor {
-                    retry_config.randomization_factor = v;
-                }
-                if let Some(v) = req_retry_config.multiplier {
-                    retry_config.multiplier = v;
-                }
-                if let Some(v) = req_retry_config.max_interval {
-                    retry_config.max_interval = v.try_into().map_err(|_| "invalid max interval")?;
-                }
-                if let Some(v) = req_retry_config.max_elapsed_time {
-                    retry_config.max_elapsed_time =
-                        Some(v.try_into().map_err(|_| "invalid max elapsed time")?);
-                }
-                if let Some(v) = req_retry_config.max_retries {
-                    retry_config.max_retries = v as usize;
-                }
-                gateway_opts.retry_config(retry_config);
-            }
-            core_opts.gateway_opts(
-                gateway_opts
-                    .build()
-                    .map_err(|err| format!("invalid gateway options: {}", err))?,
+    fn try_from(InitTelemetryRequest(req): InitTelemetryRequest) -> Result<Self, Self::Error> {
+        let mut telemetry_opts = TelemetryOptionsBuilder::default();
+        if !req.otel_collector_url.is_empty() {
+            telemetry_opts.otel_collector_url(
+                Url::parse(&req.otel_collector_url)
+                    .map_err(|err| format!("invalid OpenTelemetry collector URL: {}", err))?,
             );
         }
-        if let Some(req_telemetry_opts) = req.telemetry_options {
-            let mut telemetry_opts = temporal_sdk_core::TelemetryOptionsBuilder::default();
-            if !req_telemetry_opts.otel_collector_url.is_empty() {
-                telemetry_opts.otel_collector_url(
-                    temporal_sdk_core::Url::parse(&req_telemetry_opts.otel_collector_url)
-                        .map_err(|err| format!("invalid OpenTelemetry collector URL: {}", err))?,
-                );
+        if !req.tracing_filter.is_empty() {
+            telemetry_opts.tracing_filter(req.tracing_filter.clone());
+        }
+        match req.log_forwarding_level() {
+            bridge::LogLevel::Unspecified => {}
+            bridge::LogLevel::Off => {
+                telemetry_opts.log_forwarding_level(LevelFilter::Off);
             }
-            if !req_telemetry_opts.tracing_filter.is_empty() {
-                telemetry_opts.tracing_filter(req_telemetry_opts.tracing_filter.clone());
+            bridge::LogLevel::Error => {
+                telemetry_opts.log_forwarding_level(LevelFilter::Error);
             }
-            match req_telemetry_opts.log_forwarding_level() {
-                bridge::LogLevel::Unspecified => {}
-                bridge::LogLevel::Off => {
-                    telemetry_opts.log_forwarding_level(log::LevelFilter::Off);
-                }
-                bridge::LogLevel::Error => {
-                    telemetry_opts.log_forwarding_level(log::LevelFilter::Error);
-                }
-                bridge::LogLevel::Warn => {
-                    telemetry_opts.log_forwarding_level(log::LevelFilter::Warn);
-                }
-                bridge::LogLevel::Info => {
-                    telemetry_opts.log_forwarding_level(log::LevelFilter::Info);
-                }
-                bridge::LogLevel::Debug => {
-                    telemetry_opts.log_forwarding_level(log::LevelFilter::Debug);
-                }
-                bridge::LogLevel::Trace => {
-                    telemetry_opts.log_forwarding_level(log::LevelFilter::Trace);
-                }
+            bridge::LogLevel::Warn => {
+                telemetry_opts.log_forwarding_level(LevelFilter::Warn);
             }
-            if !req_telemetry_opts.prometheus_export_bind_address.is_empty() {
-                telemetry_opts.prometheus_export_bind_address(
-                    std::net::SocketAddr::from_str(
-                        &req_telemetry_opts.prometheus_export_bind_address,
-                    )
+            bridge::LogLevel::Info => {
+                telemetry_opts.log_forwarding_level(LevelFilter::Info);
+            }
+            bridge::LogLevel::Debug => {
+                telemetry_opts.log_forwarding_level(LevelFilter::Debug);
+            }
+            bridge::LogLevel::Trace => {
+                telemetry_opts.log_forwarding_level(LevelFilter::Trace);
+            }
+        }
+        if !req.prometheus_export_bind_address.is_empty() {
+            telemetry_opts.prometheus_export_bind_address(
+                SocketAddr::from_str(&req.prometheus_export_bind_address)
                     .map_err(|err| format!("invalid Prometheus address: {}", err))?,
-                );
-            }
-            core_opts.telemetry_opts(
-                telemetry_opts
-                    .build()
-                    .map_err(|err| format!("invalid telemetry options: {}", err))?,
             );
         }
-        core_opts
+
+        telemetry_opts
             .build()
-            .map_err(|err| format!("invalid options: {}", err))
+            .map_err(|err| format!("invalid telemetry options: {}", err))
+    }
+}
+
+pub struct ServerGatewayOptions(pub bridge::CreateGatewayRequest);
+
+impl TryFrom<ServerGatewayOptions> for temporal_sdk_core::ServerGatewayOptions {
+    type Error = String;
+
+    fn try_from(ServerGatewayOptions(req): ServerGatewayOptions) -> Result<Self, Self::Error> {
+        let mut gateway_opts = temporal_sdk_core::ServerGatewayOptionsBuilder::default();
+        if !req.target_url.is_empty() {
+            gateway_opts.target_url(
+                temporal_sdk_core::Url::parse(&req.target_url)
+                    .map_err(|err| format!("invalid target URL: {}", err))?,
+            );
+        }
+        if !req.client_name.is_empty() {
+            gateway_opts.client_name(req.client_name);
+        }
+        if !req.client_version.is_empty() {
+            gateway_opts.client_version(req.client_version);
+        }
+        if !req.static_headers.is_empty() {
+            gateway_opts.static_headers(req.static_headers);
+        }
+        if !req.identity.is_empty() {
+            gateway_opts.identity(req.identity);
+        }
+        if !req.worker_binary_id.is_empty() {
+            gateway_opts.worker_binary_id(req.worker_binary_id);
+        }
+        if let Some(req_tls_config) = req.tls_config {
+            let mut tls_config = temporal_sdk_core::TlsConfig::default();
+            if !req_tls_config.server_root_ca_cert.is_empty() {
+                tls_config.server_root_ca_cert = Some(req_tls_config.server_root_ca_cert);
+            }
+            if !req_tls_config.domain.is_empty() {
+                tls_config.domain = Some(req_tls_config.domain);
+            }
+            if !req_tls_config.client_cert.is_empty()
+                || !req_tls_config.client_private_key.is_empty()
+            {
+                tls_config.client_tls_config = Some(temporal_sdk_core::ClientTlsConfig {
+                    client_cert: req_tls_config.client_cert,
+                    client_private_key: req_tls_config.client_private_key,
+                })
+            }
+            gateway_opts.tls_cfg(tls_config);
+        }
+        if let Some(req_retry_config) = req.retry_config {
+            let mut retry_config = temporal_sdk_core::RetryConfig::default();
+            if let Some(v) = req_retry_config.initial_interval {
+                retry_config.initial_interval =
+                    v.try_into().map_err(|_| "invalid initial interval")?;
+            }
+            if let Some(v) = req_retry_config.randomization_factor {
+                retry_config.randomization_factor = v;
+            }
+            if let Some(v) = req_retry_config.multiplier {
+                retry_config.multiplier = v;
+            }
+            if let Some(v) = req_retry_config.max_interval {
+                retry_config.max_interval = v.try_into().map_err(|_| "invalid max interval")?;
+            }
+            if let Some(v) = req_retry_config.max_elapsed_time {
+                retry_config.max_elapsed_time =
+                    Some(v.try_into().map_err(|_| "invalid max elapsed time")?);
+            }
+            if let Some(v) = req_retry_config.max_retries {
+                retry_config.max_retries = v as usize;
+            }
+            gateway_opts.retry_config(retry_config);
+        }
+        gateway_opts
+            .build()
+            .map_err(|err| format!("invalid gateway options: {}", err))
     }
 }
 
 // Present for try-from only
-pub struct WorkerConfig(pub bridge::RegisterWorkerRequest);
+pub struct WorkerConfig(pub bridge::CreateWorkerRequest);
 
 impl TryFrom<WorkerConfig> for temporal_sdk_core_api::worker::WorkerConfig {
     type Error = String;

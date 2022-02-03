@@ -27,4 +27,4 @@ tonic = "0.6"
 uuid = { version = "0.8.2", features = ["v4"], optional = true }
 
 [build-dependencies]
-tonic-build = "0.5"
+tonic-build = "0.6"

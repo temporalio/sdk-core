@@ -31,6 +31,11 @@ impl MetricsContext {
         Self::new(vec![KeyValue::new(KEY_NAMESPACE, namespace)])
     }
 
+    pub(crate) fn with_task_q(mut self, tq: String) -> Self {
+        Arc::make_mut(&mut self.kvs).push(task_queue(tq));
+        self
+    }
+
     /// Extend an existing metrics context with new attributes
     pub(crate) fn with_new_attrs(&self, new_kvs: impl IntoIterator<Item = KeyValue>) -> Self {
         let mut kvs = self.kvs.clone();

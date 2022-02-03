@@ -748,51 +748,35 @@ pub mod coresdk {
 
     impl WorkflowActivationCompletion {
         /// Create a successful activation with no commands in it
-        pub fn empty(task_queue: impl Into<String>, run_id: impl Into<String>) -> Self {
+        pub fn empty(run_id: impl Into<String>) -> Self {
             let success = workflow_completion::Success::from_variants(vec![]);
             Self {
                 run_id: run_id.into(),
-                task_queue: task_queue.into(),
                 status: Some(workflow_activation_completion::Status::Successful(success)),
             }
         }
 
         /// Create a successful activation from a list of commands
-        pub fn from_cmds(
-            task_q: impl Into<String>,
-            run_id: impl Into<String>,
-            cmds: Vec<workflow_command::Variant>,
-        ) -> Self {
+        pub fn from_cmds(run_id: impl Into<String>, cmds: Vec<workflow_command::Variant>) -> Self {
             let success = workflow_completion::Success::from_variants(cmds);
             Self {
                 run_id: run_id.into(),
-                task_queue: task_q.into(),
                 status: Some(workflow_activation_completion::Status::Successful(success)),
             }
         }
 
         /// Create a successful activation from just one command
-        pub fn from_cmd(
-            task_q: impl Into<String>,
-            run_id: impl Into<String>,
-            cmd: workflow_command::Variant,
-        ) -> Self {
+        pub fn from_cmd(run_id: impl Into<String>, cmd: workflow_command::Variant) -> Self {
             let success = workflow_completion::Success::from_variants(vec![cmd]);
             Self {
                 run_id: run_id.into(),
-                task_queue: task_q.into(),
                 status: Some(workflow_activation_completion::Status::Successful(success)),
             }
         }
 
-        pub fn fail(
-            task_q: impl Into<String>,
-            run_id: impl Into<String>,
-            failure: Failure,
-        ) -> Self {
+        pub fn fail(run_id: impl Into<String>, failure: Failure) -> Self {
             Self {
                 run_id: run_id.into(),
-                task_queue: task_q.into(),
                 status: Some(workflow_activation_completion::Status::Failed(
                     workflow_completion::Failure {
                         failure: Some(failure),
@@ -876,20 +860,12 @@ pub mod coresdk {
     /// Makes converting outgoing lang commands into [WorkflowActivationCompletion]s easier
     pub trait IntoCompletion {
         /// The conversion function
-        fn into_completion(
-            self,
-            task_queue: String,
-            run_id: String,
-        ) -> WorkflowActivationCompletion;
+        fn into_completion(self, run_id: String) -> WorkflowActivationCompletion;
     }
 
     impl IntoCompletion for workflow_command::Variant {
-        fn into_completion(
-            self,
-            task_queue: String,
-            run_id: String,
-        ) -> WorkflowActivationCompletion {
-            WorkflowActivationCompletion::from_cmd(task_queue, run_id, self)
+        fn into_completion(self, run_id: String) -> WorkflowActivationCompletion {
+            WorkflowActivationCompletion::from_cmd(run_id, self)
         }
     }
 
@@ -898,15 +874,10 @@ pub mod coresdk {
         I: IntoIterator<Item = V>,
         V: Into<WorkflowCommand>,
     {
-        fn into_completion(
-            self,
-            task_queue: String,
-            run_id: String,
-        ) -> WorkflowActivationCompletion {
+        fn into_completion(self, run_id: String) -> WorkflowActivationCompletion {
             let success = self.into_iter().map(Into::into).collect::<Vec<_>>().into();
             WorkflowActivationCompletion {
                 run_id,
-                task_queue,
                 status: Some(workflow_activation_completion::Status::Successful(success)),
             }
         }

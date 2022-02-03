@@ -3,9 +3,9 @@ pub(crate) use temporal_sdk_core_test_utils::canned_histories;
 use crate::{
     pollers::{BoxedActPoller, BoxedPoller, BoxedWFPoller, MockManualPoller, MockPoller},
     replay::TestHistoryBuilder,
+    sticky_q_name_for_worker,
     workflow::WorkflowCachingPolicy,
-    Core, CoreInitOptionsBuilder, CoreSDK, ServerGatewayApis, TaskToken, WorkerConfig,
-    WorkerConfigBuilder,
+    ServerGatewayApis, TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,
 };
 use bimap::BiMap;
 use futures::FutureExt;
@@ -16,10 +16,8 @@ use std::{
     ops::RangeFull,
     sync::Arc,
 };
-use temporal_client::{
-    mocks::{fake_sg_opts, mock_gateway},
-    MockServerGatewayApis,
-};
+use temporal_client::{mocks::mock_gateway, MockServerGatewayApis};
+use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::WorkflowActivation,
@@ -39,6 +37,12 @@ use temporal_sdk_core_protos::{
 
 pub const TEST_Q: &str = "q";
 pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";
+
+pub fn test_worker_cfg() -> WorkerConfigBuilder {
+    let mut wcb = WorkerConfigBuilder::default();
+    wcb.namespace("default").task_queue(TEST_Q);
+    wcb
+}
 
 /// When constructing responses for mocks, indicates how a given response should be built
 #[derive(derive_more::From, Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -64,92 +68,61 @@ impl From<&Self> for ResponseType {
 }
 
 /// Given identifiers for a workflow/run, and a test history builder, construct an instance of
-/// the core SDK with a mock server gateway that will produce the responses as appropriate.
+/// the a worker with a mock server gateway that will produce the responses as appropriate.
 ///
 /// `response_batches` is used to control the fake [PollWorkflowTaskQueueResponse]s returned. For
 /// each number in the input list, a fake response will be prepared which includes history up to the
 /// workflow task with that number, as in [TestHistoryBuilder::get_history_info].
-pub(crate) fn build_fake_core(
+pub(crate) fn build_fake_worker(
     wf_id: &str,
     t: TestHistoryBuilder,
     response_batches: impl IntoIterator<Item = impl Into<ResponseType>>,
-) -> CoreSDK {
+) -> Worker {
     let response_batches = response_batches.into_iter().map(Into::into).collect();
-    let mock_gateway = build_multihist_mock_sg(
+    let mock_holder = build_multihist_mock_sg(
         vec![FakeWfResponses {
             wf_id: wf_id.to_owned(),
             hist: t,
             response_batches,
-            task_q: TEST_Q.to_owned(),
         }],
         true,
         None,
     );
-    mock_core(mock_gateway)
+    mock_worker(mock_holder)
 }
 
-pub(crate) fn mock_core<SG>(mocks: MocksHolder<SG>) -> CoreSDK
+pub(crate) fn mock_worker<SG>(mocks: MocksHolder<SG>) -> Worker
 where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
-    mock_core_with_opts(mocks, CoreInitOptionsBuilder::default())
-}
-
-pub(crate) fn mock_core_with_opts<SG>(
-    mocks: MocksHolder<SG>,
-    opts: CoreInitOptionsBuilder,
-) -> CoreSDK
-where
-    SG: ServerGatewayApis + Send + Sync + 'static,
-{
-    let mut core = mock_core_with_opts_no_workers(mocks.sg, opts);
-    register_mock_workers(&mut core, mocks.mock_pollers.into_values());
-    core
-}
-
-pub(crate) fn register_mock_workers(
-    core: &mut CoreSDK,
-    mocks: impl IntoIterator<Item = MockWorker>,
-) {
-    for worker in mocks {
-        core.reg_worker_sync(worker);
-    }
-}
-
-pub(crate) fn mock_core_with_opts_no_workers<SG>(
-    sg: SG,
-    mut opts: CoreInitOptionsBuilder,
-) -> CoreSDK
-where
-    SG: ServerGatewayApis + Send + Sync + 'static,
-{
-    CoreSDK::new(sg, opts.gateway_opts(fake_sg_opts()).build().unwrap())
+    let sticky_q = sticky_q_name_for_worker("unit-test", &mocks.mock_worker.config);
+    Worker::new_with_pollers(
+        mocks.mock_worker.config,
+        sticky_q,
+        Arc::new(mocks.sg),
+        mocks.mock_worker.wf_poller,
+        mocks.mock_worker.act_poller,
+        Default::default(),
+    )
 }
 
 pub struct FakeWfResponses {
     pub wf_id: String,
     pub hist: TestHistoryBuilder,
     pub response_batches: Vec<ResponseType>,
-    pub task_q: String,
 }
 
-// TODO: turn this into a builder or make a new one? to make all these different build fns simpler
+// TODO: Rename to mock TQ or something?
 pub struct MocksHolder<SG> {
     sg: SG,
-    mock_pollers: HashMap<String, MockWorker>,
+    mock_worker: MockWorker,
     // bidirectional mapping of run id / task token
     pub outstanding_task_map: Option<Arc<RwLock<BiMap<String, TaskToken>>>>,
 }
 
 impl<SG> MocksHolder<SG> {
-    pub fn worker_cfg(&mut self, task_q: &str, mutator: impl FnOnce(&mut WorkerConfig)) {
-        if let Some(w) = self.mock_pollers.get_mut(task_q) {
-            mutator(&mut w.config);
-        }
-    }
-
-    pub fn take_pollers(self) -> HashMap<String, MockWorker> {
-        self.mock_pollers
+    pub fn worker_cfg(&mut self, mutator: impl FnOnce(&mut WorkerConfig)) {
+        mutator(&mut self.mock_worker.config);
     }
 }
 
@@ -161,24 +134,17 @@ pub struct MockWorker {
 
 impl Default for MockWorker {
     fn default() -> Self {
-        Self::for_queue(TEST_Q)
+        Self::new(Box::from(mock_poller()))
     }
 }
 
 impl MockWorker {
-    pub fn new(q: &str, wf_poller: BoxedWFPoller) -> Self {
+    pub fn new(wf_poller: BoxedWFPoller) -> Self {
         Self {
             wf_poller,
             act_poller: None,
-            config: WorkerConfigBuilder::default()
-                .task_queue(q)
-                .build()
-                .unwrap(),
+            config: test_worker_cfg().build().unwrap(),
         }
-    }
-
-    pub fn for_queue(q: &str) -> Self {
-        Self::new(q, Box::from(mock_poller()))
     }
 }
 
@@ -186,14 +152,10 @@ impl<SG> MocksHolder<SG>
 where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
-    pub fn from_mock_workers(sg: SG, mock_workers: impl IntoIterator<Item = MockWorker>) -> Self {
-        let mock_pollers = mock_workers
-            .into_iter()
-            .map(|w| (w.config.task_queue.clone(), w))
-            .collect();
+    pub fn from_mock_worker(sg: SG, mock_worker: MockWorker) -> Self {
         Self {
             sg,
-            mock_pollers,
+            mock_worker,
             outstanding_task_map: None,
         }
     }
@@ -206,23 +168,16 @@ where
         <WFT as IntoIterator>::IntoIter: Send + 'static,
         <ACT as IntoIterator>::IntoIter: Send + 'static,
     {
-        let mut mock_pollers = HashMap::new();
         let mock_poller = mock_poller_from_resps(wf_tasks);
         let mock_act_poller = mock_poller_from_resps(act_tasks);
-        mock_pollers.insert(
-            TEST_Q.to_string(),
-            MockWorker {
-                wf_poller: mock_poller,
-                act_poller: Some(mock_act_poller),
-                config: WorkerConfigBuilder::default()
-                    .task_queue(TEST_Q)
-                    .build()
-                    .unwrap(),
-            },
-        );
+        let mock_worker = MockWorker {
+            wf_poller: mock_poller,
+            act_poller: Some(mock_act_poller),
+            config: test_worker_cfg().build().unwrap(),
+        };
         Self {
             sg,
-            mock_pollers,
+            mock_worker,
             outstanding_task_map: None,
         }
     }
@@ -338,7 +293,6 @@ impl MockPollCfg {
                 wf_id: wf_id.to_owned(),
                 hist: t,
                 response_batches: resps.into_iter().map(Into::into).collect(),
-                task_q: TEST_Q.to_owned(),
             }],
             enforce_correct_number_of_polls: true,
             num_expected_fails: None,
@@ -350,8 +304,7 @@ impl MockPollCfg {
 
 /// Given an iterable of fake responses, return the mocks & associated data to work with them
 pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockServerGatewayApis> {
-    // Maps task queues to maps of wfid -> responses
-    let mut task_queues_to_resps: HashMap<String, BTreeMap<String, VecDeque<_>>> = HashMap::new();
+    let mut task_q_resps: BTreeMap<String, VecDeque<_>> = BTreeMap::new();
     let outstanding_wf_task_tokens = Arc::new(RwLock::new(BiMap::new()));
     let mut correct_num_polls = None;
 
@@ -384,12 +337,7 @@ pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockServerGateway
             .iter()
             .map(|to_task_num| {
                 let cur_attempt = attempts_at_task_num.entry(to_task_num).or_insert(1);
-                let mut r = hist_to_poll_resp(
-                    &hist.hist,
-                    hist.wf_id.clone(),
-                    *to_task_num,
-                    hist.task_q.clone(),
-                );
+                let mut r = hist_to_poll_resp(&hist.hist, hist.wf_id.clone(), *to_task_num, TEST_Q);
                 r.attempt = *cur_attempt;
                 *cur_attempt += 1;
                 r
@@ -397,42 +345,34 @@ pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockServerGateway
             .collect();
 
         let tasks = VecDeque::from(responses);
-        task_queues_to_resps
-            .entry(hist.task_q)
-            .or_default()
-            .insert(hist.wf_id, tasks);
+        task_q_resps.insert(hist.wf_id, tasks);
     }
 
-    let mut mock_pollers = HashMap::new();
-    for (task_q, mut queue_tasks) in task_queues_to_resps {
-        let mut mock_poller = mock_poller();
-
-        // The poller will return history from any workflow runs that do not have currently
-        // outstanding tasks.
-        let outstanding = outstanding_wf_task_tokens.clone();
-        mock_poller
-            .expect_poll()
-            .times(correct_num_polls.map_or_else(|| RangeFull.into(), Into::<TimesRange>::into))
-            .returning(move || {
-                for (_, tasks) in queue_tasks.iter_mut() {
-                    // Must extract run id from a workflow task associated with this workflow
-                    // TODO: Case where run id changes for same workflow id is not handled here
-                    if let Some(t) = tasks.get(0) {
-                        let rid = t.workflow_execution.as_ref().unwrap().run_id.clone();
-                        if !outstanding.read().contains_left(&rid) {
-                            let t = tasks.pop_front().unwrap();
-                            outstanding
-                                .write()
-                                .insert(rid, TaskToken(t.task_token.clone()));
-                            return Some(Ok(t));
-                        }
+    let mut mock_poller = mock_poller();
+    // The poller will return history from any workflow runs that do not have currently
+    // outstanding tasks.
+    let outstanding = outstanding_wf_task_tokens.clone();
+    mock_poller
+        .expect_poll()
+        .times(correct_num_polls.map_or_else(|| RangeFull.into(), Into::<TimesRange>::into))
+        .returning(move || {
+            for (_, tasks) in task_q_resps.iter_mut() {
+                // Must extract run id from a workflow task associated with this workflow
+                // TODO: Case where run id changes for same workflow id is not handled here
+                if let Some(t) = tasks.get(0) {
+                    let rid = t.workflow_execution.as_ref().unwrap().run_id.clone();
+                    if !outstanding.read().contains_left(&rid) {
+                        let t = tasks.pop_front().unwrap();
+                        outstanding
+                            .write()
+                            .insert(rid, TaskToken(t.task_token.clone()));
+                        return Some(Ok(t));
                     }
                 }
-                Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG)))
-            });
-        let mw = MockWorker::new(&task_q, Box::from(mock_poller));
-        mock_pollers.insert(task_q, mw);
-    }
+            }
+            Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG)))
+        });
+    let mock_worker = MockWorker::new(Box::from(mock_poller));
 
     let outstanding = outstanding_wf_task_tokens.clone();
     cfg.mock_gateway
@@ -459,7 +399,7 @@ pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockServerGateway
 
     MocksHolder {
         sg: cfg.mock_gateway,
-        mock_pollers,
+        mock_worker,
         outstanding_task_map: Some(outstanding_wf_task_tokens),
     }
 }
@@ -468,7 +408,7 @@ pub fn hist_to_poll_resp(
     t: &TestHistoryBuilder,
     wf_id: String,
     response_type: ResponseType,
-    task_queue: String,
+    task_queue: impl Into<String>,
 ) -> PollWorkflowTaskQueueResponse {
     let run_id = t.get_orig_run_id();
     let wf = WorkflowExecution {
@@ -498,15 +438,15 @@ type AsserterWithReply<'a> = (
 /// since they clearly can't be returned every time we replay the workflow, or it could never
 /// proceed
 pub(crate) async fn poll_and_reply<'a>(
-    core: &'a CoreSDK,
+    worker: &'a Worker,
     eviction_mode: WorkflowCachingPolicy,
     expect_and_reply: &'a [AsserterWithReply<'a>],
 ) {
-    poll_and_reply_clears_outstanding_evicts(core, None, eviction_mode, expect_and_reply).await;
+    poll_and_reply_clears_outstanding_evicts(worker, None, eviction_mode, expect_and_reply).await;
 }
 
 pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
-    core: &'a CoreSDK,
+    worker: &'a Worker,
     outstanding_map: Option<Arc<RwLock<BiMap<String, TaskToken>>>>,
     eviction_mode: WorkflowCachingPolicy,
     expect_and_reply: &'a [AsserterWithReply<'a>],
@@ -530,7 +470,7 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
                 continue;
             }
 
-            let mut res = core.poll_workflow_activation(TEST_Q).await.unwrap();
+            let mut res = worker.poll_workflow_activation().await.unwrap();
             let contains_eviction = res.eviction_index();
 
             if let Some(eviction_job_ix) = contains_eviction {
@@ -554,17 +494,16 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
 
             let reply = if res.jobs.is_empty() {
                 // Just an eviction
-                WorkflowActivationCompletion::empty(TEST_Q, res.run_id.clone())
+                WorkflowActivationCompletion::empty(res.run_id.clone())
             } else {
                 // Eviction plus some work, we still want to issue the reply
                 WorkflowActivationCompletion {
-                    task_queue: TEST_Q.to_string(),
                     run_id: res.run_id.clone(),
                     status: Some(reply.clone()),
                 }
             };
 
-            core.complete_workflow_activation(reply).await.unwrap();
+            worker.complete_workflow_activation(reply).await.unwrap();
 
             // Restart assertions from the beginning if it was an eviction
             if contains_eviction.is_some() {
@@ -580,7 +519,7 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
                 WorkflowCachingPolicy::NonSticky => (),
                 WorkflowCachingPolicy::AfterEveryReply => {
                     if evictions < expected_evictions {
-                        core.request_workflow_eviction(TEST_Q, &res.run_id);
+                        worker.request_workflow_eviction(&res.run_id);
                         evictions += 1;
                     }
                 }
@@ -591,7 +530,7 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
     }
 
     assert_eq!(expected_fail_count, executed_failures.len());
-    assert_eq!(core.outstanding_wfts(TEST_Q), 0);
+    assert_eq!(worker.outstanding_workflow_tasks(), 0);
 }
 
 pub(crate) fn gen_assert_and_reply(

@@ -9,16 +9,15 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{failure::v1::Failure, query::v1::WorkflowQuery},
 };
-use temporal_sdk_core_test_utils::{init_core_and_create_wf, CoreTestHelpers, CoreWfStarter};
+use temporal_sdk_core_test_utils::{init_core_and_create_wf, CoreWfStarter, WorkerTestHelpers};
 
 #[tokio::test]
 async fn simple_query_legacy() {
     let query_resp = b"response";
     let (core, task_q) = init_core_and_create_wf("simple_query_legacy").await;
     let workflow_id = task_q.clone();
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id.clone(),
         vec![
             StartTimer {
@@ -56,7 +55,7 @@ async fn simple_query_legacy() {
         tokio::time::sleep(Duration::from_millis(400)).await;
         // This poll *should* have the `queries` field populated, but doesn't, seemingly due to
         // a server bug. So, complete the WF task of the first timer firing with empty commands
-        let task = core.poll_workflow_activation(&task_q).await.unwrap();
+        let task = core.poll_workflow_activation().await.unwrap();
         assert_matches!(
             task.jobs.as_slice(),
             [WorkflowActivationJob {
@@ -64,13 +63,12 @@ async fn simple_query_legacy() {
             }]
         );
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            &task_q,
             task.run_id,
             vec![],
         ))
         .await
         .unwrap();
-        let task = core.poll_workflow_activation(&task_q).await.unwrap();
+        let task = core.poll_workflow_activation().await.unwrap();
         // Poll again, and we end up getting a `query` field query response
         let query = assert_matches!(
             task.jobs.as_slice(),
@@ -80,7 +78,6 @@ async fn simple_query_legacy() {
         );
         // Complete the query
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-            &task_q,
             task.run_id,
             QueryResult {
                 query_id: query.query_id.clone(),
@@ -96,8 +93,8 @@ async fn simple_query_legacy() {
         .await
         .unwrap();
         // Finish the workflow
-        let task = core.poll_workflow_activation(&task_q).await.unwrap();
-        core.complete_execution(&task_q, &task.run_id).await;
+        let task = core.poll_workflow_activation().await.unwrap();
+        core.complete_execution(&task.run_id).await;
     };
     let (q_resp, _) = tokio::join!(query_fut, workflow_completions_future);
     // Ensure query response is as expected
@@ -116,7 +113,7 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
 
     let do_workflow = |go_until_query: bool| async move {
         loop {
-            let task = core.poll_workflow_activation(task_q).await.unwrap();
+            let task = core.poll_workflow_activation().await.unwrap();
 
             // When we see the query, handle it.
             if go_until_query {
@@ -125,7 +122,6 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
                 }] = task.jobs.as_slice()
                 {
                     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-                        task_q,
                         task.run_id,
                         QueryResult {
                             query_id: query.query_id.clone(),
@@ -150,12 +146,9 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
                     variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
                 }]
             ) {
-                core.complete_workflow_activation(WorkflowActivationCompletion::empty(
-                    task_q,
-                    task.run_id,
-                ))
-                .await
-                .unwrap();
+                core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+                    .await
+                    .unwrap();
                 continue;
             }
             assert_matches!(
@@ -165,10 +158,10 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
                 }]
             );
             let run_id = task.run_id.clone();
-            core.complete_timer(task_q, &task.run_id, 1, Duration::from_millis(500))
+            core.complete_timer(&task.run_id, 1, Duration::from_millis(500))
                 .await;
-            let task = core.poll_workflow_activation(task_q).await.unwrap();
-            core.complete_execution(task_q, &task.run_id).await;
+            let task = core.poll_workflow_activation().await.unwrap();
+            core.complete_execution(&task.run_id).await;
             if !go_until_query {
                 break run_id;
             }
@@ -179,7 +172,7 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
     assert!(!run_id.is_empty());
 
     if do_evict {
-        core.request_workflow_eviction(task_q, run_id);
+        core.request_workflow_eviction(run_id);
     }
     // Spam some queries (sending multiple queries after WF closed covers a possible path where
     // we could screw-up re-applying the final WFT)
@@ -218,20 +211,19 @@ async fn repros_query_dropped_on_floor() {
     let mut wf_starter = CoreWfStarter::new("repros_query_dropped_on_floor");
     // Easiest way I discovered to reliably trigger new query path is with a WFT timeout
     wf_starter.wft_timeout(Duration::from_secs(1));
-    let core = wf_starter.get_core().await;
+    let core = wf_starter.get_worker().await;
     let task_q = wf_starter.get_task_queue();
     wf_starter.start_wf().await;
 
-    let task = core.poll_workflow_activation(task_q).await.unwrap();
-    core.complete_timer(task_q, &task.run_id, 1, Duration::from_millis(500))
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_timer(&task.run_id, 1, Duration::from_millis(500))
         .await;
 
     // Poll for a task we will time out
-    let task = core.poll_workflow_activation(task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     tokio::time::sleep(Duration::from_secs(2)).await;
     // Complete now-timed-out task (add a new timer)
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        task_q,
         task.run_id.clone(),
         vec![],
     ))
@@ -272,7 +264,7 @@ async fn repros_query_dropped_on_floor() {
         let mut seen_q1 = false;
         let mut seen_q2 = false;
         while !seen_q1 || !seen_q2 {
-            let task = core.poll_workflow_activation(task_q).await.unwrap();
+            let task = core.poll_workflow_activation().await.unwrap();
 
             if matches!(
                 task.jobs[0],
@@ -280,8 +272,8 @@ async fn repros_query_dropped_on_floor() {
                     variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
                 }
             ) {
-                let task = core.poll_workflow_activation(task_q).await.unwrap();
-                core.complete_timer(task_q, &task.run_id, 1, Duration::from_millis(500))
+                let task = core.poll_workflow_activation().await.unwrap();
+                core.complete_timer(&task.run_id, 1, Duration::from_millis(500))
                     .await;
                 continue;
             }
@@ -293,7 +285,7 @@ async fn repros_query_dropped_on_floor() {
                 }
             ) {
                 // If we get the timer firing after replay, be done.
-                core.complete_execution(task_q, &task.run_id).await;
+                core.complete_execution(&task.run_id).await;
             }
 
             // There should be a query job (really, there should be both... server only sends one?)
@@ -312,7 +304,6 @@ async fn repros_query_dropped_on_floor() {
             };
             // Complete the query
             core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-                task_q,
                 task.run_id,
                 vec![QueryResult {
                     query_id: query.query_id.clone(),
@@ -340,9 +331,8 @@ async fn fail_legacy_query() {
     let query_err = "oh no broken";
     let (core, task_q) = init_core_and_create_wf("fail_legacy_query").await;
     let workflow_id = task_q.clone();
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        &task_q,
         task.run_id.clone(),
         vec![
             StartTimer {
@@ -380,7 +370,7 @@ async fn fail_legacy_query() {
         tokio::time::sleep(Duration::from_millis(400)).await;
         // This poll *should* have the `queries` field populated, but doesn't, seemingly due to
         // a server bug. So, complete the WF task of the first timer firing with empty commands
-        let task = core.poll_workflow_activation(&task_q).await.unwrap();
+        let task = core.poll_workflow_activation().await.unwrap();
         assert_matches!(
             task.jobs.as_slice(),
             [WorkflowActivationJob {
@@ -388,13 +378,12 @@ async fn fail_legacy_query() {
             }]
         );
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            &task_q,
             task.run_id,
             vec![],
         ))
         .await
         .unwrap();
-        let task = core.poll_workflow_activation(&task_q).await.unwrap();
+        let task = core.poll_workflow_activation().await.unwrap();
         // Poll again, and we end up getting a `query` field query response
         assert_matches!(
             task.jobs.as_slice(),
@@ -404,7 +393,6 @@ async fn fail_legacy_query() {
         );
         // Fail this task
         core.complete_workflow_activation(WorkflowActivationCompletion::fail(
-            &task_q,
             task.run_id,
             Failure {
                 message: query_err.to_string(),
@@ -414,8 +402,8 @@ async fn fail_legacy_query() {
         .await
         .unwrap();
         // Finish the workflow
-        let task = core.poll_workflow_activation(&task_q).await.unwrap();
-        core.complete_execution(&task_q, &task.run_id).await;
+        let task = core.poll_workflow_activation().await.unwrap();
+        core.complete_execution(&task.run_id).await;
     };
     let (q_resp, _) = tokio::join!(query_fut, workflow_completions_future);
     // Ensure query response is a failure and has the right message

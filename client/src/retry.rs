@@ -23,8 +23,9 @@ pub const RETRYABLE_ERROR_CODES: [Code; 7] = [
     Code::Unavailable,
 ];
 
-#[derive(Debug)]
-/// A wrapper for a [ServerGatewayApis] implementor which performs auto-retries
+/// A wrapper for a [ServerGatewayApis] or [crate::WorkflowService] implementor which performs
+/// auto-retries
+#[derive(Debug, Clone)]
 pub struct RetryGateway<SG> {
     gateway: SG,
     retry_config: RetryConfig,
@@ -40,32 +41,70 @@ impl<SG> RetryGateway<SG> {
     }
 }
 
-impl<SG: ServerGatewayApis + Send + Sync + 'static> RetryGateway<SG> {
-    async fn call_with_retry<R, F, Fut>(
+impl<SG> RetryGateway<SG> {
+    /// Return the inner client type
+    pub fn get_client(&self) -> &SG {
+        &self.gateway
+    }
+
+    /// Return the inner client type mutably
+    pub fn get_client_mut(&mut self) -> &mut SG {
+        &mut self.gateway
+    }
+
+    /// Disable retry and return the inner client type
+    pub fn into_inner(self) -> SG {
+        self.gateway
+    }
+
+    /// Wraps a call to the underlying client with retry capability.
+    ///
+    /// This is the "old" path used by higher-level [ServerGatewayApis] implementors
+    pub(crate) async fn call_with_retry<R, F, Fut>(
         &self,
         factory: F,
-        ct: CallType,
         call_name: &'static str,
     ) -> Result<R>
     where
         F: Fn() -> Fut + Unpin,
         Fut: Future<Output = Result<R>>,
     {
-        let rtc = match ct {
+        let rtc = self.get_retry_config(call_name);
+        let res = Self::make_future_retry(rtc, factory, call_name).await;
+        Ok(res.map_err(|(e, _attempt)| e)?.0)
+    }
+
+    pub(crate) fn get_retry_config(&self, call_name: &'static str) -> RetryConfig {
+        let call_type = Self::determine_call_type(call_name);
+        match call_type {
             CallType::Normal => self.retry_config.clone(),
             CallType::LongPoll => RetryConfig::poll_retry_policy(),
-        };
-        Ok(
-            FutureRetry::new(factory, TonicErrorHandler::new(rtc, ct, call_name))
-                .await
-                .map_err(|(e, _attempt)| e)?
-                .0,
-        )
+        }
+    }
+
+    pub(crate) fn make_future_retry<R, F, Fut>(
+        rtc: RetryConfig,
+        factory: F,
+        call_name: &'static str,
+    ) -> FutureRetry<F, TonicErrorHandler>
+    where
+        F: FnMut() -> Fut + Unpin,
+        Fut: Future<Output = Result<R>>,
+    {
+        let call_type = Self::determine_call_type(call_name);
+        FutureRetry::new(factory, TonicErrorHandler::new(rtc, call_type, call_name))
+    }
+
+    fn determine_call_type(call_name: &str) -> CallType {
+        match call_name {
+            "poll_workflow_task" | "poll_activity_task" => CallType::LongPoll,
+            _ => CallType::Normal,
+        }
     }
 }
 
 #[derive(Debug)]
-struct TonicErrorHandler {
+pub(crate) struct TonicErrorHandler {
     backoff: ExponentialBackoff,
     max_retries: usize,
     call_type: CallType,
@@ -93,8 +132,9 @@ impl TonicErrorHandler {
         false
     }
 }
-#[derive(Debug, Eq, PartialEq, Hash)]
-enum CallType {
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum CallType {
     Normal,
     LongPoll,
 }
@@ -139,14 +179,23 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
 }
 
 macro_rules! retry_call {
-    ($myself:ident, $ctype:expr, $call_name:ident, $($args:expr),*) => {{
-        let fact = move || { $myself.gateway.$call_name($($args,)*)};
-        $myself.call_with_retry(fact, $ctype, stringify!($call_name)).await
-    }};
+    ($myself:ident, $call_name:ident) => { retry_call!($myself, $call_name,) };
+    ($myself:ident, $call_name:ident, $($args:expr),*) => {{
+        let call_name_str = stringify!($call_name);
+        let fact = || { $myself.get_client().$call_name($($args,)*)};
+        $myself.call_with_retry(fact, call_name_str).await
+    }}
 }
 
+// Ideally, this would be auto-implemented for anything that implements the raw client, but that
+// breaks all our retry gateways which use a mock since it's based on this trait currently. Ideally
+// we would create an automock for the WorkflowServiceClient copy-paste trait and use that, but
+// that's a huge pain. Maybe one day tonic will provide traits.
 #[async_trait::async_trait]
-impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryGateway<SG> {
+impl<SG> ServerGatewayApis for RetryGateway<SG>
+where
+    SG: ServerGatewayApis + Send + Sync + 'static,
+{
     async fn start_workflow(
         &self,
         input: Vec<Payload>,
@@ -157,7 +206,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     ) -> Result<StartWorkflowExecutionResponse> {
         retry_call!(
             self,
-            CallType::Normal,
             start_workflow,
             input.clone(),
             task_queue.clone(),
@@ -172,25 +220,14 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         task_queue: String,
         is_sticky: bool,
     ) -> Result<PollWorkflowTaskQueueResponse> {
-        retry_call!(
-            self,
-            CallType::LongPoll,
-            poll_workflow_task,
-            task_queue.clone(),
-            is_sticky
-        )
+        retry_call!(self, poll_workflow_task, task_queue.clone(), is_sticky)
     }
 
     async fn poll_activity_task(
         &self,
         task_queue: String,
     ) -> Result<PollActivityTaskQueueResponse> {
-        retry_call!(
-            self,
-            CallType::LongPoll,
-            poll_activity_task,
-            task_queue.clone()
-        )
+        retry_call!(self, poll_activity_task, task_queue.clone())
     }
 
     async fn reset_sticky_task_queue(
@@ -200,7 +237,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     ) -> Result<ResetStickyTaskQueueResponse> {
         retry_call!(
             self,
-            CallType::Normal,
             reset_sticky_task_queue,
             workflow_id.clone(),
             run_id.clone()
@@ -211,12 +247,7 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
         &self,
         request: WorkflowTaskCompletion,
     ) -> Result<RespondWorkflowTaskCompletedResponse> {
-        retry_call!(
-            self,
-            CallType::Normal,
-            complete_workflow_task,
-            request.clone()
-        )
+        retry_call!(self, complete_workflow_task, request.clone())
     }
 
     async fn complete_activity_task(
@@ -226,7 +257,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     ) -> Result<RespondActivityTaskCompletedResponse> {
         retry_call!(
             self,
-            CallType::Normal,
             complete_activity_task,
             task_token.clone(),
             result.clone()
@@ -240,7 +270,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     ) -> Result<RecordActivityTaskHeartbeatResponse> {
         retry_call!(
             self,
-            CallType::Normal,
             record_activity_heartbeat,
             task_token.clone(),
             details.clone()
@@ -254,7 +283,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     ) -> Result<RespondActivityTaskCanceledResponse> {
         retry_call!(
             self,
-            CallType::Normal,
             cancel_activity_task,
             task_token.clone(),
             details.clone()
@@ -268,7 +296,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     ) -> Result<RespondActivityTaskFailedResponse> {
         retry_call!(
             self,
-            CallType::Normal,
             fail_activity_task,
             task_token.clone(),
             failure.clone()
@@ -283,7 +310,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     ) -> Result<RespondWorkflowTaskFailedResponse> {
         retry_call!(
             self,
-            CallType::Normal,
             fail_workflow_task,
             task_token.clone(),
             cause,
@@ -300,7 +326,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     ) -> Result<SignalWorkflowExecutionResponse> {
         retry_call!(
             self,
-            CallType::Normal,
             signal_workflow_execution,
             workflow_id.clone(),
             run_id.clone(),
@@ -317,7 +342,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     ) -> Result<QueryWorkflowResponse> {
         retry_call!(
             self,
-            CallType::Normal,
             query_workflow_execution,
             workflow_id.clone(),
             run_id.clone(),
@@ -332,7 +356,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     ) -> Result<DescribeWorkflowExecutionResponse> {
         retry_call!(
             self,
-            CallType::Normal,
             describe_workflow_execution,
             workflow_id.clone(),
             run_id.clone()
@@ -347,7 +370,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     ) -> Result<GetWorkflowExecutionHistoryResponse> {
         retry_call!(
             self,
-            CallType::Normal,
             get_workflow_execution_history,
             workflow_id.clone(),
             run_id.clone(),
@@ -362,7 +384,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     ) -> Result<RespondQueryTaskCompletedResponse> {
         retry_call!(
             self,
-            CallType::Normal,
             respond_legacy_query,
             task_token.clone(),
             query_result.clone()
@@ -376,7 +397,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     ) -> Result<RequestCancelWorkflowExecutionResponse> {
         retry_call!(
             self,
-            CallType::Normal,
             cancel_workflow_execution,
             workflow_id.clone(),
             run_id.clone()
@@ -390,7 +410,6 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     ) -> Result<TerminateWorkflowExecutionResponse> {
         retry_call!(
             self,
-            CallType::Normal,
             terminate_workflow_execution,
             workflow_id.clone(),
             run_id.clone()
@@ -398,11 +417,15 @@ impl<SG: ServerGatewayApis + Send + Sync + 'static> ServerGatewayApis for RetryG
     }
 
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse> {
-        retry_call!(self, CallType::Normal, list_namespaces,)
+        retry_call!(self, list_namespaces,)
     }
 
     fn get_options(&self) -> &ServerGatewayOptions {
         self.gateway.get_options()
+    }
+
+    fn namespace(&self) -> &str {
+        self.gateway.namespace()
     }
 }
 

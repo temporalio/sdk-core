@@ -89,6 +89,18 @@ message PendingChildExecutionInfo {
     temporal.api.enums.v1.ParentClosePolicy parent_close_policy = 5;
 }
 
+message PendingWorkflowTaskInfo {
+    temporal.api.enums.v1.PendingWorkflowTaskState state = 1;
+    google.protobuf.Timestamp scheduled_time = 2 [(gogoproto.stdtime) = true];
+    // original_scheduled_time is the scheduled time of the first workflow task during workflow task heartbeat.
+    // Heartbeat workflow task is done by RespondWorkflowTaskComplete with ForceCreateNewWorkflowTask == true and no command
+    // In this case, OriginalScheduledTime won't change. Then when current time - original_scheduled_time exceeds
+    // some threshold, the workflow task will be forced timeout.
+    google.protobuf.Timestamp original_scheduled_time = 3 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp started_time = 4 [(gogoproto.stdtime) = true];
+    int32 attempt = 5;
+}
+
 message ResetPoints {
     repeated ResetPointInfo points = 1;
 }

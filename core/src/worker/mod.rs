@@ -1,5 +1,4 @@
 mod activities;
-mod dispatcher;
 mod wft_delivery;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
@@ -8,7 +7,6 @@ pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     NewLocalAct,
 };
-pub(crate) use dispatcher::WorkerDispatcher;
 
 use crate::{
     errors::CompleteWfError,
@@ -31,7 +29,7 @@ use crate::{
         },
         EmptyWorkflowCommandErr, LocalResolution, WFMachinesError, WorkflowCachingPolicy,
     },
-    ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError,
+    ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
 };
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
 use futures::{Future, TryFutureExt};
@@ -43,6 +41,7 @@ use temporal_sdk_core_protos::{
         activity_task::ActivityTask,
         workflow_activation::{remove_from_cache::EvictionReason, WorkflowActivation},
         workflow_completion::{self, workflow_activation_completion, WorkflowActivationCompletion},
+        ActivityTaskCompletion,
     },
     temporal::api::{
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
@@ -52,7 +51,8 @@ use temporal_sdk_core_protos::{
     },
     TaskToken,
 };
-use tokio::sync::{watch, Notify, Semaphore};
+use tokio::sync::{Notify, Semaphore};
+use tokio_util::sync::CancellationToken;
 use tonic::Code;
 use tracing_futures::Instrument;
 
@@ -67,8 +67,8 @@ pub struct Worker {
     /// Buffers workflow task polling in the event we need to return a pending activation while
     /// a poll is ongoing. Sticky and nonsticky polling happens inside of it.
     wf_task_source: WFTSource,
-    /// Workflow task management TODO: No pub
-    pub(crate) wft_manager: WorkflowTaskManager,
+    /// Workflow task management
+    wft_manager: WorkflowTaskManager,
     /// Manages activity tasks for this worker/task queue
     at_task_mgr: Option<WorkerActivityTasks>,
     /// Manages local activities
@@ -82,12 +82,88 @@ pub struct Worker {
     /// a WFT is completed.
     wfts_drained_notify: Arc<Notify>,
     /// Has shutdown been called?
-    shutdown_requested: watch::Receiver<bool>,
-    shutdown_sender: watch::Sender<bool>,
+    shutdown_token: CancellationToken,
     /// Will be called at the end of each activation completion
     post_activate_hook: Option<Box<dyn Fn(&Self) + Send + Sync>>,
 
     metrics: MetricsContext,
+}
+
+#[async_trait::async_trait]
+impl WorkerTrait for Worker {
+    #[instrument(level = "debug", skip(self), fields(run_id))]
+    async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
+        self.next_workflow_activation().await
+    }
+
+    #[instrument(level = "debug", skip(self))]
+    async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError> {
+        loop {
+            match self.activity_poll().await.transpose() {
+                Some(r) => break r,
+                None => {
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+            }
+        }
+    }
+
+    #[instrument(level = "debug", skip(self, completion),
+    fields(completion=%&completion, run_id=%completion.run_id))]
+    async fn complete_workflow_activation(
+        &self,
+        completion: WorkflowActivationCompletion,
+    ) -> Result<(), CompleteWfError> {
+        self.complete_workflow_activation(completion).await
+    }
+
+    #[instrument(level = "debug", skip(self))]
+    async fn complete_activity_task(
+        &self,
+        completion: ActivityTaskCompletion,
+    ) -> Result<(), CompleteActivityError> {
+        let task_token = TaskToken(completion.task_token);
+        let status = if let Some(s) = completion.result.and_then(|r| r.status) {
+            s
+        } else {
+            return Err(CompleteActivityError::MalformedActivityCompletion {
+                reason: "Activity completion had empty result/status field".to_owned(),
+                completion: None,
+            });
+        };
+
+        self.complete_activity(task_token, status).await
+    }
+
+    fn record_activity_heartbeat(&self, details: ActivityHeartbeat) {
+        self.record_heartbeat(details);
+    }
+
+    fn request_workflow_eviction(&self, run_id: &str) {
+        self.request_wf_eviction(
+            run_id,
+            "Eviction explicitly requested by lang",
+            EvictionReason::LangRequested,
+        );
+    }
+
+    fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
+        self.server_gateway.clone()
+    }
+
+    fn get_config(&self) -> &WorkerConfig {
+        &self.config
+    }
+
+    async fn shutdown(&self) {
+        self.shutdown().await
+    }
+
+    async fn finalize_shutdown(self) {
+        self.shutdown().await;
+        self.finalize_shutdown().await
+    }
 }
 
 impl Worker {
@@ -173,7 +249,6 @@ impl Worker {
         };
         let pa_notif = Arc::new(Notify::new());
         let wfts_drained_notify = Arc::new(Notify::new());
-        let (shut_tx, shut_rx) = watch::channel(false);
         Self {
             server_gateway: sg.clone(),
             sticky_name: sticky_queue_name,
@@ -191,12 +266,11 @@ impl Worker {
             }),
             local_act_mgr: LocalActivityManager::new(
                 config.max_outstanding_local_activities,
-                sg.get_options().namespace.clone(),
+                config.namespace.clone(),
             ),
             workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
             config,
-            shutdown_requested: shut_rx,
-            shutdown_sender: shut_tx,
+            shutdown_token: CancellationToken::new(),
             post_activate_hook: None,
             pending_activations_notify: pa_notif,
             wfts_drained_notify,
@@ -206,7 +280,7 @@ impl Worker {
 
     /// Begins the shutdown process, tells pollers they should stop. Is idempotent.
     pub(crate) fn initiate_shutdown(&self) {
-        let _ = self.shutdown_sender.send(true);
+        self.shutdown_token.cancel();
         // First, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.notify_shutdown();
@@ -262,7 +336,7 @@ impl Worker {
             if let Some(ref act_mgr) = self.at_task_mgr {
                 act_mgr.poll().await
             } else {
-                let _ = self.shutdown_requested.clone().changed().await;
+                self.shutdown_token.cancelled().await;
                 Err(PollActivityError::ShutDown)
             }
         };
@@ -278,7 +352,12 @@ impl Worker {
                             &run_id, LocalResolution::LocalActivity(resolution)).await;
                         Ok(task)
                     },
-                    None => Ok(None)
+                    None => {
+                        if self.shutdown_token.is_cancelled() {
+                            return Err(PollActivityError::ShutDown);
+                        }
+                        Ok(None)
+                    }
                 }
             },
             r = act_mgr_poll => r,
@@ -448,11 +527,23 @@ impl Worker {
         self.post_activate_hook = Some(Box::new(callback))
     }
 
+    pub(crate) fn set_shutdown_on_run_reaches_event(&mut self, run_id: String, last_event: i64) {
+        self.set_post_activate_hook(move |worker| {
+            if worker
+                .wft_manager
+                .most_recently_processed_event(&run_id)
+                .unwrap_or_default()
+                >= last_event
+            {
+                worker.initiate_shutdown();
+            }
+        });
+    }
+
     /// Resolves with WFT poll response or `PollWfError::ShutDown` if WFTs have been drained
     async fn workflow_poll_or_wfts_drained(
         &self,
     ) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
-        let mut shutdown_requested = self.shutdown_requested.clone();
         loop {
             tokio::select! {
                 biased;
@@ -466,7 +557,7 @@ impl Worker {
                     }
                     return r
                 },
-                _ = shutdown_requested.changed() => {},
+                _ = self.shutdown_token.cancelled() => {},
             }
         }
     }
@@ -481,7 +572,7 @@ impl Worker {
         // heartbeating which is a "new" workflow task that we need to accept and process as long as
         // the LA is outstanding. Similarly, if we already have such tasks (from a WFT completion),
         // then we must fetch them from the source before we can say workflow polling is shutdown.
-        if *self.shutdown_requested.borrow()
+        if self.shutdown_token.is_cancelled()
             && !self.wf_task_source.has_tasks_from_complete()
             && self.local_act_mgr.num_outstanding() == 0
         {
@@ -555,7 +646,6 @@ impl Worker {
                 debug!(workflow_execution=?we,
                        "No new work for lang to perform after polling server");
                 self.complete_workflow_activation(WorkflowActivationCompletion {
-                    task_queue: self.config.task_queue.clone(),
                     run_id: we.run_id,
                     status: Some(workflow_completion::Success::from_variants(vec![]).into()),
                 })
@@ -851,6 +941,7 @@ struct WFTReportOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_help::test_worker_cfg;
     use temporal_client::mocks::mock_gateway;
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 
@@ -861,8 +952,7 @@ mod tests {
             .expect_poll_activity_task()
             .returning(|_| Ok(PollActivityTaskQueueResponse::default()));
 
-        let cfg = WorkerConfigBuilder::default()
-            .task_queue("whatever")
+        let cfg = test_worker_cfg()
             .max_outstanding_activities(5_usize)
             .build()
             .unwrap();
@@ -878,8 +968,7 @@ mod tests {
             .expect_poll_workflow_task()
             .returning(|_, _| Ok(PollWorkflowTaskQueueResponse::default()));
 
-        let cfg = WorkerConfigBuilder::default()
-            .task_queue("whatever")
+        let cfg = test_worker_cfg()
             .max_outstanding_workflow_tasks(5_usize)
             .build()
             .unwrap();
@@ -895,8 +984,7 @@ mod tests {
             .expect_poll_activity_task()
             .returning(|_| Err(tonic::Status::internal("ahhh")));
 
-        let cfg = WorkerConfigBuilder::default()
-            .task_queue("whatever")
+        let cfg = test_worker_cfg()
             .max_outstanding_activities(5_usize)
             .build()
             .unwrap();
@@ -912,8 +1000,7 @@ mod tests {
             .expect_poll_workflow_task()
             .returning(|_, _| Err(tonic::Status::internal("ahhh")));
 
-        let cfg = WorkerConfigBuilder::default()
-            .task_queue("whatever")
+        let cfg = test_worker_cfg()
             .max_outstanding_workflow_tasks(5_usize)
             .build()
             .unwrap();
@@ -924,18 +1011,14 @@ mod tests {
 
     #[test]
     fn max_polls_calculated_properly() {
-        let cfg = WorkerConfigBuilder::default()
-            .task_queue("whatever")
-            .build()
-            .unwrap();
+        let cfg = test_worker_cfg().build().unwrap();
         assert_eq!(cfg.max_nonsticky_polls(), 1);
         assert_eq!(cfg.max_sticky_polls(), 4);
     }
 
     #[test]
     fn max_polls_zero_is_err() {
-        assert!(WorkerConfigBuilder::default()
-            .task_queue("whatever")
+        assert!(test_worker_cfg()
             .max_concurrent_wft_polls(0_usize)
             .build()
             .is_err());

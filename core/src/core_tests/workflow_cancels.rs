@@ -1,7 +1,7 @@
 use crate::{
     job_assert,
     test_help::{
-        build_fake_core, canned_histories, gen_assert_and_reply, poll_and_reply, ResponseType,
+        build_fake_worker, canned_histories, gen_assert_and_reply, poll_and_reply, ResponseType,
     },
     workflow::WorkflowCachingPolicy::NonSticky,
 };
@@ -45,7 +45,7 @@ async fn timer_then_cancel_req(
             canned_histories::timer_wf_cancel_req_cancelled(timer_id.as_str())
         }
     };
-    let core = build_fake_core(wfid, t, hist_batches);
+    let core = build_fake_worker(wfid, t, hist_batches);
 
     let final_cmd = match completion_type {
         CompletionType::Complete => CompleteWorkflowExecution::default().into(),
@@ -77,7 +77,7 @@ async fn timer_then_cancel_req(
 async fn timer_then_cancel_req_then_timer_then_cancelled() {
     let wfid = "fake_wf_id";
     let t = canned_histories::timer_wf_cancel_req_do_another_timer_then_cancelled();
-    let core = build_fake_core(wfid, t, [ResponseType::AllHistory]);
+    let core = build_fake_worker(wfid, t, [ResponseType::AllHistory]);
 
     poll_and_reply(
         &core,
@@ -107,7 +107,7 @@ async fn timer_then_cancel_req_then_timer_then_cancelled() {
 async fn immediate_cancel() {
     let wfid = "fake_wf_id";
     let t = canned_histories::immediate_wf_cancel();
-    let core = build_fake_core(wfid, t, &[1]);
+    let core = build_fake_worker(wfid, t, &[1]);
 
     poll_and_reply(
         &core,

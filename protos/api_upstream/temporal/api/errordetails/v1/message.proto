@@ -33,6 +33,8 @@ option java_outer_classname = "MessageProto";
 option ruby_package = "Temporal::Api::ErrorDetails::V1";
 option csharp_namespace = "Temporal.Api.ErrorDetails.V1";
 
+import "temporal/api/enums/v1/failed_cause.proto";
+
 message NotFoundFailure {
     string current_cluster = 1;
     string active_cluster = 2;
@@ -71,4 +73,8 @@ message QueryFailedFailure {
 
 message PermissionDeniedFailure {
     string reason = 1;
+}
+
+message ResourceExhaustedFailure {
+    temporal.api.enums.v1.ResourceExhaustedCause cause = 1;
 }

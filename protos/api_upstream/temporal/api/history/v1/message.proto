@@ -81,7 +81,8 @@ message WorkflowExecutionStartedEventAttributes {
     google.protobuf.Timestamp workflow_execution_expiration_time = 19 [(gogoproto.stdtime) = true];
     // If this workflow runs on a cron schedule, it will appear here
     string cron_schedule = 20;
-    // TODO: What is this? Appears unused.
+    // For a cron workflow, this contains the amount of time between when this iteration of
+    // the cron workflow was scheduled and when it should run next per its cron_schedule.
     google.protobuf.Duration first_workflow_task_backoff = 21 [(gogoproto.stdduration) = true];
     temporal.api.common.v1.Memo memo = 22;
     temporal.api.common.v1.SearchAttributes search_attributes = 23;

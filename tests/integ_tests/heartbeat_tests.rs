@@ -11,7 +11,7 @@ use temporal_sdk_core_protos::coresdk::{
     ActivityHeartbeat, ActivityTaskCompletion, IntoCompletion,
 };
 use temporal_sdk_core_test_utils::{
-    init_core_and_create_wf, schedule_activity_cmd, CoreTestHelpers,
+    init_core_and_create_wf, schedule_activity_cmd, WorkerTestHelpers,
 };
 use tokio::time::sleep;
 
@@ -19,7 +19,7 @@ use tokio::time::sleep;
 async fn activity_heartbeat() {
     let (core, task_q) = init_core_and_create_wf("activity_heartbeat").await;
     let activity_id = "act-1";
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
@@ -30,12 +30,12 @@ async fn activity_heartbeat() {
             Duration::from_secs(60),
             Duration::from_secs(1),
         )
-        .into_completion(task_q.to_string(), task.run_id),
+        .into_completion(task.run_id),
     )
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
-    let task = core.poll_activity_task(&task_q).await.unwrap();
+    let task = core.poll_activity_task().await.unwrap();
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
@@ -49,7 +49,6 @@ async fn activity_heartbeat() {
         sleep(Duration::from_millis(100)).await;
         core.record_activity_heartbeat(ActivityHeartbeat {
             task_token: task.task_token.clone(),
-            task_queue: task_q.to_string(),
             details: vec![],
         });
     }
@@ -61,13 +60,12 @@ async fn activity_heartbeat() {
     // Complete activity successfully.
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
-        task_queue: task_q.to_string(),
         result: Some(ActivityExecutionResult::ok(response_payload.clone())),
     })
     .await
     .unwrap();
     // Poll workflow task and verify that activity has succeeded.
-    let task = core.poll_workflow_activation(&task_q).await.unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [
@@ -83,5 +81,5 @@ async fn activity_heartbeat() {
             assert_eq!(r, &response_payload);
         }
     );
-    core.complete_execution(&task_q, &task.run_id).await;
+    core.complete_execution(&task.run_id).await;
 }

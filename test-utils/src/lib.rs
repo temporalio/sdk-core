@@ -13,11 +13,11 @@ use std::{
 };
 use temporal_sdk::TestRustWorker;
 use temporal_sdk_core::{
-    replay::{init_core_replay, ReplayCore},
-    CoreInitOptions, CoreInitOptionsBuilder, ServerGatewayOptions, ServerGatewayOptionsBuilder,
-    TelemetryOptions, TelemetryOptionsBuilder, WorkerConfig, WorkerConfigBuilder,
+    init_replay_worker, init_worker, replay::mock_gateway_from_history, telemetry_init,
+    ServerGatewayOptions, ServerGatewayOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
+    WorkerConfig, WorkerConfigBuilder,
 };
-use temporal_sdk_core_api::Core;
+use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_commands::{
@@ -37,27 +37,27 @@ const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
 /// If set, enable direct scraping of prom metrics on the specified port
 const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
 
-/// Create a core instance which will use the provided test name to base the task queue and wf id
+/// Create a worker instance which will use the provided test name to base the task queue and wf id
 /// upon. Returns the instance and the task queue name (which is also the workflow id).
-pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn Core>, String) {
+pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn Worker>, String) {
     let mut starter = CoreWfStarter::new(test_name);
-    let core = starter.get_core().await;
+    let core = starter.get_worker().await;
     starter.start_wf().await;
     (core, starter.get_task_queue().to_string())
 }
 
-/// Create a core replay instance preloaded with just one provided history. Returns the core impl
+/// Create a worker replay instance preloaded with a provided history. Returns the worker impl
 /// and the task queue name as in [init_core_and_create_wf].
-pub fn init_core_replay_preloaded(test_name: &str, history: &History) -> (Arc<dyn Core>, String) {
-    let replay_core = init_core_replay(get_integ_telem_options());
+pub fn init_core_replay_preloaded(test_name: &str, history: &History) -> (Arc<dyn Worker>, String) {
     let worker_cfg = WorkerConfigBuilder::default()
+        .namespace(NAMESPACE)
         .task_queue(test_name)
         .build()
         .expect("Configuration options construct properly");
-    replay_core
-        .make_replay_worker(worker_cfg, history)
-        .expect("Worker registration works");
-    (Arc::new(replay_core), test_name.to_string())
+    let gateway = mock_gateway_from_history(history, test_name.to_string());
+    let worker = init_replay_worker(worker_cfg, Arc::new(gateway), history)
+        .expect("Replay worker must init properly");
+    (Arc::new(worker), test_name.to_string())
 }
 
 /// Load history from a file containing the protobuf serialization of it
@@ -73,10 +73,10 @@ pub async fn history_from_proto_binary(path_from_root: &str) -> Result<History, 
 pub struct CoreWfStarter {
     /// Used for both the task queue and workflow id
     task_queue_name: String,
-    core_options: CoreInitOptions,
+    telemetry_options: TelemetryOptions,
     worker_config: WorkerConfig,
     wft_timeout: Option<Duration>,
-    initted_core: Option<Arc<dyn Core>>,
+    initted_worker: Option<Arc<dyn Worker>>,
 }
 
 impl CoreWfStarter {
@@ -90,43 +90,41 @@ impl CoreWfStarter {
     pub fn new_tq_name(task_queue: &str) -> Self {
         Self {
             task_queue_name: task_queue.to_owned(),
-            core_options: CoreInitOptionsBuilder::default()
-                .gateway_opts(get_integ_server_options())
-                .telemetry_opts(get_integ_telem_options())
-                .build()
-                .unwrap(),
+            telemetry_options: get_integ_telem_options(),
             worker_config: WorkerConfigBuilder::default()
+                .namespace(NAMESPACE)
                 .task_queue(task_queue)
                 .max_cached_workflows(1000_usize)
                 .build()
                 .unwrap(),
             wft_timeout: None,
-            initted_core: None,
+            initted_worker: None,
         }
     }
 
     pub async fn worker(&mut self) -> TestRustWorker {
         TestRustWorker::new(
-            self.get_core().await,
+            self.get_worker().await,
             self.worker_config.task_queue.clone(),
             self.wft_timeout,
         )
     }
 
     pub async fn shutdown(&mut self) {
-        self.get_core().await.shutdown().await;
+        self.get_worker().await.shutdown().await;
     }
 
-    pub async fn get_core(&mut self) -> Arc<dyn Core> {
-        if self.initted_core.is_none() {
-            let core = temporal_sdk_core::init(self.core_options.clone())
+    pub async fn get_worker(&mut self) -> Arc<dyn Worker> {
+        if self.initted_worker.is_none() {
+            telemetry_init(&self.telemetry_options).expect("Telemetry inits cleanly");
+            let gateway = get_integ_server_options()
+                .connect(self.worker_config.namespace.clone(), None)
                 .await
-                .unwrap();
-            // Register a worker for the task queue
-            core.register_worker(self.worker_config.clone()).unwrap();
-            self.initted_core = Some(Arc::new(core));
+                .expect("Must connect");
+            let worker = init_worker(self.worker_config.clone(), gateway);
+            self.initted_worker = Some(Arc::new(worker));
         }
-        self.initted_core.as_ref().unwrap().clone()
+        self.initted_worker.as_ref().unwrap().clone()
     }
 
     /// Start the workflow defined by the builder and return run id
@@ -135,7 +133,7 @@ impl CoreWfStarter {
     }
 
     pub async fn start_wf_with_id(&self, workflow_id: String) -> String {
-        self.initted_core
+        self.initted_worker
             .as_ref()
             .expect(
                 "Core must be initted before starting a workflow.\
@@ -161,21 +159,22 @@ impl CoreWfStarter {
         &mut self,
         wf_id: impl Into<String>,
         run_id: impl Into<String>,
+        // TODO: Need not be passed in
         worker: &mut TestRustWorker,
     ) -> Result<(), anyhow::Error> {
         // Fetch history and replay it
         let history = self
-            .get_core()
+            .get_worker()
             .await
             .server_gateway()
             .get_workflow_execution_history(wf_id.into(), Some(run_id.into()), vec![])
             .await?
             .history
             .expect("history field must be populated");
-        let (replay_core, _) = init_core_replay_preloaded(worker.task_queue(), &history);
-        let mut replay_worker = worker.swap_core(replay_core);
-        replay_worker.incr_expected_run_count(1);
-        replay_worker.run_until_done().await.unwrap();
+        let (replay_worker, _) = init_core_replay_preloaded(worker.task_queue(), &history);
+        worker.with_new_core_worker(replay_worker);
+        worker.incr_expected_run_count(1);
+        worker.run_until_done().await.unwrap();
         Ok(())
     }
 
@@ -225,7 +224,6 @@ pub fn get_integ_server_options() -> ServerGatewayOptions {
     };
     let url = Url::try_from(&*temporal_server_address).unwrap();
     ServerGatewayOptionsBuilder::default()
-        .namespace(NAMESPACE.to_string())
         .identity("integ_tester".to_string())
         .worker_binary_id("fakebinaryid".to_string())
         .target_url(url)
@@ -308,19 +306,18 @@ where
 }
 
 #[async_trait::async_trait]
-pub trait CoreTestHelpers {
-    async fn complete_execution(&self, task_q: &str, run_id: &str);
-    async fn complete_timer(&self, task_q: &str, run_id: &str, seq: u32, duration: Duration);
+pub trait WorkerTestHelpers {
+    async fn complete_execution(&self, run_id: &str);
+    async fn complete_timer(&self, run_id: &str, seq: u32, duration: Duration);
 }
 
 #[async_trait::async_trait]
-impl<T> CoreTestHelpers for T
+impl<T> WorkerTestHelpers for T
 where
-    T: Core + ?Sized,
+    T: Worker + ?Sized,
 {
-    async fn complete_execution(&self, task_q: &str, run_id: &str) {
+    async fn complete_execution(&self, run_id: &str) {
         self.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            task_q.to_string(),
             run_id.to_string(),
             vec![CompleteWorkflowExecution { result: None }.into()],
         ))
@@ -328,9 +325,8 @@ where
         .unwrap();
     }
 
-    async fn complete_timer(&self, task_q: &str, run_id: &str, seq: u32, duration: Duration) {
+    async fn complete_timer(&self, run_id: &str, seq: u32, duration: Duration) {
         self.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            task_q.to_string(),
             run_id.to_string(),
             vec![StartTimer {
                 seq,

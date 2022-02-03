@@ -1,7 +1,7 @@
 use crate::{
     replay::DEFAULT_WORKFLOW_TYPE,
     test_help::{
-        build_mock_pollers, canned_histories, mock_core, MockPollCfg, ResponseType, TEST_Q,
+        build_mock_pollers, canned_histories, mock_worker, MockPollCfg, ResponseType, TEST_Q,
     },
     workflow::managed_wf::ManagedWFFunc,
 };
@@ -28,7 +28,7 @@ async fn signal_child_workflow(#[case] serial: bool) {
     let mock = mock_gateway();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::AllHistory], mock);
     let mock = build_mock_pollers(mh);
-    let core = mock_core(mock);
+    let core = mock_worker(mock);
     let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
 
     let wf = move |ctx: WfContext| async move {

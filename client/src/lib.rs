@@ -10,13 +10,18 @@ extern crate tracing;
 mod metrics;
 #[cfg(any(feature = "mocks", test))]
 pub mod mocks;
+mod raw;
 mod retry;
 
-pub use crate::retry::RetryGateway;
+pub use crate::retry::{CallType, RetryGateway};
 #[cfg(any(feature = "mocks", test))]
 pub use mocks::MockManualGateway;
+pub use raw::WorkflowService;
 
-use crate::metrics::{svc_operation, MetricsContext};
+use crate::{
+    metrics::{svc_operation, MetricsContext},
+    raw::{sealed::RawClientLike, AttachMetricLabels},
+};
 use backoff::{ExponentialBackoff, SystemClock};
 use futures::{future::BoxFuture, task::Context, FutureExt};
 use http::uri::InvalidUri;
@@ -24,7 +29,9 @@ use opentelemetry::metrics::Meter;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
+    ops::{Deref, DerefMut},
     str::FromStr,
+    sync::Arc,
     task::Poll,
     time::{Duration, Instant},
 };
@@ -47,7 +54,7 @@ use tonic::{
     metadata::{MetadataKey, MetadataValue},
     service::Interceptor,
     transport::{Certificate, Channel, Endpoint, Identity},
-    IntoRequest, Status,
+    Status,
 };
 use tower::ServiceBuilder;
 use url::Url;
@@ -70,9 +77,6 @@ pub struct ServerGatewayOptions {
     /// The URL of the Temporal server to connect to
     #[builder(setter(into))]
     pub target_url: Url,
-
-    /// What namespace will we operate under
-    pub namespace: String,
 
     /// The name of the SDK being implemented on top of core. Is set as `client-name` header in
     /// all RPC calls
@@ -205,31 +209,115 @@ pub enum GatewayInitError {
     TonicTransportError(#[from] tonic::transport::Error),
 }
 
+/// Types which can turn into [ServerGatewayApis] implementing [Arc]s, which expose higher-level
+/// interactions and can be passed to workers when initializing them.
+pub trait GatewayArcable {
+    /// The concrete type
+    type Reified: ServerGatewayApis + Send + Sync + 'static;
+    /// Get an the arc'd gateway impl
+    fn into_gateway_arc(self) -> Arc<Self::Reified>;
+}
+impl<SGA> GatewayArcable for SGA
+where
+    SGA: ServerGatewayApis + Send + Sync + 'static,
+{
+    type Reified = SGA;
+    fn into_gateway_arc(self) -> Arc<Self::Reified> {
+        Arc::new(self)
+    }
+}
+impl<SGA> GatewayArcable for Arc<SGA>
+where
+    SGA: ServerGatewayApis + Send + Sync + 'static,
+{
+    type Reified = SGA;
+    fn into_gateway_arc(self) -> Arc<Self::Reified> {
+        self
+    }
+}
+
+/// A client with [ServerGatewayOptions] attached, which can be passed to initialize workers,
+/// or can be used directly.
+#[derive(Clone)]
+pub struct ConfiguredClient<C> {
+    client: C,
+    options: ServerGatewayOptions,
+}
+
+impl<C> ConfiguredClient<C> {
+    /// Returns the options the client is configured with
+    pub fn options(&self) -> &ServerGatewayOptions {
+        &self.options
+    }
+
+    /// De-constitute this type
+    pub fn into_parts(self) -> (C, ServerGatewayOptions) {
+        (self.client, self.options)
+    }
+}
+
+// The configured client is effectively a "smart" (dumb) pointer
+impl<C> Deref for ConfiguredClient<C> {
+    type Target = C;
+
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
+impl<C> DerefMut for ConfiguredClient<C> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.client
+    }
+}
+
 impl ServerGatewayOptions {
-    /// Attempt to establish a connection to the Temporal server
+    /// Attempt to establish a connection to the Temporal server in a specific namespace. The
+    /// returned client is bound to that namespace.
     pub async fn connect(
         &self,
+        namespace: impl Into<String>,
         metrics_meter: Option<&Meter>,
     ) -> Result<RetryGateway<ServerGateway>, GatewayInitError> {
+        let (service, opts) = self
+            .connect_no_namespace(metrics_meter)
+            .await?
+            .into_inner()
+            .into_parts();
+        let gateway = ServerGateway {
+            service,
+            namespace: namespace.into(),
+            opts,
+        };
+        let retry_gateway = RetryGateway::new(gateway, self.retry_config.clone());
+        Ok(retry_gateway)
+    }
+
+    /// Attempt to establish a connection to the Temporal server and return a gRPC client which is
+    /// intercepted with retry, default headers functionality, and metrics if provided.
+    ///
+    /// See [RetryGateway] for more
+    pub async fn connect_no_namespace(
+        &self,
+        metrics_meter: Option<&Meter>,
+    ) -> Result<RetryGateway<ConfiguredClient<WorkflowServiceClientWithMetrics>>, GatewayInitError>
+    {
         let channel = Channel::from_shared(self.target_url.to_string())?;
         let channel = self.add_tls_to_channel(channel).await?;
         let channel = channel.connect().await?;
         let service = ServiceBuilder::new()
-            .layer_fn(|channel| {
-                GrpcMetricSvc::new(
-                    channel,
-                    metrics_meter.map(|mm| MetricsContext::top_level(self.namespace.clone(), mm)),
-                )
+            .layer_fn(|channel| GrpcMetricSvc {
+                inner: channel,
+                metrics: metrics_meter.map(|mm| MetricsContext::new(vec![], mm)),
             })
             .service(channel);
         let interceptor = ServiceCallInterceptor { opts: self.clone() };
-        let service = WorkflowServiceClient::with_interceptor(service, interceptor);
-        let gateway = ServerGateway {
-            service,
-            opts: self.clone(),
-        };
-        let retry_gateway = RetryGateway::new(gateway, self.retry_config.clone());
-        Ok(retry_gateway)
+        Ok(RetryGateway::new(
+            ConfiguredClient {
+                client: WorkflowServiceClient::with_interceptor(service, interceptor),
+                options: self.clone(),
+            },
+            self.retry_config.clone(),
+        ))
     }
 
     /// If TLS is configured, set the appropriate options on the provided channel and return it.
@@ -280,8 +368,9 @@ pub struct WorkflowTaskCompletion {
     pub force_create_new_workflow_task: bool,
 }
 
+/// Interceptor which attaches common metadata (like "client-name") to every outgoing call
 #[derive(Clone)]
-struct ServiceCallInterceptor {
+pub struct ServiceCallInterceptor {
     opts: ServerGatewayOptions,
 }
 
@@ -318,8 +407,8 @@ impl Interceptor for ServiceCallInterceptor {
 }
 
 /// Implements metrics functionality for gRPC (really, any http) calls
-#[derive(derive_more::Constructor, Debug, Clone)]
-pub(crate) struct GrpcMetricSvc {
+#[derive(Debug, Clone)]
+pub struct GrpcMetricSvc {
     inner: Channel,
     // If set to none, metrics are a no-op
     metrics: Option<MetricsContext>,
@@ -334,18 +423,30 @@ impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, req: http::Request<BoxBody>) -> Self::Future {
-        let metrics = self.metrics.as_ref().and_then(|metrics| {
-            req.uri().to_string().rsplit_once('/').map(|split_tup| {
-                let method_name = split_tup.1;
-                let mut metrics = metrics.with_new_attrs([svc_operation(method_name.to_string())]);
-                if LONG_POLL_METHOD_NAMES.contains(&method_name) {
-                    metrics.set_is_long_poll();
+    fn call(&mut self, mut req: http::Request<BoxBody>) -> Self::Future {
+        let metrics = self
+            .metrics
+            .clone()
+            .map(|m| {
+                // Attach labels from client wrapper
+                if let Some(other_labels) = req.extensions_mut().remove::<AttachMetricLabels>() {
+                    m.with_new_attrs(other_labels.labels)
+                } else {
+                    m
                 }
-                metrics.svc_request();
-                metrics
             })
-        });
+            .and_then(|mut metrics| {
+                // Attach method name label if possible
+                req.uri().to_string().rsplit_once('/').map(|split_tup| {
+                    let method_name = split_tup.1;
+                    metrics.add_new_attrs([svc_operation(method_name.to_string())]);
+                    if LONG_POLL_METHOD_NAMES.contains(&method_name) {
+                        metrics.set_is_long_poll();
+                    }
+                    metrics.svc_request();
+                    metrics
+                })
+            });
         let callfut = self.inner.call(req);
         async move {
             let started = Instant::now();
@@ -362,16 +463,52 @@ impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
     }
 }
 
-/// Contains an instance of a client for interacting with the temporal server
-#[derive(Debug)]
+/// A [WorkflowServiceClient] with the default interceptors attached.
+pub type WorkflowServiceClientWithMetrics = WorkflowServiceClient<InterceptedMetricsSvc>;
+type InterceptedMetricsSvc = InterceptedService<GrpcMetricSvc, ServiceCallInterceptor>;
+
+/// Contains an instance of a namespace-bound client for interacting with the Temporal server
+#[derive(derive_more::Constructor, Debug)]
 pub struct ServerGateway {
     /// Client for interacting with workflow service
-    service: WorkflowServiceClient<InterceptedService<GrpcMetricSvc, ServiceCallInterceptor>>,
+    service: WorkflowServiceClientWithMetrics,
     /// Options gateway was initialized with
-    pub opts: ServerGatewayOptions,
+    opts: ServerGatewayOptions,
+    /// The namespace this gateway interacts with
+    namespace: String,
 }
 
-/// This trait provides ways to call the temporal server
+impl ServerGateway {
+    /// Return an auto-retrying version of the underling grpc client (instrumented with metrics
+    /// collection, if enabled).
+    ///
+    /// Note that it is reasonably cheap to clone the returned type if you need to own it. Such
+    /// clones will keep re-using the same channel.
+    pub fn raw_retry_client(&self) -> RetryGateway<WorkflowServiceClientWithMetrics> {
+        RetryGateway::new(self.service.clone(), self.opts.retry_config.clone())
+    }
+
+    /// Access the underling grpc client (instrumented with metrics collection, if enabled). This
+    /// raw client is not bound to a specific namespace.
+    ///
+    /// Note that it is reasonably cheap to clone the returned type if you need to own it. Such
+    /// clones will keep re-using the same channel.
+    pub fn raw_client(&self) -> &WorkflowServiceClientWithMetrics {
+        &self.service
+    }
+
+    /// Return the options this client was initialized with
+    pub fn options(&self) -> &ServerGatewayOptions {
+        &self.opts
+    }
+
+    /// Used to access the client as a [WorkflowService] implementor rather than the raw struct
+    fn wf_svc(&self) -> impl RawClientLike<SvcType = InterceptedMetricsSvc> {
+        self.service.clone()
+    }
+}
+
+/// This trait provides higher-level friendlier interaction with the server
 #[cfg_attr(any(feature = "mocks", test), mockall::automock)]
 #[async_trait::async_trait]
 pub trait ServerGatewayApis {
@@ -516,6 +653,9 @@ pub trait ServerGatewayApis {
 
     /// Returns options that were used to initialize the gateway
     fn get_options(&self) -> &ServerGatewayOptions;
+
+    /// Returns the namespace this gateway is bound to
+    fn namespace(&self) -> &str;
 }
 
 #[async_trait::async_trait]
@@ -531,10 +671,9 @@ impl ServerGatewayApis for ServerGateway {
         let request_id = Uuid::new_v4().to_string();
 
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .start_workflow_execution(StartWorkflowExecutionRequest {
-                namespace: self.opts.namespace.clone(),
+                namespace: self.namespace.clone(),
                 input: input.into_payloads(),
                 workflow_id,
                 workflow_type: Some(WorkflowType {
@@ -557,8 +696,8 @@ impl ServerGatewayApis for ServerGateway {
         task_queue: String,
         is_sticky: bool,
     ) -> Result<PollWorkflowTaskQueueResponse> {
-        let mut request = PollWorkflowTaskQueueRequest {
-            namespace: self.opts.namespace.clone(),
+        let request = PollWorkflowTaskQueueRequest {
+            namespace: self.namespace.clone(),
             task_queue: Some(TaskQueue {
                 name: task_queue,
                 kind: if is_sticky {
@@ -569,13 +708,10 @@ impl ServerGatewayApis for ServerGateway {
             }),
             identity: self.opts.identity.clone(),
             binary_checksum: self.opts.worker_binary_id.clone(),
-        }
-        .into_request();
-        request.set_timeout(LONG_POLL_TIMEOUT);
+        };
 
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .poll_workflow_task_queue(request)
             .await?
             .into_inner())
@@ -585,21 +721,18 @@ impl ServerGatewayApis for ServerGateway {
         &self,
         task_queue: String,
     ) -> Result<PollActivityTaskQueueResponse> {
-        let mut request = PollActivityTaskQueueRequest {
-            namespace: self.opts.namespace.clone(),
+        let request = PollActivityTaskQueueRequest {
+            namespace: self.namespace.clone(),
             task_queue: Some(TaskQueue {
                 name: task_queue,
                 kind: TaskQueueKind::Normal as i32,
             }),
             identity: self.opts.identity.clone(),
             task_queue_metadata: None,
-        }
-        .into_request();
-        request.set_timeout(LONG_POLL_TIMEOUT);
+        };
 
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .poll_activity_task_queue(request)
             .await?
             .into_inner())
@@ -611,15 +744,14 @@ impl ServerGatewayApis for ServerGateway {
         run_id: String,
     ) -> Result<ResetStickyTaskQueueResponse> {
         let request = ResetStickyTaskQueueRequest {
-            namespace: self.opts.namespace.clone(),
+            namespace: self.namespace.clone(),
             execution: Some(WorkflowExecution {
                 workflow_id,
                 run_id,
             }),
         };
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .reset_sticky_task_queue(request)
             .await?
             .into_inner())
@@ -652,11 +784,10 @@ impl ServerGatewayApis for ServerGateway {
                     )
                 })
                 .collect(),
-            namespace: self.opts.namespace.clone(),
+            namespace: self.namespace.clone(),
         };
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .respond_workflow_task_completed(request)
             .await?
             .into_inner())
@@ -668,13 +799,12 @@ impl ServerGatewayApis for ServerGateway {
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse> {
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .respond_activity_task_completed(RespondActivityTaskCompletedRequest {
                 task_token: task_token.0,
                 result,
                 identity: self.opts.identity.clone(),
-                namespace: self.opts.namespace.clone(),
+                namespace: self.namespace.clone(),
             })
             .await?
             .into_inner())
@@ -686,13 +816,12 @@ impl ServerGatewayApis for ServerGateway {
         details: Option<Payloads>,
     ) -> Result<RecordActivityTaskHeartbeatResponse> {
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .record_activity_task_heartbeat(RecordActivityTaskHeartbeatRequest {
                 task_token: task_token.0,
                 details,
                 identity: self.opts.identity.clone(),
-                namespace: self.opts.namespace.clone(),
+                namespace: self.namespace.clone(),
             })
             .await?
             .into_inner())
@@ -704,13 +833,12 @@ impl ServerGatewayApis for ServerGateway {
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse> {
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .respond_activity_task_canceled(RespondActivityTaskCanceledRequest {
                 task_token: task_token.0,
                 details,
                 identity: self.opts.identity.clone(),
-                namespace: self.opts.namespace.clone(),
+                namespace: self.namespace.clone(),
             })
             .await?
             .into_inner())
@@ -722,13 +850,12 @@ impl ServerGatewayApis for ServerGateway {
         failure: Option<Failure>,
     ) -> Result<RespondActivityTaskFailedResponse> {
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .respond_activity_task_failed(RespondActivityTaskFailedRequest {
                 task_token: task_token.0,
                 failure,
                 identity: self.opts.identity.clone(),
-                namespace: self.opts.namespace.clone(),
+                namespace: self.namespace.clone(),
             })
             .await?
             .into_inner())
@@ -746,11 +873,10 @@ impl ServerGatewayApis for ServerGateway {
             failure,
             identity: self.opts.identity.clone(),
             binary_checksum: self.opts.worker_binary_id.clone(),
-            namespace: self.opts.namespace.clone(),
+            namespace: self.namespace.clone(),
         };
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .respond_workflow_task_failed(request)
             .await?
             .into_inner())
@@ -764,10 +890,9 @@ impl ServerGatewayApis for ServerGateway {
         payloads: Option<Payloads>,
     ) -> Result<SignalWorkflowExecutionResponse> {
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .signal_workflow_execution(SignalWorkflowExecutionRequest {
-                namespace: self.opts.namespace.clone(),
+                namespace: self.namespace.clone(),
                 workflow_execution: Some(WorkflowExecution {
                     workflow_id,
                     run_id,
@@ -788,10 +913,9 @@ impl ServerGatewayApis for ServerGateway {
         query: WorkflowQuery,
     ) -> Result<QueryWorkflowResponse> {
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .query_workflow(QueryWorkflowRequest {
-                namespace: self.opts.namespace.clone(),
+                namespace: self.namespace.clone(),
                 execution: Some(WorkflowExecution {
                     workflow_id,
                     run_id,
@@ -809,10 +933,9 @@ impl ServerGatewayApis for ServerGateway {
         run_id: Option<String>,
     ) -> Result<DescribeWorkflowExecutionResponse> {
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .describe_workflow_execution(DescribeWorkflowExecutionRequest {
-                namespace: self.opts.namespace.clone(),
+                namespace: self.namespace.clone(),
                 execution: Some(WorkflowExecution {
                     workflow_id,
                     run_id: run_id.unwrap_or_default(),
@@ -829,10 +952,9 @@ impl ServerGatewayApis for ServerGateway {
         page_token: Vec<u8>,
     ) -> Result<GetWorkflowExecutionHistoryResponse> {
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .get_workflow_execution_history(GetWorkflowExecutionHistoryRequest {
-                namespace: self.opts.namespace.clone(),
+                namespace: self.namespace.clone(),
                 execution: Some(WorkflowExecution {
                     workflow_id,
                     run_id: run_id.unwrap_or_default(),
@@ -851,30 +973,27 @@ impl ServerGatewayApis for ServerGateway {
     ) -> Result<RespondQueryTaskCompletedResponse> {
         let (_, completed_type, query_result, error_message) = query_result.into_components();
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .respond_query_task_completed(RespondQueryTaskCompletedRequest {
                 task_token: task_token.into(),
                 completed_type: completed_type as i32,
                 query_result,
                 error_message,
-                namespace: self.opts.namespace.clone(),
+                namespace: self.namespace.clone(),
             })
             .await?
             .into_inner())
     }
 
-    /// Cancel a currently executing workflow
     async fn cancel_workflow_execution(
         &self,
         workflow_id: String,
         run_id: Option<String>,
     ) -> Result<RequestCancelWorkflowExecutionResponse> {
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .request_cancel_workflow_execution(RequestCancelWorkflowExecutionRequest {
-                namespace: self.opts.namespace.clone(),
+                namespace: self.namespace.clone(),
                 workflow_execution: Some(WorkflowExecution {
                     workflow_id,
                     run_id: run_id.unwrap_or_default(),
@@ -887,17 +1006,15 @@ impl ServerGatewayApis for ServerGateway {
             .into_inner())
     }
 
-    /// Terminate a currently executing workflow
     async fn terminate_workflow_execution(
         &self,
         workflow_id: String,
         run_id: Option<String>,
     ) -> Result<TerminateWorkflowExecutionResponse> {
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .terminate_workflow_execution(TerminateWorkflowExecutionRequest {
-                namespace: self.opts.namespace.clone(),
+                namespace: self.namespace.clone(),
                 workflow_execution: Some(WorkflowExecution {
                     workflow_id,
                     run_id: run_id.unwrap_or_default(),
@@ -913,8 +1030,7 @@ impl ServerGatewayApis for ServerGateway {
 
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse> {
         Ok(self
-            .service
-            .clone()
+            .wf_svc()
             .list_namespaces(ListNamespacesRequest::default())
             .await?
             .into_inner())
@@ -922,5 +1038,9 @@ impl ServerGatewayApis for ServerGateway {
 
     fn get_options(&self) -> &ServerGatewayOptions {
         &self.opts
+    }
+
+    fn namespace(&self) -> &str {
+        &self.namespace
     }
 }
