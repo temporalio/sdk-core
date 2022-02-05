@@ -2,11 +2,15 @@
 //! information we need via interceptors. This module contains the necessary stuff to make that
 //! happen.
 
-use crate::metrics::task_queue_kv;
-use crate::{metrics::namespace_kv, raw::sealed::RawClientLike, LONG_POLL_TIMEOUT};
+use crate::{
+    metrics::{namespace_kv, task_queue_kv},
+    raw::sealed::RawClientLike,
+    LONG_POLL_TIMEOUT,
+};
 use futures::{future::BoxFuture, FutureExt};
-use temporal_sdk_core_protos::temporal::api::taskqueue::v1::TaskQueue;
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::workflow_service_client::WorkflowServiceClient;
+use temporal_sdk_core_protos::temporal::api::{
+    taskqueue::v1::TaskQueue, workflowservice::v1::workflow_service_client::WorkflowServiceClient,
+};
 use tonic::{body::BoxBody, client::GrpcService, metadata::KeyAndValueRef};
 
 pub(super) mod sealed {

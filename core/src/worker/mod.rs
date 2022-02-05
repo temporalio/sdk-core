@@ -855,7 +855,7 @@ impl Worker {
                     // Silence unhandled command errors since the lang SDK cannot do anything about
                     // them besides poll again, which it will do anyway.
                     tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
-                        warn!(error = %err, run_id, "Unhandled command response when completing");
+                        debug!(error = %err, run_id, "Unhandled command response when completing");
                         should_evict = Some(EvictionReason::UnhandledCommand);
                         Ok(())
                     }
