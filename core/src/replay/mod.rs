@@ -15,7 +15,10 @@ use temporal_client::{mocks::mock_manual_gateway, ServerGatewayApis};
 use temporal_sdk_core_protos::temporal::api::{
     common::v1::WorkflowExecution,
     history::v1::History,
-    workflowservice::v1::{RespondWorkflowTaskFailedResponse, StartWorkflowExecutionResponse},
+    workflowservice::v1::{
+        RespondWorkflowTaskCompletedResponse, RespondWorkflowTaskFailedResponse,
+        StartWorkflowExecutionResponse,
+    },
 };
 
 pub use temporal_sdk_core_protos::{
@@ -70,6 +73,8 @@ pub fn mock_gateway_from_history(
         .boxed()
     });
 
+    mg.expect_complete_workflow_task()
+        .returning(|_| async move { Ok(RespondWorkflowTaskCompletedResponse::default()) }.boxed());
     mg.expect_fail_workflow_task().returning(move |_, _, _| {
         // We'll need to re-send the history if WFT fails
         did_send.store(false, Ordering::Release);
