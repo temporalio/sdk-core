@@ -8,7 +8,7 @@ use opentelemetry::{
     },
     KeyValue,
 };
-use std::{sync::Arc, time::Duration};
+use std::{borrow::Cow, sync::Arc, time::Duration};
 
 /// Used to track context associated with metrics, and record/update them
 ///
@@ -124,6 +124,11 @@ impl MetricsContext {
         WORKER_REGISTERED.add(1, &self.kvs);
     }
 
+    /// Record current number of available task slots. Context should have worker type set.
+    pub(crate) fn available_task_slots(&self, num: usize) {
+        TASK_SLOTS_AVAILABLE.record(num as u64, &self.kvs)
+    }
+
     /// Record current number of pollers. Context should include poller type / task queue tag.
     pub(crate) fn record_num_pollers(&self, num: usize) {
         NUM_POLLERS.record(num as u64, &self.kvs);
@@ -179,6 +184,7 @@ const KEY_WF_TYPE: &str = "workflow_type";
 const KEY_TASK_QUEUE: &str = "task_queue";
 const KEY_ACT_TYPE: &str = "activity_type";
 const KEY_POLLER_TYPE: &str = "poller_type";
+const KEY_WORKER_TYPE: &str = "worker_type";
 
 pub(crate) fn workflow_poller() -> KeyValue {
     KeyValue::new(KEY_POLLER_TYPE, "workflow_task")
@@ -197,6 +203,24 @@ pub(crate) fn activity_type(ty: String) -> KeyValue {
 }
 pub(crate) fn workflow_type(ty: String) -> KeyValue {
     KeyValue::new(KEY_WF_TYPE, ty)
+}
+pub(crate) const fn workflow_worker_type() -> KeyValue {
+    KeyValue {
+        key: opentelemetry::Key::from_static_str(KEY_WORKER_TYPE),
+        value: opentelemetry::Value::String(Cow::Borrowed("WorkflowWorker")),
+    }
+}
+pub(crate) const fn activity_worker_type() -> KeyValue {
+    KeyValue {
+        key: opentelemetry::Key::from_static_str(KEY_WORKER_TYPE),
+        value: opentelemetry::Value::String(Cow::Borrowed("ActivityWorker")),
+    }
+}
+pub(crate) const fn local_activity_worker_type() -> KeyValue {
+    KeyValue {
+        key: opentelemetry::Key::from_static_str(KEY_WORKER_TYPE),
+        value: opentelemetry::Value::String(Cow::Borrowed("LocalActivityWorker")),
+    }
 }
 
 tm!(ctr, WF_COMPLETED_COUNTER, "workflow_completed");
@@ -253,6 +277,8 @@ tm!(vr_u64, ACT_EXEC_LATENCY, ACT_EXEC_LATENCY_NAME);
 tm!(ctr, WORKER_REGISTERED, "worker_start");
 const NUM_POLLERS_NAME: &str = "num_pollers";
 tm!(vr_u64, NUM_POLLERS, NUM_POLLERS_NAME);
+const TASK_SLOTS_AVAILABLE_NAME: &str = "worker_task_slots_available";
+tm!(vr_u64, TASK_SLOTS_AVAILABLE, TASK_SLOTS_AVAILABLE_NAME);
 
 tm!(ctr, STICKY_CACHE_HIT, "sticky_cache_hit");
 tm!(ctr, STICKY_CACHE_MISS, "sticky_cache_miss");
@@ -310,7 +336,9 @@ impl AggregatorSelector for SDKAggSelector {
         if *descriptor.instrument_kind() == InstrumentKind::ValueRecorder {
             // Some recorders are just gauges
             match descriptor.name() {
-                STICKY_CACHE_SIZE_NAME | NUM_POLLERS_NAME => return Some(Arc::new(last_value())),
+                STICKY_CACHE_SIZE_NAME | NUM_POLLERS_NAME | TASK_SLOTS_AVAILABLE_NAME => {
+                    return Some(Arc::new(last_value()))
+                }
                 _ => (),
             }
 

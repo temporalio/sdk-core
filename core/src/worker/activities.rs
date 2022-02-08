@@ -7,6 +7,8 @@ pub(crate) use local_activities::{
     LocalInFlightActInfo, NewLocalAct,
 };
 
+use crate::abstractions::MeteredSemaphore;
+use crate::telemetry::metrics::activity_worker_type;
 use crate::{
     pollers::BoxedActPoller,
     telemetry::metrics::{activity_type, workflow_type, MetricsContext},
@@ -31,7 +33,7 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::PollActivityTaskQueueResponse,
     },
 };
-use tokio::sync::{Notify, Semaphore};
+use tokio::sync::Notify;
 
 #[derive(Debug, derive_more::Constructor)]
 struct PendingActivityCancel {
@@ -88,7 +90,7 @@ pub(crate) struct WorkerActivityTasks {
     /// ongoing.
     poller: BoxedActPoller,
     /// Ensures we stay at or below this worker's maximum concurrent activity limit
-    activities_semaphore: Semaphore,
+    activities_semaphore: MeteredSemaphore,
     /// Wakes every time an activity is removed from the outstanding map
     complete_notify: Notify,
 
@@ -111,7 +113,11 @@ impl WorkerActivityTasks {
             heartbeat_manager: ActivityHeartbeatManager::new(sg),
             outstanding_activity_tasks: Default::default(),
             poller,
-            activities_semaphore: Semaphore::new(max_activity_tasks),
+            activities_semaphore: MeteredSemaphore::new(
+                max_activity_tasks,
+                metrics.with_new_attrs([activity_worker_type()]),
+                MetricsContext::available_task_slots,
+            ),
             complete_notify: Notify::new(),
             metrics,
             max_heartbeat_throttle_interval,
@@ -204,7 +210,7 @@ impl WorkerActivityTasks {
                 workflow_type(act_info.base.workflow_type.clone()),
             ]);
             act_metrics.act_execution_latency(act_info.base.start_time.elapsed());
-            self.activities_semaphore.add_permits(1);
+            self.activities_semaphore.add_permit();
             self.heartbeat_manager.evict(task_token.clone()).await;
             let known_not_found = act_info.known_not_found;
             drop(act_info); // TODO: Get rid of dashmap. If we hold ref across await, bad stuff.
@@ -331,6 +337,6 @@ impl WorkerActivityTasks {
 
     #[cfg(test)]
     pub(crate) fn remaining_activity_capacity(&self) -> usize {
-        self.activities_semaphore.available_permits()
+        self.activities_semaphore.sem.available_permits()
     }
 }

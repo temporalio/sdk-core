@@ -175,7 +175,6 @@ async fn can_shutdown_local_act_only_worker_when_act_polling() {
     tokio::join!(
         async {
             barrier.wait().await;
-            dbg!("Doing shutdowen");
             worker.shutdown().await;
         },
         async {
