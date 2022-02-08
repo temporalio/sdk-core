@@ -7,11 +7,10 @@ pub(crate) use local_activities::{
     LocalInFlightActInfo, NewLocalAct,
 };
 
-use crate::abstractions::MeteredSemaphore;
-use crate::telemetry::metrics::activity_worker_type;
 use crate::{
+    abstractions::MeteredSemaphore,
     pollers::BoxedActPoller,
-    telemetry::metrics::{activity_type, workflow_type, MetricsContext},
+    telemetry::metrics::{activity_type, activity_worker_type, workflow_type, MetricsContext},
     worker::activities::activity_heartbeat_manager::ActivityHeartbeatError,
     CompleteActivityError, PollActivityError, ServerGatewayApis, TaskToken,
 };

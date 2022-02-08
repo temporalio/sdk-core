@@ -8,9 +8,8 @@ pub(crate) use activities::{
     NewLocalAct,
 };
 
-use crate::abstractions::MeteredSemaphore;
-use crate::telemetry::metrics::{local_activity_worker_type, workflow_worker_type};
 use crate::{
+    abstractions::MeteredSemaphore,
     errors::CompleteWfError,
     pollers::{
         new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, BoxedWFPoller, Poller,
@@ -18,7 +17,8 @@ use crate::{
     },
     protosext::{legacy_query_failure, ValidPollWFTQResponse},
     telemetry::metrics::{
-        activity_poller, workflow_poller, workflow_sticky_poller, MetricsContext,
+        activity_poller, local_activity_worker_type, workflow_poller, workflow_sticky_poller,
+        workflow_worker_type, MetricsContext,
     },
     worker::{
         activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
