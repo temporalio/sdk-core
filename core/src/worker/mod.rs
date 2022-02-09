@@ -9,6 +9,7 @@ pub(crate) use activities::{
 };
 
 use crate::{
+    abstractions::MeteredSemaphore,
     errors::CompleteWfError,
     pollers::{
         new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, BoxedWFPoller, Poller,
@@ -16,7 +17,8 @@ use crate::{
     },
     protosext::{legacy_query_failure, ValidPollWFTQResponse},
     telemetry::metrics::{
-        activity_poller, workflow_poller, workflow_sticky_poller, MetricsContext,
+        activity_poller, local_activity_worker_type, workflow_poller, workflow_sticky_poller,
+        workflow_worker_type, MetricsContext,
     },
     worker::{
         activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
@@ -51,7 +53,7 @@ use temporal_sdk_core_protos::{
     },
     TaskToken,
 };
-use tokio::sync::{Notify, Semaphore};
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tonic::Code;
 use tracing_futures::Instrument;
@@ -74,7 +76,7 @@ pub struct Worker {
     /// Manages local activities
     local_act_mgr: LocalActivityManager,
     /// Ensures we stay at or below this worker's maximum concurrent workflow limit
-    workflows_semaphore: Semaphore,
+    workflows_semaphore: MeteredSemaphore,
     /// Used to wake blocked workflow task polling when there is some change to workflow activations
     /// that should cause us to restart the loop
     pending_activations_notify: Arc<Notify>,
@@ -173,6 +175,7 @@ impl Worker {
         sg: Arc<dyn ServerGatewayApis + Send + Sync>,
         metrics: MetricsContext,
     ) -> Self {
+        info!(task_queue = %config.task_queue, "Initializing worker");
         metrics.worker_registered();
 
         let max_nonsticky_polls = if sticky_queue_name.is_some() {
@@ -267,8 +270,13 @@ impl Worker {
             local_act_mgr: LocalActivityManager::new(
                 config.max_outstanding_local_activities,
                 config.namespace.clone(),
+                metrics.with_new_attrs([local_activity_worker_type()]),
             ),
-            workflows_semaphore: Semaphore::new(config.max_outstanding_workflow_tasks),
+            workflows_semaphore: MeteredSemaphore::new(
+                config.max_outstanding_workflow_tasks,
+                metrics.with_new_attrs([workflow_worker_type()]),
+                MetricsContext::available_task_slots,
+            ),
             config,
             shutdown_token: CancellationToken::new(),
             post_activate_hook: None,
@@ -323,7 +331,7 @@ impl Worker {
 
     #[cfg(test)]
     pub(crate) fn available_wft_permits(&self) -> usize {
-        self.workflows_semaphore.available_permits()
+        self.workflows_semaphore.sem.available_permits()
     }
 
     /// Get new activity tasks (may be local or nonlocal). Local activities are returned first
@@ -507,7 +515,7 @@ impl Worker {
 
     /// Tell the worker a workflow task has completed, for tracking max outstanding WFTs
     pub(crate) fn return_workflow_task_permit(&self) {
-        self.workflows_semaphore.add_permits(1);
+        self.workflows_semaphore.add_permit();
     }
 
     pub(crate) fn request_wf_eviction(
@@ -527,6 +535,8 @@ impl Worker {
         self.post_activate_hook = Some(Box::new(callback))
     }
 
+    /// Used for replay workers - causes the worker to shutdown when the given run reaches the
+    /// given event number
     pub(crate) fn set_shutdown_on_run_reaches_event(&mut self, run_id: String, last_event: i64) {
         self.set_post_activate_hook(move |worker| {
             if worker
@@ -974,7 +984,7 @@ mod tests {
             .unwrap();
         let worker = Worker::new(cfg, None, Arc::new(mock_gateway), Default::default());
         assert_eq!(worker.workflow_poll().await.unwrap(), None);
-        assert_eq!(worker.workflows_semaphore.available_permits(), 5);
+        assert_eq!(worker.workflows_semaphore.sem.available_permits(), 5);
     }
 
     #[tokio::test]
@@ -1006,7 +1016,7 @@ mod tests {
             .unwrap();
         let worker = Worker::new(cfg, None, Arc::new(mock_gateway), Default::default());
         assert!(worker.workflow_poll().await.is_err());
-        assert_eq!(worker.workflows_semaphore.available_permits(), 5);
+        assert_eq!(worker.workflows_semaphore.sem.available_permits(), 5);
     }
 
     #[test]

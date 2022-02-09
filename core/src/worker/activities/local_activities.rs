@@ -1,4 +1,7 @@
-use crate::{protosext::ValidScheduleLA, retry_logic::RetryPolicyExt, TaskToken};
+use crate::{
+    abstractions::MeteredSemaphore, protosext::ValidScheduleLA, retry_logic::RetryPolicyExt,
+    MetricsContext, TaskToken,
+};
 use parking_lot::Mutex;
 use std::{
     collections::HashMap,
@@ -16,7 +19,7 @@ use temporal_sdk_core_protos::{
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        Notify, Semaphore,
+        Notify,
     },
     task::JoinHandle,
     time::sleep,
@@ -103,7 +106,7 @@ pub(crate) struct LocalActivityManager {
     /// Just so we can provide activity tasks the same namespace as the worker
     namespace: String,
     /// Constrains number of currently executing local activities
-    semaphore: Semaphore,
+    semaphore: MeteredSemaphore,
     /// Sink for new activity execution requests
     act_req_tx: UnboundedSender<NewOrRetry>,
     /// Cancels need a different queue since they should be taken first, and don't take a permit
@@ -135,13 +138,21 @@ impl LAMData {
 }
 
 impl LocalActivityManager {
-    pub(crate) fn new(max_concurrent: usize, namespace: String) -> Self {
+    pub(crate) fn new(
+        max_concurrent: usize,
+        namespace: String,
+        metrics_context: MetricsContext,
+    ) -> Self {
         let (act_req_tx, act_req_rx) = unbounded_channel();
         let (cancels_req_tx, cancels_req_rx) = unbounded_channel();
         let shutdown_complete_tok = CancellationToken::new();
         Self {
             namespace,
-            semaphore: Semaphore::new(max_concurrent),
+            semaphore: MeteredSemaphore::new(
+                max_concurrent,
+                metrics_context,
+                MetricsContext::available_task_slots,
+            ),
             act_req_tx,
             cancels_req_tx,
             complete_notify: Notify::new(),
@@ -159,6 +170,15 @@ impl LocalActivityManager {
                 next_tt_num: 0,
             }),
         }
+    }
+
+    #[cfg(test)]
+    fn test(max_concurrent: usize) -> Self {
+        Self::new(
+            max_concurrent,
+            "fake_ns".to_string(),
+            MetricsContext::default(),
+        )
     }
 
     pub(crate) fn num_outstanding(&self) -> usize {
@@ -387,7 +407,7 @@ impl LocalActivityManager {
                 seq_num: info.la_info.schedule_cmd.seq,
             };
             dlock.id_to_tt.remove(&exec_id);
-            self.semaphore.add_permits(1);
+            self.semaphore.add_permit();
 
             match status {
                 LocalActivityExecutionResult::Completed(_)
@@ -507,7 +527,7 @@ struct RcvChans {
 }
 
 impl RcvChans {
-    async fn next(&mut self, new_sem: &Semaphore) -> Option<NewOrCancel> {
+    async fn next(&mut self, new_sem: &MeteredSemaphore) -> Option<NewOrCancel> {
         tokio::select! {
             cancel = async { self.cancels_req_rx.recv().await } => {
                 Some(NewOrCancel::Cancel(cancel.expect("Send halves of LA manager are not dropped")))
@@ -633,7 +653,7 @@ mod tests {
 
     #[tokio::test]
     async fn max_concurrent_respected() {
-        let lam = LocalActivityManager::new(1, "whatever".to_string());
+        let lam = LocalActivityManager::test(1);
         lam.enqueue((1..=50).map(|i| {
             NewLocalAct {
                 schedule_cmd: ValidScheduleLA {
@@ -673,7 +693,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_work_doesnt_deadlock_with_complete() {
-        let lam = LocalActivityManager::new(5, "whatever".to_string());
+        let lam = LocalActivityManager::test(5);
         lam.enqueue([NewLocalAct {
             schedule_cmd: ValidScheduleLA {
                 seq: 1,
@@ -705,7 +725,7 @@ mod tests {
 
     #[tokio::test]
     async fn can_cancel_in_flight() {
-        let lam = LocalActivityManager::new(5, "whatever".to_string());
+        let lam = LocalActivityManager::test(5);
         lam.enqueue([NewLocalAct {
             schedule_cmd: ValidScheduleLA {
                 seq: 1,
@@ -732,7 +752,7 @@ mod tests {
 
     #[tokio::test]
     async fn respects_timer_backoff_threshold() {
-        let lam = LocalActivityManager::new(1, "whatever".to_string());
+        let lam = LocalActivityManager::test(1);
         lam.enqueue([NewLocalAct {
             schedule_cmd: ValidScheduleLA {
                 seq: 1,
@@ -767,7 +787,7 @@ mod tests {
 
     #[tokio::test]
     async fn can_cancel_during_local_backoff() {
-        let lam = LocalActivityManager::new(1, "whatever".to_string());
+        let lam = LocalActivityManager::test(1);
         lam.enqueue([NewLocalAct {
             schedule_cmd: ValidScheduleLA {
                 seq: 1,
@@ -816,7 +836,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_backoff_clears_handle_map_when_started() {
-        let lam = LocalActivityManager::new(1, "whatever".to_string());
+        let lam = LocalActivityManager::test(1);
         lam.enqueue([NewLocalAct {
             schedule_cmd: ValidScheduleLA {
                 seq: 1,
@@ -852,7 +872,7 @@ mod tests {
 
     #[tokio::test]
     async fn sched_to_start_timeout() {
-        let lam = LocalActivityManager::new(1, "whatever".to_string());
+        let lam = LocalActivityManager::test(1);
         let timeout = Duration::from_millis(100);
         lam.enqueue([NewLocalAct {
             schedule_cmd: ValidScheduleLA {
@@ -893,7 +913,7 @@ mod tests {
     #[case::start(false)]
     #[tokio::test]
     async fn local_x_to_close_timeout(#[case] is_schedule: bool) {
-        let lam = LocalActivityManager::new(1, "whatever".to_string());
+        let lam = LocalActivityManager::test(1);
         let timeout = Duration::from_millis(100);
         let close_timeouts = if is_schedule {
             LACloseTimeouts::ScheduleOnly(timeout)
@@ -937,7 +957,7 @@ mod tests {
 
     #[tokio::test]
     async fn idempotency_enforced() {
-        let lam = LocalActivityManager::new(10, "whatever".to_string());
+        let lam = LocalActivityManager::test(10);
         let new_la = NewLocalAct {
             schedule_cmd: ValidScheduleLA {
                 seq: 1,
