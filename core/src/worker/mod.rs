@@ -175,6 +175,7 @@ impl Worker {
         sg: Arc<dyn ServerGatewayApis + Send + Sync>,
         metrics: MetricsContext,
     ) -> Self {
+        info!(task_queue = %config.task_queue, "Initializing worker");
         metrics.worker_registered();
 
         let max_nonsticky_polls = if sticky_queue_name.is_some() {

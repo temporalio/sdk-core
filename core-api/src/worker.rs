@@ -47,7 +47,7 @@ pub struct WorkerConfig {
     #[builder(default = "5")]
     pub max_concurrent_at_polls: usize,
     /// If set to true this worker will only handle workflow tasks and local activities, it will not
-    /// poll for activity tasks. This option exists because
+    /// poll for activity tasks.
     #[builder(default = "false")]
     pub no_remote_activities: bool,
     /// How long a workflow task is allowed to sit on the sticky queue before it is timed out
