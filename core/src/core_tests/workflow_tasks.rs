@@ -1,3 +1,4 @@
+use crate::telemetry::test_telem_console;
 use crate::{
     errors::PollWfError,
     job_assert,
@@ -1628,6 +1629,57 @@ async fn cache_miss_doesnt_eat_permit_forever() {
         ))
         .await
         .unwrap();
+
+    worker.shutdown().await;
+}
+
+#[tokio::test]
+async fn cache_miss_will_fetch_history() {
+    test_telem_console();
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_we_signaled("sig", vec![]);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::ToTaskNum(1), ResponseType::OneTask(2)],
+        mock_gateway(),
+    );
+    mh.num_expected_fails = Some(0);
+    let mock = build_mock_pollers(mh);
+    let worker = mock_worker(mock);
+
+    // Start TODO: Assert
+    let activation = worker.poll_workflow_activation().await.unwrap();
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
+        .await
+        .unwrap();
+    // Evict (cache is off)
+    let activation = worker.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        activation.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
+        },]
+    );
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
+        .await
+        .unwrap();
+    let activation = worker.poll_workflow_activation().await.unwrap();
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            activation.run_id,
+            CompleteWorkflowExecution { result: None }.into(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(worker.outstanding_workflow_tasks(), 0);
 
     worker.shutdown().await;
 }

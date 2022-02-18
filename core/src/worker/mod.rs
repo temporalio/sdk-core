@@ -664,7 +664,9 @@ impl Worker {
             }
             NewWfTaskOutcome::CacheMiss => {
                 debug!(workflow_execution=?we, "Unable to process workflow task with partial \
-                history because workflow cache does not contain workflow anymore.");
+                history because workflow cache does not contain the workflow. Will fetch history");
+                // Fetch history and apply it to restore the workflow state, then attempt to
+                // complete the workflow task.
                 self.server_gateway
                     .fail_workflow_task(
                         tt,
