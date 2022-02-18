@@ -304,7 +304,11 @@ impl WorkflowMachines {
     /// Handle a single event from the workflow history. `has_next_event` should be false if `event`
     /// is the last event in the history.
     ///
-    /// TODO: Describe what actually happens in here
+    /// This function will attempt to apply the event to the workflow state machines. If there is
+    /// not a matching machine for the event, a nondeterminism error is returned. Otherwise, the
+    /// event is applied to the machine, which may also return a nondeterminism error if the machine
+    /// does not match the expected type. A fatal error may be returned if the machine is in an
+    /// invalid state.
     #[instrument(level = "debug", skip(self, event), fields(event=%event))]
     fn handle_event(&mut self, event: &HistoryEvent, has_next_event: bool) -> Result<()> {
         if event.is_final_wf_execution_event() {
@@ -329,20 +333,20 @@ impl WorkflowMachines {
                 // We remove the machine while we it handles events, then return it, to avoid
                 // borrowing from ourself mutably.
                 let maybe_machine = self.machines_by_event_id.remove(&initial_cmd_id);
-                if let Some(sm) = maybe_machine {
-                    self.submachine_handle_event(sm, event, has_next_event)?;
-                } else {
-                    return Err(WFMachinesError::Nondeterminism(format!(
-                        "During event handling, this event had an initial command ID but we could \
-                        not find a matching command for it: {:?}",
-                        event
-                    )));
-                }
-
-                // Restore machine if not in it's final state
-                if let Some(sm) = maybe_machine {
-                    if !self.machine(sm).is_final_state() {
-                        self.machines_by_event_id.insert(initial_cmd_id, sm);
+                match maybe_machine {
+                    Some(sm) => {
+                        self.submachine_handle_event(sm, event, has_next_event)?;
+                        // Restore machine if not in it's final state
+                        if !self.machine(sm).is_final_state() {
+                            self.machines_by_event_id.insert(initial_cmd_id, sm);
+                        }
+                    }
+                    None => {
+                        return Err(WFMachinesError::Nondeterminism(format!(
+                            "During event handling, this event had an initial command ID but we \
+                            could not find a matching command for it: {:?}",
+                            event
+                        )));
                     }
                 }
             }
