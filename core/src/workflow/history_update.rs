@@ -34,9 +34,34 @@ pub struct HistoryPaginator {
     event_queue: VecDeque<HistoryEvent>,
     wf_id: String,
     run_id: String,
-    next_page_token: Vec<u8>,
+    next_page_token: NextPageToken,
     open_history_request:
         Option<BoxFuture<'static, Result<GetWorkflowExecutionHistoryResponse, tonic::Status>>>,
+    /// These are events that should be returned once pagination has finished. This only happens
+    /// during cache misses, where we got a partial task but need to fetch history from the start.
+    /// We use this to apply any
+    final_events: Vec<HistoryEvent>,
+}
+
+#[derive(Clone, Debug)]
+pub enum NextPageToken {
+    /// There is no page token, we need to fetch history from the beginning
+    FetchFromStart,
+    /// There is a page token
+    Next(Vec<u8>),
+    /// There is no page token, we are done fetching history
+    Done,
+}
+
+// If we're converting from a page token from the server, if it's empty, then we're done.
+impl From<Vec<u8>> for NextPageToken {
+    fn from(page_token: Vec<u8>) -> Self {
+        if page_token.is_empty() {
+            NextPageToken::Done
+        } else {
+            NextPageToken::Next(page_token)
+        }
+    }
 }
 
 impl HistoryPaginator {
@@ -44,17 +69,43 @@ impl HistoryPaginator {
         initial_history: History,
         wf_id: String,
         run_id: String,
-        next_page_token: Vec<u8>,
+        next_page_token: impl Into<NextPageToken>,
         gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
     ) -> Self {
+        let next_page_token = next_page_token.into();
+        let (event_queue, final_events) =
+            if matches!(next_page_token, NextPageToken::FetchFromStart) {
+                (VecDeque::new(), initial_history.events)
+            } else {
+                (initial_history.events.into(), vec![])
+            };
         Self {
             gateway,
-            event_queue: initial_history.events.into(),
+            event_queue,
             wf_id,
             run_id,
             next_page_token,
             open_history_request: None,
+            final_events,
         }
+    }
+
+    fn extend_queue_with_new_page(&mut self, resp: GetWorkflowExecutionHistoryResponse) {
+        self.next_page_token = resp.next_page_token.into();
+        self.event_queue
+            .extend(resp.history.map(|h| h.events).unwrap_or_default());
+        if matches!(&self.next_page_token, NextPageToken::Done) {
+            // If finished, we need to extend the queue with the final events, skipping any
+            // which are already present.
+            if let Some(last_event_id) = self.event_queue.back().map(|e| e.event_id) {
+                let final_events = std::mem::take(&mut self.final_events);
+                self.event_queue.extend(
+                    final_events
+                        .into_iter()
+                        .skip_while(|e2| e2.event_id <= last_event_id),
+                );
+            }
+        };
     }
 }
 
@@ -65,20 +116,19 @@ impl Stream for HistoryPaginator {
         if let Some(e) = self.event_queue.pop_front() {
             return Poll::Ready(Some(Ok(e)));
         }
-        if self.next_page_token.is_empty() {
-            return Poll::Ready(None);
-        }
-
         let history_req = if let Some(req) = self.open_history_request.as_mut() {
             req
         } else {
+            let npt = match std::mem::replace(&mut self.next_page_token, NextPageToken::Done) {
+                // If there's no open request and the last page token we got was empty, we're done.
+                NextPageToken::Done => return Poll::Ready(None),
+                NextPageToken::FetchFromStart => vec![],
+                NextPageToken::Next(v) => v,
+            };
             debug!(run_id=%self.run_id, "Fetching new history page");
-            // We're out of stored events and we have a page token - fetch additional history from
-            // the server. Note that server can return page tokens that point to an empty page.
             let gw = self.gateway.clone();
             let wid = self.wf_id.clone();
             let rid = self.run_id.clone();
-            let npt = self.next_page_token.clone();
             let resp_fut =
                 async move { gw.get_workflow_execution_history(wid, Some(rid), npt).await };
             self.open_history_request.insert(resp_fut.boxed())
@@ -90,9 +140,7 @@ impl Stream for HistoryPaginator {
                 match resp {
                     Err(neterr) => Poll::Ready(Some(Err(neterr))),
                     Ok(resp) => {
-                        self.next_page_token = resp.next_page_token;
-                        self.event_queue
-                            .extend(resp.history.map(|h| h.events).unwrap_or_default());
+                        self.extend_queue_with_new_page(resp);
                         Poll::Ready(self.event_queue.pop_front().map(Ok))
                     }
                 }
@@ -357,5 +405,40 @@ pub mod tests {
             assert_eq!(seq.len(), 5);
             last_started_id += 5;
         }
+    }
+
+    #[tokio::test]
+    async fn handles_cache_misses() {
+        let timer_hist = canned_histories::single_timer("t");
+        let partial_task = timer_hist.get_one_wft(2).unwrap();
+        let mut history_from_get: GetWorkflowExecutionHistoryResponse =
+            timer_hist.get_history_info(2).unwrap().into();
+        // Chop off the last event, which is WFT started, which server doesn't return in get
+        // history
+        history_from_get.history.as_mut().map(|h| h.events.pop());
+        let mut mock_gateway = mock_gateway();
+        mock_gateway
+            .expect_get_workflow_execution_history()
+            .returning(move |_, _, _| Ok(history_from_get.clone()));
+
+        let mut update = HistoryUpdate::new(
+            HistoryPaginator::new(
+                partial_task.into(),
+                "wfid".to_string(),
+                "runid".to_string(),
+                // A cache miss means we'll try to fetch from start
+                NextPageToken::FetchFromStart,
+                Arc::new(mock_gateway),
+            ),
+            1,
+        );
+        // We expect if we try to take the first task sequence that the first event is the first
+        // event in the sequence.
+        let seq = update.take_next_wft_sequence(0).await.unwrap();
+        assert_eq!(seq[0].event_id, 1);
+        let seq = update.take_next_wft_sequence(3).await.unwrap();
+        // Verify anything extra (which should only ever be WFT started) was re-appended to the
+        // end of the event iteration after fetching the old history.
+        assert_eq!(seq.last().unwrap().event_id, 8);
     }
 }

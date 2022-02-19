@@ -644,21 +644,14 @@ impl WorkflowMachines {
             }
         }
 
-        let first_event_id = match events.first() {
-            Some(event) => event.event_id,
-            None => 0,
-        };
-        // Workflow has been evicted, but we've received partial history from the server.
-        // Need to reset sticky and trigger another poll.
-        if self.current_started_event_id == 0 && first_event_id != 1 && !events.is_empty() {
-            debug!("Cache miss.");
-            self.metrics.sticky_cache_miss();
-            return Err(WFMachinesError::CacheMiss);
-        }
-
         let mut history = events.iter().peekable();
-
         while let Some(event) = history.next() {
+            if event.event_id != self.last_processed_event + 1 {
+                return Err(WFMachinesError::Fatal(format!(
+                    "History is out of order. Last processed event: {}, event id: {}",
+                    self.last_processed_event, event.event_id
+                )));
+            }
             let next_event = history.peek();
             self.handle_event(event, next_event.is_some())?;
             self.last_processed_event = event.event_id;

@@ -90,10 +90,6 @@ pub enum WFMachinesError {
 
     #[error("Unrecoverable network error while fetching history: {0}")]
     HistoryFetchingError(tonic::Status),
-
-    /// Should always be caught internally and turned into a workflow task failure
-    #[error("Unable to process partial event history because workflow is no longer cached.")]
-    CacheMiss,
 }
 
 impl WFMachinesError {
@@ -103,7 +99,6 @@ impl WFMachinesError {
             WFMachinesError::Fatal(_) | WFMachinesError::HistoryFetchingError(_) => {
                 EvictionReason::Fatal
             }
-            WFMachinesError::CacheMiss => EvictionReason::CacheMiss,
         }
     }
 }
