@@ -1,10 +1,9 @@
-use crate::temporal::api::workflowservice::v1::GetWorkflowExecutionHistoryResponse;
 use crate::temporal::api::{
     common::v1::WorkflowType,
     enums::v1::{EventType, TaskQueueKind},
     history::v1::{history_event, History, HistoryEvent},
     taskqueue::v1::TaskQueue,
-    workflowservice::v1::PollWorkflowTaskQueueResponse,
+    workflowservice::v1::{GetWorkflowExecutionHistoryResponse, PollWorkflowTaskQueueResponse},
 };
 use anyhow::{anyhow, bail};
 use rand::{thread_rng, Rng};

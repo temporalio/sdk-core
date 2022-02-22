@@ -19,14 +19,12 @@ use std::{
 };
 use temporal_client::mocks::mock_gateway;
 use temporal_sdk_core_api::Worker as WorkerTrait;
-use temporal_sdk_core_protos::coresdk::workflow_activation::remove_from_cache::EvictionReason;
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::GetWorkflowExecutionHistoryResponse;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_resolution, ActivityResolution},
         workflow_activation::{
-            workflow_activation_job, FireTimer, ResolveActivity, StartWorkflow, UpdateRandomSeed,
-            WorkflowActivationJob,
+            remove_from_cache::EvictionReason, workflow_activation_job, FireTimer, ResolveActivity,
+            StartWorkflow, UpdateRandomSeed, WorkflowActivationJob,
         },
         workflow_commands::{
             ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
@@ -38,7 +36,9 @@ use temporal_sdk_core_protos::{
         enums::v1::{EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
         history::v1::{history_event, TimerFiredEventAttributes},
-        workflowservice::v1::RespondWorkflowTaskCompletedResponse,
+        workflowservice::v1::{
+            GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
+        },
     },
 };
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
