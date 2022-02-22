@@ -9,6 +9,7 @@ use crate::{
     telemetry::metrics::MetricsContext,
     worker::{LocalActRequest, LocalActivityResolution},
     workflow::{
+        history_update::NextPageToken,
         machines::WFMachinesError,
         workflow_tasks::{
             cache_manager::WorkflowCacheManager, concurrency_manager::WorkflowConcurrencyManager,
@@ -120,8 +121,6 @@ pub(crate) enum NewWfTaskOutcome {
     /// The workflow task should be auto-completed with an empty command list, as it must be replied
     /// to but there is no meaningful work for lang to do.
     Autocomplete,
-    /// Workflow task had partial history and workflow was not present in the cache.
-    CacheMiss,
     /// The workflow task ran into problems while being applied and we must now evict the workflow
     Evict(WorkflowUpdateError),
     /// No action should be taken. Possibly we are waiting for local activities to complete
@@ -327,9 +326,6 @@ impl WorkflowTaskManager {
             match self.instantiate_or_update_workflow(work, gateway).await {
                 Ok((info, next_activation)) => (info, next_activation),
                 Err(e) => {
-                    if let WFMachinesError::CacheMiss = e.source {
-                        return NewWfTaskOutcome::CacheMiss;
-                    }
                     return NewWfTaskOutcome::Evict(e);
                 }
             };
@@ -593,20 +589,37 @@ impl WorkflowTaskManager {
             task_token: poll_wf_resp.task_token,
         };
 
+        let poll_resp_is_incremental = poll_wf_resp
+            .history
+            .events
+            .get(0)
+            .map(|ev| ev.event_id > 1)
+            .unwrap_or_default();
+
+        let page_token = if !self.workflow_machines.exists(&run_id) && poll_resp_is_incremental {
+            debug!(run_id=?run_id, "Workflow task has partial history, but workflow is not in \
+                   cache. Will fetch history");
+            self.metrics.sticky_cache_miss();
+            NextPageToken::FetchFromStart
+        } else {
+            poll_wf_resp.next_page_token.into()
+        };
+        let history_update = HistoryUpdate::new(
+            HistoryPaginator::new(
+                poll_wf_resp.history,
+                poll_wf_resp.workflow_execution.workflow_id.clone(),
+                poll_wf_resp.workflow_execution.run_id,
+                page_token,
+                gateway.clone(),
+            ),
+            poll_wf_resp.previous_started_event_id,
+        );
+
         match self
             .workflow_machines
             .create_or_update(
                 &run_id,
-                HistoryUpdate::new(
-                    HistoryPaginator::new(
-                        poll_wf_resp.history,
-                        poll_wf_resp.workflow_execution.workflow_id.clone(),
-                        poll_wf_resp.workflow_execution.run_id.clone(),
-                        poll_wf_resp.next_page_token,
-                        gateway.clone(),
-                    ),
-                    poll_wf_resp.previous_started_event_id,
-                ),
+                history_update,
                 &poll_wf_resp.workflow_execution.workflow_id,
                 gateway.namespace(),
                 &poll_wf_resp.workflow_type,

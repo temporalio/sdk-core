@@ -636,7 +636,6 @@ impl Worker {
         work: ValidPollWFTQResponse,
     ) -> Result<Option<WorkflowActivation>, PollWfError> {
         let we = work.workflow_execution.clone();
-        let tt = work.task_token.clone();
         let res = self
             .wft_manager
             .apply_new_poll_resp(work, self.server_gateway.clone())
@@ -660,24 +659,6 @@ impl Worker {
                     status: Some(workflow_completion::Success::from_variants(vec![]).into()),
                 })
                 .await?;
-                None
-            }
-            NewWfTaskOutcome::CacheMiss => {
-                debug!(workflow_execution=?we, "Unable to process workflow task with partial \
-                history because workflow cache does not contain workflow anymore.");
-                self.server_gateway
-                    .fail_workflow_task(
-                        tt,
-                        WorkflowTaskFailedCause::ResetStickyTaskQueue,
-                        Some(Failure {
-                            message: "Unable to process workflow task with partial history \
-                                      because workflow cache does not contain workflow anymore."
-                                .to_string(),
-                            ..Default::default()
-                        }),
-                    )
-                    .await?;
-                self.return_workflow_task_permit();
                 None
             }
             NewWfTaskOutcome::Evict(e) => {

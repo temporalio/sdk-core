@@ -23,8 +23,8 @@ use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_resolution, ActivityResolution},
         workflow_activation::{
-            workflow_activation_job, FireTimer, ResolveActivity, StartWorkflow, UpdateRandomSeed,
-            WorkflowActivationJob,
+            remove_from_cache::EvictionReason, workflow_activation_job, FireTimer, ResolveActivity,
+            StartWorkflow, UpdateRandomSeed, WorkflowActivationJob,
         },
         workflow_commands::{
             ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
@@ -36,7 +36,9 @@ use temporal_sdk_core_protos::{
         enums::v1::{EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
         history::v1::{history_event, TimerFiredEventAttributes},
-        workflowservice::v1::RespondWorkflowTaskCompletedResponse,
+        workflowservice::v1::{
+            GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
+        },
     },
 };
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
@@ -1562,65 +1564,64 @@ async fn failing_wft_doesnt_eat_permit_forever() {
 }
 
 #[tokio::test]
-async fn cache_miss_doesnt_eat_permit_forever() {
+async fn cache_miss_will_fetch_history() {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
     t.add_we_signaled("sig", vec![]);
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
+    let get_exec_resp: GetWorkflowExecutionHistoryResponse = t.get_history_info(2).unwrap().into();
 
     let mut mh = MockPollCfg::from_resp_batches(
         "fake_wf_id",
         t,
-        [
-            ResponseType::ToTaskNum(1),
-            ResponseType::OneTask(2),
-            ResponseType::ToTaskNum(1),
-            ResponseType::OneTask(2),
-            ResponseType::ToTaskNum(1),
-            ResponseType::OneTask(2),
-            // Last one to complete successfully
-            ResponseType::ToTaskNum(1),
-        ],
+        [ResponseType::ToTaskNum(1), ResponseType::OneTask(2)],
         mock_gateway(),
     );
-    mh.num_expected_fails = Some(3);
-    mh.expect_fail_wft_matcher =
-        Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::ResetStickyTaskQueue));
+    mh.num_expected_fails = Some(0);
+    mh.mock_gateway
+        .expect_get_workflow_execution_history()
+        .times(1)
+        .returning(move |_, _, _| Ok(get_exec_resp.clone()));
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|cfg| {
-        cfg.max_outstanding_workflow_tasks = 2;
+        cfg.max_cached_workflows = 1;
     });
     let worker = mock_worker(mock);
 
-    // Spin missing the cache to verify that we don't get stuck
-    for _ in 1..=3 {
-        // Start
+    let activation = worker.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        activation.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+        }]
+    );
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::empty(&activation.run_id))
+        .await
+        .unwrap();
+    // Force an eviction
+    worker.request_wf_eviction(
+        &activation.run_id,
+        "whatever",
+        EvictionReason::LangRequested,
+    );
+    // Handle the eviction, and the restart
+    for _ in 1..=2 {
         let activation = worker.poll_workflow_activation().await.unwrap();
         worker
             .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
             .await
             .unwrap();
-        // Evict
-        let activation = worker.poll_workflow_activation().await.unwrap();
-        assert_matches!(
-            activation.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-            },]
-        );
-        worker
-            .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
-            .await
-            .unwrap();
-        assert_eq!(worker.outstanding_workflow_tasks(), 0);
-        assert_eq!(worker.available_wft_permits(), 2);
-        // When we loop back up, the poll will trigger a cache miss, which we should immediately
-        // reply to WFT with failure, and then poll again, which will deliver the from-the-start
-        // history
     }
     let activation = worker.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        activation.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
+        }]
+    );
     worker
         .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             activation.run_id,
@@ -1628,7 +1629,7 @@ async fn cache_miss_doesnt_eat_permit_forever() {
         ))
         .await
         .unwrap();
-
+    assert_eq!(worker.outstanding_workflow_tasks(), 0);
     worker.shutdown().await;
 }
 

@@ -3,7 +3,7 @@ use crate::temporal::api::{
     enums::v1::{EventType, TaskQueueKind},
     history::v1::{history_event, History, HistoryEvent},
     taskqueue::v1::TaskQueue,
-    workflowservice::v1::PollWorkflowTaskQueueResponse,
+    workflowservice::v1::{GetWorkflowExecutionHistoryResponse, PollWorkflowTaskQueueResponse},
 };
 use anyhow::{anyhow, bail};
 use rand::{thread_rng, Rng};
@@ -117,6 +117,10 @@ impl HistoryInfo {
     /// Remove events from the beginning of this history such that it looks like what would've been
     /// delivered on a sticky queue where the previously started task was the one before the last
     /// task in this history.
+    ///
+    /// This is not *fully* accurate in that it will include commands that were part of the last
+    /// WFT completion, which the server would typically not include, but it's good enough for
+    /// testing.
     pub fn make_incremental(&mut self) {
         let last_complete_ix = self
             .events
@@ -179,6 +183,15 @@ impl HistoryInfo {
 impl From<HistoryInfo> for History {
     fn from(i: HistoryInfo) -> Self {
         Self { events: i.events }
+    }
+}
+
+impl From<HistoryInfo> for GetWorkflowExecutionHistoryResponse {
+    fn from(i: HistoryInfo) -> Self {
+        Self {
+            history: Some(i.into()),
+            ..Default::default()
+        }
     }
 }
 
