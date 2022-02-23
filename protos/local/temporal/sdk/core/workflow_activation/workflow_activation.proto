@@ -79,35 +79,43 @@ message StartWorkflow {
     uint64 randomness_seed = 4;
     // Used to add metadata e.g. for tracing and auth, meant to be read and written to by interceptors.
     map<string, common.Payload> headers = 5;
+    // Identity of the client who requested this execution
+    string identity = 6;
     // If this workflow is a child, information about the parent
-    common.NamespacedWorkflowExecution parent_workflow_info = 6;
+    common.NamespacedWorkflowExecution parent_workflow_info = 7;
     // Total workflow execution timeout including retries and continue as new.
-    google.protobuf.Duration workflow_execution_timeout = 7;
+    google.protobuf.Duration workflow_execution_timeout = 8;
     // Timeout of a single workflow run.
-    google.protobuf.Duration workflow_run_timeout = 8;
+    google.protobuf.Duration workflow_run_timeout = 9;
     // Timeout of a single workflow task.
-    google.protobuf.Duration workflow_task_timeout = 9;
+    google.protobuf.Duration workflow_task_timeout = 10;
     // Run id of the previous workflow which continued-as-new or retired or cron executed into this
     // workflow, if any.
-    string continued_from_execution_run_id = 10;
+    string continued_from_execution_run_id = 11;
     // If this workflow was a continuation, indicates the type of continuation.
-    temporal.api.enums.v1.ContinueAsNewInitiator continued_initiator = 11;
+    temporal.api.enums.v1.ContinueAsNewInitiator continued_initiator = 12;
     // If this workflow was a continuation and that continuation failed, the details of that.
-    temporal.api.failure.v1.Failure continued_failure = 12;
+    temporal.api.failure.v1.Failure continued_failure = 13;
     // If this workflow was a continuation and that continuation completed, the details of that.
-    temporal.api.common.v1.Payloads last_completion_result = 13;
+    temporal.api.common.v1.Payloads last_completion_result = 14;
     // This is the very first run id the workflow ever had, following continuation chains.
-    string first_execution_run_id = 14;
+    string first_execution_run_id = 15;
     // This workflow's retry policy
-    temporal.api.common.v1.RetryPolicy retry_policy = 15;
+    temporal.api.common.v1.RetryPolicy retry_policy = 16;
     // Starting at 1, the number of times we have tried to execute this workflow
-    int32 attempt = 16;
+    int32 attempt = 17;
     // If this workflow runs on a cron schedule, it will appear here
-    string cron_schedule = 17;
+    string cron_schedule = 18;
+    // The absolute time at which the workflow will be timed out.
+    // This is passed without change to the next run/retry of a workflow.
+    google.protobuf.Timestamp workflow_execution_expiration_time = 19;
+    // For a cron workflow, this contains the amount of time between when this iteration of
+    // the cron workflow was scheduled and when it should run next per its cron_schedule.
+    google.protobuf.Duration cron_schedule_to_schedule_interval = 20;
     // User-defined memo
-    temporal.api.common.v1.Memo memo = 18;
+    temporal.api.common.v1.Memo memo = 21;
     // Search attributes created/updated when this workflow was started
-    temporal.api.common.v1.SearchAttributes search_attributes = 19;
+    temporal.api.common.v1.SearchAttributes search_attributes = 22;
 }
 
 /// Notify a workflow that a timer has fired

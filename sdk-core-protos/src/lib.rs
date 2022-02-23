@@ -560,6 +560,7 @@ pub mod coresdk {
                         .map(|(k, v)| (k, Payload::from(v)))
                         .collect(),
                 },
+                identity: attrs.identity,
                 parent_workflow_info: attrs.parent_workflow_execution.map(|pe| {
                     NamespacedWorkflowExecution {
                         namespace: attrs.parent_workflow_namespace,
@@ -578,6 +579,8 @@ pub mod coresdk {
                 retry_policy: attrs.retry_policy,
                 attempt: attrs.attempt,
                 cron_schedule: attrs.cron_schedule,
+                workflow_execution_expiration_time: attrs.workflow_execution_expiration_time,
+                cron_schedule_to_schedule_interval: attrs.first_workflow_task_backoff,
                 memo: attrs.memo,
                 search_attributes: attrs.search_attributes,
             }
