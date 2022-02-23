@@ -2,7 +2,8 @@ use crate::workflow::WFCommand;
 use std::collections::VecDeque;
 use temporal_sdk_core_protos::{
     coresdk::workflow_activation::{
-        workflow_activation_job, CancelWorkflow, SignalWorkflow, WorkflowActivationJob,
+        start_workflow_from_attribs, workflow_activation_job, CancelWorkflow, SignalWorkflow,
+        WorkflowActivationJob,
     },
     temporal::api::history::v1::WorkflowExecutionStartedEventAttributes,
 };
@@ -31,8 +32,17 @@ where
 
 impl DrivenWorkflow {
     /// Start the workflow
-    pub fn start(&mut self, attribs: WorkflowExecutionStartedEventAttributes) {
+    pub fn start(
+        &mut self,
+        workflow_id: String,
+        randomness_seed: u64,
+        attribs: WorkflowExecutionStartedEventAttributes,
+    ) {
         debug!(run_id = %attribs.original_execution_run_id, "Driven WF start");
+        // TODO: Avoid attrs clone
+        self.send_job(
+            start_workflow_from_attribs(attribs.clone(), workflow_id, randomness_seed).into(),
+        );
         self.started_attrs = Some(attribs);
     }
 

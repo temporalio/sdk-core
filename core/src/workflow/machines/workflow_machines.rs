@@ -24,30 +24,29 @@ use crate::{
         CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WFCommand, WorkflowFetcher,
     },
 };
+use siphasher::sip::SipHasher13;
 use slotmap::SlotMap;
 use std::{
     borrow::{Borrow, BorrowMut},
-    collections::{hash_map::DefaultHasher, HashMap, VecDeque},
+    collections::{HashMap, VecDeque},
     convert::TryInto,
     hash::{Hash, Hasher},
     time::{Duration, Instant, SystemTime},
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        common::{NamespacedWorkflowExecution, Payload},
+        common::NamespacedWorkflowExecution,
         workflow_activation::{
             workflow_activation_job::{self, Variant},
-            NotifyHasPatch, StartWorkflow, UpdateRandomSeed, WorkflowActivation,
+            NotifyHasPatch, UpdateRandomSeed, WorkflowActivation,
         },
         workflow_commands::{
             request_cancel_external_workflow_execution as cancel_we,
             signal_external_workflow_execution as sig_we,
         },
-        FromPayloadsExt,
     },
     temporal::api::{
         command::v1::Command as ProtoCommand,
-        common::v1::Header,
         enums::v1::EventType,
         history::v1::{history_event, HistoryEvent, WorkflowExecutionStartedEventAttributes},
     },
@@ -472,30 +471,13 @@ impl WorkflowMachines {
                         let as_systime: SystemTime = st.clone().try_into()?;
                         self.workflow_start_time = Some(as_systime);
                     }
-                    // We need to notify the lang sdk that it's time to kick off a workflow
-                    self.drive_me.send_job(
-                        StartWorkflow {
-                            workflow_type: attrs
-                                .workflow_type
-                                .as_ref()
-                                .map(|wt| wt.name.clone())
-                                .unwrap_or_default(),
-                            workflow_id: self.workflow_id.clone(),
-                            arguments: Vec::from_payloads(attrs.input.clone()),
-                            randomness_seed: str_to_randomness_seed(
-                                &attrs.original_execution_run_id,
-                            ),
-                            headers: match &attrs.header {
-                                None => HashMap::new(),
-                                Some(Header { fields }) => fields
-                                    .iter()
-                                    .map(|(k, v)| (k.clone(), Payload::from(v.clone())))
-                                    .collect(),
-                            },
-                        }
-                        .into(),
+                    // Notify the lang sdk that it's time to kick off a workflow
+                    self.drive_me.start(
+                        self.workflow_id.clone(),
+                        str_to_randomness_seed(&attrs.original_execution_run_id),
+                        // TODO: No clone
+                        attrs.clone(),
                     );
-                    self.drive_me.start(attrs.clone());
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
                         "WorkflowExecutionStarted event did not have appropriate attributes: {}",
@@ -1081,7 +1063,9 @@ impl WorkflowMachines {
 }
 
 fn str_to_randomness_seed(run_id: &str) -> u64 {
-    let mut s = DefaultHasher::new();
+    // This was originally `DefaultHasher` but that is potentially unstable across Rust releases.
+    // This must forever be `SipHasher13` now or we risk breaking history compat.
+    let mut s = SipHasher13::new();
     run_id.hash(&mut s);
     s.finish()
 }

@@ -7,7 +7,10 @@ syntax = "proto3";
 package coresdk.workflow_activation;
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
 import "temporal/api/failure/v1/message.proto";
+import "temporal/api/common/v1/message.proto";
+import "temporal/api/enums/v1/workflow.proto";
 import "temporal/sdk/core/activity_result/activity_result.proto";
 import "temporal/sdk/core/child_workflow/child_workflow.proto";
 import "temporal/sdk/core/common/common.proto";
@@ -63,22 +66,48 @@ message WorkflowActivationJob {
     }
 }
 
-/// Start a new workflow
+// Start a new workflow
 message StartWorkflow {
-    /// The identifier the lang-specific sdk uses to execute workflow code
+    // The identifier the lang-specific sdk uses to execute workflow code
     string workflow_type = 1;
-    /// The workflow id used on the temporal server
+    // The workflow id used on the temporal server
     string workflow_id = 2;
-    /// Inputs to the workflow code
+    // Inputs to the workflow code
     repeated common.Payload arguments = 3;
-    /// The seed must be used to initialize the random generator used by SDK.
-    /// RandomSeedUpdatedAttributes are used to deliver seed updates.
+    // The seed must be used to initialize the random generator used by SDK.
+    // RandomSeedUpdatedAttributes are used to deliver seed updates.
     uint64 randomness_seed = 4;
-    /// Used to add metadata e.g. for tracing and auth, meant to be read and written to by interceptors.
+    // Used to add metadata e.g. for tracing and auth, meant to be read and written to by interceptors.
     map<string, common.Payload> headers = 5;
-
-    // TODO: Do we need namespace here, or should that just be fetchable easily?
-    //   will be others - workflow exe started attrs, etc
+    // If this workflow is a child, information about the parent
+    common.NamespacedWorkflowExecution parent_workflow_info = 6;
+    // Total workflow execution timeout including retries and continue as new.
+    google.protobuf.Duration workflow_execution_timeout = 7;
+    // Timeout of a single workflow run.
+    google.protobuf.Duration workflow_run_timeout = 8;
+    // Timeout of a single workflow task.
+    google.protobuf.Duration workflow_task_timeout = 9;
+    // Run id of the previous workflow which continued-as-new or retired or cron executed into this
+    // workflow, if any.
+    string continued_from_execution_run_id = 10;
+    // If this workflow was a continuation, indicates the type of continuation.
+    temporal.api.enums.v1.ContinueAsNewInitiator continued_initiator = 11;
+    // If this workflow was a continuation and that continuation failed, the details of that.
+    temporal.api.failure.v1.Failure continued_failure = 12;
+    // If this workflow was a continuation and that continuation completed, the details of that.
+    temporal.api.common.v1.Payloads last_completion_result = 13;
+    // This is the very first run id the workflow ever had, following continuation chains.
+    string first_execution_run_id = 14;
+    // This workflow's retry policy
+    temporal.api.common.v1.RetryPolicy retry_policy = 15;
+    // Starting at 1, the number of times we have tried to execute this workflow
+    int32 attempt = 16;
+    // If this workflow runs on a cron schedule, it will appear here
+    string cron_schedule = 17;
+    // User-defined memo
+    temporal.api.common.v1.Memo memo = 18;
+    // Search attributes created/updated when this workflow was started
+    temporal.api.common.v1.SearchAttributes search_attributes = 19;
 }
 
 /// Notify a workflow that a timer has fired

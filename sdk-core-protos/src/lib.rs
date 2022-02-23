@@ -344,13 +344,24 @@ pub mod coresdk {
 
     pub mod workflow_activation {
         use crate::{
-            coresdk::{workflow_activation::remove_from_cache::EvictionReason, FromPayloadsExt},
-            temporal::api::history::v1::{
-                WorkflowExecutionCancelRequestedEventAttributes,
-                WorkflowExecutionSignaledEventAttributes,
+            coresdk::{
+                common::{NamespacedWorkflowExecution, Payload},
+                workflow_activation::remove_from_cache::EvictionReason,
+                FromPayloadsExt,
+            },
+            temporal::api::{
+                common::v1::Header,
+                history::v1::{
+                    WorkflowExecutionCancelRequestedEventAttributes,
+                    WorkflowExecutionSignaledEventAttributes,
+                    WorkflowExecutionStartedEventAttributes,
+                },
             },
         };
-        use std::fmt::{Display, Formatter};
+        use std::{
+            collections::HashMap,
+            fmt::{Display, Formatter},
+        };
 
         tonic::include_proto!("coresdk.workflow_activation");
 
@@ -528,6 +539,47 @@ pub mod coresdk {
         impl From<WorkflowExecutionCancelRequestedEventAttributes> for CancelWorkflow {
             fn from(_a: WorkflowExecutionCancelRequestedEventAttributes) -> Self {
                 Self { details: vec![] }
+            }
+        }
+
+        /// Create a [StartWorkflow] job from corresponding event attributes
+        pub fn start_workflow_from_attribs(
+            attrs: WorkflowExecutionStartedEventAttributes,
+            workflow_id: String,
+            randomness_seed: u64,
+        ) -> StartWorkflow {
+            StartWorkflow {
+                workflow_type: attrs.workflow_type.map(|wt| wt.name).unwrap_or_default(),
+                workflow_id,
+                arguments: Vec::from_payloads(attrs.input),
+                randomness_seed,
+                headers: match attrs.header {
+                    None => HashMap::new(),
+                    Some(Header { fields }) => fields
+                        .into_iter()
+                        .map(|(k, v)| (k, Payload::from(v)))
+                        .collect(),
+                },
+                parent_workflow_info: attrs.parent_workflow_execution.map(|pe| {
+                    NamespacedWorkflowExecution {
+                        namespace: attrs.parent_workflow_namespace,
+                        run_id: pe.run_id,
+                        workflow_id: pe.workflow_id,
+                    }
+                }),
+                workflow_execution_timeout: attrs.workflow_execution_timeout,
+                workflow_run_timeout: attrs.workflow_run_timeout,
+                workflow_task_timeout: attrs.workflow_task_timeout,
+                continued_from_execution_run_id: attrs.continued_execution_run_id,
+                continued_initiator: attrs.initiator,
+                continued_failure: attrs.continued_failure,
+                last_completion_result: attrs.last_completion_result,
+                first_execution_run_id: attrs.first_execution_run_id,
+                retry_policy: attrs.retry_policy,
+                attempt: attrs.attempt,
+                cron_schedule: attrs.cron_schedule,
+                memo: attrs.memo,
+                search_attributes: attrs.search_attributes,
             }
         }
     }

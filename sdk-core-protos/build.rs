@@ -1,4 +1,5 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("cargo:rerun-if-changed=../protos");
     tonic_build::configure()
         // We don't actually want to build the grpc definitions - we don't need them (for now).
         // Just build the message structs.
