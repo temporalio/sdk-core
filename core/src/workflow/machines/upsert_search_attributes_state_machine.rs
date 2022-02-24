@@ -187,14 +187,25 @@ mod tests {
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
 
-        let wff = WorkflowFunction::new(|ctx: WfContext| async move {
-            ctx.upsert_search_attributes([(
-                String::from("foo"),
-                Payload {
-                    metadata: Default::default(),
-                    data: vec![],
-                },
-            )]);
+        let (k1, k2) = ("foo", "bar");
+
+        let wff = WorkflowFunction::new(move |ctx: WfContext| async move {
+            ctx.upsert_search_attributes([
+                (
+                    String::from(k1),
+                    Payload {
+                        data: vec![0x01],
+                        ..Default::default()
+                    },
+                ),
+                (
+                    String::from(k2),
+                    Payload {
+                        data: vec![0x02],
+                        ..Default::default()
+                    },
+                ),
+            ]);
             Ok(().into())
         });
         let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
@@ -202,10 +213,22 @@ mod tests {
         wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert!(!commands.is_empty());
+        let cmd = commands[0].clone();
         assert_eq!(
-            commands[0].command_type,
+            cmd.command_type,
             CommandType::UpsertWorkflowSearchAttributes as i32
         );
+        match cmd.attributes.unwrap() {
+            Attributes::UpsertWorkflowSearchAttributesCommandAttributes(msg) => {
+                let fields = &msg.search_attributes.unwrap().indexed_fields;
+                assert_eq!(fields.len(), 2);
+                let pay1 = fields.get(k1).unwrap();
+                let pay2 = fields.get(k2).unwrap();
+                assert_eq!(pay1.data[0], 0x01);
+                assert_eq!(pay2.data[0], 0x02);
+            }
+            _ => panic!("expected command to contain an UpsertWorkflowSearchAttributresCommandAttributes value")
+        }
         wfm.shutdown().await.unwrap();
     }
 
