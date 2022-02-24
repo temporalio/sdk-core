@@ -1,21 +1,16 @@
 use std::convert::TryFrom;
 
-use rustfsm::{fsm, StateMachine, TransitionResult};
+use rustfsm::{fsm, TransitionResult};
 use temporal_sdk_core_protos::{
-    coresdk::workflow_commands::{
-        workflow_command::Variant::UpsertWorkflowSearchAttributesCommandAttributes,
-        UpsertWorkflowSearchAttributes,
-    },
+    coresdk::workflow_commands::UpsertWorkflowSearchAttributes,
     temporal::api::{
-        command::v1::command::Attributes,
         command::v1::Command,
-        common::v1::SearchAttributes,
         enums::v1::{CommandType, EventType},
         history::v1::HistoryEvent,
     },
 };
 
-use crate::workflow::machines::{Cancellable, EventInfo, MachineKind, Machines, WFMachinesAdapter};
+use crate::workflow::machines::{Cancellable, EventInfo, MachineKind, WFMachinesAdapter};
 
 use super::{
     workflow_machines::{MachineResponse, WFMachinesError},
@@ -45,7 +40,7 @@ fsm! {
 pub(super) fn upsert_search_attrs(
     attribs: UpsertWorkflowSearchAttributes,
 ) -> NewMachineWithCommand {
-    let mut sm = UpsertSearchAttributesMachine::new();
+    let sm = UpsertSearchAttributesMachine::new();
     let cmd = Command {
         command_type: CommandType::UpsertWorkflowSearchAttributes as i32,
         attributes: Some(attribs.into()),
@@ -60,12 +55,11 @@ pub(super) fn upsert_search_attrs(
 type SharedState = ();
 
 /// The state-machine-specific set of commands that are the results of state transition in the
-/// UpsertSearchAttributesMachine.
+/// UpsertSearchAttributesMachine. There are none of these because this state machine emits the
+/// UpsertSearchAttributes API command during construction and then does not emit any subsequent
+/// state-machine specific commands.
 #[derive(Debug, derive_more::Display)]
-pub(super) enum UpsertSearchAttributesMachineCommand {
-    #[display(fmt = "SendUpsertCommand")]
-    SendUpsertCommand(Attributes),
-}
+pub(super) enum UpsertSearchAttributesMachineCommand {}
 
 /// The state of the UpsertSearchAttributesMachine at time zero (i.e. at instantiation)
 #[derive(Debug, Default, Clone, derive_more::Display)]
@@ -96,14 +90,13 @@ impl WFMachinesAdapter for UpsertSearchAttributesMachine {
     /// StateMachine type.
     fn adapt_response(
         &self,
-        my_command: Self::Command,
+        _my_command: Self::Command,
         _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, Self::Error> {
-        let UpsertSearchAttributesMachineCommand::SendUpsertCommand(attrs) = my_command;
-        Ok(vec![MachineResponse::IssueNewCommand(Command {
-            command_type: CommandType::UpsertWorkflowSearchAttributes as i32,
-            attributes: Some(attrs),
-        })])
+        // No implementation needed until this state machine emits state machine commands
+        Err(Self::Error::Nondeterminism(
+            "UpsertWorkflowSearchAttributesMachine does not use commands".to_string(),
+        ))
     }
 
     /// Filters for EventType::UpsertWorkflowSearchAttributes
@@ -172,8 +165,10 @@ impl From<Created> for CommandIssued {
 
 #[cfg(test)]
 mod tests {
+    use rustfsm::StateMachine;
     use temporal_sdk::{WfContext, WorkflowFunction};
     use temporal_sdk_core_protos::coresdk::common::Payload;
+    use temporal_sdk_core_protos::temporal::api::command::v1::command::Attributes;
 
     use crate::{replay::TestHistoryBuilder, workflow::managed_wf::ManagedWFFunc};
 
