@@ -1318,9 +1318,11 @@ pub mod temporal {
 
                 impl From<workflow_commands::UpsertWorkflowSearchAttributes> for command::Attributes {
                     fn from(s: workflow_commands::UpsertWorkflowSearchAttributes) -> Self {
-                        Self::UpsertWorkflowSearchAttributesCommandAttributes(UpsertWorkflowSearchAttributesCommandAttributes {
-                            search_attributes: Some(s.search_attributes.into()),
-                        })
+                        Self::UpsertWorkflowSearchAttributesCommandAttributes(
+                            UpsertWorkflowSearchAttributesCommandAttributes {
+                                search_attributes: Some(s.search_attributes.into()),
+                            },
+                        )
                     }
                 }
 

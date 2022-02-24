@@ -22,6 +22,7 @@ use std::{
     task::Poll,
     time::{Duration, SystemTime},
 };
+use temporal_sdk_core_protos::coresdk::workflow_commands::UpsertWorkflowSearchAttributes;
 use temporal_sdk_core_protos::coresdk::{
     activity_result::{activity_resolution, ActivityResolution},
     child_workflow::ChildWorkflowResult,
@@ -56,6 +57,7 @@ struct WfCtxProtectedDat {
     next_child_workflow_sequence_number: u32,
     next_cancel_external_wf_sequence_number: u32,
     next_signal_external_wf_sequence_number: u32,
+    next_upsert_search_attrs_sequence_number: u32,
 }
 
 impl WfCtxProtectedDat {
@@ -82,6 +84,11 @@ impl WfCtxProtectedDat {
     fn next_signal_external_wf_seq(&mut self) -> u32 {
         let seq = self.next_signal_external_wf_sequence_number;
         self.next_signal_external_wf_sequence_number += 1;
+        seq
+    }
+    fn next_upsert_search_attrs_wf_seq(&mut self) -> u32 {
+        let seq = self.next_upsert_search_attrs_sequence_number;
+        self.next_upsert_search_attrs_sequence_number += 1;
         seq
     }
 }
@@ -121,6 +128,7 @@ impl WfContext {
                     next_child_workflow_sequence_number: 1,
                     next_cancel_external_wf_sequence_number: 1,
                     next_signal_external_wf_sequence_number: 1,
+                    next_upsert_search_attrs_sequence_number: 1,
                 }),
             },
             rx,
@@ -276,6 +284,18 @@ impl WfContext {
             run_id: run_id.into(),
         });
         self.send_signal_wf(signal_name, payload, target)
+    }
+
+    /// Add or create a set of search attributes
+    pub fn upsert_search_attributes(&self, attr_iter: impl IntoIterator<Item = (String, Payload)>) {
+        self.send(RustWfCmd::NewNonblockingCmd(
+            workflow_command::Variant::UpsertWorkflowSearchAttributesCommandAttributes(
+                UpsertWorkflowSearchAttributes {
+                    seq: self.seq_nums.write().next_upsert_search_attrs_wf_seq(),
+                    search_attributes: HashMap::from_iter(attr_iter.into_iter()),
+                },
+            ),
+        ))
     }
 
     /// Return a stream that produces values when the named signal is sent to this workflow
