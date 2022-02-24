@@ -360,6 +360,7 @@ pub mod coresdk {
                     WorkflowExecutionSignaledEventAttributes,
                     WorkflowExecutionStartedEventAttributes,
                 },
+                query::v1::WorkflowQuery,
             },
         };
         use std::{
@@ -399,6 +400,15 @@ pub mod coresdk {
                     .into_iter()
                     .map(|qr| workflow_activation_job::Variant::QueryWorkflow(qr).into())
                     .collect(),
+            }
+        }
+
+        pub fn query_to_job(id: String, q: WorkflowQuery) -> QueryWorkflow {
+            QueryWorkflow {
+                query_id: id,
+                query_type: q.query_type,
+                arguments: Vec::from_payloads(q.query_args),
+                headers: q.header.map(|h| h.into()).unwrap_or_default(),
             }
         }
 

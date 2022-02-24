@@ -31,11 +31,10 @@ use temporal_client::ServerGatewayApis;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
-            create_query_activation, remove_from_cache::EvictionReason, workflow_activation_job,
-            QueryWorkflow, WorkflowActivation,
+            create_query_activation, query_to_job, remove_from_cache::EvictionReason,
+            workflow_activation_job, QueryWorkflow, WorkflowActivation,
         },
         workflow_commands::QueryResult,
-        FromPayloadsExt,
     },
     temporal::api::command::v1::Command as ProtoCommand,
     TaskToken,
@@ -316,12 +315,10 @@ impl WorkflowTaskManager {
 
         // Check if there is a legacy query we either need to immediately issue an activation for
         // (if there is no more replay work to do) or we need to store for later answering.
-        let legacy_query = work.legacy_query.take().map(|q| QueryWorkflow {
-            query_id: LEGACY_QUERY_ID.to_string(),
-            query_type: q.query_type,
-            arguments: Vec::from_payloads(q.query_args),
-            headers: q.header.map(|h| h.into()).unwrap_or_default(),
-        });
+        let legacy_query = work
+            .legacy_query
+            .take()
+            .map(|q| query_to_job(LEGACY_QUERY_ID.to_string(), q));
 
         let (info, mut next_activation) =
             match self.instantiate_or_update_workflow(work, gateway).await {

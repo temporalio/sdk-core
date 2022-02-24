@@ -19,12 +19,13 @@ use temporal_sdk_core_protos::{
         },
         external_data::LocalActivityMarkerData,
         workflow_activation::{
-            workflow_activation_job, QueryWorkflow, WorkflowActivation, WorkflowActivationJob,
+            query_to_job, workflow_activation_job, QueryWorkflow, WorkflowActivation,
+            WorkflowActivationJob,
         },
         workflow_commands::{
             query_result, ActivityCancellationType, QueryResult, ScheduleLocalActivity,
         },
-        workflow_completion, FromPayloadsExt,
+        workflow_completion,
     },
     temporal::api::{
         common::v1::{Payload, WorkflowExecution},
@@ -82,12 +83,7 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
             } => {
                 let query_requests = queries
                     .into_iter()
-                    .map(|(id, q)| QueryWorkflow {
-                        query_id: id,
-                        query_type: q.query_type,
-                        arguments: Vec::from_payloads(q.query_args),
-                        headers: q.header.map(|h| h.into()).unwrap_or_default(),
-                    })
+                    .map(|(id, q)| query_to_job(id, q))
                     .collect();
 
                 Ok(Self {
