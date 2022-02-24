@@ -196,7 +196,7 @@ impl WorkflowFuture {
                 }
                 Variant::SignalWorkflow(sig) => {
                     let mut dat = SignalData::new(sig.input);
-                    dat.headers = sig.header;
+                    dat.headers = sig.headers;
                     match self.sig_chans.entry(sig.signal_name) {
                         Entry::Occupied(mut o) => match o.get_mut() {
                             SigChanOrBuffer::Chan(chan) => {

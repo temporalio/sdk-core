@@ -86,7 +86,7 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                         query_id: id,
                         query_type: q.query_type,
                         arguments: Vec::from_payloads(q.query_args),
-                        header: q.header.map(|h| h.into()).unwrap_or_default(),
+                        headers: q.header.map(|h| h.into()).unwrap_or_default(),
                     })
                     .collect();
 
@@ -268,7 +268,7 @@ pub struct ValidScheduleLA {
     pub activity_type: String,
     pub attempt: u32,
     pub original_schedule_time: Option<SystemTime>,
-    pub header_fields: HashMap<String, SDKPayload>,
+    pub headers: HashMap<String, SDKPayload>,
     pub arguments: Vec<SDKPayload>,
     pub schedule_to_start_timeout: Option<Duration>,
     pub close_timeouts: LACloseTimeouts,
@@ -379,7 +379,7 @@ impl ValidScheduleLA {
             activity_type: v.activity_type,
             attempt: v.attempt,
             original_schedule_time,
-            header_fields: v.header_fields,
+            headers: v.headers,
             arguments: v.arguments,
             schedule_to_start_timeout,
             close_timeouts,

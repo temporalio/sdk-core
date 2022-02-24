@@ -98,10 +98,10 @@ pub(super) fn new_external_signal(
                 workflow_id: workflow_execution.workflow_id,
                 run_id: workflow_execution.run_id,
             }),
-            header: if attrs.header.is_empty() {
+            header: if attrs.headers.is_empty() {
                 None
             } else {
-                Some(attrs.header.into())
+                Some(attrs.headers.into())
             },
             signal_name: attrs.signal_name,
             input: attrs.args.into_payloads(),

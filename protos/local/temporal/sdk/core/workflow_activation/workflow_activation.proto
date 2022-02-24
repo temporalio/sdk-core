@@ -185,7 +185,7 @@ message QueryWorkflow {
     string query_type = 2;
     repeated common.Payload arguments = 3;
     /// Headers attached to the query
-    map<string, common.Payload> header = 5;
+    map<string, common.Payload> headers = 5;
 }
 
 /// Cancel a running workflow
@@ -201,7 +201,7 @@ message SignalWorkflow {
     // Identity of the sender of the signal
     string identity = 3;
     // Headers attached to the signal
-    map<string, common.Payload> header = 5;
+    map<string, common.Payload> headers = 5;
 }
 
 // Inform lang what the result of a call to `patched` or similar API should be -- this is always

@@ -332,7 +332,7 @@ impl WfContext {
                     signal_name: signal.signal_name,
                     args: signal.data.input,
                     target: Some(target),
-                    header: signal.data.headers,
+                    headers: signal.data.headers,
                 }
                 .into(),
                 unblocker,

@@ -536,7 +536,7 @@ pub mod coresdk {
                     signal_name: a.signal_name,
                     input: Vec::from_payloads(a.input),
                     identity: a.identity,
-                    header: a.header.map(Into::into).unwrap_or_default(),
+                    headers: a.header.map(Into::into).unwrap_or_default(),
                 }
             }
         }
@@ -1333,7 +1333,7 @@ pub mod temporal {
                                 }),
                                 namespace: s.namespace,
                                 task_queue: Some(s.task_queue.into()),
-                                header: Some(s.header_fields.into()),
+                                header: Some(s.headers.into()),
                                 input: s.arguments.into_payloads(),
                                 schedule_to_close_timeout: s.schedule_to_close_timeout,
                                 schedule_to_start_timeout: s.schedule_to_start_timeout,
@@ -1356,7 +1356,7 @@ pub mod temporal {
                                 control: "".into(),
                                 namespace: s.namespace,
                                 task_queue: Some(s.task_queue.into()),
-                                header: Some(s.header.into()),
+                                header: Some(s.headers.into()),
                                 memo: Some(s.memo.into()),
                                 search_attributes: Some(s.search_attributes.into()),
                                 input: s.input.into_payloads(),
@@ -1402,7 +1402,7 @@ pub mod temporal {
                                 workflow_run_timeout: c.workflow_run_timeout,
                                 workflow_task_timeout: c.workflow_task_timeout,
                                 memo: Some(c.memo.into()),
-                                header: Some(c.header.into()),
+                                header: Some(c.headers.into()),
                                 search_attributes: Some(c.search_attributes.into()),
                                 ..Default::default()
                             },
