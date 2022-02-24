@@ -40,8 +40,8 @@ fsm! {
     CommandIssued --(CommandRecorded) --> Done;
 }
 
-// Instantiates an UpsertSearchAttributesMachine and packs it together with an initial command
-// to apply the provided search attribute update.
+/// Instantiates an UpsertSearchAttributesMachine and packs it together with an initial command
+/// to apply the provided search attribute update.
 pub(super) fn upsert_search_attrs(
     attribs: UpsertWorkflowSearchAttributes,
 ) -> NewMachineWithCommand {
@@ -56,28 +56,28 @@ pub(super) fn upsert_search_attrs(
     }
 }
 
-// Unused but must exist
+/// Unused but must exist
 type SharedState = ();
 
-// The state-machine-specific set of commands that are the results of state transition in the
-// UpsertSearchAttributesMachine.
+/// The state-machine-specific set of commands that are the results of state transition in the
+/// UpsertSearchAttributesMachine.
 #[derive(Debug, derive_more::Display)]
 pub(super) enum UpsertSearchAttributesMachineCommand {
     #[display(fmt = "SendUpsertCommand")]
     SendUpsertCommand(Attributes),
 }
 
-// The state of the UpsertSearchAttributesMachine at time zero (i.e. at instantiation)
+/// The state of the UpsertSearchAttributesMachine at time zero (i.e. at instantiation)
 #[derive(Debug, Default, Clone, derive_more::Display)]
 pub(super) struct Created {}
 
-// Once the UpsertSearchAttributesMachine has been known to have issued the upsert command to
-// higher-level machinery, it transitions into this state.
+/// Once the UpsertSearchAttributesMachine has been known to have issued the upsert command to
+/// higher-level machinery, it transitions into this state.
 #[derive(Debug, Default, Clone, derive_more::Display)]
 pub(super) struct CommandIssued {}
 
-// Once the server has recorded its receipt of the search attribute update, the
-// UpsertSearchAttributesMachine transitions into this terminal state.
+/// Once the server has recorded its receipt of the search attribute update, the
+/// UpsertSearchAttributesMachine transitions into this terminal state.
 #[derive(Debug, Default, Clone, derive_more::Display)]
 pub(super) struct Done {}
 
@@ -88,16 +88,12 @@ impl UpsertSearchAttributesMachine {
             shared_state: (),
         }
     }
-
-    fn state(&self) -> String {
-        self.state.to_string()
-    }
 }
 
 impl WFMachinesAdapter for UpsertSearchAttributesMachine {
-    // Transforms an UpsertSearchAttributesMachine-specific command (i.e. an instance of the type
-    // UpsertSearchAttributesMachineCommand) to a more generic form supported by the abstract
-    // StateMachine type.
+    /// Transforms an UpsertSearchAttributesMachine-specific command (i.e. an instance of the type
+    /// UpsertSearchAttributesMachineCommand) to a more generic form supported by the abstract
+    /// StateMachine type.
     fn adapt_response(
         &self,
         my_command: Self::Command,
@@ -110,7 +106,7 @@ impl WFMachinesAdapter for UpsertSearchAttributesMachine {
         })])
     }
 
-    // Filters for EventType::UpsertWorkflowSearchAttributes
+    /// Filters for EventType::UpsertWorkflowSearchAttributes
     fn matches_event(&self, event: &HistoryEvent) -> bool {
         matches!(
             event.event_type(),
@@ -125,9 +121,9 @@ impl WFMachinesAdapter for UpsertSearchAttributesMachine {
 
 impl Cancellable for UpsertSearchAttributesMachine {}
 
-// Converts the generic history event with type EventType::UpsertWorkflowSearchAttributes into the
-// UpsertSearchAttributesMachine-specific event type
-// UpsertSearchAttributesMachineEvents::CommandRecorded.
+/// Converts the generic history event with type EventType::UpsertWorkflowSearchAttributes into the
+/// UpsertSearchAttributesMachine-specific event type
+/// UpsertSearchAttributesMachineEvents::CommandRecorded.
 impl TryFrom<HistoryEvent> for UpsertSearchAttributesMachineEvents {
     type Error = WFMachinesError;
 
@@ -143,8 +139,8 @@ impl TryFrom<HistoryEvent> for UpsertSearchAttributesMachineEvents {
     }
 }
 
-// Converts generic state machine command type CommandType::UpsertWorkflowSearchAttributes into
-// the UpsertSearchAttributesMachine-specific event
+/// Converts generic state machine command type CommandType::UpsertWorkflowSearchAttributes into
+/// the UpsertSearchAttributesMachine-specific event
 impl TryFrom<CommandType> for UpsertSearchAttributesMachineEvents {
     type Error = WFMachinesError;
 
@@ -160,14 +156,14 @@ impl TryFrom<CommandType> for UpsertSearchAttributesMachineEvents {
     }
 }
 
-// There is no Command/Reponse associated with this transition
+/// There is no Command/Reponse associated with this transition
 impl From<CommandIssued> for Done {
     fn from(_: CommandIssued) -> Self {
         Self {}
     }
 }
 
-// There is no Command/Reponse associated with this transition
+/// There is no Command/Reponse associated with this transition
 impl From<Created> for CommandIssued {
     fn from(_: Created) -> Self {
         Self {}
