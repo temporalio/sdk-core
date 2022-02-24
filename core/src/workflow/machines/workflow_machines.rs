@@ -802,8 +802,7 @@ impl WorkflowMachines {
                         attrs,
                         self.started_attrs()
                             .as_ref()
-                            .map(|x| x.workflow_execution_timeout.clone().try_into_or_none())
-                            .flatten(),
+                            .and_then(|x| x.workflow_execution_timeout.clone().try_into_or_none()),
                     )
                     .map_err(|e| {
                         WFMachinesError::Fatal(format!(
