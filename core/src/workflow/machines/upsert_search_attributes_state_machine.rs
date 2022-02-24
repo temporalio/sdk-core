@@ -212,7 +212,7 @@ mod tests {
     #[tokio::test]
     async fn upsert_search_attrs_sm() {
         let mut sm = UpsertSearchAttributesMachine::new();
-        assert_eq!(Created {}.to_string(), sm.state());
+        assert_eq!(Created {}.to_string(), sm.state().to_string());
 
         let cmd_scheduled_sm_event = CommandType::UpsertWorkflowSearchAttributes
             .try_into()
@@ -226,10 +226,10 @@ mod tests {
 
         OnEventWrapper::on_event_mut(&mut sm, cmd_scheduled_sm_event)
             .expect("CommandScheduled should transition Created -> CommandIssued");
-        assert_eq!(CommandIssued {}.to_string(), sm.state());
+        assert_eq!(CommandIssued {}.to_string(), sm.state().to_string());
 
         OnEventWrapper::on_event_mut(&mut sm, cmd_recorded_sm_event)
             .expect("CommandRecorded should transition CommandIssued -> Done");
-        assert_eq!(Done {}.to_string(), sm.state());
+        assert_eq!(Done {}.to_string(), sm.state().to_string());
     }
 }
