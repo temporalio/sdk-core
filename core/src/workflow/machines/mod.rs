@@ -15,7 +15,6 @@ mod patch_state_machine;
 mod side_effect_state_machine;
 mod signal_external_state_machine;
 mod timer_state_machine;
-#[allow(unused)]
 mod upsert_search_attributes_state_machine;
 mod workflow_task_state_machine;
 
