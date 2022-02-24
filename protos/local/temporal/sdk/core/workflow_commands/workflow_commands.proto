@@ -273,6 +273,8 @@ message SignalExternalWorkflowExecution {
     string signal_name = 4;
     /// Arguments for the handler
     repeated common.Payload args = 5;
+    /// Headers to attach to the signal
+    map<string, common.Payload> header = 6;
 }
 
 /// Can be used to cancel not-already-sent `SignalExternalWorkflowExecution` commands

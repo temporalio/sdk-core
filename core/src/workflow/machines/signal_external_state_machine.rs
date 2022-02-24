@@ -6,8 +6,11 @@ use rustfsm::{fsm, MachineError, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::{
-        common::{NamespacedWorkflowExecution, Payload},
+        common::NamespacedWorkflowExecution,
         workflow_activation::ResolveSignalExternalWorkflow,
+        workflow_commands::{
+            signal_external_workflow_execution as sig_we, SignalExternalWorkflowExecution,
+        },
         IntoPayloadsExt,
     },
     temporal::api::{
@@ -62,15 +65,29 @@ pub(super) enum SignalExternalCommand {
 }
 
 pub(super) fn new_external_signal(
-    seq: u32,
-    workflow_execution: NamespacedWorkflowExecution,
-    signal_name: String,
-    payloads: impl IntoIterator<Item = Payload>,
-    only_child: bool,
-) -> NewMachineWithCommand {
+    attrs: SignalExternalWorkflowExecution,
+    this_namespace: &str,
+) -> Result<NewMachineWithCommand, WFMachinesError> {
+    let (workflow_execution, only_child) = match attrs.target {
+        None => {
+            return Err(WFMachinesError::Fatal(
+                "Signal external workflow command had empty target field".to_string(),
+            ))
+        }
+        Some(sig_we::Target::ChildWorkflowId(wfid)) => (
+            NamespacedWorkflowExecution {
+                namespace: this_namespace.to_string(),
+                workflow_id: wfid,
+                run_id: "".to_string(),
+            },
+            true,
+        ),
+        Some(sig_we::Target::WorkflowExecution(we)) => (we, false),
+    };
+
     let mut s = SignalExternalMachine {
         state: Created {}.into(),
-        shared_state: SharedState { seq },
+        shared_state: SharedState { seq: attrs.seq },
     };
     OnEventWrapper::on_event_mut(&mut s, SignalExternalMachineEvents::Schedule)
         .expect("Scheduling signal external wf command doesn't fail");
@@ -81,9 +98,13 @@ pub(super) fn new_external_signal(
                 workflow_id: workflow_execution.workflow_id,
                 run_id: workflow_execution.run_id,
             }),
-            header: None,
-            signal_name,
-            input: payloads.into_payloads(),
+            header: if attrs.header.is_empty() {
+                None
+            } else {
+                Some(attrs.header.into())
+            },
+            signal_name: attrs.signal_name,
+            input: attrs.args.into_payloads(),
             // Is deprecated
             control: "".to_string(),
             child_workflow_only: only_child,
@@ -93,10 +114,10 @@ pub(super) fn new_external_signal(
         command_type: CommandType::SignalExternalWorkflowExecution as i32,
         attributes: Some(cmd_attrs),
     };
-    NewMachineWithCommand {
+    Ok(NewMachineWithCommand {
         command: cmd,
         machine: s.into(),
-    }
+    })
 }
 
 #[derive(Default, Clone)]
@@ -287,7 +308,9 @@ mod tests {
     use super::*;
     use crate::{replay::TestHistoryBuilder, workflow::managed_wf::ManagedWFFunc};
     use std::mem::discriminant;
-    use temporal_sdk::{CancellableFuture, WfContext, WorkflowFunction, WorkflowResult};
+    use temporal_sdk::{
+        CancellableFuture, SignalWorkflowOptions, WfContext, WorkflowFunction, WorkflowResult,
+    };
     use temporal_sdk_core_protos::coresdk::workflow_activation::{
         workflow_activation_job, WorkflowActivationJob,
     };
@@ -295,9 +318,9 @@ mod tests {
     const SIGNAME: &str = "signame";
 
     async fn signal_sender(ctx: WfContext) -> WorkflowResult<()> {
-        let res = ctx
-            .signal_workflow("fake_wid", "fake_rid", SIGNAME, b"hi!")
-            .await;
+        let mut dat = SignalWorkflowOptions::new("fake_wid", "fake_rid", SIGNAME, [b"hi!"]);
+        dat.with_header("tupac", b"shakur");
+        let res = ctx.signal_workflow(dat).await;
         if res.is_err() {
             Err(anyhow::anyhow!("Signal fail!"))
         } else {
@@ -325,11 +348,20 @@ mod tests {
         let wff = WorkflowFunction::new(signal_sender);
         let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
         wfm.get_next_activation().await.unwrap();
-        let cmds = wfm.get_server_commands().commands;
+        let mut cmds = wfm.get_server_commands().commands;
         assert_eq!(cmds.len(), 1);
         assert_eq!(
             cmds[0].command_type(),
             CommandType::SignalExternalWorkflowExecution
+        );
+        assert_matches!(
+            cmds.remove(0).attributes.unwrap(),
+            command::Attributes::SignalExternalWorkflowExecutionCommandAttributes(attrs) => {
+                assert_eq!(attrs.signal_name, SIGNAME);
+                assert_eq!(attrs.input.unwrap().payloads[0],
+                           b"hi!".into());
+                assert_eq!(*attrs.header.unwrap().fields.get("tupac").unwrap(), b"shakur".into());
+            }
         );
         wfm.get_next_activation().await.unwrap();
         let cmds = wfm.get_server_commands().commands;
@@ -354,7 +386,12 @@ mod tests {
         t.add_workflow_execution_completed();
 
         let wff = WorkflowFunction::new(|ctx: WfContext| async move {
-            let sig = ctx.signal_workflow("fake_wid", "fake_rid", SIGNAME, b"hi!");
+            let sig = ctx.signal_workflow(SignalWorkflowOptions::new(
+                "fake_wid",
+                "fake_rid",
+                SIGNAME,
+                [b"hi!"],
+            ));
             sig.cancel(&ctx);
             let _res = sig.await;
             Ok(().into())

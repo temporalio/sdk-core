@@ -86,6 +86,7 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                         query_id: id,
                         query_type: q.query_type,
                         arguments: Vec::from_payloads(q.query_args),
+                        header: q.header.map(|h| h.into()).unwrap_or_default(),
                     })
                     .collect();
 

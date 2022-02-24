@@ -1,5 +1,7 @@
 use futures::StreamExt;
-use temporal_sdk::{ChildWorkflowOptions, WfContext, WorkflowResult};
+use temporal_sdk::{
+    ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext, WorkflowResult,
+};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use uuid::Uuid;
 
@@ -10,9 +12,9 @@ async fn signal_sender(ctx: WfContext) -> WorkflowResult<()> {
     let run_id = std::str::from_utf8(&ctx.get_args()[0].data)
         .unwrap()
         .to_owned();
-    let sigres = ctx
-        .signal_workflow(RECEIVER_WFID, run_id, SIGNAME, b"hi!")
-        .await;
+    let mut dat = SignalWorkflowOptions::new(RECEIVER_WFID, run_id, SIGNAME, [b"hi!"]);
+    dat.with_header("tupac", b"shakur");
+    let sigres = ctx.signal_workflow(dat).await;
     if ctx.get_args().get(1).is_some() {
         // We expect failure
         assert!(sigres.is_err());
@@ -41,7 +43,12 @@ async fn sends_signal_to_missing_wf() {
 }
 
 async fn signal_receiver(ctx: WfContext) -> WorkflowResult<()> {
-    ctx.make_signal_channel(SIGNAME).next().await.unwrap();
+    let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
+    assert_eq!(&res.input, &[b"hi!".into()]);
+    assert_eq!(
+        *res.headers.get("tupac").expect("tupac header exists"),
+        b"shakur".into()
+    );
     Ok(().into())
 }
 
@@ -78,7 +85,9 @@ async fn signals_child(ctx: WfContext) -> WorkflowResult<()> {
         .await
         .into_started()
         .expect("Must start ok");
-    started_child.signal(&ctx, SIGNAME, b"hiya!").await.unwrap();
+    let mut sig = Signal::new(SIGNAME, [b"hi!"]);
+    sig.data.with_header("tupac", b"shakur");
+    started_child.signal(&ctx, sig).await.unwrap();
     started_child.result().await.status.unwrap();
     Ok(().into())
 }

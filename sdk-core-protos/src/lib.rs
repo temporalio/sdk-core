@@ -197,8 +197,12 @@ pub mod coresdk {
             T: AsRef<[u8]>,
         {
             fn from(v: T) -> Self {
+                // TODO: Set better encodings, whole data converter deal. Setting anything for now
+                //  at least makes it show up in the web UI.
+                let mut metadata = HashMap::new();
+                metadata.insert("encoding".to_string(), b"binary/plain".to_vec());
                 Self {
-                    metadata: Default::default(),
+                    metadata,
                     data: v.as_ref().to_vec(),
                 }
             }
@@ -532,6 +536,7 @@ pub mod coresdk {
                     signal_name: a.signal_name,
                     input: Vec::from_payloads(a.input),
                     identity: a.identity,
+                    header: a.header.map(Into::into).unwrap_or_default(),
                 }
             }
         }
