@@ -213,17 +213,16 @@ mod tests {
             cmd.command_type,
             CommandType::UpsertWorkflowSearchAttributes as i32
         );
-        match cmd.attributes.unwrap() {
-            Attributes::UpsertWorkflowSearchAttributesCommandAttributes(msg) => {
-                let fields = &msg.search_attributes.unwrap().indexed_fields;
-                assert_eq!(fields.len(), 2);
-                let pay1 = fields.get(k1).unwrap();
-                let pay2 = fields.get(k2).unwrap();
-                assert_eq!(pay1.data[0], 0x01);
-                assert_eq!(pay2.data[0], 0x02);
-            }
-            _ => panic!("expected command to contain an UpsertWorkflowSearchAttributresCommandAttributes value")
-        }
+        assert_matches!(
+        cmd.attributes.unwrap(),
+        Attributes::UpsertWorkflowSearchAttributesCommandAttributes(msg) => {
+            let fields = &msg.search_attributes.unwrap().indexed_fields;
+            let payload1 = fields.get(k1).unwrap();
+            let payload2 = fields.get(k2).unwrap();
+            assert_eq!(payload1.data[0], 0x01);
+            assert_eq!(payload2.data[0], 0x02);
+            assert_eq!(fields.len(), 2);
+        });
         wfm.shutdown().await.unwrap();
     }
 
