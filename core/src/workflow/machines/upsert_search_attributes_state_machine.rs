@@ -1,5 +1,3 @@
-use std::convert::TryFrom;
-
 use rustfsm::{fsm, TransitionResult};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::UpsertWorkflowSearchAttributes,
