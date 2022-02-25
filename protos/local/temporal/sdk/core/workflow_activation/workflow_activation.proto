@@ -184,6 +184,8 @@ message QueryWorkflow {
     /// The query's function/method/etc name
     string query_type = 2;
     repeated common.Payload arguments = 3;
+    /// Headers attached to the query
+    map<string, common.Payload> headers = 5;
 }
 
 /// Cancel a running workflow
@@ -192,11 +194,14 @@ message CancelWorkflow {
     repeated common.Payload details = 1;
 }
 
-/// Send a signal to a workflow
+// Send a signal to a workflow
 message SignalWorkflow {
     string signal_name = 1;
     repeated common.Payload input = 2;
+    // Identity of the sender of the signal
     string identity = 3;
+    // Headers attached to the signal
+    map<string, common.Payload> headers = 5;
 }
 
 // Inform lang what the result of a call to `patched` or similar API should be -- this is always

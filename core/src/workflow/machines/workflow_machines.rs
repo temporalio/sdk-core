@@ -41,10 +41,7 @@ use temporal_sdk_core_protos::{
             workflow_activation_job::{self, Variant},
             NotifyHasPatch, UpdateRandomSeed, WorkflowActivation,
         },
-        workflow_commands::{
-            request_cancel_external_workflow_execution as cancel_we,
-            signal_external_workflow_execution as sig_we,
-        },
+        workflow_commands::request_cancel_external_workflow_execution as cancel_we,
     },
     temporal::api::{
         command::v1::Command as ProtoCommand,
@@ -813,8 +810,7 @@ impl WorkflowMachines {
                         attrs,
                         self.started_attrs()
                             .as_ref()
-                            .map(|x| x.workflow_execution_timeout.clone().try_into_or_none())
-                            .flatten(),
+                            .and_then(|x| x.workflow_execution_timeout.clone().try_into_or_none()),
                     )
                     .map_err(|e| {
                         WFMachinesError::Fatal(format!(
@@ -912,33 +908,10 @@ impl WorkflowMachines {
                     );
                 }
                 WFCommand::SignalExternalWorkflow(attrs) => {
-                    let (we, only_child) = match attrs.target {
-                        None => {
-                            return Err(WFMachinesError::Fatal(
-                                "Signal external workflow command had empty target field"
-                                    .to_string(),
-                            ))
-                        }
-                        Some(sig_we::Target::ChildWorkflowId(wfid)) => (
-                            NamespacedWorkflowExecution {
-                                namespace: self.namespace.clone(),
-                                workflow_id: wfid,
-                                run_id: "".to_string(),
-                            },
-                            true,
-                        ),
-                        Some(sig_we::Target::WorkflowExecution(we)) => (we, false),
-                    };
-
+                    let seq = attrs.seq;
                     self.add_cmd_to_wf_task(
-                        new_external_signal(
-                            attrs.seq,
-                            we,
-                            attrs.signal_name,
-                            attrs.args,
-                            only_child,
-                        ),
-                        Some(CommandID::SignalExternal(attrs.seq)),
+                        new_external_signal(attrs, &self.namespace)?,
+                        Some(CommandID::SignalExternal(seq)),
                     );
                 }
                 WFCommand::CancelSignalWorkflow(attrs) => {

@@ -197,8 +197,12 @@ pub mod coresdk {
             T: AsRef<[u8]>,
         {
             fn from(v: T) -> Self {
+                // TODO: Set better encodings, whole data converter deal. Setting anything for now
+                //  at least makes it show up in the web UI.
+                let mut metadata = HashMap::new();
+                metadata.insert("encoding".to_string(), b"binary/plain".to_vec());
                 Self {
-                    metadata: Default::default(),
+                    metadata,
                     data: v.as_ref().to_vec(),
                 }
             }
@@ -356,6 +360,7 @@ pub mod coresdk {
                     WorkflowExecutionSignaledEventAttributes,
                     WorkflowExecutionStartedEventAttributes,
                 },
+                query::v1::WorkflowQuery,
             },
         };
         use std::{
@@ -395,6 +400,15 @@ pub mod coresdk {
                     .into_iter()
                     .map(|qr| workflow_activation_job::Variant::QueryWorkflow(qr).into())
                     .collect(),
+            }
+        }
+
+        pub fn query_to_job(id: String, q: WorkflowQuery) -> QueryWorkflow {
+            QueryWorkflow {
+                query_id: id,
+                query_type: q.query_type,
+                arguments: Vec::from_payloads(q.query_args),
+                headers: q.header.map(|h| h.into()).unwrap_or_default(),
             }
         }
 
@@ -532,6 +546,7 @@ pub mod coresdk {
                     signal_name: a.signal_name,
                     input: Vec::from_payloads(a.input),
                     identity: a.identity,
+                    headers: a.header.map(Into::into).unwrap_or_default(),
                 }
             }
         }
@@ -1344,7 +1359,7 @@ pub mod temporal {
                                 }),
                                 namespace: s.namespace,
                                 task_queue: Some(s.task_queue.into()),
-                                header: Some(s.header_fields.into()),
+                                header: Some(s.headers.into()),
                                 input: s.arguments.into_payloads(),
                                 schedule_to_close_timeout: s.schedule_to_close_timeout,
                                 schedule_to_start_timeout: s.schedule_to_start_timeout,
@@ -1367,7 +1382,7 @@ pub mod temporal {
                                 control: "".into(),
                                 namespace: s.namespace,
                                 task_queue: Some(s.task_queue.into()),
-                                header: Some(s.header.into()),
+                                header: Some(s.headers.into()),
                                 memo: Some(s.memo.into()),
                                 search_attributes: Some(s.search_attributes.into()),
                                 input: s.input.into_payloads(),
@@ -1413,7 +1428,7 @@ pub mod temporal {
                                 workflow_run_timeout: c.workflow_run_timeout,
                                 workflow_task_timeout: c.workflow_task_timeout,
                                 memo: Some(c.memo.into()),
-                                header: Some(c.header.into()),
+                                header: Some(c.headers.into()),
                                 search_attributes: Some(c.search_attributes.into()),
                                 ..Default::default()
                             },

@@ -55,7 +55,7 @@ message ScheduleActivity {
     string namespace = 4;
     // The name of the task queue to place this activity request in
     string task_queue = 5;
-    map<string, common.Payload> header_fields = 6;
+    map<string, common.Payload> headers = 6;
     /// Arguments/input to the activity. Called "input" upstream.
     repeated common.Payload arguments = 7;
     /// Indicates how long the caller is willing to wait for an activity completion. Limits how long
@@ -91,7 +91,7 @@ message ScheduleLocalActivity {
     /// If this local activity is a retry (as per the attempt field) this needs to be the original
     /// scheduling time (as provided in `DoBackoff`)
     google.protobuf.Timestamp original_schedule_time = 5;
-    map<string, common.Payload> header_fields = 6;
+    map<string, common.Payload> headers = 6;
     /// Arguments/input to the activity.
     repeated common.Payload arguments = 7;
     /// Indicates how long the caller is willing to wait for local activity completion. Limits how
@@ -185,7 +185,7 @@ message ContinueAsNewWorkflowExecution {
     /// Memo fields
     map<string, common.Payload> memo = 6;
     /// Header fields
-    map<string, common.Payload> header = 7;
+    map<string, common.Payload> headers = 7;
     /// Search attributes
     map<string, common.Payload> search_attributes = 8;
 }
@@ -228,7 +228,7 @@ message StartChildWorkflowExecution {
     common.RetryPolicy retry_policy = 13;
     string cron_schedule = 14;
     /// Header fields
-    map<string, common.Payload> header = 15;
+    map<string, common.Payload> headers = 15;
     /// Memo fields
     map<string, common.Payload> memo = 16;
     /// Search attributes
@@ -271,6 +271,8 @@ message SignalExternalWorkflowExecution {
     string signal_name = 4;
     /// Arguments for the handler
     repeated common.Payload args = 5;
+    /// Headers to attach to the signal
+    map<string, common.Payload> headers = 6;
 }
 
 /// Can be used to cancel not-already-sent `SignalExternalWorkflowExecution` commands

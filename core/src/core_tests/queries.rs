@@ -14,6 +14,7 @@ use temporal_sdk_core_protos::{
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{
+        common::v1::Payload,
         failure::v1::Failure,
         history::v1::History,
         query::v1::WorkflowQuery,
@@ -32,6 +33,8 @@ async fn legacy_query(#[case] include_history: bool) {
     let wfid = "fake_wf_id";
     let query_resp = "response";
     let t = canned_histories::single_timer("1");
+    let mut header = HashMap::new();
+    header.insert("head".to_string(), Payload::from(b"er"));
     let tasks = VecDeque::from(vec![
         hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
         {
@@ -39,7 +42,7 @@ async fn legacy_query(#[case] include_history: bool) {
             pr.query = Some(WorkflowQuery {
                 query_type: "query-type".to_string(),
                 query_args: Some(b"hi".into()),
-                header: None,
+                header: Some(header.into()),
             });
             if !include_history {
                 pr.history = Some(History { events: vec![] });
@@ -96,6 +99,7 @@ async fn legacy_query(#[case] include_history: bool) {
             variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
         }] => q
     );
+    assert_eq!(query.headers.get("head").unwrap(), &b"er".into());
     // Complete the query
     worker
         .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
@@ -144,6 +148,8 @@ async fn new_queries(#[case] num_queries: usize) {
     let wfid = "fake_wf_id";
     let query_resp = "response";
     let t = canned_histories::single_timer("1");
+    let mut header = HashMap::new();
+    header.insert("head".to_string(), Payload::from(b"er"));
     let tasks = VecDeque::from(vec![
         hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
         {
@@ -155,7 +161,7 @@ async fn new_queries(#[case] num_queries: usize) {
                     WorkflowQuery {
                         query_type: "query-type".to_string(),
                         query_args: Some(b"hi".into()),
-                        header: None,
+                        header: Some(header.clone().into()),
                     },
                 );
             }
@@ -191,7 +197,9 @@ async fn new_queries(#[case] num_queries: usize) {
         assert_matches!(
             task.jobs[i],
             WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::QueryWorkflow(_)),
+                variant: Some(workflow_activation_job::Variant::QueryWorkflow(ref q)),
+            } => {
+                assert_eq!(q.headers.get("head").unwrap(), &b"er".into());
             }
         );
     }

@@ -1,6 +1,7 @@
 use crate::{
     conversions::anyhow_to_fail, workflow_context::WfContextSharedData, CancellableID, RustWfCmd,
-    TimerResult, UnblockEvent, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
+    SignalData, TimerResult, UnblockEvent, WfContext, WfExitValue, WorkflowFunction,
+    WorkflowResult,
 };
 use anyhow::{anyhow, bail, Context as AnyhowContext, Error};
 use crossbeam::channel::Receiver;
@@ -86,8 +87,8 @@ struct WFCommandFutInfo {
 //   production-ready SDK design, or if desired to allow dynamic signal registration, prevent this
 //   from growing unbounded if being sent lots of unhandled signals.
 enum SigChanOrBuffer {
-    Chan(UnboundedSender<Vec<Payload>>),
-    Buffer(Vec<Vec<Payload>>),
+    Chan(UnboundedSender<SignalData>),
+    Buffer(Vec<SignalData>),
 }
 
 pub struct WorkflowFuture {
@@ -193,17 +194,21 @@ impl WorkflowFuture {
                         .send(true)
                         .expect("Cancel rx not dropped");
                 }
-                Variant::SignalWorkflow(sig) => match self.sig_chans.entry(sig.signal_name) {
-                    Entry::Occupied(mut o) => match o.get_mut() {
-                        SigChanOrBuffer::Chan(chan) => {
-                            let _ = chan.send(sig.input);
+                Variant::SignalWorkflow(sig) => {
+                    let mut dat = SignalData::new(sig.input);
+                    dat.headers = sig.headers;
+                    match self.sig_chans.entry(sig.signal_name) {
+                        Entry::Occupied(mut o) => match o.get_mut() {
+                            SigChanOrBuffer::Chan(chan) => {
+                                let _ = chan.send(dat);
+                            }
+                            SigChanOrBuffer::Buffer(ref mut buf) => buf.push(dat),
+                        },
+                        Entry::Vacant(v) => {
+                            v.insert(SigChanOrBuffer::Buffer(vec![dat]));
                         }
-                        SigChanOrBuffer::Buffer(ref mut buf) => buf.push(sig.input),
-                    },
-                    Entry::Vacant(v) => {
-                        v.insert(SigChanOrBuffer::Buffer(vec![sig.input]));
                     }
-                },
+                }
                 Variant::NotifyHasPatch(NotifyHasPatch { patch_id }) => {
                     self.ctx_shared.write().changes.insert(patch_id, true);
                 }

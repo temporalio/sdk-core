@@ -1,6 +1,9 @@
 mod options;
 
-pub use options::{ActivityOptions, ChildWorkflowOptions, LocalActivityOptions};
+pub use options::{
+    ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, Signal, SignalData,
+    SignalWorkflowOptions,
+};
 
 use crate::{
     workflow_context::options::IntoWorkflowCommand, CancelExternalWfResult, CancellableID,
@@ -272,17 +275,15 @@ impl WfContext {
     /// or was cancelled.
     pub fn signal_workflow(
         &self,
-        workflow_id: impl Into<String>,
-        run_id: impl Into<String>,
-        signal_name: impl Into<String>,
-        payload: impl Into<Payload>,
+        opts: impl Into<SignalWorkflowOptions>,
     ) -> impl CancellableFuture<SignalExternalWfResult> {
+        let options: SignalWorkflowOptions = opts.into();
         let target = sig_we::Target::WorkflowExecution(NamespacedWorkflowExecution {
             namespace: self.namespace.clone(),
-            workflow_id: workflow_id.into(),
-            run_id: run_id.into(),
+            workflow_id: options.workflow_id,
+            run_id: options.run_id.unwrap_or_default(),
         });
-        self.send_signal_wf(signal_name, payload, target)
+        self.send_signal_wf(target, options.signal)
     }
 
     /// Add or create a set of search attributes
@@ -301,7 +302,7 @@ impl WfContext {
     pub fn make_signal_channel(
         &self,
         signal_name: impl Into<String>,
-    ) -> impl Stream<Item = Vec<Payload>> {
+    ) -> impl Stream<Item = SignalData> {
         let (tx, rx) = mpsc::unbounded_channel();
         self.send(RustWfCmd::SubscribeSignal(signal_name.into(), tx));
         UnboundedReceiverStream::new(rx)
@@ -337,9 +338,8 @@ impl WfContext {
 
     fn send_signal_wf(
         &self,
-        signal_name: impl Into<String>,
-        payload: impl Into<Payload>,
         target: sig_we::Target,
+        signal: Signal,
     ) -> impl CancellableFuture<SignalExternalWfResult> {
         let seq = self.seq_nums.write().next_signal_external_wf_seq();
         let (cmd, unblocker) =
@@ -348,9 +348,10 @@ impl WfContext {
             CommandCreateRequest {
                 cmd: SignalExternalWorkflowExecution {
                     seq,
-                    signal_name: signal_name.into(),
-                    args: vec![payload.into()],
+                    signal_name: signal.signal_name,
+                    args: signal.data.input,
                     target: Some(target),
+                    headers: signal.data.headers,
                 }
                 .into(),
                 unblocker,
@@ -655,10 +656,9 @@ impl StartedChildWorkflow {
     pub fn signal(
         &self,
         cx: &WfContext,
-        signal_name: impl Into<String>,
-        payload: impl Into<Payload>,
+        data: impl Into<Signal>,
     ) -> impl CancellableFuture<SignalExternalWfResult> {
         let target = sig_we::Target::ChildWorkflowId(self.common.workflow_id.clone());
-        cx.send_signal_wf(signal_name, payload, target)
+        cx.send_signal_wf(target, data.into())
     }
 }

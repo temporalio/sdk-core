@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 use temporal_sdk_core_protos::coresdk::{
     child_workflow::ChildWorkflowCancellationType,
     common::{Payload, RetryPolicy},
@@ -176,5 +176,90 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
             cancellation_type: self.cancel_type as i32,
             ..Default::default()
         }
+    }
+}
+
+/// Options for sending a signal to an external workflow
+pub struct SignalWorkflowOptions {
+    /// The workflow's id
+    pub workflow_id: String,
+    /// The particular run to target, or latest if `None`
+    pub run_id: Option<String>,
+    /// The details of the signal to send
+    pub signal: Signal,
+}
+
+impl SignalWorkflowOptions {
+    /// Create options for sending a signal to another workflow
+    pub fn new(
+        workflow_id: impl Into<String>,
+        run_id: impl Into<String>,
+        name: impl Into<String>,
+        input: impl IntoIterator<Item = impl Into<Payload>>,
+    ) -> Self {
+        Self {
+            workflow_id: workflow_id.into(),
+            run_id: Some(run_id.into()),
+            signal: Signal::new(name, input),
+        }
+    }
+
+    /// Set a header k/v pair attached to the signal
+    pub fn with_header(
+        &mut self,
+        key: impl Into<String>,
+        payload: impl Into<Payload>,
+    ) -> &mut Self {
+        self.signal.data.with_header(key.into(), payload.into());
+        self
+    }
+}
+
+/// Information needed to send a specific signal
+pub struct Signal {
+    /// The signal name
+    pub signal_name: String,
+    /// The data the signal carries
+    pub data: SignalData,
+}
+
+impl Signal {
+    /// Create a new signal
+    pub fn new(
+        name: impl Into<String>,
+        input: impl IntoIterator<Item = impl Into<Payload>>,
+    ) -> Self {
+        Self {
+            signal_name: name.into(),
+            data: SignalData::new(input),
+        }
+    }
+}
+
+/// Data contained within a signal
+pub struct SignalData {
+    /// The arguments the signal will receive
+    pub input: Vec<Payload>,
+    /// Metadata attached to the signal
+    pub headers: HashMap<String, Payload>,
+}
+
+impl SignalData {
+    /// Create data for a signal
+    pub fn new(input: impl IntoIterator<Item = impl Into<Payload>>) -> Self {
+        Self {
+            input: input.into_iter().map(Into::into).collect(),
+            headers: HashMap::new(),
+        }
+    }
+
+    /// Set a header k/v pair attached to the signal
+    pub fn with_header(
+        &mut self,
+        key: impl Into<String>,
+        payload: impl Into<Payload>,
+    ) -> &mut Self {
+        self.headers.insert(key.into(), payload.into());
+        self
     }
 }

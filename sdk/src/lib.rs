@@ -16,7 +16,7 @@ mod workflow_future;
 
 pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
-    WfContext,
+    Signal, SignalData, SignalWorkflowOptions, WfContext,
 };
 
 use crate::workflow_context::{ChildWfCommon, PendingChildWorkflow};
@@ -550,7 +550,7 @@ enum RustWfCmd {
     NewCmd(CommandCreateRequest),
     NewNonblockingCmd(workflow_command::Variant),
     SubscribeChildWorkflowCompletion(CommandSubscribeChildWorkflowCompletion),
-    SubscribeSignal(String, UnboundedSender<Vec<Payload>>),
+    SubscribeSignal(String, UnboundedSender<SignalData>),
 }
 
 struct CommandCreateRequest {

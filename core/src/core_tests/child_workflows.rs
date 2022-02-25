@@ -8,7 +8,7 @@ use crate::{
 use std::sync::Arc;
 use temporal_client::mocks::mock_gateway;
 use temporal_sdk::{
-    ChildWorkflowOptions, TestRustWorker, WfContext, WorkflowFunction, WorkflowResult,
+    ChildWorkflowOptions, Signal, TestRustWorker, WfContext, WorkflowFunction, WorkflowResult,
 };
 use temporal_sdk_core_protos::coresdk::child_workflow::{
     child_workflow_result, ChildWorkflowCancellationType,
@@ -44,11 +44,11 @@ async fn signal_child_workflow(#[case] serial: bool) {
             .into_started()
             .expect("Child should get started");
         let (sigres, res) = if serial {
-            let sigres = start_res.signal(&ctx, SIGNAME, b"Hi!").await;
+            let sigres = start_res.signal(&ctx, Signal::new(SIGNAME, [b"Hi!"])).await;
             let res = start_res.result().await;
             (sigres, res)
         } else {
-            let sigfut = start_res.signal(&ctx, SIGNAME, b"Hi!");
+            let sigfut = start_res.signal(&ctx, Signal::new(SIGNAME, [b"Hi!"]));
             let resfut = start_res.result();
             join!(sigfut, resfut)
         };

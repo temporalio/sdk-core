@@ -378,7 +378,7 @@ impl LocalActivityManager {
                 workflow_execution: Some(new_la.workflow_exec_info),
                 activity_id: sa.activity_id,
                 activity_type: sa.activity_type,
-                header_fields: sa.header_fields,
+                header_fields: sa.headers,
                 input: sa.arguments,
                 heartbeat_details: vec![],
                 scheduled_time: Some(new_la.schedule_time.into()),
