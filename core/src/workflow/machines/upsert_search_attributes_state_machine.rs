@@ -110,9 +110,9 @@ impl WFMachinesAdapter for UpsertSearchAttributesMachine {
 
 impl Cancellable for UpsertSearchAttributesMachine {}
 
-/// Converts the generic history event with type EventType::UpsertWorkflowSearchAttributes into the
-/// UpsertSearchAttributesMachine-specific event type
-/// UpsertSearchAttributesMachineEvents::CommandRecorded.
+// Converts the generic history event with type EventType::UpsertWorkflowSearchAttributes into the
+// UpsertSearchAttributesMachine-specific event type
+// UpsertSearchAttributesMachineEvents::CommandRecorded.
 impl TryFrom<HistoryEvent> for UpsertSearchAttributesMachineEvents {
     type Error = WFMachinesError;
 
@@ -128,8 +128,8 @@ impl TryFrom<HistoryEvent> for UpsertSearchAttributesMachineEvents {
     }
 }
 
-/// Converts generic state machine command type CommandType::UpsertWorkflowSearchAttributes into
-/// the UpsertSearchAttributesMachine-specific event
+// Converts generic state machine command type CommandType::UpsertWorkflowSearchAttributes into
+// the UpsertSearchAttributesMachine-specific event
 impl TryFrom<CommandType> for UpsertSearchAttributesMachineEvents {
     type Error = WFMachinesError;
 
@@ -145,14 +145,14 @@ impl TryFrom<CommandType> for UpsertSearchAttributesMachineEvents {
     }
 }
 
-/// There is no Command/Response associated with this transition
+// There is no Command/Response associated with this transition
 impl From<CommandIssued> for Done {
     fn from(_: CommandIssued) -> Self {
         Self {}
     }
 }
 
-/// There is no Command/Response associated with this transition
+// There is no Command/Response associated with this transition
 impl From<Created> for CommandIssued {
     fn from(_: Created) -> Self {
         Self {}
