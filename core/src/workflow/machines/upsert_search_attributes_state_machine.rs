@@ -1,3 +1,8 @@
+use super::{
+    workflow_machines::{MachineResponse, WFMachinesError},
+    NewMachineWithCommand,
+};
+use crate::workflow::machines::{Cancellable, EventInfo, MachineKind, WFMachinesAdapter};
 use rustfsm::{fsm, TransitionResult};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::UpsertWorkflowSearchAttributes,
@@ -6,13 +11,6 @@ use temporal_sdk_core_protos::{
         enums::v1::{CommandType, EventType},
         history::v1::HistoryEvent,
     },
-};
-
-use crate::workflow::machines::{Cancellable, EventInfo, MachineKind, WFMachinesAdapter};
-
-use super::{
-    workflow_machines::{MachineResponse, WFMachinesError},
-    NewMachineWithCommand,
 };
 
 fsm! {
@@ -165,13 +163,13 @@ impl From<Created> for CommandIssued {
 mod tests {
     use rustfsm::StateMachine;
     use temporal_sdk::{WfContext, WorkflowFunction};
-    use temporal_sdk_core_protos::coresdk::common::Payload;
-    use temporal_sdk_core_protos::temporal::api::command::v1::command::Attributes;
+    use temporal_sdk_core_protos::{
+        coresdk::common::Payload, temporal::api::command::v1::command::Attributes,
+    };
 
     use crate::{replay::TestHistoryBuilder, workflow::managed_wf::ManagedWFFunc};
 
-    use super::super::OnEventWrapper;
-    use super::*;
+    use super::{super::OnEventWrapper, *};
 
     #[tokio::test]
     async fn upsert_search_attrs_from_workflow() {

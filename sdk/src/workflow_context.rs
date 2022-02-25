@@ -22,7 +22,6 @@ use std::{
     task::Poll,
     time::{Duration, SystemTime},
 };
-use temporal_sdk_core_protos::coresdk::workflow_commands::UpsertWorkflowSearchAttributes;
 use temporal_sdk_core_protos::coresdk::{
     activity_result::{activity_resolution, ActivityResolution},
     child_workflow::ChildWorkflowResult,
@@ -32,7 +31,7 @@ use temporal_sdk_core_protos::coresdk::{
         request_cancel_external_workflow_execution as cancel_we,
         signal_external_workflow_execution as sig_we, workflow_command,
         RequestCancelExternalWorkflowExecution, SetPatchMarker, SignalExternalWorkflowExecution,
-        StartTimer,
+        StartTimer, UpsertWorkflowSearchAttributes,
     },
 };
 use tokio::sync::{mpsc, oneshot, watch};
