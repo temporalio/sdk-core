@@ -15,7 +15,6 @@ mod patch_state_machine;
 mod side_effect_state_machine;
 mod signal_external_state_machine;
 mod timer_state_machine;
-#[allow(unused)]
 mod upsert_search_attributes_state_machine;
 mod workflow_task_state_machine;
 
@@ -45,6 +44,7 @@ use temporal_sdk_core_protos::temporal::api::{
     command::v1::Command as ProtoCommand, enums::v1::CommandType, history::v1::HistoryEvent,
 };
 use timer_state_machine::TimerMachine;
+use upsert_search_attributes_state_machine::UpsertSearchAttributesMachine;
 use workflow_machines::MachineResponse;
 use workflow_task_state_machine::WorkflowTaskMachine;
 
@@ -65,6 +65,7 @@ enum MachineKind {
     SignalExternalWorkflow,
     CancelExternalWorkflow,
     LocalActivity,
+    UpsertSearchAttributes,
 }
 
 #[enum_dispatch::enum_dispatch]
@@ -82,6 +83,7 @@ enum Machines {
     SignalExternalMachine,
     TimerMachine,
     WorkflowTaskMachine,
+    UpsertSearchAttributesMachine,
 }
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.

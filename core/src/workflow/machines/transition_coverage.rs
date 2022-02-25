@@ -77,6 +77,7 @@ mod machine_coverage_report {
         fail_workflow_state_machine::FailWorkflowMachine,
         local_activity_state_machine::LocalActivityMachine, patch_state_machine::PatchMachine,
         signal_external_state_machine::SignalExternalMachine, timer_state_machine::TimerMachine,
+        upsert_search_attributes_state_machine::UpsertSearchAttributesMachine,
         workflow_task_state_machine::WorkflowTaskMachine,
     };
     use rustfsm::StateMachine;
@@ -113,6 +114,7 @@ mod machine_coverage_report {
         let mut signal_ext = SignalExternalMachine::visualizer().to_owned();
         let mut cancel_ext = CancelExternalMachine::visualizer().to_owned();
         let mut la_mach = LocalActivityMachine::visualizer().to_owned();
+        let mut upsert_search_attr = UpsertSearchAttributesMachine::visualizer().to_owned();
 
         // This isn't at all efficient but doesn't need to be.
         // Replace transitions in the vizzes with green color if they are covered.
@@ -133,6 +135,9 @@ mod machine_coverage_report {
                 m @ "SignalExternalMachine" => cover_transitions(m, &mut signal_ext, coverage),
                 m @ "CancelExternalMachine" => cover_transitions(m, &mut cancel_ext, coverage),
                 m @ "LocalActivityMachine" => cover_transitions(m, &mut la_mach, coverage),
+                m @ "UpsertSearchAttributesMachine" => {
+                    cover_transitions(m, &mut upsert_search_attr, coverage)
+                }
                 m => panic!("Unknown machine {}", m),
             }
         }
