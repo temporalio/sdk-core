@@ -34,7 +34,7 @@ use temporal_sdk_core_protos::coresdk::{
         request_cancel_external_workflow_execution as cancel_we,
         signal_external_workflow_execution as sig_we, workflow_command,
         RequestCancelExternalWorkflowExecution, SetPatchMarker, SignalExternalWorkflowExecution,
-        StartTimer,
+        StartTimer, UpsertWorkflowSearchAttributes,
     },
 };
 use tokio::sync::{mpsc, oneshot, watch};
@@ -59,6 +59,7 @@ struct WfCtxProtectedDat {
     next_child_workflow_sequence_number: u32,
     next_cancel_external_wf_sequence_number: u32,
     next_signal_external_wf_sequence_number: u32,
+    next_upsert_search_attrs_sequence_number: u32,
 }
 
 impl WfCtxProtectedDat {
@@ -85,6 +86,11 @@ impl WfCtxProtectedDat {
     fn next_signal_external_wf_seq(&mut self) -> u32 {
         let seq = self.next_signal_external_wf_sequence_number;
         self.next_signal_external_wf_sequence_number += 1;
+        seq
+    }
+    fn next_upsert_search_attrs_wf_seq(&mut self) -> u32 {
+        let seq = self.next_upsert_search_attrs_sequence_number;
+        self.next_upsert_search_attrs_sequence_number += 1;
         seq
     }
 }
@@ -124,6 +130,7 @@ impl WfContext {
                     next_child_workflow_sequence_number: 1,
                     next_cancel_external_wf_sequence_number: 1,
                     next_signal_external_wf_sequence_number: 1,
+                    next_upsert_search_attrs_sequence_number: 1,
                 }),
             },
             rx,
@@ -277,6 +284,18 @@ impl WfContext {
             run_id: options.run_id.unwrap_or_default(),
         });
         self.send_signal_wf(target, options.signal)
+    }
+
+    /// Add or create a set of search attributes
+    pub fn upsert_search_attributes(&self, attr_iter: impl IntoIterator<Item = (String, Payload)>) {
+        self.send(RustWfCmd::NewNonblockingCmd(
+            workflow_command::Variant::UpsertWorkflowSearchAttributesCommandAttributes(
+                UpsertWorkflowSearchAttributes {
+                    seq: self.seq_nums.write().next_upsert_search_attrs_wf_seq(),
+                    search_attributes: HashMap::from_iter(attr_iter.into_iter()),
+                },
+            ),
+        ))
     }
 
     /// Return a stream that produces values when the named signal is sent to this workflow

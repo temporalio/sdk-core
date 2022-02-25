@@ -213,6 +213,7 @@ pub enum WFCommand {
     RequestCancelExternalWorkflow(RequestCancelExternalWorkflowExecution),
     SignalExternalWorkflow(SignalExternalWorkflowExecution),
     CancelSignalWorkflow(CancelSignalWorkflow),
+    UpsertSearchAttributes(UpsertWorkflowSearchAttributes),
 }
 
 impl TryFrom<WorkflowCommand> for WFCommand {
@@ -252,6 +253,9 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::ScheduleLocalActivity(s) => Ok(Self::AddLocalActivity(s)),
             workflow_command::Variant::RequestCancelLocalActivity(s) => {
                 Ok(Self::RequestCancelLocalActivity(s))
+            }
+            workflow_command::Variant::UpsertWorkflowSearchAttributesCommandAttributes(s) => {
+                Ok(Self::UpsertSearchAttributes(s))
             }
         }
     }

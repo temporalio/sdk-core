@@ -10,7 +10,8 @@ use super::{
     continue_as_new_workflow_state_machine::continue_as_new,
     fail_workflow_state_machine::fail_workflow, local_activity_state_machine::new_local_activity,
     patch_state_machine::has_change, signal_external_state_machine::new_external_signal,
-    timer_state_machine::new_timer, workflow_machines::local_acts::LocalActivityData,
+    timer_state_machine::new_timer, upsert_search_attributes_state_machine::upsert_search_attrs,
+    workflow_machines::local_acts::LocalActivityData,
     workflow_task_state_machine::WorkflowTaskMachine, MachineKind, Machines, NewMachineWithCommand,
     TemporalStateMachine,
 };
@@ -788,6 +789,13 @@ impl WorkflowMachines {
                 WFCommand::AddTimer(attrs) => {
                     let seq = attrs.seq;
                     self.add_cmd_to_wf_task(new_timer(attrs), Some(CommandID::Timer(seq)));
+                }
+                WFCommand::UpsertSearchAttributes(attrs) => {
+                    let seq = attrs.seq;
+                    self.add_cmd_to_wf_task(
+                        upsert_search_attrs(attrs),
+                        Some(CommandID::Timer(seq)),
+                    );
                 }
                 WFCommand::CancelTimer(attrs) => {
                     jobs.extend(self.process_cancellation(CommandID::Timer(attrs.seq))?);
