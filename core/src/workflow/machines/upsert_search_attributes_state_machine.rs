@@ -147,14 +147,14 @@ impl TryFrom<CommandType> for UpsertSearchAttributesMachineEvents {
     }
 }
 
-/// There is no Command/Reponse associated with this transition
+/// There is no Command/Response associated with this transition
 impl From<CommandIssued> for Done {
     fn from(_: CommandIssued) -> Self {
         Self {}
     }
 }
 
-/// There is no Command/Reponse associated with this transition
+/// There is no Command/Response associated with this transition
 impl From<Created> for CommandIssued {
     fn from(_: Created) -> Self {
         Self {}
