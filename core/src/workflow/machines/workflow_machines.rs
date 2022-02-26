@@ -465,19 +465,18 @@ impl WorkflowMachines {
             Some(EventType::WorkflowExecutionStarted) => {
                 if let Some(history_event::Attributes::WorkflowExecutionStartedEventAttributes(
                     attrs,
-                )) = &event.attributes
+                )) = event.attributes
                 {
                     self.run_id = attrs.original_execution_run_id.clone();
-                    if let Some(st) = event.event_time.as_ref() {
-                        let as_systime: SystemTime = st.clone().try_into()?;
+                    if let Some(st) = event.event_time {
+                        let as_systime: SystemTime = st.try_into()?;
                         self.workflow_start_time = Some(as_systime);
                     }
                     // Notify the lang sdk that it's time to kick off a workflow
                     self.drive_me.start(
                         self.workflow_id.clone(),
                         str_to_randomness_seed(&attrs.original_execution_run_id),
-                        // TODO: No clone
-                        attrs.clone(),
+                        attrs,
                     );
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
@@ -495,9 +494,9 @@ impl WorkflowMachines {
             Some(EventType::WorkflowExecutionSignaled) => {
                 if let Some(history_event::Attributes::WorkflowExecutionSignaledEventAttributes(
                     attrs,
-                )) = &event.attributes
+                )) = event.attributes
                 {
-                    self.drive_me.signal(attrs.clone().into());
+                    self.drive_me.signal(attrs.into());
                 } else {
                     // err
                 }
@@ -507,9 +506,9 @@ impl WorkflowMachines {
                     history_event::Attributes::WorkflowExecutionCancelRequestedEventAttributes(
                         attrs,
                     ),
-                ) = &event.attributes
+                ) = event.attributes
                 {
-                    self.drive_me.cancel(attrs.clone().into());
+                    self.drive_me.cancel(attrs.into());
                 } else {
                     // err
                 }
