@@ -737,9 +737,8 @@ fn convert_payloads(
 ) -> Result<Option<Payload>, WFMachinesError> {
     result.map(TryInto::try_into).transpose().map_err(|pe| {
         WFMachinesError::Fatal(format!(
-            "Not exactly one payload in activity result ({}) for event: {}",
-            pe,
-            event_info.map(|e| e.event.clone()).unwrap_or_default()
+            "Not exactly one payload in activity result ({}) for event: {:?}",
+            pe, event_info
         ))
     })
 }

@@ -307,7 +307,7 @@ impl WorkflowMachines {
     /// does not match the expected type. A fatal error may be returned if the machine is in an
     /// invalid state.
     #[instrument(level = "debug", skip(self, event), fields(event=%event))]
-    fn handle_event(&mut self, event: &HistoryEvent, has_next_event: bool) -> Result<()> {
+    fn handle_event(&mut self, event: HistoryEvent, has_next_event: bool) -> Result<()> {
         if event.is_final_wf_execution_event() {
             self.have_seen_terminal_event = true;
         }
@@ -386,7 +386,7 @@ impl WorkflowMachines {
     /// The handling consists of verifying that the next command in the commands queue is associated
     /// with a state machine, which is then notified about the event and the command is removed from
     /// the commands queue.
-    fn handle_command_event(&mut self, event: &HistoryEvent) -> Result<()> {
+    fn handle_command_event(&mut self, event: HistoryEvent) -> Result<()> {
         if event.is_local_activity_marker() {
             let deets = event.extract_local_activity_marker_data().ok_or_else(|| {
                 WFMachinesError::Fatal(format!("Local activity marker was unparsable: {:?}", event))
@@ -407,10 +407,12 @@ impl WorkflowMachines {
             }
         }
 
+        let event_id = event.event_id;
+
         let consumed_cmd = loop {
             if let Some(peek_machine) = self.commands.front() {
                 let mach = self.machine(peek_machine.machine);
-                match change_marker_handling(event, mach)? {
+                match change_marker_handling(&event, mach)? {
                     ChangeMarkerOutcome::SkipEvent => return Ok(()),
                     ChangeMarkerOutcome::SkipCommand => {
                         self.commands.pop_front();
@@ -443,7 +445,7 @@ impl WorkflowMachines {
 
         if !self.machine(consumed_cmd.machine).is_final_state() {
             self.machines_by_event_id
-                .insert(event.event_id, consumed_cmd.machine);
+                .insert(event_id, consumed_cmd.machine);
         }
 
         Ok(())
@@ -451,13 +453,14 @@ impl WorkflowMachines {
 
     fn handle_non_stateful_event(
         &mut self,
-        event: &HistoryEvent,
+        event: HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
         debug!(
             event = %event,
             "handling non-stateful event"
         );
+        let event_id = event.event_id;
         match EventType::from_i32(event.event_type) {
             Some(EventType::WorkflowExecutionStarted) => {
                 if let Some(history_event::Attributes::WorkflowExecutionStartedEventAttributes(
@@ -487,7 +490,7 @@ impl WorkflowMachines {
                 let wf_task_sm = WorkflowTaskMachine::new(self.next_started_event_id);
                 let key = self.all_machines.insert(wf_task_sm.into());
                 self.submachine_handle_event(key, event, has_next_event)?;
-                self.machines_by_event_id.insert(event.event_id, key);
+                self.machines_by_event_id.insert(event_id, key);
             }
             Some(EventType::WorkflowExecutionSignaled) => {
                 if let Some(history_event::Attributes::WorkflowExecutionSignaledEventAttributes(
@@ -624,7 +627,7 @@ impl WorkflowMachines {
             }
         }
 
-        let mut history = events.iter().peekable();
+        let mut history = events.into_iter().peekable();
         while let Some(event) = history.next() {
             if event.event_id != self.last_processed_event + 1 {
                 return Err(WFMachinesError::Fatal(format!(
@@ -633,9 +636,11 @@ impl WorkflowMachines {
                 )));
             }
             let next_event = history.peek();
+            let eid = event.event_id;
+            let etype = event.event_type;
             self.handle_event(event, next_event.is_some())?;
-            self.last_processed_event = event.event_id;
-            if event.event_type == EventType::WorkflowTaskStarted as i32 && next_event.is_none() {
+            self.last_processed_event = eid;
+            if etype == EventType::WorkflowTaskStarted as i32 && next_event.is_none() {
                 break;
             }
         }
@@ -672,7 +677,7 @@ impl WorkflowMachines {
     fn submachine_handle_event(
         &mut self,
         sm: MachineKey,
-        event: &HistoryEvent,
+        event: HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
         let machine_responses = self.machine_mut(sm).handle_event(event, has_next_event)?;
