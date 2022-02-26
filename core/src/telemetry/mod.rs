@@ -58,6 +58,10 @@ pub struct TelemetryOptions {
     /// to the OTel collector if it is also set, only traces will be.
     #[builder(setter(into, strip_option), default)]
     pub prometheus_export_bind_address: Option<SocketAddr>,
+    /// If set, no resources are dedicated to telemetry and no metrics or traces are emited.
+    /// Supercedes all other options.
+    #[builder(default)]
+    pub totally_disable: bool,
 }
 
 impl Default for TelemetryOptions {
@@ -127,6 +131,15 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
         let res = GLOBAL_TELEM_DAT.get_or_try_init::<_, anyhow::Error>(move || {
             // Ensure closure captures the mutex guard
             let _ = &*guard;
+
+            if opts.totally_disable {
+                return Ok(GlobalTelemDat {
+                    metric_push_controller: None,
+                    core_export_logger: None,
+                    runtime: None,
+                    prom_srv: None,
+                });
+            }
 
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .thread_name("telemetry")
@@ -243,6 +256,7 @@ pub(crate) fn test_telem_console() {
         tracing_filter: "temporal_sdk_core=DEBUG".to_string(),
         log_forwarding_level: LevelFilter::Off,
         prometheus_export_bind_address: None,
+        totally_disable: false,
     })
     .unwrap();
 }
@@ -255,6 +269,7 @@ pub(crate) fn test_telem_collector() {
         tracing_filter: "temporal_sdk_core=DEBUG".to_string(),
         log_forwarding_level: LevelFilter::Off,
         prometheus_export_bind_address: None,
+        totally_disable: false,
     })
     .unwrap();
 }

@@ -40,9 +40,10 @@ use std::{
     convert::{TryFrom, TryInto},
     fmt::{Debug, Display},
 };
-use temporal_sdk_core_protos::temporal::api::enums::v1::EventType;
 use temporal_sdk_core_protos::temporal::api::{
-    command::v1::Command as ProtoCommand, enums::v1::CommandType, history::v1::HistoryEvent,
+    command::v1::Command as ProtoCommand,
+    enums::v1::{CommandType, EventType},
+    history::v1::HistoryEvent,
 };
 use timer_state_machine::TimerMachine;
 use upsert_search_attributes_state_machine::UpsertSearchAttributesMachine;

@@ -218,6 +218,7 @@ impl TestRustWorker {
                             )
                             .await?;
                         if wf_half.incomplete_workflows.load(Ordering::SeqCst) == 0 {
+                            info!("All expected workflows complete");
                             // Die rebel scum - evict all workflows (which are complete now),
                             // and turn off activity polling.
                             let _ = shutdown_tx.send(true);
@@ -301,10 +302,11 @@ impl WorkflowHalf {
             variant: Some(Variant::StartWorkflow(sw)),
         }) = activation.jobs.get(0)
         {
+            let workflow_type = &sw.workflow_type;
             let wf_function = self
                 .workflow_fns
-                .get(&sw.workflow_type)
-                .ok_or_else(|| anyhow!("Workflow type not found"))?;
+                .get(workflow_type)
+                .ok_or_else(|| anyhow!("Workflow type {workflow_type} not found"))?;
 
             let (wff, activations) = wf_function.start_workflow(
                 worker.get_config().namespace.clone(),
