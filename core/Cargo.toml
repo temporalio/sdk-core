@@ -76,6 +76,7 @@ version = "0.1"
 [dev-dependencies]
 assert_matches = "1.4"
 bimap = "0.6.1"
+criterion = "0.3"
 mockall = "0.11"
 rstest = "0.12"
 temporal-sdk-core-test-utils = { path = "../test-utils" }
@@ -95,3 +96,7 @@ test = false
 name = "load_tests"
 path = "../tests/load_tests.rs"
 test = false
+
+[[bench]]
+name = "workflow_replay"
+harness = false

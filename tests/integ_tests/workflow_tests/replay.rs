@@ -1,6 +1,7 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporal_sdk_core::{replay::mock_gateway_from_history, ServerGatewayApis};
+use temporal_sdk::{TestRustWorker, WfContext, WorkflowFunction};
+use temporal_sdk_core::{replay::mock_gateway_from_history, telemetry_init, ServerGatewayApis};
 use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -9,9 +10,11 @@ use temporal_sdk_core_protos::{
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
+    DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{
-    history_from_proto_binary, init_core_replay_preloaded, WorkerTestHelpers,
+    canned_histories, get_integ_telem_options, history_from_proto_binary,
+    init_core_replay_preloaded, WorkerTestHelpers,
 };
 use tokio::join;
 
@@ -120,4 +123,27 @@ async fn workflow_nondeterministic_replay() {
         core.poll_workflow_activation().await,
         Err(PollWfError::ShutDown)
     );
+}
+
+#[tokio::test]
+async fn replay_using_wf_function() {
+    telemetry_init(&get_integ_telem_options()).unwrap();
+    let num_timers = 10;
+    let t = canned_histories::long_sequential_timers(num_timers as usize);
+    let func = timers_wf(num_timers);
+    let (worker, _) =
+        init_core_replay_preloaded("replay_bench", &t.get_full_history_info().unwrap().into());
+    let mut worker = TestRustWorker::new(worker, "replay_bench".to_string(), None);
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+    worker.incr_expected_run_count(1);
+    worker.run_until_done().await.unwrap();
+}
+
+fn timers_wf(num_timers: u32) -> WorkflowFunction {
+    WorkflowFunction::new(move |ctx: WfContext| async move {
+        for _ in 1..=num_timers {
+            ctx.timer(Duration::from_secs(1)).await;
+        }
+        Ok(().into())
+    })
 }

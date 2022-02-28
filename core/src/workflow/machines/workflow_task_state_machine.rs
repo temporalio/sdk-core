@@ -64,8 +64,8 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
                 task_started_event_id,
                 time,
             } => {
-                let (event, has_next_event) = if let Some(ei) = event_info {
-                    (ei.event, ei.has_next_event)
+                let (event_id, event_type, has_next_event) = if let Some(ei) = event_info {
+                    (ei.event_id, ei.event_type, ei.has_next_event)
                 } else {
                     return Err(WFMachinesError::Fatal(
                         "WF Task machine should never issue a task started trigger \
@@ -74,8 +74,8 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
                     ));
                 };
 
-                let cur_event_past_or_at_start = event.event_id >= task_started_event_id;
-                if event.event_type() == EventType::WorkflowTaskStarted
+                let cur_event_past_or_at_start = event_id >= task_started_event_id;
+                if event_type == EventType::WorkflowTaskStarted
                     && (!cur_event_past_or_at_start || has_next_event)
                 {
                     return Ok(vec![]);

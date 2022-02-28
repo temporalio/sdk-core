@@ -461,9 +461,8 @@ impl WorkflowTaskManager {
 
                         let wft_timeout: Duration = wfm
                             .machines
-                            .started_attrs()
-                            .and_then(|attrs| attrs.workflow_task_timeout.clone())
-                            .and_then(|tt| tt.try_into().ok())
+                            .get_started_info()
+                            .and_then(|attrs| attrs.workflow_task_timeout)
                             .ok_or_else(|| {
                                 WFMachinesError::Fatal(
                                     "Workflow's start attribs were missing a well formed task timeout"

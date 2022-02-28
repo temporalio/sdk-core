@@ -1,3 +1,4 @@
+use rand::RngCore;
 use temporal_sdk_core::replay::TestHistoryBuilder;
 use temporal_sdk_core_protos::{
     coresdk::common::NamespacedWorkflowExecution,
@@ -848,6 +849,32 @@ pub fn long_sequential_timers(num_tasks: usize) -> TestHistoryBuilder {
     for i in 1..=num_tasks {
         let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
         t.add_timer_fired(timer_started_event_id, i.to_string());
+        t.add_full_wf_task();
+    }
+
+    t.add_workflow_execution_completed();
+    t
+}
+
+/// Sends 5 large signals per workflow task
+pub fn lots_of_big_signals(num_tasks: usize) -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+
+    let mut rng = rand::thread_rng();
+    for _ in 1..=num_tasks {
+        let mut dat = [0_u8; 1024 * 1000];
+        for _ in 1..=5 {
+            rng.fill_bytes(&mut dat);
+            t.add_we_signaled(
+                "bigsig",
+                vec![Payload {
+                    metadata: Default::default(),
+                    data: dat.into(),
+                }],
+            );
+        }
         t.add_full_wf_task();
     }
 

@@ -41,7 +41,9 @@ use std::{
     fmt::{Debug, Display},
 };
 use temporal_sdk_core_protos::temporal::api::{
-    command::v1::Command as ProtoCommand, enums::v1::CommandType, history::v1::HistoryEvent,
+    command::v1::Command as ProtoCommand,
+    enums::v1::{CommandType, EventType},
+    history::v1::HistoryEvent,
 };
 use timer_state_machine::TimerMachine;
 use upsert_search_attributes_state_machine::UpsertSearchAttributesMachine;
@@ -106,7 +108,7 @@ trait TemporalStateMachine: Send {
     /// to update the overall state of the workflow. EX: To issue outgoing WF activations.
     fn handle_event(
         &mut self,
-        event: &HistoryEvent,
+        event: HistoryEvent,
         has_next_event: bool,
     ) -> Result<Vec<MachineResponse>, WFMachinesError>;
 
@@ -170,7 +172,7 @@ where
 
     fn handle_event(
         &mut self,
-        event: &HistoryEvent,
+        event: HistoryEvent,
         has_next_event: bool,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         debug!(
@@ -179,22 +181,20 @@ where
             state = %self.state(),
             "handling event"
         );
-        let converted_event: <Self as StateMachine>::Event = event.clone().try_into()?;
+        let event_info = EventInfo {
+            event_id: event.event_id,
+            event_type: event.event_type(),
+            has_next_event,
+        };
+        let converted_event: <Self as StateMachine>::Event = event.try_into()?;
 
         match OnEventWrapper::on_event_mut(self, converted_event) {
-            Ok(c) => process_machine_commands(
-                self,
-                c,
-                Some(EventInfo {
-                    event,
-                    has_next_event,
-                }),
-            ),
+            Ok(c) => process_machine_commands(self, c, Some(event_info)),
             Err(MachineError::InvalidTransition) => Err(WFMachinesError::Fatal(format!(
-                "{} in state {} says the transition is invalid during event {}",
+                "{} in state {} says the transition is invalid during event {:?}",
                 self.name(),
                 self.state(),
-                event
+                event_info
             ))),
             Err(MachineError::Underlying(e)) => Err(e.into()),
         }
@@ -265,8 +265,9 @@ trait WFMachinesAdapter: StateMachine {
 }
 
 #[derive(Debug, Copy, Clone)]
-struct EventInfo<'a> {
-    event: &'a HistoryEvent,
+struct EventInfo {
+    event_id: i64,
+    event_type: EventType,
     has_next_event: bool,
 }
 

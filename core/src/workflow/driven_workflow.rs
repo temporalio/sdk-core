@@ -1,4 +1,4 @@
-use crate::workflow::WFCommand;
+use crate::workflow::{WFCommand, WorkflowStartedInfo};
 use std::collections::VecDeque;
 use temporal_sdk_core_protos::{
     coresdk::workflow_activation::{
@@ -6,12 +6,13 @@ use temporal_sdk_core_protos::{
         WorkflowActivationJob,
     },
     temporal::api::history::v1::WorkflowExecutionStartedEventAttributes,
+    utilities::TryIntoOrNone,
 };
 
 /// Abstracts away the concept of an actual workflow implementation, handling sending it new
 /// jobs and fetching output from it.
 pub struct DrivenWorkflow {
-    started_attrs: Option<WorkflowExecutionStartedEventAttributes>,
+    started_attrs: Option<WorkflowStartedInfo>,
     fetcher: Box<dyn WorkflowFetcher>,
     /// Outgoing activation jobs that need to be sent to the lang sdk
     outgoing_wf_activation_jobs: VecDeque<workflow_activation_job::Variant>,
@@ -39,15 +40,19 @@ impl DrivenWorkflow {
         attribs: WorkflowExecutionStartedEventAttributes,
     ) {
         debug!(run_id = %attribs.original_execution_run_id, "Driven WF start");
-        // TODO: Avoid attrs clone
-        self.send_job(
-            start_workflow_from_attribs(attribs.clone(), workflow_id, randomness_seed).into(),
-        );
-        self.started_attrs = Some(attribs);
+        let started_info = WorkflowStartedInfo {
+            workflow_task_timeout: attribs.workflow_task_timeout.clone().try_into_or_none(),
+            workflow_execution_timeout: attribs
+                .workflow_execution_timeout
+                .clone()
+                .try_into_or_none(),
+        };
+        self.send_job(start_workflow_from_attribs(attribs, workflow_id, randomness_seed).into());
+        self.started_attrs = Some(started_info);
     }
 
     /// Return the attributes from the workflow execution started event if this workflow has started
-    pub fn get_started_attrs(&self) -> Option<&WorkflowExecutionStartedEventAttributes> {
+    pub fn get_started_info(&self) -> Option<&WorkflowStartedInfo> {
         self.started_attrs.as_ref()
     }
 

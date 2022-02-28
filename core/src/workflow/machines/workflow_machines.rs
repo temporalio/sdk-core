@@ -15,6 +15,7 @@ use super::{
     workflow_task_state_machine::WorkflowTaskMachine, MachineKind, Machines, NewMachineWithCommand,
     TemporalStateMachine,
 };
+use crate::workflow::WorkflowStartedInfo;
 use crate::{
     protosext::{HistoryEventExt, ValidScheduleLA},
     telemetry::{metrics::MetricsContext, VecDisplayer},
@@ -46,9 +47,8 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::Command as ProtoCommand,
         enums::v1::EventType,
-        history::v1::{history_event, HistoryEvent, WorkflowExecutionStartedEventAttributes},
+        history::v1::{history_event, HistoryEvent},
     },
-    utilities::TryIntoOrNone,
 };
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
@@ -293,9 +293,9 @@ impl WorkflowMachines {
         self.local_activity_data.outstanding_la_count()
     }
 
-    /// Returns the start attributes for the workflow if it has started
-    pub(crate) fn started_attrs(&self) -> Option<&WorkflowExecutionStartedEventAttributes> {
-        self.drive_me.get_started_attrs()
+    /// Returns start info for the workflow if it has started
+    pub(crate) fn get_started_info(&self) -> Option<&WorkflowStartedInfo> {
+        self.drive_me.get_started_info()
     }
 
     /// Handle a single event from the workflow history. `has_next_event` should be false if `event`
@@ -307,7 +307,7 @@ impl WorkflowMachines {
     /// does not match the expected type. A fatal error may be returned if the machine is in an
     /// invalid state.
     #[instrument(level = "debug", skip(self, event), fields(event=%event))]
-    fn handle_event(&mut self, event: &HistoryEvent, has_next_event: bool) -> Result<()> {
+    fn handle_event(&mut self, event: HistoryEvent, has_next_event: bool) -> Result<()> {
         if event.is_final_wf_execution_event() {
             self.have_seen_terminal_event = true;
         }
@@ -386,7 +386,7 @@ impl WorkflowMachines {
     /// The handling consists of verifying that the next command in the commands queue is associated
     /// with a state machine, which is then notified about the event and the command is removed from
     /// the commands queue.
-    fn handle_command_event(&mut self, event: &HistoryEvent) -> Result<()> {
+    fn handle_command_event(&mut self, event: HistoryEvent) -> Result<()> {
         if event.is_local_activity_marker() {
             let deets = event.extract_local_activity_marker_data().ok_or_else(|| {
                 WFMachinesError::Fatal(format!("Local activity marker was unparsable: {:?}", event))
@@ -407,10 +407,12 @@ impl WorkflowMachines {
             }
         }
 
+        let event_id = event.event_id;
+
         let consumed_cmd = loop {
             if let Some(peek_machine) = self.commands.front() {
                 let mach = self.machine(peek_machine.machine);
-                match change_marker_handling(event, mach)? {
+                match change_marker_handling(&event, mach)? {
                     ChangeMarkerOutcome::SkipEvent => return Ok(()),
                     ChangeMarkerOutcome::SkipCommand => {
                         self.commands.pop_front();
@@ -443,7 +445,7 @@ impl WorkflowMachines {
 
         if !self.machine(consumed_cmd.machine).is_final_state() {
             self.machines_by_event_id
-                .insert(event.event_id, consumed_cmd.machine);
+                .insert(event_id, consumed_cmd.machine);
         }
 
         Ok(())
@@ -451,30 +453,30 @@ impl WorkflowMachines {
 
     fn handle_non_stateful_event(
         &mut self,
-        event: &HistoryEvent,
+        event: HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
         debug!(
             event = %event,
             "handling non-stateful event"
         );
+        let event_id = event.event_id;
         match EventType::from_i32(event.event_type) {
             Some(EventType::WorkflowExecutionStarted) => {
                 if let Some(history_event::Attributes::WorkflowExecutionStartedEventAttributes(
                     attrs,
-                )) = &event.attributes
+                )) = event.attributes
                 {
                     self.run_id = attrs.original_execution_run_id.clone();
-                    if let Some(st) = event.event_time.as_ref() {
-                        let as_systime: SystemTime = st.clone().try_into()?;
+                    if let Some(st) = event.event_time {
+                        let as_systime: SystemTime = st.try_into()?;
                         self.workflow_start_time = Some(as_systime);
                     }
                     // Notify the lang sdk that it's time to kick off a workflow
                     self.drive_me.start(
                         self.workflow_id.clone(),
                         str_to_randomness_seed(&attrs.original_execution_run_id),
-                        // TODO: No clone
-                        attrs.clone(),
+                        attrs,
                     );
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
@@ -487,14 +489,14 @@ impl WorkflowMachines {
                 let wf_task_sm = WorkflowTaskMachine::new(self.next_started_event_id);
                 let key = self.all_machines.insert(wf_task_sm.into());
                 self.submachine_handle_event(key, event, has_next_event)?;
-                self.machines_by_event_id.insert(event.event_id, key);
+                self.machines_by_event_id.insert(event_id, key);
             }
             Some(EventType::WorkflowExecutionSignaled) => {
                 if let Some(history_event::Attributes::WorkflowExecutionSignaledEventAttributes(
                     attrs,
-                )) = &event.attributes
+                )) = event.attributes
                 {
-                    self.drive_me.signal(attrs.clone().into());
+                    self.drive_me.signal(attrs.into());
                 } else {
                     // err
                 }
@@ -504,9 +506,9 @@ impl WorkflowMachines {
                     history_event::Attributes::WorkflowExecutionCancelRequestedEventAttributes(
                         attrs,
                     ),
-                ) = &event.attributes
+                ) = event.attributes
                 {
-                    self.drive_me.cancel(attrs.clone().into());
+                    self.drive_me.cancel(attrs.into());
                 } else {
                     // err
                 }
@@ -624,7 +626,7 @@ impl WorkflowMachines {
             }
         }
 
-        let mut history = events.iter().peekable();
+        let mut history = events.into_iter().peekable();
         while let Some(event) = history.next() {
             if event.event_id != self.last_processed_event + 1 {
                 return Err(WFMachinesError::Fatal(format!(
@@ -633,9 +635,11 @@ impl WorkflowMachines {
                 )));
             }
             let next_event = history.peek();
+            let eid = event.event_id;
+            let etype = event.event_type;
             self.handle_event(event, next_event.is_some())?;
-            self.last_processed_event = event.event_id;
-            if event.event_type == EventType::WorkflowTaskStarted as i32 && next_event.is_none() {
+            self.last_processed_event = eid;
+            if etype == EventType::WorkflowTaskStarted as i32 && next_event.is_none() {
                 break;
             }
         }
@@ -672,7 +676,7 @@ impl WorkflowMachines {
     fn submachine_handle_event(
         &mut self,
         sm: MachineKey,
-        event: &HistoryEvent,
+        event: HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
         let machine_responses = self.machine_mut(sm).handle_event(event, has_next_event)?;
@@ -808,9 +812,9 @@ impl WorkflowMachines {
                     let seq = attrs.seq;
                     let attrs: ValidScheduleLA = ValidScheduleLA::from_schedule_la(
                         attrs,
-                        self.started_attrs()
+                        self.get_started_info()
                             .as_ref()
-                            .and_then(|x| x.workflow_execution_timeout.clone().try_into_or_none()),
+                            .and_then(|x| x.workflow_execution_timeout),
                     )
                     .map_err(|e| {
                         WFMachinesError::Fatal(format!(
