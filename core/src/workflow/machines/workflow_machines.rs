@@ -15,6 +15,7 @@ use super::{
     workflow_task_state_machine::WorkflowTaskMachine, MachineKind, Machines, NewMachineWithCommand,
     TemporalStateMachine,
 };
+use crate::workflow::WorkflowStartedInfo;
 use crate::{
     protosext::{HistoryEventExt, ValidScheduleLA},
     telemetry::{metrics::MetricsContext, VecDisplayer},
@@ -46,9 +47,8 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::Command as ProtoCommand,
         enums::v1::EventType,
-        history::v1::{history_event, HistoryEvent, WorkflowExecutionStartedEventAttributes},
+        history::v1::{history_event, HistoryEvent},
     },
-    utilities::TryIntoOrNone,
 };
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
@@ -293,9 +293,9 @@ impl WorkflowMachines {
         self.local_activity_data.outstanding_la_count()
     }
 
-    /// Returns the start attributes for the workflow if it has started
-    pub(crate) fn started_attrs(&self) -> Option<&WorkflowExecutionStartedEventAttributes> {
-        self.drive_me.get_started_attrs()
+    /// Returns start info for the workflow if it has started
+    pub(crate) fn get_started_info(&self) -> Option<&WorkflowStartedInfo> {
+        self.drive_me.get_started_info()
     }
 
     /// Handle a single event from the workflow history. `has_next_event` should be false if `event`
@@ -812,9 +812,9 @@ impl WorkflowMachines {
                     let seq = attrs.seq;
                     let attrs: ValidScheduleLA = ValidScheduleLA::from_schedule_la(
                         attrs,
-                        self.started_attrs()
+                        self.get_started_info()
                             .as_ref()
-                            .and_then(|x| x.workflow_execution_timeout.clone().try_into_or_none()),
+                            .and_then(|x| x.workflow_execution_timeout),
                     )
                     .map_err(|e| {
                         WFMachinesError::Fatal(format!(
