@@ -331,7 +331,7 @@ impl WorkflowTaskManager {
         // Immediately dispatch query activation if no other jobs
         let legacy_query = if next_activation.jobs.is_empty() {
             if let Some(lq) = legacy_query {
-                debug!("Dispatching legacy query {:?}", &lq);
+                debug!("Dispatching legacy query {}", &lq);
                 next_activation
                     .jobs
                     .push(workflow_activation_job::Variant::QueryWorkflow(lq).into());

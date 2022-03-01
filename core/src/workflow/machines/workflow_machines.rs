@@ -15,7 +15,6 @@ use super::{
     workflow_task_state_machine::WorkflowTaskMachine, MachineKind, Machines, NewMachineWithCommand,
     TemporalStateMachine,
 };
-use crate::workflow::WorkflowStartedInfo;
 use crate::{
     protosext::{HistoryEventExt, ValidScheduleLA},
     telemetry::{metrics::MetricsContext, VecDisplayer},
@@ -24,6 +23,7 @@ use crate::{
     },
     workflow::{
         CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WFCommand, WorkflowFetcher,
+        WorkflowStartedInfo,
     },
 };
 use siphasher::sip::SipHasher13;
@@ -937,7 +937,8 @@ impl WorkflowMachines {
         let mut jobs = vec![];
         let m_key = self.get_machine_key(id)?;
         let machine_resps = self.machine_mut(m_key).cancel()?;
-        debug!(machine_responses = ?machine_resps, cmd_id = ?id, "Cancel request responses");
+        debug!(machine_responses = %machine_resps.display(), cmd_id = ?id,
+               "Cancel request responses");
         for r in machine_resps {
             match r {
                 MachineResponse::IssueNewCommand(c) => {
