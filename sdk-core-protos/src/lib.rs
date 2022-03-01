@@ -45,6 +45,8 @@ pub mod coresdk {
 
     #[allow(clippy::module_inception)]
     pub mod activity_task {
+        use crate::{coresdk::ActivityTaskCompletion, task_token::fmt_tt};
+        use std::fmt::{Display, Formatter};
         tonic::include_proto!("coresdk.activity_task");
 
         impl ActivityTask {
@@ -55,6 +57,22 @@ pub mod coresdk {
                         reason: reason as i32,
                     })),
                 }
+            }
+        }
+
+        impl Display for ActivityTaskCompletion {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(
+                    f,
+                    "ActivityTaskCompletion(token: {}",
+                    fmt_tt(&self.task_token),
+                )?;
+                if let Some(r) = self.result.as_ref() {
+                    write!(f, ", {}", r)?;
+                } else {
+                    write!(f, ", missing result")?;
+                }
+                write!(f, ")")
             }
         }
     }
@@ -70,6 +88,7 @@ pub mod coresdk {
         };
         use crate::temporal::api::{enums::v1::TimeoutType, failure::v1::TimeoutFailureInfo};
         use activity_execution_result as aer;
+        use std::fmt::{Display, Formatter};
 
         impl ActivityExecutionResult {
             pub const fn ok(result: Payload) -> Self {
@@ -102,6 +121,57 @@ pub mod coresdk {
 
             pub fn is_cancelled(&self) -> bool {
                 matches!(self.status, Some(aer::Status::Cancelled(_)))
+            }
+        }
+
+        impl Display for ActivityExecutionResult {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "ActivityExecutionResult(")?;
+                match self.status.as_ref() {
+                    None => write!(f, "missing result)"),
+                    Some(aer::Status::Completed(v)) => {
+                        write!(f, "{})", v)
+                    }
+                    Some(aer::Status::Failed(v)) => {
+                        write!(f, "{})", v)
+                    }
+                    Some(aer::Status::Cancelled(v)) => {
+                        write!(f, "{})", v)
+                    }
+                    Some(aer::Status::WillCompleteAsync(_)) => {
+                        write!(f, "Will complete async)")
+                    }
+                }
+            }
+        }
+
+        impl Display for Success {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "Success(")?;
+                if let Some(ref v) = self.result {
+                    write!(f, "{}", v)?;
+                }
+                write!(f, ")")
+            }
+        }
+
+        impl Display for Failure {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "Failure(")?;
+                if let Some(ref v) = self.failure {
+                    write!(f, "{}", v)?;
+                }
+                write!(f, ")")
+            }
+        }
+
+        impl Display for Cancellation {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "Cancellation(")?;
+                if let Some(ref v) = self.failure {
+                    write!(f, "{}", v)?;
+                }
+                write!(f, ")")
             }
         }
 
@@ -191,6 +261,7 @@ pub mod coresdk {
             temporal::api::common::v1::{Payload as ApiPayload, Payloads},
         };
         use std::collections::HashMap;
+        use std::fmt::{Display, Formatter};
 
         impl<T> From<T> for Payload
         where
@@ -212,6 +283,22 @@ pub mod coresdk {
             // Is it's own function b/c asref causes implementation conflicts
             pub fn as_slice(&self) -> &[u8] {
                 self.data.as_slice()
+            }
+        }
+
+        impl Display for Payload {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                if self.data.len() > 64 {
+                    let mut windows = self.data.as_slice().windows(32);
+                    write!(
+                        f,
+                        "[{}..{}]",
+                        base64::encode(windows.next().unwrap_or_default()),
+                        base64::encode(windows.next_back().unwrap_or_default())
+                    )
+                } else {
+                    write!(f, "[{}]", base64::encode(&self.data))
+                }
             }
         }
 
@@ -537,6 +624,16 @@ pub mod coresdk {
                         write!(f, "ResolveRequestCancelExternalWorkflow")
                     }
                 }
+            }
+        }
+
+        impl Display for QueryWorkflow {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(
+                    f,
+                    "QueryWorkflow(id: {}, type: {})",
+                    self.query_id, self.query_type
+                )
             }
         }
 
@@ -1072,6 +1169,48 @@ pub mod coresdk {
                 )),
                 ..Default::default()
             }
+        }
+    }
+
+    impl Display for Failure {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "Failure({}, ", self.message)?;
+            match self.failure_info.as_ref() {
+                None => write!(f, "missing info")?,
+                Some(FailureInfo::TimeoutFailureInfo(v)) => {
+                    write!(f, "Timeout: {:?}", v.timeout_type())?;
+                }
+                Some(FailureInfo::ApplicationFailureInfo(v)) => {
+                    write!(f, "Application Failure: {}", v.r#type)?;
+                }
+                Some(FailureInfo::CanceledFailureInfo(_)) => {
+                    write!(f, "Cancelled")?;
+                }
+                Some(FailureInfo::TerminatedFailureInfo(_)) => {
+                    write!(f, "Terminated")?;
+                }
+                Some(FailureInfo::ServerFailureInfo(_)) => {
+                    write!(f, "Server Failure")?;
+                }
+                Some(FailureInfo::ResetWorkflowFailureInfo(_)) => {
+                    write!(f, "Reset Workflow")?;
+                }
+                Some(FailureInfo::ActivityFailureInfo(v)) => {
+                    write!(
+                        f,
+                        "Activity Failure: scheduled_event_id: {}",
+                        v.scheduled_event_id
+                    )?;
+                }
+                Some(FailureInfo::ChildWorkflowExecutionFailureInfo(v)) => {
+                    write!(
+                        f,
+                        "Child Workflow: started_event_id: {}",
+                        v.started_event_id
+                    )?;
+                }
+            }
+            write!(f, ")")
         }
     }
 

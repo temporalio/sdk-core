@@ -15,8 +15,7 @@ use crate::{
     worker::{LocalActRequest, LocalActivityResolution},
 };
 use machines::WorkflowMachines;
-use std::time::Duration;
-use std::{result, sync::mpsc::Sender};
+use std::{result, sync::mpsc::Sender, time::Duration};
 use temporal_sdk_core_protos::{
     coresdk::{workflow_activation::WorkflowActivation, workflow_commands::*},
     temporal::api::command::v1::Command as ProtoCommand,

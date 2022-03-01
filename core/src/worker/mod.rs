@@ -16,9 +16,12 @@ use crate::{
         WorkflowTaskPoller,
     },
     protosext::{legacy_query_failure, ValidPollWFTQResponse},
-    telemetry::metrics::{
-        activity_poller, local_activity_worker_type, workflow_poller, workflow_sticky_poller,
-        workflow_worker_type, MetricsContext,
+    telemetry::{
+        metrics::{
+            activity_poller, local_activity_worker_type, workflow_poller, workflow_sticky_poller,
+            workflow_worker_type, MetricsContext,
+        },
+        VecDisplayer,
     },
     worker::{
         activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
@@ -120,7 +123,8 @@ impl WorkerTrait for Worker {
         self.complete_workflow_activation(completion).await
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[instrument(level = "debug", skip(self, completion),
+    fields(completion=%&completion))]
     async fn complete_activity_task(
         &self,
         completion: ActivityTaskCompletion,
@@ -708,9 +712,12 @@ impl Worker {
                         force_new_wft,
                     },
             })) => {
-                debug!("Sending commands to server: {:?}", &commands);
+                debug!("Sending commands to server: {}", commands.display());
                 if !query_responses.is_empty() {
-                    debug!("Sending query responses to server: {:?}", &query_responses);
+                    debug!(
+                        "Sending query responses to server: {}",
+                        query_responses.display()
+                    );
                 }
                 let mut completion = WorkflowTaskCompletion {
                     task_token,
