@@ -21,6 +21,7 @@ use std::{
     },
     time::Duration,
 };
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_api::{errors::PollWfError, Worker};
 use temporal_sdk_core_protos::{
@@ -50,7 +51,8 @@ async fn parallel_workflows_same_queue() {
     let num_workflows = 25usize;
 
     let run_ids: Vec<_> = future::join_all(
-        (0..num_workflows).map(|i| starter.start_wf_with_id(format!("wf-id-{}", i))),
+        (0..num_workflows)
+            .map(|i| starter.start_wf_with_id(format!("wf-id-{}", i), WorkflowOptions::default())),
     )
     .await;
 
@@ -119,6 +121,7 @@ async fn workflow_lru_cache_evictions() {
                 format!("wce-{}", Uuid::new_v4()),
                 wf_type.to_string(),
                 vec![],
+                WorkflowOptions::default(),
             )
             .await
             .unwrap();

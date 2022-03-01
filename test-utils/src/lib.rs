@@ -11,6 +11,7 @@ use std::{
     convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, sync::Arc,
     time::Duration,
 };
+use temporal_client::WorkflowOptions;
 use temporal_sdk::TestRustWorker;
 use temporal_sdk_core::{
     init_replay_worker, init_worker, replay::mock_gateway_from_history, telemetry_init,
@@ -129,10 +130,12 @@ impl CoreWfStarter {
 
     /// Start the workflow defined by the builder and return run id
     pub async fn start_wf(&self) -> String {
-        self.start_wf_with_id(self.task_queue_name.clone()).await
+        self.start_wf_with_id(self.task_queue_name.clone(), WorkflowOptions::default())
+            .await
     }
 
-    pub async fn start_wf_with_id(&self, workflow_id: String) -> String {
+    pub async fn start_wf_with_id(&self, workflow_id: String, mut opts: WorkflowOptions) -> String {
+        opts.task_timeout = opts.task_timeout.or(self.wft_timeout);
         self.initted_worker
             .as_ref()
             .expect(
@@ -146,7 +149,7 @@ impl CoreWfStarter {
                 self.worker_config.task_queue.clone(),
                 workflow_id,
                 self.task_queue_name.clone(),
-                self.wft_timeout,
+                opts,
             )
             .await
             .unwrap()

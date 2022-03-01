@@ -32,6 +32,7 @@ use std::{
     },
     time::Duration,
 };
+use temporal_client::WorkflowOptions;
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
     Worker,
@@ -130,7 +131,9 @@ impl TestRustWorker {
         workflow_id: impl Into<String>,
         workflow_type: impl Into<String>,
         input: Vec<Payload>,
+        mut options: WorkflowOptions,
     ) -> Result<String, tonic::Status> {
+        options.task_timeout = options.task_timeout.or(self.task_timeout);
         let res = self
             .worker
             .server_gateway()
@@ -139,7 +142,7 @@ impl TestRustWorker {
                 self.task_queue.clone(),
                 workflow_id.into(),
                 workflow_type.into(),
-                self.task_timeout,
+                options,
             )
             .await?;
 

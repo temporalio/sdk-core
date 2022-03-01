@@ -1,5 +1,6 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -50,7 +51,12 @@ async fn one_activity() {
     );
 
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

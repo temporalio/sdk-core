@@ -46,7 +46,7 @@ mockall::mock! {
             task_queue: String,
             workflow_id: String,
             workflow_type: String,
-            task_timeout: Option<Duration>,
+            options: WorkflowOptions,
         ) -> impl Future<Output = Result<StartWorkflowExecutionResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 

@@ -519,7 +519,7 @@ pub trait ServerGatewayApis {
         task_queue: String,
         workflow_id: String,
         workflow_type: String,
-        task_timeout: Option<Duration>,
+        options: WorkflowOptions,
     ) -> Result<StartWorkflowExecutionResponse>;
 
     /// Fetch new workflow tasks from the provided queue. Should block indefinitely if there is no
@@ -658,6 +658,16 @@ pub trait ServerGatewayApis {
     fn namespace(&self) -> &str;
 }
 
+/// Optional fields supplied at the start of workflow execution
+#[derive(Debug, Clone, Default)]
+pub struct WorkflowOptions {
+    /// Optionally indicates the default task timeout for workflow tasks
+    pub task_timeout: Option<Duration>,
+
+    /// Optionally associate extra search attributes with a workflow
+    pub search_attributes: Option<HashMap<String, Payload>>,
+}
+
 #[async_trait::async_trait]
 impl ServerGatewayApis for ServerGateway {
     async fn start_workflow(
@@ -666,7 +676,7 @@ impl ServerGatewayApis for ServerGateway {
         task_queue: String,
         workflow_id: String,
         workflow_type: String,
-        task_timeout: Option<Duration>,
+        options: WorkflowOptions,
     ) -> Result<StartWorkflowExecutionResponse> {
         let request_id = Uuid::new_v4().to_string();
 
@@ -684,7 +694,8 @@ impl ServerGatewayApis for ServerGateway {
                     kind: 0,
                 }),
                 request_id,
-                workflow_task_timeout: task_timeout.map(Into::into),
+                workflow_task_timeout: options.task_timeout.map(Into::into),
+                search_attributes: options.search_attributes.map(Into::into),
                 ..Default::default()
             })
             .await?
