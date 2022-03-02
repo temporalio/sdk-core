@@ -321,8 +321,7 @@ impl WorkerActivityTasks {
                 }
                 Ok(Some(ActivityTask::cancel_from_ids(task_token.0, reason)))
             } else {
-                warn!(task_token = ?task_token,
-                              "Unknown activity task when issuing cancel");
+                debug!(task_token = ?task_token, "Unknown activity task when issuing cancel");
                 // If we can't find the activity here, it's already been completed,
                 // in which case issuing a cancel again is pointless.
                 Ok(None)
