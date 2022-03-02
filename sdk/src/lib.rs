@@ -32,7 +32,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::WorkflowOptions;
+use temporal_client::{ServerGatewayApis, WorkflowOptions};
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
     Worker,
@@ -113,6 +113,11 @@ impl TestRustWorker {
                 task_tokens_to_cancels: Default::default(),
             },
         }
+    }
+
+    /// Access the worker's server gateway client
+    pub fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
+        self.worker.server_gateway()
     }
 
     /// Returns the task queue name this worker polls on
