@@ -1,4 +1,7 @@
-use crate::{Result, RetryConfig, ServerGatewayApis, ServerGatewayOptions, WorkflowTaskCompletion};
+use crate::{
+    Result, RetryConfig, ServerGatewayApis, ServerGatewayOptions, WorkflowOptions,
+    WorkflowTaskCompletion,
+};
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use std::{fmt::Debug, future::Future, time::Duration};
@@ -202,7 +205,7 @@ where
         task_queue: String,
         workflow_id: String,
         workflow_type: String,
-        task_timeout: Option<Duration>,
+        options: WorkflowOptions,
     ) -> Result<StartWorkflowExecutionResponse> {
         retry_call!(
             self,
@@ -211,7 +214,7 @@ where
             task_queue.clone(),
             workflow_id.clone(),
             workflow_type.clone(),
-            task_timeout
+            options.clone()
         )
     }
 

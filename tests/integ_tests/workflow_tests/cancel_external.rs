@@ -1,3 +1,4 @@
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::common::NamespacedWorkflowExecution;
 use temporal_sdk_core_test_utils::CoreWfStarter;
@@ -37,7 +38,12 @@ async fn sends_cancel_to_other_wf() {
     worker.register_wf("receiver", cancel_receiver);
 
     let receiver_run_id = worker
-        .submit_wf(RECEIVER_WFID, "receiver", vec![])
+        .submit_wf(
+            RECEIVER_WFID,
+            "receiver",
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker
@@ -45,6 +51,7 @@ async fn sends_cancel_to_other_wf() {
             "sends-cancel-sender",
             "sender",
             vec![receiver_run_id.into()],
+            WorkflowOptions::default(),
         )
         .await
         .unwrap();

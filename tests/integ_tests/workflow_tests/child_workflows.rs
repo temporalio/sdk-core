@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{ChildWorkflowOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::child_workflow::{child_workflow_result, Success};
 use temporal_sdk_core_test_utils::CoreWfStarter;
@@ -38,7 +39,12 @@ async fn child_workflow_happy_path() {
     worker.incr_expected_run_count(1); // Expect another WF to be run as child
 
     worker
-        .submit_wf("parent".to_string(), PARENT_WF_TYPE.to_owned(), vec![])
+        .submit_wf(
+            "parent".to_string(),
+            PARENT_WF_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

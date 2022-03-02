@@ -1,4 +1,5 @@
 use std::time::Duration;
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowExecutionStatus;
 use temporal_sdk_core_test_utils::CoreWfStarter;
@@ -25,7 +26,12 @@ async fn cancel_during_timer() {
     worker.register_wf(wf_name.to_string(), cancelled_wf);
 
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
 

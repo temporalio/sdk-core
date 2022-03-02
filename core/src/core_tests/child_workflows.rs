@@ -6,7 +6,7 @@ use crate::{
     workflow::managed_wf::ManagedWFFunc,
 };
 use std::sync::Arc;
-use temporal_client::mocks::mock_gateway;
+use temporal_client::{mocks::mock_gateway, WorkflowOptions};
 use temporal_sdk::{
     ChildWorkflowOptions, Signal, TestRustWorker, WfContext, WorkflowFunction, WorkflowResult,
 };
@@ -59,7 +59,12 @@ async fn signal_child_workflow(#[case] serial: bool) {
 
     worker.register_wf(wf_type.to_owned(), wf);
     worker
-        .submit_wf(wf_id.to_owned(), wf_type.to_owned(), vec![])
+        .submit_wf(
+            wf_id.to_owned(),
+            wf_type.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

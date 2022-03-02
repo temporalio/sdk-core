@@ -1,6 +1,7 @@
 use assert_matches::assert_matches;
 use futures::future::join_all;
 use std::time::Duration;
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{
     activity_task::activity_task as act_task,
@@ -118,7 +119,12 @@ async fn can_paginate_long_history() {
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), many_parallel_timers_longhist);
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

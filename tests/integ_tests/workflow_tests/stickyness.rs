@@ -3,6 +3,7 @@ use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio::sync::Barrier;
@@ -16,7 +17,12 @@ async fn timer_workflow_not_sticky() {
     worker.register_wf(wf_name.to_owned(), timer_wf);
 
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -46,7 +52,12 @@ async fn timer_workflow_timeout_on_sticky() {
     worker.register_wf(wf_name.to_owned(), timer_timeout_wf);
 
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -69,7 +80,12 @@ async fn cache_miss_ok() {
     });
 
     let run_id = worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     let core = starter.get_worker().await;

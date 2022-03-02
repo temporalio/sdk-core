@@ -11,7 +11,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::mocks::mock_gateway;
+use temporal_client::{mocks::mock_gateway, WorkflowOptions};
 use temporal_sdk::{TestRustWorker, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
 
@@ -47,7 +47,12 @@ async fn test_wf_task_rejected_properly() {
 
     worker.register_wf(wf_type.to_owned(), timer_wf_fails_once);
     worker
-        .submit_wf(wf_id.to_owned(), wf_type.to_owned(), vec![])
+        .submit_wf(
+            wf_id.to_owned(),
+            wf_type.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -96,7 +101,12 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
     });
 
     worker
-        .submit_wf(wf_id.to_owned(), wf_type.to_owned(), vec![])
+        .submit_wf(
+            wf_id.to_owned(),
+            wf_type.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

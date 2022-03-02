@@ -1,4 +1,5 @@
 use std::time::Duration;
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::workflow_commands::ContinueAsNewWorkflowExecution;
 use temporal_sdk_core_test_utils::CoreWfStarter;
@@ -24,7 +25,12 @@ async fn continue_as_new_happy_path() {
     worker.register_wf(wf_name.to_string(), continue_as_new_wf);
 
     worker
-        .submit_wf(wf_name.to_string(), wf_name.to_string(), vec![[1].into()])
+        .submit_wf(
+            wf_name.to_string(),
+            wf_name.to_string(),
+            vec![[1].into()],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

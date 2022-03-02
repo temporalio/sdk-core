@@ -30,3 +30,7 @@ version = "0.1"
 [dependencies.temporal-sdk-core-api]
 path = "../core-api"
 version = "0.1"
+
+[dependencies.temporal-client]
+path = "../client"
+version = "0.1"
