@@ -1,4 +1,5 @@
 use futures::StreamExt;
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{
     ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext, WorkflowResult,
 };
@@ -36,6 +37,7 @@ async fn sends_signal_to_missing_wf() {
             wf_name,
             wf_name,
             vec![Uuid::new_v4().to_string().into(), [1].into()],
+            WorkflowOptions::default(),
         )
         .await
         .unwrap();
@@ -60,7 +62,12 @@ async fn sends_signal_to_other_wf() {
     worker.register_wf("receiver", signal_receiver);
 
     let receiver_run_id = worker
-        .submit_wf(RECEIVER_WFID, "receiver", vec![])
+        .submit_wf(
+            RECEIVER_WFID,
+            "receiver",
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker
@@ -68,6 +75,7 @@ async fn sends_signal_to_other_wf() {
             "sends-signal-sender",
             "sender",
             vec![receiver_run_id.into()],
+            WorkflowOptions::default(),
         )
         .await
         .unwrap();
@@ -101,7 +109,12 @@ async fn sends_signal_to_child() {
 
     worker.incr_expected_run_count(1); // Expect another WF to be run as child
     worker
-        .submit_wf("sends-signal-to-child", "child_signaler", vec![])
+        .submit_wf(
+            "sends-signal-to-child",
+            "child_signaler",
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

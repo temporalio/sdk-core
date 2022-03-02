@@ -32,6 +32,7 @@ use std::{
     },
     time::Duration,
 };
+use temporal_client::{ServerGatewayApis, WorkflowOptions};
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
     Worker,
@@ -114,6 +115,11 @@ impl TestRustWorker {
         }
     }
 
+    /// Access the worker's server gateway client
+    pub fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
+        self.worker.server_gateway()
+    }
+
     /// Returns the task queue name this worker polls on
     pub fn task_queue(&self) -> &str {
         &self.task_queue
@@ -130,7 +136,9 @@ impl TestRustWorker {
         workflow_id: impl Into<String>,
         workflow_type: impl Into<String>,
         input: Vec<Payload>,
+        mut options: WorkflowOptions,
     ) -> Result<String, tonic::Status> {
+        options.task_timeout = options.task_timeout.or(self.task_timeout);
         let res = self
             .worker
             .server_gateway()
@@ -139,7 +147,7 @@ impl TestRustWorker {
                 self.task_queue.clone(),
                 workflow_id.into(),
                 workflow_type.into(),
-                self.task_timeout,
+                options,
             )
             .await?;
 

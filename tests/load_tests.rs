@@ -1,6 +1,7 @@
 use assert_matches::assert_matches;
 use futures::future::join_all;
 use std::time::{Duration, Instant};
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, WfContext};
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityExecutionResult, activity_task::activity_task as act_task,
@@ -56,7 +57,12 @@ async fn activity_load() {
         let wf_id = format!("activity_load_{}", i);
         async move {
             worker
-                .submit_wf(wf_id, wf_type.to_owned(), vec![])
+                .submit_wf(
+                    wf_id,
+                    wf_type.to_owned(),
+                    vec![],
+                    WorkflowOptions::default(),
+                )
                 .await
                 .unwrap();
         }

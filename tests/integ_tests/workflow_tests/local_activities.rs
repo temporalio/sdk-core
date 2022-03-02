@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 use futures::future::join_all;
 use std::time::Duration;
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{
     act_cancelled, act_is_cancelled, ActivityCancelledError, CancellableFuture,
     LocalActivityOptions, WfContext, WorkflowResult,
@@ -37,7 +38,12 @@ async fn one_local_activity() {
     worker.register_activity("echo_activity", echo);
 
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -63,7 +69,12 @@ async fn local_act_concurrent_with_timer() {
     worker.register_activity("echo_activity", echo);
 
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -90,7 +101,12 @@ async fn local_act_then_timer_then_wait_result() {
     worker.register_activity("echo_activity", echo);
 
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -109,7 +125,12 @@ async fn long_running_local_act_with_timer() {
     });
 
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -142,7 +163,12 @@ async fn local_act_fanout() {
     worker.register_activity("echo_activity", echo);
 
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -178,7 +204,12 @@ async fn local_act_retry_timer_backoff() {
     });
 
     let run_id = worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -229,7 +260,12 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
     });
 
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker
@@ -318,7 +354,12 @@ async fn cancel_after_act_starts(
     });
 
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker
@@ -376,7 +417,12 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
     });
 
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -421,7 +467,12 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
     });
 
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -441,7 +492,12 @@ async fn eviction_wont_make_local_act_get_dropped() {
     });
 
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -489,7 +545,12 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
     });
 
     worker
-        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![])
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

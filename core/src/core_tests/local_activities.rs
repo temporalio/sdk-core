@@ -11,7 +11,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::mocks::mock_gateway;
+use temporal_client::{mocks::mock_gateway, WorkflowOptions};
 use temporal_sdk::{LocalActivityOptions, TestRustWorker, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{common::RetryPolicy, AsJsonPayloadExt},
@@ -72,7 +72,12 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: 
     );
     worker.register_activity("echo", echo);
     worker
-        .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -119,7 +124,12 @@ async fn local_act_many_concurrent() {
     worker.register_wf(DEFAULT_WORKFLOW_TYPE.to_owned(), local_act_fanout_wf);
     worker.register_activity("echo", |str: String| async move { Ok(str) });
     worker
-        .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -182,7 +192,12 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
         Ok(str)
     });
     worker
-        .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     let (_, runres) = tokio::join!(
@@ -248,7 +263,12 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
         }
     });
     worker
-        .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -320,7 +340,12 @@ async fn local_act_retry_long_backoff_uses_timer() {
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
     worker
-        .submit_wf(wf_id.to_owned(), DEFAULT_WORKFLOW_TYPE.to_owned(), vec![])
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
