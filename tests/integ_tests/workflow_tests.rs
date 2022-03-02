@@ -10,6 +10,7 @@ mod replay;
 mod signals;
 mod stickyness;
 mod timers;
+mod upsert_search_attrs;
 
 use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
