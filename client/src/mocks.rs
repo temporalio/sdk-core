@@ -54,7 +54,7 @@ mockall::mock! {
             -> impl Future<Output = Result<PollWorkflowTaskQueueResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
-        fn poll_activity_task<'a, 'b>(&self, task_queue: String)
+        fn poll_activity_task<'a, 'b>(&self, task_queue: String, max_tasks_per_sec: Option<f64>)
             -> impl Future<Output = Result<PollActivityTaskQueueResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 

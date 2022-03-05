@@ -361,7 +361,7 @@ impl ValidScheduleLA {
         };
         let retry_policy = v
             .retry_policy
-            .ok_or(anyhow!("Retry policy must be defined!"))?;
+            .ok_or_else(|| anyhow!("Retry policy must be defined!"))?;
         let local_retry_threshold = v
             .local_retry_threshold
             .clone()
