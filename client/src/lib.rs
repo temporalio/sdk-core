@@ -509,7 +509,8 @@ impl ServerGateway {
     }
 }
 
-/// This trait provides higher-level friendlier interaction with the server
+/// This trait provides higher-level friendlier interaction with the server.
+/// See the [WorkflowService] trait for a lower-level client.
 #[cfg_attr(any(feature = "mocks", test), mockall::automock)]
 #[async_trait::async_trait]
 pub trait ServerGatewayApis {
