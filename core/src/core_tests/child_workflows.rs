@@ -7,12 +7,11 @@ use crate::{
 };
 use std::sync::Arc;
 use temporal_client::{mocks::mock_gateway, WorkflowOptions};
-use temporal_sdk::{
-    ChildWorkflowOptions, Signal, WfContext, Worker, WorkflowFunction, WorkflowResult,
-};
+use temporal_sdk::{ChildWorkflowOptions, Signal, WfContext, WorkflowFunction, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::child_workflow::{
     child_workflow_result, ChildWorkflowCancellationType,
 };
+use temporal_sdk_core_test_utils::TestWorker;
 use tokio::join;
 
 const SIGNAME: &str = "SIGNAME";
@@ -29,7 +28,7 @@ async fn signal_child_workflow(#[case] serial: bool) {
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::AllHistory], mock);
     let mock = build_mock_pollers(mh);
     let core = mock_worker(mock);
-    let mut worker = Worker::new(Arc::new(core), TEST_Q.to_string(), None);
+    let mut worker = TestWorker::new(Arc::new(core), TEST_Q.to_string());
 
     let wf = move |ctx: WfContext| async move {
         let child = ctx.child_workflow(ChildWorkflowOptions {

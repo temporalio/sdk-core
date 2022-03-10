@@ -214,7 +214,7 @@ async fn local_act_retry_timer_backoff() {
         .unwrap();
     worker.run_until_done().await.unwrap();
     starter
-        .fetch_history_and_replay(wf_name, run_id, &mut worker)
+        .fetch_history_and_replay(wf_name, run_id, worker.inner_mut())
         .await
         .unwrap();
 }

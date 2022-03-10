@@ -53,13 +53,9 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display, Formatter},
     future::Future,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-    time::Duration,
+    sync::Arc,
 };
-use temporal_client::{ServerGatewayApis, ServerGatewayOptionsBuilder, WorkflowOptions};
+use temporal_client::{ServerGatewayApis, ServerGatewayOptionsBuilder};
 use temporal_sdk_core::Url;
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
@@ -112,7 +108,6 @@ pub fn sdk_client_options(url: impl Into<Url>) -> ServerGatewayOptionsBuilder {
 pub struct Worker {
     worker: Arc<dyn CoreWorker>,
     task_queue: String,
-    task_timeout: Option<Duration>,
     workflow_half: WorkflowHalf,
     activity_half: ActivityHalf,
 }
@@ -122,8 +117,6 @@ struct WorkflowHalf {
     workflows: HashMap<String, UnboundedSender<WorkflowActivation>>,
     /// Maps workflow type to the function for executing workflow runs with that ID
     workflow_fns: HashMap<String, WorkflowFunction>,
-    /// Number of live workflows
-    incomplete_workflows: Arc<AtomicUsize>,
     /// Handles for each spawned workflow run are inserted here to be cleaned up when all runs
     /// are finished
     join_handles: FuturesUnordered<BoxFuture<'static, Result<WorkflowResult<()>, JoinError>>>,
@@ -137,19 +130,13 @@ struct ActivityHalf {
 
 impl Worker {
     /// Create a new rust worker
-    pub fn new(
-        worker: Arc<dyn CoreWorker>,
-        task_queue: impl Into<String>,
-        task_timeout: Option<Duration>,
-    ) -> Self {
+    pub fn new(worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         Self {
             worker,
             task_queue: task_queue.into(),
-            task_timeout,
             workflow_half: WorkflowHalf {
                 workflows: Default::default(),
                 workflow_fns: Default::default(),
-                incomplete_workflows: Arc::new(AtomicUsize::new(0)),
                 join_handles: FuturesUnordered::new(),
             },
             activity_half: ActivityHalf {
@@ -167,36 +154,6 @@ impl Worker {
     /// Returns the task queue name this worker polls on
     pub fn task_queue(&self) -> &str {
         &self.task_queue
-    }
-
-    /// Create a workflow, asking the server to start it with the provided workflow ID and using the
-    /// provided workflow function.
-    ///
-    /// Increments the expected Workflow run count.
-    ///
-    /// Returns the run id of the started workflow
-    pub async fn submit_wf(
-        &self,
-        workflow_id: impl Into<String>,
-        workflow_type: impl Into<String>,
-        input: Vec<Payload>,
-        mut options: WorkflowOptions,
-    ) -> Result<String, tonic::Status> {
-        options.task_timeout = options.task_timeout.or(self.task_timeout);
-        let res = self
-            .worker
-            .server_gateway()
-            .start_workflow(
-                input,
-                self.task_queue.clone(),
-                workflow_id.into(),
-                workflow_type.into(),
-                options,
-            )
-            .await?;
-
-        self.incr_expected_run_count(1);
-        Ok(res.run_id)
     }
 
     /// Register a Workflow function to invoke when the Worker is asked to run a workflow of
@@ -226,25 +183,9 @@ impl Worker {
         );
     }
 
-    // TODO: Should be removed before making this worker prod ready. There can be a test worker
-    //   which wraps this one and implements the workflow counting / run_until_done concepts.
-    //   This worker can expose an interceptor for completions that could be used to assist with
-    //   workflow tracking
-    /// Increment the expected Workflow run count on this Worker. The Worker tracks the run count
-    /// and will resolve `run_until_done` when it goes down to 0.
-    /// You do not have to increment if scheduled a Workflow with `submit_wf`.
-    pub fn incr_expected_run_count(&self, count: usize) {
-        self.workflow_half
-            .incomplete_workflows
-            .fetch_add(count, Ordering::SeqCst);
-    }
-
-    /// See [Self::run_until_done], except calls the provided callback just before performing core
-    /// shutdown.
-    pub async fn run_until_done_shutdown_hook(
-        &mut self,
-        before_shutdown: impl FnOnce(),
-    ) -> Result<(), anyhow::Error> {
+    /// Runs the worker. Eventually resolves after the worker has been explicitly shut down,
+    /// or may return early with an error in the event of some unresolvable problem.
+    pub async fn run(&mut self) -> Result<(), anyhow::Error> {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let pollers = async move {
             let (worker, task_q, wf_half, act_half) = self.split_apart();
@@ -269,13 +210,6 @@ impl Worker {
                                 activation,
                             )
                             .await?;
-                        if wf_half.incomplete_workflows.load(Ordering::SeqCst) == 0 {
-                            info!("All expected workflows complete");
-                            // Die rebel scum - evict all workflows (which are complete now),
-                            // and turn off activity polling.
-                            let _ = shutdown_tx.send(true);
-                            break Result::<_, anyhow::Error>::Ok(());
-                        }
                     }
                 },
                 // Only poll on the activity queue if activity functions have been registered. This
@@ -309,16 +243,9 @@ impl Worker {
         while let Some(h) = myself.workflow_half.join_handles.next().await {
             h??;
         }
-        before_shutdown();
         myself.worker.shutdown().await;
         myself.workflow_half.workflows.clear();
         Ok(())
-    }
-
-    /// Drives all workflows & activities until they have all finished, repeatedly polls server to
-    /// fetch work for them.
-    pub async fn run_until_done(&mut self) -> Result<(), anyhow::Error> {
-        self.run_until_done_shutdown_hook(|| {}).await
     }
 
     /// Turns this rust worker into a new worker with all the same workflows and activities
@@ -398,7 +325,6 @@ impl WorkflowHalf {
         let completion = completions_rx.recv().await.expect("No workflows left?");
         if completion.has_execution_ending() {
             debug!("Workflow {} says it's finishing", &completion.run_id);
-            self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
         }
         worker.complete_workflow_activation(completion).await?;
         Ok(())

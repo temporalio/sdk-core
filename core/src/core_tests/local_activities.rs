@@ -12,11 +12,12 @@ use std::{
     time::Duration,
 };
 use temporal_client::{mocks::mock_gateway, WorkflowOptions};
-use temporal_sdk::{LocalActivityOptions, WfContext, Worker, WorkflowResult};
+use temporal_sdk::{LocalActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{common::RetryPolicy, AsJsonPayloadExt},
     temporal::api::{enums::v1::EventType, failure::v1::Failure},
 };
+use temporal_sdk_core_test_utils::TestWorker;
 use tokio::sync::Barrier;
 
 async fn echo(e: String) -> anyhow::Result<String> {
@@ -55,7 +56,7 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: 
         mock.worker_cfg(|cfg| cfg.max_cached_workflows = 1);
     }
     let core = mock_worker(mock);
-    let mut worker = Worker::new(Arc::new(core), TEST_Q.to_string(), None);
+    let mut worker = TestWorker::new(Arc::new(core), TEST_Q.to_string());
 
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
@@ -119,7 +120,7 @@ async fn local_act_many_concurrent() {
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 3], mock);
     let mock = build_mock_pollers(mh);
     let core = mock_worker(mock);
-    let mut worker = Worker::new(Arc::new(core), TEST_Q.to_string(), None);
+    let mut worker = TestWorker::new(Arc::new(core), TEST_Q.to_string());
 
     worker.register_wf(DEFAULT_WORKFLOW_TYPE.to_owned(), local_act_fanout_wf);
     worker.register_activity("echo", |str: String| async move { Ok(str) });
@@ -168,7 +169,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
     let core = Arc::new(mock_worker(mock));
-    let mut worker = Worker::new(core.clone(), TEST_Q.to_string(), None);
+    let mut worker = TestWorker::new(core.clone(), TEST_Q.to_string());
     let shutdown_barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
 
     worker.register_wf(
@@ -226,7 +227,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [1], mock);
     let mock = build_mock_pollers(mh);
     let core = mock_worker(mock);
-    let mut worker = Worker::new(Arc::new(core), TEST_Q.to_string(), None);
+    let mut worker = TestWorker::new(Arc::new(core), TEST_Q.to_string());
 
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
@@ -310,7 +311,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|w| w.max_cached_workflows = 1);
     let core = mock_worker(mock);
-    let mut worker = Worker::new(Arc::new(core), TEST_Q.to_string(), None);
+    let mut worker = TestWorker::new(Arc::new(core), TEST_Q.to_string());
 
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),

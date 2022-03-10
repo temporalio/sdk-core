@@ -7,18 +7,20 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use log::LevelFilter;
 use prost::Message;
 use rand::{distributions::Standard, Rng};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, sync::Arc,
     time::Duration,
 };
 use temporal_client::{RetryGateway, ServerGateway, ServerGatewayApis, WorkflowOptions};
-use temporal_sdk::Worker;
+use temporal_sdk::{IntoActivityFunc, Worker, WorkflowFunction};
 use temporal_sdk_core::{
     init_replay_worker, init_worker, replay::mock_gateway_from_history, telemetry_init,
     ServerGatewayOptions, ServerGatewayOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
     WorkerConfig, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::Worker as CoreWorker;
+use temporal_sdk_core_protos::coresdk::common::Payload;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_commands::{
@@ -111,11 +113,10 @@ impl CoreWfStarter {
         }
     }
 
-    pub async fn worker(&mut self) -> Worker {
-        Worker::new(
+    pub async fn worker(&mut self) -> TestWorker {
+        TestWorker::new(
             self.get_worker().await,
             self.worker_config.task_queue.clone(),
-            self.wft_timeout,
         )
     }
 
@@ -178,8 +179,7 @@ impl CoreWfStarter {
             .expect("history field must be populated");
         let (replay_worker, _) = init_core_replay_preloaded(worker.task_queue(), &history);
         worker.with_new_core_worker(replay_worker);
-        worker.incr_expected_run_count(1);
-        worker.run_until_done().await.unwrap();
+        worker.run().await.unwrap();
         Ok(())
     }
 
@@ -238,6 +238,88 @@ impl CoreWfStarter {
                 }
             })
             .await
+    }
+}
+
+/// Provides conveniences for running integ tests with the SDK
+pub struct TestWorker {
+    inner: Worker,
+    expected_wf_runs: AtomicUsize,
+}
+impl TestWorker {
+    /// Create a new test worker
+    pub fn new(core_worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
+        Self {
+            inner: Worker::new(core_worker, task_queue),
+            expected_wf_runs: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn inner_mut(&mut self) -> &mut Worker {
+        &mut self.inner
+    }
+
+    pub fn incr_expected_run_count(&self, amount: usize) {
+        self.expected_wf_runs.fetch_add(amount, Ordering::AcqRel);
+    }
+
+    // TODO: Maybe trait-ify?
+    pub fn register_wf<F: Into<WorkflowFunction>>(
+        &mut self,
+        workflow_type: impl Into<String>,
+        wf_function: F,
+    ) {
+        self.inner.register_wf(workflow_type, wf_function)
+    }
+
+    pub fn register_activity<A, R>(
+        &mut self,
+        activity_type: impl Into<String>,
+        act_function: impl IntoActivityFunc<A, R>,
+    ) {
+        self.inner.register_activity(activity_type, act_function)
+    }
+
+    /// Create a workflow, asking the server to start it with the provided workflow ID and using the
+    /// provided workflow function.
+    ///
+    /// Increments the expected Workflow run count.
+    ///
+    /// Returns the run id of the started workflow
+    pub async fn submit_wf(
+        &self,
+        workflow_id: impl Into<String>,
+        workflow_type: impl Into<String>,
+        input: Vec<Payload>,
+        options: WorkflowOptions,
+    ) -> Result<String, anyhow::Error> {
+        let wfid = workflow_id.into();
+        let res = self
+            .inner
+            .server_gateway()
+            .start_workflow(
+                input,
+                self.inner.task_queue().to_string(),
+                wfid.clone(),
+                workflow_type.into(),
+                options,
+            )
+            .await?;
+        Ok(res.run_id)
+    }
+
+    /// Runs until all expected workflows have completed
+    pub async fn run_until_done(&mut self) -> Result<(), anyhow::Error> {
+        todo!()
+    }
+
+    /// See [Self::run_until_done], except calls the provided callback just before performing core
+    /// shutdown.
+    pub async fn run_until_done_shutdown_hook(
+        &mut self,
+        before_shutdown: impl FnOnce(),
+    ) -> Result<(), anyhow::Error> {
+        todo!()
     }
 }
 
