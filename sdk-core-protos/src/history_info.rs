@@ -42,9 +42,9 @@ impl HistoryInfo {
                 attrs
                     .workflow_type
                     .as_ref()
-                    .ok_or(anyhow!(
-                        "No workflow type defined in execution started attributes"
-                    ))?
+                    .ok_or_else(|| {
+                        anyhow!("No workflow type defined in execution started attributes")
+                    })?
                     .name
                     .clone()
             }

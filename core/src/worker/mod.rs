@@ -217,6 +217,7 @@ impl Worker {
                 config.task_queue.clone(),
                 config.max_concurrent_at_polls,
                 config.max_concurrent_at_polls * 2,
+                config.max_task_queue_activities_per_second,
             );
             let act_metrics = metrics.with_new_attrs([activity_poller()]);
             ap.set_num_pollers_handler(move |np| act_metrics.record_num_pollers(np));
@@ -343,7 +344,7 @@ impl Worker {
     ///
     /// Returns `Ok(None)` in the event of a poll timeout or if the polling loop should otherwise
     /// be restarted
-    pub(crate) async fn activity_poll(&self) -> Result<Option<ActivityTask>, PollActivityError> {
+    async fn activity_poll(&self) -> Result<Option<ActivityTask>, PollActivityError> {
         let act_mgr_poll = async {
             if let Some(ref act_mgr) = self.at_task_mgr {
                 act_mgr.poll().await
@@ -948,7 +949,7 @@ mod tests {
         let mut mock_gateway = mock_gateway();
         mock_gateway
             .expect_poll_activity_task()
-            .returning(|_| Ok(PollActivityTaskQueueResponse::default()));
+            .returning(|_, _| Ok(PollActivityTaskQueueResponse::default()));
 
         let cfg = test_worker_cfg()
             .max_outstanding_activities(5_usize)
@@ -980,7 +981,7 @@ mod tests {
         let mut mock_gateway = mock_gateway();
         mock_gateway
             .expect_poll_activity_task()
-            .returning(|_| Err(tonic::Status::internal("ahhh")));
+            .returning(|_, _| Err(tonic::Status::internal("ahhh")));
 
         let cfg = test_worker_cfg()
             .max_outstanding_activities(5_usize)

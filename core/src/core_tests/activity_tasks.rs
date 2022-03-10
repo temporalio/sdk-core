@@ -5,9 +5,10 @@ use crate::{
         mock_worker, poll_and_reply, test_worker_cfg, MockWorker, MocksHolder,
     },
     workflow::WorkflowCachingPolicy::NonSticky,
-    ActivityHeartbeat,
+    ActivityHeartbeat, MetricsContext, Worker, WorkerConfigBuilder,
 };
 use futures::FutureExt;
+use std::sync::Arc;
 use std::{
     cell::RefCell,
     collections::{hash_map::Entry, HashMap, VecDeque},
@@ -16,7 +17,7 @@ use std::{
     time::Duration,
 };
 use temporal_client::mocks::{mock_gateway, mock_manual_gateway};
-use temporal_sdk_core_api::Worker;
+use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{activity_resolution, ActivityExecutionResult, ActivityResolution},
@@ -61,7 +62,7 @@ async fn max_activities_respected() {
     mock_gateway
         .expect_poll_activity_task()
         .times(3)
-        .returning(move |_| Ok(tasks.pop_front().unwrap()));
+        .returning(move |_, _| Ok(tasks.pop_front().unwrap()));
     mock_gateway
         .expect_complete_activity_task()
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
@@ -347,7 +348,7 @@ async fn many_concurrent_heartbeat_cancels() {
     let mut calls_map = HashMap::<_, i32>::new();
     mock_gateway
         .expect_poll_activity_task()
-        .returning(move |_| poll_resps.pop_front().unwrap());
+        .returning(move |_, _| poll_resps.pop_front().unwrap());
     mock_gateway
         .expect_cancel_activity_task()
         .returning(move |_, _| async move { Ok(Default::default()) }.boxed());
@@ -584,4 +585,29 @@ async fn complete_act_with_fail_flushes_heartbeat() {
     // Verify the last seen call to record a heartbeat had the last detail payload
     let last_seen_payload = &last_seen_payload.take().unwrap().payloads[0];
     assert_eq!(last_seen_payload.data, &[last_hb]);
+}
+
+#[tokio::test]
+async fn max_tq_acts_set_passed_to_poll_properly() {
+    let rate = 9.28;
+    let mut mock_gateway = mock_gateway();
+    mock_gateway
+        .expect_poll_activity_task()
+        .returning(move |_, tps| {
+            assert_eq!(tps, Some(rate));
+            Ok(PollActivityTaskQueueResponse {
+                task_token: vec![1],
+                ..Default::default()
+            })
+        });
+
+    let cfg = WorkerConfigBuilder::default()
+        .namespace("enchi")
+        .task_queue("cat")
+        .max_concurrent_at_polls(1_usize)
+        .max_task_queue_activities_per_second(rate)
+        .build()
+        .unwrap();
+    let worker = Worker::new(cfg, None, Arc::new(mock_gateway), MetricsContext::default());
+    worker.poll_activity_task().await.unwrap();
 }

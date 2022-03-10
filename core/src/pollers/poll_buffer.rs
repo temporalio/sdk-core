@@ -221,12 +221,13 @@ pub fn new_activity_task_buffer(
     task_queue: String,
     concurrent_pollers: usize,
     buffer_size: usize,
+    max_tps: Option<f64>,
 ) -> PollActivityTaskBuffer {
     LongPollBuffer::new(
         move || {
             let sg = sg.clone();
             let task_queue = task_queue.clone();
-            async move { sg.poll_activity_task(task_queue).await }
+            async move { sg.poll_activity_task(task_queue, max_tps).await }
         },
         concurrent_pollers,
         buffer_size,

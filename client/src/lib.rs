@@ -62,6 +62,7 @@ use uuid::Uuid;
 
 #[cfg(any(feature = "mocks", test))]
 use futures::Future;
+use temporal_sdk_core_protos::temporal::api::taskqueue::v1::TaskQueueMetadata;
 
 static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivityTaskQueue"];
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
@@ -532,8 +533,11 @@ pub trait ServerGatewayApis {
 
     /// Fetch new activity tasks from the provided queue. Should block indefinitely if there is no
     /// work.
-    async fn poll_activity_task(&self, task_queue: String)
-        -> Result<PollActivityTaskQueueResponse>;
+    async fn poll_activity_task(
+        &self,
+        task_queue: String,
+        max_tasks_per_sec: Option<f64>,
+    ) -> Result<PollActivityTaskQueueResponse>;
 
     /// Notifies the server that workflow tasks for a given workflow should be sent to the normal
     /// non-sticky task queue. This normally happens when workflow has been evicted from the cache.
@@ -731,6 +735,7 @@ impl ServerGatewayApis for ServerGateway {
     async fn poll_activity_task(
         &self,
         task_queue: String,
+        max_tasks_per_sec: Option<f64>,
     ) -> Result<PollActivityTaskQueueResponse> {
         let request = PollActivityTaskQueueRequest {
             namespace: self.namespace.clone(),
@@ -739,7 +744,9 @@ impl ServerGatewayApis for ServerGateway {
                 kind: TaskQueueKind::Normal as i32,
             }),
             identity: self.opts.identity.clone(),
-            task_queue_metadata: None,
+            task_queue_metadata: max_tasks_per_sec.map(|tps| TaskQueueMetadata {
+                max_tasks_per_second: Some(tps),
+            }),
         };
 
         Ok(self

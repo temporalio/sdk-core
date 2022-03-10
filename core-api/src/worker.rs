@@ -4,7 +4,6 @@ use std::time::Duration;
 #[derive(Debug, Clone, derive_builder::Builder)]
 #[builder(setter(into), build_fn(validate = "Self::validate"))]
 #[non_exhaustive]
-// TODO: per-second queue limits
 pub struct WorkerConfig {
     /// The Temporal service namespace this worker is bound to
     pub namespace: String,
@@ -65,6 +64,13 @@ pub struct WorkerConfig {
     /// `heartbeat_timeout * 0.8`.
     #[builder(default = "Duration::from_secs(30)")]
     pub default_heartbeat_throttle_interval: Duration,
+
+    /// Sets the maximum number of activities per second the task queue will dispatch, controlled
+    /// server-side. Note that this only takes effect upon an activity poll request. If multiple
+    /// workers on the same queue have different values set, they will thrash with the last poller
+    /// winning.
+    #[builder(setter(strip_option), default)]
+    pub max_task_queue_activities_per_second: Option<f64>,
 }
 
 impl WorkerConfig {
