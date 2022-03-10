@@ -1,10 +1,36 @@
 #![warn(missing_docs)] // error if there are missing docs
 
-//! This crate is a rough prototype Rust SDK. It can be used to create closures that look sort of
-//! like normal workflow code. It should only depend on things in the core crate that are already
-//! publicly exposed.
+//! This crate defines an alpha-stage Temporal Rust SDK.
 //!
-//! Needs lots of love to be production ready but the basis is there
+//! Currently defining activities and running an activity-only worker is the most stable code.
+//! Workflow definitions exist and running a workflow worker works, but the API is still very
+//! unstable.
+//!
+//! An example of running an activity worker:
+//! ```no_run
+//! use std::sync::Arc;
+//! use std::str::FromStr;
+//! use temporal_sdk::{sdk_client_options, Worker};
+//! use temporal_sdk_core::{init_worker, Url};
+//! use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let server_options = sdk_client_options(Url::from_str("http://localhost:7233")?).build()?;
+//!     let client = server_options.connect("my_namespace", None).await?;
+//!     let worker_config = WorkerConfigBuilder::default().build()?;
+//!     let core_worker = init_worker(worker_config, client);
+//!
+//!     let mut worker = Worker::new(Arc::new(core_worker), "task_queue", None);
+//!     worker.register_activity(
+//!         "echo_activity",
+//!         |echo_me: String| async move { Ok(echo_me) },
+//!     );
+//!     // TODO: This should be different
+//!     worker.run_until_done().await?;
+//!     Ok(())
+//! }
+//! ```
 
 #[macro_use]
 extern crate tracing;
@@ -22,6 +48,7 @@ pub use workflow_context::{
 use crate::workflow_context::{ChildWfCommon, PendingChildWorkflow};
 use anyhow::{anyhow, bail};
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use once_cell::sync::OnceCell;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display, Formatter},
@@ -32,7 +59,8 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{ServerGatewayApis, WorkflowOptions};
+use temporal_client::{ServerGatewayApis, ServerGatewayOptionsBuilder, WorkflowOptions};
+use temporal_sdk_core::Url;
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
     Worker as CoreWorker,
@@ -63,6 +91,21 @@ use tokio::{
     task::JoinError,
 };
 use tokio_util::sync::CancellationToken;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Returns a [ServerGatewayOptionsBuilder] with required fields set to appropriate values
+/// for the Rust SDK.
+pub fn sdk_client_options(url: impl Into<Url>) -> ServerGatewayOptionsBuilder {
+    let mut builder = ServerGatewayOptionsBuilder::default();
+    builder
+        .target_url(url)
+        .client_name("rust-sdk".to_string())
+        .client_version(VERSION.to_string())
+        .worker_binary_id(binary_id().to_string());
+
+    builder
+}
 
 /// A worker that can poll for and respond to workflow tasks by using [WorkflowFunction]s,
 /// and activity tasks by using [ActivityFunction]s
@@ -96,12 +139,12 @@ impl Worker {
     /// Create a new rust worker
     pub fn new(
         worker: Arc<dyn CoreWorker>,
-        task_queue: String,
+        task_queue: impl Into<String>,
         task_timeout: Option<Duration>,
     ) -> Self {
         Self {
             worker,
-            task_queue,
+            task_queue: task_queue.into(),
             task_timeout,
             workflow_half: WorkflowHalf {
                 workflows: Default::default(),
@@ -682,4 +725,21 @@ where
         };
         Arc::new(wrapper)
     }
+}
+
+/// Reads own binary, hashes it, and returns b64 str version of that hash
+fn binary_id() -> &'static str {
+    use sha2::{Digest, Sha256};
+    use std::{env, fs, io};
+
+    static INSTANCE: OnceCell<String> = OnceCell::new();
+    INSTANCE.get_or_init(|| {
+        let exe_path = env::current_exe().expect("Cannot read own binary to determine binary id");
+        let mut exe_file =
+            fs::File::open(exe_path).expect("Cannot read own binary to determine binary id");
+        let mut hasher = Sha256::new();
+        io::copy(&mut exe_file, &mut hasher).expect("Copying data into binary hasher works");
+        let hash = hasher.finalize();
+        base64::encode(hash)
+    })
 }
