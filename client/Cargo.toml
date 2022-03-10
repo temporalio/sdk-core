@@ -36,4 +36,3 @@ uuid = { version = "0.8.2", features = ["v4"] }
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"
 version = "0.1"
-

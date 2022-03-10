@@ -12,13 +12,13 @@ use std::{
     time::Duration,
 };
 use temporal_client::{RetryGateway, ServerGateway, ServerGatewayApis, WorkflowOptions};
-use temporal_sdk::TestRustWorker;
+use temporal_sdk::Worker;
 use temporal_sdk_core::{
     init_replay_worker, init_worker, replay::mock_gateway_from_history, telemetry_init,
     ServerGatewayOptions, ServerGatewayOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
     WorkerConfig, WorkerConfigBuilder,
 };
-use temporal_sdk_core_api::Worker;
+use temporal_sdk_core_api::Worker as CoreWorker;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_commands::{
@@ -41,7 +41,7 @@ const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
 
 /// Create a worker instance which will use the provided test name to base the task queue and wf id
 /// upon. Returns the instance and the task queue name (which is also the workflow id).
-pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn Worker>, String) {
+pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn CoreWorker>, String) {
     let mut starter = CoreWfStarter::new(test_name);
     let core = starter.get_worker().await;
     starter.start_wf().await;
@@ -50,7 +50,10 @@ pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn Worker>, Strin
 
 /// Create a worker replay instance preloaded with a provided history. Returns the worker impl
 /// and the task queue name as in [init_core_and_create_wf].
-pub fn init_core_replay_preloaded(test_name: &str, history: &History) -> (Arc<dyn Worker>, String) {
+pub fn init_core_replay_preloaded(
+    test_name: &str,
+    history: &History,
+) -> (Arc<dyn CoreWorker>, String) {
     let worker_cfg = WorkerConfigBuilder::default()
         .namespace(NAMESPACE)
         .task_queue(test_name)
@@ -81,7 +84,7 @@ pub struct CoreWfStarter {
     initted_worker: OnceCell<InitializedWorker>,
 }
 struct InitializedWorker {
-    worker: Arc<dyn Worker>,
+    worker: Arc<dyn CoreWorker>,
     client: Arc<RetryGateway<ServerGateway>>,
 }
 
@@ -108,8 +111,8 @@ impl CoreWfStarter {
         }
     }
 
-    pub async fn worker(&mut self) -> TestRustWorker {
-        TestRustWorker::new(
+    pub async fn worker(&mut self) -> Worker {
+        Worker::new(
             self.get_worker().await,
             self.worker_config.task_queue.clone(),
             self.wft_timeout,
@@ -120,7 +123,7 @@ impl CoreWfStarter {
         self.get_worker().await.shutdown().await;
     }
 
-    pub async fn get_worker(&mut self) -> Arc<dyn Worker> {
+    pub async fn get_worker(&mut self) -> Arc<dyn CoreWorker> {
         self.get_or_init().await.worker.clone()
     }
 
@@ -162,7 +165,7 @@ impl CoreWfStarter {
         wf_id: impl Into<String>,
         run_id: impl Into<String>,
         // TODO: Need not be passed in
-        worker: &mut TestRustWorker,
+        worker: &mut Worker,
     ) -> Result<(), anyhow::Error> {
         // Fetch history and replay it
         let history = self
@@ -335,7 +338,7 @@ pub trait WorkerTestHelpers {
 #[async_trait::async_trait]
 impl<T> WorkerTestHelpers for T
 where
-    T: Worker + ?Sized,
+    T: CoreWorker + ?Sized,
 {
     async fn complete_execution(&self, run_id: &str) {
         self.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(

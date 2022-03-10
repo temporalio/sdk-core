@@ -35,7 +35,7 @@ use std::{
 use temporal_client::{ServerGatewayApis, WorkflowOptions};
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
-    Worker,
+    Worker as CoreWorker,
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -64,9 +64,10 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-/// A worker that can poll for and respond to workflow tasks by using [WorkflowFunction]s
-pub struct TestRustWorker {
-    worker: Arc<dyn Worker>,
+/// A worker that can poll for and respond to workflow tasks by using [WorkflowFunction]s,
+/// and activity tasks by using [ActivityFunction]s
+pub struct Worker {
+    worker: Arc<dyn CoreWorker>,
     task_queue: String,
     task_timeout: Option<Duration>,
     workflow_half: WorkflowHalf,
@@ -91,10 +92,10 @@ struct ActivityHalf {
     task_tokens_to_cancels: HashMap<TaskToken, CancellationToken>,
 }
 
-impl TestRustWorker {
+impl Worker {
     /// Create a new rust worker
     pub fn new(
-        worker: Arc<dyn Worker>,
+        worker: Arc<dyn CoreWorker>,
         task_queue: String,
         task_timeout: Option<Duration>,
     ) -> Self {
@@ -280,11 +281,18 @@ impl TestRustWorker {
     /// Turns this rust worker into a new worker with all the same workflows and activities
     /// registered, but with a new underlying core worker. Can be used to swap the worker for
     /// a replay worker, change task queues, etc.
-    pub fn with_new_core_worker(&mut self, new_core_worker: Arc<dyn Worker>) {
+    pub fn with_new_core_worker(&mut self, new_core_worker: Arc<dyn CoreWorker>) {
         self.worker = new_core_worker;
     }
 
-    fn split_apart(&mut self) -> (Arc<dyn Worker>, &str, &mut WorkflowHalf, &mut ActivityHalf) {
+    fn split_apart(
+        &mut self,
+    ) -> (
+        Arc<dyn CoreWorker>,
+        &str,
+        &mut WorkflowHalf,
+        &mut ActivityHalf,
+    ) {
         (
             self.worker.clone(),
             &self.task_queue,
@@ -297,7 +305,7 @@ impl TestRustWorker {
 impl WorkflowHalf {
     async fn workflow_activation_handler(
         &mut self,
-        worker: &dyn Worker,
+        worker: &dyn CoreWorker,
         task_queue: &str,
         shutdown_rx: &Receiver<bool>,
         completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
@@ -374,7 +382,7 @@ impl ActivityHalf {
     /// Spawns off a task to handle the provided activity task
     fn activity_task_handler(
         &mut self,
-        worker: Arc<dyn Worker>,
+        worker: Arc<dyn CoreWorker>,
         activity: ActivityTask,
     ) -> Result<(), anyhow::Error> {
         match activity.variant {

@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 use temporal_client::{mocks::mock_gateway, WorkflowOptions};
-use temporal_sdk::{TestRustWorker, WfContext, WorkflowResult};
+use temporal_sdk::{WfContext, Worker, WorkflowResult};
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
 
 static DID_FAIL: AtomicBool = AtomicBool::new(false);
@@ -43,7 +43,7 @@ async fn test_wf_task_rejected_properly() {
         Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::Unspecified));
     let mock = build_mock_pollers(mh);
     let core = mock_worker(mock);
-    let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
+    let mut worker = Worker::new(Arc::new(core), TEST_Q.to_string(), None);
 
     worker.register_wf(wf_type.to_owned(), timer_wf_fails_once);
     worker
@@ -87,7 +87,7 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
         });
     }
     let core = mock_worker(mock);
-    let mut worker = TestRustWorker::new(Arc::new(core), TEST_Q.to_string(), None);
+    let mut worker = Worker::new(Arc::new(core), TEST_Q.to_string(), None);
 
     let started_count: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
     worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
