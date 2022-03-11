@@ -21,13 +21,12 @@
 //!     let worker_config = WorkerConfigBuilder::default().build()?;
 //!     let core_worker = init_worker(worker_config, client);
 //!
-//!     let mut worker = Worker::new(Arc::new(core_worker), "task_queue", None);
+//!     let mut worker = Worker::new(Arc::new(core_worker), "task_queue");
 //!     worker.register_activity(
 //!         "echo_activity",
 //!         |echo_me: String| async move { Ok(echo_me) },
 //!     );
-//!     // TODO: This should be different
-//!     worker.run_until_done().await?;
+//!     worker.run().await?;
 //!     Ok(())
 //! }
 //! ```
@@ -36,6 +35,7 @@
 extern crate tracing;
 
 mod conversions;
+pub mod interceptors;
 mod payload_converter;
 mod workflow_context;
 mod workflow_future;
@@ -45,6 +45,7 @@ pub use workflow_context::{
     Signal, SignalData, SignalWorkflowOptions, WfContext,
 };
 
+use crate::interceptors::WorkerInterceptor;
 use crate::workflow_context::{ChildWfCommon, PendingChildWorkflow};
 use anyhow::{anyhow, bail};
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
@@ -106,10 +107,15 @@ pub fn sdk_client_options(url: impl Into<Url>) -> ServerGatewayOptionsBuilder {
 /// A worker that can poll for and respond to workflow tasks by using [WorkflowFunction]s,
 /// and activity tasks by using [ActivityFunction]s
 pub struct Worker {
-    worker: Arc<dyn CoreWorker>,
-    task_queue: String,
+    common: CommonWorker,
     workflow_half: WorkflowHalf,
     activity_half: ActivityHalf,
+}
+
+struct CommonWorker {
+    worker: Arc<dyn CoreWorker>,
+    task_queue: String,
+    worker_interceptor: Option<Box<dyn WorkerInterceptor>>,
 }
 
 struct WorkflowHalf {
@@ -132,8 +138,11 @@ impl Worker {
     /// Create a new rust worker
     pub fn new(worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         Self {
-            worker,
-            task_queue: task_queue.into(),
+            common: CommonWorker {
+                worker,
+                task_queue: task_queue.into(),
+                worker_interceptor: None,
+            },
             workflow_half: WorkflowHalf {
                 workflows: Default::default(),
                 workflow_fns: Default::default(),
@@ -148,12 +157,19 @@ impl Worker {
 
     /// Access the worker's server gateway client
     pub fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
-        self.worker.server_gateway()
+        self.common.worker.server_gateway()
     }
 
     /// Returns the task queue name this worker polls on
     pub fn task_queue(&self) -> &str {
-        &self.task_queue
+        &self.common.task_queue
+    }
+
+    /// Return a handle that can be used to initiate shutdown.
+    /// TODO: Doc better after shutdown changes
+    pub fn shutdown_handle(&self) -> impl Fn() {
+        let w = self.common.worker.clone();
+        move || w.initiate_shutdown()
     }
 
     /// Register a Workflow function to invoke when the Worker is asked to run a workflow of
@@ -188,13 +204,14 @@ impl Worker {
     pub async fn run(&mut self) -> Result<(), anyhow::Error> {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let pollers = async move {
-            let (worker, task_q, wf_half, act_half) = self.split_apart();
+            let (common, wf_half, act_half) = self.split_apart();
             let (completions_tx, mut completions_rx) = unbounded_channel();
             let (wf_poll_res, act_poll_res) = tokio::join!(
                 // Workflow polling loop
                 async {
                     loop {
-                        let activation = match worker.poll_workflow_activation().await {
+                        info!("Polling");
+                        let activation = match common.worker.poll_workflow_activation().await {
                             Err(PollWfError::ShutDown) => {
                                 break Result::<_, anyhow::Error>::Ok(());
                             }
@@ -202,8 +219,7 @@ impl Worker {
                         };
                         wf_half
                             .workflow_activation_handler(
-                                worker.as_ref(),
-                                task_q,
+                                common,
                                 &shutdown_rx,
                                 &completions_tx,
                                 &mut completions_rx,
@@ -219,11 +235,11 @@ impl Worker {
                     if !act_half.activity_fns.is_empty() {
                         loop {
                             tokio::select! {
-                                activity = worker.poll_activity_task() => {
+                                activity = common.worker.poll_activity_task() => {
                                     if matches!(activity, Err(PollActivityError::ShutDown)) {
                                         break;
                                     }
-                                    act_half.activity_task_handler(worker.clone(),
+                                    act_half.activity_task_handler(common.worker.clone(),
                                                                    activity?)?;
                                 },
                                 _ = shutdown_rx.changed() => { break }
@@ -240,32 +256,31 @@ impl Worker {
         };
 
         let myself = pollers.await?;
+        info!("Polling loop exited");
+        let _ = shutdown_tx.send(true);
         while let Some(h) = myself.workflow_half.join_handles.next().await {
             h??;
         }
-        myself.worker.shutdown().await;
+        myself.common.worker.shutdown().await;
         myself.workflow_half.workflows.clear();
         Ok(())
+    }
+
+    /// Set a [WorkerInterceptor]
+    pub fn set_worker_interceptor(&mut self, interceptor: Box<dyn WorkerInterceptor>) {
+        self.common.worker_interceptor = Some(interceptor);
     }
 
     /// Turns this rust worker into a new worker with all the same workflows and activities
     /// registered, but with a new underlying core worker. Can be used to swap the worker for
     /// a replay worker, change task queues, etc.
     pub fn with_new_core_worker(&mut self, new_core_worker: Arc<dyn CoreWorker>) {
-        self.worker = new_core_worker;
+        self.common.worker = new_core_worker;
     }
 
-    fn split_apart(
-        &mut self,
-    ) -> (
-        Arc<dyn CoreWorker>,
-        &str,
-        &mut WorkflowHalf,
-        &mut ActivityHalf,
-    ) {
+    fn split_apart(&mut self) -> (&mut CommonWorker, &mut WorkflowHalf, &mut ActivityHalf) {
         (
-            self.worker.clone(),
-            &self.task_queue,
+            &mut self.common,
             &mut self.workflow_half,
             &mut self.activity_half,
         )
@@ -275,8 +290,7 @@ impl Worker {
 impl WorkflowHalf {
     async fn workflow_activation_handler(
         &mut self,
-        worker: &dyn CoreWorker,
-        task_queue: &str,
+        common: &CommonWorker,
         shutdown_rx: &Receiver<bool>,
         completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
         completions_rx: &mut UnboundedReceiver<WorkflowActivationCompletion>,
@@ -295,8 +309,8 @@ impl WorkflowHalf {
                 .ok_or_else(|| anyhow!("Workflow type {workflow_type} not found"))?;
 
             let (wff, activations) = wf_function.start_workflow(
-                worker.get_config().namespace.clone(),
-                task_queue.to_string(),
+                common.worker.get_config().namespace.clone(),
+                common.task_queue.clone(),
                 // NOTE: Don't clone args if this gets ported to be a non-test rust worker
                 sw.arguments.clone(),
                 completions_tx.clone(),
@@ -323,10 +337,13 @@ impl WorkflowHalf {
         };
 
         let completion = completions_rx.recv().await.expect("No workflows left?");
-        if completion.has_execution_ending() {
-            debug!("Workflow {} says it's finishing", &completion.run_id);
+        if let Some(ref i) = common.worker_interceptor {
+            i.on_workflow_activation_completion(&completion);
         }
-        worker.complete_workflow_activation(completion).await?;
+        common
+            .worker
+            .complete_workflow_activation(completion)
+            .await?;
         Ok(())
     }
 }

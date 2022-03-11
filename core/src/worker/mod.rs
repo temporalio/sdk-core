@@ -162,6 +162,17 @@ impl WorkerTrait for Worker {
         &self.config
     }
 
+    /// Begins the shutdown process, tells pollers they should stop. Is idempotent.
+    // TODO: will be in trait after Roey's shutdown refactor
+    fn initiate_shutdown(&self) {
+        self.shutdown_token.cancel();
+        // First, we want to stop polling of both activity and workflow tasks
+        if let Some(atm) = self.at_task_mgr.as_ref() {
+            atm.notify_shutdown();
+        }
+        self.wf_task_source.stop_pollers();
+    }
+
     async fn shutdown(&self) {
         self.shutdown().await
     }
@@ -291,20 +302,11 @@ impl Worker {
         }
     }
 
-    /// Begins the shutdown process, tells pollers they should stop. Is idempotent.
-    pub(crate) fn initiate_shutdown(&self) {
-        self.shutdown_token.cancel();
-        // First, we want to stop polling of both activity and workflow tasks
-        if let Some(atm) = self.at_task_mgr.as_ref() {
-            atm.notify_shutdown();
-        }
-        self.wf_task_source.stop_pollers();
-    }
-
     /// Will shutdown the worker. Does not resolve until all outstanding workflow tasks have been
     /// completed
     pub(crate) async fn shutdown(&self) {
         self.initiate_shutdown();
+        info!("Initiated shutdown");
         // Next we need to wait for all local activities to finish so no more workflow task
         // heartbeats will be generated
         self.local_act_mgr.shutdown_and_wait_all_finished().await;

@@ -1,18 +1,23 @@
 //! This crate contains testing functionality that can be useful when building SDKs against Core,
 //! or even when testing workflows written in SDKs that use Core.
 
+#[macro_use]
+extern crate tracing;
+
 pub mod canned_histories;
 
 use futures::{stream::FuturesUnordered, StreamExt};
 use log::LevelFilter;
 use prost::Message;
 use rand::{distributions::Standard, Rng};
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, sync::Arc,
     time::Duration,
 };
 use temporal_client::{RetryGateway, ServerGateway, ServerGatewayApis, WorkflowOptions};
+use temporal_sdk::interceptors::WorkerInterceptor;
 use temporal_sdk::{IntoActivityFunc, Worker, WorkflowFunction};
 use temporal_sdk_core::{
     init_replay_worker, init_worker, replay::mock_gateway_from_history, telemetry_init,
@@ -244,14 +249,21 @@ impl CoreWfStarter {
 /// Provides conveniences for running integ tests with the SDK
 pub struct TestWorker {
     inner: Worker,
-    expected_wf_runs: AtomicUsize,
+    incomplete_workflows: Arc<AtomicUsize>,
 }
 impl TestWorker {
     /// Create a new test worker
     pub fn new(core_worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
+        let ct = Arc::new(AtomicUsize::new(0));
+        let mut inner = Worker::new(core_worker, task_queue);
+        let iceptor = WorkflowCompletionCountingInterceptor {
+            incomplete_workflows: ct.clone(),
+            shutdown_handle: Box::new(inner.shutdown_handle()),
+        };
+        inner.set_worker_interceptor(Box::new(iceptor));
         Self {
-            inner: Worker::new(core_worker, task_queue),
-            expected_wf_runs: AtomicUsize::new(0),
+            inner,
+            incomplete_workflows: ct,
         }
     }
 
@@ -260,7 +272,8 @@ impl TestWorker {
     }
 
     pub fn incr_expected_run_count(&self, amount: usize) {
-        self.expected_wf_runs.fetch_add(amount, Ordering::AcqRel);
+        self.incomplete_workflows
+            .fetch_add(amount, Ordering::AcqRel);
     }
 
     // TODO: Maybe trait-ify?
@@ -305,21 +318,52 @@ impl TestWorker {
                 options,
             )
             .await?;
+        self.incr_expected_run_count(1);
         Ok(res.run_id)
     }
 
     /// Runs until all expected workflows have completed
     pub async fn run_until_done(&mut self) -> Result<(), anyhow::Error> {
-        todo!()
+        self.inner.run().await
     }
 
     /// See [Self::run_until_done], except calls the provided callback just before performing core
     /// shutdown.
     pub async fn run_until_done_shutdown_hook(
         &mut self,
-        before_shutdown: impl FnOnce(),
+        before_shutdown: impl FnOnce() + 'static,
     ) -> Result<(), anyhow::Error> {
-        todo!()
+        // Replace shutdown interceptor with one that calls the before hook first
+        let b4shut = RefCell::new(Some(before_shutdown));
+        let shutdown_handle = self.inner.shutdown_handle();
+        let iceptor = WorkflowCompletionCountingInterceptor {
+            incomplete_workflows: self.incomplete_workflows.clone(),
+            shutdown_handle: Box::new(move || {
+                if let Some(s) = b4shut.borrow_mut().take() {
+                    s();
+                }
+                shutdown_handle();
+            }),
+        };
+        self.inner.set_worker_interceptor(Box::new(iceptor));
+        self.inner.run().await
+    }
+}
+
+struct WorkflowCompletionCountingInterceptor {
+    incomplete_workflows: Arc<AtomicUsize>,
+    shutdown_handle: Box<dyn Fn()>,
+}
+impl WorkerInterceptor for WorkflowCompletionCountingInterceptor {
+    fn on_workflow_activation_completion(&self, completion: &WorkflowActivationCompletion) {
+        if completion.has_execution_ending() {
+            info!("Workflow {} says it's finishing", &completion.run_id);
+            let prev = self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
+            if prev <= 1 {
+                // There are now zero, we just subtracted one
+                (self.shutdown_handle)()
+            }
+        }
     }
 }
 

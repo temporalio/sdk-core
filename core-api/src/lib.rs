@@ -97,6 +97,9 @@ pub trait Worker: Send + Sync {
     /// Return this worker's config
     fn get_config(&self) -> &WorkerConfig;
 
+    /// TODO: Will be replaced/fixed/whatever by shutdown refactoring
+    fn initiate_shutdown(&self);
+
     /// Initiates async shutdown procedure, eventually ceases all polling of the server and shuts
     /// down this worker. [Worker::poll_workflow_activation] should be called until it
     /// returns [PollWfError::ShutDown] to ensure that any workflows which are still undergoing

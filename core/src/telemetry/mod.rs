@@ -253,7 +253,7 @@ pub fn fetch_global_buffered_logs() -> Vec<CoreLog> {
 pub(crate) fn test_telem_console() {
     telemetry_init(&TelemetryOptions {
         otel_collector_url: None,
-        tracing_filter: "temporal_sdk_core=DEBUG".to_string(),
+        tracing_filter: "temporal_sdk_core=DEBUG,temporal_sdk=DEBUG".to_string(),
         log_forwarding_level: LevelFilter::Off,
         prometheus_export_bind_address: None,
         totally_disable: false,
