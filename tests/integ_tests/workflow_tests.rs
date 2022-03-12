@@ -7,6 +7,7 @@ mod determinism;
 mod local_activities;
 mod patches;
 mod replay;
+mod resets;
 mod signals;
 mod stickyness;
 mod timers;

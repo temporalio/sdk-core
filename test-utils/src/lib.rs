@@ -11,7 +11,7 @@ use std::{
     convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, sync::Arc,
     time::Duration,
 };
-use temporal_client::WorkflowOptions;
+use temporal_client::{RetryGateway, ServerGateway, ServerGatewayApis, WorkflowOptions};
 use temporal_sdk::TestRustWorker;
 use temporal_sdk_core::{
     init_replay_worker, init_worker, replay::mock_gateway_from_history, telemetry_init,
@@ -29,6 +29,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::history::v1::History,
 };
+use tokio::sync::OnceCell;
 use url::Url;
 
 pub const NAMESPACE: &str = "default";
@@ -77,7 +78,11 @@ pub struct CoreWfStarter {
     telemetry_options: TelemetryOptions,
     worker_config: WorkerConfig,
     wft_timeout: Option<Duration>,
-    initted_worker: Option<Arc<dyn Worker>>,
+    initted_worker: OnceCell<InitializedWorker>,
+}
+struct InitializedWorker {
+    worker: Arc<dyn Worker>,
+    client: Arc<RetryGateway<ServerGateway>>,
 }
 
 impl CoreWfStarter {
@@ -99,7 +104,7 @@ impl CoreWfStarter {
                 .build()
                 .unwrap(),
             wft_timeout: None,
-            initted_worker: None,
+            initted_worker: OnceCell::new(),
         }
     }
 
@@ -116,16 +121,11 @@ impl CoreWfStarter {
     }
 
     pub async fn get_worker(&mut self) -> Arc<dyn Worker> {
-        if self.initted_worker.is_none() {
-            telemetry_init(&self.telemetry_options).expect("Telemetry inits cleanly");
-            let gateway = get_integ_server_options()
-                .connect(self.worker_config.namespace.clone(), None)
-                .await
-                .expect("Must connect");
-            let worker = init_worker(self.worker_config.clone(), gateway);
-            self.initted_worker = Some(Arc::new(worker));
-        }
-        self.initted_worker.as_ref().unwrap().clone()
+        self.get_or_init().await.worker.clone()
+    }
+
+    pub async fn get_client(&mut self) -> Arc<RetryGateway<ServerGateway>> {
+        self.get_or_init().await.client.clone()
     }
 
     /// Start the workflow defined by the builder and return run id
@@ -137,13 +137,12 @@ impl CoreWfStarter {
     pub async fn start_wf_with_id(&self, workflow_id: String, mut opts: WorkflowOptions) -> String {
         opts.task_timeout = opts.task_timeout.or(self.wft_timeout);
         self.initted_worker
-            .as_ref()
+            .get()
             .expect(
-                "Core must be initted before starting a workflow.\
-                             Tests must call `get_core` first.",
+                "Worker must be initted before starting a workflow.\
+                             Tests must call `get_worker` first.",
             )
-            .as_ref()
-            .server_gateway()
+            .client
             .start_workflow(
                 vec![],
                 self.worker_config.task_queue.clone(),
@@ -217,6 +216,25 @@ impl CoreWfStarter {
     pub fn wft_timeout(&mut self, timeout: Duration) -> &mut Self {
         self.wft_timeout = Some(timeout);
         self
+    }
+
+    async fn get_or_init(&mut self) -> &InitializedWorker {
+        self.initted_worker
+            .get_or_init(|| async {
+                telemetry_init(&self.telemetry_options).expect("Telemetry inits cleanly");
+                let gateway = Arc::new(
+                    get_integ_server_options()
+                        .connect(self.worker_config.namespace.clone(), None)
+                        .await
+                        .expect("Must connect"),
+                );
+                let worker = init_worker(self.worker_config.clone(), gateway.clone());
+                InitializedWorker {
+                    worker: Arc::new(worker),
+                    client: gateway,
+                }
+            })
+            .await
     }
 }
 

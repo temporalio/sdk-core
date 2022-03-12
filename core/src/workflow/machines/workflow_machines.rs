@@ -467,7 +467,6 @@ impl WorkflowMachines {
                     attrs,
                 )) = event.attributes
                 {
-                    self.run_id = attrs.original_execution_run_id.clone();
                     if let Some(st) = event.event_time {
                         let as_systime: SystemTime = st.try_into()?;
                         self.workflow_start_time = Some(as_systime);
