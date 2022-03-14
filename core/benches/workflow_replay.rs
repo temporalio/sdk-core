@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use futures::StreamExt;
 use std::time::Duration;
-use temporal_sdk::{TestRustWorker, WfContext, WorkflowFunction};
+use temporal_sdk::{WfContext, Worker, WorkflowFunction};
 use temporal_sdk_core::{telemetry_init, TelemetryOptionsBuilder};
 use temporal_sdk_core_protos::DEFAULT_WORKFLOW_TYPE;
 use temporal_sdk_core_test_utils::{canned_histories, init_core_replay_preloaded};
@@ -29,10 +29,9 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             tokio_runtime.block_on(async {
                 let func = timers_wf(num_timers);
                 let (worker, _) = init_core_replay_preloaded("replay_bench", &hist);
-                let mut worker = TestRustWorker::new(worker, "replay_bench".to_string(), None);
+                let mut worker = Worker::new(worker, "replay_bench".to_string());
                 worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
-                worker.incr_expected_run_count(1);
-                worker.run_until_done().await.unwrap();
+                worker.run().await.unwrap();
             })
         })
     });
@@ -46,10 +45,9 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             tokio_runtime.block_on(async {
                 let func = big_signals_wf(num_tasks);
                 let (worker, _) = init_core_replay_preloaded("large_hist_bench", &hist);
-                let mut worker = TestRustWorker::new(worker, "large_hist_bench".to_string(), None);
+                let mut worker = Worker::new(worker, "large_hist_bench".to_string());
                 worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
-                worker.incr_expected_run_count(1);
-                worker.run_until_done().await.unwrap();
+                worker.run().await.unwrap();
             })
         })
     });

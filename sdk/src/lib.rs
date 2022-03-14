@@ -1,15 +1,41 @@
 #![warn(missing_docs)] // error if there are missing docs
 
-//! This crate is a rough prototype Rust SDK. It can be used to create closures that look sort of
-//! like normal workflow code. It should only depend on things in the core crate that are already
-//! publicly exposed.
+//! This crate defines an alpha-stage Temporal Rust SDK.
 //!
-//! Needs lots of love to be production ready but the basis is there
+//! Currently defining activities and running an activity-only worker is the most stable code.
+//! Workflow definitions exist and running a workflow worker works, but the API is still very
+//! unstable.
+//!
+//! An example of running an activity worker:
+//! ```no_run
+//! use std::sync::Arc;
+//! use std::str::FromStr;
+//! use temporal_sdk::{sdk_client_options, Worker};
+//! use temporal_sdk_core::{init_worker, Url};
+//! use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let server_options = sdk_client_options(Url::from_str("http://localhost:7233")?).build()?;
+//!     let client = server_options.connect("my_namespace", None).await?;
+//!     let worker_config = WorkerConfigBuilder::default().build()?;
+//!     let core_worker = init_worker(worker_config, client);
+//!
+//!     let mut worker = Worker::new(Arc::new(core_worker), "task_queue");
+//!     worker.register_activity(
+//!         "echo_activity",
+//!         |echo_me: String| async move { Ok(echo_me) },
+//!     );
+//!     worker.run().await?;
+//!     Ok(())
+//! }
+//! ```
 
 #[macro_use]
 extern crate tracing;
 
 mod conversions;
+pub mod interceptors;
 mod payload_converter;
 mod workflow_context;
 mod workflow_future;
@@ -19,23 +45,22 @@ pub use workflow_context::{
     Signal, SignalData, SignalWorkflowOptions, WfContext,
 };
 
+use crate::interceptors::WorkerInterceptor;
 use crate::workflow_context::{ChildWfCommon, PendingChildWorkflow};
 use anyhow::{anyhow, bail};
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use once_cell::sync::OnceCell;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display, Formatter},
     future::Future,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-    time::Duration,
+    sync::Arc,
 };
-use temporal_client::{ServerGatewayApis, WorkflowOptions};
+use temporal_client::{ServerGatewayApis, ServerGatewayOptionsBuilder};
+use temporal_sdk_core::Url;
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
-    Worker,
+    Worker as CoreWorker,
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -64,13 +89,33 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-/// A worker that can poll for and respond to workflow tasks by using [WorkflowFunction]s
-pub struct TestRustWorker {
-    worker: Arc<dyn Worker>,
-    task_queue: String,
-    task_timeout: Option<Duration>,
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Returns a [ServerGatewayOptionsBuilder] with required fields set to appropriate values
+/// for the Rust SDK.
+pub fn sdk_client_options(url: impl Into<Url>) -> ServerGatewayOptionsBuilder {
+    let mut builder = ServerGatewayOptionsBuilder::default();
+    builder
+        .target_url(url)
+        .client_name("rust-sdk".to_string())
+        .client_version(VERSION.to_string())
+        .worker_binary_id(binary_id().to_string());
+
+    builder
+}
+
+/// A worker that can poll for and respond to workflow tasks by using [WorkflowFunction]s,
+/// and activity tasks by using [ActivityFunction]s
+pub struct Worker {
+    common: CommonWorker,
     workflow_half: WorkflowHalf,
     activity_half: ActivityHalf,
+}
+
+struct CommonWorker {
+    worker: Arc<dyn CoreWorker>,
+    task_queue: String,
+    worker_interceptor: Option<Box<dyn WorkerInterceptor>>,
 }
 
 struct WorkflowHalf {
@@ -78,8 +123,6 @@ struct WorkflowHalf {
     workflows: HashMap<String, UnboundedSender<WorkflowActivation>>,
     /// Maps workflow type to the function for executing workflow runs with that ID
     workflow_fns: HashMap<String, WorkflowFunction>,
-    /// Number of live workflows
-    incomplete_workflows: Arc<AtomicUsize>,
     /// Handles for each spawned workflow run are inserted here to be cleaned up when all runs
     /// are finished
     join_handles: FuturesUnordered<BoxFuture<'static, Result<WorkflowResult<()>, JoinError>>>,
@@ -91,21 +134,18 @@ struct ActivityHalf {
     task_tokens_to_cancels: HashMap<TaskToken, CancellationToken>,
 }
 
-impl TestRustWorker {
+impl Worker {
     /// Create a new rust worker
-    pub fn new(
-        worker: Arc<dyn Worker>,
-        task_queue: String,
-        task_timeout: Option<Duration>,
-    ) -> Self {
+    pub fn new(worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         Self {
-            worker,
-            task_queue,
-            task_timeout,
+            common: CommonWorker {
+                worker,
+                task_queue: task_queue.into(),
+                worker_interceptor: None,
+            },
             workflow_half: WorkflowHalf {
                 workflows: Default::default(),
                 workflow_fns: Default::default(),
-                incomplete_workflows: Arc::new(AtomicUsize::new(0)),
                 join_handles: FuturesUnordered::new(),
             },
             activity_half: ActivityHalf {
@@ -117,42 +157,19 @@ impl TestRustWorker {
 
     /// Access the worker's server gateway client
     pub fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
-        self.worker.server_gateway()
+        self.common.worker.server_gateway()
     }
 
     /// Returns the task queue name this worker polls on
     pub fn task_queue(&self) -> &str {
-        &self.task_queue
+        &self.common.task_queue
     }
 
-    /// Create a workflow, asking the server to start it with the provided workflow ID and using the
-    /// provided workflow function.
-    ///
-    /// Increments the expected Workflow run count.
-    ///
-    /// Returns the run id of the started workflow
-    pub async fn submit_wf(
-        &self,
-        workflow_id: impl Into<String>,
-        workflow_type: impl Into<String>,
-        input: Vec<Payload>,
-        mut options: WorkflowOptions,
-    ) -> Result<String, tonic::Status> {
-        options.task_timeout = options.task_timeout.or(self.task_timeout);
-        let res = self
-            .worker
-            .server_gateway()
-            .start_workflow(
-                input,
-                self.task_queue.clone(),
-                workflow_id.into(),
-                workflow_type.into(),
-                options,
-            )
-            .await?;
-
-        self.incr_expected_run_count(1);
-        Ok(res.run_id)
+    /// Return a handle that can be used to initiate shutdown.
+    /// TODO: Doc better after shutdown changes
+    pub fn shutdown_handle(&self) -> impl Fn() {
+        let w = self.common.worker.clone();
+        move || w.initiate_shutdown()
     }
 
     /// Register a Workflow function to invoke when the Worker is asked to run a workflow of
@@ -182,34 +199,19 @@ impl TestRustWorker {
         );
     }
 
-    // TODO: Should be removed before making this worker prod ready. There can be a test worker
-    //   which wraps this one and implements the workflow counting / run_until_done concepts.
-    //   This worker can expose an interceptor for completions that could be used to assist with
-    //   workflow tracking
-    /// Increment the expected Workflow run count on this Worker. The Worker tracks the run count
-    /// and will resolve `run_until_done` when it goes down to 0.
-    /// You do not have to increment if scheduled a Workflow with `submit_wf`.
-    pub fn incr_expected_run_count(&self, count: usize) {
-        self.workflow_half
-            .incomplete_workflows
-            .fetch_add(count, Ordering::SeqCst);
-    }
-
-    /// See [Self::run_until_done], except calls the provided callback just before performing core
-    /// shutdown.
-    pub async fn run_until_done_shutdown_hook(
-        &mut self,
-        before_shutdown: impl FnOnce(),
-    ) -> Result<(), anyhow::Error> {
+    /// Runs the worker. Eventually resolves after the worker has been explicitly shut down,
+    /// or may return early with an error in the event of some unresolvable problem.
+    pub async fn run(&mut self) -> Result<(), anyhow::Error> {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let pollers = async move {
-            let (worker, task_q, wf_half, act_half) = self.split_apart();
+            let (common, wf_half, act_half) = self.split_apart();
             let (completions_tx, mut completions_rx) = unbounded_channel();
             let (wf_poll_res, act_poll_res) = tokio::join!(
                 // Workflow polling loop
                 async {
                     loop {
-                        let activation = match worker.poll_workflow_activation().await {
+                        info!("Polling");
+                        let activation = match common.worker.poll_workflow_activation().await {
                             Err(PollWfError::ShutDown) => {
                                 break Result::<_, anyhow::Error>::Ok(());
                             }
@@ -217,21 +219,13 @@ impl TestRustWorker {
                         };
                         wf_half
                             .workflow_activation_handler(
-                                worker.as_ref(),
-                                task_q,
+                                common,
                                 &shutdown_rx,
                                 &completions_tx,
                                 &mut completions_rx,
                                 activation,
                             )
                             .await?;
-                        if wf_half.incomplete_workflows.load(Ordering::SeqCst) == 0 {
-                            info!("All expected workflows complete");
-                            // Die rebel scum - evict all workflows (which are complete now),
-                            // and turn off activity polling.
-                            let _ = shutdown_tx.send(true);
-                            break Result::<_, anyhow::Error>::Ok(());
-                        }
                     }
                 },
                 // Only poll on the activity queue if activity functions have been registered. This
@@ -241,11 +235,11 @@ impl TestRustWorker {
                     if !act_half.activity_fns.is_empty() {
                         loop {
                             tokio::select! {
-                                activity = worker.poll_activity_task() => {
+                                activity = common.worker.poll_activity_task() => {
                                     if matches!(activity, Err(PollActivityError::ShutDown)) {
                                         break;
                                     }
-                                    act_half.activity_task_handler(worker.clone(),
+                                    act_half.activity_task_handler(common.worker.clone(),
                                                                    activity?)?;
                                 },
                                 _ = shutdown_rx.changed() => { break }
@@ -262,32 +256,31 @@ impl TestRustWorker {
         };
 
         let myself = pollers.await?;
+        info!("Polling loop exited");
+        let _ = shutdown_tx.send(true);
         while let Some(h) = myself.workflow_half.join_handles.next().await {
             h??;
         }
-        before_shutdown();
-        myself.worker.shutdown().await;
+        myself.common.worker.shutdown().await;
         myself.workflow_half.workflows.clear();
         Ok(())
     }
 
-    /// Drives all workflows & activities until they have all finished, repeatedly polls server to
-    /// fetch work for them.
-    pub async fn run_until_done(&mut self) -> Result<(), anyhow::Error> {
-        self.run_until_done_shutdown_hook(|| {}).await
+    /// Set a [WorkerInterceptor]
+    pub fn set_worker_interceptor(&mut self, interceptor: Box<dyn WorkerInterceptor>) {
+        self.common.worker_interceptor = Some(interceptor);
     }
 
     /// Turns this rust worker into a new worker with all the same workflows and activities
     /// registered, but with a new underlying core worker. Can be used to swap the worker for
     /// a replay worker, change task queues, etc.
-    pub fn with_new_core_worker(&mut self, new_core_worker: Arc<dyn Worker>) {
-        self.worker = new_core_worker;
+    pub fn with_new_core_worker(&mut self, new_core_worker: Arc<dyn CoreWorker>) {
+        self.common.worker = new_core_worker;
     }
 
-    fn split_apart(&mut self) -> (Arc<dyn Worker>, &str, &mut WorkflowHalf, &mut ActivityHalf) {
+    fn split_apart(&mut self) -> (&mut CommonWorker, &mut WorkflowHalf, &mut ActivityHalf) {
         (
-            self.worker.clone(),
-            &self.task_queue,
+            &mut self.common,
             &mut self.workflow_half,
             &mut self.activity_half,
         )
@@ -297,8 +290,7 @@ impl TestRustWorker {
 impl WorkflowHalf {
     async fn workflow_activation_handler(
         &mut self,
-        worker: &dyn Worker,
-        task_queue: &str,
+        common: &CommonWorker,
         shutdown_rx: &Receiver<bool>,
         completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
         completions_rx: &mut UnboundedReceiver<WorkflowActivationCompletion>,
@@ -317,8 +309,8 @@ impl WorkflowHalf {
                 .ok_or_else(|| anyhow!("Workflow type {workflow_type} not found"))?;
 
             let (wff, activations) = wf_function.start_workflow(
-                worker.get_config().namespace.clone(),
-                task_queue.to_string(),
+                common.worker.get_config().namespace.clone(),
+                common.task_queue.clone(),
                 // NOTE: Don't clone args if this gets ported to be a non-test rust worker
                 sw.arguments.clone(),
                 completions_tx.clone(),
@@ -345,11 +337,13 @@ impl WorkflowHalf {
         };
 
         let completion = completions_rx.recv().await.expect("No workflows left?");
-        if completion.has_execution_ending() {
-            debug!("Workflow {} says it's finishing", &completion.run_id);
-            self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
+        if let Some(ref i) = common.worker_interceptor {
+            i.on_workflow_activation_completion(&completion);
         }
-        worker.complete_workflow_activation(completion).await?;
+        common
+            .worker
+            .complete_workflow_activation(completion)
+            .await?;
         Ok(())
     }
 }
@@ -374,7 +368,7 @@ impl ActivityHalf {
     /// Spawns off a task to handle the provided activity task
     fn activity_task_handler(
         &mut self,
-        worker: Arc<dyn Worker>,
+        worker: Arc<dyn CoreWorker>,
         activity: ActivityTask,
     ) -> Result<(), anyhow::Error> {
         match activity.variant {
@@ -674,4 +668,21 @@ where
         };
         Arc::new(wrapper)
     }
+}
+
+/// Reads own binary, hashes it, and returns b64 str version of that hash
+fn binary_id() -> &'static str {
+    use sha2::{Digest, Sha256};
+    use std::{env, fs, io};
+
+    static INSTANCE: OnceCell<String> = OnceCell::new();
+    INSTANCE.get_or_init(|| {
+        let exe_path = env::current_exe().expect("Cannot read own binary to determine binary id");
+        let mut exe_file =
+            fs::File::open(exe_path).expect("Cannot read own binary to determine binary id");
+        let mut hasher = Sha256::new();
+        io::copy(&mut exe_file, &mut hasher).expect("Copying data into binary hasher works");
+        let hash = hasher.finalize();
+        base64::encode(hash)
+    })
 }

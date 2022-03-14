@@ -1,6 +1,6 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporal_sdk::{TestRustWorker, WfContext, WorkflowFunction};
+use temporal_sdk::{WfContext, Worker, WorkflowFunction};
 use temporal_sdk_core::{replay::mock_gateway_from_history, telemetry_init, ServerGatewayApis};
 use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_protos::{
@@ -133,10 +133,9 @@ async fn replay_using_wf_function() {
     let func = timers_wf(num_timers);
     let (worker, _) =
         init_core_replay_preloaded("replay_bench", &t.get_full_history_info().unwrap().into());
-    let mut worker = TestRustWorker::new(worker, "replay_bench".to_string(), None);
+    let mut worker = Worker::new(worker, "replay_bench".to_string());
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
-    worker.incr_expected_run_count(1);
-    worker.run_until_done().await.unwrap();
+    worker.run().await.unwrap();
 }
 
 fn timers_wf(num_timers: u32) -> WorkflowFunction {

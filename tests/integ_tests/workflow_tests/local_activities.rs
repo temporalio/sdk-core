@@ -214,7 +214,7 @@ async fn local_act_retry_timer_backoff() {
         .unwrap();
     worker.run_until_done().await.unwrap();
     starter
-        .fetch_history_and_replay(wf_name, run_id, &mut worker)
+        .fetch_history_and_replay(wf_name, run_id, worker.inner_mut())
         .await
         .unwrap();
 }
@@ -269,7 +269,7 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
         .await
         .unwrap();
     worker
-        .run_until_done_shutdown_hook(|| manual_cancel.cancel())
+        .run_until_done_shutdown_hook(move || manual_cancel.cancel())
         .await
         .unwrap();
 }
@@ -363,7 +363,7 @@ async fn cancel_after_act_starts(
         .await
         .unwrap();
     worker
-        .run_until_done_shutdown_hook(|| manual_cancel.cancel())
+        .run_until_done_shutdown_hook(move || manual_cancel.cancel())
         .await
         .unwrap();
 }
