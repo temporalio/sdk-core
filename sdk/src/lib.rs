@@ -8,8 +8,7 @@
 //!
 //! An example of running an activity worker:
 //! ```no_run
-//! use std::sync::Arc;
-//! use std::str::FromStr;
+//! use std::{sync::Arc, str::FromStr};
 //! use temporal_sdk::{sdk_client_options, Worker};
 //! use temporal_sdk_core::{init_worker, Url};
 //! use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
