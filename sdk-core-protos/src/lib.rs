@@ -260,8 +260,10 @@ pub mod coresdk {
             coresdk::{AsJsonPayloadExt, IntoPayloadsExt},
             temporal::api::common::v1::{Payload as ApiPayload, Payloads},
         };
-        use std::collections::HashMap;
-        use std::fmt::{Display, Formatter};
+        use std::{
+            collections::HashMap,
+            fmt::{Display, Formatter},
+        };
 
         impl<T> From<T> for Payload
         where

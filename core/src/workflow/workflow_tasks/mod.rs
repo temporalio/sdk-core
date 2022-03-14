@@ -309,6 +309,7 @@ impl WorkflowTaskManager {
             task_token = %&work.task_token,
             history_length = %work.history.events.len(),
             attempt = %work.attempt,
+            run_id = %work.workflow_execution.run_id,
             "Applying new workflow task from server"
         );
         let task_start_time = Instant::now();

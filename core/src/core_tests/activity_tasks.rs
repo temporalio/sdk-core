@@ -8,12 +8,14 @@ use crate::{
     ActivityHeartbeat, MetricsContext, Worker, WorkerConfigBuilder,
 };
 use futures::FutureExt;
-use std::sync::Arc;
 use std::{
     cell::RefCell,
     collections::{hash_map::Entry, HashMap, VecDeque},
     rc::Rc,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use temporal_client::mocks::{mock_gateway, mock_manual_gateway};
