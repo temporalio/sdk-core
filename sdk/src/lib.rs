@@ -20,7 +20,7 @@
 //!     let worker_config = WorkerConfigBuilder::default().build()?;
 //!     let core_worker = init_worker(worker_config, client);
 //!
-//!     let mut worker = Worker::new(Arc::new(core_worker), "task_queue");
+//!     let mut worker = Worker::new_from_core(Arc::new(core_worker), "task_queue");
 //!     worker.register_activity(
 //!         "echo_activity",
 //!         |echo_me: String| async move { Ok(echo_me) },
@@ -136,8 +136,11 @@ struct ActivityHalf {
 }
 
 impl Worker {
-    /// Create a new rust worker
-    pub fn new(worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
+    // pub fn new(cfg: WorkerConfig) -> Self {}
+
+    #[doc(hidden)]
+    /// Create a new rust worker from a core worker
+    pub fn new_from_core(worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         Self {
             common: CommonWorker {
                 worker,

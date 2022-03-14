@@ -44,7 +44,7 @@ pub use worker::{Worker, WorkerConfig, WorkerConfigBuilder};
 
 use crate::telemetry::metrics::{MetricsContext, METRIC_METER};
 use std::sync::Arc;
-use temporal_client::{ConfiguredClient, GatewayArcable, WorkflowServiceClientWithMetrics};
+use temporal_client::AnyClient;
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollActivityError, PollWfError},
     CoreLog, Worker as WorkerTrait,
@@ -59,21 +59,25 @@ lazy_static::lazy_static! {
 }
 
 /// Initialize a worker bound to a task queue
-pub fn init_worker(worker_config: WorkerConfig, client: impl GatewayArcable) -> Worker {
-    let client = client.into_gateway_arc();
+pub fn init_worker<CT>(worker_config: WorkerConfig, client: CT) -> Worker
+where
+    CT: Into<AnyClient>,
+{
+    let as_enum = client.into();
+    // TODO: Assert namespaces match
+    let client = match as_enum {
+        AnyClient::HighLevel(ac) => ac,
+        AnyClient::LowLevel(ll) => {
+            let (c, opts) = ll.into_parts();
+            let gateway = ServerGateway::new(c, opts, worker_config.namespace.to_owned());
+            let retry_gateway = RetryGateway::new(gateway, RetryConfig::default());
+            Arc::new(retry_gateway)
+        }
+    };
     let sticky_q = sticky_q_name_for_worker(&client.get_options().identity, &worker_config);
     let metrics = MetricsContext::top_level(worker_config.namespace.clone())
         .with_task_q(worker_config.task_queue.clone());
     Worker::new(worker_config, sticky_q, client, metrics)
-}
-
-/// Initialize a worker from config and a lower-level client
-pub fn init_worker_from_upgradeable_client(
-    worker_config: WorkerConfig,
-    client: impl UpgradeableClient,
-) -> Worker {
-    let upgrayde = client.upgrade(worker_config.namespace.clone(), RetryConfig::default());
-    init_worker(worker_config, upgrayde)
 }
 
 /// Create a worker for replaying a specific history. It will auto-shutdown as soon as the history
@@ -110,42 +114,5 @@ pub(crate) fn sticky_q_name_for_worker(
         ))
     } else {
         None
-    }
-}
-
-#[doc(hidden)]
-pub trait UpgradeableClient {
-    fn upgrade(
-        self,
-        namespace: String,
-        retry_opts: RetryConfig,
-    ) -> NamespacedConfiguredClient<WorkflowServiceClientWithMetrics>;
-}
-impl UpgradeableClient for ConfiguredClient<WorkflowServiceClientWithMetrics> {
-    fn upgrade(
-        self,
-        namespace: String,
-        retry_opts: RetryConfig,
-    ) -> NamespacedConfiguredClient<WorkflowServiceClientWithMetrics> {
-        NamespacedConfiguredClient {
-            cc: self,
-            namespace,
-            retry_opts,
-        }
-    }
-}
-#[doc(hidden)]
-pub struct NamespacedConfiguredClient<C> {
-    cc: ConfiguredClient<C>,
-    namespace: String,
-    retry_opts: RetryConfig,
-}
-impl GatewayArcable for NamespacedConfiguredClient<WorkflowServiceClientWithMetrics> {
-    type Reified = RetryGateway<ServerGateway>;
-    fn into_gateway_arc(self) -> Arc<Self::Reified> {
-        let (c, opts) = self.cc.into_parts();
-        let gateway = ServerGateway::new(c, opts, self.namespace);
-        let retry_gateway = RetryGateway::new(gateway, self.retry_opts);
-        Arc::new(retry_gateway)
     }
 }

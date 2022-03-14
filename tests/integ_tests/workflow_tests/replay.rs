@@ -133,7 +133,7 @@ async fn replay_using_wf_function() {
     let func = timers_wf(num_timers);
     let (worker, _) =
         init_core_replay_preloaded("replay_bench", &t.get_full_history_info().unwrap().into());
-    let mut worker = Worker::new(worker, "replay_bench".to_string());
+    let mut worker = Worker::new_from_core(worker, "replay_bench".to_string());
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
     worker.run().await.unwrap();
 }

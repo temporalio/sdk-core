@@ -19,20 +19,18 @@ pub use mocks::MockManualGateway;
 pub use raw::WorkflowService;
 
 use crate::{
-    metrics::{svc_operation, MetricsContext},
+    metrics::{GrpcMetricSvc, MetricsContext},
     raw::{sealed::RawClientLike, AttachMetricLabels},
 };
 use backoff::{ExponentialBackoff, SystemClock};
-use futures::{future::BoxFuture, task::Context, FutureExt};
 use http::uri::InvalidUri;
 use opentelemetry::metrics::Meter;
+use std::sync::Arc;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
     ops::{Deref, DerefMut},
     str::FromStr,
-    sync::Arc,
-    task::Poll,
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
@@ -49,8 +47,7 @@ use temporal_sdk_core_protos::{
     TaskToken,
 };
 use tonic::{
-    body::BoxBody,
-    codegen::{InterceptedService, Service},
+    codegen::InterceptedService,
     metadata::{MetadataKey, MetadataValue},
     service::Interceptor,
     transport::{Certificate, Channel, Endpoint, Identity},
@@ -210,30 +207,40 @@ pub enum GatewayInitError {
     TonicTransportError(#[from] tonic::transport::Error),
 }
 
-/// Types which can turn into [ServerGatewayApis] implementing [Arc]s, which expose higher-level
-/// interactions and can be passed to workers when initializing them.
-pub trait GatewayArcable {
-    /// The concrete type
-    type Reified: ServerGatewayApis + Send + Sync + 'static;
-    /// Get an the arc'd gateway impl
-    fn into_gateway_arc(self) -> Arc<Self::Reified>;
+#[doc(hidden)]
+/// Allows passing different kinds of clients into things that want to be flexible. Motivating
+/// use-case was worker initialization.
+pub enum AnyClient {
+    /// A high level client, like the type workers work with
+    HighLevel(Arc<dyn ServerGatewayApis + Send + Sync>),
+    /// A low level gRPC client, wrapped with the typical interceptors
+    LowLevel(Box<ConfiguredClient<WorkflowServiceClientWithMetrics>>),
 }
-impl<SGA> GatewayArcable for SGA
+
+impl<SGA> From<SGA> for AnyClient
 where
     SGA: ServerGatewayApis + Send + Sync + 'static,
 {
-    type Reified = SGA;
-    fn into_gateway_arc(self) -> Arc<Self::Reified> {
-        Arc::new(self)
+    fn from(s: SGA) -> Self {
+        Self::HighLevel(Arc::new(s))
     }
 }
-impl<SGA> GatewayArcable for Arc<SGA>
+impl<SGA> From<Arc<SGA>> for AnyClient
 where
     SGA: ServerGatewayApis + Send + Sync + 'static,
 {
-    type Reified = SGA;
-    fn into_gateway_arc(self) -> Arc<Self::Reified> {
-        self
+    fn from(s: Arc<SGA>) -> Self {
+        Self::HighLevel(s)
+    }
+}
+impl From<RetryGateway<ConfiguredClient<WorkflowServiceClientWithMetrics>>> for AnyClient {
+    fn from(c: RetryGateway<ConfiguredClient<WorkflowServiceClientWithMetrics>>) -> Self {
+        Self::LowLevel(Box::new(c.into_inner()))
+    }
+}
+impl From<ConfiguredClient<WorkflowServiceClientWithMetrics>> for AnyClient {
+    fn from(c: ConfiguredClient<WorkflowServiceClientWithMetrics>) -> Self {
+        Self::LowLevel(Box::new(c))
     }
 }
 
@@ -404,63 +411,6 @@ impl Interceptor for ServiceCallInterceptor {
         }
 
         Ok(request)
-    }
-}
-
-/// Implements metrics functionality for gRPC (really, any http) calls
-#[derive(Debug, Clone)]
-pub struct GrpcMetricSvc {
-    inner: Channel,
-    // If set to none, metrics are a no-op
-    metrics: Option<MetricsContext>,
-}
-
-impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
-    type Response = http::Response<tonic::transport::Body>;
-    type Error = tonic::transport::Error;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx).map_err(Into::into)
-    }
-
-    fn call(&mut self, mut req: http::Request<BoxBody>) -> Self::Future {
-        let metrics = self
-            .metrics
-            .clone()
-            .map(|m| {
-                // Attach labels from client wrapper
-                if let Some(other_labels) = req.extensions_mut().remove::<AttachMetricLabels>() {
-                    m.with_new_attrs(other_labels.labels)
-                } else {
-                    m
-                }
-            })
-            .and_then(|mut metrics| {
-                // Attach method name label if possible
-                req.uri().to_string().rsplit_once('/').map(|split_tup| {
-                    let method_name = split_tup.1;
-                    metrics.add_new_attrs([svc_operation(method_name.to_string())]);
-                    if LONG_POLL_METHOD_NAMES.contains(&method_name) {
-                        metrics.set_is_long_poll();
-                    }
-                    metrics.svc_request();
-                    metrics
-                })
-            });
-        let callfut = self.inner.call(req);
-        async move {
-            let started = Instant::now();
-            let res = callfut.await;
-            if let Some(metrics) = metrics {
-                metrics.record_svc_req_latency(started.elapsed());
-                if res.is_err() {
-                    metrics.svc_request_failed();
-                }
-            }
-            res
-        }
-        .boxed()
     }
 }
 

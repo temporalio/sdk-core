@@ -261,7 +261,7 @@ impl TestWorker {
     /// Create a new test worker
     pub fn new(core_worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         let ct = Arc::new(AtomicUsize::new(0));
-        let mut inner = Worker::new(core_worker, task_queue);
+        let mut inner = Worker::new_from_core(core_worker, task_queue);
         let iceptor = WorkflowCompletionCountingInterceptor {
             incomplete_workflows: ct.clone(),
             shutdown_handle: Box::new(inner.shutdown_handle()),
