@@ -1,13 +1,15 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
+use temporal_sdk_core_protos::coresdk::activity_task::activity_task;
 use temporal_sdk_core_protos::coresdk::{
     activity_result::{
         self, activity_resolution as act_res, ActivityExecutionResult, ActivityResolution,
     },
     activity_task::activity_task as act_task,
-    common::Payload,
+    common::{Payload, RetryPolicy},
     workflow_activation::{workflow_activation_job, ResolveActivity, WorkflowActivationJob},
-    workflow_commands::ActivityCancellationType,
+    workflow_commands::{ActivityCancellationType, ScheduleActivity},
+    workflow_completion::WorkflowActivationCompletion,
     ActivityHeartbeat, ActivityTaskCompletion, IntoCompletion,
 };
 use temporal_sdk_core_test_utils::{
@@ -80,6 +82,81 @@ async fn activity_heartbeat() {
             assert_eq!(*seq, 0);
             assert_eq!(r, &response_payload);
         }
+    );
+    core.complete_execution(&task.run_id).await;
+}
+
+#[tokio::test]
+async fn many_act_fails_with_heartbeats() {
+    let (core, task_q) = init_core_and_create_wf("many_act_fails_with_heartbeats").await;
+    let activity_id = "act-1";
+    let task = core.poll_workflow_activation().await.unwrap();
+    // Complete workflow task and schedule activity
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        ScheduleActivity {
+            seq: 0,
+            activity_id: activity_id.to_string(),
+            activity_type: "test_act".to_string(),
+            task_queue: task_q,
+            start_to_close_timeout: Some(Duration::from_secs(10).into()),
+            retry_policy: Some(RetryPolicy {
+                initial_interval: Some(Duration::from_millis(10).into()),
+                backoff_coefficient: 1.0,
+                maximum_attempts: 4,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
+
+    // Multiple times, poll for the activity, heartbeat, and then immediately fail
+    // Poll activity and verify that it's been scheduled with correct parameters
+    for i in 0u8..=3 {
+        let task = core.poll_activity_task().await.unwrap();
+        let hb_details = assert_matches!(task.variant, Some(activity_task::Variant::Start(s)) => s);
+
+        core.record_activity_heartbeat(ActivityHeartbeat {
+            task_token: task.task_token.clone(),
+            details: vec![[i].into()],
+        });
+
+        let compl = if i == 3 {
+            // Verify last hb was recorded
+            assert_eq!(hb_details.heartbeat_details, [[2].into()]);
+            ActivityTaskCompletion {
+                task_token: task.task_token,
+                result: Some(ActivityExecutionResult::ok("passed".into())),
+            }
+        } else {
+            if i != 0 {
+                assert_eq!(hb_details.heartbeat_details, [[i - 1].into()]);
+            }
+            ActivityTaskCompletion {
+                task_token: task.task_token,
+                result: Some(ActivityExecutionResult::fail(format!("Die on {i}").into())),
+            }
+        };
+        core.complete_activity_task(compl).await.unwrap();
+    }
+    let task = core.poll_workflow_activation().await.unwrap();
+
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::ResolveActivity(
+                ResolveActivity {
+                    result: Some(ActivityResolution {
+                        status: Some(act_res::Status::Completed(activity_result::Success { .. })),
+                        ..
+                    }),
+                    ..
+                }
+            )),
+        },]
     );
     core.complete_execution(&task.run_id).await;
 }

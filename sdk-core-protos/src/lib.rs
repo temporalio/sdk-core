@@ -1222,6 +1222,12 @@ pub mod coresdk {
         }
     }
 
+    impl From<String> for Failure {
+        fn from(v: String) -> Self {
+            Failure::application_failure(v, false)
+        }
+    }
+
     impl From<anyhow::Error> for Failure {
         fn from(ae: anyhow::Error) -> Self {
             Failure::application_failure(ae.to_string(), false)

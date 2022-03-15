@@ -10,24 +10,30 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use log::LevelFilter;
 use prost::Message;
 use rand::{distributions::Standard, Rng};
-use std::cell::RefCell;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
-    convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, sync::Arc,
+    cell::RefCell,
+    convert::TryFrom,
+    env,
+    future::Future,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use temporal_client::{RetryGateway, ServerGateway, ServerGatewayApis, WorkflowOptions};
-use temporal_sdk::interceptors::WorkerInterceptor;
-use temporal_sdk::{IntoActivityFunc, Worker, WorkflowFunction};
+use temporal_sdk::{interceptors::WorkerInterceptor, IntoActivityFunc, Worker, WorkflowFunction};
 use temporal_sdk_core::{
     init_replay_worker, init_worker, replay::mock_gateway_from_history, telemetry_init,
     ServerGatewayOptions, ServerGatewayOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
     WorkerConfig, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::Worker as CoreWorker;
-use temporal_sdk_core_protos::coresdk::common::Payload;
 use temporal_sdk_core_protos::{
     coresdk::{
+        common::Payload,
         workflow_commands::{
             workflow_command, ActivityCancellationType, CompleteWorkflowExecution,
             ScheduleActivity, StartTimer,
