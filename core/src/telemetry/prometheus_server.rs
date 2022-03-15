@@ -1,3 +1,4 @@
+use crate::telemetry::default_resource;
 use crate::telemetry::metrics::{SDKAggSelector, DEFAULT_MS_BUCKETS};
 use hyper::{
     header::CONTENT_TYPE,
@@ -22,6 +23,7 @@ impl PromServer {
             .with_aggregator_selector(SDKAggSelector)
             .with_host(addr.ip().to_string())
             .with_port(addr.port())
+            .with_resource(default_resource())
             .try_init()?;
         Ok(Self {
             exporter: Arc::new(exporter),

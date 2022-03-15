@@ -29,6 +29,14 @@ static DEFAULT_FILTER: &str = "temporal_sdk_core=INFO";
 static GLOBAL_TELEM_DAT: OnceCell<GlobalTelemDat> = OnceCell::new();
 static TELETM_MUTEX: Mutex<()> = const_mutex(());
 
+fn default_resource_kvs() -> &'static [KeyValue] {
+    static INSTANCE: OnceCell<[KeyValue; 1]> = OnceCell::new();
+    INSTANCE.get_or_init(|| [KeyValue::new("service.name", TELEM_SERVICE_NAME)])
+}
+fn default_resource() -> Resource {
+    Resource::new(default_resource_kvs().iter().cloned())
+}
+
 /// Telemetry configuration options. Construct with [TelemetryOptionsBuilder]
 #[derive(Debug, Clone, derive_builder::Builder)]
 #[non_exhaustive]
@@ -171,11 +179,7 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
 
             if let Some(otel_url) = opts.otel_collector_url.as_ref() {
                 runtime.block_on(async {
-                    let tracer_cfg =
-                        Config::default().with_resource(Resource::new(vec![KeyValue::new(
-                            "service.name",
-                            TELEM_SERVICE_NAME,
-                        )]));
+                    let tracer_cfg = Config::default().with_resource(default_resource());
                     let tracer = opentelemetry_otlp::new_pipeline()
                         .tracing()
                         .with_exporter(
@@ -193,6 +197,7 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
                             .metrics(|f| runtime.spawn(f), tokio_interval_stream)
                             .with_aggregator_selector(SDKAggSelector)
                             .with_period(Duration::from_secs(1))
+                            .with_resource(default_resource_kvs().iter().cloned())
                             .with_exporter(
                                 // No joke exporter builder literally not cloneable for some insane
                                 // reason
