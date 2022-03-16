@@ -45,8 +45,10 @@ pub use workflow_context::{
     Signal, SignalData, SignalWorkflowOptions, WfContext,
 };
 
-use crate::interceptors::WorkerInterceptor;
-use crate::workflow_context::{ChildWfCommon, PendingChildWorkflow};
+use crate::{
+    interceptors::WorkerInterceptor,
+    workflow_context::{ChildWfCommon, PendingChildWorkflow},
+};
 use anyhow::{anyhow, bail};
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use once_cell::sync::OnceCell;

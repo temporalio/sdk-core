@@ -56,7 +56,6 @@ enum HeartbeatExecutorAction {
     Report {
         task_token: TaskToken,
         details: Vec<common::Payload>,
-        on_reported: Option<Arc<Notify>>,
     },
 }
 
@@ -139,6 +138,8 @@ impl ActivityHeartbeatManager {
 struct ActivityHeartbeatState {
     /// If None and throttle interval is over, untrack this task token
     last_recorded_details: Option<Vec<common::Payload>>,
+    /// True if we've queued up a request to record against server, but it hasn't yet completed
+    is_record_in_flight: bool,
     last_send_requested: Instant,
     throttle_interval: Duration,
     throttled_cancellation_token: Option<CancellationToken>,
@@ -161,6 +162,7 @@ impl ActivityHeartbeatState {
 #[derive(Debug)]
 struct HeartbeatStreamState {
     tt_to_state: HashMap<TaskToken, ActivityHeartbeatState>,
+    tt_needs_flush: HashMap<TaskToken, Arc<Notify>>,
     incoming_hbs: UnboundedReceiver<HeartbeatAction>,
     /// Token that can be used to cancel the entire stream.
     /// Requests to the server are not cancelled with this token.
@@ -175,6 +177,7 @@ impl HeartbeatStreamState {
             Self {
                 cancellation_token: cancellation_token.clone(),
                 tt_to_state: Default::default(),
+                tt_needs_flush: Default::default(),
                 incoming_hbs,
             },
             heartbeat_tx,
@@ -193,13 +196,13 @@ impl HeartbeatStreamState {
                     // None is used to mark that after throttling we can stop tracking this task
                     // token.
                     last_recorded_details: None,
+                    is_record_in_flight: true,
                     throttled_cancellation_token: None,
                 };
                 e.insert(state);
                 Some(HeartbeatExecutorAction::Report {
                     task_token: hb.task_token,
                     details: hb.details,
-                    on_reported: None,
                 })
             }
             Entry::Occupied(mut o) => {
@@ -212,7 +215,11 @@ impl HeartbeatStreamState {
 
     /// Heartbeat report to server completed
     fn handle_report_completed(&mut self, tt: TaskToken) -> Option<HeartbeatExecutorAction> {
+        if let Some(not) = self.tt_needs_flush.remove(&tt) {
+            not.notify_one();
+        }
         if let Some(st) = self.tt_to_state.get_mut(&tt) {
+            st.is_record_in_flight = false;
             let cancellation_token = self.cancellation_token.child_token();
             st.throttled_cancellation_token = Some(cancellation_token.clone());
             // Always sleep for simplicity even if the duration is 0
@@ -236,10 +243,10 @@ impl HeartbeatStreamState {
                     // Reset the cancellation token and schedule another report
                     state.throttled_cancellation_token = None;
                     state.last_send_requested = Instant::now();
+                    state.is_record_in_flight = true;
                     Some(HeartbeatExecutorAction::Report {
                         task_token: tt,
                         details,
-                        on_reported: None,
                     })
                 } else {
                     // Nothing to report, forget this task token
@@ -265,11 +272,14 @@ impl HeartbeatStreamState {
                 let _ = cancel_tok.cancel();
             }
             if let Some(last_deets) = state.last_recorded_details {
+                self.tt_needs_flush.insert(tt.clone(), on_complete);
                 return Some(HeartbeatExecutorAction::Report {
                     task_token: tt,
                     details: last_deets,
-                    on_reported: Some(on_complete),
                 });
+            } else if state.is_record_in_flight {
+                self.tt_needs_flush.insert(tt, on_complete);
+                return None;
             }
         }
         // Since there's nothing to flush immediately report back that eviction is finished
@@ -332,7 +342,7 @@ impl ActivityHeartbeatManager {
                                 },
                             };
                         }
-                        HeartbeatExecutorAction::Report { task_token: tt, details, on_reported } => {
+                        HeartbeatExecutorAction::Report { task_token: tt, details } => {
                             match sg
                                 .record_activity_heartbeat(tt.clone(), details.into_payloads())
                                 .await
@@ -353,6 +363,8 @@ impl ActivityHeartbeatManager {
                                 // finished (which is one thing not found implies - other reasons
                                 // would seem equally valid).
                                 Err(s) if s.code() == tonic::Code::NotFound => {
+                                    debug!(task_token = %tt,
+                                           "Activity not found when recording heartbeat");
                                     cancels_tx
                                         .send(PendingActivityCancel::new(
                                             tt.clone(),
@@ -364,9 +376,6 @@ impl ActivityHeartbeatManager {
                                     warn!("Error when recording heartbeat: {:?}", e);
                                 }
                             };
-                            if let Some(onrep) = on_reported {
-                                onrep.notify_one();
-                            }
                             let _ = heartbeat_tx.send(HeartbeatAction::CompleteReport(tt));
                         }
                     }
@@ -388,7 +397,6 @@ mod test {
     use super::*;
 
     use std::time::Duration;
-
     use temporal_client::mocks::mock_gateway;
     use temporal_sdk_core_protos::{
         coresdk::common::Payload,
@@ -492,6 +500,20 @@ mod test {
         // Let it propagate
         sleep(Duration::from_millis(10)).await;
         // We know it works b/c otherwise we would have only called record 1 time w/o sleep
+        hm.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn evict_immediate_after_record() {
+        let mut mock_gateway = mock_gateway();
+        mock_gateway
+            .expect_record_activity_heartbeat()
+            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
+            .times(1);
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
+        let fake_task_token = vec![1, 2, 3];
+        record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
+        hm.evict(fake_task_token.clone().into()).await;
         hm.shutdown().await;
     }
 

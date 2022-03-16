@@ -1,5 +1,7 @@
-use crate::telemetry::default_resource;
-use crate::telemetry::metrics::{SDKAggSelector, DEFAULT_MS_BUCKETS};
+use crate::telemetry::{
+    default_resource,
+    metrics::{SDKAggSelector, DEFAULT_MS_BUCKETS},
+};
 use hyper::{
     header::CONTENT_TYPE,
     service::{make_service_fn, service_fn},
