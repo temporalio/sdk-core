@@ -1,5 +1,5 @@
 use std::time::Duration;
-use temporal_client::{RetryGateway, WorkflowService};
+use temporal_client::{RetryClient, WorkflowService};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::DescribeNamespaceRequest;
 use temporal_sdk_core_test_utils::{get_integ_server_options, CoreWfStarter, NAMESPACE};
 
@@ -18,7 +18,7 @@ async fn can_use_retry_gateway() {
 async fn can_use_retry_gateway_raw_client() {
     let opts = get_integ_server_options();
     let raw_client = opts.connect_no_namespace(None).await.unwrap();
-    let mut retry_client = RetryGateway::new(raw_client, opts.retry_config);
+    let mut retry_client = RetryClient::new(raw_client, opts.retry_config);
     retry_client
         .describe_namespace(DescribeNamespaceRequest {
             namespace: NAMESPACE.to_string(),

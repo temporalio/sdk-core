@@ -29,12 +29,12 @@ pub const RETRYABLE_ERROR_CODES: [Code; 7] = [
 /// A wrapper for a [ServerGatewayApis] or [crate::WorkflowService] implementor which performs
 /// auto-retries
 #[derive(Debug, Clone)]
-pub struct RetryGateway<SG> {
+pub struct RetryClient<SG> {
     gateway: SG,
     retry_config: RetryConfig,
 }
 
-impl<SG> RetryGateway<SG> {
+impl<SG> RetryClient<SG> {
     /// Use the provided retry config with the provided gateway
     pub const fn new(gateway: SG, retry_config: RetryConfig) -> Self {
         Self {
@@ -44,7 +44,7 @@ impl<SG> RetryGateway<SG> {
     }
 }
 
-impl<SG> RetryGateway<SG> {
+impl<SG> RetryClient<SG> {
     /// Return the inner client type
     pub fn get_client(&self) -> &SG {
         &self.gateway
@@ -195,7 +195,7 @@ macro_rules! retry_call {
 // we would create an automock for the WorkflowServiceClient copy-paste trait and use that, but
 // that's a huge pain. Maybe one day tonic will provide traits.
 #[async_trait::async_trait]
-impl<SG> ServerGatewayApis for RetryGateway<SG>
+impl<SG> ServerGatewayApis for RetryClient<SG>
 where
     SG: ServerGatewayApis + Send + Sync + 'static,
 {
@@ -462,7 +462,7 @@ mod tests {
                 .expect_cancel_activity_task()
                 .returning(move |_, _| Err(Status::new(code, "non-retryable failure")))
                 .times(1);
-            let retry_gateway = RetryGateway::new(mock_gateway, Default::default());
+            let retry_gateway = RetryClient::new(mock_gateway, Default::default());
             let result = retry_gateway
                 .cancel_activity_task(vec![1].into(), None)
                 .await;
@@ -491,7 +491,7 @@ mod tests {
                 .expect_poll_activity_task()
                 .returning(move |_, _| Err(Status::new(code, "non-retryable failure")))
                 .times(1);
-            let retry_gateway = RetryGateway::new(mock_gateway, Default::default());
+            let retry_gateway = RetryClient::new(mock_gateway, Default::default());
             let result = retry_gateway
                 .poll_workflow_task("tq".to_string(), false)
                 .await;
@@ -516,7 +516,7 @@ mod tests {
                 .returning(|_, _| Ok(Default::default()))
                 .times(1);
 
-            let retry_gateway = RetryGateway::new(mock_gateway, Default::default());
+            let retry_gateway = RetryClient::new(mock_gateway, Default::default());
             let result = retry_gateway
                 .cancel_activity_task(vec![1].into(), None)
                 .await;
@@ -545,7 +545,7 @@ mod tests {
             .returning(|_, _| Ok(Default::default()))
             .times(1);
 
-        let retry_gateway = RetryGateway::new(mock_gateway, Default::default());
+        let retry_gateway = RetryClient::new(mock_gateway, Default::default());
 
         let result = retry_gateway
             .poll_workflow_task("tq".to_string(), false)
@@ -579,7 +579,7 @@ mod tests {
                 .returning(|_, _| Ok(Default::default()))
                 .times(1);
 
-            let retry_gateway = RetryGateway::new(mock_gateway, Default::default());
+            let retry_gateway = RetryClient::new(mock_gateway, Default::default());
 
             let result = retry_gateway
                 .poll_workflow_task("tq".to_string(), false)

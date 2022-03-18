@@ -13,7 +13,7 @@ pub mod mocks;
 mod raw;
 mod retry;
 
-pub use crate::retry::{CallType, RetryGateway};
+pub use crate::retry::{CallType, RetryClient};
 #[cfg(any(feature = "mocks", test))]
 pub use mocks::MockManualGateway;
 pub use raw::WorkflowService;
@@ -25,12 +25,12 @@ use crate::{
 use backoff::{ExponentialBackoff, SystemClock};
 use http::uri::InvalidUri;
 use opentelemetry::metrics::Meter;
-use std::sync::Arc;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
     ops::{Deref, DerefMut},
     str::FromStr,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
@@ -233,8 +233,8 @@ where
         Self::HighLevel(s)
     }
 }
-impl From<RetryGateway<ConfiguredClient<WorkflowServiceClientWithMetrics>>> for AnyClient {
-    fn from(c: RetryGateway<ConfiguredClient<WorkflowServiceClientWithMetrics>>) -> Self {
+impl From<RetryClient<ConfiguredClient<WorkflowServiceClientWithMetrics>>> for AnyClient {
+    fn from(c: RetryClient<ConfiguredClient<WorkflowServiceClientWithMetrics>>) -> Self {
         Self::LowLevel(Box::new(c.into_inner()))
     }
 }
@@ -285,7 +285,7 @@ impl ServerGatewayOptions {
         &self,
         namespace: impl Into<String>,
         metrics_meter: Option<&Meter>,
-    ) -> Result<RetryGateway<ServerGateway>, GatewayInitError> {
+    ) -> Result<RetryClient<ServerGateway>, GatewayInitError> {
         let (service, opts) = self
             .connect_no_namespace(metrics_meter)
             .await?
@@ -296,7 +296,7 @@ impl ServerGatewayOptions {
             namespace: namespace.into(),
             opts,
         };
-        let retry_gateway = RetryGateway::new(gateway, self.retry_config.clone());
+        let retry_gateway = RetryClient::new(gateway, self.retry_config.clone());
         Ok(retry_gateway)
     }
 
@@ -307,7 +307,7 @@ impl ServerGatewayOptions {
     pub async fn connect_no_namespace(
         &self,
         metrics_meter: Option<&Meter>,
-    ) -> Result<RetryGateway<ConfiguredClient<WorkflowServiceClientWithMetrics>>, GatewayInitError>
+    ) -> Result<RetryClient<ConfiguredClient<WorkflowServiceClientWithMetrics>>, GatewayInitError>
     {
         let channel = Channel::from_shared(self.target_url.to_string())?;
         let channel = self.add_tls_to_channel(channel).await?;
@@ -319,7 +319,7 @@ impl ServerGatewayOptions {
             })
             .service(channel);
         let interceptor = ServiceCallInterceptor { opts: self.clone() };
-        Ok(RetryGateway::new(
+        Ok(RetryClient::new(
             ConfiguredClient {
                 client: WorkflowServiceClient::with_interceptor(service, interceptor),
                 options: self.clone(),
@@ -435,8 +435,8 @@ impl ServerGateway {
     ///
     /// Note that it is reasonably cheap to clone the returned type if you need to own it. Such
     /// clones will keep re-using the same channel.
-    pub fn raw_retry_client(&self) -> RetryGateway<WorkflowServiceClientWithMetrics> {
-        RetryGateway::new(self.service.clone(), self.opts.retry_config.clone())
+    pub fn raw_retry_client(&self) -> RetryClient<WorkflowServiceClientWithMetrics> {
+        RetryClient::new(self.service.clone(), self.opts.retry_config.clone())
     }
 
     /// Access the underling grpc client (instrumented with metrics collection, if enabled). This

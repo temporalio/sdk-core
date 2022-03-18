@@ -15,7 +15,7 @@ use tonic::{body::BoxBody, client::GrpcService, metadata::KeyAndValueRef};
 
 pub(super) mod sealed {
     use super::*;
-    use crate::{ConfiguredClient, RetryGateway};
+    use crate::{ConfiguredClient, RetryClient};
     use futures::TryFutureExt;
     use tonic::{Request, Response, Status};
 
@@ -47,7 +47,7 @@ pub(super) mod sealed {
 
     // Here we implement retry on anything that is already RawClientLike
     #[async_trait::async_trait]
-    impl<RC, T> RawClientLike for RetryGateway<RC>
+    impl<RC, T> RawClientLike for RetryClient<RC>
     where
         RC: RawClientLike<SvcType = T> + 'static,
         T: Send + Sync + Clone + 'static,
@@ -543,7 +543,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{mocks::fake_sg_opts, RetryGateway, WorkflowServiceClientWithMetrics};
+    use crate::{mocks::fake_sg_opts, RetryClient, WorkflowServiceClientWithMetrics};
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListNamespacesRequest;
 
     // Just to help me make sure some stuff compiles
@@ -551,7 +551,7 @@ mod tests {
     async fn raw_client_retry_compiles() {
         let opts = fake_sg_opts();
         let raw_client = opts.connect_no_namespace(None).await.unwrap();
-        let mut retry_client = RetryGateway::new(raw_client, opts.retry_config);
+        let mut retry_client = RetryClient::new(raw_client, opts.retry_config);
 
         let the_request = ListNamespacesRequest::default();
         let fact = |c: &mut WorkflowServiceClientWithMetrics, req| {

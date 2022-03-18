@@ -30,7 +30,7 @@ mod test_help;
 pub(crate) use temporal_sdk_core_api::errors;
 
 pub use pollers::{
-    ClientTlsConfig, RetryConfig, RetryGateway, ServerGateway, ServerGatewayApis,
+    ClientTlsConfig, RetryClient, RetryConfig, ServerGateway, ServerGatewayApis,
     ServerGatewayOptions, ServerGatewayOptionsBuilder, TlsConfig,
 };
 pub use telemetry::{
@@ -70,7 +70,7 @@ where
         AnyClient::LowLevel(ll) => {
             let (c, opts) = ll.into_parts();
             let gateway = ServerGateway::new(c, opts, worker_config.namespace.to_owned());
-            let retry_gateway = RetryGateway::new(gateway, RetryConfig::default());
+            let retry_gateway = RetryClient::new(gateway, RetryConfig::default());
             Arc::new(retry_gateway)
         }
     };

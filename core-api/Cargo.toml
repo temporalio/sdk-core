@@ -15,7 +15,7 @@ categories = ["development-tools"]
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
-derive_builder = "0.10"
+derive_builder = "0.11"
 log = "0.4"
 opentelemetry = "0.17"
 prost-types = "0.9"
