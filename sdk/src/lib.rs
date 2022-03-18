@@ -159,9 +159,9 @@ impl Worker {
         }
     }
 
-    /// Access the worker's server gateway client
-    pub fn server_gateway(&self) -> Arc<dyn WorkflowClientTrait + Send + Sync> {
-        self.common.worker.server_gateway()
+    /// Access the worker's workflow client
+    pub fn workflow_client(&self) -> Arc<dyn WorkflowClientTrait + Send + Sync> {
+        self.common.worker.workflow_client()
     }
 
     /// Returns the task queue name this worker polls on

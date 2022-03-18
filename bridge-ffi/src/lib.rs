@@ -23,7 +23,7 @@ use temporal_sdk_core::{
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::coresdk::{
     bridge,
-    bridge::{CreateGatewayRequest, InitTelemetryRequest},
+    bridge::{CreateClientRequest, InitTelemetryRequest},
 };
 
 /// A set of bytes owned by Core. No fields within nor any bytes references must
@@ -360,7 +360,7 @@ type tmprl_client_init_callback = unsafe extern "C" fn(
 /// Initialize a client connection to the Temporal service.
 ///
 /// The runtime is required and must outlive this instance. The `req_proto` and `req_proto_len`
-/// represent a byte array for a [CreateGatewayRequest] protobuf message. The callback is invoked on
+/// represent a byte array for a [CreateClientRequest] protobuf message. The callback is invoked on
 /// completion.
 #[no_mangle]
 pub extern "C" fn tmprl_client_init(
@@ -372,7 +372,7 @@ pub extern "C" fn tmprl_client_init(
 ) {
     let runtime = unsafe { &*runtime };
     let (namespace, req) =
-        match tmprl_worker_t::decode_proto::<CreateGatewayRequest>(req_proto, req_proto_len)
+        match tmprl_worker_t::decode_proto::<CreateClientRequest>(req_proto, req_proto_len)
             .and_then(|cgr| {
                 let ns = cgr.namespace.clone();
                 wrappers::ClientOptions(cgr)

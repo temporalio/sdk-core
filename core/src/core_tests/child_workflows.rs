@@ -6,7 +6,7 @@ use crate::{
     workflow::managed_wf::ManagedWFFunc,
 };
 use std::sync::Arc;
-use temporal_client::{mocks::mock_gateway, WorkflowOptions};
+use temporal_client::{mocks::mock_workflow_client, WorkflowOptions};
 use temporal_sdk::{ChildWorkflowOptions, Signal, WfContext, WorkflowFunction, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::child_workflow::{
     child_workflow_result, ChildWorkflowCancellationType,
@@ -24,7 +24,7 @@ async fn signal_child_workflow(#[case] serial: bool) {
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let t = canned_histories::single_child_workflow_signaled("child-id-1", SIGNAME);
-    let mock = mock_gateway();
+    let mock = mock_workflow_client();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::AllHistory], mock);
     let mock = build_mock_pollers(mh);
     let core = mock_worker(mock);

@@ -10,7 +10,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{mocks::mock_manual_gateway, WorkflowClientTrait};
+use temporal_client::{mocks::mock_manual_workflow_client, WorkflowClientTrait};
 
 use temporal_sdk_core_protos::temporal::api::{
     common::v1::WorkflowExecution,
@@ -25,15 +25,15 @@ pub use temporal_sdk_core_protos::{
     default_wes_attribs, HistoryInfo, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
 };
 
-/// Create a mock gateway which can be used by a replay worker to serve up canned history.
+/// Create a mock client which can be used by a replay worker to serve up canned history.
 /// It will return the entire history in one workflow task, after that it will return default
 /// responses (with a 10s wait). If a workflow task failure is sent to the mock, it will send
 /// the complete response again.
-pub fn mock_gateway_from_history(
+pub fn mock_client_from_history(
     history: &History,
     task_queue: impl Into<String>,
 ) -> impl WorkflowClientTrait {
-    let mut mg = mock_manual_gateway();
+    let mut mg = mock_manual_workflow_client();
 
     let hist_info = HistoryInfo::new_from_history(history, None).unwrap();
     let wf = WorkflowExecution {

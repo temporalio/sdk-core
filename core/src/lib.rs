@@ -69,9 +69,9 @@ where
         AnyClient::HighLevel(ac) => ac,
         AnyClient::LowLevel(ll) => {
             let (c, opts) = ll.into_parts();
-            let gateway = Client::new(c, opts, worker_config.namespace.to_owned());
-            let retry_gateway = RetryClient::new(gateway, RetryConfig::default());
-            Arc::new(retry_gateway)
+            let client = Client::new(c, opts, worker_config.namespace.to_owned());
+            let retry_client = RetryClient::new(client, RetryConfig::default());
+            Arc::new(retry_client)
         }
     };
     let sticky_q = sticky_q_name_for_worker(&client.get_options().identity, &worker_config);
@@ -81,11 +81,11 @@ where
 }
 
 /// Create a worker for replaying a specific history. It will auto-shutdown as soon as the history
-/// has finished being replayed. The provided gateway should be a mock, and this should only be used
+/// has finished being replayed. The provided client should be a mock, and this should only be used
 /// for workflow testing purposes.
 pub fn init_replay_worker(
     mut config: WorkerConfig,
-    gateway: Arc<dyn WorkflowClientTrait + Send + Sync>,
+    client: Arc<dyn WorkflowClientTrait + Send + Sync>,
     history: &History,
 ) -> Result<Worker, anyhow::Error> {
     info!(
@@ -98,7 +98,7 @@ pub fn init_replay_worker(
     // Could possibly just use mocked pollers here, but they'd need to be un-test-moded
     let run_id = history.extract_run_id_from_start()?.to_string();
     let last_event = history.last_event_id();
-    let mut worker = Worker::new(config, None, gateway, MetricsContext::default());
+    let mut worker = Worker::new(config, None, client, MetricsContext::default());
     worker.set_shutdown_on_run_reaches_event(run_id, last_event);
     Ok(worker)
 }

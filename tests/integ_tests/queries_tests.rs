@@ -37,7 +37,7 @@ async fn simple_query_legacy() {
     tokio::time::sleep(Duration::from_secs(1)).await;
     // Query after timer should have fired and there should be new WFT
     let query_fut = async {
-        core.server_gateway()
+        core.workflow_client()
             .query_workflow_execution(
                 workflow_id,
                 task.run_id.to_string(),
@@ -178,7 +178,7 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
     // we could screw-up re-applying the final WFT)
     let mut query_futs = FuturesUnordered::new();
     for _ in 0..3 {
-        let gw = core.server_gateway().clone();
+        let gw = core.workflow_client().clone();
         let query_fut = async move {
             let q_resp = gw
                 .query_workflow_execution(
@@ -232,7 +232,7 @@ async fn repros_query_dropped_on_floor() {
 
     let run_id = task.run_id.to_string();
     let q1_fut = async {
-        core.server_gateway()
+        core.workflow_client()
             .query_workflow_execution(
                 task_q.to_string(),
                 run_id,
@@ -247,7 +247,7 @@ async fn repros_query_dropped_on_floor() {
     };
     let run_id = task.run_id.to_string();
     let q2_fut = async {
-        core.server_gateway()
+        core.workflow_client()
             .query_workflow_execution(
                 task_q.to_string(),
                 run_id,
@@ -352,7 +352,7 @@ async fn fail_legacy_query() {
     tokio::time::sleep(Duration::from_secs(1)).await;
     // Query after timer should have fired and there should be new WFT
     let query_fut = async {
-        core.server_gateway()
+        core.workflow_client()
             .query_workflow_execution(
                 workflow_id.to_string(),
                 task.run_id.to_string(),

@@ -6,7 +6,7 @@ use std::str::FromStr;
 use url::Url;
 
 /// Create a mock client primed with basic necessary expectations
-pub fn mock_gateway() -> MockWorkflowClientTrait {
+pub fn mock_workflow_client() -> MockWorkflowClientTrait {
     let mut mg = MockWorkflowClientTrait::new();
     mg.expect_get_options().return_const(fake_sg_opts());
     mg.expect_namespace()
@@ -15,8 +15,8 @@ pub fn mock_gateway() -> MockWorkflowClientTrait {
 }
 
 /// Create a mock manual client primed with basic necessary expectations
-pub fn mock_manual_gateway() -> MockManualGateway {
-    let mut mg = MockManualGateway::new();
+pub fn mock_manual_workflow_client() -> MockManualWorkflowClient {
+    let mut mg = MockManualWorkflowClient::new();
     mg.expect_get_options().return_const(fake_sg_opts());
     mg.expect_namespace()
         .return_const("fake_namespace".to_string());
@@ -38,8 +38,8 @@ pub fn fake_sg_opts() -> ClientOptions {
 // results. This is really annoying b/c of the async trait stuff. Need
 // https://github.com/asomers/mockall/issues/189 to be fixed for it to go away.
 mockall::mock! {
-    pub ManualGateway {}
-    impl WorkflowClientTrait for ManualGateway {
+    pub ManualWorkflowClient {}
+    impl WorkflowClientTrait for ManualWorkflowClient {
         fn start_workflow<'a, 'b>(
             &self,
             input: Vec<Payload>,

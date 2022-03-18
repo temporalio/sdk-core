@@ -92,7 +92,7 @@ pub trait Worker: Send + Sync {
     fn request_workflow_eviction(&self, run_id: &str);
 
     /// Returns this worker's instance of the [WorkflowClientTrait] implementor it is using.
-    fn server_gateway(&self) -> Arc<dyn WorkflowClientTrait + Send + Sync>;
+    fn workflow_client(&self) -> Arc<dyn WorkflowClientTrait + Send + Sync>;
 
     /// Return this worker's config
     fn get_config(&self) -> &WorkerConfig;

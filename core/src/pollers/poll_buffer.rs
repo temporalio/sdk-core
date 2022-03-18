@@ -239,13 +239,13 @@ mod tests {
     use super::*;
     use futures::FutureExt;
     use std::time::Duration;
-    use temporal_client::MockManualGateway;
+    use temporal_client::MockManualWorkflowClient;
     use tokio::{select, sync::mpsc::channel};
 
     #[tokio::test]
     async fn only_polls_once_with_1_poller() {
-        let mut mock_gateway = MockManualGateway::new();
-        mock_gateway
+        let mut mock_client = MockManualWorkflowClient::new();
+        mock_client
             .expect_poll_workflow_task()
             .times(2)
             .returning(move |_, _| {
@@ -255,9 +255,9 @@ mod tests {
                 }
                 .boxed()
             });
-        let mock_gateway = Arc::new(mock_gateway);
+        let mock_client = Arc::new(mock_client);
 
-        let pb = new_workflow_task_buffer(mock_gateway, "someq".to_string(), false, 1, 1);
+        let pb = new_workflow_task_buffer(mock_client, "someq".to_string(), false, 1, 1);
 
         // Poll a bunch of times, "interrupting" it each time, we should only actually have polled
         // once since the poll takes a while

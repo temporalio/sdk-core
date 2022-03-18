@@ -201,7 +201,7 @@ impl WorkerActivityTasks {
         &self,
         task_token: TaskToken,
         status: aer::Status,
-        gateway: &(dyn WorkflowClientTrait + Send + Sync),
+        client: &(dyn WorkflowClientTrait + Send + Sync),
     ) -> Result<(), CompleteActivityError> {
         if let Some((_, act_info)) = self.outstanding_activity_tasks.remove(&task_token) {
             let act_metrics = self.metrics.with_new_attrs([
@@ -219,13 +219,13 @@ impl WorkerActivityTasks {
             if !known_not_found {
                 let maybe_net_err = match status {
                     aer::Status::WillCompleteAsync(_) => None,
-                    aer::Status::Completed(ar::Success { result }) => gateway
+                    aer::Status::Completed(ar::Success { result }) => client
                         .complete_activity_task(task_token.clone(), result.map(Into::into))
                         .await
                         .err(),
                     aer::Status::Failed(ar::Failure { failure }) => {
                         act_metrics.act_execution_failed();
-                        gateway
+                        client
                             .fail_activity_task(task_token.clone(), failure.map(Into::into))
                             .await
                             .err()
@@ -243,7 +243,7 @@ impl WorkerActivityTasks {
                                 "Expected activity cancelled status with CanceledFailureInfo");
                             None
                         };
-                        gateway
+                        client
                             .cancel_activity_task(task_token.clone(), details.map(Into::into))
                             .await
                             .err()

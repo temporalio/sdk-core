@@ -15,7 +15,7 @@ mod retry;
 
 pub use crate::retry::{CallType, RetryClient};
 #[cfg(any(feature = "mocks", test))]
-pub use mocks::MockManualGateway;
+pub use mocks::MockManualWorkflowClient;
 pub use raw::WorkflowService;
 
 use crate::{
@@ -101,7 +101,7 @@ pub struct ClientOptions {
     #[builder(setter(strip_option), default)]
     pub tls_cfg: Option<TlsConfig>,
 
-    /// Retry configuration for the server gateway. Default is [RetryConfig::default]
+    /// Retry configuration for the server client. Default is [RetryConfig::default]
     #[builder(default)]
     pub retry_config: RetryConfig,
 }
@@ -198,7 +198,7 @@ impl Debug for ClientTlsConfig {
 
 /// Errors thrown while attempting to establish a connection to the server
 #[derive(thiserror::Error, Debug)]
-pub enum GatewayInitError {
+pub enum ClientInitError {
     /// Invalid URI. Configuration error, fatal.
     #[error("Invalid URI: {0:?}")]
     InvalidUri(#[from] InvalidUri),
@@ -285,19 +285,19 @@ impl ClientOptions {
         &self,
         namespace: impl Into<String>,
         metrics_meter: Option<&Meter>,
-    ) -> Result<RetryClient<Client>, GatewayInitError> {
+    ) -> Result<RetryClient<Client>, ClientInitError> {
         let (service, opts) = self
             .connect_no_namespace(metrics_meter)
             .await?
             .into_inner()
             .into_parts();
-        let gateway = Client {
+        let client = Client {
             service,
             namespace: namespace.into(),
             opts,
         };
-        let retry_gateway = RetryClient::new(gateway, self.retry_config.clone());
-        Ok(retry_gateway)
+        let retry_client = RetryClient::new(client, self.retry_config.clone());
+        Ok(retry_client)
     }
 
     /// Attempt to establish a connection to the Temporal server and return a gRPC client which is
@@ -307,7 +307,7 @@ impl ClientOptions {
     pub async fn connect_no_namespace(
         &self,
         metrics_meter: Option<&Meter>,
-    ) -> Result<RetryClient<ConfiguredClient<WorkflowServiceClientWithMetrics>>, GatewayInitError>
+    ) -> Result<RetryClient<ConfiguredClient<WorkflowServiceClientWithMetrics>>, ClientInitError>
     {
         let channel = Channel::from_shared(self.target_url.to_string())?;
         let channel = self.add_tls_to_channel(channel).await?;
@@ -423,9 +423,9 @@ type InterceptedMetricsSvc = InterceptedService<GrpcMetricSvc, ServiceCallInterc
 pub struct Client {
     /// Client for interacting with workflow service
     service: WorkflowServiceClientWithMetrics,
-    /// Options gateway was initialized with
+    /// Options client was initialized with
     opts: ClientOptions,
-    /// The namespace this gateway interacts with
+    /// The namespace this client interacts with
     namespace: String,
 }
 
@@ -606,10 +606,10 @@ pub trait WorkflowClientTrait {
     /// Lists all available namespaces
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse>;
 
-    /// Returns options that were used to initialize the gateway
+    /// Returns options that were used to initialize the client
     fn get_options(&self) -> &ClientOptions;
 
-    /// Returns the namespace this gateway is bound to
+    /// Returns the namespace this client is bound to
     fn namespace(&self) -> &str;
 }
 

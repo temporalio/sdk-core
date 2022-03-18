@@ -44,7 +44,7 @@ async fn sends_upsert() {
 
     let search_attrs = worker
         .inner_mut()
-        .server_gateway()
+        .workflow_client()
         .describe_workflow_execution(wf_id.to_string(), Some(run_id))
         .await
         .unwrap()

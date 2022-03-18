@@ -397,7 +397,7 @@ mod test {
     use super::*;
 
     use std::time::Duration;
-    use temporal_client::mocks::mock_gateway;
+    use temporal_client::mocks::mock_workflow_client;
     use temporal_sdk_core_protos::{
         coresdk::common::Payload,
         temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
@@ -408,12 +408,12 @@ mod test {
     /// every 1/2 of the heartbeat timeout.
     #[tokio::test]
     async fn process_heartbeats_and_shutdown() {
-        let mut mock_gateway = mock_gateway();
-        mock_gateway
+        let mut mock_client = mock_workflow_client();
+        mock_client
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(2);
-        let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client));
         let fake_task_token = vec![1, 2, 3];
         // Send 2 heartbeat requests for 20ms apart.
         // The first heartbeat should be sent right away, and
@@ -429,12 +429,12 @@ mod test {
 
     #[tokio::test]
     async fn send_heartbeats_less_frequently_than_throttle_interval() {
-        let mut mock_gateway = mock_gateway();
-        mock_gateway
+        let mut mock_client = mock_workflow_client();
+        mock_client
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(3);
-        let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client));
         let fake_task_token = vec![1, 2, 3];
         // Heartbeats always get sent if recorded less frequently than the throttle intreval
         for i in 0_u8..3 {
@@ -449,12 +449,12 @@ mod test {
     /// interactions with the server - one immediately and one after 500ms after the throttle_interval.
     #[tokio::test]
     async fn process_tight_loop_and_shutdown() {
-        let mut mock_gateway = mock_gateway();
-        mock_gateway
+        let mut mock_client = mock_workflow_client();
+        mock_client
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(1);
-        let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client));
         let fake_task_token = vec![1, 2, 3];
         // Send a whole bunch of heartbeats very fast. We should still only send one total.
         for i in 0_u8..50 {
@@ -468,12 +468,12 @@ mod test {
     /// This test reports one heartbeat and waits for the throttle_interval to elapse before sending another
     #[tokio::test]
     async fn report_heartbeat_after_timeout() {
-        let mut mock_gateway = mock_gateway();
-        mock_gateway
+        let mut mock_client = mock_workflow_client();
+        mock_client
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(2);
-        let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client));
         let fake_task_token = vec![1, 2, 3];
         record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
         sleep(Duration::from_millis(500)).await;
@@ -485,12 +485,12 @@ mod test {
 
     #[tokio::test]
     async fn evict_works() {
-        let mut mock_gateway = mock_gateway();
-        mock_gateway
+        let mut mock_client = mock_workflow_client();
+        mock_client
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(2);
-        let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client));
         let fake_task_token = vec![1, 2, 3];
         record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
         // Let it propagate
@@ -505,12 +505,12 @@ mod test {
 
     #[tokio::test]
     async fn evict_immediate_after_record() {
-        let mut mock_gateway = mock_gateway();
-        mock_gateway
+        let mut mock_client = mock_workflow_client();
+        mock_client
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(1);
-        let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client));
         let fake_task_token = vec![1, 2, 3];
         record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
         hm.evict(fake_task_token.clone().into()).await;
@@ -520,12 +520,12 @@ mod test {
     /// Recording new heartbeats after shutdown is not allowed, and will result in error.
     #[tokio::test]
     async fn record_after_shutdown() {
-        let mut mock_gateway = mock_gateway();
-        mock_gateway
+        let mut mock_client = mock_workflow_client();
+        mock_client
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(0);
-        let hm = ActivityHeartbeatManager::new(Arc::new(mock_gateway));
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client));
         hm.shutdown().await;
         match hm.record(
             ActivityHeartbeat {

@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_sdk::{WfContext, Worker, WorkflowFunction};
-use temporal_sdk_core::{replay::mock_gateway_from_history, telemetry_init, WorkflowClientTrait};
+use temporal_sdk_core::{replay::mock_client_from_history, telemetry_init, WorkflowClientTrait};
 use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -72,8 +72,8 @@ async fn two_cores_replay() {
         .await
         .unwrap();
 
-    let mock_1 = mock_gateway_from_history(&hist, "a");
-    let mock_2 = mock_gateway_from_history(&hist, "b");
+    let mock_1 = mock_client_from_history(&hist, "a");
+    let mock_2 = mock_client_from_history(&hist, "b");
     assert_ne!(
         mock_1
             .poll_workflow_task("a".to_string(), false)

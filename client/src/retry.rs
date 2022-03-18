@@ -30,15 +30,15 @@ pub const RETRYABLE_ERROR_CODES: [Code; 7] = [
 /// auto-retries
 #[derive(Debug, Clone)]
 pub struct RetryClient<SG> {
-    gateway: SG,
+    client: SG,
     retry_config: RetryConfig,
 }
 
 impl<SG> RetryClient<SG> {
-    /// Use the provided retry config with the provided gateway
-    pub const fn new(gateway: SG, retry_config: RetryConfig) -> Self {
+    /// Use the provided retry config with the provided client
+    pub const fn new(client: SG, retry_config: RetryConfig) -> Self {
         Self {
-            gateway,
+            client,
             retry_config,
         }
     }
@@ -47,17 +47,17 @@ impl<SG> RetryClient<SG> {
 impl<SG> RetryClient<SG> {
     /// Return the inner client type
     pub fn get_client(&self) -> &SG {
-        &self.gateway
+        &self.client
     }
 
     /// Return the inner client type mutably
     pub fn get_client_mut(&mut self) -> &mut SG {
-        &mut self.gateway
+        &mut self.client
     }
 
     /// Disable retry and return the inner client type
     pub fn into_inner(self) -> SG {
-        self.gateway
+        self.client
     }
 
     /// Wraps a call to the underlying client with retry capability.
@@ -191,7 +191,7 @@ macro_rules! retry_call {
 }
 
 // Ideally, this would be auto-implemented for anything that implements the raw client, but that
-// breaks all our retry gateways which use a mock since it's based on this trait currently. Ideally
+// breaks all our retry clients which use a mock since it's based on this trait currently. Ideally
 // we would create an automock for the WorkflowServiceClient copy-paste trait and use that, but
 // that's a huge pain. Maybe one day tonic will provide traits.
 #[async_trait::async_trait]
@@ -430,11 +430,11 @@ where
     }
 
     fn get_options(&self) -> &ClientOptions {
-        self.gateway.get_options()
+        self.client.get_options()
     }
 
     fn namespace(&self) -> &str {
-        self.gateway.namespace()
+        self.client.namespace()
     }
 }
 
@@ -457,13 +457,13 @@ mod tests {
             Code::Unauthenticated,
             Code::Unimplemented,
         ] {
-            let mut mock_gateway = MockWorkflowClientTrait::new();
-            mock_gateway
+            let mut mock_client = MockWorkflowClientTrait::new();
+            mock_client
                 .expect_cancel_activity_task()
                 .returning(move |_, _| Err(Status::new(code, "non-retryable failure")))
                 .times(1);
-            let retry_gateway = RetryClient::new(mock_gateway, Default::default());
-            let result = retry_gateway
+            let retry_client = RetryClient::new(mock_client, Default::default());
+            let result = retry_client
                 .cancel_activity_task(vec![1].into(), None)
                 .await;
             // Expecting an error after a single attempt, since there was a non-retryable error.
@@ -482,21 +482,21 @@ mod tests {
             Code::Unauthenticated,
             Code::Unimplemented,
         ] {
-            let mut mock_gateway = MockWorkflowClientTrait::new();
-            mock_gateway
+            let mut mock_client = MockWorkflowClientTrait::new();
+            mock_client
                 .expect_poll_workflow_task()
                 .returning(move |_, _| Err(Status::new(code, "non-retryable failure")))
                 .times(1);
-            mock_gateway
+            mock_client
                 .expect_poll_activity_task()
                 .returning(move |_, _| Err(Status::new(code, "non-retryable failure")))
                 .times(1);
-            let retry_gateway = RetryClient::new(mock_gateway, Default::default());
-            let result = retry_gateway
+            let retry_client = RetryClient::new(mock_client, Default::default());
+            let result = retry_client
                 .poll_workflow_task("tq".to_string(), false)
                 .await;
             assert!(result.is_err());
-            let result = retry_gateway
+            let result = retry_client
                 .poll_activity_task("tq".to_string(), None)
                 .await;
             assert!(result.is_err());
@@ -506,18 +506,18 @@ mod tests {
     #[tokio::test]
     async fn retryable_errors() {
         for code in RETRYABLE_ERROR_CODES {
-            let mut mock_gateway = MockWorkflowClientTrait::new();
-            mock_gateway
+            let mut mock_client = MockWorkflowClientTrait::new();
+            mock_client
                 .expect_cancel_activity_task()
                 .returning(move |_, _| Err(Status::new(code, "retryable failure")))
                 .times(3);
-            mock_gateway
+            mock_client
                 .expect_cancel_activity_task()
                 .returning(|_, _| Ok(Default::default()))
                 .times(1);
 
-            let retry_gateway = RetryClient::new(mock_gateway, Default::default());
-            let result = retry_gateway
+            let retry_client = RetryClient::new(mock_client, Default::default());
+            let result = retry_client
                 .cancel_activity_task(vec![1].into(), None)
                 .await;
             // Expecting successful response after retries
@@ -527,31 +527,31 @@ mod tests {
 
     #[tokio::test]
     async fn long_poll_retries_forever() {
-        let mut mock_gateway = MockWorkflowClientTrait::new();
-        mock_gateway
+        let mut mock_client = MockWorkflowClientTrait::new();
+        mock_client
             .expect_poll_workflow_task()
             .returning(move |_, _| Err(Status::new(Code::Unknown, "retryable failure")))
             .times(50);
-        mock_gateway
+        mock_client
             .expect_poll_workflow_task()
             .returning(|_, _| Ok(Default::default()))
             .times(1);
-        mock_gateway
+        mock_client
             .expect_poll_activity_task()
             .returning(move |_, _| Err(Status::new(Code::Unknown, "retryable failure")))
             .times(50);
-        mock_gateway
+        mock_client
             .expect_poll_activity_task()
             .returning(|_, _| Ok(Default::default()))
             .times(1);
 
-        let retry_gateway = RetryClient::new(mock_gateway, Default::default());
+        let retry_client = RetryClient::new(mock_client, Default::default());
 
-        let result = retry_gateway
+        let result = retry_client
             .poll_workflow_task("tq".to_string(), false)
             .await;
         assert!(result.is_ok());
-        let result = retry_gateway
+        let result = retry_client
             .poll_activity_task("tq".to_string(), None)
             .await;
         assert!(result.is_ok());
@@ -561,31 +561,31 @@ mod tests {
     async fn long_poll_retries_deadline_exceeded() {
         // For some reason we will get cancelled in these situations occasionally (always?) too
         for code in [Code::Cancelled, Code::DeadlineExceeded] {
-            let mut mock_gateway = MockWorkflowClientTrait::new();
-            mock_gateway
+            let mut mock_client = MockWorkflowClientTrait::new();
+            mock_client
                 .expect_poll_workflow_task()
                 .returning(move |_, _| Err(Status::new(code, "retryable failure")))
                 .times(5);
-            mock_gateway
+            mock_client
                 .expect_poll_workflow_task()
                 .returning(|_, _| Ok(Default::default()))
                 .times(1);
-            mock_gateway
+            mock_client
                 .expect_poll_activity_task()
                 .returning(move |_, _| Err(Status::new(code, "retryable failure")))
                 .times(5);
-            mock_gateway
+            mock_client
                 .expect_poll_activity_task()
                 .returning(|_, _| Ok(Default::default()))
                 .times(1);
 
-            let retry_gateway = RetryClient::new(mock_gateway, Default::default());
+            let retry_client = RetryClient::new(mock_client, Default::default());
 
-            let result = retry_gateway
+            let result = retry_client
                 .poll_workflow_task("tq".to_string(), false)
                 .await;
             assert!(result.is_ok());
-            let result = retry_gateway
+            let result = retry_client
                 .poll_activity_task("tq".to_string(), None)
                 .await;
             assert!(result.is_ok());

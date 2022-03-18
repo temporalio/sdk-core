@@ -16,7 +16,7 @@ use std::{
     ops::RangeFull,
     sync::Arc,
 };
-use temporal_client::{mocks::mock_gateway, MockWorkflowClientTrait};
+use temporal_client::{mocks::mock_workflow_client, MockWorkflowClientTrait};
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -68,7 +68,7 @@ impl From<&Self> for ResponseType {
 }
 
 /// Given identifiers for a workflow/run, and a test history builder, construct an instance of
-/// the a worker with a mock server gateway that will produce the responses as appropriate.
+/// the a worker with a mock server client that will produce the responses as appropriate.
 ///
 /// `response_batches` is used to control the fake [PollWorkflowTaskQueueResponse]s returned. For
 /// each number in the input list, a fake response will be prepared which includes history up to the
@@ -161,7 +161,7 @@ where
     }
 
     /// Uses the provided list of tasks to create a mock poller for the `TEST_Q`
-    pub fn from_gateway_with_responses<WFT, ACT>(sg: SG, wf_tasks: WFT, act_tasks: ACT) -> Self
+    pub fn from_client_with_responses<WFT, ACT>(sg: SG, wf_tasks: WFT, act_tasks: ACT) -> Self
     where
         WFT: IntoIterator<Item = PollWorkflowTaskQueueResponse>,
         ACT: IntoIterator<Item = PollActivityTaskQueueResponse>,
@@ -223,7 +223,7 @@ where
     mock_poller
 }
 
-/// Build a mock server gateway capable of returning multiple different histories for different
+/// Build a mock server client capable of returning multiple different histories for different
 /// workflows. It does so by tracking outstanding workflow tasks like is also happening in core
 /// (which is unfortunately a bit redundant, we could provide hooks in core but that feels a little
 /// nasty). If there is an outstanding task for a given workflow, new chunks of its history are not
@@ -250,10 +250,10 @@ pub fn single_hist_mock_sg(
     wf_id: &str,
     t: TestHistoryBuilder,
     response_batches: impl IntoIterator<Item = impl Into<ResponseType>>,
-    mock_gateway: MockWorkflowClientTrait,
+    mock_client: MockWorkflowClientTrait,
     enforce_num_polls: bool,
 ) -> MocksHolder<MockWorkflowClientTrait> {
-    let mut mh = MockPollCfg::from_resp_batches(wf_id, t, response_batches, mock_gateway);
+    let mut mh = MockPollCfg::from_resp_batches(wf_id, t, response_batches, mock_client);
     mh.enforce_correct_number_of_polls = enforce_num_polls;
     build_mock_pollers(mh)
 }
@@ -262,7 +262,7 @@ pub struct MockPollCfg {
     pub hists: Vec<FakeWfResponses>,
     pub enforce_correct_number_of_polls: bool,
     pub num_expected_fails: Option<usize>,
-    pub mock_gateway: MockWorkflowClientTrait,
+    pub mock_client: MockWorkflowClientTrait,
     /// All calls to fail WFTs must match this predicate
     pub expect_fail_wft_matcher:
         Box<dyn Fn(&TaskToken, &WorkflowTaskFailedCause, &Option<Failure>) -> bool + Send>,
@@ -278,7 +278,7 @@ impl MockPollCfg {
             hists,
             enforce_correct_number_of_polls,
             num_expected_fails,
-            mock_gateway: mock_gateway(),
+            mock_client: mock_workflow_client(),
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
         }
     }
@@ -286,7 +286,7 @@ impl MockPollCfg {
         wf_id: &str,
         t: TestHistoryBuilder,
         resps: impl IntoIterator<Item = impl Into<ResponseType>>,
-        mock_gateway: MockWorkflowClientTrait,
+        mock_client: MockWorkflowClientTrait,
     ) -> Self {
         Self {
             hists: vec![FakeWfResponses {
@@ -296,7 +296,7 @@ impl MockPollCfg {
             }],
             enforce_correct_number_of_polls: true,
             num_expected_fails: None,
-            mock_gateway,
+            mock_client,
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
         }
     }
@@ -375,14 +375,14 @@ pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockWorkflowClien
     let mock_worker = MockWorker::new(Box::from(mock_poller));
 
     let outstanding = outstanding_wf_task_tokens.clone();
-    cfg.mock_gateway
+    cfg.mock_client
         .expect_complete_workflow_task()
         .returning(move |comp| {
             outstanding.write().remove_by_right(&comp.task_token);
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
     let outstanding = outstanding_wf_task_tokens.clone();
-    cfg.mock_gateway
+    cfg.mock_client
         .expect_fail_workflow_task()
         .withf(cfg.expect_fail_wft_matcher)
         .times(
@@ -393,12 +393,12 @@ pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockWorkflowClien
             outstanding.write().remove_by_right(&tt);
             Ok(Default::default())
         });
-    cfg.mock_gateway
+    cfg.mock_client
         .expect_start_workflow()
         .returning(|_, _, _, _, _| Ok(Default::default()));
 
     MocksHolder {
-        sg: cfg.mock_gateway,
+        sg: cfg.mock_client,
         mock_worker,
         outstanding_task_map: Some(outstanding_wf_task_tokens),
     }

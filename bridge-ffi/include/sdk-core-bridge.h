@@ -137,7 +137,7 @@ const struct tmprl_bytes_t *tmprl_telemetry_init(const uint8_t *req_proto, size_
  * Initialize a client connection to the Temporal service.
  *
  * The runtime is required and must outlive this instance. The `req_proto` and `req_proto_len`
- * represent a byte array for a [CreateGatewayRequest] protobuf message. The callback is invoked on
+ * represent a byte array for a [CreateClientRequest] protobuf message. The callback is invoked on
  * completion.
  */
 void tmprl_client_init(struct tmprl_runtime_t *runtime,

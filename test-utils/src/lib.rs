@@ -26,7 +26,7 @@ use std::{
 use temporal_client::{Client, RetryClient, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{interceptors::WorkerInterceptor, IntoActivityFunc, Worker, WorkflowFunction};
 use temporal_sdk_core::{
-    init_replay_worker, init_worker, replay::mock_gateway_from_history, telemetry_init,
+    init_replay_worker, init_worker, replay::mock_client_from_history, telemetry_init,
     ClientOptions, ClientOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder, WorkerConfig,
     WorkerConfigBuilder,
 };
@@ -72,8 +72,8 @@ pub fn init_core_replay_preloaded(
         .task_queue(test_name)
         .build()
         .expect("Configuration options construct properly");
-    let gateway = mock_gateway_from_history(history, test_name.to_string());
-    let worker = init_replay_worker(worker_cfg, Arc::new(gateway), history)
+    let client = mock_client_from_history(history, test_name.to_string());
+    let worker = init_replay_worker(worker_cfg, Arc::new(client), history)
         .expect("Replay worker must init properly");
     (Arc::new(worker), test_name.to_string())
 }
@@ -183,7 +183,7 @@ impl CoreWfStarter {
         let history = self
             .get_worker()
             .await
-            .server_gateway()
+            .workflow_client()
             .get_workflow_execution_history(wf_id.into(), Some(run_id.into()), vec![])
             .await?
             .history
@@ -236,16 +236,16 @@ impl CoreWfStarter {
         self.initted_worker
             .get_or_init(|| async {
                 telemetry_init(&self.telemetry_options).expect("Telemetry inits cleanly");
-                let gateway = Arc::new(
+                let client = Arc::new(
                     get_integ_server_options()
                         .connect(self.worker_config.namespace.clone(), None)
                         .await
                         .expect("Must connect"),
                 );
-                let worker = init_worker(self.worker_config.clone(), gateway.clone());
+                let worker = init_worker(self.worker_config.clone(), client.clone());
                 InitializedWorker {
                     worker: Arc::new(worker),
-                    client: gateway,
+                    client,
                 }
             })
             .await
@@ -315,7 +315,7 @@ impl TestWorker {
         let wfid = workflow_id.into();
         let res = self
             .inner
-            .server_gateway()
+            .workflow_client()
             .start_workflow(
                 input,
                 self.inner.task_queue().to_string(),

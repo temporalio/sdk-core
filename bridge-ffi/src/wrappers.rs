@@ -54,33 +54,33 @@ impl TryFrom<InitTelemetryRequest> for temporal_sdk_core::TelemetryOptions {
     }
 }
 
-pub struct ClientOptions(pub bridge::CreateGatewayRequest);
+pub struct ClientOptions(pub bridge::CreateClientRequest);
 
 impl TryFrom<ClientOptions> for temporal_sdk_core::ClientOptions {
     type Error = String;
 
     fn try_from(ClientOptions(req): ClientOptions) -> Result<Self, Self::Error> {
-        let mut gateway_opts = temporal_sdk_core::ClientOptionsBuilder::default();
+        let mut client_opts = temporal_sdk_core::ClientOptionsBuilder::default();
         if !req.target_url.is_empty() {
-            gateway_opts.target_url(
+            client_opts.target_url(
                 temporal_sdk_core::Url::parse(&req.target_url)
                     .map_err(|err| format!("invalid target URL: {}", err))?,
             );
         }
         if !req.client_name.is_empty() {
-            gateway_opts.client_name(req.client_name);
+            client_opts.client_name(req.client_name);
         }
         if !req.client_version.is_empty() {
-            gateway_opts.client_version(req.client_version);
+            client_opts.client_version(req.client_version);
         }
         if !req.static_headers.is_empty() {
-            gateway_opts.static_headers(req.static_headers);
+            client_opts.static_headers(req.static_headers);
         }
         if !req.identity.is_empty() {
-            gateway_opts.identity(req.identity);
+            client_opts.identity(req.identity);
         }
         if !req.worker_binary_id.is_empty() {
-            gateway_opts.worker_binary_id(req.worker_binary_id);
+            client_opts.worker_binary_id(req.worker_binary_id);
         }
         if let Some(req_tls_config) = req.tls_config {
             let mut tls_config = temporal_sdk_core::TlsConfig::default();
@@ -98,7 +98,7 @@ impl TryFrom<ClientOptions> for temporal_sdk_core::ClientOptions {
                     client_private_key: req_tls_config.client_private_key,
                 })
             }
-            gateway_opts.tls_cfg(tls_config);
+            client_opts.tls_cfg(tls_config);
         }
         if let Some(req_retry_config) = req.retry_config {
             let mut retry_config = temporal_sdk_core::RetryConfig::default();
@@ -122,11 +122,11 @@ impl TryFrom<ClientOptions> for temporal_sdk_core::ClientOptions {
             if let Some(v) = req_retry_config.max_retries {
                 retry_config.max_retries = v as usize;
             }
-            gateway_opts.retry_config(retry_config);
+            client_opts.retry_config(retry_config);
         }
-        gateway_opts
+        client_opts
             .build()
-            .map_err(|err| format!("invalid gateway options: {}", err))
+            .map_err(|err| format!("invalid client options: {}", err))
     }
 }
 

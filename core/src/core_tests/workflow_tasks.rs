@@ -17,7 +17,7 @@ use std::{
     sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_client::mocks::mock_gateway;
+use temporal_client::mocks::mock_workflow_client;
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -1096,7 +1096,7 @@ async fn wft_timeout_repro(hist_batches: &'static [usize]) {
 async fn complete_after_eviction() {
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("1");
-    let mut mock = mock_gateway();
+    let mut mock = mock_workflow_client();
     mock.expect_complete_workflow_task().times(0);
     let mock = single_hist_mock_sg(wfid, t, &[2], mock, true);
     let core = mock_worker(mock);
@@ -1139,7 +1139,7 @@ async fn sends_appropriate_sticky_task_queue_responses() {
     // include the information that tells the server to enqueue the next task on a sticky queue.
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("1");
-    let mut mock = mock_gateway();
+    let mut mock = mock_workflow_client();
     mock.expect_complete_workflow_task()
         .withf(|comp| comp.sticky_attributes.is_some())
         .times(1)
@@ -1163,7 +1163,7 @@ async fn sends_appropriate_sticky_task_queue_responses() {
 async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation() {
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("1");
-    let mock = single_hist_mock_sg(wfid, t, &[1, 2], mock_gateway(), false);
+    let mock = single_hist_mock_sg(wfid, t, &[1, 2], mock_workflow_client(), false);
     let core = mock_worker(mock);
 
     // Poll for and complete first workflow task
@@ -1224,10 +1224,10 @@ async fn buffered_work_drained_on_shutdown() {
         ))
         .take(50),
     );
-    let mut mock = mock_gateway();
+    let mut mock = mock_workflow_client();
     mock.expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
-    let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, []);
+    let mut mock = MocksHolder::from_client_with_responses(mock, tasks, []);
     // Cache on to avoid being super repetitive
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = &mock_worker(mock);
@@ -1264,7 +1264,7 @@ async fn buffered_work_drained_on_shutdown() {
 async fn buffering_tasks_doesnt_count_toward_outstanding_max() {
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("1");
-    let mock = mock_gateway();
+    let mock = mock_workflow_client();
     let mut tasks = VecDeque::new();
     // A way bigger task list than allowed outstanding tasks
     tasks.extend(
@@ -1276,7 +1276,7 @@ async fn buffering_tasks_doesnt_count_toward_outstanding_max() {
         ))
         .take(20),
     );
-    let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, []);
+    let mut mock = MocksHolder::from_client_with_responses(mock, tasks, []);
     mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 10;
         wc.max_outstanding_workflow_tasks = 5;
@@ -1300,7 +1300,7 @@ async fn fail_wft_then_recover() {
         t,
         // We need to deliver all of history twice because of eviction
         [ResponseType::AllHistory, ResponseType::AllHistory],
-        mock_gateway(),
+        mock_workflow_client(),
     );
     mh.num_expected_fails = Some(1);
     mh.expect_fail_wft_matcher =
@@ -1369,8 +1369,12 @@ async fn poll_response_triggers_wf_error() {
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
-    let mut mh =
-        MockPollCfg::from_resp_batches("fake_wf_id", t, [ResponseType::AllHistory], mock_gateway());
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::AllHistory],
+        mock_workflow_client(),
+    );
     // Since applying the poll response immediately generates an error core will start polling again
     // Rather than panic on bad expectation we want to return the magic "no more work" error
     mh.enforce_correct_number_of_polls = false;
@@ -1398,14 +1402,14 @@ async fn lang_slower_than_wft_timeouts() {
         hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
         hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
     ];
-    let mut mock = mock_gateway();
+    let mut mock = mock_workflow_client();
     mock.expect_complete_workflow_task()
         .times(1)
         .returning(|_| Err(tonic::Status::not_found("Workflow task not found.")));
     mock.expect_complete_workflow_task()
         .times(1)
         .returning(|_| Ok(Default::default()));
-    let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, []);
+    let mut mock = MocksHolder::from_client_with_responses(mock, tasks, []);
     mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 2;
     });
@@ -1457,7 +1461,7 @@ async fn tries_cancel_of_completed_activity() {
     t.add_activity_task_completed(scheduled_event_id, started_event_id, Default::default());
     t.add_workflow_task_scheduled_and_started();
 
-    let mock = mock_gateway();
+    let mock = mock_workflow_client();
     let mut mock = single_hist_mock_sg("fake_wf_id", t, &[1, 2], mock, true);
     mock.worker_cfg(|cfg| cfg.max_cached_workflows = 1);
     let core = mock_worker(mock);
@@ -1505,7 +1509,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_workflow_task_scheduled_and_started();
 
-    let mock = mock_gateway();
+    let mock = mock_workflow_client();
     let mut mock = single_hist_mock_sg("fake_wf_id", t, [1, 1, 1], mock, true);
     mock.worker_cfg(|cfg| {
         cfg.max_cached_workflows = 2;
@@ -1577,10 +1581,10 @@ async fn cache_miss_will_fetch_history() {
         "fake_wf_id",
         t,
         [ResponseType::ToTaskNum(1), ResponseType::OneTask(2)],
-        mock_gateway(),
+        mock_workflow_client(),
     );
     mh.num_expected_fails = Some(0);
-    mh.mock_gateway
+    mh.mock_client
         .expect_get_workflow_execution_history()
         .times(1)
         .returning(move |_, _, _| Ok(get_exec_resp.clone()));
@@ -1651,7 +1655,7 @@ async fn tasks_from_completion_are_delivered() {
         1.into(),
         TEST_Q.to_string(),
     )];
-    let mut mock = mock_gateway();
+    let mut mock = mock_workflow_client();
     mock.expect_complete_workflow_task()
         .times(1)
         .returning(move |_| {
@@ -1667,7 +1671,7 @@ async fn tasks_from_completion_are_delivered() {
     mock.expect_complete_workflow_task()
         .times(1)
         .returning(|_| Ok(Default::default()));
-    let mut mock = MocksHolder::from_gateway_with_responses(mock, tasks, []);
+    let mut mock = MocksHolder::from_client_with_responses(mock, tasks, []);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 2);
     let core = mock_worker(mock);
 

@@ -251,7 +251,7 @@ async fn signal_workflow() {
     .unwrap();
 
     // Send the signals to the server
-    core.server_gateway()
+    core.workflow_client()
         .signal_workflow_execution(
             workflow_id.to_string(),
             res.run_id.to_string(),
@@ -260,7 +260,7 @@ async fn signal_workflow() {
         )
         .await
         .unwrap();
-    core.server_gateway()
+    core.workflow_client()
         .signal_workflow_execution(
             workflow_id.to_string(),
             res.run_id.to_string(),
@@ -343,7 +343,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
             let run_id = res.run_id.clone();
 
             // Send the signal to the server
-            core.server_gateway()
+            core.workflow_client()
                 .signal_workflow_execution(
                     workflow_id.to_string(),
                     res.run_id.to_string(),
@@ -450,7 +450,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     let rid = wf_task.run_id.clone();
     // Send the signals to the server & resolve activity -- sometimes this happens too fast
     sleep(Duration::from_millis(200)).await;
-    core.server_gateway()
+    core.workflow_client()
         .signal_workflow_execution(wf_id.to_string(), rid, signal_at_start.to_string(), None)
         .await
         .unwrap();
@@ -462,7 +462,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     .await
     .unwrap();
     let rid = wf_task.run_id.clone();
-    core.server_gateway()
+    core.workflow_client()
         .signal_workflow_execution(wf_id.to_string(), rid, signal_at_complete.to_string(), None)
         .await
         .unwrap();

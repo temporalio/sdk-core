@@ -38,7 +38,7 @@ async fn cancel_during_timer() {
     let canceller = async {
         tokio::time::sleep(Duration::from_millis(500)).await;
         // Cancel the workflow externally
-        core.server_gateway()
+        core.workflow_client()
             .cancel_workflow_execution(wf_name.to_string(), None)
             .await
             .unwrap();
@@ -47,7 +47,7 @@ async fn cancel_during_timer() {
     let (_, res) = tokio::join!(canceller, worker.run_until_done());
     res.unwrap();
     let desc = core
-        .server_gateway()
+        .workflow_client()
         .describe_workflow_execution(wf_name.to_string(), None)
         .await
         .unwrap();

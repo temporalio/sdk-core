@@ -296,7 +296,7 @@ impl WorkflowTaskManager {
     pub(crate) async fn apply_new_poll_resp(
         &self,
         work: ValidPollWFTQResponse,
-        gateway: Arc<dyn WorkflowClientTrait + Send + Sync>,
+        client: Arc<dyn WorkflowClientTrait + Send + Sync>,
     ) -> NewWfTaskOutcome {
         let mut work = if let Some(w) = self.workflow_machines.buffer_resp_if_outstanding_work(work)
         {
@@ -322,7 +322,7 @@ impl WorkflowTaskManager {
             .map(|q| query_to_job(LEGACY_QUERY_ID.to_string(), q));
 
         let (info, mut next_activation) =
-            match self.instantiate_or_update_workflow(work, gateway).await {
+            match self.instantiate_or_update_workflow(work, client).await {
                 Ok((info, next_activation)) => (info, next_activation),
                 Err(e) => {
                     return NewWfTaskOutcome::Evict(e);
@@ -578,7 +578,7 @@ impl WorkflowTaskManager {
     async fn instantiate_or_update_workflow(
         &self,
         poll_wf_resp: ValidPollWFTQResponse,
-        gateway: Arc<dyn WorkflowClientTrait + Send + Sync>,
+        client: Arc<dyn WorkflowClientTrait + Send + Sync>,
     ) -> Result<(WorkflowTaskInfo, WorkflowActivation), WorkflowUpdateError> {
         let run_id = poll_wf_resp.workflow_execution.run_id.clone();
 
@@ -608,7 +608,7 @@ impl WorkflowTaskManager {
                 poll_wf_resp.workflow_execution.workflow_id.clone(),
                 poll_wf_resp.workflow_execution.run_id,
                 page_token,
-                gateway.clone(),
+                client.clone(),
             ),
             poll_wf_resp.previous_started_event_id,
         );
@@ -619,7 +619,7 @@ impl WorkflowTaskManager {
                 &run_id,
                 history_update,
                 &poll_wf_resp.workflow_execution.workflow_id,
-                gateway.namespace(),
+                client.namespace(),
                 &poll_wf_resp.workflow_type,
                 &self.metrics,
             )

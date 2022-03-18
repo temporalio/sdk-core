@@ -632,7 +632,7 @@ async fn async_activity_completion_workflow() {
     })
     .await
     .unwrap();
-    let gw = core.server_gateway();
+    let gw = core.workflow_client();
     gw.complete_activity_task(
         task.task_token.into(),
         Some(Payloads {
@@ -713,7 +713,7 @@ async fn activity_cancelled_after_heartbeat_times_out() {
     // Verify shutdown completes
     core.shutdown().await;
     // Cleanup just in case
-    core.server_gateway()
+    core.workflow_client()
         .terminate_workflow_execution(task_q, None)
         .await
         .unwrap();
