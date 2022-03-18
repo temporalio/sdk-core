@@ -1,4 +1,4 @@
-use crate::{pollers::ServerGatewayApis, worker::activities::PendingActivityCancel, TaskToken};
+use crate::{pollers::WorkflowClientTrait, worker::activities::PendingActivityCancel, TaskToken};
 use futures::StreamExt;
 use std::{
     collections::{hash_map::Entry, HashMap},
@@ -291,7 +291,7 @@ impl HeartbeatStreamState {
 impl ActivityHeartbeatManager {
     /// Creates a new instance of an activity heartbeat manager and returns a handle to the user,
     /// which allows to send new heartbeats and initiate the shutdown.
-    pub fn new(sg: Arc<impl ServerGatewayApis + Send + Sync + 'static + ?Sized>) -> Self {
+    pub fn new(sg: Arc<impl WorkflowClientTrait + Send + Sync + 'static + ?Sized>) -> Self {
         let (heartbeat_stream_state, heartbeat_tx_source, shutdown_token) =
             HeartbeatStreamState::new();
         let (cancels_tx, cancels_rx) = unbounded_channel();

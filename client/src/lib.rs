@@ -212,14 +212,14 @@ pub enum GatewayInitError {
 /// use-case was worker initialization.
 pub enum AnyClient {
     /// A high level client, like the type workers work with
-    HighLevel(Arc<dyn ServerGatewayApis + Send + Sync>),
+    HighLevel(Arc<dyn WorkflowClientTrait + Send + Sync>),
     /// A low level gRPC client, wrapped with the typical interceptors
     LowLevel(Box<ConfiguredClient<WorkflowServiceClientWithMetrics>>),
 }
 
 impl<SGA> From<SGA> for AnyClient
 where
-    SGA: ServerGatewayApis + Send + Sync + 'static,
+    SGA: WorkflowClientTrait + Send + Sync + 'static,
 {
     fn from(s: SGA) -> Self {
         Self::HighLevel(Arc::new(s))
@@ -227,7 +227,7 @@ where
 }
 impl<SGA> From<Arc<SGA>> for AnyClient
 where
-    SGA: ServerGatewayApis + Send + Sync + 'static,
+    SGA: WorkflowClientTrait + Send + Sync + 'static,
 {
     fn from(s: Arc<SGA>) -> Self {
         Self::HighLevel(s)
@@ -463,7 +463,7 @@ impl ServerGateway {
 /// See the [WorkflowService] trait for a lower-level client.
 #[cfg_attr(any(feature = "mocks", test), mockall::automock)]
 #[async_trait::async_trait]
-pub trait ServerGatewayApis {
+pub trait WorkflowClientTrait {
     /// Starts workflow execution.
     async fn start_workflow(
         &self,
@@ -624,7 +624,7 @@ pub struct WorkflowOptions {
 }
 
 #[async_trait::async_trait]
-impl ServerGatewayApis for ServerGateway {
+impl WorkflowClientTrait for ServerGateway {
     async fn start_workflow(
         &self,
         input: Vec<Payload>,

@@ -23,7 +23,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{RetryClient, ServerGateway, ServerGatewayApis, WorkflowOptions};
+use temporal_client::{RetryClient, ServerGateway, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{interceptors::WorkerInterceptor, IntoActivityFunc, Worker, WorkflowFunction};
 use temporal_sdk_core::{
     init_replay_worker, init_worker, replay::mock_gateway_from_history, telemetry_init,

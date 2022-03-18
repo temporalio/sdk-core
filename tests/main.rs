@@ -11,8 +11,8 @@ mod integ_tests {
     use std::str::FromStr;
     use temporal_client::WorkflowService;
     use temporal_sdk_core::{
-        init_worker, telemetry_init, ClientOptionsBuilder, ClientTlsConfig, ServerGatewayApis,
-        TlsConfig,
+        init_worker, telemetry_init, ClientOptionsBuilder, ClientTlsConfig, TlsConfig,
+        WorkflowClientTrait,
     };
     use temporal_sdk_core_api::{worker::WorkerConfigBuilder, CoreTelemetry};
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListNamespacesRequest;

@@ -11,7 +11,7 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use temporal_client::ServerGatewayApis;
+use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core_protos::coresdk::{
     activity_task::ActivityTask, workflow_activation::WorkflowActivation,
     workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
@@ -91,8 +91,8 @@ pub trait Worker: Send + Sync {
     /// a warning.
     fn request_workflow_eviction(&self, run_id: &str);
 
-    /// Returns this worker's instance of the [ServerGatewayApis] implementor it is using.
-    fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync>;
+    /// Returns this worker's instance of the [WorkflowClientTrait] implementor it is using.
+    fn server_gateway(&self) -> Arc<dyn WorkflowClientTrait + Send + Sync>;
 
     /// Return this worker's config
     fn get_config(&self) -> &WorkerConfig;

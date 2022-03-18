@@ -39,7 +39,7 @@ use crate::{
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
 use futures::{Future, TryFutureExt};
 use std::{convert::TryInto, sync::Arc};
-use temporal_client::{ServerGatewayApis, WorkflowTaskCompletion};
+use temporal_client::{WorkflowClientTrait, WorkflowTaskCompletion};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::activity_execution_result,
@@ -64,7 +64,7 @@ use tracing_futures::Instrument;
 /// A worker polls on a certain task queue
 pub struct Worker {
     config: WorkerConfig,
-    server_gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+    server_gateway: Arc<dyn WorkflowClientTrait + Send + Sync>,
 
     /// Will be populated when this worker should poll on a sticky WFT queue
     sticky_name: Option<String>,
@@ -154,7 +154,7 @@ impl WorkerTrait for Worker {
         );
     }
 
-    fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
+    fn server_gateway(&self) -> Arc<dyn WorkflowClientTrait + Send + Sync> {
         self.server_gateway.clone()
     }
 
@@ -187,7 +187,7 @@ impl Worker {
     pub(crate) fn new(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
-        sg: Arc<dyn ServerGatewayApis + Send + Sync>,
+        sg: Arc<dyn WorkflowClientTrait + Send + Sync>,
         metrics: MetricsContext,
     ) -> Self {
         info!(task_queue = %config.task_queue, "Initializing worker");
@@ -254,7 +254,7 @@ impl Worker {
     pub(crate) fn new_with_pollers(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
-        sg: Arc<dyn ServerGatewayApis + Send + Sync>,
+        sg: Arc<dyn WorkflowClientTrait + Send + Sync>,
         wft_poller: BoxedWFPoller,
         act_poller: Option<BoxedActPoller>,
         metrics: MetricsContext,

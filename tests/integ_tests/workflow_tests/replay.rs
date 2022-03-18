@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_sdk::{WfContext, Worker, WorkflowFunction};
-use temporal_sdk_core::{replay::mock_gateway_from_history, telemetry_init, ServerGatewayApis};
+use temporal_sdk_core::{replay::mock_gateway_from_history, telemetry_init, WorkflowClientTrait};
 use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_protos::{
     coresdk::{

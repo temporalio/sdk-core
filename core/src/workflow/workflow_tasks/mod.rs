@@ -27,7 +27,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use temporal_client::ServerGatewayApis;
+use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
@@ -296,7 +296,7 @@ impl WorkflowTaskManager {
     pub(crate) async fn apply_new_poll_resp(
         &self,
         work: ValidPollWFTQResponse,
-        gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+        gateway: Arc<dyn WorkflowClientTrait + Send + Sync>,
     ) -> NewWfTaskOutcome {
         let mut work = if let Some(w) = self.workflow_machines.buffer_resp_if_outstanding_work(work)
         {
@@ -578,7 +578,7 @@ impl WorkflowTaskManager {
     async fn instantiate_or_update_workflow(
         &self,
         poll_wf_resp: ValidPollWFTQResponse,
-        gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+        gateway: Arc<dyn WorkflowClientTrait + Send + Sync>,
     ) -> Result<(WorkflowTaskInfo, WorkflowActivation), WorkflowUpdateError> {
         let run_id = poll_wf_resp.workflow_execution.run_id.clone();
 

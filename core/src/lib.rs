@@ -31,7 +31,7 @@ pub(crate) use temporal_sdk_core_api::errors;
 
 pub use pollers::{
     ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig, ServerGateway,
-    ServerGatewayApis, TlsConfig,
+    TlsConfig, WorkflowClientTrait,
 };
 pub use telemetry::{
     fetch_global_buffered_logs, telemetry_init, TelemetryOptions, TelemetryOptionsBuilder,
@@ -85,7 +85,7 @@ where
 /// for workflow testing purposes.
 pub fn init_replay_worker(
     mut config: WorkerConfig,
-    gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+    gateway: Arc<dyn WorkflowClientTrait + Send + Sync>,
     history: &History,
 ) -> Result<Worker, anyhow::Error> {
     info!(

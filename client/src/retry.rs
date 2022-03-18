@@ -1,5 +1,6 @@
 use crate::{
-    ClientOptions, Result, RetryConfig, ServerGatewayApis, WorkflowOptions, WorkflowTaskCompletion,
+    ClientOptions, Result, RetryConfig, WorkflowClientTrait, WorkflowOptions,
+    WorkflowTaskCompletion,
 };
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
@@ -25,7 +26,7 @@ pub const RETRYABLE_ERROR_CODES: [Code; 7] = [
     Code::Unavailable,
 ];
 
-/// A wrapper for a [ServerGatewayApis] or [crate::WorkflowService] implementor which performs
+/// A wrapper for a [WorkflowClientTrait] or [crate::WorkflowService] implementor which performs
 /// auto-retries
 #[derive(Debug, Clone)]
 pub struct RetryClient<SG> {
@@ -61,7 +62,7 @@ impl<SG> RetryClient<SG> {
 
     /// Wraps a call to the underlying client with retry capability.
     ///
-    /// This is the "old" path used by higher-level [ServerGatewayApis] implementors
+    /// This is the "old" path used by higher-level [WorkflowClientTrait] implementors
     pub(crate) async fn call_with_retry<R, F, Fut>(
         &self,
         factory: F,
@@ -194,9 +195,9 @@ macro_rules! retry_call {
 // we would create an automock for the WorkflowServiceClient copy-paste trait and use that, but
 // that's a huge pain. Maybe one day tonic will provide traits.
 #[async_trait::async_trait]
-impl<SG> ServerGatewayApis for RetryClient<SG>
+impl<SG> WorkflowClientTrait for RetryClient<SG>
 where
-    SG: ServerGatewayApis + Send + Sync + 'static,
+    SG: WorkflowClientTrait + Send + Sync + 'static,
 {
     async fn start_workflow(
         &self,
@@ -440,7 +441,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MockServerGatewayApis;
+    use crate::MockWorkflowClientTrait;
     use tonic::Status;
 
     #[tokio::test]
@@ -456,7 +457,7 @@ mod tests {
             Code::Unauthenticated,
             Code::Unimplemented,
         ] {
-            let mut mock_gateway = MockServerGatewayApis::new();
+            let mut mock_gateway = MockWorkflowClientTrait::new();
             mock_gateway
                 .expect_cancel_activity_task()
                 .returning(move |_, _| Err(Status::new(code, "non-retryable failure")))
@@ -481,7 +482,7 @@ mod tests {
             Code::Unauthenticated,
             Code::Unimplemented,
         ] {
-            let mut mock_gateway = MockServerGatewayApis::new();
+            let mut mock_gateway = MockWorkflowClientTrait::new();
             mock_gateway
                 .expect_poll_workflow_task()
                 .returning(move |_, _| Err(Status::new(code, "non-retryable failure")))
@@ -505,7 +506,7 @@ mod tests {
     #[tokio::test]
     async fn retryable_errors() {
         for code in RETRYABLE_ERROR_CODES {
-            let mut mock_gateway = MockServerGatewayApis::new();
+            let mut mock_gateway = MockWorkflowClientTrait::new();
             mock_gateway
                 .expect_cancel_activity_task()
                 .returning(move |_, _| Err(Status::new(code, "retryable failure")))
@@ -526,7 +527,7 @@ mod tests {
 
     #[tokio::test]
     async fn long_poll_retries_forever() {
-        let mut mock_gateway = MockServerGatewayApis::new();
+        let mut mock_gateway = MockWorkflowClientTrait::new();
         mock_gateway
             .expect_poll_workflow_task()
             .returning(move |_, _| Err(Status::new(Code::Unknown, "retryable failure")))
@@ -560,7 +561,7 @@ mod tests {
     async fn long_poll_retries_deadline_exceeded() {
         // For some reason we will get cancelled in these situations occasionally (always?) too
         for code in [Code::Cancelled, Code::DeadlineExceeded] {
-            let mut mock_gateway = MockServerGatewayApis::new();
+            let mut mock_gateway = MockWorkflowClientTrait::new();
             mock_gateway
                 .expect_poll_workflow_task()
                 .returning(move |_, _| Err(Status::new(code, "retryable failure")))

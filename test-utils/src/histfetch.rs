@@ -5,7 +5,7 @@
 //! We can use `clap` if this needs more arguments / other stuff later on.
 
 use prost::Message;
-use temporal_client::ServerGatewayApis;
+use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core_test_utils::get_integ_server_options;
 
 #[tokio::main]

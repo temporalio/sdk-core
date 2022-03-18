@@ -57,7 +57,7 @@ use std::{
     future::Future,
     sync::Arc,
 };
-use temporal_client::{ClientOptionsBuilder, ServerGatewayApis};
+use temporal_client::{ClientOptionsBuilder, WorkflowClientTrait};
 use temporal_sdk_core::Url;
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
@@ -160,7 +160,7 @@ impl Worker {
     }
 
     /// Access the worker's server gateway client
-    pub fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
+    pub fn server_gateway(&self) -> Arc<dyn WorkflowClientTrait + Send + Sync> {
         self.common.worker.server_gateway()
     }
 

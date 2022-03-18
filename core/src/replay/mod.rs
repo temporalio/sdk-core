@@ -10,7 +10,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{mocks::mock_manual_gateway, ServerGatewayApis};
+use temporal_client::{mocks::mock_manual_gateway, WorkflowClientTrait};
 
 use temporal_sdk_core_protos::temporal::api::{
     common::v1::WorkflowExecution,
@@ -32,7 +32,7 @@ pub use temporal_sdk_core_protos::{
 pub fn mock_gateway_from_history(
     history: &History,
     task_queue: impl Into<String>,
-) -> impl ServerGatewayApis {
+) -> impl WorkflowClientTrait {
     let mut mg = mock_manual_gateway();
 
     let hist_info = HistoryInfo::new_from_history(history, None).unwrap();

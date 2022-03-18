@@ -1,6 +1,6 @@
 use crate::{
     replay::{HistoryInfo, TestHistoryBuilder},
-    ServerGatewayApis,
+    WorkflowClientTrait,
 };
 use futures::{future::BoxFuture, stream, stream::BoxStream, FutureExt, Stream, StreamExt};
 use std::{
@@ -30,7 +30,7 @@ pub struct HistoryUpdate {
 }
 
 pub struct HistoryPaginator {
-    gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+    gateway: Arc<dyn WorkflowClientTrait + Send + Sync>,
     event_queue: VecDeque<HistoryEvent>,
     wf_id: String,
     run_id: String,
@@ -70,7 +70,7 @@ impl HistoryPaginator {
         wf_id: String,
         run_id: String,
         next_page_token: impl Into<NextPageToken>,
-        gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+        gateway: Arc<dyn WorkflowClientTrait + Send + Sync>,
     ) -> Self {
         let next_page_token = next_page_token.into();
         let (event_queue, final_events) =

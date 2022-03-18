@@ -1,13 +1,13 @@
 //! Helpers for mocking
 
 use super::*;
-use crate::{ClientOptions, ClientOptionsBuilder, MockServerGatewayApis};
+use crate::{ClientOptions, ClientOptionsBuilder, MockWorkflowClientTrait};
 use std::str::FromStr;
 use url::Url;
 
 /// Create a mock client primed with basic necessary expectations
-pub fn mock_gateway() -> MockServerGatewayApis {
-    let mut mg = MockServerGatewayApis::new();
+pub fn mock_gateway() -> MockWorkflowClientTrait {
+    let mut mg = MockWorkflowClientTrait::new();
     mg.expect_get_options().return_const(fake_sg_opts());
     mg.expect_namespace()
         .return_const("fake_namespace".to_string());
@@ -39,7 +39,7 @@ pub fn fake_sg_opts() -> ClientOptions {
 // https://github.com/asomers/mockall/issues/189 to be fixed for it to go away.
 mockall::mock! {
     pub ManualGateway {}
-    impl ServerGatewayApis for ManualGateway {
+    impl WorkflowClientTrait for ManualGateway {
         fn start_workflow<'a, 'b>(
             &self,
             input: Vec<Payload>,

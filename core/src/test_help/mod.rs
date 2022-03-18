@@ -5,7 +5,7 @@ use crate::{
     replay::TestHistoryBuilder,
     sticky_q_name_for_worker,
     workflow::WorkflowCachingPolicy,
-    ServerGatewayApis, TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,
+    TaskToken, Worker, WorkerConfig, WorkerConfigBuilder, WorkflowClientTrait,
 };
 use bimap::BiMap;
 use futures::FutureExt;
@@ -16,7 +16,7 @@ use std::{
     ops::RangeFull,
     sync::Arc,
 };
-use temporal_client::{mocks::mock_gateway, MockServerGatewayApis};
+use temporal_client::{mocks::mock_gateway, MockWorkflowClientTrait};
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -93,7 +93,7 @@ pub(crate) fn build_fake_worker(
 
 pub(crate) fn mock_worker<SG>(mocks: MocksHolder<SG>) -> Worker
 where
-    SG: ServerGatewayApis + Send + Sync + 'static,
+    SG: WorkflowClientTrait + Send + Sync + 'static,
 {
     let sticky_q = sticky_q_name_for_worker("unit-test", &mocks.mock_worker.config);
     Worker::new_with_pollers(
@@ -150,7 +150,7 @@ impl MockWorker {
 
 impl<SG> MocksHolder<SG>
 where
-    SG: ServerGatewayApis + Send + Sync + 'static,
+    SG: WorkflowClientTrait + Send + Sync + 'static,
 {
     pub fn from_mock_worker(sg: SG, mock_worker: MockWorker) -> Self {
         Self {
@@ -236,7 +236,7 @@ pub fn build_multihist_mock_sg(
     hists: impl IntoIterator<Item = FakeWfResponses>,
     enforce_correct_number_of_polls: bool,
     num_expected_fails: Option<usize>,
-) -> MocksHolder<MockServerGatewayApis> {
+) -> MocksHolder<MockWorkflowClientTrait> {
     let mh = MockPollCfg::new(
         hists.into_iter().collect(),
         enforce_correct_number_of_polls,
@@ -250,9 +250,9 @@ pub fn single_hist_mock_sg(
     wf_id: &str,
     t: TestHistoryBuilder,
     response_batches: impl IntoIterator<Item = impl Into<ResponseType>>,
-    mock_gateway: MockServerGatewayApis,
+    mock_gateway: MockWorkflowClientTrait,
     enforce_num_polls: bool,
-) -> MocksHolder<MockServerGatewayApis> {
+) -> MocksHolder<MockWorkflowClientTrait> {
     let mut mh = MockPollCfg::from_resp_batches(wf_id, t, response_batches, mock_gateway);
     mh.enforce_correct_number_of_polls = enforce_num_polls;
     build_mock_pollers(mh)
@@ -262,7 +262,7 @@ pub struct MockPollCfg {
     pub hists: Vec<FakeWfResponses>,
     pub enforce_correct_number_of_polls: bool,
     pub num_expected_fails: Option<usize>,
-    pub mock_gateway: MockServerGatewayApis,
+    pub mock_gateway: MockWorkflowClientTrait,
     /// All calls to fail WFTs must match this predicate
     pub expect_fail_wft_matcher:
         Box<dyn Fn(&TaskToken, &WorkflowTaskFailedCause, &Option<Failure>) -> bool + Send>,
@@ -286,7 +286,7 @@ impl MockPollCfg {
         wf_id: &str,
         t: TestHistoryBuilder,
         resps: impl IntoIterator<Item = impl Into<ResponseType>>,
-        mock_gateway: MockServerGatewayApis,
+        mock_gateway: MockWorkflowClientTrait,
     ) -> Self {
         Self {
             hists: vec![FakeWfResponses {
@@ -303,7 +303,7 @@ impl MockPollCfg {
 }
 
 /// Given an iterable of fake responses, return the mocks & associated data to work with them
-pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockServerGatewayApis> {
+pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder<MockWorkflowClientTrait> {
     let mut task_q_resps: BTreeMap<String, VecDeque<_>> = BTreeMap::new();
     let outstanding_wf_task_tokens = Arc::new(RwLock::new(BiMap::new()));
     let mut correct_num_polls = None;
