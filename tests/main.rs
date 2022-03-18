@@ -11,8 +11,8 @@ mod integ_tests {
     use std::str::FromStr;
     use temporal_client::WorkflowService;
     use temporal_sdk_core::{
-        init_worker, telemetry_init, ClientTlsConfig, ServerGatewayApis,
-        ServerGatewayOptionsBuilder, TlsConfig,
+        init_worker, telemetry_init, ClientOptionsBuilder, ClientTlsConfig, ServerGatewayApis,
+        TlsConfig,
     };
     use temporal_sdk_core_api::{worker::WorkerConfigBuilder, CoreTelemetry};
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListNamespacesRequest;
@@ -71,7 +71,7 @@ mod integ_tests {
         )
         .await
         .unwrap();
-        let sgo = ServerGatewayOptionsBuilder::default()
+        let sgo = ClientOptionsBuilder::default()
             .target_url(Url::from_str("https://localhost:7233").unwrap())
             .worker_binary_id("binident".to_string())
             .tls_cfg(TlsConfig {

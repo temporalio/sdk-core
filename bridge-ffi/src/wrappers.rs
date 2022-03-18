@@ -54,13 +54,13 @@ impl TryFrom<InitTelemetryRequest> for temporal_sdk_core::TelemetryOptions {
     }
 }
 
-pub struct ServerGatewayOptions(pub bridge::CreateGatewayRequest);
+pub struct ClientOptions(pub bridge::CreateGatewayRequest);
 
-impl TryFrom<ServerGatewayOptions> for temporal_sdk_core::ServerGatewayOptions {
+impl TryFrom<ClientOptions> for temporal_sdk_core::ClientOptions {
     type Error = String;
 
-    fn try_from(ServerGatewayOptions(req): ServerGatewayOptions) -> Result<Self, Self::Error> {
-        let mut gateway_opts = temporal_sdk_core::ServerGatewayOptionsBuilder::default();
+    fn try_from(ClientOptions(req): ClientOptions) -> Result<Self, Self::Error> {
+        let mut gateway_opts = temporal_sdk_core::ClientOptionsBuilder::default();
         if !req.target_url.is_empty() {
             gateway_opts.target_url(
                 temporal_sdk_core::Url::parse(&req.target_url)

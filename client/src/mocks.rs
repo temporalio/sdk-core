@@ -1,7 +1,7 @@
 //! Helpers for mocking
 
 use super::*;
-use crate::{MockServerGatewayApis, ServerGatewayOptions, ServerGatewayOptionsBuilder};
+use crate::{ClientOptions, ClientOptionsBuilder, MockServerGatewayApis};
 use std::str::FromStr;
 use url::Url;
 
@@ -24,8 +24,8 @@ pub fn mock_manual_gateway() -> MockManualGateway {
 }
 
 /// Returns some totally fake client options for use with mock clients
-pub fn fake_sg_opts() -> ServerGatewayOptions {
-    ServerGatewayOptionsBuilder::default()
+pub fn fake_sg_opts() -> ClientOptions {
+    ClientOptionsBuilder::default()
         .target_url(Url::from_str("https://fake").unwrap())
         .client_name("fake_client".to_string())
         .client_version("fake_version".to_string())
@@ -165,7 +165,7 @@ mockall::mock! {
         ) -> impl Future<Output = Result<ListNamespacesResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
-        fn get_options(&self) -> &ServerGatewayOptions;
+        fn get_options(&self) -> &ClientOptions;
         fn namespace(&self) -> &str;
     }
 }

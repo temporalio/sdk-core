@@ -1,6 +1,5 @@
 use crate::{
-    Result, RetryConfig, ServerGatewayApis, ServerGatewayOptions, WorkflowOptions,
-    WorkflowTaskCompletion,
+    ClientOptions, Result, RetryConfig, ServerGatewayApis, WorkflowOptions, WorkflowTaskCompletion,
 };
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
@@ -429,7 +428,7 @@ where
         retry_call!(self, list_namespaces,)
     }
 
-    fn get_options(&self) -> &ServerGatewayOptions {
+    fn get_options(&self) -> &ClientOptions {
         self.gateway.get_options()
     }
 

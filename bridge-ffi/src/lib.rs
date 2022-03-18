@@ -18,7 +18,7 @@ use bridge::{init_response, CreateWorkerRequest, InitResponse};
 use prost::Message;
 use std::sync::Arc;
 use temporal_sdk_core::{
-    fetch_global_buffered_logs, telemetry_init, RetryClient, ServerGateway, ServerGatewayOptions,
+    fetch_global_buffered_logs, telemetry_init, ClientOptions, RetryClient, ServerGateway,
 };
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::coresdk::{
@@ -375,9 +375,9 @@ pub extern "C" fn tmprl_client_init(
         match tmprl_worker_t::decode_proto::<CreateGatewayRequest>(req_proto, req_proto_len)
             .and_then(|cgr| {
                 let ns = cgr.namespace.clone();
-                wrappers::ServerGatewayOptions(cgr)
+                wrappers::ClientOptions(cgr)
                     .try_into()
-                    .map(|sgo: ServerGatewayOptions| (ns, sgo))
+                    .map(|sgo: ClientOptions| (ns, sgo))
             }) {
             Ok(req) => req,
             Err(message) => {

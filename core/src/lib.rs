@@ -30,8 +30,8 @@ mod test_help;
 pub(crate) use temporal_sdk_core_api::errors;
 
 pub use pollers::{
-    ClientTlsConfig, RetryClient, RetryConfig, ServerGateway, ServerGatewayApis,
-    ServerGatewayOptions, ServerGatewayOptionsBuilder, TlsConfig,
+    ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig, ServerGateway,
+    ServerGatewayApis, TlsConfig,
 };
 pub use telemetry::{
     fetch_global_buffered_logs, telemetry_init, TelemetryOptions, TelemetryOptionsBuilder,

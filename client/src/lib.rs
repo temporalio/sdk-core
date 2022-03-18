@@ -68,10 +68,10 @@ const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
-/// Options for the connection to the temporal server. Construct with [ServerGatewayOptionsBuilder]
+/// Options for the connection to the temporal server. Construct with [ClientOptionsBuilder]
 #[derive(Clone, Debug, derive_builder::Builder)]
 #[non_exhaustive]
-pub struct ServerGatewayOptions {
+pub struct ClientOptions {
     /// The URL of the Temporal server to connect to
     #[builder(setter(into))]
     pub target_url: Url,
@@ -244,22 +244,22 @@ impl From<ConfiguredClient<WorkflowServiceClientWithMetrics>> for AnyClient {
     }
 }
 
-/// A client with [ServerGatewayOptions] attached, which can be passed to initialize workers,
+/// A client with [ClientOptions] attached, which can be passed to initialize workers,
 /// or can be used directly.
 #[derive(Clone)]
 pub struct ConfiguredClient<C> {
     client: C,
-    options: ServerGatewayOptions,
+    options: ClientOptions,
 }
 
 impl<C> ConfiguredClient<C> {
     /// Returns the options the client is configured with
-    pub fn options(&self) -> &ServerGatewayOptions {
+    pub fn options(&self) -> &ClientOptions {
         &self.options
     }
 
     /// De-constitute this type
-    pub fn into_parts(self) -> (C, ServerGatewayOptions) {
+    pub fn into_parts(self) -> (C, ClientOptions) {
         (self.client, self.options)
     }
 }
@@ -278,7 +278,7 @@ impl<C> DerefMut for ConfiguredClient<C> {
     }
 }
 
-impl ServerGatewayOptions {
+impl ClientOptions {
     /// Attempt to establish a connection to the Temporal server in a specific namespace. The
     /// returned client is bound to that namespace.
     pub async fn connect(
@@ -379,7 +379,7 @@ pub struct WorkflowTaskCompletion {
 /// Interceptor which attaches common metadata (like "client-name") to every outgoing call
 #[derive(Clone)]
 pub struct ServiceCallInterceptor {
-    opts: ServerGatewayOptions,
+    opts: ClientOptions,
 }
 
 impl Interceptor for ServiceCallInterceptor {
@@ -424,7 +424,7 @@ pub struct ServerGateway {
     /// Client for interacting with workflow service
     service: WorkflowServiceClientWithMetrics,
     /// Options gateway was initialized with
-    opts: ServerGatewayOptions,
+    opts: ClientOptions,
     /// The namespace this gateway interacts with
     namespace: String,
 }
@@ -449,7 +449,7 @@ impl ServerGateway {
     }
 
     /// Return the options this client was initialized with
-    pub fn options(&self) -> &ServerGatewayOptions {
+    pub fn options(&self) -> &ClientOptions {
         &self.opts
     }
 
@@ -607,7 +607,7 @@ pub trait ServerGatewayApis {
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse>;
 
     /// Returns options that were used to initialize the gateway
-    fn get_options(&self) -> &ServerGatewayOptions;
+    fn get_options(&self) -> &ClientOptions;
 
     /// Returns the namespace this gateway is bound to
     fn namespace(&self) -> &str;
@@ -1005,7 +1005,7 @@ impl ServerGatewayApis for ServerGateway {
             .into_inner())
     }
 
-    fn get_options(&self) -> &ServerGatewayOptions {
+    fn get_options(&self) -> &ClientOptions {
         &self.opts
     }
 

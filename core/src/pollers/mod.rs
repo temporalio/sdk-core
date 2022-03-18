@@ -5,8 +5,8 @@ pub use poll_buffer::{
     PollWorkflowTaskBuffer, WorkflowTaskPoller,
 };
 pub use temporal_client::{
-    ClientTlsConfig, RetryClient, RetryConfig, ServerGateway, ServerGatewayApis,
-    ServerGatewayOptions, ServerGatewayOptionsBuilder, TlsConfig,
+    ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig, ServerGateway,
+    ServerGatewayApis, TlsConfig,
 };
 
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{

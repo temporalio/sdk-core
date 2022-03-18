@@ -27,8 +27,8 @@ use temporal_client::{RetryClient, ServerGateway, ServerGatewayApis, WorkflowOpt
 use temporal_sdk::{interceptors::WorkerInterceptor, IntoActivityFunc, Worker, WorkflowFunction};
 use temporal_sdk_core::{
     init_replay_worker, init_worker, replay::mock_gateway_from_history, telemetry_init,
-    ServerGatewayOptions, ServerGatewayOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
-    WorkerConfig, WorkerConfigBuilder,
+    ClientOptions, ClientOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder, WorkerConfig,
+    WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::Worker as CoreWorker;
 use temporal_sdk_core_protos::{
@@ -373,13 +373,13 @@ impl WorkerInterceptor for WorkflowCompletionCountingInterceptor {
     }
 }
 
-pub fn get_integ_server_options() -> ServerGatewayOptions {
+pub fn get_integ_server_options() -> ClientOptions {
     let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
         Ok(addr) => addr,
         Err(_) => "http://localhost:7233".to_owned(),
     };
     let url = Url::try_from(&*temporal_server_address).unwrap();
-    ServerGatewayOptionsBuilder::default()
+    ClientOptionsBuilder::default()
         .identity("integ_tester".to_string())
         .worker_binary_id("fakebinaryid".to_string())
         .target_url(url)

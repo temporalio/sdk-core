@@ -57,7 +57,7 @@ use std::{
     future::Future,
     sync::Arc,
 };
-use temporal_client::{ServerGatewayApis, ServerGatewayOptionsBuilder};
+use temporal_client::{ClientOptionsBuilder, ServerGatewayApis};
 use temporal_sdk_core::Url;
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
@@ -92,10 +92,10 @@ use tokio_util::sync::CancellationToken;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Returns a [ServerGatewayOptionsBuilder] with required fields set to appropriate values
+/// Returns a [ClientOptionsBuilder] with required fields set to appropriate values
 /// for the Rust SDK.
-pub fn sdk_client_options(url: impl Into<Url>) -> ServerGatewayOptionsBuilder {
-    let mut builder = ServerGatewayOptionsBuilder::default();
+pub fn sdk_client_options(url: impl Into<Url>) -> ClientOptionsBuilder {
+    let mut builder = ClientOptionsBuilder::default();
     builder
         .target_url(url)
         .client_name("rust-sdk".to_string())
