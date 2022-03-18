@@ -18,7 +18,7 @@ use bridge::{init_response, CreateWorkerRequest, InitResponse};
 use prost::Message;
 use std::sync::Arc;
 use temporal_sdk_core::{
-    fetch_global_buffered_logs, telemetry_init, ClientOptions, RetryClient, ServerGateway,
+    fetch_global_buffered_logs, telemetry_init, Client, ClientOptions, RetryClient,
 };
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::coresdk::{
@@ -336,11 +336,11 @@ pub extern "C" fn tmprl_telemetry_init(
 /// A client instance owned by Core. This must be passed to [tmprl_client_free]
 /// when no longer in use which will free the resources.
 pub struct tmprl_client_t {
-    client: Arc<RetryClient<ServerGateway>>,
+    client: Arc<RetryClient<Client>>,
 }
 
 impl tmprl_client_t {
-    pub fn new(client: Arc<RetryClient<ServerGateway>>) -> Self {
+    pub fn new(client: Arc<RetryClient<Client>>) -> Self {
         Self { client }
     }
 }
@@ -716,7 +716,7 @@ pub extern "C" fn tmprl_fetch_buffered_logs(
 impl tmprl_worker_t {
     fn new(
         tokio_runtime: Arc<tokio::runtime::Runtime>,
-        client: Arc<RetryClient<ServerGateway>>,
+        client: Arc<RetryClient<Client>>,
         opts: wrappers::WorkerConfig,
     ) -> Result<tmprl_worker_t, String> {
         Ok(tmprl_worker_t {

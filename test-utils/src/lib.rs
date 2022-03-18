@@ -23,7 +23,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{RetryClient, ServerGateway, WorkflowClientTrait, WorkflowOptions};
+use temporal_client::{Client, RetryClient, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{interceptors::WorkerInterceptor, IntoActivityFunc, Worker, WorkflowFunction};
 use temporal_sdk_core::{
     init_replay_worker, init_worker, replay::mock_gateway_from_history, telemetry_init,
@@ -98,7 +98,7 @@ pub struct CoreWfStarter {
 }
 struct InitializedWorker {
     worker: Arc<dyn CoreWorker>,
-    client: Arc<RetryClient<ServerGateway>>,
+    client: Arc<RetryClient<Client>>,
 }
 
 impl CoreWfStarter {
@@ -139,7 +139,7 @@ impl CoreWfStarter {
         self.get_or_init().await.worker.clone()
     }
 
-    pub async fn get_client(&mut self) -> Arc<RetryClient<ServerGateway>> {
+    pub async fn get_client(&mut self) -> Arc<RetryClient<Client>> {
         self.get_or_init().await.client.clone()
     }
 

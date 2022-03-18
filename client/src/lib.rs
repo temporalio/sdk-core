@@ -285,13 +285,13 @@ impl ClientOptions {
         &self,
         namespace: impl Into<String>,
         metrics_meter: Option<&Meter>,
-    ) -> Result<RetryClient<ServerGateway>, GatewayInitError> {
+    ) -> Result<RetryClient<Client>, GatewayInitError> {
         let (service, opts) = self
             .connect_no_namespace(metrics_meter)
             .await?
             .into_inner()
             .into_parts();
-        let gateway = ServerGateway {
+        let gateway = Client {
             service,
             namespace: namespace.into(),
             opts,
@@ -303,7 +303,7 @@ impl ClientOptions {
     /// Attempt to establish a connection to the Temporal server and return a gRPC client which is
     /// intercepted with retry, default headers functionality, and metrics if provided.
     ///
-    /// See [RetryGateway] for more
+    /// See [RetryClient] for more
     pub async fn connect_no_namespace(
         &self,
         metrics_meter: Option<&Meter>,
@@ -420,7 +420,7 @@ type InterceptedMetricsSvc = InterceptedService<GrpcMetricSvc, ServiceCallInterc
 
 /// Contains an instance of a namespace-bound client for interacting with the Temporal server
 #[derive(derive_more::Constructor, Debug)]
-pub struct ServerGateway {
+pub struct Client {
     /// Client for interacting with workflow service
     service: WorkflowServiceClientWithMetrics,
     /// Options gateway was initialized with
@@ -429,7 +429,7 @@ pub struct ServerGateway {
     namespace: String,
 }
 
-impl ServerGateway {
+impl Client {
     /// Return an auto-retrying version of the underling grpc client (instrumented with metrics
     /// collection, if enabled).
     ///
@@ -624,7 +624,7 @@ pub struct WorkflowOptions {
 }
 
 #[async_trait::async_trait]
-impl WorkflowClientTrait for ServerGateway {
+impl WorkflowClientTrait for Client {
     async fn start_workflow(
         &self,
         input: Vec<Payload>,

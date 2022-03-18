@@ -5,7 +5,7 @@ pub use poll_buffer::{
     PollWorkflowTaskBuffer, WorkflowTaskPoller,
 };
 pub use temporal_client::{
-    ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig, ServerGateway,
+    Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,
     TlsConfig, WorkflowClientTrait,
 };
 
