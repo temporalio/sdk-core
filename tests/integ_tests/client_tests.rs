@@ -1,5 +1,5 @@
 use std::time::Duration;
-use temporal_client::{RetryClient, WorkflowService};
+use temporal_client::{RetryClient, WorkflowClientTrait, WorkflowService};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::DescribeNamespaceRequest;
 use temporal_sdk_core_test_utils::{get_integ_server_options, CoreWfStarter, NAMESPACE};
 
@@ -7,7 +7,7 @@ use temporal_sdk_core_test_utils::{get_integ_server_options, CoreWfStarter, NAME
 async fn can_use_retry_client() {
     // Not terribly interesting by itself but can be useful for manually inspecting metrics etc
     let mut core = CoreWfStarter::new("retry_client");
-    let retry_client = core.get_worker().await.workflow_client();
+    let retry_client = core.get_client().await;
     for _ in 0..10 {
         retry_client.list_namespaces().await.unwrap();
         tokio::time::sleep(Duration::from_millis(10)).await;

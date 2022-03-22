@@ -1,6 +1,7 @@
 use assert_matches::assert_matches;
 use futures::{prelude::stream::FuturesUnordered, FutureExt, StreamExt};
 use std::time::Duration;
+use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{workflow_activation_job, WorkflowActivationJob},
@@ -14,8 +15,9 @@ use temporal_sdk_core_test_utils::{init_core_and_create_wf, CoreWfStarter, Worke
 #[tokio::test]
 async fn simple_query_legacy() {
     let query_resp = b"response";
-    let (core, task_q) = init_core_and_create_wf("simple_query_legacy").await;
-    let workflow_id = task_q.clone();
+    let mut starter = init_core_and_create_wf("simple_query_legacy").await;
+    let core = starter.get_worker().await;
+    let workflow_id = starter.get_task_queue().to_string();
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id.clone(),
@@ -37,7 +39,9 @@ async fn simple_query_legacy() {
     tokio::time::sleep(Duration::from_secs(1)).await;
     // Query after timer should have fired and there should be new WFT
     let query_fut = async {
-        core.workflow_client()
+        starter
+            .get_client()
+            .await
             .query_workflow_execution(
                 workflow_id,
                 task.run_id.to_string(),
@@ -107,9 +111,10 @@ async fn simple_query_legacy() {
 #[tokio::test]
 async fn query_after_execution_complete(#[case] do_evict: bool) {
     let query_resp = b"response";
-    let (ref core, ref task_q) =
+    let mut starter =
         init_core_and_create_wf(&format!("after_done_query_evict-{}", do_evict)).await;
-    let workflow_id = task_q.as_str();
+    let core = &starter.get_worker().await;
+    let workflow_id = &starter.get_task_queue().to_string();
 
     let do_workflow = |go_until_query: bool| async move {
         loop {
@@ -178,7 +183,7 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
     // we could screw-up re-applying the final WFT)
     let mut query_futs = FuturesUnordered::new();
     for _ in 0..3 {
-        let gw = core.workflow_client().clone();
+        let gw = starter.get_client().await.clone();
         let query_fut = async move {
             let q_resp = gw
                 .query_workflow_execution(
@@ -212,8 +217,9 @@ async fn repros_query_dropped_on_floor() {
     // Easiest way I discovered to reliably trigger new query path is with a WFT timeout
     wf_starter.wft_timeout(Duration::from_secs(1));
     let core = wf_starter.get_worker().await;
-    let task_q = wf_starter.get_task_queue();
+    let task_q = wf_starter.get_task_queue().to_string();
     wf_starter.start_wf().await;
+    let client = wf_starter.get_client().await;
 
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_timer(&task.run_id, 1, Duration::from_millis(500))
@@ -232,9 +238,9 @@ async fn repros_query_dropped_on_floor() {
 
     let run_id = task.run_id.to_string();
     let q1_fut = async {
-        core.workflow_client()
+        client
             .query_workflow_execution(
-                task_q.to_string(),
+                task_q.clone(),
                 run_id,
                 WorkflowQuery {
                     query_type: "query_1".to_string(),
@@ -247,9 +253,9 @@ async fn repros_query_dropped_on_floor() {
     };
     let run_id = task.run_id.to_string();
     let q2_fut = async {
-        core.workflow_client()
+        client
             .query_workflow_execution(
-                task_q.to_string(),
+                task_q.clone(),
                 run_id,
                 WorkflowQuery {
                     query_type: "query_2".to_string(),
@@ -329,8 +335,9 @@ async fn repros_query_dropped_on_floor() {
 #[tokio::test]
 async fn fail_legacy_query() {
     let query_err = "oh no broken";
-    let (core, task_q) = init_core_and_create_wf("fail_legacy_query").await;
-    let workflow_id = task_q.clone();
+    let mut starter = init_core_and_create_wf("fail_legacy_query").await;
+    let core = starter.get_worker().await;
+    let workflow_id = starter.get_task_queue().to_string();
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id.clone(),
@@ -352,7 +359,9 @@ async fn fail_legacy_query() {
     tokio::time::sleep(Duration::from_secs(1)).await;
     // Query after timer should have fired and there should be new WFT
     let query_fut = async {
-        core.workflow_client()
+        starter
+            .get_client()
+            .await
             .query_workflow_execution(
                 workflow_id.to_string(),
                 task.run_id.to_string(),

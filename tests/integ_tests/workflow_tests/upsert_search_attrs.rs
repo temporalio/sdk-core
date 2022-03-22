@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use temporal_client::WorkflowOptions;
+use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
 use temporal_sdk_core_test_utils::CoreWfStarter;
@@ -42,9 +42,9 @@ async fn sends_upsert() {
         .unwrap();
     worker.run_until_done().await.unwrap();
 
-    let search_attrs = worker
-        .inner_mut()
-        .workflow_client()
+    let search_attrs = starter
+        .get_client()
+        .await
         .describe_workflow_execution(wf_id.to_string(), Some(run_id))
         .await
         .unwrap()
