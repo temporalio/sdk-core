@@ -23,12 +23,11 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{RetryGateway, ServerGateway, ServerGatewayApis, WorkflowOptions};
+use temporal_client::{Client, RetryClient, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{interceptors::WorkerInterceptor, IntoActivityFunc, Worker, WorkflowFunction};
 use temporal_sdk_core::{
-    init_replay_worker, init_worker, replay::mock_gateway_from_history, telemetry_init,
-    ServerGatewayOptions, ServerGatewayOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
-    WorkerConfig, WorkerConfigBuilder,
+    init_replay_worker, init_worker, telemetry_init, ClientOptions, ClientOptionsBuilder,
+    TelemetryOptions, TelemetryOptionsBuilder, WorkerConfig, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::Worker as CoreWorker;
 use temporal_sdk_core_protos::{
@@ -54,11 +53,11 @@ const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
 
 /// Create a worker instance which will use the provided test name to base the task queue and wf id
 /// upon. Returns the instance and the task queue name (which is also the workflow id).
-pub async fn init_core_and_create_wf(test_name: &str) -> (Arc<dyn CoreWorker>, String) {
+pub async fn init_core_and_create_wf(test_name: &str) -> CoreWfStarter {
     let mut starter = CoreWfStarter::new(test_name);
-    let core = starter.get_worker().await;
+    let _ = starter.get_worker().await;
     starter.start_wf().await;
-    (core, starter.get_task_queue().to_string())
+    starter
 }
 
 /// Create a worker replay instance preloaded with a provided history. Returns the worker impl
@@ -72,9 +71,7 @@ pub fn init_core_replay_preloaded(
         .task_queue(test_name)
         .build()
         .expect("Configuration options construct properly");
-    let gateway = mock_gateway_from_history(history, test_name.to_string());
-    let worker = init_replay_worker(worker_cfg, Arc::new(gateway), history)
-        .expect("Replay worker must init properly");
+    let worker = init_replay_worker(worker_cfg, history).expect("Replay worker must init properly");
     (Arc::new(worker), test_name.to_string())
 }
 
@@ -98,7 +95,7 @@ pub struct CoreWfStarter {
 }
 struct InitializedWorker {
     worker: Arc<dyn CoreWorker>,
-    client: Arc<RetryGateway<ServerGateway>>,
+    client: Arc<RetryClient<Client>>,
 }
 
 impl CoreWfStarter {
@@ -125,10 +122,13 @@ impl CoreWfStarter {
     }
 
     pub async fn worker(&mut self) -> TestWorker {
-        TestWorker::new(
+        let mut w = TestWorker::new(
             self.get_worker().await,
             self.worker_config.task_queue.clone(),
-        )
+        );
+        w.client = Some(self.get_client().await);
+
+        w
     }
 
     pub async fn shutdown(&mut self) {
@@ -139,7 +139,7 @@ impl CoreWfStarter {
         self.get_or_init().await.worker.clone()
     }
 
-    pub async fn get_client(&mut self) -> Arc<RetryGateway<ServerGateway>> {
+    pub async fn get_client(&mut self) -> Arc<RetryClient<Client>> {
         self.get_or_init().await.client.clone()
     }
 
@@ -181,9 +181,8 @@ impl CoreWfStarter {
     ) -> Result<(), anyhow::Error> {
         // Fetch history and replay it
         let history = self
-            .get_worker()
+            .get_client()
             .await
-            .server_gateway()
             .get_workflow_execution_history(wf_id.into(), Some(run_id.into()), vec![])
             .await?
             .history
@@ -236,16 +235,16 @@ impl CoreWfStarter {
         self.initted_worker
             .get_or_init(|| async {
                 telemetry_init(&self.telemetry_options).expect("Telemetry inits cleanly");
-                let gateway = Arc::new(
+                let client = Arc::new(
                     get_integ_server_options()
                         .connect(self.worker_config.namespace.clone(), None)
                         .await
                         .expect("Must connect"),
                 );
-                let worker = init_worker(self.worker_config.clone(), gateway.clone());
+                let worker = init_worker(self.worker_config.clone(), client.clone());
                 InitializedWorker {
                     worker: Arc::new(worker),
-                    client: gateway,
+                    client,
                 }
             })
             .await
@@ -255,13 +254,14 @@ impl CoreWfStarter {
 /// Provides conveniences for running integ tests with the SDK
 pub struct TestWorker {
     inner: Worker,
+    client: Option<Arc<dyn WorkflowClientTrait>>,
     incomplete_workflows: Arc<AtomicUsize>,
 }
 impl TestWorker {
     /// Create a new test worker
     pub fn new(core_worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         let ct = Arc::new(AtomicUsize::new(0));
-        let mut inner = Worker::new(core_worker, task_queue);
+        let mut inner = Worker::new_from_core(core_worker, task_queue);
         let iceptor = WorkflowCompletionCountingInterceptor {
             incomplete_workflows: ct.clone(),
             shutdown_handle: Box::new(inner.shutdown_handle()),
@@ -269,6 +269,7 @@ impl TestWorker {
         inner.set_worker_interceptor(Box::new(iceptor));
         Self {
             inner,
+            client: None,
             incomplete_workflows: ct,
         }
     }
@@ -312,20 +313,22 @@ impl TestWorker {
         input: Vec<Payload>,
         options: WorkflowOptions,
     ) -> Result<String, anyhow::Error> {
-        let wfid = workflow_id.into();
-        let res = self
-            .inner
-            .server_gateway()
-            .start_workflow(
-                input,
-                self.inner.task_queue().to_string(),
-                wfid.clone(),
-                workflow_type.into(),
-                options,
-            )
-            .await?;
         self.incr_expected_run_count(1);
-        Ok(res.run_id)
+        if let Some(c) = self.client.as_ref() {
+            let wfid = workflow_id.into();
+            let res = c
+                .start_workflow(
+                    input,
+                    self.inner.task_queue().to_string(),
+                    wfid.clone(),
+                    workflow_type.into(),
+                    options,
+                )
+                .await?;
+            Ok(res.run_id)
+        } else {
+            Ok("fake_run_id".to_string())
+        }
     }
 
     /// Runs until all expected workflows have completed
@@ -373,13 +376,13 @@ impl WorkerInterceptor for WorkflowCompletionCountingInterceptor {
     }
 }
 
-pub fn get_integ_server_options() -> ServerGatewayOptions {
+pub fn get_integ_server_options() -> ClientOptions {
     let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
         Ok(addr) => addr,
         Err(_) => "http://localhost:7233".to_owned(),
     };
     let url = Url::try_from(&*temporal_server_address).unwrap();
-    ServerGatewayOptionsBuilder::default()
+    ClientOptionsBuilder::default()
         .identity("integ_tester".to_string())
         .worker_binary_id("fakebinaryid".to_string())
         .target_url(url)

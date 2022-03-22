@@ -11,8 +11,8 @@ mod integ_tests {
     use std::str::FromStr;
     use temporal_client::WorkflowService;
     use temporal_sdk_core::{
-        init_worker_from_upgradeable_client, telemetry_init, ClientTlsConfig, ServerGatewayApis,
-        ServerGatewayOptionsBuilder, TlsConfig,
+        init_worker, telemetry_init, ClientOptionsBuilder, ClientTlsConfig, TlsConfig,
+        WorkflowClientTrait,
     };
     use temporal_sdk_core_api::{worker::WorkerConfigBuilder, CoreTelemetry};
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListNamespacesRequest;
@@ -32,7 +32,7 @@ mod integ_tests {
             .await
             .unwrap();
 
-        let _worker = init_worker_from_upgradeable_client(
+        let _worker = init_worker(
             WorkerConfigBuilder::default()
                 .namespace("default")
                 .task_queue("Wheee!")
@@ -40,7 +40,7 @@ mod integ_tests {
                 .unwrap(),
             // clone the client if you intend to use it later. Strip off the retry wrapper since
             // worker will assert its own
-            retrying_client.clone().into_inner(),
+            retrying_client.clone(),
         );
 
         // Do things with worker or client
@@ -71,7 +71,7 @@ mod integ_tests {
         )
         .await
         .unwrap();
-        let sgo = ServerGatewayOptionsBuilder::default()
+        let sgo = ClientOptionsBuilder::default()
             .target_url(Url::from_str("https://localhost:7233").unwrap())
             .worker_binary_id("binident".to_string())
             .tls_cfg(TlsConfig {

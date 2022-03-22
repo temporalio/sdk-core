@@ -1,24 +1,21 @@
 use crate::{
-    init_worker, job_assert,
+    job_assert,
     test_help::{
         build_fake_worker, canned_histories, gen_assert_and_reply, mock_manual_poller, mock_poller,
         mock_worker, poll_and_reply, test_worker_cfg, MockWorker, MocksHolder,
     },
+    worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     workflow::WorkflowCachingPolicy::NonSticky,
-    ActivityHeartbeat, MetricsContext, Worker, WorkerConfigBuilder,
+    ActivityHeartbeat, Worker, WorkerConfigBuilder,
 };
 use futures::FutureExt;
 use std::{
     cell::RefCell,
     collections::{hash_map::Entry, HashMap, VecDeque},
     rc::Rc,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_client::mocks::{mock_gateway, mock_manual_gateway};
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -60,21 +57,21 @@ async fn max_activities_respected() {
             ..Default::default()
         },
     ]);
-    let mut mock_gateway = mock_gateway();
-    mock_gateway
+    let mut mock_client = mock_workflow_client();
+    mock_client
         .expect_poll_activity_task()
         .times(3)
         .returning(move |_, _| Ok(tasks.pop_front().unwrap()));
-    mock_gateway
+    mock_client
         .expect_complete_activity_task()
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
 
-    let worker = init_worker(
+    let worker = Worker::new_test(
         test_worker_cfg()
             .max_outstanding_activities(2_usize)
             .build()
             .unwrap(),
-        mock_gateway,
+        mock_client,
     );
 
     // We allow two outstanding activities, therefore first two polls should return right away
@@ -101,15 +98,11 @@ async fn max_activities_respected() {
 
 #[tokio::test]
 async fn activity_not_found_returns_ok() {
-    let mut mock_gateway = mock_gateway();
+    let mut mock_client = mock_workflow_client();
     // Mock won't even be called, since we weren't tracking activity
-    mock_gateway.expect_complete_activity_task().times(0);
+    mock_client.expect_complete_activity_task().times(0);
 
-    let core = mock_worker(MocksHolder::from_gateway_with_responses(
-        mock_gateway,
-        [],
-        [],
-    ));
+    let core = mock_worker(MocksHolder::from_client_with_responses(mock_client, [], []));
 
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: vec![1],
@@ -122,8 +115,8 @@ async fn activity_not_found_returns_ok() {
 
 #[tokio::test]
 async fn heartbeats_report_cancels_only_once() {
-    let mut mock_gateway = mock_gateway();
-    mock_gateway
+    let mut mock_client = mock_workflow_client();
+    mock_client
         .expect_record_activity_heartbeat()
         .times(2)
         .returning(|_, _| {
@@ -131,17 +124,17 @@ async fn heartbeats_report_cancels_only_once() {
                 cancel_requested: true,
             })
         });
-    mock_gateway
+    mock_client
         .expect_complete_activity_task()
         .times(1)
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
-    mock_gateway
+    mock_client
         .expect_cancel_activity_task()
         .times(1)
         .returning(|_, _| Ok(RespondActivityTaskCanceledResponse::default()));
 
-    let core = mock_worker(MocksHolder::from_gateway_with_responses(
-        mock_gateway,
+    let core = mock_worker(MocksHolder::from_client_with_responses(
+        mock_client,
         [],
         [
             PollActivityTaskQueueResponse {
@@ -238,8 +231,8 @@ async fn activity_cancel_interrupts_poll() {
         .times(2)
         .returning(move || poll_resps.pop_front().unwrap());
 
-    let mut mock_gateway = mock_manual_gateway();
-    mock_gateway
+    let mut mock_client = mock_manual_workflow_client();
+    mock_client
         .expect_record_activity_heartbeat()
         .times(1)
         .returning(|_, _| {
@@ -250,7 +243,7 @@ async fn activity_cancel_interrupts_poll() {
             }
             .boxed()
         });
-    mock_gateway
+    mock_client
         .expect_complete_activity_task()
         .times(1)
         .returning(|_, _| async { Ok(RespondActivityTaskCompletedResponse::default()) }.boxed());
@@ -259,7 +252,7 @@ async fn activity_cancel_interrupts_poll() {
         act_poller: Some(Box::from(mock_poller)),
         ..Default::default()
     };
-    let core = mock_worker(MocksHolder::from_mock_worker(mock_gateway, mw));
+    let core = mock_worker(MocksHolder::from_mock_worker(mock_client.into(), mw));
     let last_finisher = AtomicUsize::new(0);
     // Perform first poll to get the activity registered
     let act = core.poll_activity_task().await.unwrap();
@@ -293,7 +286,7 @@ async fn activity_cancel_interrupts_poll() {
 
 #[tokio::test]
 async fn activity_poll_timeout_retries() {
-    let mock_gateway = mock_gateway();
+    let mock_client = mock_workflow_client();
     let mut calls = 0;
     let mut mock_act_poller = mock_poller();
     mock_act_poller.expect_poll().times(3).returning(move || {
@@ -311,7 +304,7 @@ async fn activity_poll_timeout_retries() {
         act_poller: Some(Box::from(mock_act_poller)),
         ..Default::default()
     };
-    let core = mock_worker(MocksHolder::from_mock_worker(mock_gateway, mw));
+    let core = mock_worker(MocksHolder::from_mock_worker(mock_client.into(), mw));
     let r = core.poll_activity_task().await.unwrap();
     assert_matches!(r.task_token.as_slice(), b"hello!");
 }
@@ -322,7 +315,7 @@ async fn many_concurrent_heartbeat_cancels() {
     // them after a few successful heartbeats
     const CONCURRENCY_NUM: usize = 5;
 
-    let mut mock_gateway = mock_manual_gateway();
+    let mut mock_client = mock_manual_workflow_client();
     let mut poll_resps = VecDeque::from(
         (0..CONCURRENCY_NUM)
             .map(|i| {
@@ -348,13 +341,13 @@ async fn many_concurrent_heartbeat_cancels() {
         .boxed(),
     );
     let mut calls_map = HashMap::<_, i32>::new();
-    mock_gateway
+    mock_client
         .expect_poll_activity_task()
         .returning(move |_, _| poll_resps.pop_front().unwrap());
-    mock_gateway
+    mock_client
         .expect_cancel_activity_task()
         .returning(move |_, _| async move { Ok(Default::default()) }.boxed());
-    mock_gateway
+    mock_client
         .expect_record_activity_heartbeat()
         .returning(move |tt, _| {
             let calls = match calls_map.entry(tt) {
@@ -378,14 +371,14 @@ async fn many_concurrent_heartbeat_cancels() {
             .boxed()
         });
 
-    let worker = &init_worker(
+    let worker = &Worker::new_test(
         test_worker_cfg()
             .max_outstanding_activities(CONCURRENCY_NUM)
             // Only 1 poll at a time to avoid over-polling and running out of responses
             .max_concurrent_at_polls(1_usize)
             .build()
             .unwrap(),
-        mock_gateway,
+        mock_client,
     );
 
     // Poll all activities first so they are registered
@@ -483,8 +476,8 @@ async fn activity_timeout_no_double_resolve() {
 
 #[tokio::test]
 async fn can_heartbeat_acts_during_shutdown() {
-    let mut mock_gateway = mock_gateway();
-    mock_gateway
+    let mut mock_client = mock_workflow_client();
+    mock_client
         .expect_record_activity_heartbeat()
         .times(1)
         .returning(|_, _| {
@@ -492,13 +485,13 @@ async fn can_heartbeat_acts_during_shutdown() {
                 cancel_requested: false,
             })
         });
-    mock_gateway
+    mock_client
         .expect_complete_activity_task()
         .times(1)
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
 
-    let core = mock_worker(MocksHolder::from_gateway_with_responses(
-        mock_gateway,
+    let core = mock_worker(MocksHolder::from_client_with_responses(
+        mock_client,
         [],
         [PollActivityTaskQueueResponse {
             task_token: vec![1],
@@ -539,10 +532,10 @@ async fn can_heartbeat_acts_during_shutdown() {
 #[tokio::test]
 async fn complete_act_with_fail_flushes_heartbeat() {
     let last_hb = 50;
-    let mut mock_gateway = mock_gateway();
+    let mut mock_client = mock_workflow_client();
     let last_seen_payload = Rc::new(RefCell::new(None));
     let lsp = last_seen_payload.clone();
-    mock_gateway
+    mock_client
         .expect_record_activity_heartbeat()
         // Two times b/c we always record the first heartbeat, and we'll flush the last
         .times(2)
@@ -552,13 +545,13 @@ async fn complete_act_with_fail_flushes_heartbeat() {
                 cancel_requested: false,
             })
         });
-    mock_gateway
+    mock_client
         .expect_fail_activity_task()
         .times(1)
         .returning(|_, _| Ok(RespondActivityTaskFailedResponse::default()));
 
-    let core = mock_worker(MocksHolder::from_gateway_with_responses(
-        mock_gateway,
+    let core = mock_worker(MocksHolder::from_client_with_responses(
+        mock_client,
         [],
         [PollActivityTaskQueueResponse {
             task_token: vec![1],
@@ -592,8 +585,8 @@ async fn complete_act_with_fail_flushes_heartbeat() {
 #[tokio::test]
 async fn max_tq_acts_set_passed_to_poll_properly() {
     let rate = 9.28;
-    let mut mock_gateway = mock_gateway();
-    mock_gateway
+    let mut mock_client = mock_workflow_client();
+    mock_client
         .expect_poll_activity_task()
         .returning(move |_, tps| {
             assert_eq!(tps, Some(rate));
@@ -610,6 +603,6 @@ async fn max_tq_acts_set_passed_to_poll_properly() {
         .max_task_queue_activities_per_second(rate)
         .build()
         .unwrap();
-    let worker = Worker::new(cfg, None, Arc::new(mock_gateway), MetricsContext::default());
+    let worker = Worker::new_test(cfg, mock_client);
     worker.poll_activity_task().await.unwrap();
 }

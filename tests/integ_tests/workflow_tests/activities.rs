@@ -1,6 +1,6 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporal_client::WorkflowOptions;
+use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -64,14 +64,16 @@ async fn one_activity() {
 
 #[tokio::test]
 async fn activity_workflow() {
-    let (core, task_q) = init_core_and_create_wf("activity_workflow").await;
+    let mut starter = init_core_and_create_wf("activity_workflow").await;
+    let core = starter.get_worker().await;
+    let task_q = starter.get_task_queue();
     let activity_id = "act-1";
     let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
             0,
-            &task_q,
+            task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
             Duration::from_secs(60),
@@ -124,14 +126,16 @@ async fn activity_workflow() {
 
 #[tokio::test]
 async fn activity_non_retryable_failure() {
-    let (core, task_q) = init_core_and_create_wf("activity_non_retryable_failure").await;
+    let mut starter = init_core_and_create_wf("activity_non_retryable_failure").await;
+    let core = starter.get_worker().await;
+    let task_q = starter.get_task_queue();
     let activity_id = "act-1";
     let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
             0,
-            &task_q,
+            task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
             Duration::from_secs(60),
@@ -194,14 +198,16 @@ async fn activity_non_retryable_failure() {
 
 #[tokio::test]
 async fn activity_retry() {
-    let (core, task_q) = init_core_and_create_wf("activity_retry").await;
+    let mut starter = init_core_and_create_wf("activity_retry").await;
+    let core = starter.get_worker().await;
+    let task_q = starter.get_task_queue();
     let activity_id = "act-1";
     let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
             0,
-            &task_q,
+            task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
             Duration::from_secs(60),
@@ -267,7 +273,9 @@ async fn activity_retry() {
 
 #[tokio::test]
 async fn activity_cancellation_try_cancel() {
-    let (core, task_q) = init_core_and_create_wf("activity_cancellation_try_cancel").await;
+    let mut starter = init_core_and_create_wf("activity_cancellation_try_cancel").await;
+    let core = starter.get_worker().await;
+    let task_q = starter.get_task_queue();
     let activity_id = "act-1";
     let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
@@ -275,7 +283,7 @@ async fn activity_cancellation_try_cancel() {
         vec![
             schedule_activity_cmd(
                 0,
-                &task_q,
+                task_q,
                 activity_id,
                 ActivityCancellationType::TryCancel,
                 Duration::from_secs(60),
@@ -326,8 +334,10 @@ async fn activity_cancellation_try_cancel() {
 
 #[tokio::test]
 async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
-    let (core, task_q) =
+    let mut starter =
         init_core_and_create_wf("activity_cancellation_plus_complete_doesnt_double_resolve").await;
+    let core = starter.get_worker().await;
+    let task_q = starter.get_task_queue();
     let activity_id = "act-1";
     let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
@@ -335,7 +345,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
         vec![
             schedule_activity_cmd(
                 0,
-                &task_q,
+                task_q,
                 activity_id,
                 ActivityCancellationType::TryCancel,
                 Duration::from_secs(60),
@@ -415,14 +425,16 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
 
 #[tokio::test]
 async fn started_activity_timeout() {
-    let (core, task_q) = init_core_and_create_wf("started_activity_timeout").await;
+    let mut starter = init_core_and_create_wf("started_activity_timeout").await;
+    let core = starter.get_worker().await;
+    let task_q = starter.get_task_queue();
     let activity_id = "act-1";
     let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity that times out in 1 second.
     core.complete_workflow_activation(
         schedule_activity_cmd(
             0,
-            &task_q,
+            task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
             Duration::from_secs(1),
@@ -469,8 +481,10 @@ async fn started_activity_timeout() {
 
 #[tokio::test]
 async fn activity_cancellation_wait_cancellation_completed() {
-    let (core, task_q) =
+    let mut starter =
         init_core_and_create_wf("activity_cancellation_wait_cancellation_completed").await;
+    let core = starter.get_worker().await;
+    let task_q = starter.get_task_queue();
     let activity_id = "act-1";
     let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
@@ -478,7 +492,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
         vec![
             schedule_activity_cmd(
                 0,
-                &task_q,
+                task_q,
                 activity_id,
                 ActivityCancellationType::WaitCancellationCompleted,
                 Duration::from_secs(60),
@@ -535,7 +549,9 @@ async fn activity_cancellation_wait_cancellation_completed() {
 
 #[tokio::test]
 async fn activity_cancellation_abandon() {
-    let (core, task_q) = init_core_and_create_wf("activity_cancellation_abandon").await;
+    let mut starter = init_core_and_create_wf("activity_cancellation_abandon").await;
+    let core = starter.get_worker().await;
+    let task_q = starter.get_task_queue();
     let activity_id = "act-1";
     let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity and a timer that fires immediately
@@ -543,7 +559,7 @@ async fn activity_cancellation_abandon() {
         vec![
             schedule_activity_cmd(
                 0,
-                &task_q,
+                task_q,
                 activity_id,
                 ActivityCancellationType::Abandon,
                 Duration::from_secs(60),
@@ -596,14 +612,16 @@ async fn activity_cancellation_abandon() {
 
 #[tokio::test]
 async fn async_activity_completion_workflow() {
-    let (core, task_q) = init_core_and_create_wf("async_activity_workflow").await;
+    let mut starter = init_core_and_create_wf("async_activity_workflow").await;
+    let core = starter.get_worker().await;
+    let task_q = starter.get_task_queue();
     let activity_id = "act-1";
     let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
             0,
-            &task_q,
+            task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
             Duration::from_secs(60),
@@ -632,15 +650,17 @@ async fn async_activity_completion_workflow() {
     })
     .await
     .unwrap();
-    let gw = core.server_gateway();
-    gw.complete_activity_task(
-        task.task_token.into(),
-        Some(Payloads {
-            payloads: vec![response_payload.clone().into()],
-        }),
-    )
-    .await
-    .unwrap();
+    starter
+        .get_client()
+        .await
+        .complete_activity_task(
+            task.task_token.into(),
+            Some(Payloads {
+                payloads: vec![response_payload.clone().into()],
+            }),
+        )
+        .await
+        .unwrap();
 
     // Poll workflow task and verify that activity has succeeded.
     let task = core.poll_workflow_activation().await.unwrap();
@@ -664,8 +684,9 @@ async fn async_activity_completion_workflow() {
 
 #[tokio::test]
 async fn activity_cancelled_after_heartbeat_times_out() {
-    let (core, task_q) =
-        init_core_and_create_wf("activity_cancelled_after_heartbeat_times_out").await;
+    let mut starter = init_core_and_create_wf("activity_cancelled_after_heartbeat_times_out").await;
+    let core = starter.get_worker().await;
+    let task_q = starter.get_task_queue().to_string();
     let activity_id = "act-1";
     let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity
@@ -713,8 +734,10 @@ async fn activity_cancelled_after_heartbeat_times_out() {
     // Verify shutdown completes
     core.shutdown().await;
     // Cleanup just in case
-    core.server_gateway()
-        .terminate_workflow_execution(task_q, None)
+    starter
+        .get_client()
+        .await
+        .terminate_workflow_execution(task_q.clone(), None)
         .await
         .unwrap();
 }

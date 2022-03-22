@@ -29,7 +29,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             tokio_runtime.block_on(async {
                 let func = timers_wf(num_timers);
                 let (worker, _) = init_core_replay_preloaded("replay_bench", &hist);
-                let mut worker = Worker::new(worker, "replay_bench".to_string());
+                let mut worker = Worker::new_from_core(worker, "replay_bench".to_string());
                 worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
                 worker.run().await.unwrap();
             })
@@ -45,7 +45,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             tokio_runtime.block_on(async {
                 let func = big_signals_wf(num_tasks);
                 let (worker, _) = init_core_replay_preloaded("large_hist_bench", &hist);
-                let mut worker = Worker::new(worker, "large_hist_bench".to_string());
+                let mut worker = Worker::new_from_core(worker, "large_hist_bench".to_string());
                 worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
                 worker.run().await.unwrap();
             })

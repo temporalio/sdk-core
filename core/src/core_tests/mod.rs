@@ -10,20 +10,20 @@ mod workflow_tasks;
 
 use crate::{
     errors::{PollActivityError, PollWfError},
-    init_worker,
     test_help::{build_mock_pollers, canned_histories, mock_worker, test_worker_cfg, MockPollCfg},
+    worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
+    Worker,
 };
 use futures::FutureExt;
 use std::time::Duration;
-use temporal_client::mocks::{mock_gateway, mock_manual_gateway};
-use temporal_sdk_core_api::Worker;
+use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::coresdk::workflow_completion::WorkflowActivationCompletion;
 use tokio::{sync::Barrier, time::sleep};
 
 #[tokio::test]
 async fn after_shutdown_server_is_not_polled() {
     let t = canned_histories::single_timer("fake_timer");
-    let mh = MockPollCfg::from_resp_batches("fake_wf_id", t, [1], mock_gateway());
+    let mh = MockPollCfg::from_resp_batches("fake_wf_id", t, [1], mock_workflow_client());
     let mut mock = build_mock_pollers(mh);
     // Just so we don't have to deal w/ cache overflow
     mock.worker_cfg(|cfg| cfg.max_cached_workflows = 1);
@@ -49,8 +49,8 @@ lazy_static::lazy_static! {
 }
 #[tokio::test]
 async fn shutdown_interrupts_both_polls() {
-    let mut mock_gateway = mock_manual_gateway();
-    mock_gateway
+    let mut mock_client = mock_manual_workflow_client();
+    mock_client
         .expect_poll_activity_task()
         .times(1)
         .returning(move |_, _| {
@@ -61,7 +61,7 @@ async fn shutdown_interrupts_both_polls() {
             }
             .boxed()
         });
-    mock_gateway
+    mock_client
         .expect_poll_workflow_task()
         .times(1)
         .returning(move |_, _| {
@@ -73,14 +73,14 @@ async fn shutdown_interrupts_both_polls() {
             .boxed()
         });
 
-    let worker = init_worker(
+    let worker = Worker::new_test(
         test_worker_cfg()
             // Need only 1 concurrent pollers for mock expectations to work here
             .max_concurrent_wft_polls(1_usize)
             .max_concurrent_at_polls(1_usize)
             .build()
             .unwrap(),
-        mock_gateway,
+        mock_client,
     );
     tokio::join! {
         async {

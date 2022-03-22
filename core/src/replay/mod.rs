@@ -2,6 +2,7 @@
 //! to replay canned histories. It should be used by Lang SDKs to provide replay capabilities to
 //! users during testing.
 
+use crate::{worker::client::mocks::mock_manual_workflow_client, WorkerClientBag};
 use futures::FutureExt;
 use std::{
     sync::{
@@ -10,47 +11,32 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{mocks::mock_manual_gateway, ServerGatewayApis};
-
 use temporal_sdk_core_protos::temporal::api::{
     common::v1::WorkflowExecution,
     history::v1::History,
     workflowservice::v1::{
         RespondWorkflowTaskCompletedResponse, RespondWorkflowTaskFailedResponse,
-        StartWorkflowExecutionResponse,
     },
 };
-
 pub use temporal_sdk_core_protos::{
     default_wes_attribs, HistoryInfo, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
 };
 
-/// Create a mock gateway which can be used by a replay worker to serve up canned history.
+/// Create a mock client which can be used by a replay worker to serve up canned history.
 /// It will return the entire history in one workflow task, after that it will return default
 /// responses (with a 10s wait). If a workflow task failure is sent to the mock, it will send
 /// the complete response again.
-pub fn mock_gateway_from_history(
+pub(crate) fn mock_client_from_history(
     history: &History,
     task_queue: impl Into<String>,
-) -> impl ServerGatewayApis {
-    let mut mg = mock_manual_gateway();
+) -> WorkerClientBag {
+    let mut mg = mock_manual_workflow_client();
 
     let hist_info = HistoryInfo::new_from_history(history, None).unwrap();
     let wf = WorkflowExecution {
         workflow_id: "fake_wf_id".to_string(),
         run_id: hist_info.orig_run_id().to_string(),
     };
-
-    let wf_clone = wf.clone();
-    mg.expect_start_workflow().returning(move |_, _, _, _, _| {
-        let wf_clone = wf_clone.clone();
-        async move {
-            Ok(StartWorkflowExecutionResponse {
-                run_id: wf_clone.run_id.clone(),
-            })
-        }
-        .boxed()
-    });
 
     let did_send = Arc::new(AtomicBool::new(false));
     let did_send_clone = did_send.clone();
@@ -81,5 +67,5 @@ pub fn mock_gateway_from_history(
         async move { Ok(RespondWorkflowTaskFailedResponse {}) }.boxed()
     });
 
-    mg
+    WorkerClientBag::new(Box::new(mg), "fake_namespace".to_string())
 }

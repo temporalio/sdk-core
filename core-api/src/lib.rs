@@ -7,11 +7,7 @@ use crate::{
 };
 use log::Level;
 use opentelemetry::metrics::Meter;
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
-use temporal_client::ServerGatewayApis;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use temporal_sdk_core_protos::coresdk::{
     activity_task::ActivityTask, workflow_activation::WorkflowActivation,
     workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
@@ -90,9 +86,6 @@ pub trait Worker: Send + Sync {
     /// such activations are invalidated and subsequent completions of them will do nothing and log
     /// a warning.
     fn request_workflow_eviction(&self, run_id: &str);
-
-    /// Returns this worker's instance of the [ServerGatewayApis] implementor it is using.
-    fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync>;
 
     /// Return this worker's config
     fn get_config(&self) -> &WorkerConfig;

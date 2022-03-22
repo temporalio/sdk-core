@@ -1,6 +1,6 @@
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
-use temporal_client::{ServerGatewayApis, WorkflowOptions, WorkflowService};
+use temporal_client::{WorkflowClientTrait, WorkflowOptions, WorkflowService};
 use temporal_sdk::WfContext;
 use temporal_sdk_core_protos::temporal::api::{
     common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,

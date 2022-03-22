@@ -3,11 +3,11 @@ use crate::{
         build_fake_worker, build_mock_pollers, canned_histories, mock_manual_poller, mock_worker,
         MockPollCfg, MockWorker, MocksHolder,
     },
+    worker::client::mocks::mock_workflow_client,
     PollActivityError, PollWfError,
 };
 use futures::FutureExt;
 use std::{cell::RefCell, time::Duration};
-use temporal_client::mocks::mock_gateway;
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -142,11 +142,11 @@ async fn worker_shutdown_during_poll_doesnt_deadlock() {
         .boxed()
     });
     let mw = MockWorker::new(Box::new(mock_poller));
-    let mut mock_gateway = mock_gateway();
-    mock_gateway
+    let mut mock_client = mock_workflow_client();
+    mock_client
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
-    let worker = mock_worker(MocksHolder::from_mock_worker(mock_gateway, mw));
+    let worker = mock_worker(MocksHolder::from_mock_worker(mock_client.into(), mw));
     let pollfut = worker.poll_workflow_activation();
     let shutdownfut = async {
         worker.shutdown().await;
@@ -162,7 +162,7 @@ async fn worker_shutdown_during_poll_doesnt_deadlock() {
 #[tokio::test]
 async fn can_shutdown_local_act_only_worker_when_act_polling() {
     let t = canned_histories::single_timer("1");
-    let mock = mock_gateway();
+    let mock = mock_workflow_client();
     let mh = MockPollCfg::from_resp_batches("fakeid", t, [1], mock);
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|w| {
@@ -197,7 +197,7 @@ async fn can_shutdown_local_act_only_worker_when_act_polling() {
 #[tokio::test]
 async fn complete_with_task_not_found_during_shutdwn() {
     let t = canned_histories::single_timer("1");
-    let mut mock = mock_gateway();
+    let mut mock = mock_workflow_client();
     mock.expect_complete_workflow_task()
         .times(1)
         .returning(|_| Err(tonic::Status::not_found("Workflow task not found.")));

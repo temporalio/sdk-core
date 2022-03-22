@@ -18,14 +18,16 @@ use tokio::time::sleep;
 
 #[tokio::test]
 async fn activity_heartbeat() {
-    let (core, task_q) = init_core_and_create_wf("activity_heartbeat").await;
+    let mut starter = init_core_and_create_wf("activity_heartbeat").await;
+    let core = starter.get_worker().await;
+    let task_q = starter.get_task_queue();
     let activity_id = "act-1";
     let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity
     core.complete_workflow_activation(
         schedule_activity_cmd(
             0,
-            &task_q,
+            task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
             Duration::from_secs(60),
@@ -87,7 +89,8 @@ async fn activity_heartbeat() {
 
 #[tokio::test]
 async fn many_act_fails_with_heartbeats() {
-    let (core, task_q) = init_core_and_create_wf("many_act_fails_with_heartbeats").await;
+    let mut starter = init_core_and_create_wf("many_act_fails_with_heartbeats").await;
+    let core = starter.get_worker().await;
     let activity_id = "act-1";
     let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity
@@ -97,7 +100,7 @@ async fn many_act_fails_with_heartbeats() {
             seq: 0,
             activity_id: activity_id.to_string(),
             activity_type: "test_act".to_string(),
-            task_queue: task_q,
+            task_queue: starter.get_task_queue().to_string(),
             start_to_close_timeout: Some(Duration::from_secs(30).into()),
             retry_policy: Some(RetryPolicy {
                 initial_interval: Some(Duration::from_millis(10).into()),

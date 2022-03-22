@@ -1,6 +1,7 @@
 use crate::{
     replay::{default_wes_attribs, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE},
     test_help::{build_mock_pollers, mock_worker, MockPollCfg, ResponseType, TEST_Q},
+    worker::client::mocks::mock_workflow_client,
 };
 use anyhow::anyhow;
 use futures::future::join_all;
@@ -11,7 +12,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{mocks::mock_gateway, WorkflowOptions};
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{LocalActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{common::RetryPolicy, AsJsonPayloadExt},
@@ -44,7 +45,7 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: 
     t.add_workflow_execution_completed();
 
     let wf_id = "fakeid";
-    let mock = mock_gateway();
+    let mock = mock_workflow_client();
     let resps = if replay {
         vec![ResponseType::AllHistory]
     } else {
@@ -116,7 +117,7 @@ async fn local_act_many_concurrent() {
     t.add_workflow_execution_completed();
 
     let wf_id = "fakeid";
-    let mock = mock_gateway();
+    let mock = mock_workflow_client();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 3], mock);
     let mock = build_mock_pollers(mh);
     let core = mock_worker(mock);
@@ -161,7 +162,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     t.add_workflow_task_scheduled_and_started();
 
     let wf_id = "fakeid";
-    let mock = mock_gateway();
+    let mock = mock_workflow_client();
     // Allow returning incomplete history more than once, as the wft timeout can be timing sensitive
     // and might poll an extra time
     let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 2, 2, 2], mock);
@@ -223,7 +224,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
     t.add_workflow_task_scheduled_and_started();
 
     let wf_id = "fakeid";
-    let mock = mock_gateway();
+    let mock = mock_workflow_client();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [1], mock);
     let mock = build_mock_pollers(mh);
     let core = mock_worker(mock);
@@ -301,7 +302,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
     t.add_workflow_execution_completed();
 
     let wf_id = "fakeid";
-    let mock = mock_gateway();
+    let mock = mock_workflow_client();
     let mh = MockPollCfg::from_resp_batches(
         wf_id,
         t,

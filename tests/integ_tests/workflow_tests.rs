@@ -23,7 +23,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::WorkflowOptions;
+use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_api::{errors::PollWfError, Worker};
 use temporal_sdk_core_protos::{
@@ -163,15 +163,17 @@ async fn shutdown_aborts_actively_blocked_poll() {
 #[rstest::rstest]
 #[tokio::test]
 async fn fail_wf_task(#[values(true, false)] replay: bool) {
-    let (core, _) = if replay {
-        init_core_replay_preloaded(
+    let core = if replay {
+        let (core, _) = init_core_replay_preloaded(
             "fail_wf_task",
             &history_from_proto_binary("histories/fail_wf_task.bin")
                 .await
                 .unwrap(),
-        )
+        );
+        core
     } else {
-        init_core_and_create_wf("fail_wf_task").await
+        let mut starter = init_core_and_create_wf("fail_wf_task").await;
+        starter.get_worker().await
     };
     // Start with a timer
     let task = core.poll_workflow_activation().await.unwrap();
@@ -218,7 +220,10 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
 
 #[tokio::test]
 async fn fail_workflow_execution() {
-    let (core, _) = init_core_and_create_wf("fail_workflow_execution").await;
+    let core = init_core_and_create_wf("fail_workflow_execution")
+        .await
+        .get_worker()
+        .await;
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_timer(&task.run_id, 0, Duration::from_secs(1))
         .await;
@@ -236,8 +241,10 @@ async fn fail_workflow_execution() {
 
 #[tokio::test]
 async fn signal_workflow() {
-    let (core, task_q) = init_core_and_create_wf("signal_workflow").await;
-    let workflow_id = task_q.clone();
+    let mut starter = init_core_and_create_wf("signal_workflow").await;
+    let core = starter.get_worker().await;
+    let client = starter.get_client().await;
+    let workflow_id = starter.get_task_queue().to_string();
 
     let signal_id_1 = "signal1";
     let signal_id_2 = "signal2";
@@ -251,7 +258,7 @@ async fn signal_workflow() {
     .unwrap();
 
     // Send the signals to the server
-    core.server_gateway()
+    client
         .signal_workflow_execution(
             workflow_id.to_string(),
             res.run_id.to_string(),
@@ -260,7 +267,7 @@ async fn signal_workflow() {
         )
         .await
         .unwrap();
-    core.server_gateway()
+    client
         .signal_workflow_execution(
             workflow_id.to_string(),
             res.run_id.to_string(),
@@ -311,9 +318,10 @@ async fn signal_workflow() {
 
 #[tokio::test]
 async fn signal_workflow_signal_not_handled_on_workflow_completion() {
-    let (core, task_q) =
+    let mut starter =
         init_core_and_create_wf("signal_workflow_signal_not_handled_on_workflow_completion").await;
-    let workflow_id = task_q.as_str();
+    let core = starter.get_worker().await;
+    let workflow_id = starter.get_task_queue().to_string();
     let signal_id_1 = "signal1";
     for i in 1..=2 {
         let res = core.poll_workflow_activation().await.unwrap();
@@ -343,9 +351,11 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
             let run_id = res.run_id.clone();
 
             // Send the signal to the server
-            core.server_gateway()
+            starter
+                .get_client()
+                .await
                 .signal_workflow_execution(
-                    workflow_id.to_string(),
+                    workflow_id.clone(),
                     res.run_id.to_string(),
                     signal_id_1.to_string(),
                     None,
@@ -399,6 +409,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         .max_cached_workflows(0usize)
         .wft_timeout(Duration::from_secs(1));
     let core = wf_starter.get_worker().await;
+    let client = wf_starter.get_client().await;
     let task_q = wf_starter.get_task_queue();
     let wf_id = &wf_starter.get_wf_id().to_owned();
 
@@ -450,7 +461,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     let rid = wf_task.run_id.clone();
     // Send the signals to the server & resolve activity -- sometimes this happens too fast
     sleep(Duration::from_millis(200)).await;
-    core.server_gateway()
+    client
         .signal_workflow_execution(wf_id.to_string(), rid, signal_at_start.to_string(), None)
         .await
         .unwrap();
@@ -462,7 +473,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     .await
     .unwrap();
     let rid = wf_task.run_id.clone();
-    core.server_gateway()
+    client
         .signal_workflow_execution(wf_id.to_string(), rid, signal_at_complete.to_string(), None)
         .await
         .unwrap();

@@ -8,8 +8,7 @@
 //!
 //! An example of running an activity worker:
 //! ```no_run
-//! use std::sync::Arc;
-//! use std::str::FromStr;
+//! use std::{sync::Arc, str::FromStr};
 //! use temporal_sdk::{sdk_client_options, Worker};
 //! use temporal_sdk_core::{init_worker, Url};
 //! use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
@@ -21,7 +20,7 @@
 //!     let worker_config = WorkerConfigBuilder::default().build()?;
 //!     let core_worker = init_worker(worker_config, client);
 //!
-//!     let mut worker = Worker::new(Arc::new(core_worker), "task_queue");
+//!     let mut worker = Worker::new_from_core(Arc::new(core_worker), "task_queue");
 //!     worker.register_activity(
 //!         "echo_activity",
 //!         |echo_me: String| async move { Ok(echo_me) },
@@ -58,7 +57,7 @@ use std::{
     future::Future,
     sync::Arc,
 };
-use temporal_client::{ServerGatewayApis, ServerGatewayOptionsBuilder};
+use temporal_client::ClientOptionsBuilder;
 use temporal_sdk_core::Url;
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
@@ -93,10 +92,10 @@ use tokio_util::sync::CancellationToken;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Returns a [ServerGatewayOptionsBuilder] with required fields set to appropriate values
+/// Returns a [ClientOptionsBuilder] with required fields set to appropriate values
 /// for the Rust SDK.
-pub fn sdk_client_options(url: impl Into<Url>) -> ServerGatewayOptionsBuilder {
-    let mut builder = ServerGatewayOptionsBuilder::default();
+pub fn sdk_client_options(url: impl Into<Url>) -> ClientOptionsBuilder {
+    let mut builder = ClientOptionsBuilder::default();
     builder
         .target_url(url)
         .client_name("rust-sdk".to_string())
@@ -137,8 +136,11 @@ struct ActivityHalf {
 }
 
 impl Worker {
-    /// Create a new rust worker
-    pub fn new(worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
+    // pub fn new(cfg: WorkerConfig) -> Self {}
+
+    #[doc(hidden)]
+    /// Create a new rust worker from a core worker
+    pub fn new_from_core(worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         Self {
             common: CommonWorker {
                 worker,
@@ -155,11 +157,6 @@ impl Worker {
                 task_tokens_to_cancels: Default::default(),
             },
         }
-    }
-
-    /// Access the worker's server gateway client
-    pub fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
-        self.common.worker.server_gateway()
     }
 
     /// Returns the task queue name this worker polls on

@@ -1,11 +1,13 @@
-use crate::test_help::{
-    canned_histories, hist_to_poll_resp, mock_worker, MocksHolder, ResponseType, TEST_Q,
+use crate::{
+    test_help::{
+        canned_histories, hist_to_poll_resp, mock_worker, MocksHolder, ResponseType, TEST_Q,
+    },
+    worker::client::mocks::mock_workflow_client,
 };
 use std::{
     collections::{HashMap, VecDeque},
     time::Duration,
 };
-use temporal_client::mocks::mock_gateway;
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -51,16 +53,16 @@ async fn legacy_query(#[case] include_history: bool) {
         },
         hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()),
     ]);
-    let mut mock_gateway = mock_gateway();
-    mock_gateway
+    let mut mock_client = mock_workflow_client();
+    mock_client
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
-    mock_gateway
+    mock_client
         .expect_respond_legacy_query()
         .times(1)
         .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
 
-    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![]);
+    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
     if !include_history {
         mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     }
@@ -168,13 +170,13 @@ async fn new_queries(#[case] num_queries: usize) {
             pr
         },
     ]);
-    let mut mock_gateway = mock_gateway();
-    mock_gateway
+    let mut mock_client = mock_workflow_client();
+    mock_client
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
-    mock_gateway.expect_respond_legacy_query().times(0);
+    mock_client.expect_respond_legacy_query().times(0);
 
-    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![]);
+    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
 
@@ -245,16 +247,16 @@ async fn legacy_query_failure_on_wft_failure() {
         },
         hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()),
     ]);
-    let mut mock_gateway = mock_gateway();
-    mock_gateway
+    let mut mock_client = mock_workflow_client();
+    mock_client
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
-    mock_gateway
+    mock_client
         .expect_respond_legacy_query()
         .times(1)
         .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
 
-    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![]);
+    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
 
@@ -323,16 +325,16 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
         query_with_hist_task.clone(),
         query_with_hist_task,
     ]);
-    let mut mock_gateway = mock_gateway();
-    mock_gateway
+    let mut mock_client = mock_workflow_client();
+    mock_client
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
-    mock_gateway
+    mock_client
         .expect_respond_legacy_query()
         .times(2)
         .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
 
-    let mut mock = MocksHolder::from_gateway_with_responses(mock_gateway, tasks, vec![]);
+    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
 

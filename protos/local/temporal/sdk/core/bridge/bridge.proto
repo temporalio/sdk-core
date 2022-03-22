@@ -27,7 +27,7 @@ message InitTelemetryRequest {
   string prometheus_export_bind_address = 4;
 }
 
-message CreateGatewayRequest {
+message CreateClientRequest {
   string target_url = 1;
   string namespace = 2;
   string client_name = 3;

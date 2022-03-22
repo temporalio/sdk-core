@@ -11,8 +11,11 @@ use crate::{
     abstractions::MeteredSemaphore,
     pollers::BoxedActPoller,
     telemetry::metrics::{activity_type, activity_worker_type, workflow_type, MetricsContext},
-    worker::activities::activity_heartbeat_manager::ActivityHeartbeatError,
-    CompleteActivityError, PollActivityError, ServerGatewayApis, TaskToken,
+    worker::{
+        activities::activity_heartbeat_manager::ActivityHeartbeatError,
+        client::{WorkerClient, WorkerClientBag},
+    },
+    CompleteActivityError, PollActivityError, TaskToken,
 };
 use activity_heartbeat_manager::ActivityHeartbeatManager;
 use dashmap::DashMap;
@@ -103,13 +106,13 @@ impl WorkerActivityTasks {
     pub(crate) fn new(
         max_activity_tasks: usize,
         poller: BoxedActPoller,
-        sg: Arc<impl ServerGatewayApis + Send + Sync + 'static + ?Sized>,
+        client: Arc<WorkerClientBag>,
         metrics: MetricsContext,
         max_heartbeat_throttle_interval: Duration,
         default_heartbeat_throttle_interval: Duration,
     ) -> Self {
         Self {
-            heartbeat_manager: ActivityHeartbeatManager::new(sg),
+            heartbeat_manager: ActivityHeartbeatManager::new(client),
             outstanding_activity_tasks: Default::default(),
             poller,
             activities_semaphore: MeteredSemaphore::new(
@@ -201,7 +204,7 @@ impl WorkerActivityTasks {
         &self,
         task_token: TaskToken,
         status: aer::Status,
-        gateway: &(dyn ServerGatewayApis + Send + Sync),
+        client: &dyn WorkerClient,
     ) -> Result<(), CompleteActivityError> {
         if let Some((_, act_info)) = self.outstanding_activity_tasks.remove(&task_token) {
             let act_metrics = self.metrics.with_new_attrs([
@@ -219,13 +222,13 @@ impl WorkerActivityTasks {
             if !known_not_found {
                 let maybe_net_err = match status {
                     aer::Status::WillCompleteAsync(_) => None,
-                    aer::Status::Completed(ar::Success { result }) => gateway
+                    aer::Status::Completed(ar::Success { result }) => client
                         .complete_activity_task(task_token.clone(), result.map(Into::into))
                         .await
                         .err(),
                     aer::Status::Failed(ar::Failure { failure }) => {
                         act_metrics.act_execution_failed();
-                        gateway
+                        client
                             .fail_activity_task(task_token.clone(), failure.map(Into::into))
                             .await
                             .err()
@@ -243,7 +246,7 @@ impl WorkerActivityTasks {
                                 "Expected activity cancelled status with CanceledFailureInfo");
                             None
                         };
-                        gateway
+                        client
                             .cancel_activity_task(task_token.clone(), details.map(Into::into))
                             .await
                             .err()

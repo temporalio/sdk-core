@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_sdk::{WfContext, Worker, WorkflowFunction};
-use temporal_sdk_core::{replay::mock_gateway_from_history, telemetry_init, ServerGatewayApis};
+use temporal_sdk_core::telemetry_init;
 use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -9,7 +9,6 @@ use temporal_sdk_core_protos::{
         workflow_commands::{ScheduleActivity, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
     },
-    temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
     DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{
@@ -65,31 +64,6 @@ async fn timer_workflow_replay() {
     core.shutdown().await;
 }
 
-// Regression test to verify mock replayers don't interfere with each other
-#[tokio::test]
-async fn two_cores_replay() {
-    let hist = history_from_proto_binary("histories/fail_wf_task.bin")
-        .await
-        .unwrap();
-
-    let mock_1 = mock_gateway_from_history(&hist, "a");
-    let mock_2 = mock_gateway_from_history(&hist, "b");
-    assert_ne!(
-        mock_1
-            .poll_workflow_task("a".to_string(), false)
-            .await
-            .unwrap(),
-        PollWorkflowTaskQueueResponse::default()
-    );
-    assert_ne!(
-        mock_2
-            .poll_workflow_task("b".to_string(), false)
-            .await
-            .unwrap(),
-        PollWorkflowTaskQueueResponse::default()
-    );
-}
-
 #[tokio::test]
 async fn workflow_nondeterministic_replay() {
     let (core, _) = init_core_replay_preloaded(
@@ -133,7 +107,7 @@ async fn replay_using_wf_function() {
     let func = timers_wf(num_timers);
     let (worker, _) =
         init_core_replay_preloaded("replay_bench", &t.get_full_history_info().unwrap().into());
-    let mut worker = Worker::new(worker, "replay_bench".to_string());
+    let mut worker = Worker::new_from_core(worker, "replay_bench".to_string());
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
     worker.run().await.unwrap();
 }

@@ -1,4 +1,5 @@
 mod activities;
+pub(crate) mod client;
 mod wft_delivery;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
@@ -25,6 +26,7 @@ use crate::{
     },
     worker::{
         activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
+        client::WorkerClientBag,
         wft_delivery::WFTSource,
     },
     workflow::{
@@ -39,7 +41,7 @@ use crate::{
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
 use futures::{Future, TryFutureExt};
 use std::{convert::TryInto, sync::Arc};
-use temporal_client::{ServerGatewayApis, WorkflowTaskCompletion};
+use temporal_client::WorkflowTaskCompletion;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::activity_execution_result,
@@ -61,10 +63,13 @@ use tokio_util::sync::CancellationToken;
 use tonic::Code;
 use tracing_futures::Instrument;
 
+#[cfg(test)]
+use crate::worker::client::WorkerClient;
+
 /// A worker polls on a certain task queue
 pub struct Worker {
     config: WorkerConfig,
-    server_gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+    wf_client: Arc<WorkerClientBag>,
 
     /// Will be populated when this worker should poll on a sticky WFT queue
     sticky_name: Option<String>,
@@ -154,10 +159,6 @@ impl WorkerTrait for Worker {
         );
     }
 
-    fn server_gateway(&self) -> Arc<dyn ServerGatewayApis + Send + Sync> {
-        self.server_gateway.clone()
-    }
-
     fn get_config(&self) -> &WorkerConfig {
         &self.config
     }
@@ -187,7 +188,7 @@ impl Worker {
     pub(crate) fn new(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
-        sg: Arc<dyn ServerGatewayApis + Send + Sync>,
+        client: Arc<WorkerClientBag>,
         metrics: MetricsContext,
     ) -> Self {
         info!(task_queue = %config.task_queue, "Initializing worker");
@@ -201,7 +202,7 @@ impl Worker {
         let max_sticky_polls = config.max_sticky_polls();
         let wft_metrics = metrics.with_new_attrs([workflow_poller()]);
         let mut wf_task_poll_buffer = new_workflow_task_buffer(
-            sg.clone(),
+            client.clone(),
             config.task_queue.clone(),
             false,
             max_nonsticky_polls,
@@ -211,7 +212,7 @@ impl Worker {
         let sticky_queue_poller = sticky_queue_name.as_ref().map(|sqn| {
             let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
             let mut sp = new_workflow_task_buffer(
-                sg.clone(),
+                client.clone(),
                 sqn.clone(),
                 true,
                 max_sticky_polls,
@@ -224,7 +225,7 @@ impl Worker {
             None
         } else {
             let mut ap = new_activity_task_buffer(
-                sg.clone(),
+                client.clone(),
                 config.task_queue.clone(),
                 config.max_concurrent_at_polls,
                 config.max_concurrent_at_polls * 2,
@@ -244,17 +245,22 @@ impl Worker {
         Self::new_with_pollers(
             config,
             sticky_queue_name,
-            sg,
+            client,
             wf_task_poll_buffer,
             act_poll_buffer,
             metrics,
         )
     }
 
+    #[cfg(test)]
+    pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
+        Self::new(config, None, Arc::new(client.into()), Default::default())
+    }
+
     pub(crate) fn new_with_pollers(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
-        sg: Arc<dyn ServerGatewayApis + Send + Sync>,
+        client: Arc<WorkerClientBag>,
         wft_poller: BoxedWFPoller,
         act_poller: Option<BoxedActPoller>,
         metrics: MetricsContext,
@@ -269,7 +275,7 @@ impl Worker {
         let pa_notif = Arc::new(Notify::new());
         let wfts_drained_notify = Arc::new(Notify::new());
         Self {
-            server_gateway: sg.clone(),
+            wf_client: client.clone(),
             sticky_name: sticky_queue_name,
             wf_task_source: WFTSource::new(wft_poller),
             wft_manager: WorkflowTaskManager::new(pa_notif.clone(), cache_policy, metrics.clone()),
@@ -277,7 +283,7 @@ impl Worker {
                 WorkerActivityTasks::new(
                     config.max_outstanding_activities,
                     ap,
-                    sg.clone(),
+                    client.clone(),
                     metrics.clone(),
                     config.max_heartbeat_throttle_interval,
                     config.default_heartbeat_throttle_interval,
@@ -420,8 +426,7 @@ impl Worker {
         }
 
         if let Some(atm) = &self.at_task_mgr {
-            atm.complete(task_token, status, self.server_gateway.as_ref())
-                .await
+            atm.complete(task_token, status, &**self.wf_client).await
         } else {
             error!(
                 "Tried to complete activity {} on a worker that does not have an activity manager",
@@ -645,7 +650,7 @@ impl Worker {
         let we = work.workflow_execution.clone();
         let res = self
             .wft_manager
-            .apply_new_poll_resp(work, self.server_gateway.clone())
+            .apply_new_poll_resp(work, self.wf_client.clone())
             .await;
         Ok(match res {
             NewWfTaskOutcome::IssueActivation(a) => {
@@ -740,7 +745,7 @@ impl Worker {
 
                 self.handle_wft_reporting_errs(run_id, || async {
                     let maybe_wft = self
-                        .server_gateway
+                        .wf_client
                         .complete_workflow_task(completion)
                         .instrument(span!(tracing::Level::DEBUG, "Complete WFT call"))
                         .await?;
@@ -760,7 +765,7 @@ impl Worker {
                 action: ActivationAction::RespondLegacyQuery { result },
                 ..
             })) => {
-                self.server_gateway
+                self.wf_client
                     .respond_legacy_query(task_token, result)
                     .await?;
                 Ok(WFTReportOutcome {
@@ -811,7 +816,7 @@ impl Worker {
                 FailedActivationOutcome::Report(tt) => {
                     warn!(run_id, failure=?failure, "Failing workflow activation");
                     self.handle_wft_reporting_errs(run_id, || async {
-                        self.server_gateway
+                        self.wf_client
                             .fail_workflow_task(tt, cause, failure.failure.map(Into::into))
                             .await
                     })
@@ -823,7 +828,7 @@ impl Worker {
                 }
                 FailedActivationOutcome::ReportLegacyQueryFailure(task_token) => {
                     warn!(run_id, failure=?failure, "Failing legacy query request");
-                    self.server_gateway
+                    self.wf_client
                         .respond_legacy_query(task_token, legacy_query_failure(failure))
                         .await?;
                     WFTReportOutcome {
@@ -942,14 +947,13 @@ struct WFTReportOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_help::test_worker_cfg;
-    use temporal_client::mocks::mock_gateway;
+    use crate::{test_help::test_worker_cfg, worker::client::mocks::mock_workflow_client};
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 
     #[tokio::test]
     async fn activity_timeouts_dont_eat_permits() {
-        let mut mock_gateway = mock_gateway();
-        mock_gateway
+        let mut mock_client = mock_workflow_client();
+        mock_client
             .expect_poll_activity_task()
             .returning(|_, _| Ok(PollActivityTaskQueueResponse::default()));
 
@@ -957,15 +961,15 @@ mod tests {
             .max_outstanding_activities(5_usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, None, Arc::new(mock_gateway), Default::default());
+        let worker = Worker::new_test(cfg, mock_client);
         assert_eq!(worker.activity_poll().await.unwrap(), None);
         assert_eq!(worker.at_task_mgr.unwrap().remaining_activity_capacity(), 5);
     }
 
     #[tokio::test]
     async fn workflow_timeouts_dont_eat_permits() {
-        let mut mock_gateway = mock_gateway();
-        mock_gateway
+        let mut mock_client = mock_workflow_client();
+        mock_client
             .expect_poll_workflow_task()
             .returning(|_, _| Ok(PollWorkflowTaskQueueResponse::default()));
 
@@ -973,15 +977,15 @@ mod tests {
             .max_outstanding_workflow_tasks(5_usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, None, Arc::new(mock_gateway), Default::default());
+        let worker = Worker::new_test(cfg, mock_client);
         assert_eq!(worker.workflow_poll().await.unwrap(), None);
         assert_eq!(worker.workflows_semaphore.sem.available_permits(), 5);
     }
 
     #[tokio::test]
     async fn activity_errs_dont_eat_permits() {
-        let mut mock_gateway = mock_gateway();
-        mock_gateway
+        let mut mock_client = mock_workflow_client();
+        mock_client
             .expect_poll_activity_task()
             .returning(|_, _| Err(tonic::Status::internal("ahhh")));
 
@@ -989,15 +993,15 @@ mod tests {
             .max_outstanding_activities(5_usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, None, Arc::new(mock_gateway), Default::default());
+        let worker = Worker::new_test(cfg, mock_client);
         assert!(worker.activity_poll().await.is_err());
         assert_eq!(worker.at_task_mgr.unwrap().remaining_activity_capacity(), 5);
     }
 
     #[tokio::test]
     async fn workflow_errs_dont_eat_permits() {
-        let mut mock_gateway = mock_gateway();
-        mock_gateway
+        let mut mock_client = mock_workflow_client();
+        mock_client
             .expect_poll_workflow_task()
             .returning(|_, _| Err(tonic::Status::internal("ahhh")));
 
@@ -1005,7 +1009,7 @@ mod tests {
             .max_outstanding_workflow_tasks(5_usize)
             .build()
             .unwrap();
-        let worker = Worker::new(cfg, None, Arc::new(mock_gateway), Default::default());
+        let worker = Worker::new_test(cfg, mock_client);
         assert!(worker.workflow_poll().await.is_err());
         assert_eq!(worker.workflows_semaphore.sem.available_permits(), 5);
     }

@@ -5,18 +5,18 @@
 //! We can use `clap` if this needs more arguments / other stuff later on.
 
 use prost::Message;
-use temporal_client::ServerGatewayApis;
+use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core_test_utils::get_integ_server_options;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let gw_opts = get_integ_server_options();
-    let gateway = gw_opts.connect("default", None).await?;
+    let client = gw_opts.connect("default", None).await?;
     let wf_id = std::env::args()
         .nth(1)
         .expect("must provide workflow id as only argument");
     let run_id = std::env::args().nth(2);
-    let hist = gateway
+    let hist = client
         .get_workflow_execution_history(wf_id.clone(), run_id, vec![])
         .await?
         .history

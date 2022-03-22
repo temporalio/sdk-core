@@ -18,12 +18,12 @@ use bridge::{init_response, CreateWorkerRequest, InitResponse};
 use prost::Message;
 use std::sync::Arc;
 use temporal_sdk_core::{
-    fetch_global_buffered_logs, telemetry_init, RetryGateway, ServerGateway, ServerGatewayOptions,
+    fetch_global_buffered_logs, telemetry_init, Client, ClientOptions, RetryClient,
 };
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::coresdk::{
     bridge,
-    bridge::{CreateGatewayRequest, InitTelemetryRequest},
+    bridge::{CreateClientRequest, InitTelemetryRequest},
 };
 
 /// A set of bytes owned by Core. No fields within nor any bytes references must
@@ -336,11 +336,11 @@ pub extern "C" fn tmprl_telemetry_init(
 /// A client instance owned by Core. This must be passed to [tmprl_client_free]
 /// when no longer in use which will free the resources.
 pub struct tmprl_client_t {
-    client: Arc<RetryGateway<ServerGateway>>,
+    client: Arc<RetryClient<Client>>,
 }
 
 impl tmprl_client_t {
-    pub fn new(client: Arc<RetryGateway<ServerGateway>>) -> Self {
+    pub fn new(client: Arc<RetryClient<Client>>) -> Self {
         Self { client }
     }
 }
@@ -360,7 +360,7 @@ type tmprl_client_init_callback = unsafe extern "C" fn(
 /// Initialize a client connection to the Temporal service.
 ///
 /// The runtime is required and must outlive this instance. The `req_proto` and `req_proto_len`
-/// represent a byte array for a [CreateGatewayRequest] protobuf message. The callback is invoked on
+/// represent a byte array for a [CreateClientRequest] protobuf message. The callback is invoked on
 /// completion.
 #[no_mangle]
 pub extern "C" fn tmprl_client_init(
@@ -372,12 +372,12 @@ pub extern "C" fn tmprl_client_init(
 ) {
     let runtime = unsafe { &*runtime };
     let (namespace, req) =
-        match tmprl_worker_t::decode_proto::<CreateGatewayRequest>(req_proto, req_proto_len)
+        match tmprl_worker_t::decode_proto::<CreateClientRequest>(req_proto, req_proto_len)
             .and_then(|cgr| {
                 let ns = cgr.namespace.clone();
-                wrappers::ServerGatewayOptions(cgr)
+                wrappers::ClientOptions(cgr)
                     .try_into()
-                    .map(|sgo: ServerGatewayOptions| (ns, sgo))
+                    .map(|sgo: ClientOptions| (ns, sgo))
             }) {
             Ok(req) => req,
             Err(message) => {
@@ -716,7 +716,7 @@ pub extern "C" fn tmprl_fetch_buffered_logs(
 impl tmprl_worker_t {
     fn new(
         tokio_runtime: Arc<tokio::runtime::Runtime>,
-        client: Arc<RetryGateway<ServerGateway>>,
+        client: Arc<RetryClient<Client>>,
         opts: wrappers::WorkerConfig,
     ) -> Result<tmprl_worker_t, String> {
         Ok(tmprl_worker_t {

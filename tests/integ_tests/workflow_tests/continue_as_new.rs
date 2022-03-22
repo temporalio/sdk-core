@@ -1,5 +1,5 @@
 use std::time::Duration;
-use temporal_client::WorkflowOptions;
+use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::workflow_commands::ContinueAsNewWorkflowExecution;
 use temporal_sdk_core_test_utils::CoreWfStarter;
@@ -37,9 +37,8 @@ async fn continue_as_new_happy_path() {
 
     // Terminate the continued workflow
     starter
-        .get_worker()
+        .get_client()
         .await
-        .server_gateway()
         .terminate_workflow_execution(wf_name.to_owned(), None)
         .await
         .unwrap();

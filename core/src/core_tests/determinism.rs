@@ -3,6 +3,7 @@ use crate::{
     test_help::{
         build_mock_pollers, canned_histories, mock_worker, MockPollCfg, ResponseType, TEST_Q,
     },
+    worker::client::mocks::mock_workflow_client,
 };
 use std::{
     sync::{
@@ -11,7 +12,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{mocks::mock_gateway, WorkflowOptions};
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
 use temporal_sdk_core_test_utils::TestWorker;
@@ -35,7 +36,7 @@ async fn test_wf_task_rejected_properly() {
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let t = canned_histories::workflow_fails_with_failure_after_timer("1");
-    let mock = mock_gateway();
+    let mock = mock_workflow_client();
     let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 2], mock);
     // We should see one wft failure which has unspecified cause, since panics don't have a defined
     // type.
@@ -69,7 +70,7 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let t = canned_histories::single_timer_wf_completes("1");
-    let mock = mock_gateway();
+    let mock = mock_workflow_client();
     let mut mh = MockPollCfg::from_resp_batches(
         wf_id,
         t,

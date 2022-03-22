@@ -1,6 +1,6 @@
 use crate::{
     replay::{HistoryInfo, TestHistoryBuilder},
-    ServerGatewayApis,
+    worker::client::WorkerClientBag,
 };
 use futures::{future::BoxFuture, stream, stream::BoxStream, FutureExt, Stream, StreamExt};
 use std::{
@@ -30,7 +30,8 @@ pub struct HistoryUpdate {
 }
 
 pub struct HistoryPaginator {
-    gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+    // Potentially this could actually be a ref w/ lifetime here
+    client: Arc<WorkerClientBag>,
     event_queue: VecDeque<HistoryEvent>,
     wf_id: String,
     run_id: String,
@@ -65,12 +66,12 @@ impl From<Vec<u8>> for NextPageToken {
 }
 
 impl HistoryPaginator {
-    pub fn new(
+    pub(crate) fn new(
         initial_history: History,
         wf_id: String,
         run_id: String,
         next_page_token: impl Into<NextPageToken>,
-        gateway: Arc<dyn ServerGatewayApis + Send + Sync>,
+        client: Arc<WorkerClientBag>,
     ) -> Self {
         let next_page_token = next_page_token.into();
         let (event_queue, final_events) =
@@ -80,7 +81,7 @@ impl HistoryPaginator {
                 (initial_history.events.into(), vec![])
             };
         Self {
-            gateway,
+            client,
             event_queue,
             wf_id,
             run_id,
@@ -126,7 +127,7 @@ impl Stream for HistoryPaginator {
                 NextPageToken::Next(v) => v,
             };
             debug!(run_id=%self.run_id, "Fetching new history page");
-            let gw = self.gateway.clone();
+            let gw = self.client.clone();
             let wid = self.wf_id.clone();
             let rid = self.run_id.clone();
             let resp_fut =
@@ -303,8 +304,7 @@ impl TestHBExt for TestHistoryBuilder {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::test_help::canned_histories;
-    use temporal_client::mocks::mock_gateway;
+    use crate::{test_help::canned_histories, worker::client::mocks::mock_workflow_client};
 
     #[tokio::test]
     async fn consumes_standard_wft_sequence() {
@@ -360,10 +360,10 @@ pub mod tests {
         let long_hist = canned_histories::long_sequential_timers(wft_count);
         let initial_hist = long_hist.get_history_info(10).unwrap();
         let prev_started = initial_hist.previous_started_event_id();
-        let mut mock_gateway = mock_gateway();
+        let mut mock_client = mock_workflow_client();
 
         let mut npt = 2;
-        mock_gateway
+        mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, passed_npt| {
                 assert_eq!(passed_npt, vec![npt]);
@@ -383,7 +383,7 @@ pub mod tests {
                 "wfid".to_string(),
                 "runid".to_string(),
                 vec![2], // Start at page "2"
-                Arc::new(mock_gateway),
+                Arc::new(mock_client.into()),
             ),
             prev_started,
         );
@@ -416,8 +416,8 @@ pub mod tests {
         // Chop off the last event, which is WFT started, which server doesn't return in get
         // history
         history_from_get.history.as_mut().map(|h| h.events.pop());
-        let mut mock_gateway = mock_gateway();
-        mock_gateway
+        let mut mock_client = mock_workflow_client();
+        mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| Ok(history_from_get.clone()));
 
@@ -428,7 +428,7 @@ pub mod tests {
                 "runid".to_string(),
                 // A cache miss means we'll try to fetch from start
                 NextPageToken::FetchFromStart,
-                Arc::new(mock_gateway),
+                Arc::new(mock_client.into()),
             ),
             1,
         );
