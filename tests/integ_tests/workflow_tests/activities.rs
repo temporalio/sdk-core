@@ -73,7 +73,7 @@ async fn activity_workflow() {
     core.complete_workflow_activation(
         schedule_activity_cmd(
             0,
-            &task_q,
+            task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
             Duration::from_secs(60),
@@ -135,7 +135,7 @@ async fn activity_non_retryable_failure() {
     core.complete_workflow_activation(
         schedule_activity_cmd(
             0,
-            &task_q,
+            task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
             Duration::from_secs(60),
@@ -207,7 +207,7 @@ async fn activity_retry() {
     core.complete_workflow_activation(
         schedule_activity_cmd(
             0,
-            &task_q,
+            task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
             Duration::from_secs(60),
@@ -283,7 +283,7 @@ async fn activity_cancellation_try_cancel() {
         vec![
             schedule_activity_cmd(
                 0,
-                &task_q,
+                task_q,
                 activity_id,
                 ActivityCancellationType::TryCancel,
                 Duration::from_secs(60),
@@ -345,7 +345,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
         vec![
             schedule_activity_cmd(
                 0,
-                &task_q,
+                task_q,
                 activity_id,
                 ActivityCancellationType::TryCancel,
                 Duration::from_secs(60),
@@ -434,7 +434,7 @@ async fn started_activity_timeout() {
     core.complete_workflow_activation(
         schedule_activity_cmd(
             0,
-            &task_q,
+            task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
             Duration::from_secs(1),
@@ -492,7 +492,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
         vec![
             schedule_activity_cmd(
                 0,
-                &task_q,
+                task_q,
                 activity_id,
                 ActivityCancellationType::WaitCancellationCompleted,
                 Duration::from_secs(60),
@@ -559,7 +559,7 @@ async fn activity_cancellation_abandon() {
         vec![
             schedule_activity_cmd(
                 0,
-                &task_q,
+                task_q,
                 activity_id,
                 ActivityCancellationType::Abandon,
                 Duration::from_secs(60),
@@ -621,7 +621,7 @@ async fn async_activity_completion_workflow() {
     core.complete_workflow_activation(
         schedule_activity_cmd(
             0,
-            &task_q,
+            task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
             Duration::from_secs(60),

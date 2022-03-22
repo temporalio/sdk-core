@@ -27,7 +27,7 @@ async fn out_of_order_completion_doesnt_hang() {
         vec![
             schedule_activity_cmd(
                 0,
-                &task_q,
+                task_q,
                 activity_id,
                 ActivityCancellationType::TryCancel,
                 Duration::from_secs(60),

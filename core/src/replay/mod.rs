@@ -2,10 +2,7 @@
 //! to replay canned histories. It should be used by Lang SDKs to provide replay capabilities to
 //! users during testing.
 
-use crate::{
-    worker::client::mocks::{fake_sg_opts, mock_manual_workflow_client},
-    WorkerClientBag,
-};
+use crate::{worker::client::mocks::mock_manual_workflow_client, WorkerClientBag};
 use futures::FutureExt;
 use std::{
     sync::{
@@ -41,17 +38,6 @@ pub(crate) fn mock_client_from_history(
         run_id: hist_info.orig_run_id().to_string(),
     };
 
-    // let wf_clone = wf.clone();
-    // mg.expect_start_workflow().returning(move |_, _, _, _, _| {
-    //     let wf_clone = wf_clone.clone();
-    //     async move {
-    //         Ok(StartWorkflowExecutionResponse {
-    //             run_id: wf_clone.run_id.clone(),
-    //         })
-    //     }
-    //     .boxed()
-    // });
-
     let did_send = Arc::new(AtomicBool::new(false));
     let did_send_clone = did_send.clone();
     let tq = task_queue.into();
@@ -81,5 +67,5 @@ pub(crate) fn mock_client_from_history(
         async move { Ok(RespondWorkflowTaskFailedResponse {}) }.boxed()
     });
 
-    WorkerClientBag::new(Box::new(mg), "fake_namespace".to_string(), fake_sg_opts())
+    WorkerClientBag::new(Box::new(mg), "fake_namespace".to_string())
 }

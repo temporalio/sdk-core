@@ -82,7 +82,6 @@ where
     let client_bag = Arc::new(WorkerClientBag::new(
         Box::new(client),
         worker_config.namespace.clone(),
-        c_opts.clone(),
     ));
     let sticky_q = sticky_q_name_for_worker(&c_opts.identity, &worker_config);
     let metrics = MetricsContext::top_level(worker_config.namespace.clone())

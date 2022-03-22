@@ -244,8 +244,7 @@ async fn signal_workflow() {
     let mut starter = init_core_and_create_wf("signal_workflow").await;
     let core = starter.get_worker().await;
     let client = starter.get_client().await;
-    let task_q = starter.get_task_queue();
-    let workflow_id = task_q.clone();
+    let workflow_id = starter.get_task_queue().to_string();
 
     let signal_id_1 = "signal1";
     let signal_id_2 = "signal2";

@@ -391,9 +391,6 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
             outstanding.write().remove_by_right(&tt);
             Ok(Default::default())
         });
-    // cfg.mock_client
-    //     .expect_start_workflow()
-    //     .returning(|_, _, _, _, _| Ok(Default::default()));
 
     MocksHolder {
         client_bag: cfg.mock_client.into(),

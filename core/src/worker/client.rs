@@ -6,7 +6,7 @@ use std::{
     borrow::Borrow,
     ops::{Deref, DerefMut},
 };
-use temporal_client::{ClientOptions, WorkflowClientTrait, WorkflowTaskCompletion};
+use temporal_client::{WorkflowClientTrait, WorkflowTaskCompletion};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
@@ -22,19 +22,11 @@ type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 pub(crate) struct WorkerClientBag {
     client: Box<dyn WorkerClient>,
     namespace: String,
-    options: ClientOptions,
 }
 
 impl WorkerClientBag {
-    pub fn new(client: Box<dyn WorkerClient>, namespace: String, options: ClientOptions) -> Self {
-        Self {
-            client,
-            namespace,
-            options,
-        }
-    }
-    pub fn options(&self) -> &ClientOptions {
-        &self.options
+    pub fn new(client: Box<dyn WorkerClient>, namespace: String) -> Self {
+        Self { client, namespace }
     }
 
     pub fn namespace(&self) -> &str {
@@ -59,95 +51,63 @@ where
     T: WorkerClient + 'static,
 {
     fn from(c: T) -> Self {
-        use crate::worker::client::mocks::fake_sg_opts;
         use temporal_sdk_core_test_utils::NAMESPACE;
 
-        WorkerClientBag::new(Box::new(c), NAMESPACE.to_string(), fake_sg_opts())
+        WorkerClientBag::new(Box::new(c), NAMESPACE.to_string())
     }
 }
 
 /// This trait contains everything workers need to interact with Temporal, and hence provides a
-/// minimal mocking surface.
+/// minimal mocking surface. Delegates to [WorkflowClientTrait] so see that for details.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
 pub(crate) trait WorkerClient: Sync + Send {
-    /// Fetch new workflow tasks from the provided queue. Should block indefinitely if there is no
-    /// work.
     async fn poll_workflow_task(
         &self,
         task_queue: String,
         is_sticky: bool,
     ) -> Result<PollWorkflowTaskQueueResponse>;
-
-    /// Fetch new activity tasks from the provided queue. Should block indefinitely if there is no
-    /// work.
     async fn poll_activity_task(
         &self,
         task_queue: String,
         max_tasks_per_sec: Option<f64>,
     ) -> Result<PollActivityTaskQueueResponse>;
-
-    /// Complete a workflow activation.
     async fn complete_workflow_task(
         &self,
         request: WorkflowTaskCompletion,
     ) -> Result<RespondWorkflowTaskCompletedResponse>;
-
-    /// Complete activity task by sending response to the server. `task_token` contains activity
-    /// identifier that would've been received from polling for an activity task. `result` is a blob
-    /// that contains activity response.
     async fn complete_activity_task(
         &self,
         task_token: TaskToken,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse>;
-
-    /// Report activity task heartbeat by sending details to the server. `task_token` contains
-    /// activity identifier that would've been received from polling for an activity task. `result`
-    /// contains `cancel_requested` flag, which if set to true indicates that activity has been
-    /// cancelled.
     async fn record_activity_heartbeat(
         &self,
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RecordActivityTaskHeartbeatResponse>;
-
-    /// Cancel activity task by sending response to the server. `task_token` contains activity
-    /// identifier that would've been received from polling for an activity task. `details` is a
-    /// blob that provides arbitrary user defined cancellation info.
     async fn cancel_activity_task(
         &self,
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse>;
-
-    /// Fail activity task by sending response to the server. `task_token` contains activity
-    /// identifier that would've been received from polling for an activity task. `failure` provides
-    /// failure details, such as message, cause and stack trace.
     async fn fail_activity_task(
         &self,
         task_token: TaskToken,
         failure: Option<Failure>,
     ) -> Result<RespondActivityTaskFailedResponse>;
-
-    /// Fail task by sending the failure to the server. `task_token` is the task token that would've
-    /// been received from polling for a workflow activation.
     async fn fail_workflow_task(
         &self,
         task_token: TaskToken,
         cause: WorkflowTaskFailedCause,
         failure: Option<Failure>,
     ) -> Result<RespondWorkflowTaskFailedResponse>;
-
-    /// Get history for a particular workflow run
     async fn get_workflow_execution_history(
         &self,
         workflow_id: String,
         run_id: Option<String>,
         page_token: Vec<u8>,
     ) -> Result<GetWorkflowExecutionHistoryResponse>;
-
-    /// Respond to a legacy query-only workflow task
     async fn respond_legacy_query(
         &self,
         task_token: TaskToken,

@@ -27,7 +27,7 @@ async fn activity_heartbeat() {
     core.complete_workflow_activation(
         schedule_activity_cmd(
             0,
-            &task_q,
+            task_q,
             activity_id,
             ActivityCancellationType::TryCancel,
             Duration::from_secs(60),
