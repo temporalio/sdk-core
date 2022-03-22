@@ -3,11 +3,11 @@ use crate::{
         build_fake_worker, build_mock_pollers, canned_histories, mock_manual_poller, mock_worker,
         MockPollCfg, MockWorker, MocksHolder,
     },
+    worker::client::mocks::mock_workflow_client,
     PollActivityError, PollWfError,
 };
 use futures::FutureExt;
 use std::{cell::RefCell, time::Duration};
-use temporal_client::mocks::mock_workflow_client;
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -146,7 +146,7 @@ async fn worker_shutdown_during_poll_doesnt_deadlock() {
     mock_client
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
-    let worker = mock_worker(MocksHolder::from_mock_worker(mock_client, mw));
+    let worker = mock_worker(MocksHolder::from_mock_worker(mock_client.into(), mw));
     let pollfut = worker.poll_workflow_activation();
     let shutdownfut = async {
         worker.shutdown().await;

@@ -57,7 +57,7 @@ use std::{
     future::Future,
     sync::Arc,
 };
-use temporal_client::{ClientOptionsBuilder, WorkflowClientTrait};
+use temporal_client::ClientOptionsBuilder;
 use temporal_sdk_core::Url;
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
@@ -157,11 +157,6 @@ impl Worker {
                 task_tokens_to_cancels: Default::default(),
             },
         }
-    }
-
-    /// Access the worker's workflow client
-    pub fn workflow_client(&self) -> Arc<dyn WorkflowClientTrait + Send + Sync> {
-        self.common.worker.workflow_client()
     }
 
     /// Returns the task queue name this worker polls on

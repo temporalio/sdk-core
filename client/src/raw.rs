@@ -543,13 +543,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{mocks::fake_sg_opts, RetryClient, WorkflowServiceClientWithMetrics};
+    use crate::{ClientOptionsBuilder, RetryClient, WorkflowServiceClientWithMetrics};
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListNamespacesRequest;
 
-    // Just to help me make sure some stuff compiles
+    // Just to help make sure some stuff compiles. Not run.
     #[allow(dead_code)]
     async fn raw_client_retry_compiles() {
-        let opts = fake_sg_opts();
+        let opts = ClientOptionsBuilder::default().build().unwrap();
         let raw_client = opts.connect_no_namespace(None).await.unwrap();
         let mut retry_client = RetryClient::new(raw_client, opts.retry_config);
 

@@ -3,10 +3,11 @@ use crate::{
     test_help::{
         build_mock_pollers, canned_histories, mock_worker, MockPollCfg, ResponseType, TEST_Q,
     },
+    worker::client::mocks::mock_workflow_client,
     workflow::managed_wf::ManagedWFFunc,
 };
 use std::sync::Arc;
-use temporal_client::{mocks::mock_workflow_client, WorkflowOptions};
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{ChildWorkflowOptions, Signal, WfContext, WorkflowFunction, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::child_workflow::{
     child_workflow_result, ChildWorkflowCancellationType,

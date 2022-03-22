@@ -1,14 +1,12 @@
 mod poll_buffer;
 
-pub use poll_buffer::{
-    new_activity_task_buffer, new_workflow_task_buffer, PollActivityTaskBuffer,
-    PollWorkflowTaskBuffer, WorkflowTaskPoller,
+pub(crate) use poll_buffer::{
+    new_activity_task_buffer, new_workflow_task_buffer, WorkflowTaskPoller,
 };
 pub use temporal_client::{
     Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,
     TlsConfig, WorkflowClientTrait,
 };
-
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
     PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
 };

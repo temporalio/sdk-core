@@ -42,7 +42,11 @@ pub use temporal_sdk_core_protos::TaskToken;
 pub use url::Url;
 pub use worker::{Worker, WorkerConfig, WorkerConfigBuilder};
 
-use crate::telemetry::metrics::{MetricsContext, METRIC_METER};
+use crate::{
+    replay::mock_client_from_history,
+    telemetry::metrics::{MetricsContext, METRIC_METER},
+    worker::client::WorkerClientBag,
+};
 use std::sync::Arc;
 use temporal_client::AnyClient;
 use temporal_sdk_core_api::{
@@ -74,10 +78,16 @@ where
             Arc::new(retry_client)
         }
     };
-    let sticky_q = sticky_q_name_for_worker(&client.get_options().identity, &worker_config);
+    let c_opts = client.get_options().clone();
+    let client_bag = Arc::new(WorkerClientBag::new(
+        Box::new(client),
+        worker_config.namespace.clone(),
+        c_opts.clone(),
+    ));
+    let sticky_q = sticky_q_name_for_worker(&c_opts.identity, &worker_config);
     let metrics = MetricsContext::top_level(worker_config.namespace.clone())
         .with_task_q(worker_config.task_queue.clone());
-    Worker::new(worker_config, sticky_q, client, metrics)
+    Worker::new(worker_config, sticky_q, client_bag, metrics)
 }
 
 /// Create a worker for replaying a specific history. It will auto-shutdown as soon as the history
@@ -85,7 +95,6 @@ where
 /// for workflow testing purposes.
 pub fn init_replay_worker(
     mut config: WorkerConfig,
-    client: Arc<dyn WorkflowClientTrait + Send + Sync>,
     history: &History,
 ) -> Result<Worker, anyhow::Error> {
     info!(
@@ -95,10 +104,11 @@ pub fn init_replay_worker(
     config.max_cached_workflows = 1;
     config.max_concurrent_wft_polls = 1;
     config.no_remote_activities = true;
-    // Could possibly just use mocked pollers here, but they'd need to be un-test-moded
+    // Could possibly just use mocked pollers here?
+    let client = mock_client_from_history(history, &config.task_queue);
     let run_id = history.extract_run_id_from_start()?.to_string();
     let last_event = history.last_event_id();
-    let mut worker = Worker::new(config, None, client, MetricsContext::default());
+    let mut worker = Worker::new(config, None, Arc::new(client), MetricsContext::default());
     worker.set_shutdown_on_run_reaches_event(run_id, last_event);
     Ok(worker)
 }

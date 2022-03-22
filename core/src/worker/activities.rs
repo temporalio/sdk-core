@@ -11,8 +11,11 @@ use crate::{
     abstractions::MeteredSemaphore,
     pollers::BoxedActPoller,
     telemetry::metrics::{activity_type, activity_worker_type, workflow_type, MetricsContext},
-    worker::activities::activity_heartbeat_manager::ActivityHeartbeatError,
-    CompleteActivityError, PollActivityError, TaskToken, WorkflowClientTrait,
+    worker::{
+        activities::activity_heartbeat_manager::ActivityHeartbeatError,
+        client::{WorkerClient, WorkerClientBag},
+    },
+    CompleteActivityError, PollActivityError, TaskToken,
 };
 use activity_heartbeat_manager::ActivityHeartbeatManager;
 use dashmap::DashMap;
@@ -103,13 +106,13 @@ impl WorkerActivityTasks {
     pub(crate) fn new(
         max_activity_tasks: usize,
         poller: BoxedActPoller,
-        sg: Arc<impl WorkflowClientTrait + Send + Sync + 'static + ?Sized>,
+        client: Arc<WorkerClientBag>,
         metrics: MetricsContext,
         max_heartbeat_throttle_interval: Duration,
         default_heartbeat_throttle_interval: Duration,
     ) -> Self {
         Self {
-            heartbeat_manager: ActivityHeartbeatManager::new(sg),
+            heartbeat_manager: ActivityHeartbeatManager::new(client),
             outstanding_activity_tasks: Default::default(),
             poller,
             activities_semaphore: MeteredSemaphore::new(
@@ -201,7 +204,7 @@ impl WorkerActivityTasks {
         &self,
         task_token: TaskToken,
         status: aer::Status,
-        client: &(dyn WorkflowClientTrait + Send + Sync),
+        client: &dyn WorkerClient,
     ) -> Result<(), CompleteActivityError> {
         if let Some((_, act_info)) = self.outstanding_activity_tasks.remove(&task_token) {
             let act_metrics = self.metrics.with_new_attrs([

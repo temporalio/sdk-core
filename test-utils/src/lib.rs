@@ -26,9 +26,8 @@ use std::{
 use temporal_client::{Client, RetryClient, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{interceptors::WorkerInterceptor, IntoActivityFunc, Worker, WorkflowFunction};
 use temporal_sdk_core::{
-    init_replay_worker, init_worker, replay::mock_client_from_history, telemetry_init,
-    ClientOptions, ClientOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder, WorkerConfig,
-    WorkerConfigBuilder,
+    init_replay_worker, init_worker, telemetry_init, ClientOptions, ClientOptionsBuilder,
+    TelemetryOptions, TelemetryOptionsBuilder, WorkerConfig, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::Worker as CoreWorker;
 use temporal_sdk_core_protos::{
@@ -72,9 +71,7 @@ pub fn init_core_replay_preloaded(
         .task_queue(test_name)
         .build()
         .expect("Configuration options construct properly");
-    let client = mock_client_from_history(history, test_name.to_string());
-    let worker = init_replay_worker(worker_cfg, Arc::new(client), history)
-        .expect("Replay worker must init properly");
+    let worker = init_replay_worker(worker_cfg, history).expect("Replay worker must init properly");
     (Arc::new(worker), test_name.to_string())
 }
 
@@ -125,10 +122,13 @@ impl CoreWfStarter {
     }
 
     pub async fn worker(&mut self) -> TestWorker {
-        TestWorker::new(
+        let mut w = TestWorker::new(
             self.get_worker().await,
             self.worker_config.task_queue.clone(),
-        )
+        );
+        w.client = Some(self.get_client().await);
+
+        w
     }
 
     pub async fn shutdown(&mut self) {
@@ -181,9 +181,8 @@ impl CoreWfStarter {
     ) -> Result<(), anyhow::Error> {
         // Fetch history and replay it
         let history = self
-            .get_worker()
+            .get_client()
             .await
-            .workflow_client()
             .get_workflow_execution_history(wf_id.into(), Some(run_id.into()), vec![])
             .await?
             .history
@@ -255,6 +254,7 @@ impl CoreWfStarter {
 /// Provides conveniences for running integ tests with the SDK
 pub struct TestWorker {
     inner: Worker,
+    client: Option<Arc<dyn WorkflowClientTrait>>,
     incomplete_workflows: Arc<AtomicUsize>,
 }
 impl TestWorker {
@@ -269,6 +269,7 @@ impl TestWorker {
         inner.set_worker_interceptor(Box::new(iceptor));
         Self {
             inner,
+            client: None,
             incomplete_workflows: ct,
         }
     }
@@ -312,20 +313,22 @@ impl TestWorker {
         input: Vec<Payload>,
         options: WorkflowOptions,
     ) -> Result<String, anyhow::Error> {
-        let wfid = workflow_id.into();
-        let res = self
-            .inner
-            .workflow_client()
-            .start_workflow(
-                input,
-                self.inner.task_queue().to_string(),
-                wfid.clone(),
-                workflow_type.into(),
-                options,
-            )
-            .await?;
         self.incr_expected_run_count(1);
-        Ok(res.run_id)
+        if let Some(c) = self.client.as_ref() {
+            let wfid = workflow_id.into();
+            let res = c
+                .start_workflow(
+                    input,
+                    self.inner.task_queue().to_string(),
+                    wfid.clone(),
+                    workflow_type.into(),
+                    options,
+                )
+                .await?;
+            Ok(res.run_id)
+        } else {
+            Ok("fake_run_id".to_string())
+        }
     }
 
     /// Runs until all expected workflows have completed

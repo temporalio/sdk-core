@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_sdk::{WfContext, Worker, WorkflowFunction};
-use temporal_sdk_core::{replay::mock_client_from_history, telemetry_init, WorkflowClientTrait};
+use temporal_sdk_core::telemetry_init;
 use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -9,7 +9,6 @@ use temporal_sdk_core_protos::{
         workflow_commands::{ScheduleActivity, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
     },
-    temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
     DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{
@@ -63,31 +62,6 @@ async fn timer_workflow_replay() {
     );
 
     core.shutdown().await;
-}
-
-// Regression test to verify mock replayers don't interfere with each other
-#[tokio::test]
-async fn two_cores_replay() {
-    let hist = history_from_proto_binary("histories/fail_wf_task.bin")
-        .await
-        .unwrap();
-
-    let mock_1 = mock_client_from_history(&hist, "a");
-    let mock_2 = mock_client_from_history(&hist, "b");
-    assert_ne!(
-        mock_1
-            .poll_workflow_task("a".to_string(), false)
-            .await
-            .unwrap(),
-        PollWorkflowTaskQueueResponse::default()
-    );
-    assert_ne!(
-        mock_2
-            .poll_workflow_task("b".to_string(), false)
-            .await
-            .unwrap(),
-        PollWorkflowTaskQueueResponse::default()
-    );
 }
 
 #[tokio::test]

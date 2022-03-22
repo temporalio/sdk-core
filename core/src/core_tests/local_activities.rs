@@ -1,6 +1,7 @@
 use crate::{
     replay::{default_wes_attribs, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE},
     test_help::{build_mock_pollers, mock_worker, MockPollCfg, ResponseType, TEST_Q},
+    worker::client::mocks::mock_workflow_client,
 };
 use anyhow::anyhow;
 use futures::future::join_all;
@@ -11,7 +12,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{mocks::mock_workflow_client, WorkflowOptions};
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{LocalActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{common::RetryPolicy, AsJsonPayloadExt},

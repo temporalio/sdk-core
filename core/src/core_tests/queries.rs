@@ -1,11 +1,13 @@
-use crate::test_help::{
-    canned_histories, hist_to_poll_resp, mock_worker, MocksHolder, ResponseType, TEST_Q,
+use crate::{
+    test_help::{
+        canned_histories, hist_to_poll_resp, mock_worker, MocksHolder, ResponseType, TEST_Q,
+    },
+    worker::client::mocks::mock_workflow_client,
 };
 use std::{
     collections::{HashMap, VecDeque},
     time::Duration,
 };
-use temporal_client::mocks::mock_workflow_client;
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{

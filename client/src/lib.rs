@@ -8,14 +8,10 @@
 extern crate tracing;
 
 mod metrics;
-#[cfg(any(feature = "mocks", test))]
-pub mod mocks;
 mod raw;
 mod retry;
 
 pub use crate::retry::{CallType, RetryClient};
-#[cfg(any(feature = "mocks", test))]
-pub use mocks::MockManualWorkflowClient;
 pub use raw::WorkflowService;
 
 use crate::{
@@ -57,8 +53,6 @@ use tower::ServiceBuilder;
 use url::Url;
 use uuid::Uuid;
 
-#[cfg(any(feature = "mocks", test))]
-use futures::Future;
 use temporal_sdk_core_protos::temporal::api::taskqueue::v1::TaskQueueMetadata;
 
 static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivityTaskQueue"];
@@ -210,6 +204,8 @@ pub enum ClientInitError {
 #[doc(hidden)]
 /// Allows passing different kinds of clients into things that want to be flexible. Motivating
 /// use-case was worker initialization.
+///
+/// Needs to exist in this crate to avoid blanket impl conflicts.
 pub enum AnyClient {
     /// A high level client, like the type workers work with
     HighLevel(Arc<dyn WorkflowClientTrait + Send + Sync>),
@@ -461,7 +457,7 @@ impl Client {
 
 /// This trait provides higher-level friendlier interaction with the server.
 /// See the [WorkflowService] trait for a lower-level client.
-#[cfg_attr(any(feature = "mocks", test), mockall::automock)]
+#[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
 pub trait WorkflowClientTrait {
     /// Starts workflow execution.

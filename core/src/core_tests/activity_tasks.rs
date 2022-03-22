@@ -1,24 +1,21 @@
 use crate::{
-    init_worker, job_assert,
+    job_assert,
     test_help::{
         build_fake_worker, canned_histories, gen_assert_and_reply, mock_manual_poller, mock_poller,
         mock_worker, poll_and_reply, test_worker_cfg, MockWorker, MocksHolder,
     },
+    worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     workflow::WorkflowCachingPolicy::NonSticky,
-    ActivityHeartbeat, MetricsContext, Worker, WorkerConfigBuilder,
+    ActivityHeartbeat, Worker, WorkerConfigBuilder,
 };
 use futures::FutureExt;
 use std::{
     cell::RefCell,
     collections::{hash_map::Entry, HashMap, VecDeque},
     rc::Rc,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_client::mocks::{mock_manual_workflow_client, mock_workflow_client};
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -69,7 +66,7 @@ async fn max_activities_respected() {
         .expect_complete_activity_task()
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
 
-    let worker = init_worker(
+    let worker = Worker::new_test(
         test_worker_cfg()
             .max_outstanding_activities(2_usize)
             .build()
@@ -255,7 +252,7 @@ async fn activity_cancel_interrupts_poll() {
         act_poller: Some(Box::from(mock_poller)),
         ..Default::default()
     };
-    let core = mock_worker(MocksHolder::from_mock_worker(mock_client, mw));
+    let core = mock_worker(MocksHolder::from_mock_worker(mock_client.into(), mw));
     let last_finisher = AtomicUsize::new(0);
     // Perform first poll to get the activity registered
     let act = core.poll_activity_task().await.unwrap();
@@ -307,7 +304,7 @@ async fn activity_poll_timeout_retries() {
         act_poller: Some(Box::from(mock_act_poller)),
         ..Default::default()
     };
-    let core = mock_worker(MocksHolder::from_mock_worker(mock_client, mw));
+    let core = mock_worker(MocksHolder::from_mock_worker(mock_client.into(), mw));
     let r = core.poll_activity_task().await.unwrap();
     assert_matches!(r.task_token.as_slice(), b"hello!");
 }
@@ -374,7 +371,7 @@ async fn many_concurrent_heartbeat_cancels() {
             .boxed()
         });
 
-    let worker = &init_worker(
+    let worker = &Worker::new_test(
         test_worker_cfg()
             .max_outstanding_activities(CONCURRENCY_NUM)
             // Only 1 poll at a time to avoid over-polling and running out of responses
@@ -606,6 +603,6 @@ async fn max_tq_acts_set_passed_to_poll_properly() {
         .max_task_queue_activities_per_second(rate)
         .build()
         .unwrap();
-    let worker = Worker::new(cfg, None, Arc::new(mock_client), MetricsContext::default());
+    let worker = Worker::new_test(cfg, mock_client);
     worker.poll_activity_task().await.unwrap();
 }

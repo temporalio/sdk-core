@@ -2,6 +2,10 @@
 //! to replay canned histories. It should be used by Lang SDKs to provide replay capabilities to
 //! users during testing.
 
+use crate::{
+    worker::client::mocks::{fake_sg_opts, mock_manual_workflow_client},
+    WorkerClientBag,
+};
 use futures::FutureExt;
 use std::{
     sync::{
@@ -10,17 +14,13 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{mocks::mock_manual_workflow_client, WorkflowClientTrait};
-
 use temporal_sdk_core_protos::temporal::api::{
     common::v1::WorkflowExecution,
     history::v1::History,
     workflowservice::v1::{
         RespondWorkflowTaskCompletedResponse, RespondWorkflowTaskFailedResponse,
-        StartWorkflowExecutionResponse,
     },
 };
-
 pub use temporal_sdk_core_protos::{
     default_wes_attribs, HistoryInfo, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
 };
@@ -29,10 +29,10 @@ pub use temporal_sdk_core_protos::{
 /// It will return the entire history in one workflow task, after that it will return default
 /// responses (with a 10s wait). If a workflow task failure is sent to the mock, it will send
 /// the complete response again.
-pub fn mock_client_from_history(
+pub(crate) fn mock_client_from_history(
     history: &History,
     task_queue: impl Into<String>,
-) -> impl WorkflowClientTrait {
+) -> WorkerClientBag {
     let mut mg = mock_manual_workflow_client();
 
     let hist_info = HistoryInfo::new_from_history(history, None).unwrap();
@@ -41,16 +41,16 @@ pub fn mock_client_from_history(
         run_id: hist_info.orig_run_id().to_string(),
     };
 
-    let wf_clone = wf.clone();
-    mg.expect_start_workflow().returning(move |_, _, _, _, _| {
-        let wf_clone = wf_clone.clone();
-        async move {
-            Ok(StartWorkflowExecutionResponse {
-                run_id: wf_clone.run_id.clone(),
-            })
-        }
-        .boxed()
-    });
+    // let wf_clone = wf.clone();
+    // mg.expect_start_workflow().returning(move |_, _, _, _, _| {
+    //     let wf_clone = wf_clone.clone();
+    //     async move {
+    //         Ok(StartWorkflowExecutionResponse {
+    //             run_id: wf_clone.run_id.clone(),
+    //         })
+    //     }
+    //     .boxed()
+    // });
 
     let did_send = Arc::new(AtomicBool::new(false));
     let did_send_clone = did_send.clone();
@@ -81,5 +81,5 @@ pub fn mock_client_from_history(
         async move { Ok(RespondWorkflowTaskFailedResponse {}) }.boxed()
     });
 
-    mg
+    WorkerClientBag::new(Box::new(mg), "fake_namespace".to_string(), fake_sg_opts())
 }

@@ -8,6 +8,7 @@ use crate::{
         poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, FakeWfResponses,
         MockPollCfg, MocksHolder, ResponseType, NO_MORE_WORK_ERROR_MSG, TEST_Q,
     },
+    worker::client::mocks::mock_workflow_client,
     workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
     Worker,
 };
@@ -17,7 +18,6 @@ use std::{
     sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_client::mocks::mock_workflow_client;
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{

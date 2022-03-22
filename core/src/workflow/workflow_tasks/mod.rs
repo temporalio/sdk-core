@@ -7,7 +7,7 @@ use crate::{
     pending_activations::PendingActivations,
     protosext::{ValidPollWFTQResponse, WorkflowActivationExt},
     telemetry::metrics::MetricsContext,
-    worker::{LocalActRequest, LocalActivityResolution},
+    worker::{client::WorkerClientBag, LocalActRequest, LocalActivityResolution},
     workflow::{
         history_update::NextPageToken,
         machines::WFMachinesError,
@@ -27,7 +27,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
@@ -296,7 +295,7 @@ impl WorkflowTaskManager {
     pub(crate) async fn apply_new_poll_resp(
         &self,
         work: ValidPollWFTQResponse,
-        client: Arc<dyn WorkflowClientTrait + Send + Sync>,
+        client: Arc<WorkerClientBag>,
     ) -> NewWfTaskOutcome {
         let mut work = if let Some(w) = self.workflow_machines.buffer_resp_if_outstanding_work(work)
         {
@@ -578,7 +577,7 @@ impl WorkflowTaskManager {
     async fn instantiate_or_update_workflow(
         &self,
         poll_wf_resp: ValidPollWFTQResponse,
-        client: Arc<dyn WorkflowClientTrait + Send + Sync>,
+        client: Arc<WorkerClientBag>,
     ) -> Result<(WorkflowTaskInfo, WorkflowActivation), WorkflowUpdateError> {
         let run_id = poll_wf_resp.workflow_execution.run_id.clone();
 

@@ -1,6 +1,6 @@
 use crate::{
     pollers::{self, Poller},
-    WorkflowClientTrait,
+    worker::client::WorkerClientBag,
 };
 use futures::{prelude::stream::FuturesUnordered, StreamExt};
 use std::{
@@ -197,8 +197,8 @@ impl Poller<PollWorkflowTaskQueueResponse> for WorkflowTaskPoller {
 }
 
 pub type PollWorkflowTaskBuffer = LongPollBuffer<PollWorkflowTaskQueueResponse>;
-pub fn new_workflow_task_buffer(
-    sg: Arc<impl WorkflowClientTrait + Send + Sync + 'static + ?Sized>,
+pub(crate) fn new_workflow_task_buffer(
+    client: Arc<WorkerClientBag>,
     task_queue: String,
     is_sticky: bool,
     concurrent_pollers: usize,
@@ -206,9 +206,9 @@ pub fn new_workflow_task_buffer(
 ) -> PollWorkflowTaskBuffer {
     LongPollBuffer::new(
         move || {
-            let sg = sg.clone();
+            let client = client.clone();
             let task_queue = task_queue.clone();
-            async move { sg.poll_workflow_task(task_queue, is_sticky).await }
+            async move { client.poll_workflow_task(task_queue, is_sticky).await }
         },
         concurrent_pollers,
         buffer_size,
@@ -216,8 +216,8 @@ pub fn new_workflow_task_buffer(
 }
 
 pub type PollActivityTaskBuffer = LongPollBuffer<PollActivityTaskQueueResponse>;
-pub fn new_activity_task_buffer(
-    sg: Arc<impl WorkflowClientTrait + Send + Sync + 'static + ?Sized>,
+pub(crate) fn new_activity_task_buffer(
+    client: Arc<WorkerClientBag>,
     task_queue: String,
     concurrent_pollers: usize,
     buffer_size: usize,
@@ -225,9 +225,9 @@ pub fn new_activity_task_buffer(
 ) -> PollActivityTaskBuffer {
     LongPollBuffer::new(
         move || {
-            let sg = sg.clone();
+            let client = client.clone();
             let task_queue = task_queue.clone();
-            async move { sg.poll_activity_task(task_queue, max_tps).await }
+            async move { client.poll_activity_task(task_queue, max_tps).await }
         },
         concurrent_pollers,
         buffer_size,
@@ -237,14 +237,14 @@ pub fn new_activity_task_buffer(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::client::mocks::mock_manual_workflow_client;
     use futures::FutureExt;
     use std::time::Duration;
-    use temporal_client::MockManualWorkflowClient;
     use tokio::{select, sync::mpsc::channel};
 
     #[tokio::test]
     async fn only_polls_once_with_1_poller() {
-        let mut mock_client = MockManualWorkflowClient::new();
+        let mut mock_client = mock_manual_workflow_client();
         mock_client
             .expect_poll_workflow_task()
             .times(2)
@@ -255,9 +255,14 @@ mod tests {
                 }
                 .boxed()
             });
-        let mock_client = Arc::new(mock_client);
 
-        let pb = new_workflow_task_buffer(mock_client, "someq".to_string(), false, 1, 1);
+        let pb = new_workflow_task_buffer(
+            Arc::new(mock_client.into()),
+            "someq".to_string(),
+            false,
+            1,
+            1,
+        );
 
         // Poll a bunch of times, "interrupting" it each time, we should only actually have polled
         // once since the poll takes a while
