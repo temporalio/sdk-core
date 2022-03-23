@@ -72,13 +72,15 @@ where
     let client = match as_enum {
         AnyClient::HighLevel(ac) => ac,
         AnyClient::LowLevel(ll) => {
-            let (c, opts) = ll.into_parts();
-            let client = Client::new(c, opts, worker_config.namespace.to_owned());
+            let client = Client::new(*ll, worker_config.namespace.clone());
             let retry_client = RetryClient::new(client, RetryConfig::default());
             Arc::new(retry_client)
         }
     };
     let c_opts = client.get_options().clone();
+    if client.namespace() != worker_config.namespace {
+        panic!("Passed in client is not bound to the same namespace as the worker");
+    }
     let client_bag = Arc::new(WorkerClientBag::new(
         Box::new(client),
         worker_config.namespace.clone(),
