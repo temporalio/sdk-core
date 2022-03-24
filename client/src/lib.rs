@@ -199,6 +199,10 @@ pub enum ClientInitError {
     /// Server connection error. Crashing and restarting the worker is likely best.
     #[error("Server connection error: {0:?}")]
     TonicTransportError(#[from] tonic::transport::Error),
+    /// We couldn't successfully make the `get_system_info` call at connection time to establish
+    /// server capabilities / verify server is responding.
+    #[error("`get_system_info` call error after connection: {0:?}")]
+    SystemInfoCallError(tonic::Status),
 }
 
 #[doc(hidden)]
@@ -246,14 +250,20 @@ impl From<ConfiguredClient<WorkflowServiceClientWithMetrics>> for AnyClient {
 pub struct ConfiguredClient<C> {
     client: C,
     options: ClientOptions,
-    /// Capabilities as read from the `get_system_info` RPC call
-    capabilities: Option<()>,
+    /// Capabilities as read from the `get_system_info` RPC call made on client connection
+    capabilities: Option<get_system_info_response::Capabilities>,
 }
 
 impl<C> ConfiguredClient<C> {
     /// Returns the options the client is configured with
     pub fn options(&self) -> &ClientOptions {
         &self.options
+    }
+
+    /// Returns the server capabilities we (may have) learned about when establishing an initial
+    /// connection
+    pub fn capabilities(&self) -> Option<&get_system_info_response::Capabilities> {
+        self.capabilities.as_ref()
     }
 
     /// De-constitute this type
@@ -309,14 +319,19 @@ impl ClientOptions {
             })
             .service(channel);
         let interceptor = ServiceCallInterceptor { opts: self.clone() };
-        Ok(RetryClient::new(
-            ConfiguredClient {
-                client: WorkflowServiceClient::with_interceptor(service, interceptor),
-                options: self.clone(),
-                capabilities: None,
-            },
-            self.retry_config.clone(),
-        ))
+
+        let mut client = ConfiguredClient {
+            client: WorkflowServiceClient::with_interceptor(service, interceptor),
+            options: self.clone(),
+            capabilities: None,
+        };
+        let sysinfo = client
+            .get_system_info(GetSystemInfoRequest::default())
+            .await
+            .map_err(ClientInitError::SystemInfoCallError)?
+            .into_inner();
+        client.capabilities = sysinfo.capabilities;
+        Ok(RetryClient::new(client, self.retry_config.clone()))
     }
 
     /// If TLS is configured, set the appropriate options on the provided channel and return it.
