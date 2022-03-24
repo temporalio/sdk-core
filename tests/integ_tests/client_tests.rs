@@ -27,3 +27,10 @@ async fn can_use_retry_raw_client() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn calls_get_system_info() {
+    let opts = get_integ_server_options();
+    let raw_client = opts.connect_no_namespace(None).await.unwrap();
+    assert!(raw_client.get_client().capabilities().is_some());
+}

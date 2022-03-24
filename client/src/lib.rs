@@ -199,6 +199,10 @@ pub enum ClientInitError {
     /// Server connection error. Crashing and restarting the worker is likely best.
     #[error("Server connection error: {0:?}")]
     TonicTransportError(#[from] tonic::transport::Error),
+    /// We couldn't successfully make the `get_system_info` call at connection time to establish
+    /// server capabilities / verify server is responding.
+    #[error("`get_system_info` call error after connection: {0:?}")]
+    SystemInfoCallError(tonic::Status),
 }
 
 #[doc(hidden)]
@@ -242,16 +246,24 @@ impl From<ConfiguredClient<WorkflowServiceClientWithMetrics>> for AnyClient {
 
 /// A client with [ClientOptions] attached, which can be passed to initialize workers,
 /// or can be used directly.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ConfiguredClient<C> {
     client: C,
     options: ClientOptions,
+    /// Capabilities as read from the `get_system_info` RPC call made on client connection
+    capabilities: Option<get_system_info_response::Capabilities>,
 }
 
 impl<C> ConfiguredClient<C> {
     /// Returns the options the client is configured with
     pub fn options(&self) -> &ClientOptions {
         &self.options
+    }
+
+    /// Returns the server capabilities we (may have) learned about when establishing an initial
+    /// connection
+    pub fn capabilities(&self) -> Option<&get_system_info_response::Capabilities> {
+        self.capabilities.as_ref()
     }
 
     /// De-constitute this type
@@ -282,16 +294,8 @@ impl ClientOptions {
         namespace: impl Into<String>,
         metrics_meter: Option<&Meter>,
     ) -> Result<RetryClient<Client>, ClientInitError> {
-        let (service, opts) = self
-            .connect_no_namespace(metrics_meter)
-            .await?
-            .into_inner()
-            .into_parts();
-        let client = Client {
-            service,
-            namespace: namespace.into(),
-            opts,
-        };
+        let client = self.connect_no_namespace(metrics_meter).await?.into_inner();
+        let client = Client::new(client, namespace.into());
         let retry_client = RetryClient::new(client, self.retry_config.clone());
         Ok(retry_client)
     }
@@ -315,13 +319,19 @@ impl ClientOptions {
             })
             .service(channel);
         let interceptor = ServiceCallInterceptor { opts: self.clone() };
-        Ok(RetryClient::new(
-            ConfiguredClient {
-                client: WorkflowServiceClient::with_interceptor(service, interceptor),
-                options: self.clone(),
-            },
-            self.retry_config.clone(),
-        ))
+
+        let mut client = ConfiguredClient {
+            client: WorkflowServiceClient::with_interceptor(service, interceptor),
+            options: self.clone(),
+            capabilities: None,
+        };
+        let sysinfo = client
+            .get_system_info(GetSystemInfoRequest::default())
+            .await
+            .map_err(ClientInitError::SystemInfoCallError)?
+            .into_inner();
+        client.capabilities = sysinfo.capabilities;
+        Ok(RetryClient::new(client, self.retry_config.clone()))
     }
 
     /// If TLS is configured, set the appropriate options on the provided channel and return it.
@@ -415,43 +425,54 @@ pub type WorkflowServiceClientWithMetrics = WorkflowServiceClient<InterceptedMet
 type InterceptedMetricsSvc = InterceptedService<GrpcMetricSvc, ServiceCallInterceptor>;
 
 /// Contains an instance of a namespace-bound client for interacting with the Temporal server
-#[derive(derive_more::Constructor, Debug)]
+#[derive(Debug)]
 pub struct Client {
     /// Client for interacting with workflow service
-    service: WorkflowServiceClientWithMetrics,
-    /// Options client was initialized with
-    opts: ClientOptions,
+    inner: ConfiguredClient<WorkflowServiceClientWithMetrics>,
     /// The namespace this client interacts with
     namespace: String,
 }
 
 impl Client {
+    /// Create a new client from an existing configured lower level client and a namespace
+    pub fn new(
+        client: ConfiguredClient<WorkflowServiceClientWithMetrics>,
+        namespace: String,
+    ) -> Self {
+        Client {
+            inner: client,
+            namespace,
+        }
+    }
+
     /// Return an auto-retrying version of the underling grpc client (instrumented with metrics
     /// collection, if enabled).
     ///
     /// Note that it is reasonably cheap to clone the returned type if you need to own it. Such
     /// clones will keep re-using the same channel.
     pub fn raw_retry_client(&self) -> RetryClient<WorkflowServiceClientWithMetrics> {
-        RetryClient::new(self.service.clone(), self.opts.retry_config.clone())
+        RetryClient::new(
+            self.raw_client().clone(),
+            self.inner.options.retry_config.clone(),
+        )
     }
 
-    /// Access the underling grpc client (instrumented with metrics collection, if enabled). This
-    /// raw client is not bound to a specific namespace.
+    /// Access the underling grpc client. This raw client is not bound to a specific namespace.
     ///
     /// Note that it is reasonably cheap to clone the returned type if you need to own it. Such
     /// clones will keep re-using the same channel.
     pub fn raw_client(&self) -> &WorkflowServiceClientWithMetrics {
-        &self.service
+        self.inner.deref()
     }
 
     /// Return the options this client was initialized with
     pub fn options(&self) -> &ClientOptions {
-        &self.opts
+        &self.inner.options
     }
 
     /// Used to access the client as a [WorkflowService] implementor rather than the raw struct
     fn wf_svc(&self) -> impl RawClientLike<SvcType = InterceptedMetricsSvc> {
-        self.service.clone()
+        self.raw_client().clone()
     }
 }
 
@@ -668,8 +689,8 @@ impl WorkflowClientTrait for Client {
                     TaskQueueKind::Normal
                 } as i32,
             }),
-            identity: self.opts.identity.clone(),
-            binary_checksum: self.opts.worker_binary_id.clone(),
+            identity: self.inner.options.identity.clone(),
+            binary_checksum: self.inner.options.worker_binary_id.clone(),
         };
 
         Ok(self
@@ -690,7 +711,7 @@ impl WorkflowClientTrait for Client {
                 name: task_queue,
                 kind: TaskQueueKind::Normal as i32,
             }),
-            identity: self.opts.identity.clone(),
+            identity: self.inner.options.identity.clone(),
             task_queue_metadata: max_tasks_per_sec.map(|tps| TaskQueueMetadata {
                 max_tasks_per_second: Some(tps),
             }),
@@ -729,11 +750,11 @@ impl WorkflowClientTrait for Client {
         let request = RespondWorkflowTaskCompletedRequest {
             task_token: request.task_token.into(),
             commands: request.commands,
-            identity: self.opts.identity.clone(),
+            identity: self.inner.options.identity.clone(),
             sticky_attributes: request.sticky_attributes,
             return_new_workflow_task: request.return_new_workflow_task,
             force_create_new_workflow_task: request.force_create_new_workflow_task,
-            binary_checksum: self.opts.worker_binary_id.clone(),
+            binary_checksum: self.inner.options.worker_binary_id.clone(),
             query_results: request
                 .query_responses
                 .into_iter()
@@ -768,7 +789,7 @@ impl WorkflowClientTrait for Client {
             .respond_activity_task_completed(RespondActivityTaskCompletedRequest {
                 task_token: task_token.0,
                 result,
-                identity: self.opts.identity.clone(),
+                identity: self.inner.options.identity.clone(),
                 namespace: self.namespace.clone(),
             })
             .await?
@@ -785,7 +806,7 @@ impl WorkflowClientTrait for Client {
             .record_activity_task_heartbeat(RecordActivityTaskHeartbeatRequest {
                 task_token: task_token.0,
                 details,
-                identity: self.opts.identity.clone(),
+                identity: self.inner.options.identity.clone(),
                 namespace: self.namespace.clone(),
             })
             .await?
@@ -802,7 +823,7 @@ impl WorkflowClientTrait for Client {
             .respond_activity_task_canceled(RespondActivityTaskCanceledRequest {
                 task_token: task_token.0,
                 details,
-                identity: self.opts.identity.clone(),
+                identity: self.inner.options.identity.clone(),
                 namespace: self.namespace.clone(),
             })
             .await?
@@ -819,7 +840,7 @@ impl WorkflowClientTrait for Client {
             .respond_activity_task_failed(RespondActivityTaskFailedRequest {
                 task_token: task_token.0,
                 failure,
-                identity: self.opts.identity.clone(),
+                identity: self.inner.options.identity.clone(),
                 namespace: self.namespace.clone(),
             })
             .await?
@@ -836,8 +857,8 @@ impl WorkflowClientTrait for Client {
             task_token: task_token.0,
             cause: cause as i32,
             failure,
-            identity: self.opts.identity.clone(),
-            binary_checksum: self.opts.worker_binary_id.clone(),
+            identity: self.inner.options.identity.clone(),
+            binary_checksum: self.inner.options.worker_binary_id.clone(),
             namespace: self.namespace.clone(),
         };
         Ok(self
@@ -864,7 +885,7 @@ impl WorkflowClientTrait for Client {
                 }),
                 signal_name,
                 input: payloads,
-                identity: self.opts.identity.clone(),
+                identity: self.inner.options.identity.clone(),
                 ..Default::default()
             })
             .await?
@@ -963,7 +984,7 @@ impl WorkflowClientTrait for Client {
                     workflow_id,
                     run_id: run_id.unwrap_or_default(),
                 }),
-                identity: self.opts.identity.clone(),
+                identity: self.inner.options.identity.clone(),
                 request_id: "".to_string(),
                 first_execution_run_id: "".to_string(),
             })
@@ -986,7 +1007,7 @@ impl WorkflowClientTrait for Client {
                 }),
                 reason: "".to_string(),
                 details: None,
-                identity: self.opts.identity.clone(),
+                identity: self.inner.options.identity.clone(),
                 first_execution_run_id: "".to_string(),
             })
             .await?
@@ -1002,7 +1023,7 @@ impl WorkflowClientTrait for Client {
     }
 
     fn get_options(&self) -> &ClientOptions {
-        &self.opts
+        &self.inner.options
     }
 
     fn namespace(&self) -> &str {
