@@ -8,5 +8,6 @@ lint:
   use:
     - DEFAULT
 breaking:
+  ignore:
   use:
     - PACKAGE

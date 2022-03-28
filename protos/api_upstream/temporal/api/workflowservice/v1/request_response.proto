@@ -80,6 +80,7 @@ message RegisterNamespaceResponse {
 message ListNamespacesRequest {
     int32 page_size = 1;
     bytes next_page_token = 2;
+    temporal.api.namespace.v1.NamespaceFilter namespace_filter = 3;
 }
 
 message ListNamespacesResponse {
@@ -191,6 +192,19 @@ message GetWorkflowExecutionHistoryResponse {
     bool archived = 4;
 }
 
+message GetWorkflowExecutionHistoryReverseRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution execution = 2;
+    int32 maximum_page_size = 3;
+    bytes next_page_token = 4;
+}
+
+message GetWorkflowExecutionHistoryReverseResponse {
+    temporal.api.history.v1.History history = 1;
+    // Will be set if there are more history events than were included in this response
+    bytes next_page_token = 3;
+}
+
 message PollWorkflowTaskQueueRequest {
     string namespace = 1;
     temporal.api.taskqueue.v1.TaskQueue task_queue = 2;
@@ -268,6 +282,8 @@ message RespondWorkflowTaskCompletedRequest {
 message RespondWorkflowTaskCompletedResponse {
     // See `RespondWorkflowTaskCompletedResponse::return_new_workflow_task`
     PollWorkflowTaskQueueResponse workflow_task = 1;
+    // See `ScheduleActivityTaskCommandAttributes::request_start`
+    repeated PollActivityTaskQueueResponse activity_tasks = 2;
 }
 
 message RespondWorkflowTaskFailedRequest {
@@ -420,9 +436,14 @@ message RespondActivityTaskFailedRequest {
     // The identity of the worker/client
     string identity = 3;
     string namespace = 4;
+    // Additional details to be stored as last activity heartbeat
+    temporal.api.common.v1.Payloads last_heartbeat_details = 5;
 }
 
 message RespondActivityTaskFailedResponse {
+    // Server validation failures could include
+    // last_heartbeat_details payload is too large, request failure is too large
+    repeated temporal.api.failure.v1.Failure failures = 1;
 }
 
 message RespondActivityTaskFailedByIdRequest {
@@ -438,9 +459,14 @@ message RespondActivityTaskFailedByIdRequest {
     temporal.api.failure.v1.Failure failure = 5;
     // The identity of the worker/client
     string identity = 6;
+    // Additional details to be stored as last activity heartbeat
+    temporal.api.common.v1.Payloads last_heartbeat_details = 7;
 }
 
 message RespondActivityTaskFailedByIdResponse {
+    // Server validation failures could include
+    // last_heartbeat_details payload is too large, request failure is too large
+    repeated temporal.api.failure.v1.Failure failures = 1;
 }
 
 message RespondActivityTaskCanceledRequest {
@@ -481,8 +507,12 @@ message RequestCancelWorkflowExecutionRequest {
     string identity = 3;
     // Used to de-dupe cancellation requests
     string request_id = 4;
-    // Should be removed. Appears unused.
+    // If set, this call will error if the most recent (if no run id is set on
+    // `workflow_execution`), or specified (if it is) workflow execution is not part of the same
+    // execution chain as this id.
     string first_execution_run_id = 5;
+    // Reason for requesting the cancellation
+    string reason = 6;
 }
 
 message RequestCancelWorkflowExecutionResponse {
@@ -572,7 +602,9 @@ message TerminateWorkflowExecutionRequest {
     temporal.api.common.v1.Payloads details = 4;
     // The identity of the worker/client
     string identity = 5;
-    // Should be removed. Appears unused.
+    // If set, this call will error if the most recent (if no run id is set on
+    // `workflow_execution`), or specified (if it is) workflow execution is not part of the same
+    // execution chain as this id.
     string first_execution_run_id = 6;
 }
 
@@ -761,6 +793,9 @@ message GetSystemInfoResponse {
         // When unset/false, clients retry all failures. When true, clients should only retry
         // non-internal errors.
         bool internal_error_differentiation = 2;
+
+        // True if RespondActivityTaskFailed API supports including heartbeat details
+        bool activity_failure_include_heartbeat = 3;
     }
 }
 

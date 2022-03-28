@@ -94,6 +94,12 @@ service WorkflowService {
     // `NotFound` if the specified workflow execution is unknown to the service.
     rpc GetWorkflowExecutionHistory (GetWorkflowExecutionHistoryRequest) returns (GetWorkflowExecutionHistoryResponse) {
     }
+    
+    // GetWorkflowExecutionHistoryReverse returns the history of specified workflow execution in reverse 
+    // order (starting from last event). Fails with`NotFound` if the specified workflow execution is 
+    // unknown to the service.
+    rpc GetWorkflowExecutionHistoryReverse (GetWorkflowExecutionHistoryReverseRequest) returns (GetWorkflowExecutionHistoryReverseResponse) {
+    }
 
     // PollWorkflowTaskQueue is called by workers to make progress on workflows.
     //

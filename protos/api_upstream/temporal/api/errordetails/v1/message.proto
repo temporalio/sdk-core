@@ -22,7 +22,8 @@
 
 syntax = "proto3";
 
-// These error details extend failures defined in https://github.com/googleapis/googleapis/blob/master/google/rpc/error_details.proto
+// These error details are supplied in google.rpc.Status#details as described in "Google APIs, Error Model" (https://cloud.google.com/apis/design/errors#error_model)
+// and extend standard Error Details defined in https://github.com/googleapis/googleapis/blob/master/google/rpc/error_details.proto
 
 package temporal.api.errordetails.v1;
 
@@ -33,6 +34,7 @@ option java_outer_classname = "MessageProto";
 option ruby_package = "Temporal::Api::ErrorDetails::V1";
 option csharp_namespace = "Temporal.Api.ErrorDetails.V1";
 
+import "temporal/api/common/v1/message.proto";
 import "temporal/api/enums/v1/failed_cause.proto";
 
 message NotFoundFailure {
@@ -77,4 +79,12 @@ message PermissionDeniedFailure {
 
 message ResourceExhaustedFailure {
     temporal.api.enums.v1.ResourceExhaustedCause cause = 1;
+}
+
+message SystemWorkflowFailure {
+    // WorkflowId and RunId of the Temporal system workflow performing the underlying operation.
+    // Looking up the info of the system workflow run may help identify the issue causing the failure.
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 1;
+    // Serialized error returned by the system workflow performing the underlying operation.
+    string workflow_error = 2;
 }

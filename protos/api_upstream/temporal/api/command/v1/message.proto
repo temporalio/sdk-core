@@ -79,6 +79,9 @@ message ScheduleActivityTaskCommandAttributes {
     // dynamic configuration. Retries will be attempted until `schedule_to_close_timeout` has
     // elapsed. To disable retries set retry_policy.maximum_attempts to 1.
     temporal.api.common.v1.RetryPolicy retry_policy = 11;
+    // Request to start the activity directly bypassing matching service and worker polling
+    // The slot for executing the activity should be reserved when setting this field to true.
+    bool request_eager_execution = 12;
 }
 
 message RequestCancelActivityTaskCommandAttributes {
@@ -124,6 +127,8 @@ message RequestCancelExternalWorkflowExecutionCommandAttributes {
     // command. The request will be rejected if it is set to true and the target workflow is *not*
     // a child of the requesting workflow.
     bool child_workflow_only = 5;
+    // Reason for requesting the cancellation
+    string reason = 6;
 }
 
 message SignalExternalWorkflowExecutionCommandAttributes {

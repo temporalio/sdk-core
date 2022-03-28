@@ -82,3 +82,10 @@ message UpdateNamespaceInfo {
     // Default is NAMESPACE_STATE_UNSPECIFIED which is do not change state.
     temporal.api.enums.v1.NamespaceState state = 4;
 }
+
+message NamespaceFilter {
+    // By default namespaces in NAMESPACE_STATE_DELETED state are not included.
+    // Setting include_deleted to true will include deleted namespaces.
+    // Note: Namespace is in NAMESPACE_STATE_DELETED state when it was deleted from the system but associated data is not deleted yet.
+    bool include_deleted = 1;
+}
