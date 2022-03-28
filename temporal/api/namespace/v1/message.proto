@@ -1,0 +1,91 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.namespace.v1;
+
+option go_package = "go.temporal.io/api/namespace/v1;namespace";
+option java_package = "io.temporal.api.namespace.v1";
+option java_multiple_files = true;
+option java_outer_classname = "MessageProto";
+option ruby_package = "Temporal::Api::Namespace::V1";
+option csharp_namespace = "Temporal.Api.Namespace.V1";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+import "dependencies/gogoproto/gogo.proto";
+
+import "temporal/api/enums/v1/namespace.proto";
+
+
+message NamespaceInfo {
+    string name = 1;
+    temporal.api.enums.v1.NamespaceState state = 2;
+    string description = 3;
+    string owner_email = 4;
+    // A key-value map for any customized purpose.
+    map<string, string> data = 5;
+    string id = 6;
+}
+
+message NamespaceConfig {
+    google.protobuf.Duration workflow_execution_retention_ttl = 1 [(gogoproto.stdduration) = true];
+    BadBinaries bad_binaries = 2;
+    // If unspecified (ARCHIVAL_STATE_UNSPECIFIED) then default server configuration is used.
+    temporal.api.enums.v1.ArchivalState history_archival_state = 3;
+    string history_archival_uri = 4;
+    // If unspecified (ARCHIVAL_STATE_UNSPECIFIED) then default server configuration is used.
+    temporal.api.enums.v1.ArchivalState visibility_archival_state = 5;
+    string visibility_archival_uri = 6;
+}
+
+message BadBinaries {
+    map<string, BadBinaryInfo> binaries = 1;
+}
+
+message BadBinaryInfo {
+    string reason = 1;
+    string operator = 2;
+    google.protobuf.Timestamp create_time = 3 [(gogoproto.stdtime) = true];
+}
+
+message UpdateNamespaceInfo {
+    string description = 1;
+    string owner_email = 2;
+    // A key-value map for any customized purpose.
+    map<string, string> data = 3;
+    // New namespace state, server will reject if transition is not allowed.
+    // Allowed transitions are:
+    //  Registered -> [ Deleted | Deprecated | Handover ]
+    //  Handover -> [ Registered ]
+    // Default is NAMESPACE_STATE_UNSPECIFIED which is do not change state.
+    temporal.api.enums.v1.NamespaceState state = 4;
+}
+
+message NamespaceFilter {
+    // By default namespaces in NAMESPACE_STATE_DELETED state are not included.
+    // Setting include_deleted to true will include deleted namespaces.
+    // Note: Namespace is in NAMESPACE_STATE_DELETED state when it was deleted from the system but associated data is not deleted yet.
+    bool include_deleted = 1;
+}

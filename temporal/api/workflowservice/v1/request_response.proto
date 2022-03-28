@@ -1,0 +1,810 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.workflowservice.v1;
+
+option go_package = "go.temporal.io/api/workflowservice/v1;workflowservice";
+option java_package = "io.temporal.api.workflowservice.v1";
+option java_multiple_files = true;
+option java_outer_classname = "RequestResponseProto";
+option ruby_package = "Temporal::Api::WorkflowService::V1";
+option csharp_namespace = "Temporal.Api.WorkflowService.V1";
+
+import "temporal/api/enums/v1/workflow.proto";
+import "temporal/api/enums/v1/namespace.proto";
+import "temporal/api/enums/v1/failed_cause.proto";
+import "temporal/api/enums/v1/common.proto";
+import "temporal/api/enums/v1/query.proto";
+import "temporal/api/enums/v1/reset.proto";
+import "temporal/api/enums/v1/task_queue.proto";
+import "temporal/api/common/v1/message.proto";
+import "temporal/api/history/v1/message.proto";
+import "temporal/api/workflow/v1/message.proto";
+import "temporal/api/command/v1/message.proto";
+import "temporal/api/failure/v1/message.proto";
+import "temporal/api/filter/v1/message.proto";
+import "temporal/api/namespace/v1/message.proto";
+import "temporal/api/query/v1/message.proto";
+import "temporal/api/replication/v1/message.proto";
+import "temporal/api/taskqueue/v1/message.proto";
+import "temporal/api/version/v1/message.proto";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+import "dependencies/gogoproto/gogo.proto";
+
+message RegisterNamespaceRequest {
+    string namespace = 1;
+    string description = 2;
+    string owner_email = 3;
+    google.protobuf.Duration workflow_execution_retention_period = 4 [(gogoproto.stdduration) = true];
+    repeated temporal.api.replication.v1.ClusterReplicationConfig clusters = 5;
+    string active_cluster_name = 6;
+    // A key-value map for any customized purpose.
+    map<string, string> data = 7;
+    string security_token = 8;
+    bool is_global_namespace = 9;
+    // If unspecified (ARCHIVAL_STATE_UNSPECIFIED) then default server configuration is used.
+    temporal.api.enums.v1.ArchivalState history_archival_state = 10;
+    string history_archival_uri = 11;
+    // If unspecified (ARCHIVAL_STATE_UNSPECIFIED) then default server configuration is used.
+    temporal.api.enums.v1.ArchivalState visibility_archival_state = 12;
+    string visibility_archival_uri = 13;
+}
+
+message RegisterNamespaceResponse {
+}
+
+message ListNamespacesRequest {
+    int32 page_size = 1;
+    bytes next_page_token = 2;
+    temporal.api.namespace.v1.NamespaceFilter namespace_filter = 3;
+}
+
+message ListNamespacesResponse {
+    repeated DescribeNamespaceResponse namespaces = 1;
+    bytes next_page_token = 2;
+}
+
+message DescribeNamespaceRequest {
+    string namespace = 1;
+    string id = 2;
+}
+
+message DescribeNamespaceResponse {
+    temporal.api.namespace.v1.NamespaceInfo namespace_info = 1;
+    temporal.api.namespace.v1.NamespaceConfig config = 2;
+    temporal.api.replication.v1.NamespaceReplicationConfig replication_config = 3;
+    int64 failover_version = 4;
+    bool is_global_namespace = 5;
+}
+
+// (-- api-linter: core::0134::request-mask-required=disabled
+//     aip.dev/not-precedent: UpdateNamespace RPC doesn't follow Google API format. --)
+// (-- api-linter: core::0134::request-resource-required=disabled
+//     aip.dev/not-precedent: UpdateNamespace RPC doesn't follow Google API format. --)
+message UpdateNamespaceRequest {
+    string namespace = 1;
+    temporal.api.namespace.v1.UpdateNamespaceInfo update_info = 2;
+    temporal.api.namespace.v1.NamespaceConfig config = 3;
+    temporal.api.replication.v1.NamespaceReplicationConfig replication_config = 4;
+    string security_token = 5;
+    string delete_bad_binary = 6;
+    // promote local namespace to global namespace. Ignored if namespace is already global namespace.
+    bool promote_namespace = 7;
+}
+
+message UpdateNamespaceResponse {
+    temporal.api.namespace.v1.NamespaceInfo namespace_info = 1;
+    temporal.api.namespace.v1.NamespaceConfig config = 2;
+    temporal.api.replication.v1.NamespaceReplicationConfig replication_config = 3;
+    int64 failover_version = 4;
+    bool is_global_namespace = 5;
+}
+
+// Deprecated.
+message DeprecateNamespaceRequest {
+    string namespace = 1;
+    string security_token = 2;
+}
+
+// Deprecated.
+message DeprecateNamespaceResponse {
+}
+
+message StartWorkflowExecutionRequest {
+    string namespace = 1;
+    string workflow_id = 2;
+    temporal.api.common.v1.WorkflowType workflow_type = 3;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 4;
+    // Serialized arguments to the workflow. These are passed as arguments to the workflow function.
+    temporal.api.common.v1.Payloads input = 5;
+    // Total workflow execution timeout including retries and continue as new.
+    google.protobuf.Duration workflow_execution_timeout = 6 [(gogoproto.stdduration) = true];
+    // Timeout of a single workflow run.
+    google.protobuf.Duration workflow_run_timeout = 7 [(gogoproto.stdduration) = true];
+    // Timeout of a single workflow task.
+    google.protobuf.Duration workflow_task_timeout = 8 [(gogoproto.stdduration) = true];
+    // The identity of the client who initiated this request
+    string identity = 9;
+    // A unique identifier for this start request. Typically UUIDv4.
+    string request_id = 10;
+    // Default: WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE.
+    temporal.api.enums.v1.WorkflowIdReusePolicy workflow_id_reuse_policy = 11;
+    // The retry policy for the workflow. Will never exceed `workflow_execution_timeout`.
+    temporal.api.common.v1.RetryPolicy retry_policy = 12;
+    // See https://docs.temporal.io/docs/content/what-is-a-temporal-cron-job/
+    string cron_schedule = 13;
+    temporal.api.common.v1.Memo memo = 14;
+    temporal.api.common.v1.SearchAttributes search_attributes = 15;
+    temporal.api.common.v1.Header header = 16;
+}
+
+message StartWorkflowExecutionResponse {
+    string run_id = 1;
+}
+
+message GetWorkflowExecutionHistoryRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution execution = 2;
+    int32 maximum_page_size = 3;
+    // If a `GetWorkflowExecutionHistoryResponse` or a `PollWorkflowTaskQueueResponse` had one of
+    // these, it should be passed here to fetch the next page.
+    bytes next_page_token = 4;
+    // If set to true, the RPC call will not resolve until there is a new event which matches
+    // the `history_event_filter_type`, or a timeout is hit.
+    bool wait_new_event = 5;
+    // Filter returned events such that they match the specified filter type.
+    // Default: HISTORY_EVENT_FILTER_TYPE_ALL_EVENT.
+    temporal.api.enums.v1.HistoryEventFilterType history_event_filter_type = 6;
+    bool skip_archival = 7;
+}
+
+message GetWorkflowExecutionHistoryResponse {
+    temporal.api.history.v1.History history = 1;
+    // Raw history is an alternate representation of history that may be returned if configured on
+    // the frontend. This is not supported by all SDKs. Either this or `history` will be set.
+    repeated temporal.api.common.v1.DataBlob raw_history = 2;
+    // Will be set if there are more history events than were included in this response
+    bytes next_page_token = 3;
+    bool archived = 4;
+}
+
+message GetWorkflowExecutionHistoryReverseRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution execution = 2;
+    int32 maximum_page_size = 3;
+    bytes next_page_token = 4;
+}
+
+message GetWorkflowExecutionHistoryReverseResponse {
+    temporal.api.history.v1.History history = 1;
+    // Will be set if there are more history events than were included in this response
+    bytes next_page_token = 3;
+}
+
+message PollWorkflowTaskQueueRequest {
+    string namespace = 1;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 2;
+    // The identity of the worker/client who is polling this task queue
+    string identity = 3;
+    // Each worker process should provide an ID unique to the specific set of code it is running
+    string binary_checksum = 4;
+}
+
+message PollWorkflowTaskQueueResponse {
+    // A unique identifier for this task
+    bytes task_token = 1;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
+    temporal.api.common.v1.WorkflowType workflow_type = 3;
+    // The last workflow task started event which was processed by some worker for this execution.
+    // Will be zero if no task has ever started.
+    int64 previous_started_event_id = 4;
+    // The id of the most recent workflow task started event, which will have been generated as a
+    // result of this poll request being served.
+    int64 started_event_id = 5;
+    // Starting at 1, the number of attempts to complete this task by any worker.
+    int32 attempt = 6;
+    // A hint that there are more tasks already present in this task queue. Can be used to
+    // prioritize draining a sticky queue before polling from a normal queue.
+    int64 backlog_count_hint = 7;
+    // The history for this workflow, which will either be complete or partial. Partial histories
+    // are sent to workers who have signaled that they are using a sticky queue when completing
+    // a workflow task.
+    temporal.api.history.v1.History history = 8;
+    // Will be set if there are more history events than were included in this response. Such events
+    // should be fetched via `GetWorkflowExecutionHistory`.
+    bytes next_page_token = 9;
+    // Legacy queries appear in this field. The query must be responded to via
+    // `RespondQueryTaskCompleted`. If the workflow is already closed (queries are permitted on
+    // closed workflows) then the `history` field will be populated with the entire history. It
+    // may also be populated if this task originates on a non-sticky queue.
+    temporal.api.query.v1.WorkflowQuery query = 10;
+    // The task queue this task originated from, which will always be the original non-sticky name
+    // for the queue, even if this response came from polling a sticky queue.
+    temporal.api.taskqueue.v1.TaskQueue workflow_execution_task_queue = 11;
+    // When this task was scheduled by the server
+    google.protobuf.Timestamp scheduled_time = 12 [(gogoproto.stdtime) = true];
+    // When the current workflow task started event was generated, meaning the current attempt.
+    google.protobuf.Timestamp started_time = 13 [(gogoproto.stdtime) = true];
+    // Queries that should be executed after applying the history in this task. Responses should be
+    // attached to `RespondWorkflowTaskCompletedRequest::query_results`
+    map<string, temporal.api.query.v1.WorkflowQuery> queries = 14;
+}
+
+message RespondWorkflowTaskCompletedRequest {
+    // The task token as received in `PollWorkflowTaskQueueResponse`
+    bytes task_token = 1;
+    // A list of commands generated when driving the workflow code in response to the new task
+    repeated temporal.api.command.v1.Command commands = 2;
+    // The identity of the worker/client
+    string identity = 3;
+    // May be set by workers to indicate that the worker desires future tasks to be provided with
+    // incremental history on a sticky queue.
+    temporal.api.taskqueue.v1.StickyExecutionAttributes sticky_attributes = 4;
+    // If set, the worker wishes to immediately receive the next workflow task as a response to
+    // this completion. This can save on polling round-trips.
+    bool return_new_workflow_task = 5;
+    // Can be used to *force* creation of a new workflow task, even if no commands have resolved or
+    // one would not otherwise have been generated. This is used when the worker knows it is doing
+    // something useful, but cannot complete it within the workflow task timeout. Local activities
+    // which run for longer than the task timeout being the prime example.
+    bool force_create_new_workflow_task = 6;
+    // Worker process' unique binary id
+    string binary_checksum = 7;
+    // Responses to the `queries` field in the task being responded to
+    map<string, temporal.api.query.v1.WorkflowQueryResult> query_results = 8;
+    string namespace = 9;
+}
+
+message RespondWorkflowTaskCompletedResponse {
+    // See `RespondWorkflowTaskCompletedResponse::return_new_workflow_task`
+    PollWorkflowTaskQueueResponse workflow_task = 1;
+    // See `ScheduleActivityTaskCommandAttributes::request_start`
+    repeated PollActivityTaskQueueResponse activity_tasks = 2;
+}
+
+message RespondWorkflowTaskFailedRequest {
+    // The task token as received in `PollWorkflowTaskQueueResponse`
+    bytes task_token = 1;
+    // Why did the task fail? It's important to note that many of the variants in this enum cannot
+    // apply to worker responses. See the type's doc for more.
+    temporal.api.enums.v1.WorkflowTaskFailedCause cause = 2;
+    // Failure details
+    temporal.api.failure.v1.Failure failure = 3;
+    // The identity of the worker/client
+    string identity = 4;
+    // Worker process' unique binary id
+    string binary_checksum = 5;
+    string namespace = 6;
+}
+
+message RespondWorkflowTaskFailedResponse {
+}
+
+message PollActivityTaskQueueRequest {
+    string namespace = 1;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 2;
+    // The identity of the worker/client
+    string identity = 3;
+    temporal.api.taskqueue.v1.TaskQueueMetadata task_queue_metadata = 4;
+}
+
+message PollActivityTaskQueueResponse {
+    // A unique identifier for this task
+    bytes task_token = 1;
+    // The namespace the workflow which requested this activity lives in
+    string workflow_namespace = 2;
+    // Type of the requesting workflow
+    temporal.api.common.v1.WorkflowType workflow_type = 3;
+    // Execution info of the requesting workflow
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 4;
+    temporal.api.common.v1.ActivityType activity_type = 5;
+    // The autogenerated or user specified identifier of this activity. Can be used to complete the
+    // activity via `RespondActivityTaskCompletedById`. May be re-used as long as the last usage
+    // has resolved, but unique IDs for every activity invocation is a good idea.
+    string activity_id = 6;
+    // Headers specified by the scheduling workflow. Commonly used to propagate contextual info
+    // from the workflow to its activities. For example, tracing contexts.
+    temporal.api.common.v1.Header header = 7;
+    // Arguments to the activity invocation
+    temporal.api.common.v1.Payloads input = 8;
+    // Details of the last heartbeat that was recorded for this activity as of the time this task
+    // was delivered.
+    temporal.api.common.v1.Payloads heartbeat_details = 9;
+    // When was this task first scheduled
+    google.protobuf.Timestamp scheduled_time = 10 [(gogoproto.stdtime) = true];
+    // When was this task attempt scheduled
+    google.protobuf.Timestamp current_attempt_scheduled_time = 11 [(gogoproto.stdtime) = true];
+    // When was this task started (this attempt)
+    google.protobuf.Timestamp started_time = 12 [(gogoproto.stdtime) = true];
+    // Starting at 1, the number of attempts to perform this activity
+    int32 attempt = 13;
+    // First scheduled -> final result reported timeout
+    //
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration schedule_to_close_timeout = 14 [(gogoproto.stdduration) = true];
+    // Current attempt start -> final result reported timeout
+    //
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration start_to_close_timeout = 15 [(gogoproto.stdduration) = true];
+    // Window within which the activity must report a heartbeat, or be timed out.
+    google.protobuf.Duration heartbeat_timeout = 16 [(gogoproto.stdduration) = true];
+    // This is the retry policy the service uses which may be different from the one provided
+    // (or not) during activity scheduling. The service can override the provided one if some
+    // values are not specified or exceed configured system limits.
+    temporal.api.common.v1.RetryPolicy retry_policy = 17;
+}
+
+message RecordActivityTaskHeartbeatRequest {
+    // The task token as received in `PollActivityTaskQueueResponse`
+    bytes task_token = 1;
+    // Arbitrary data, of which the most recent call is kept, to store for this activity
+    temporal.api.common.v1.Payloads details = 2;
+    // The identity of the worker/client
+    string identity = 3;
+    string namespace = 4;
+}
+
+message RecordActivityTaskHeartbeatResponse {
+    // Will be set to true if the activity has been asked to cancel itself. The SDK should then
+    // notify the activity of cancellation if it is still running.
+    bool cancel_requested = 1;
+}
+
+message RecordActivityTaskHeartbeatByIdRequest {
+    // Namespace of the workflow which scheduled this activity
+    string namespace = 1;
+    // Id of the workflow which scheduled this activity
+    string workflow_id = 2;
+    // Run Id of the workflow which scheduled this activity
+    string run_id = 3;
+    // Id of the activity we're heartbeating
+    string activity_id = 4;
+    // Arbitrary data, of which the most recent call is kept, to store for this activity
+    temporal.api.common.v1.Payloads details = 5;
+    // The identity of the worker/client
+    string identity = 6;
+}
+
+message RecordActivityTaskHeartbeatByIdResponse {
+    // Will be set to true if the activity has been asked to cancel itself. The SDK should then
+    // notify the activity of cancellation if it is still running.
+    bool cancel_requested = 1;
+}
+
+message RespondActivityTaskCompletedRequest {
+    // The task token as received in `PollActivityTaskQueueResponse`
+    bytes task_token = 1;
+    // The result of successfully executing the activity
+    temporal.api.common.v1.Payloads result = 2;
+    // The identity of the worker/client
+    string identity = 3;
+    string namespace = 4;
+}
+
+message RespondActivityTaskCompletedResponse {
+}
+
+message RespondActivityTaskCompletedByIdRequest {
+    // Namespace of the workflow which scheduled this activity
+    string namespace = 1;
+    // Id of the workflow which scheduled this activity
+    string workflow_id = 2;
+    // Run Id of the workflow which scheduled this activity
+    string run_id = 3;
+    // Id of the activity to complete
+    string activity_id = 4;
+    // The serialized result of activity execution
+    temporal.api.common.v1.Payloads result = 5;
+    // The identity of the worker/client
+    string identity = 6;
+}
+
+message RespondActivityTaskCompletedByIdResponse {
+}
+
+message RespondActivityTaskFailedRequest {
+    // The task token as received in `PollActivityTaskQueueResponse`
+    bytes task_token = 1;
+    // Detailed failure information
+    temporal.api.failure.v1.Failure failure = 2;
+    // The identity of the worker/client
+    string identity = 3;
+    string namespace = 4;
+    // Additional details to be stored as last activity heartbeat
+    temporal.api.common.v1.Payloads last_heartbeat_details = 5;
+}
+
+message RespondActivityTaskFailedResponse {
+    // Server validation failures could include
+    // last_heartbeat_details payload is too large, request failure is too large
+    repeated temporal.api.failure.v1.Failure failures = 1;
+}
+
+message RespondActivityTaskFailedByIdRequest {
+    // Namespace of the workflow which scheduled this activity
+    string namespace = 1;
+    // Id of the workflow which scheduled this activity
+    string workflow_id = 2;
+    // Run Id of the workflow which scheduled this activity
+    string run_id = 3;
+    // Id of the activity to fail
+    string activity_id = 4;
+    // Detailed failure information
+    temporal.api.failure.v1.Failure failure = 5;
+    // The identity of the worker/client
+    string identity = 6;
+    // Additional details to be stored as last activity heartbeat
+    temporal.api.common.v1.Payloads last_heartbeat_details = 7;
+}
+
+message RespondActivityTaskFailedByIdResponse {
+    // Server validation failures could include
+    // last_heartbeat_details payload is too large, request failure is too large
+    repeated temporal.api.failure.v1.Failure failures = 1;
+}
+
+message RespondActivityTaskCanceledRequest {
+    // The task token as received in `PollActivityTaskQueueResponse`
+    bytes task_token = 1;
+    // Serialized additional information to attach to the cancellation
+    temporal.api.common.v1.Payloads details = 2;
+    // The identity of the worker/client
+    string identity = 3;
+    string namespace = 4;
+}
+
+message RespondActivityTaskCanceledResponse {
+}
+
+message RespondActivityTaskCanceledByIdRequest {
+    // Namespace of the workflow which scheduled this activity
+    string namespace = 1;
+    // Id of the workflow which scheduled this activity
+    string workflow_id = 2;
+    // Run Id of the workflow which scheduled this activity
+    string run_id = 3;
+    // Id of the activity to confirm is cancelled
+    string activity_id = 4;
+    // Serialized additional information to attach to the cancellation
+    temporal.api.common.v1.Payloads details = 5;
+    // The identity of the worker/client
+    string identity = 6;
+}
+
+message RespondActivityTaskCanceledByIdResponse {
+}
+
+message RequestCancelWorkflowExecutionRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
+    // The identity of the worker/client
+    string identity = 3;
+    // Used to de-dupe cancellation requests
+    string request_id = 4;
+    // If set, this call will error if the most recent (if no run id is set on
+    // `workflow_execution`), or specified (if it is) workflow execution is not part of the same
+    // execution chain as this id.
+    string first_execution_run_id = 5;
+    // Reason for requesting the cancellation
+    string reason = 6;
+}
+
+message RequestCancelWorkflowExecutionResponse {
+}
+
+message SignalWorkflowExecutionRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
+    // The workflow author-defined name of the signal to send to the workflow
+    string signal_name = 3;
+    // Serialized value(s) to provide with the signal
+    temporal.api.common.v1.Payloads input = 4;
+    // The identity of the worker/client
+    string identity = 5;
+    // Used to de-dupe sent signals
+    string request_id = 6;
+    // Deprecated
+    string control = 7;
+    // Headers that are passed with the signal to the processing workflow.
+    // These can include things like auth or tracing tokens.
+    temporal.api.common.v1.Header header = 8;
+}
+
+message SignalWorkflowExecutionResponse {
+}
+
+message SignalWithStartWorkflowExecutionRequest {
+    string namespace = 1;
+    string workflow_id = 2;
+    temporal.api.common.v1.WorkflowType workflow_type = 3;
+    // The task queue to start this workflow on, if it will be started
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 4;
+    // Serialized arguments to the workflow. These are passed as arguments to the workflow function.
+    temporal.api.common.v1.Payloads input = 5;
+    // Total workflow execution timeout including retries and continue as new
+    google.protobuf.Duration workflow_execution_timeout = 6 [(gogoproto.stdduration) = true];
+    // Timeout of a single workflow run
+    google.protobuf.Duration workflow_run_timeout = 7 [(gogoproto.stdduration) = true];
+    // Timeout of a single workflow task
+    google.protobuf.Duration workflow_task_timeout = 8 [(gogoproto.stdduration) = true];
+    // The identity of the worker/client
+    string identity = 9;
+    // Used to de-dupe signal w/ start requests
+    string request_id = 10;
+    temporal.api.enums.v1.WorkflowIdReusePolicy workflow_id_reuse_policy = 11;
+    // The workflow author-defined name of the signal to send to the workflow
+    string signal_name = 12;
+    // Serialized value(s) to provide with the signal
+    temporal.api.common.v1.Payloads signal_input = 13;
+    // Deprecated
+    string control = 14;
+    // Retry policy for the workflow Default: WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE.
+    temporal.api.common.v1.RetryPolicy retry_policy = 15;
+    // See https://docs.temporal.io/docs/content/what-is-a-temporal-cron-job/
+    string cron_schedule = 16;
+    temporal.api.common.v1.Memo memo = 17;
+    temporal.api.common.v1.SearchAttributes search_attributes = 18;
+    temporal.api.common.v1.Header header = 19;
+}
+
+message SignalWithStartWorkflowExecutionResponse {
+    string run_id = 1;
+}
+
+message ResetWorkflowExecutionRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
+    string reason = 3;
+    // The id of a `WORKFLOW_TASK_COMPLETED`,`WORKFLOW_TASK_TIMED_OUT`, `WORKFLOW_TASK_FAILED`, or
+    // `WORKFLOW_TASK_STARTED` event to reset to.
+    int64 workflow_task_finish_event_id = 4;
+    // Used to de-dupe reset requests
+    string request_id = 5;
+    // Should be removed. Appears unused.
+    temporal.api.enums.v1.ResetReapplyType reset_reapply_type = 6;
+}
+
+message ResetWorkflowExecutionResponse {
+    string run_id = 1;
+}
+
+message TerminateWorkflowExecutionRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
+    string reason = 3;
+    // Serialized additional information to attach to the termination event
+    temporal.api.common.v1.Payloads details = 4;
+    // The identity of the worker/client
+    string identity = 5;
+    // If set, this call will error if the most recent (if no run id is set on
+    // `workflow_execution`), or specified (if it is) workflow execution is not part of the same
+    // execution chain as this id.
+    string first_execution_run_id = 6;
+}
+
+message TerminateWorkflowExecutionResponse {
+}
+
+message ListOpenWorkflowExecutionsRequest {
+    string namespace = 1;
+    int32 maximum_page_size = 2;
+    bytes next_page_token = 3;
+    temporal.api.filter.v1.StartTimeFilter start_time_filter = 4;
+    oneof filters {
+        temporal.api.filter.v1.WorkflowExecutionFilter execution_filter = 5;
+        temporal.api.filter.v1.WorkflowTypeFilter type_filter = 6;
+    }
+}
+
+message ListOpenWorkflowExecutionsResponse {
+    repeated temporal.api.workflow.v1.WorkflowExecutionInfo executions = 1;
+    bytes next_page_token = 2;
+}
+
+message ListClosedWorkflowExecutionsRequest {
+    string namespace = 1;
+    int32 maximum_page_size = 2;
+    bytes next_page_token = 3;
+    temporal.api.filter.v1.StartTimeFilter start_time_filter = 4;
+    oneof filters {
+        temporal.api.filter.v1.WorkflowExecutionFilter execution_filter = 5;
+        temporal.api.filter.v1.WorkflowTypeFilter type_filter = 6;
+        temporal.api.filter.v1.StatusFilter status_filter = 7;
+    }
+}
+
+message ListClosedWorkflowExecutionsResponse {
+    repeated temporal.api.workflow.v1.WorkflowExecutionInfo executions = 1;
+    bytes next_page_token = 2;
+}
+
+message ListWorkflowExecutionsRequest {
+    string namespace = 1;
+    int32 page_size = 2;
+    bytes next_page_token = 3;
+    string query = 4;
+}
+
+message ListWorkflowExecutionsResponse {
+    repeated temporal.api.workflow.v1.WorkflowExecutionInfo executions = 1;
+    bytes next_page_token = 2;
+}
+
+message ListArchivedWorkflowExecutionsRequest {
+    string namespace = 1;
+    int32 page_size = 2;
+    bytes next_page_token = 3;
+    string query = 4;
+}
+
+message ListArchivedWorkflowExecutionsResponse {
+    repeated temporal.api.workflow.v1.WorkflowExecutionInfo executions = 1;
+    bytes next_page_token = 2;
+}
+
+message ScanWorkflowExecutionsRequest {
+    string namespace = 1;
+    int32 page_size = 2;
+    bytes next_page_token = 3;
+    string query = 4;
+}
+
+message ScanWorkflowExecutionsResponse {
+    repeated temporal.api.workflow.v1.WorkflowExecutionInfo executions = 1;
+    bytes next_page_token = 2;
+}
+
+message CountWorkflowExecutionsRequest {
+    string namespace = 1;
+    string query = 2;
+}
+
+message CountWorkflowExecutionsResponse {
+    int64 count = 1;
+}
+
+message GetSearchAttributesRequest {
+}
+
+message GetSearchAttributesResponse {
+    map<string, temporal.api.enums.v1.IndexedValueType> keys = 1;
+}
+
+message RespondQueryTaskCompletedRequest {
+    bytes task_token = 1;
+    temporal.api.enums.v1.QueryResultType completed_type = 2;
+    temporal.api.common.v1.Payloads query_result = 3;
+    string error_message = 4;
+    reserved 5;
+    string namespace = 6;
+}
+
+message RespondQueryTaskCompletedResponse {
+}
+
+message ResetStickyTaskQueueRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution execution = 2;
+}
+
+message ResetStickyTaskQueueResponse {
+}
+
+message QueryWorkflowRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution execution = 2;
+    temporal.api.query.v1.WorkflowQuery query = 3;
+    // QueryRejectCondition can used to reject the query if workflow state does not satisfy condition.
+    // Default: QUERY_REJECT_CONDITION_NONE.
+    temporal.api.enums.v1.QueryRejectCondition query_reject_condition = 4;
+}
+
+message QueryWorkflowResponse {
+    temporal.api.common.v1.Payloads query_result = 1;
+    temporal.api.query.v1.QueryRejected query_rejected = 2;
+}
+
+message DescribeWorkflowExecutionRequest {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution execution = 2;
+}
+
+message DescribeWorkflowExecutionResponse {
+    temporal.api.workflow.v1.WorkflowExecutionConfig execution_config = 1;
+    temporal.api.workflow.v1.WorkflowExecutionInfo workflow_execution_info = 2;
+    repeated temporal.api.workflow.v1.PendingActivityInfo pending_activities = 3;
+    repeated temporal.api.workflow.v1.PendingChildExecutionInfo pending_children = 4;
+    temporal.api.workflow.v1.PendingWorkflowTaskInfo pending_workflow_task = 5;
+}
+
+message DescribeTaskQueueRequest {
+    string namespace = 1;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 2;
+    temporal.api.enums.v1.TaskQueueType task_queue_type = 3;
+    bool include_task_queue_status = 4;
+}
+
+message DescribeTaskQueueResponse {
+    repeated temporal.api.taskqueue.v1.PollerInfo pollers = 1;
+    temporal.api.taskqueue.v1.TaskQueueStatus task_queue_status = 2;
+}
+
+message GetClusterInfoRequest {
+}
+
+// GetClusterInfoResponse contains information about Temporal cluster.
+message GetClusterInfoResponse {
+    // Key is client name i.e "temporal-go", "temporal-java", or "temporal-cli".
+    // Value is ranges of supported versions of this client i.e ">1.1.1 <=1.4.0 || ^5.0.0".
+    map<string,string> supported_clients = 1;
+    string server_version = 2;
+    string cluster_id = 3;
+    temporal.api.version.v1.VersionInfo version_info = 4;
+    string cluster_name = 5;
+    int32 history_shard_count = 6;
+    string persistence_store = 7;
+    string visibility_store = 8;
+}
+
+message GetSystemInfoRequest {
+}
+
+message GetSystemInfoResponse {
+    // Version of the server.
+    string server_version = 1;
+
+    // All capabilities the system supports.
+    Capabilities capabilities = 2;
+
+    // System capability details.
+    message Capabilities {
+        // True if signal and query headers are supported.
+        bool signal_and_query_header = 1;
+
+        // True if internal errors are differentiated from other types of errors for purposes of
+        // retrying non-internal errors.
+        //
+        // When unset/false, clients retry all failures. When true, clients should only retry
+        // non-internal errors.
+        bool internal_error_differentiation = 2;
+
+        // True if RespondActivityTaskFailed API supports including heartbeat details
+        bool activity_failure_include_heartbeat = 3;
+    }
+}
+
+message ListTaskQueuePartitionsRequest {
+    string namespace = 1;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 2;
+}
+
+message ListTaskQueuePartitionsResponse {
+    repeated temporal.api.taskqueue.v1.TaskQueuePartitionMetadata activity_task_queue_partitions = 1;
+    repeated temporal.api.taskqueue.v1.TaskQueuePartitionMetadata workflow_task_queue_partitions = 2;
+}

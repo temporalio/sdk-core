@@ -1,0 +1,648 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.history.v1;
+
+option go_package = "go.temporal.io/api/history/v1;history";
+option java_package = "io.temporal.api.history.v1";
+option java_multiple_files = true;
+option java_outer_classname = "MessageProto";
+option ruby_package = "Temporal::Api::History::V1";
+option csharp_namespace = "Temporal.Api.History.V1";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+import "dependencies/gogoproto/gogo.proto";
+
+import "temporal/api/enums/v1/event_type.proto";
+import "temporal/api/enums/v1/failed_cause.proto";
+import "temporal/api/enums/v1/workflow.proto";
+import "temporal/api/common/v1/message.proto";
+import "temporal/api/failure/v1/message.proto";
+import "temporal/api/workflow/v1/message.proto";
+import "temporal/api/taskqueue/v1/message.proto";
+
+// Always the first event in workflow history
+message WorkflowExecutionStartedEventAttributes {
+    temporal.api.common.v1.WorkflowType workflow_type = 1;
+    // If this workflow is a child, the namespace our parent lives in
+    string parent_workflow_namespace = 2;
+    temporal.api.common.v1.WorkflowExecution parent_workflow_execution = 3;
+    // TODO: What is this? ID of the event that requested this workflow execution if we are a child?
+    int64 parent_initiated_event_id = 4;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 5;
+    // SDK will deserialize this and provide it as arguments to the workflow function
+    temporal.api.common.v1.Payloads input = 6;
+    // Total workflow execution timeout including retries and continue as new.
+    google.protobuf.Duration workflow_execution_timeout = 7 [(gogoproto.stdduration) = true];
+    // Timeout of a single workflow run.
+    google.protobuf.Duration workflow_run_timeout = 8 [(gogoproto.stdduration) = true];
+    // Timeout of a single workflow task.
+    google.protobuf.Duration workflow_task_timeout = 9 [(gogoproto.stdduration) = true];
+    // Run id of the previous workflow which continued-as-new or retired or cron executed into this
+    // workflow.
+    string continued_execution_run_id = 10;
+    temporal.api.enums.v1.ContinueAsNewInitiator initiator = 11;
+    temporal.api.failure.v1.Failure continued_failure = 12;
+    temporal.api.common.v1.Payloads last_completion_result = 13;
+    // This is the run id when the WorkflowExecutionStarted event was written
+    string original_execution_run_id = 14;
+    // Identity of the client who requested this execution
+    string identity = 15;
+    // This is the very first runId along the chain of ContinueAsNew and Reset.
+    string first_execution_run_id = 16;
+    temporal.api.common.v1.RetryPolicy retry_policy = 17;
+    // Starting at 1, the number of times we have tried to execute this workflow
+    int32 attempt = 18;
+    // The absolute time at which the workflow will be timed out.
+    // This is passed without change to the next run/retry of a workflow.
+    google.protobuf.Timestamp workflow_execution_expiration_time = 19 [(gogoproto.stdtime) = true];
+    // If this workflow runs on a cron schedule, it will appear here
+    string cron_schedule = 20;
+    // For a cron workflow, this contains the amount of time between when this iteration of
+    // the cron workflow was scheduled and when it should run next per its cron_schedule.
+    google.protobuf.Duration first_workflow_task_backoff = 21 [(gogoproto.stdduration) = true];
+    temporal.api.common.v1.Memo memo = 22;
+    temporal.api.common.v1.SearchAttributes search_attributes = 23;
+    temporal.api.workflow.v1.ResetPoints prev_auto_reset_points = 24;
+    temporal.api.common.v1.Header header = 25;
+}
+
+message WorkflowExecutionCompletedEventAttributes {
+    // Serialized result of workflow completion (ie: The return value of the workflow function)
+    temporal.api.common.v1.Payloads result = 1;
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 2;
+    // If another run is started by cron, this contains the new run id.
+    string new_execution_run_id = 3;
+}
+
+message WorkflowExecutionFailedEventAttributes {
+    // Serialized result of workflow failure (ex: An exception thrown, or error returned)
+    temporal.api.failure.v1.Failure failure = 1;
+    temporal.api.enums.v1.RetryState retry_state = 2;
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 3;
+    // If another run is started by cron or retry, this contains the new run id.
+    string new_execution_run_id = 4;
+}
+
+message WorkflowExecutionTimedOutEventAttributes {
+    temporal.api.enums.v1.RetryState retry_state = 1;
+    // If another run is started by cron or retry, this contains the new run id.
+    string new_execution_run_id = 2;
+}
+
+message WorkflowExecutionContinuedAsNewEventAttributes {
+    // The run ID of the new workflow started by this continue-as-new
+    string new_execution_run_id = 1;
+    temporal.api.common.v1.WorkflowType workflow_type = 2;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 3;
+    temporal.api.common.v1.Payloads input = 4;
+    // Timeout of a single workflow run.
+    google.protobuf.Duration workflow_run_timeout = 5 [(gogoproto.stdduration) = true];
+    // Timeout of a single workflow task.
+    google.protobuf.Duration workflow_task_timeout = 6 [(gogoproto.stdduration) = true];
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 7;
+    // TODO: How and is this used?
+    google.protobuf.Duration backoff_start_interval = 8 [(gogoproto.stdduration) = true];
+    temporal.api.enums.v1.ContinueAsNewInitiator initiator = 9;
+    // TODO: David are these right?
+    // Deprecated. If a workflow's retry policy would cause a new run to start when the current one
+    // has failed, this field would be populated with that failure. Now (when supported by server
+    // and sdk) the final event will be `WORKFLOW_EXECUTION_FAILED` with `new_execution_run_id` set.
+    temporal.api.failure.v1.Failure failure = 10;
+    // TODO: Is this the result of *this* workflow as it continued-as-new?
+    temporal.api.common.v1.Payloads last_completion_result = 11;
+    temporal.api.common.v1.Header header = 12;
+    temporal.api.common.v1.Memo memo = 13;
+    temporal.api.common.v1.SearchAttributes search_attributes = 14;
+
+    // workflow_execution_timeout is omitted as it shouldn't be overridden from within a workflow.
+}
+
+message WorkflowTaskScheduledEventAttributes {
+    // The task queue this workflow task was enqueued in, which could be a normal or sticky queue
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 1;
+    // How long the worker has to process this task once receiving it before it times out
+    //
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration start_to_close_timeout = 2 [(gogoproto.stdduration) = true];
+    // Starting at 1, how many attempts there have been to complete this task
+    int32 attempt = 3;
+}
+
+message WorkflowTaskStartedEventAttributes {
+    // The id of the `WORKFLOW_TASK_SCHEDULED` event this task corresponds to
+    int64 scheduled_event_id = 1;
+    // Identity of the worker who picked up this task
+    string identity = 2;
+    // TODO: ? Appears unused?
+    string request_id = 3;
+}
+
+message WorkflowTaskCompletedEventAttributes {
+    // The id of the `WORKFLOW_TASK_SCHEDULED` event this task corresponds to
+    int64 scheduled_event_id = 1;
+    // The id of the `WORKFLOW_TASK_STARTED` event this task corresponds to
+    int64 started_event_id = 2;
+    // Identity of the worker who completed this task
+    string identity = 3;
+    // Binary ID of the worker who completed this task
+    string binary_checksum = 4;
+}
+
+message WorkflowTaskTimedOutEventAttributes {
+    // The id of the `WORKFLOW_TASK_SCHEDULED` event this task corresponds to
+    int64 scheduled_event_id = 1;
+    // The id of the `WORKFLOW_TASK_STARTED` event this task corresponds to
+    int64 started_event_id = 2;
+    temporal.api.enums.v1.TimeoutType timeout_type = 3;
+}
+
+message WorkflowTaskFailedEventAttributes {
+    // The id of the `WORKFLOW_TASK_SCHEDULED` event this task corresponds to
+    int64 scheduled_event_id = 1;
+    // The id of the `WORKFLOW_TASK_STARTED` event this task corresponds to
+    int64 started_event_id = 2;
+    temporal.api.enums.v1.WorkflowTaskFailedCause cause = 3;
+    // The failure details
+    temporal.api.failure.v1.Failure failure = 4;
+    // If a worker explicitly failed this task, it's identity. TODO: What is this set to if server fails the task?
+    string identity = 5;
+    // The original run id of the workflow. For reset workflow.
+    string base_run_id = 6;
+    // If the workflow is being reset, the new run id.
+    string new_run_id = 7;
+    // TODO: ?
+    int64 fork_event_version = 8;
+    // If a worker explicitly failed this task, it's binary id
+    string binary_checksum = 9;
+}
+
+message ActivityTaskScheduledEventAttributes {
+    // The worker/user assigned identifier for the activity
+    string activity_id = 1;
+    temporal.api.common.v1.ActivityType activity_type = 2;
+    string namespace = 3;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 4;
+    temporal.api.common.v1.Header header = 5;
+    temporal.api.common.v1.Payloads input = 6;
+    // Indicates how long the caller is willing to wait for an activity completion. Limits how long
+    // retries will be attempted. Either this or `start_to_close_timeout` must be specified.
+    //
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration schedule_to_close_timeout = 7 [(gogoproto.stdduration) = true];
+    // Limits time an activity task can stay in a task queue before a worker picks it up. This
+    // timeout is always non retryable, as all a retry would achieve is to put it back into the same
+    // queue. Defaults to `schedule_to_close_timeout` or workflow execution timeout if not
+    // specified.
+    //
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration schedule_to_start_timeout = 8 [(gogoproto.stdduration) = true];
+    // Maximum time an activity is allowed to execute after being picked up by a worker. This
+    // timeout is always retryable. Either this or `schedule_to_close_timeout` must be
+    // specified.
+    //
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration start_to_close_timeout = 9 [(gogoproto.stdduration) = true];
+    // Maximum permitted time between successful worker heartbeats.
+    google.protobuf.Duration heartbeat_timeout = 10 [(gogoproto.stdduration) = true];
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 11;
+    // Activities are assigned a default retry policy controlled by the service's dynamic
+    // configuration. Retries will happen up to `schedule_to_close_timeout`. To disable retries set
+    // retry_policy.maximum_attempts to 1.
+    temporal.api.common.v1.RetryPolicy retry_policy = 12;
+}
+
+message ActivityTaskStartedEventAttributes {
+    // The id of the `ACTIVITY_TASK_SCHEDULED` event this task corresponds to
+    int64 scheduled_event_id = 1;
+    // id of the worker that picked up this task
+    string identity = 2;
+    // TODO ??
+    string request_id = 3;
+    // Starting at 1, the number of times this task has been attempted
+    int32 attempt = 4;
+    // Will be set to the most recent failure details, if this task has previously failed and then
+    // been retried.
+    temporal.api.failure.v1.Failure last_failure = 5;
+}
+
+message ActivityTaskCompletedEventAttributes {
+    // Serialized results of the activity. IE: The return value of the activity function
+    temporal.api.common.v1.Payloads result = 1;
+    // The id of the `ACTIVITY_TASK_SCHEDULED` event this completion corresponds to
+    int64 scheduled_event_id = 2;
+    // The id of the `ACTIVITY_TASK_STARTED` event this completion corresponds to
+    int64 started_event_id = 3;
+    // id of the worker that completed this task
+    string identity = 4;
+}
+
+message ActivityTaskFailedEventAttributes {
+    // Failure details
+    temporal.api.failure.v1.Failure failure = 1;
+    // The id of the `ACTIVITY_TASK_SCHEDULED` event this failure corresponds to
+    int64 scheduled_event_id = 2;
+    // The id of the `ACTIVITY_TASK_STARTED` event this failure corresponds to
+    int64 started_event_id = 3;
+    // id of the worker that failed this task
+    string identity = 4;
+    temporal.api.enums.v1.RetryState retry_state = 5;
+}
+
+message ActivityTaskTimedOutEventAttributes {
+    // If this activity had failed, was retried, and then timed out, that failure is stored as the
+    // `cause` in here.
+    temporal.api.failure.v1.Failure failure = 1;
+    // The id of the `ACTIVITY_TASK_SCHEDULED` event this timeout corresponds to
+    int64 scheduled_event_id = 2;
+    // The id of the `ACTIVITY_TASK_STARTED` event this timeout corresponds to
+    int64 started_event_id = 3;
+    temporal.api.enums.v1.RetryState retry_state = 4;
+}
+
+message ActivityTaskCancelRequestedEventAttributes {
+    // The id of the `ACTIVITY_TASK_SCHEDULED` event this cancel request corresponds to
+    int64 scheduled_event_id = 1;
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 2;
+}
+
+message ActivityTaskCanceledEventAttributes {
+    // Additional information that the activity reported upon confirming cancellation
+    temporal.api.common.v1.Payloads details = 1;
+    // id of the most recent `ACTIVITY_TASK_CANCEL_REQUESTED` event which refers to the same
+    // activity
+    int64 latest_cancel_requested_event_id = 2;
+    // The id of the `ACTIVITY_TASK_SCHEDULED` event this cancel confirmation corresponds to
+    int64 scheduled_event_id = 3;
+    // The id of the `ACTIVITY_TASK_STARTED` event this cancel confirmation corresponds to
+    int64 started_event_id = 4;
+    // id of the worker who canceled this activity
+    string identity = 5;
+}
+
+message TimerStartedEventAttributes {
+    // The worker/user assigned id for this timer
+    string timer_id = 1;
+    // How long until this timer fires
+    //
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration start_to_fire_timeout = 2 [(gogoproto.stdduration) = true];
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 3;
+}
+
+message TimerFiredEventAttributes {
+    // Will match the `timer_id` from `TIMER_STARTED` event for this timer
+    string timer_id = 1;
+    // The id of the `TIMER_STARTED` event itself
+    int64 started_event_id = 2;
+}
+
+message TimerCanceledEventAttributes {
+    // Will match the `timer_id` from `TIMER_STARTED` event for this timer
+    string timer_id = 1;
+    // The id of the `TIMER_STARTED` event itself
+    int64 started_event_id = 2;
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 3;
+    // The id of the worker who requested this cancel
+    string identity = 4;
+}
+
+message WorkflowExecutionCancelRequestedEventAttributes {
+    // User provided reason for requesting cancellation
+    // TODO: shall we create a new field with name "reason" and deprecate this one? 
+    string cause = 1; 
+    // TODO: Is this the ID of the event in the workflow which initiated this cancel, if there was one?
+    int64 external_initiated_event_id = 2;
+    temporal.api.common.v1.WorkflowExecution external_workflow_execution = 3;
+    // id of the worker or client who requested this cancel
+    string identity = 4;
+}
+
+message WorkflowExecutionCanceledEventAttributes {
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 1;
+    temporal.api.common.v1.Payloads details = 2;
+}
+
+message MarkerRecordedEventAttributes {
+    // Workers use this to identify the "types" of various markers. Ex: Local activity, side effect.
+    string marker_name = 1;
+    // Serialized information recorded in the marker
+    map<string, temporal.api.common.v1.Payloads> details = 2;
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 3;
+    temporal.api.common.v1.Header header = 4;
+    // Some uses of markers, like a local activity, could "fail". If they did that is recorded here.
+    temporal.api.failure.v1.Failure failure = 5;
+}
+
+message WorkflowExecutionSignaledEventAttributes {
+    // The name/type of the signal to fire
+    string signal_name = 1;
+    // Will be deserialized and provided as argument(s) to the signal handler
+    temporal.api.common.v1.Payloads input = 2;
+    // id of the worker/client who sent this signal
+    string identity = 3;
+    // Headers that were passed by the sender of the signal and copied by temporal 
+    // server into the workflow task.
+    temporal.api.common.v1.Header header = 4;
+}
+
+message WorkflowExecutionTerminatedEventAttributes {
+    // User/client provided reason for termination
+    string reason = 1;
+    temporal.api.common.v1.Payloads details = 2;
+    // id of the client who requested termination
+    string identity = 3;
+}
+
+message RequestCancelExternalWorkflowExecutionInitiatedEventAttributes {
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 1;
+    // The namespace the workflow to be cancelled lives in
+    string namespace = 2;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 3;
+    // Deprecated
+    string control = 4;
+    // Workers are expected to set this to true if the workflow they are requesting to cancel is
+    // a child of the workflow which issued the request
+    bool child_workflow_only = 5;
+    // Reason for requesting the cancellation
+    string reason = 6;
+}
+
+message RequestCancelExternalWorkflowExecutionFailedEventAttributes {
+    temporal.api.enums.v1.CancelExternalWorkflowExecutionFailedCause cause = 1;
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 2;
+    // namespace of the workflow which failed to cancel
+    string namespace = 3;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 4;
+    // id of the `REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED` event this failure
+    // corresponds to
+    int64 initiated_event_id = 5;
+    // Deprecated
+    string control = 6;
+}
+
+message ExternalWorkflowExecutionCancelRequestedEventAttributes {
+    // id of the `REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED` event this event corresponds
+    // to
+    int64 initiated_event_id = 1;
+    // namespace of the to-be-cancelled workflow
+    string namespace = 2;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 3;
+}
+
+message SignalExternalWorkflowExecutionInitiatedEventAttributes {
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 1;
+    // namespace of the to-be-signalled workflow
+    string namespace = 2;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 3;
+    // name/type of the signal to fire in the external workflow
+    string signal_name = 4;
+    // Serialized arguments to provide to the signal handler
+    temporal.api.common.v1.Payloads input = 5;
+    // Deprecated
+    string control = 6;
+    // Workers are expected to set this to true if the workflow they are requesting to cancel is
+    // a child of the workflow which issued the request
+    bool child_workflow_only = 7;
+    temporal.api.common.v1.Header header = 8;
+}
+
+message SignalExternalWorkflowExecutionFailedEventAttributes {
+    temporal.api.enums.v1.SignalExternalWorkflowExecutionFailedCause cause = 1;
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 2;
+    string namespace = 3;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 4;
+    int64 initiated_event_id = 5;
+    // Deprecated
+    string control = 6;
+}
+
+message ExternalWorkflowExecutionSignaledEventAttributes {
+    // id of the `SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED` event this event corresponds to
+    int64 initiated_event_id = 1;
+    // namespace of the workflow which was signaled
+    string namespace = 2;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 3;
+    // Deprecated
+    string control = 4;
+}
+
+message UpsertWorkflowSearchAttributesEventAttributes {
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 1;
+    temporal.api.common.v1.SearchAttributes search_attributes = 2;
+}
+
+message StartChildWorkflowExecutionInitiatedEventAttributes {
+    // Namespace of the child workflow
+    string namespace = 1;
+    string workflow_id = 2;
+    temporal.api.common.v1.WorkflowType workflow_type = 3;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 4;
+    temporal.api.common.v1.Payloads input = 5;
+    // Total workflow execution timeout including retries and continue as new.
+    google.protobuf.Duration workflow_execution_timeout = 6 [(gogoproto.stdduration) = true];
+    // Timeout of a single workflow run.
+    google.protobuf.Duration workflow_run_timeout = 7 [(gogoproto.stdduration) = true];
+    // Timeout of a single workflow task.
+    google.protobuf.Duration workflow_task_timeout = 8 [(gogoproto.stdduration) = true];
+    // Default: PARENT_CLOSE_POLICY_TERMINATE.
+    temporal.api.enums.v1.ParentClosePolicy parent_close_policy = 9;
+    // Deprecated
+    string control = 10;
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 11;
+    // Default: WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE.
+    temporal.api.enums.v1.WorkflowIdReusePolicy workflow_id_reuse_policy = 12;
+    temporal.api.common.v1.RetryPolicy retry_policy = 13;
+    // If this child runs on a cron schedule, it will appear here
+    string cron_schedule = 14;
+    temporal.api.common.v1.Header header = 15;
+    temporal.api.common.v1.Memo memo = 16;
+    temporal.api.common.v1.SearchAttributes search_attributes = 17;
+}
+
+message StartChildWorkflowExecutionFailedEventAttributes {
+    // Namespace of the child workflow
+    string namespace = 1;
+    string workflow_id = 2;
+    temporal.api.common.v1.WorkflowType workflow_type = 3;
+    temporal.api.enums.v1.StartChildWorkflowExecutionFailedCause cause = 4;
+    // Deprecated
+    string control = 5;
+    // Id of the `START_CHILD_WORKFLOW_EXECUTION_INITIATED` event which this event corresponds to
+    int64 initiated_event_id = 6;
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 7;
+}
+
+message ChildWorkflowExecutionStartedEventAttributes {
+    // Namespace of the child workflow
+    string namespace = 1;
+    // Id of the `START_CHILD_WORKFLOW_EXECUTION_INITIATED` event which this event corresponds to
+    int64 initiated_event_id = 2;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 3;
+    temporal.api.common.v1.WorkflowType workflow_type = 4;
+    temporal.api.common.v1.Header header = 5;
+}
+
+message ChildWorkflowExecutionCompletedEventAttributes {
+    temporal.api.common.v1.Payloads result = 1;
+    // Namespace of the child workflow
+    string namespace = 2;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 3;
+    temporal.api.common.v1.WorkflowType workflow_type = 4;
+    // Id of the `START_CHILD_WORKFLOW_EXECUTION_INITIATED` event which this event corresponds to
+    int64 initiated_event_id = 5;
+    // Id of the `CHILD_WORKFLOW_EXECUTION_STARTED` event which this event corresponds to
+    int64 started_event_id = 6;
+}
+
+message ChildWorkflowExecutionFailedEventAttributes {
+    temporal.api.failure.v1.Failure failure = 1;
+    // Namespace of the child workflow
+    string namespace = 2;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 3;
+    temporal.api.common.v1.WorkflowType workflow_type = 4;
+    // Id of the `START_CHILD_WORKFLOW_EXECUTION_INITIATED` event which this event corresponds to
+    int64 initiated_event_id = 5;
+    // Id of the `CHILD_WORKFLOW_EXECUTION_STARTED` event which this event corresponds to
+    int64 started_event_id = 6;
+    temporal.api.enums.v1.RetryState retry_state = 7;
+}
+
+message ChildWorkflowExecutionCanceledEventAttributes {
+    temporal.api.common.v1.Payloads details = 1;
+    // Namespace of the child workflow
+    string namespace = 2;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 3;
+    temporal.api.common.v1.WorkflowType workflow_type = 4;
+    // Id of the `START_CHILD_WORKFLOW_EXECUTION_INITIATED` event which this event corresponds to
+    int64 initiated_event_id = 5;
+    // Id of the `CHILD_WORKFLOW_EXECUTION_STARTED` event which this event corresponds to
+    int64 started_event_id = 6;
+}
+
+message ChildWorkflowExecutionTimedOutEventAttributes {
+    // Namespace of the child workflow
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
+    temporal.api.common.v1.WorkflowType workflow_type = 3;
+    // Id of the `START_CHILD_WORKFLOW_EXECUTION_INITIATED` event which this event corresponds to
+    int64 initiated_event_id = 4;
+    // Id of the `CHILD_WORKFLOW_EXECUTION_STARTED` event which this event corresponds to
+    int64 started_event_id = 5;
+    temporal.api.enums.v1.RetryState retry_state = 6;
+}
+
+message ChildWorkflowExecutionTerminatedEventAttributes {
+    // Namespace of the child workflow
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
+    temporal.api.common.v1.WorkflowType workflow_type = 3;
+    // Id of the `START_CHILD_WORKFLOW_EXECUTION_INITIATED` event which this event corresponds to
+    int64 initiated_event_id = 4;
+    // Id of the `CHILD_WORKFLOW_EXECUTION_STARTED` event which this event corresponds to
+    int64 started_event_id = 5;
+}
+
+// History events are the method by which Temporal SDKs advance (or recreate) workflow state.
+// See the `EventType` enum for more info about what each event is for.
+message HistoryEvent {
+    // Monotonically increasing event number, starts at 1.
+    int64 event_id = 1;
+    google.protobuf.Timestamp event_time = 2 [(gogoproto.stdtime) = true];
+    temporal.api.enums.v1.EventType event_type = 3;
+    // TODO: What is this? Appears unused by SDKs
+    int64 version = 4;
+    // TODO: What is this? Appears unused by SDKs
+    int64 task_id = 5;
+    // The event details. The type must match that in `event_type`.
+    oneof attributes {
+        WorkflowExecutionStartedEventAttributes workflow_execution_started_event_attributes = 6;
+        WorkflowExecutionCompletedEventAttributes workflow_execution_completed_event_attributes = 7;
+        WorkflowExecutionFailedEventAttributes workflow_execution_failed_event_attributes = 8;
+        WorkflowExecutionTimedOutEventAttributes workflow_execution_timed_out_event_attributes = 9;
+        WorkflowTaskScheduledEventAttributes workflow_task_scheduled_event_attributes = 10;
+        WorkflowTaskStartedEventAttributes workflow_task_started_event_attributes = 11;
+        WorkflowTaskCompletedEventAttributes workflow_task_completed_event_attributes = 12;
+        WorkflowTaskTimedOutEventAttributes workflow_task_timed_out_event_attributes = 13;
+        WorkflowTaskFailedEventAttributes workflow_task_failed_event_attributes = 14;
+        ActivityTaskScheduledEventAttributes activity_task_scheduled_event_attributes = 15;
+        ActivityTaskStartedEventAttributes activity_task_started_event_attributes = 16;
+        ActivityTaskCompletedEventAttributes activity_task_completed_event_attributes = 17;
+        ActivityTaskFailedEventAttributes activity_task_failed_event_attributes = 18;
+        ActivityTaskTimedOutEventAttributes activity_task_timed_out_event_attributes = 19;
+        TimerStartedEventAttributes timer_started_event_attributes = 20;
+        TimerFiredEventAttributes timer_fired_event_attributes = 21;
+        ActivityTaskCancelRequestedEventAttributes activity_task_cancel_requested_event_attributes = 22;
+        ActivityTaskCanceledEventAttributes activity_task_canceled_event_attributes = 23;
+        TimerCanceledEventAttributes timer_canceled_event_attributes = 24;
+        MarkerRecordedEventAttributes marker_recorded_event_attributes = 25;
+        WorkflowExecutionSignaledEventAttributes workflow_execution_signaled_event_attributes = 26;
+        WorkflowExecutionTerminatedEventAttributes workflow_execution_terminated_event_attributes = 27;
+        WorkflowExecutionCancelRequestedEventAttributes workflow_execution_cancel_requested_event_attributes = 28;
+        WorkflowExecutionCanceledEventAttributes workflow_execution_canceled_event_attributes = 29;
+        RequestCancelExternalWorkflowExecutionInitiatedEventAttributes request_cancel_external_workflow_execution_initiated_event_attributes = 30;
+        RequestCancelExternalWorkflowExecutionFailedEventAttributes request_cancel_external_workflow_execution_failed_event_attributes = 31;
+        ExternalWorkflowExecutionCancelRequestedEventAttributes external_workflow_execution_cancel_requested_event_attributes = 32;
+        WorkflowExecutionContinuedAsNewEventAttributes workflow_execution_continued_as_new_event_attributes = 33;
+        StartChildWorkflowExecutionInitiatedEventAttributes start_child_workflow_execution_initiated_event_attributes = 34;
+        StartChildWorkflowExecutionFailedEventAttributes start_child_workflow_execution_failed_event_attributes = 35;
+        ChildWorkflowExecutionStartedEventAttributes child_workflow_execution_started_event_attributes = 36;
+        ChildWorkflowExecutionCompletedEventAttributes child_workflow_execution_completed_event_attributes = 37;
+        ChildWorkflowExecutionFailedEventAttributes child_workflow_execution_failed_event_attributes = 38;
+        ChildWorkflowExecutionCanceledEventAttributes child_workflow_execution_canceled_event_attributes = 39;
+        ChildWorkflowExecutionTimedOutEventAttributes child_workflow_execution_timed_out_event_attributes = 40;
+        ChildWorkflowExecutionTerminatedEventAttributes child_workflow_execution_terminated_event_attributes = 41;
+        SignalExternalWorkflowExecutionInitiatedEventAttributes signal_external_workflow_execution_initiated_event_attributes = 42;
+        SignalExternalWorkflowExecutionFailedEventAttributes signal_external_workflow_execution_failed_event_attributes = 43;
+        ExternalWorkflowExecutionSignaledEventAttributes external_workflow_execution_signaled_event_attributes = 44;
+        UpsertWorkflowSearchAttributesEventAttributes upsert_workflow_search_attributes_event_attributes = 45;
+    }
+}
+
+message History {
+    repeated HistoryEvent events = 1;
+}

@@ -1,0 +1,90 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+// These error details are supplied in google.rpc.Status#details as described in "Google APIs, Error Model" (https://cloud.google.com/apis/design/errors#error_model)
+// and extend standard Error Details defined in https://github.com/googleapis/googleapis/blob/master/google/rpc/error_details.proto
+
+package temporal.api.errordetails.v1;
+
+option go_package = "go.temporal.io/api/errordetails/v1;errordetails";
+option java_package = "io.temporal.api.errordetails.v1";
+option java_multiple_files = true;
+option java_outer_classname = "MessageProto";
+option ruby_package = "Temporal::Api::ErrorDetails::V1";
+option csharp_namespace = "Temporal.Api.ErrorDetails.V1";
+
+import "temporal/api/common/v1/message.proto";
+import "temporal/api/enums/v1/failed_cause.proto";
+
+message NotFoundFailure {
+    string current_cluster = 1;
+    string active_cluster = 2;
+}
+
+message WorkflowExecutionAlreadyStartedFailure {
+    string start_request_id = 1;
+    string run_id = 2;
+}
+
+message NamespaceNotActiveFailure {
+    string namespace = 1;
+    string current_cluster = 2;
+    string active_cluster = 3;
+}
+
+message ClientVersionNotSupportedFailure {
+    string client_version = 1;
+    string client_name = 2;
+    string supported_versions = 3;
+}
+
+message ServerVersionNotSupportedFailure {
+    string server_version = 1;
+    string client_supported_server_versions = 2;
+}
+
+message NamespaceAlreadyExistsFailure {
+}
+
+message CancellationAlreadyRequestedFailure {
+}
+
+message QueryFailedFailure {
+}
+
+message PermissionDeniedFailure {
+    string reason = 1;
+}
+
+message ResourceExhaustedFailure {
+    temporal.api.enums.v1.ResourceExhaustedCause cause = 1;
+}
+
+message SystemWorkflowFailure {
+    // WorkflowId and RunId of the Temporal system workflow performing the underlying operation.
+    // Looking up the info of the system workflow run may help identify the issue causing the failure.
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 1;
+    // Serialized error returned by the system workflow performing the underlying operation.
+    string workflow_error = 2;
+}

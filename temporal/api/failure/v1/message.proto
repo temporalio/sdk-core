@@ -1,0 +1,96 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.failure.v1;
+
+option go_package = "go.temporal.io/api/failure/v1;failure";
+option java_package = "io.temporal.api.failure.v1";
+option java_multiple_files = true;
+option java_outer_classname = "MessageProto";
+option ruby_package = "Temporal::Api::Failure::V1";
+option csharp_namespace = "Temporal.Api.Failure.V1";
+
+import "temporal/api/common/v1/message.proto";
+import "temporal/api/enums/v1/workflow.proto";
+
+message ApplicationFailureInfo {
+    string type = 1;
+    bool non_retryable = 2;
+    temporal.api.common.v1.Payloads details = 3;
+}
+
+message TimeoutFailureInfo {
+    temporal.api.enums.v1.TimeoutType timeout_type = 1;
+    temporal.api.common.v1.Payloads last_heartbeat_details = 2;
+}
+
+message CanceledFailureInfo {
+    temporal.api.common.v1.Payloads details = 1;
+}
+
+message TerminatedFailureInfo {
+}
+
+message ServerFailureInfo {
+    bool non_retryable = 1;
+}
+
+message ResetWorkflowFailureInfo {
+    temporal.api.common.v1.Payloads last_heartbeat_details = 1;
+}
+
+message ActivityFailureInfo {
+    int64 scheduled_event_id = 1;
+    int64 started_event_id = 2;
+    string identity = 3;
+    temporal.api.common.v1.ActivityType activity_type = 4;
+    string activity_id = 5;
+    temporal.api.enums.v1.RetryState retry_state = 6;
+}
+
+message ChildWorkflowExecutionFailureInfo {
+    string namespace = 1;
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
+    temporal.api.common.v1.WorkflowType workflow_type = 3;
+    int64 initiated_event_id = 4;
+    int64 started_event_id = 5;
+    temporal.api.enums.v1.RetryState retry_state = 6;
+}
+
+message Failure {
+    string message = 1;
+    string source = 2;
+    string stack_trace = 3;
+    Failure cause = 4;
+    oneof failure_info {
+        ApplicationFailureInfo application_failure_info = 5;
+        TimeoutFailureInfo timeout_failure_info = 6;
+        CanceledFailureInfo canceled_failure_info = 7;
+        TerminatedFailureInfo terminated_failure_info = 8;
+        ServerFailureInfo server_failure_info = 9;
+        ResetWorkflowFailureInfo reset_workflow_failure_info = 10;
+        ActivityFailureInfo activity_failure_info = 11;
+        ChildWorkflowExecutionFailureInfo child_workflow_execution_failure_info = 12;
+    }
+}

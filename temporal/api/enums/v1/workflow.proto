@@ -1,0 +1,122 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.enums.v1;
+
+option go_package = "go.temporal.io/api/enums/v1;enums";
+option java_package = "io.temporal.api.enums.v1";
+option java_multiple_files = true;
+option java_outer_classname = "WorkflowProto";
+option ruby_package = "Temporal::Api::Enums::V1";
+option csharp_namespace = "Temporal.Api.Enums.V1";
+
+// Defines how new runs of a workflow with a particular ID may or may not be allowed. Note that
+// it is *never* valid to have two actively running instances of the same workflow id.
+enum WorkflowIdReusePolicy {
+    WORKFLOW_ID_REUSE_POLICY_UNSPECIFIED = 0;
+    // Allow starting a workflow execution using the same workflow id.
+    WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE = 1;
+    // Allow starting a workflow execution using the same workflow id, only when the last
+    // execution's final state is one of [terminated, cancelled, timed out, failed].
+    WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY = 2;
+    // Do not permit re-use of the workflow id for this workflow. Future start workflow requests
+    // could potentially change the policy, allowing re-use of the workflow id.
+    WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE = 3;
+    // If a workflow is running using the same workflow ID, terminate it and start a new one.
+    // If no running workflow, then the behavior is the same as ALLOW_DUPLICATE
+    WORKFLOW_ID_REUSE_POLICY_TERMINATE_IF_RUNNING = 4;
+}
+
+// Defines how child workflows will react to their parent completing
+enum ParentClosePolicy {
+    PARENT_CLOSE_POLICY_UNSPECIFIED = 0;
+    // The child workflow will also terminate
+    PARENT_CLOSE_POLICY_TERMINATE = 1;
+    // The child workflow will do nothing
+    PARENT_CLOSE_POLICY_ABANDON = 2;
+    // Cancellation will be requested of the child workflow
+    PARENT_CLOSE_POLICY_REQUEST_CANCEL = 3;
+}
+
+enum ContinueAsNewInitiator {
+    CONTINUE_AS_NEW_INITIATOR_UNSPECIFIED = 0;
+    // The workflow itself requested to continue as new
+    CONTINUE_AS_NEW_INITIATOR_WORKFLOW = 1;
+    // The workflow continued as new because it is retrying
+    CONTINUE_AS_NEW_INITIATOR_RETRY = 2;
+    // The workflow continued as new because cron has triggered a new execution
+    CONTINUE_AS_NEW_INITIATOR_CRON_SCHEDULE = 3;
+}
+
+// (-- api-linter: core::0216::synonyms=disabled
+//     aip.dev/not-precedent: There is WorkflowExecutionState already in another package. --)
+enum WorkflowExecutionStatus {
+    WORKFLOW_EXECUTION_STATUS_UNSPECIFIED = 0;
+    // Value 1 is hardcoded in SQL persistence.
+    WORKFLOW_EXECUTION_STATUS_RUNNING = 1;
+    WORKFLOW_EXECUTION_STATUS_COMPLETED = 2;
+    WORKFLOW_EXECUTION_STATUS_FAILED = 3;
+    WORKFLOW_EXECUTION_STATUS_CANCELED = 4;
+    WORKFLOW_EXECUTION_STATUS_TERMINATED = 5;
+    WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW = 6;
+    WORKFLOW_EXECUTION_STATUS_TIMED_OUT = 7;
+}
+
+enum PendingActivityState {
+    PENDING_ACTIVITY_STATE_UNSPECIFIED = 0;
+    PENDING_ACTIVITY_STATE_SCHEDULED = 1;
+    PENDING_ACTIVITY_STATE_STARTED = 2;
+    PENDING_ACTIVITY_STATE_CANCEL_REQUESTED = 3;
+}
+
+enum PendingWorkflowTaskState {
+    PENDING_WORKFLOW_TASK_STATE_UNSPECIFIED = 0;
+    PENDING_WORKFLOW_TASK_STATE_SCHEDULED = 1;
+    PENDING_WORKFLOW_TASK_STATE_STARTED = 2;
+}
+
+enum HistoryEventFilterType {
+    HISTORY_EVENT_FILTER_TYPE_UNSPECIFIED = 0;
+    HISTORY_EVENT_FILTER_TYPE_ALL_EVENT = 1;
+    HISTORY_EVENT_FILTER_TYPE_CLOSE_EVENT = 2;
+}
+
+enum RetryState {
+    RETRY_STATE_UNSPECIFIED = 0;
+    RETRY_STATE_IN_PROGRESS = 1;
+    RETRY_STATE_NON_RETRYABLE_FAILURE = 2;
+    RETRY_STATE_TIMEOUT = 3;
+    RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED = 4;
+    RETRY_STATE_RETRY_POLICY_NOT_SET = 5;
+    RETRY_STATE_INTERNAL_SERVER_ERROR = 6;
+    RETRY_STATE_CANCEL_REQUESTED = 7;
+}
+
+enum TimeoutType {
+    TIMEOUT_TYPE_UNSPECIFIED = 0;
+    TIMEOUT_TYPE_START_TO_CLOSE = 1;
+    TIMEOUT_TYPE_SCHEDULE_TO_START = 2;
+    TIMEOUT_TYPE_SCHEDULE_TO_CLOSE = 3;
+    TIMEOUT_TYPE_HEARTBEAT = 4;
+}
