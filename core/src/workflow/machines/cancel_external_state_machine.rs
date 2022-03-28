@@ -58,6 +58,7 @@ pub(super) fn new_external_cancel(
     seq: u32,
     workflow_execution: NamespacedWorkflowExecution,
     only_child: bool,
+    reason: String,
 ) -> NewMachineWithCommand {
     let mut s = CancelExternalMachine {
         state: Created {}.into(),
@@ -73,6 +74,7 @@ pub(super) fn new_external_cancel(
             // Apparently this is effectively deprecated at this point
             control: "".to_string(),
             child_workflow_only: only_child,
+            reason,
         },
     );
     let cmd = Command {

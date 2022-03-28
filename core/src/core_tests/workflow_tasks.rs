@@ -1666,6 +1666,7 @@ async fn tasks_from_completion_are_delivered() {
                     2.into(),
                     TEST_Q.to_string(),
                 )),
+                activity_tasks: vec![],
             })
         });
     mock.expect_complete_workflow_task()

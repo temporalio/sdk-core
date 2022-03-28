@@ -611,6 +611,7 @@ pub trait WorkflowClientTrait {
         &self,
         workflow_id: String,
         run_id: Option<String>,
+        reason: String,
     ) -> Result<RequestCancelWorkflowExecutionResponse>;
 
     /// Terminate a currently executing workflow
@@ -842,6 +843,8 @@ impl WorkflowClientTrait for Client {
                 failure,
                 identity: self.inner.options.identity.clone(),
                 namespace: self.namespace.clone(),
+                // TODO: Implement - https://github.com/temporalio/sdk-core/issues/293
+                last_heartbeat_details: None,
             })
             .await?
             .into_inner())
@@ -975,6 +978,7 @@ impl WorkflowClientTrait for Client {
         &self,
         workflow_id: String,
         run_id: Option<String>,
+        reason: String,
     ) -> Result<RequestCancelWorkflowExecutionResponse> {
         Ok(self
             .wf_svc()
@@ -987,6 +991,7 @@ impl WorkflowClientTrait for Client {
                 identity: self.inner.options.identity.clone(),
                 request_id: "".to_string(),
                 first_execution_run_id: "".to_string(),
+                reason,
             })
             .await?
             .into_inner())

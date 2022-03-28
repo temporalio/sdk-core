@@ -1513,6 +1513,7 @@ pub mod temporal {
                                 start_to_close_timeout: s.start_to_close_timeout,
                                 heartbeat_timeout: s.heartbeat_timeout,
                                 retry_policy: s.retry_policy.map(Into::into),
+                                request_eager_execution: !s.do_not_eagerly_execute,
                             },
                         )
                     }
