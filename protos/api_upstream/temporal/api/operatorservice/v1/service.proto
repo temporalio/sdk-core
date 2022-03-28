@@ -1,0 +1,68 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.operatorservice.v1;
+
+option go_package = "go.temporal.io/api/operatorservice/v1;operatorservice";
+option java_package = "io.temporal.api.operatorservice.v1";
+option java_multiple_files = true;
+option java_outer_classname = "ServiceProto";
+option ruby_package = "Temporal::Api::OperatorService::V1";
+option csharp_namespace = "Temporal.Api.OperatorService.V1";
+
+
+import "temporal/api/operatorservice/v1/request_response.proto";
+
+// OperatorService API defines how Temporal SDKs and other clients interact with the Temporal server
+// to perform administrative functions like registering a search attribute or a namespace.
+// APIs in this file could be not compatible with Temporal Cloud, hence it's usage in SDKs should be limited by
+// designated APIs that clearly state that they shouldn't be used by the main Application (Workflows & Activities) framework.
+service OperatorService {
+    // (-- Search Attribute --)
+
+    // AddSearchAttributes add custom search attributes.
+    //
+    // Returns ALREADY_EXISTS status code if a Search Attribute with any of the specified names already exists
+    // Returns INTERNAL status code with temporal.api.errordetails.v1.SystemWorkflowFailure in Error Details if registration process fails,
+    rpc AddSearchAttributes (AddSearchAttributesRequest) returns (AddSearchAttributesResponse) {
+    }
+
+    // RemoveSearchAttributes removes custom search attributes.
+    //
+    // Returns NOT_FOUND status code if a Search Attribute with any of the specified names is not registered
+    rpc RemoveSearchAttributes (RemoveSearchAttributesRequest) returns (RemoveSearchAttributesResponse) {
+    }
+
+    // ListSearchAttributes returns comprehensive information about search attributes.
+    rpc ListSearchAttributes (ListSearchAttributesRequest) returns (ListSearchAttributesResponse) {
+    }
+
+    // DeleteNamespace synchronously deletes a namespace and asynchronously reclaims all namespace resources.
+    // (-- api-linter: core::0135::method-signature=disabled
+    //     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
+    // (-- api-linter: core::0135::response-message-name=disabled
+    //     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
+    rpc DeleteNamespace (DeleteNamespaceRequest) returns (DeleteNamespaceResponse) {
+    }
+}

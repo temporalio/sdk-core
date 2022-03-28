@@ -1,0 +1,77 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.operatorservice.v1;
+
+option go_package = "go.temporal.io/api/operatorservice/v1;operatorservice";
+option java_package = "io.temporal.api.operatorservice.v1";
+option java_multiple_files = true;
+option java_outer_classname = "RequestResponseProto";
+option ruby_package = "Temporal::Api::OperatorService::V1";
+option csharp_namespace = "Temporal.Api.OperatorService.V1";
+
+import "temporal/api/enums/v1/common.proto";
+
+// (-- Search Attribute --)
+
+message AddSearchAttributesRequest {
+    // Mapping between search attribute name and its IndexedValueType.
+    map<string, temporal.api.enums.v1.IndexedValueType> search_attributes = 1;
+}
+
+message AddSearchAttributesResponse {
+}
+
+message RemoveSearchAttributesRequest {
+    // Search attribute names to delete.
+    repeated string search_attributes = 1;
+}
+
+message RemoveSearchAttributesResponse {
+}
+
+message ListSearchAttributesRequest {
+}
+
+message ListSearchAttributesResponse {
+    // Mapping between custom (user-registered) search attribute name to its IndexedValueType.
+    map<string, temporal.api.enums.v1.IndexedValueType> custom_attributes = 1;
+    // Mapping between system (predefined) search attribute name to its IndexedValueType.
+    map<string, temporal.api.enums.v1.IndexedValueType> system_attributes = 2;
+    // Mapping from the attribute name to the visibility storage native type.
+    map<string, string> storage_schema = 3;
+}
+
+// (-- api-linter: core::0135::request-unknown-fields=disabled
+//     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
+// (-- api-linter: core::0135::request-name-required=disabled
+//     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
+message DeleteNamespaceRequest {
+    string namespace = 1;
+}
+
+message DeleteNamespaceResponse {
+    // Temporary namespace name that is used during reclaim resources step.
+    string deleted_namespace = 1;
+}

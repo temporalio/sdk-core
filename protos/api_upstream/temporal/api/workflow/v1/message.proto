@@ -1,0 +1,119 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.workflow.v1;
+
+option go_package = "go.temporal.io/api/workflow/v1;workflow";
+option java_package = "io.temporal.api.workflow.v1";
+option java_multiple_files = true;
+option java_outer_classname = "MessageProto";
+option ruby_package = "Temporal::Api::Workflow::V1";
+option csharp_namespace = "Temporal.Api.Workflow.V1";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+import "dependencies/gogoproto/gogo.proto";
+
+import "temporal/api/enums/v1/workflow.proto";
+import "temporal/api/common/v1/message.proto";
+import "temporal/api/failure/v1/message.proto";
+import "temporal/api/taskqueue/v1/message.proto";
+
+message WorkflowExecutionInfo {
+    temporal.api.common.v1.WorkflowExecution execution = 1;
+    temporal.api.common.v1.WorkflowType type = 2;
+    google.protobuf.Timestamp start_time = 3 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp close_time = 4 [(gogoproto.stdtime) = true];
+    temporal.api.enums.v1.WorkflowExecutionStatus status = 5;
+    int64 history_length = 6;
+    string parent_namespace_id = 7;
+    temporal.api.common.v1.WorkflowExecution parent_execution = 8;
+    google.protobuf.Timestamp execution_time = 9 [(gogoproto.stdtime) = true];
+    temporal.api.common.v1.Memo memo = 10;
+    temporal.api.common.v1.SearchAttributes search_attributes = 11;
+    ResetPoints auto_reset_points = 12;
+    string task_queue = 13;
+    int64 state_transition_count = 14;
+}
+
+message WorkflowExecutionConfig {
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 1;
+    google.protobuf.Duration workflow_execution_timeout = 2 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration workflow_run_timeout = 3 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration default_workflow_task_timeout = 4 [(gogoproto.stdduration) = true];
+}
+
+message PendingActivityInfo {
+    string activity_id = 1;
+    temporal.api.common.v1.ActivityType activity_type = 2;
+    temporal.api.enums.v1.PendingActivityState state = 3;
+    temporal.api.common.v1.Payloads heartbeat_details = 4;
+    google.protobuf.Timestamp last_heartbeat_time = 5 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp last_started_time = 6 [(gogoproto.stdtime) = true];
+    int32 attempt = 7;
+    int32 maximum_attempts = 8;
+    google.protobuf.Timestamp scheduled_time = 9 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp expiration_time = 10 [(gogoproto.stdtime) = true];
+    temporal.api.failure.v1.Failure last_failure = 11;
+    string last_worker_identity = 12;
+}
+
+message PendingChildExecutionInfo {
+    string workflow_id = 1;
+    string run_id = 2;
+    string workflow_type_name = 3;
+    int64 initiated_id = 4;
+    // Default: PARENT_CLOSE_POLICY_TERMINATE.
+    temporal.api.enums.v1.ParentClosePolicy parent_close_policy = 5;
+}
+
+message PendingWorkflowTaskInfo {
+    temporal.api.enums.v1.PendingWorkflowTaskState state = 1;
+    google.protobuf.Timestamp scheduled_time = 2 [(gogoproto.stdtime) = true];
+    // original_scheduled_time is the scheduled time of the first workflow task during workflow task heartbeat.
+    // Heartbeat workflow task is done by RespondWorkflowTaskComplete with ForceCreateNewWorkflowTask == true and no command
+    // In this case, OriginalScheduledTime won't change. Then when current time - original_scheduled_time exceeds
+    // some threshold, the workflow task will be forced timeout.
+    google.protobuf.Timestamp original_scheduled_time = 3 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp started_time = 4 [(gogoproto.stdtime) = true];
+    int32 attempt = 5;
+}
+
+message ResetPoints {
+    repeated ResetPointInfo points = 1;
+}
+
+message ResetPointInfo {
+    string binary_checksum = 1;
+    string run_id = 2;
+    int64 first_workflow_task_completed_id = 3;
+    google.protobuf.Timestamp create_time = 4 [(gogoproto.stdtime) = true];
+    // (-- api-linter: core::0214::resource-expiry=disabled
+    //     aip.dev/not-precedent: TTL is not defined for ResetPointInfo. --)
+    // The time that the run is deleted due to retention.
+    google.protobuf.Timestamp expire_time = 5 [(gogoproto.stdtime) = true];
+    // false if the reset point has pending childWFs/reqCancels/signalExternals.
+    bool resettable = 6;
+}
