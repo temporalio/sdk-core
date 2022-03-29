@@ -83,6 +83,24 @@ impl RemoteInFlightActInfo {
     }
 }
 
+struct NonPollActBuffer {
+    tx: async_channel::Sender<PollActivityTaskQueueResponse>,
+    rx: async_channel::Receiver<PollActivityTaskQueueResponse>,
+}
+impl NonPollActBuffer {
+    pub fn new() -> Self {
+        let (tx, rx) = async_channel::unbounded();
+        Self { tx, rx }
+    }
+
+    pub fn push(&self, t: PollActivityTaskQueueResponse) {
+        self.tx.try_send(t).expect("Receive half cannot be dropped");
+    }
+    pub async fn next(&self) -> PollActivityTaskQueueResponse {
+        self.rx.recv().await.expect("Send half cannot be dropped")
+    }
+}
+
 pub(crate) struct WorkerActivityTasks {
     /// Centralizes management of heartbeat issuing / throttling
     heartbeat_manager: ActivityHeartbeatManager,
@@ -91,6 +109,9 @@ pub(crate) struct WorkerActivityTasks {
     /// Buffers activity task polling in the event we need to return a cancellation while a poll is
     /// ongoing.
     poller: BoxedActPoller,
+    /// Holds activity tasks we have received by non-polling means. EX: In direct response to
+    /// workflow task completion.
+    non_poll_tasks: NonPollActBuffer,
     /// Ensures we stay at or below this worker's maximum concurrent activity limit
     activities_semaphore: MeteredSemaphore,
     /// Wakes every time an activity is removed from the outstanding map
@@ -115,6 +136,7 @@ impl WorkerActivityTasks {
             heartbeat_manager: ActivityHeartbeatManager::new(client),
             outstanding_activity_tasks: Default::default(),
             poller,
+            non_poll_tasks: NonPollActBuffer::new(),
             activities_semaphore: MeteredSemaphore::new(
                 max_activity_tasks,
                 metrics.with_new_attrs([activity_worker_type()]),
@@ -165,6 +187,9 @@ impl WorkerActivityTasks {
             cancel_task = self.next_pending_cancel_task() => {
                 cancel_task
             }
+            task = self.non_poll_tasks.next() => {
+                Ok(Some(self.about_to_issue_task(task)))
+            }
             (work, sem) = poll_with_semaphore => {
                 match work {
                     Some(Ok(work)) => {
@@ -173,23 +198,10 @@ impl WorkerActivityTasks {
                             self.metrics.act_poll_timeout();
                             return Ok(None)
                         }
-
-                        if let Some(dur) = work.sched_to_start() {
-                            self.metrics
-                                .act_sched_to_start_latency(dur);
-                        }
-
-                        self.outstanding_activity_tasks.insert(
-                            work.task_token.clone().into(),
-                            RemoteInFlightActInfo::new(
-                                work.activity_type.clone().unwrap_or_default().name,
-                                work.workflow_type.clone().unwrap_or_default().name,
-                                work.heartbeat_timeout.clone()
-                            ),
-                        );
+                        let work = self.about_to_issue_task(work);
                         // Only permanently take a permit in the event the poll finished properly
                         sem.forget();
-                        Ok(Some(ActivityTask::start_from_poll_resp(work)))
+                        Ok(Some(work))
                     }
                     None => {
                         Err(PollActivityError::ShutDown)
@@ -304,6 +316,15 @@ impl WorkerActivityTasks {
         self.heartbeat_manager.record(details, throttle_interval)
     }
 
+    pub(crate) fn add_non_poll_tasks(
+        &self,
+        tasks: impl IntoIterator<Item = PollActivityTaskQueueResponse>,
+    ) {
+        for t in tasks.into_iter() {
+            self.non_poll_tasks.push(t);
+        }
+    }
+
     async fn next_pending_cancel_task(&self) -> Result<Option<ActivityTask>, PollActivityError> {
         let next_pc = self.heartbeat_manager.next_pending_cancel().await;
         // Issue cancellations for anything we noticed was cancelled during heartbeating
@@ -334,6 +355,24 @@ impl WorkerActivityTasks {
             // was dropped, which can only happen on shutdown.
             Err(PollActivityError::ShutDown)
         }
+    }
+
+    /// Called when there is a new act task about to be bubbled up out of the manager
+    fn about_to_issue_task(&self, work: PollActivityTaskQueueResponse) -> ActivityTask {
+        if let Some(dur) = work.sched_to_start() {
+            self.metrics.act_sched_to_start_latency(dur);
+        };
+
+        self.outstanding_activity_tasks.insert(
+            work.task_token.clone().into(),
+            RemoteInFlightActInfo::new(
+                work.activity_type.clone().unwrap_or_default().name,
+                work.workflow_type.clone().unwrap_or_default().name,
+                work.heartbeat_timeout.clone(),
+            ),
+        );
+
+        ActivityTask::start_from_poll_resp(work)
     }
 
     #[cfg(test)]

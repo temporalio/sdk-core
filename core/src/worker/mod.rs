@@ -744,13 +744,26 @@ impl Worker {
                 completion.sticky_attributes = sticky_attrs;
 
                 self.handle_wft_reporting_errs(run_id, || async {
-                    let maybe_wft = self
+                    let wft_report_resp = self
                         .wf_client
                         .complete_workflow_task(completion)
                         .instrument(span!(tracing::Level::DEBUG, "Complete WFT call"))
                         .await?;
-                    if let Some(wft) = maybe_wft.workflow_task {
+                    if let Some(wft) = wft_report_resp.workflow_task {
                         self.wf_task_source.add_wft_from_completion(wft);
+                    }
+                    if !wft_report_resp.activity_tasks.is_empty() {
+                        let acts = wft_report_resp.activity_tasks;
+                        info!("Got acts {:?}", acts);
+                        if let Some(atm) = self.at_task_mgr.as_ref() {
+                            atm.add_non_poll_tasks(acts);
+                        } else {
+                            panic!(
+                                "Requested eager activity execution but this worker has no
+                            activity task manager! This is an internal bug, Core should not have
+                            asked for tasks."
+                            )
+                        }
                     }
                     Ok(())
                 })

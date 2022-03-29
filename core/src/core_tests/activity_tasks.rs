@@ -1,3 +1,5 @@
+use crate::telemetry::test_telem_console;
+use crate::test_help::{hist_to_poll_resp, TEST_Q};
 use crate::{
     job_assert,
     test_help::{
@@ -17,6 +19,9 @@ use std::{
     time::Duration,
 };
 use temporal_sdk_core_api::Worker as WorkerTrait;
+use temporal_sdk_core_protos::coresdk::workflow_completion::WorkflowActivationCompletion;
+use temporal_sdk_core_protos::temporal::api::enums::v1::EventType;
+use temporal_sdk_core_protos::temporal::api::workflowservice::v1::RespondWorkflowTaskCompletedResponse;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{activity_resolution, ActivityExecutionResult, ActivityResolution},
@@ -33,6 +38,7 @@ use temporal_sdk_core_protos::{
         RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedResponse,
         RespondActivityTaskFailedResponse,
     },
+    TestHistoryBuilder,
 };
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
 use tokio::{join, time::sleep};
@@ -605,4 +611,64 @@ async fn max_tq_acts_set_passed_to_poll_properly() {
         .unwrap();
     let worker = Worker::new_test(cfg, mock_client);
     worker.poll_activity_task().await.unwrap();
+}
+
+/// This test verifies that activity tasks which come as replies to completing a WFT are properly
+/// delivered via polling.
+#[tokio::test]
+async fn activity_tasks_from_completion_are_delivered() {
+    test_telem_console();
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let schedid = t.add_activity_task_scheduled("act_id");
+    let startid = t.add_activity_task_started(schedid);
+    t.add_activity_task_completed(schedid, startid, b"hi".into());
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let tasks = [hist_to_poll_resp(
+        &t,
+        wfid.to_owned(),
+        1.into(),
+        TEST_Q.to_string(),
+    )];
+    let mut mock = mock_workflow_client();
+    mock.expect_complete_workflow_task()
+        .times(1)
+        .returning(move |_| {
+            Ok(RespondWorkflowTaskCompletedResponse {
+                workflow_task: None,
+                activity_tasks: vec![PollActivityTaskQueueResponse {
+                    task_token: vec![1],
+                    activity_id: "act1".to_string(),
+                    ..Default::default()
+                }],
+            })
+        });
+    mock.expect_complete_activity_task()
+        .times(1)
+        .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
+    let mut mock = MocksHolder::from_client_with_responses(mock, tasks, []);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 2);
+    let core = mock_worker(mock);
+
+    let wf_task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
+        .await
+        .unwrap();
+
+    // We should see the activity when we poll now
+    let act_task = core.poll_activity_task().await.unwrap();
+    assert_eq!(act_task.task_token, vec![1]);
+
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act_task.task_token.clone(),
+        result: Some(ActivityExecutionResult::ok("hi".into())),
+    })
+    .await
+    .unwrap();
+
+    core.shutdown().await;
 }
