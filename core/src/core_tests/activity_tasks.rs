@@ -691,7 +691,11 @@ async fn activity_tasks_from_completion_reserve_slots() {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let schedid = t.add_activity_task_scheduled("act_id");
+    let schedid = t.add_activity_task_scheduled("1");
+    let startid = t.add_activity_task_started(schedid);
+    t.add_activity_task_completed(schedid, startid, b"hi".into());
+    t.add_full_wf_task();
+    let schedid = t.add_activity_task_scheduled("2");
     let startid = t.add_activity_task_started(schedid);
     t.add_activity_task_completed(schedid, startid, b"hi".into());
     t.add_full_wf_task();
@@ -716,13 +720,20 @@ async fn activity_tasks_from_completion_reserve_slots() {
     mock.expect_complete_activity_task()
         .times(2)
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
+    let barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
     let mut mh = MockPollCfg::from_resp_batches(
         wf_id,
         t,
         [
             ResponseType::ToTaskNum(1),
-            // ResponseType::ToTaskNum(2),
-            // ResponseType::ToTaskNum(2),
+            ResponseType::UntilResolved(
+                async {
+                    barr.wait().await;
+                    barr.wait().await;
+                }
+                .boxed(),
+                2,
+            ),
             ResponseType::AllHistory,
         ],
         mock,
@@ -733,7 +744,11 @@ async fn activity_tasks_from_completion_reserve_slots() {
         if let Some(Attributes::ScheduleActivityTaskCommandAttributes(attrs)) =
             wftc.commands.get(0).and_then(|cmd| cmd.attributes.as_ref())
         {
-            assert_eq!(attrs.request_eager_execution, false);
+            if attrs.activity_id == "1" {
+                assert!(!attrs.request_eager_execution);
+            } else {
+                assert!(attrs.request_eager_execution);
+            }
         }
     }));
     let mut mock = build_mock_pollers(mh);
@@ -749,9 +764,6 @@ async fn activity_tasks_from_completion_reserve_slots() {
     let at1 = core.poll_activity_task().await.unwrap();
     let at2 = core.poll_activity_task().await.unwrap();
 
-    // TODO: One option is to add mock response type which will delay response until future
-    //   resolves
-    let barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
         let res = ctx
             .activity(ActivityOptions {
@@ -759,9 +771,6 @@ async fn activity_tasks_from_completion_reserve_slots() {
                 ..Default::default()
             })
             .await;
-        // barr.wait().await;
-        // dbg!("First barr");
-        // barr.wait().await;
         let res = ctx
             .activity(ActivityOptions {
                 activity_type: "act2".to_string(),
@@ -781,7 +790,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
         .await
         .unwrap();
     let act_completer = async {
-        // barr.wait().await;
+        barr.wait().await;
         dbg!("COMPLETING!");
         core.complete_activity_task(ActivityTaskCompletion {
             task_token: at1.task_token,
@@ -795,7 +804,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
         })
         .await
         .unwrap();
-        // barr.wait().await;
+        barr.wait().await;
         dbg!("COMPLETe!");
     };
     // This wf poll should *not* set the flag that it wants tasks back since both slots are
