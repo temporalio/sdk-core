@@ -175,7 +175,7 @@ where
         event: HistoryEvent,
         has_next_event: bool,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        debug!(
+        trace!(
             event = %event,
             machine_name = %self.name(),
             state = %self.state(),
@@ -234,7 +234,7 @@ where
 {
     if !commands.is_empty() {
         debug!(commands=%commands.display(), state=%machine.state(),
-               machine_name=%StateMachine::name(machine), "Machine produced commands");
+               machine_name=%TemporalStateMachine::kind(machine), "Machine produced commands");
     }
     let mut machine_responses = vec![];
     for cmd in commands {

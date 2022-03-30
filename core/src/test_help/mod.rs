@@ -9,6 +9,7 @@ use crate::{
     TaskToken, Worker, WorkerClientBag, WorkerConfig, WorkerConfigBuilder,
 };
 use bimap::BiMap;
+use futures::future::BoxFuture;
 use futures::FutureExt;
 use mockall::TimesRange;
 use parking_lot::RwLock;
@@ -17,6 +18,7 @@ use std::{
     ops::RangeFull,
     sync::Arc,
 };
+use temporal_client::WorkflowTaskCompletion;
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -45,25 +47,30 @@ pub fn test_worker_cfg() -> WorkerConfigBuilder {
 }
 
 /// When constructing responses for mocks, indicates how a given response should be built
-#[derive(derive_more::From, Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(derive_more::From)]
 pub enum ResponseType {
     ToTaskNum(usize),
     /// Returns just the history after the WFT completed of the provided task number - 1, through to
     /// the next WFT started. Simulating the incremental history for just the provided task number
     #[from(ignore)]
     OneTask(usize),
+    /// Waits until the future resolves before responding as `ToTaskNum` with the provided number
+    UntilResolved(BoxFuture<'static, ()>, usize),
     AllHistory,
 }
-
+impl ResponseType {
+    pub fn as_num(&self) -> usize {
+        match self {
+            ResponseType::ToTaskNum(n) => *n,
+            ResponseType::OneTask(n) => *n,
+            ResponseType::UntilResolved(_, n) => *n,
+            ResponseType::AllHistory => usize::MAX,
+        }
+    }
+}
 impl From<&usize> for ResponseType {
     fn from(u: &usize) -> Self {
         Self::ToTaskNum(*u)
-    }
-}
-// :shrug:
-impl From<&Self> for ResponseType {
-    fn from(r: &Self) -> Self {
-        *r
     }
 }
 
@@ -121,6 +128,9 @@ impl MocksHolder {
     pub fn worker_cfg(&mut self, mutator: impl FnOnce(&mut WorkerConfig)) {
         mutator(&mut self.mock_worker.config);
     }
+    pub fn set_act_poller(&mut self, poller: BoxedActPoller) {
+        self.mock_worker.act_poller = Some(poller);
+    }
 }
 
 pub struct MockWorker {
@@ -161,8 +171,8 @@ impl MocksHolder {
         act_tasks: ACT,
     ) -> Self
     where
-        WFT: IntoIterator<Item = PollWorkflowTaskQueueResponse>,
-        ACT: IntoIterator<Item = PollActivityTaskQueueResponse>,
+        WFT: IntoIterator<Item = QueueResponse<PollWorkflowTaskQueueResponse>>,
+        ACT: IntoIterator<Item = QueueResponse<PollActivityTaskQueueResponse>>,
         <WFT as IntoIterator>::IntoIter: Send + 'static,
         <ACT as IntoIterator>::IntoIter: Send + 'static,
     {
@@ -181,19 +191,26 @@ impl MocksHolder {
     }
 }
 
+// TODO: Un-pub ideally
 pub(crate) fn mock_poller_from_resps<T, I>(tasks: I) -> BoxedPoller<T>
 where
     T: Send + Sync + 'static,
-    I: IntoIterator<Item = T>,
+    I: IntoIterator<Item = QueueResponse<T>>,
     <I as IntoIterator>::IntoIter: Send + 'static,
 {
-    let mut mock_poller = mock_poller();
+    let mut mock_poller = mock_manual_poller();
     let mut tasks = tasks.into_iter();
     mock_poller.expect_poll().returning(move || {
         if let Some(t) = tasks.next() {
-            Some(Ok(t))
+            async move {
+                if let Some(f) = t.delay_until {
+                    f.await;
+                }
+                Some(Ok(t.resp))
+            }
+            .boxed()
         } else {
-            Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG)))
+            async { Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG))) }.boxed()
         }
     });
     Box::new(mock_poller) as BoxedPoller<T>
@@ -264,6 +281,7 @@ pub(crate) struct MockPollCfg {
     /// All calls to fail WFTs must match this predicate
     pub expect_fail_wft_matcher:
         Box<dyn Fn(&TaskToken, &WorkflowTaskFailedCause, &Option<Failure>) -> bool + Send>,
+    pub completion_asserts: Option<Box<dyn Fn(&WorkflowTaskCompletion) + Send>>,
 }
 
 impl MockPollCfg {
@@ -278,6 +296,7 @@ impl MockPollCfg {
             num_expected_fails,
             mock_client: mock_workflow_client(),
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
+            completion_asserts: None,
         }
     }
     pub fn from_resp_batches(
@@ -296,6 +315,7 @@ impl MockPollCfg {
             num_expected_fails: None,
             mock_client,
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
+            completion_asserts: None,
         }
     }
 }
@@ -332,11 +352,11 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
         let mut attempts_at_task_num = HashMap::new();
         let responses: Vec<_> = hist
             .response_batches
-            .iter()
-            .map(|to_task_num| {
-                let cur_attempt = attempts_at_task_num.entry(to_task_num).or_insert(1);
-                let mut r = hist_to_poll_resp(&hist.hist, hist.wf_id.clone(), *to_task_num, TEST_Q);
-                r.attempt = *cur_attempt;
+            .into_iter()
+            .map(|resp| {
+                let cur_attempt = attempts_at_task_num.entry(resp.as_num()).or_insert(1);
+                let mut r = hist_to_poll_resp(&hist.hist, hist.wf_id.clone(), resp, TEST_Q);
+                r.resp.attempt = *cur_attempt;
                 *cur_attempt += 1;
                 r
             })
@@ -346,7 +366,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
         task_q_resps.insert(hist.wf_id, tasks);
     }
 
-    let mut mock_poller = mock_poller();
+    let mut mock_poller = mock_manual_poller();
     // The poller will return history from any workflow runs that do not have currently
     // outstanding tasks.
     let outstanding = outstanding_wf_task_tokens.clone();
@@ -358,17 +378,23 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
                 // Must extract run id from a workflow task associated with this workflow
                 // TODO: Case where run id changes for same workflow id is not handled here
                 if let Some(t) = tasks.get(0) {
-                    let rid = t.workflow_execution.as_ref().unwrap().run_id.clone();
+                    let rid = t.resp.workflow_execution.as_ref().unwrap().run_id.clone();
                     if !outstanding.read().contains_left(&rid) {
                         let t = tasks.pop_front().unwrap();
                         outstanding
                             .write()
-                            .insert(rid, TaskToken(t.task_token.clone()));
-                        return Some(Ok(t));
+                            .insert(rid, TaskToken(t.resp.task_token.clone()));
+                        return async move {
+                            if let Some(f) = t.delay_until {
+                                f.await;
+                            }
+                            Some(Ok(t.resp))
+                        }
+                        .boxed();
                     }
                 }
             }
-            Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG)))
+            async { Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG))) }.boxed()
         });
     let mock_worker = MockWorker::new(Box::from(mock_poller));
 
@@ -376,6 +402,10 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
     cfg.mock_client
         .expect_complete_workflow_task()
         .returning(move |comp| {
+            if let Some(ass) = cfg.completion_asserts.as_ref() {
+                // tee hee
+                ass(&comp)
+            }
             outstanding.write().remove_by_right(&comp.task_token);
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
@@ -399,25 +429,43 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
     }
 }
 
+pub struct QueueResponse<T> {
+    pub resp: T,
+    pub delay_until: Option<BoxFuture<'static, ()>>,
+}
+impl<T> From<T> for QueueResponse<T> {
+    fn from(resp: T) -> Self {
+        QueueResponse {
+            resp,
+            delay_until: None,
+        }
+    }
+}
+
 pub fn hist_to_poll_resp(
     t: &TestHistoryBuilder,
     wf_id: String,
     response_type: ResponseType,
     task_queue: impl Into<String>,
-) -> PollWorkflowTaskQueueResponse {
+) -> QueueResponse<PollWorkflowTaskQueueResponse> {
     let run_id = t.get_orig_run_id();
     let wf = WorkflowExecution {
         workflow_id: wf_id,
         run_id: run_id.to_string(),
     };
+    let mut delay_until = None;
     let hist_info = match response_type {
         ResponseType::ToTaskNum(tn) => t.get_history_info(tn).unwrap(),
         ResponseType::OneTask(tn) => t.get_one_wft(tn).unwrap(),
         ResponseType::AllHistory => t.get_full_history_info().unwrap(),
+        ResponseType::UntilResolved(fut, tn) => {
+            delay_until = Some(fut);
+            t.get_history_info(tn).unwrap()
+        }
     };
     let mut resp = hist_info.as_poll_wft_response(task_queue);
     resp.workflow_execution = Some(wf);
-    resp
+    QueueResponse { resp, delay_until }
 }
 
 type AsserterWithReply<'a> = (

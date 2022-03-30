@@ -256,21 +256,19 @@ pub struct TestWorker {
     inner: Worker,
     client: Option<Arc<dyn WorkflowClientTrait>>,
     incomplete_workflows: Arc<AtomicUsize>,
+    iceptor: Option<TestWorkerCompletionIceptor>,
 }
 impl TestWorker {
     /// Create a new test worker
     pub fn new(core_worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         let ct = Arc::new(AtomicUsize::new(0));
-        let mut inner = Worker::new_from_core(core_worker, task_queue);
-        let iceptor = WorkflowCompletionCountingInterceptor {
-            incomplete_workflows: ct.clone(),
-            shutdown_handle: Box::new(inner.shutdown_handle()),
-        };
-        inner.set_worker_interceptor(Box::new(iceptor));
+        let inner = Worker::new_from_core(core_worker, task_queue);
+        let iceptor = TestWorkerCompletionIceptor::new(ct.clone(), inner.shutdown_handle());
         Self {
             inner,
             client: None,
             incomplete_workflows: ct,
+            iceptor: Some(iceptor),
         }
     }
 
@@ -333,38 +331,61 @@ impl TestWorker {
 
     /// Runs until all expected workflows have completed
     pub async fn run_until_done(&mut self) -> Result<(), anyhow::Error> {
-        self.inner.run().await
+        self.run_until_done_intercepted(|_| {}).await
     }
 
-    /// See [Self::run_until_done], except calls the provided callback just before performing core
-    /// shutdown.
-    pub async fn run_until_done_shutdown_hook(
+    /// See [Self::run_until_done], but allows configuration of some low-level interception.
+    pub async fn run_until_done_intercepted(
         &mut self,
-        before_shutdown: impl FnOnce() + 'static,
+        interceptor_config: impl FnOnce(&mut TestWorkerCompletionIceptor) + 'static,
     ) -> Result<(), anyhow::Error> {
-        // Replace shutdown interceptor with one that calls the before hook first
-        let b4shut = RefCell::new(Some(before_shutdown));
-        let shutdown_handle = self.inner.shutdown_handle();
-        let iceptor = WorkflowCompletionCountingInterceptor {
-            incomplete_workflows: self.incomplete_workflows.clone(),
-            shutdown_handle: Box::new(move || {
-                if let Some(s) = b4shut.borrow_mut().take() {
-                    s();
-                }
-                shutdown_handle();
-            }),
-        };
-        self.inner.set_worker_interceptor(Box::new(iceptor));
+        interceptor_config(self.iceptor.as_mut().unwrap());
+        self.inner
+            .set_worker_interceptor(Box::new(self.iceptor.take().unwrap()));
         self.inner.run().await
     }
 }
 
-struct WorkflowCompletionCountingInterceptor {
+pub struct TestWorkerCompletionIceptor {
     incomplete_workflows: Arc<AtomicUsize>,
     shutdown_handle: Box<dyn Fn()>,
+    every_activation: Option<Box<dyn Fn(&WorkflowActivationCompletion)>>,
 }
-impl WorkerInterceptor for WorkflowCompletionCountingInterceptor {
+impl TestWorkerCompletionIceptor {
+    pub fn new(
+        incomplete_workflows: Arc<AtomicUsize>,
+        shutdown_handle: impl Fn() + 'static,
+    ) -> Self {
+        Self {
+            incomplete_workflows,
+            shutdown_handle: Box::new(shutdown_handle),
+            every_activation: None,
+        }
+    }
+    /// Set a function to run just before worker shutdown
+    pub fn before_shutdown(&mut self, func: impl FnOnce() + 'static) {
+        // Replace shutdown interceptor with one that calls the before hook first
+        let b4shut = RefCell::new(Some(func));
+        let old_handle = std::mem::replace(&mut self.shutdown_handle, Box::new(|| {}));
+        self.shutdown_handle = Box::new(move || {
+            if let Some(s) = b4shut.borrow_mut().take() {
+                s();
+            }
+            old_handle();
+        });
+    }
+    pub fn on_each_activation_completion(
+        &mut self,
+        func: impl Fn(&WorkflowActivationCompletion) + 'static,
+    ) {
+        self.every_activation = Some(Box::new(func))
+    }
+}
+impl WorkerInterceptor for TestWorkerCompletionIceptor {
     fn on_workflow_activation_completion(&self, completion: &WorkflowActivationCompletion) {
+        if let Some(func) = self.every_activation.as_ref() {
+            func(completion);
+        }
         if completion.has_execution_ending() {
             info!("Workflow {} says it's finishing", &completion.run_id);
             let prev = self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);

@@ -39,7 +39,7 @@ async fn cancel_during_timer() {
         tokio::time::sleep(Duration::from_millis(500)).await;
         // Cancel the workflow externally
         client
-            .cancel_workflow_execution(wf_name.to_string(), None)
+            .cancel_workflow_execution(wf_name.to_string(), None, "Dieee".to_string())
             .await
             .unwrap();
     };

@@ -1216,12 +1216,9 @@ async fn buffered_work_drained_on_shutdown() {
     // Extend the task list with the now timeout-included version of the task. We add a bunch of
     // them because the poll loop will spin while new tasks are available and it is buffering them
     tasks.extend(
-        std::iter::repeat(hist_to_poll_resp(
-            &t,
-            wfid.to_owned(),
-            2.into(),
-            TEST_Q.to_string(),
-        ))
+        std::iter::repeat_with(|| {
+            hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string())
+        })
         .take(50),
     );
     let mut mock = mock_workflow_client();
@@ -1268,12 +1265,9 @@ async fn buffering_tasks_doesnt_count_toward_outstanding_max() {
     let mut tasks = VecDeque::new();
     // A way bigger task list than allowed outstanding tasks
     tasks.extend(
-        std::iter::repeat(hist_to_poll_resp(
-            &t,
-            wfid.to_owned(),
-            2.into(),
-            TEST_Q.to_string(),
-        ))
+        std::iter::repeat_with(|| {
+            hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string())
+        })
         .take(20),
     );
     let mut mock = MocksHolder::from_client_with_responses(mock, tasks, []);
@@ -1660,12 +1654,9 @@ async fn tasks_from_completion_are_delivered() {
         .times(1)
         .returning(move |_| {
             Ok(RespondWorkflowTaskCompletedResponse {
-                workflow_task: Some(hist_to_poll_resp(
-                    &t,
-                    wfid.to_owned(),
-                    2.into(),
-                    TEST_Q.to_string(),
-                )),
+                workflow_task: Some(
+                    hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()).resp,
+                ),
                 activity_tasks: vec![],
             })
         });

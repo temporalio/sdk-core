@@ -41,13 +41,13 @@ async fn legacy_query(#[case] include_history: bool) {
         hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
         {
             let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string());
-            pr.query = Some(WorkflowQuery {
+            pr.resp.query = Some(WorkflowQuery {
                 query_type: "query-type".to_string(),
                 query_args: Some(b"hi".into()),
                 header: Some(header.into()),
             });
             if !include_history {
-                pr.history = Some(History { events: vec![] });
+                pr.resp.history = Some(History { events: vec![] });
             }
             pr
         },
@@ -156,9 +156,9 @@ async fn new_queries(#[case] num_queries: usize) {
         hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
         {
             let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string());
-            pr.queries = HashMap::new();
+            pr.resp.queries = HashMap::new();
             for i in 1..=num_queries {
-                pr.queries.insert(
+                pr.resp.queries.insert(
                     format!("q{}", i),
                     WorkflowQuery {
                         query_type: "query-type".to_string(),
@@ -237,12 +237,12 @@ async fn legacy_query_failure_on_wft_failure() {
         hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
         {
             let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string());
-            pr.query = Some(WorkflowQuery {
+            pr.resp.query = Some(WorkflowQuery {
                 query_type: "query-type".to_string(),
                 query_args: Some(b"hi".into()),
                 header: None,
             });
-            pr.history = Some(History { events: vec![] });
+            pr.resp.history = Some(History { events: vec![] });
             pr
         },
         hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()),
@@ -301,14 +301,14 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
         t.add_workflow_task_completed();
         t
     };
-    let query_with_hist_task = {
+    let query_with_hist_task = || {
         let mut pr = hist_to_poll_resp(
             &t,
             wfid.to_owned(),
             ResponseType::AllHistory,
             TEST_Q.to_string(),
         );
-        pr.query = Some(WorkflowQuery {
+        pr.resp.query = Some(WorkflowQuery {
             query_type: "query-type".to_string(),
             query_args: Some(b"hi".into()),
             header: None,
@@ -322,8 +322,8 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
             ResponseType::AllHistory,
             TEST_Q.to_string(),
         ),
-        query_with_hist_task.clone(),
-        query_with_hist_task,
+        query_with_hist_task(),
+        query_with_hist_task(),
     ]);
     let mut mock_client = mock_workflow_client();
     mock_client

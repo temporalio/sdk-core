@@ -1,10 +1,11 @@
-use crate::telemetry::test_telem_console;
-use crate::test_help::{hist_to_poll_resp, TEST_Q};
 use crate::{
     job_assert,
+    telemetry::test_telem_console,
     test_help::{
-        build_fake_worker, canned_histories, gen_assert_and_reply, mock_manual_poller, mock_poller,
-        mock_worker, poll_and_reply, test_worker_cfg, MockWorker, MocksHolder,
+        build_fake_worker, build_mock_pollers, canned_histories, gen_assert_and_reply,
+        hist_to_poll_resp, mock_manual_poller, mock_poller, mock_poller_from_resps, mock_worker,
+        poll_and_reply, test_worker_cfg, MockPollCfg, MockWorker, MocksHolder, ResponseType,
+        TEST_Q,
     },
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     workflow::WorkflowCachingPolicy::NonSticky,
@@ -15,13 +16,15 @@ use std::{
     cell::RefCell,
     collections::{hash_map::Entry, HashMap, VecDeque},
     rc::Rc,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::Duration,
 };
+use temporal_client::WorkflowOptions;
+use temporal_sdk::{ActivityOptions, WfContext};
 use temporal_sdk_core_api::Worker as WorkerTrait;
-use temporal_sdk_core_protos::coresdk::workflow_completion::WorkflowActivationCompletion;
-use temporal_sdk_core_protos::temporal::api::enums::v1::EventType;
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::RespondWorkflowTaskCompletedResponse;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{activity_resolution, ActivityExecutionResult, ActivityResolution},
@@ -31,17 +34,22 @@ use temporal_sdk_core_protos::{
             ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity,
             ScheduleActivity,
         },
+        workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion,
     },
-    temporal::api::workflowservice::v1::{
-        PollActivityTaskQueueResponse, RecordActivityTaskHeartbeatResponse,
-        RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedResponse,
-        RespondActivityTaskFailedResponse,
+    temporal::api::{
+        command::v1::command::Attributes,
+        enums::v1::EventType,
+        workflowservice::v1::{
+            PollActivityTaskQueueResponse, RecordActivityTaskHeartbeatResponse,
+            RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedResponse,
+            RespondActivityTaskFailedResponse, RespondWorkflowTaskCompletedResponse,
+        },
     },
-    TestHistoryBuilder,
+    TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
 };
-use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
-use tokio::{join, time::sleep};
+use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd, TestWorker};
+use tokio::{join, sync::Barrier, time::sleep};
 
 #[tokio::test]
 async fn max_activities_respected() {
@@ -148,13 +156,15 @@ async fn heartbeats_report_cancels_only_once() {
                 activity_id: "act1".to_string(),
                 heartbeat_timeout: Some(Duration::from_millis(1).into()),
                 ..Default::default()
-            },
+            }
+            .into(),
             PollActivityTaskQueueResponse {
                 task_token: vec![2],
                 activity_id: "act2".to_string(),
                 heartbeat_timeout: Some(Duration::from_millis(1).into()),
                 ..Default::default()
-            },
+            }
+            .into(),
         ],
     ));
 
@@ -504,7 +514,8 @@ async fn can_heartbeat_acts_during_shutdown() {
             activity_id: "act1".to_string(),
             heartbeat_timeout: Some(Duration::from_millis(1).into()),
             ..Default::default()
-        }],
+        }
+        .into()],
     ));
 
     let act = core.poll_activity_task().await.unwrap();
@@ -564,7 +575,8 @@ async fn complete_act_with_fail_flushes_heartbeat() {
             activity_id: "act1".to_string(),
             heartbeat_timeout: Some(Duration::from_secs(10).into()),
             ..Default::default()
-        }],
+        }
+        .into()],
     ));
 
     let act = core.poll_activity_task().await.unwrap();
@@ -617,7 +629,6 @@ async fn max_tq_acts_set_passed_to_poll_properly() {
 /// delivered via polling.
 #[tokio::test]
 async fn activity_tasks_from_completion_are_delivered() {
-    test_telem_console();
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -671,4 +682,124 @@ async fn activity_tasks_from_completion_are_delivered() {
     .unwrap();
 
     core.shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_tasks_from_completion_reserve_slots() {
+    test_telem_console();
+    let wf_id = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let schedid = t.add_activity_task_scheduled("act_id");
+    let startid = t.add_activity_task_started(schedid);
+    t.add_activity_task_completed(schedid, startid, b"hi".into());
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let mut mock = mock_workflow_client();
+    // Set up two tasks to be returned via normal activity polling
+    let act_tasks = VecDeque::from(vec![
+        PollActivityTaskQueueResponse {
+            task_token: vec![1],
+            activity_id: "act1".to_string(),
+            ..Default::default()
+        }
+        .into(),
+        PollActivityTaskQueueResponse {
+            task_token: vec![2],
+            activity_id: "act2".to_string(),
+            ..Default::default()
+        }
+        .into(),
+    ]);
+    mock.expect_complete_activity_task()
+        .times(2)
+        .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
+    let mut mh = MockPollCfg::from_resp_batches(
+        wf_id,
+        t,
+        [
+            ResponseType::ToTaskNum(1),
+            // ResponseType::ToTaskNum(2),
+            // ResponseType::ToTaskNum(2),
+            ResponseType::AllHistory,
+        ],
+        mock,
+    );
+    mh.completion_asserts = Some(Box::new(|wftc| {
+        // Make sure when we see the completion with the schedule act command that it does
+        // not have the eager execution flag set the first time, and does the second.
+        if let Some(Attributes::ScheduleActivityTaskCommandAttributes(attrs)) =
+            wftc.commands.get(0).and_then(|cmd| cmd.attributes.as_ref())
+        {
+            assert_eq!(attrs.request_eager_execution, false);
+        }
+    }));
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|cfg| {
+        cfg.max_cached_workflows = 2;
+        cfg.max_outstanding_activities = 2;
+    });
+    mock.set_act_poller(mock_poller_from_resps(act_tasks));
+    let core = Arc::new(mock_worker(mock));
+    let mut worker = TestWorker::new(core.clone(), TEST_Q.to_string());
+
+    // First poll for activities twice, occupying both slots
+    let at1 = core.poll_activity_task().await.unwrap();
+    let at2 = core.poll_activity_task().await.unwrap();
+
+    // TODO: One option is to add mock response type which will delay response until future
+    //   resolves
+    let barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
+        let res = ctx
+            .activity(ActivityOptions {
+                activity_type: "act1".to_string(),
+                ..Default::default()
+            })
+            .await;
+        // barr.wait().await;
+        // dbg!("First barr");
+        // barr.wait().await;
+        let res = ctx
+            .activity(ActivityOptions {
+                activity_type: "act2".to_string(),
+                ..Default::default()
+            })
+            .await;
+        Ok(().into())
+    });
+
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE,
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    let act_completer = async {
+        // barr.wait().await;
+        dbg!("COMPLETING!");
+        core.complete_activity_task(ActivityTaskCompletion {
+            task_token: at1.task_token,
+            result: Some(ActivityExecutionResult::ok("hi".into())),
+        })
+        .await
+        .unwrap();
+        core.complete_activity_task(ActivityTaskCompletion {
+            task_token: at2.task_token,
+            result: Some(ActivityExecutionResult::ok("hi".into())),
+        })
+        .await
+        .unwrap();
+        // barr.wait().await;
+        dbg!("COMPLETe!");
+    };
+    // This wf poll should *not* set the flag that it wants tasks back since both slots are
+    // occupied
+    let run_fut = async { worker.run_until_done().await.unwrap() };
+    tokio::join!(run_fut, act_completer);
 }

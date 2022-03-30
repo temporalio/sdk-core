@@ -269,7 +269,9 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
         .await
         .unwrap();
     worker
-        .run_until_done_shutdown_hook(move || manual_cancel.cancel())
+        .run_until_done_intercepted(move |iceptor| {
+            iceptor.before_shutdown(move || manual_cancel.cancel())
+        })
         .await
         .unwrap();
 }
@@ -363,7 +365,9 @@ async fn cancel_after_act_starts(
         .await
         .unwrap();
     worker
-        .run_until_done_shutdown_hook(move || manual_cancel.cancel())
+        .run_until_done_intercepted(move |iceptor| {
+            iceptor.before_shutdown(move || manual_cancel.cancel())
+        })
         .await
         .unwrap();
 }

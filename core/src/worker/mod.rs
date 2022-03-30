@@ -51,6 +51,7 @@ use temporal_sdk_core_protos::{
         ActivityTaskCompletion,
     },
     temporal::api::{
+        command::v1::{command::Attributes, Command},
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
@@ -344,7 +345,7 @@ impl Worker {
 
     #[cfg(test)]
     pub(crate) fn available_wft_permits(&self) -> usize {
-        self.workflows_semaphore.sem.available_permits()
+        self.workflows_semaphore.available_permits()
     }
 
     /// Get new activity tasks (may be local or nonlocal). Local activities are returned first
@@ -357,6 +358,7 @@ impl Worker {
             if let Some(ref act_mgr) = self.at_task_mgr {
                 act_mgr.poll().await
             } else {
+                info!("Activity polling is disabled for this worker");
                 self.shutdown_token.cancelled().await;
                 Err(PollActivityError::ShutDown)
             }
@@ -715,11 +717,14 @@ impl Worker {
                 task_token,
                 action:
                     ActivationAction::WftComplete {
-                        commands,
+                        mut commands,
                         query_responses,
                         force_new_wft,
                     },
             })) => {
+                let reserved_act_slots =
+                    self.reserve_activity_slots_for_outgoing_commands(commands.as_mut_slice());
+
                 debug!("Sending commands to server: {}", commands.display());
                 if !query_responses.is_empty() {
                     debug!(
@@ -756,6 +761,19 @@ impl Worker {
                         let acts = wft_report_resp.activity_tasks;
                         info!("Got acts {:?}", acts);
                         if let Some(atm) = self.at_task_mgr.as_ref() {
+                            let excess_reserved = reserved_act_slots.saturating_sub(acts.len());
+                            if excess_reserved > 0 {
+                                // Free up slots we won't use since server didn't give us tasks
+                                atm.free_slots(excess_reserved);
+                            } else if acts.len() > reserved_act_slots {
+                                // If we somehow got more activities from server than we asked for,
+                                // server did something wrong.
+                                error!(
+                                    "Server sent more activities for eager execution than we \
+                                     requested! We will attempt to run them, and will temporarily \
+                                     exceed the max activity slots"
+                                )
+                            }
                             atm.add_non_poll_tasks(acts);
                         } else {
                             panic!(
@@ -950,6 +968,33 @@ impl Worker {
             self.wfts_drained_notify.notified().await;
         }
     }
+
+    /// Attempt to reserve activity slots for activities we could eagerly execute on
+    /// this worker.
+    ///
+    /// Returns the number of activity slots that were reserved
+    fn reserve_activity_slots_for_outgoing_commands(&self, commands: &mut [Command]) -> usize {
+        let mut reserved = 0;
+        for cmd in commands {
+            if let Some(Attributes::ScheduleActivityTaskCommandAttributes(attrs)) =
+                cmd.attributes.as_mut()
+            {
+                if let Some(at_mgr) = self.at_task_mgr.as_ref() {
+                    // If request_eager_execution was already false, that means lang explicitly
+                    // told us it didn't want to eagerly execute for some reason. So, we only
+                    // ever turn *off* eager execution if a slot is not available.
+                    if attrs.request_eager_execution {
+                        if at_mgr.reserve_slot() {
+                            reserved += 1;
+                        } else {
+                            attrs.request_eager_execution = false;
+                        }
+                    }
+                }
+            }
+        }
+        reserved
+    }
 }
 
 struct WFTReportOutcome {
@@ -992,7 +1037,7 @@ mod tests {
             .unwrap();
         let worker = Worker::new_test(cfg, mock_client);
         assert_eq!(worker.workflow_poll().await.unwrap(), None);
-        assert_eq!(worker.workflows_semaphore.sem.available_permits(), 5);
+        assert_eq!(worker.workflows_semaphore.available_permits(), 5);
     }
 
     #[tokio::test]
@@ -1024,7 +1069,7 @@ mod tests {
             .unwrap();
         let worker = Worker::new_test(cfg, mock_client);
         assert!(worker.workflow_poll().await.is_err());
-        assert_eq!(worker.workflows_semaphore.sem.available_permits(), 5);
+        assert_eq!(worker.workflows_semaphore.available_permits(), 5);
     }
 
     #[test]

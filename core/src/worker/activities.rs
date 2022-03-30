@@ -316,6 +316,24 @@ impl WorkerActivityTasks {
         self.heartbeat_manager.record(details, throttle_interval)
     }
 
+    /// Reserve an activity slot. EX: When requesting eager dispatch of an activity to this worker
+    /// upon workflow task completion
+    pub(crate) fn reserve_slot(&self) -> bool {
+        if let Ok(sem) = self.activities_semaphore.try_acquire() {
+            // Immediately forget the permit. It must be manually returned via the normal path.
+            sem.forget();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// If a slot was reserved via [reserve_slot] but is no longer needed, it can be freed here.
+    /// EX: We requested eager execution of an activity, but the activity was not dispatched to us.
+    pub(crate) fn free_slots(&self, amount: usize) {
+        self.activities_semaphore.add_permits(amount);
+    }
+
     pub(crate) fn add_non_poll_tasks(
         &self,
         tasks: impl IntoIterator<Item = PollActivityTaskQueueResponse>,
@@ -377,6 +395,6 @@ impl WorkerActivityTasks {
 
     #[cfg(test)]
     pub(crate) fn remaining_activity_capacity(&self) -> usize {
-        self.activities_semaphore.sem.available_permits()
+        self.activities_semaphore.available_permits()
     }
 }
