@@ -757,31 +757,33 @@ impl Worker {
                     if let Some(wft) = wft_report_resp.workflow_task {
                         self.wf_task_source.add_wft_from_completion(wft);
                     }
-                    if !wft_report_resp.activity_tasks.is_empty() {
-                        let acts = wft_report_resp.activity_tasks;
-                        info!("Got acts {:?}", acts);
-                        if let Some(atm) = self.at_task_mgr.as_ref() {
-                            let excess_reserved = reserved_act_slots.saturating_sub(acts.len());
-                            if excess_reserved > 0 {
-                                // Free up slots we won't use since server didn't give us tasks
-                                atm.free_slots(excess_reserved);
-                            } else if acts.len() > reserved_act_slots {
-                                // If we somehow got more activities from server than we asked for,
-                                // server did something wrong.
-                                error!(
-                                    "Server sent more activities for eager execution than we \
-                                     requested! We will attempt to run them, and will temporarily \
-                                     exceed the max activity slots"
-                                )
-                            }
-                            atm.add_non_poll_tasks(acts);
-                        } else {
-                            panic!(
-                                "Requested eager activity execution but this worker has no
-                            activity task manager! This is an internal bug, Core should not have
-                            asked for tasks."
+                    let eager_acts = wft_report_resp.activity_tasks;
+                    if let Some(atm) = self.at_task_mgr.as_ref() {
+                        let excess_reserved = reserved_act_slots.saturating_sub(eager_acts.len());
+                        if excess_reserved > 0 {
+                            // Free up slots we won't use since server didn't give us tasks
+                            debug!(
+                                "Server returned {excess_reserved} fewer activities for \
+                                 eager execution than we requested"
+                            );
+                            atm.free_slots(excess_reserved);
+                        } else if eager_acts.len() > reserved_act_slots {
+                            // If we somehow got more activities from server than we asked for,
+                            // server did something wrong.
+                            error!(
+                                "Server sent more activities for eager execution than we \
+                                 requested! We will attempt to run them, and will temporarily \
+                                 exceed the max activity slots. Please report this, as it is a \
+                                 server bug."
                             )
                         }
+                        atm.add_non_poll_tasks(eager_acts);
+                    } else if !eager_acts.is_empty() {
+                        panic!(
+                            "Requested eager activity execution but this worker has no
+                            activity task manager! This is an internal bug, Core should not have
+                            asked for tasks."
+                        )
                     }
                     Ok(())
                 })

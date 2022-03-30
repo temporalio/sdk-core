@@ -1,6 +1,5 @@
 use crate::{
     job_assert,
-    telemetry::test_telem_console,
     test_help::{
         build_fake_worker, build_mock_pollers, canned_histories, gen_assert_and_reply,
         hist_to_poll_resp, mock_manual_poller, mock_poller, mock_poller_from_resps, mock_worker,
@@ -686,7 +685,6 @@ async fn activity_tasks_from_completion_are_delivered() {
 
 #[tokio::test]
 async fn activity_tasks_from_completion_reserve_slots() {
-    test_telem_console();
     let wf_id = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -726,6 +724,8 @@ async fn activity_tasks_from_completion_reserve_slots() {
         t,
         [
             ResponseType::ToTaskNum(1),
+            // We don't want the second task to be delivered until *after* the activity tasks
+            // have been completed, so that the second activity schedule will have slots available
             ResponseType::UntilResolved(
                 async {
                     barr.wait().await;
@@ -765,18 +765,16 @@ async fn activity_tasks_from_completion_reserve_slots() {
     let at2 = core.poll_activity_task().await.unwrap();
 
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
-        let res = ctx
-            .activity(ActivityOptions {
-                activity_type: "act1".to_string(),
-                ..Default::default()
-            })
-            .await;
-        let res = ctx
-            .activity(ActivityOptions {
-                activity_type: "act2".to_string(),
-                ..Default::default()
-            })
-            .await;
+        ctx.activity(ActivityOptions {
+            activity_type: "act1".to_string(),
+            ..Default::default()
+        })
+        .await;
+        ctx.activity(ActivityOptions {
+            activity_type: "act2".to_string(),
+            ..Default::default()
+        })
+        .await;
         Ok(().into())
     });
 
@@ -791,7 +789,6 @@ async fn activity_tasks_from_completion_reserve_slots() {
         .unwrap();
     let act_completer = async {
         barr.wait().await;
-        dbg!("COMPLETING!");
         core.complete_activity_task(ActivityTaskCompletion {
             task_token: at1.task_token,
             result: Some(ActivityExecutionResult::ok("hi".into())),
@@ -805,7 +802,6 @@ async fn activity_tasks_from_completion_reserve_slots() {
         .await
         .unwrap();
         barr.wait().await;
-        dbg!("COMPLETe!");
     };
     // This wf poll should *not* set the flag that it wants tasks back since both slots are
     // occupied

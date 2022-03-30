@@ -24,6 +24,7 @@ impl MeteredSemaphore {
         }
     }
 
+    #[cfg(test)]
     pub fn available_permits(&self) -> usize {
         self.sem.available_permits()
     }

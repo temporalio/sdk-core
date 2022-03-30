@@ -192,11 +192,11 @@ impl LocalActivityManager {
 
     pub(crate) fn enqueue(
         &self,
-        reqs: impl IntoIterator<Item = LocalActRequest> + Debug,
+        reqs: impl IntoIterator<Item = LocalActRequest>,
     ) -> Vec<LocalActivityResolution> {
-        debug!("Queuing local activities: {:?}", &reqs);
         let mut immediate_resolutions = vec![];
         for req in reqs {
+            debug!(local_activity = ?req, "Queuing local activity");
             match req {
                 LocalActRequest::New(act) => {
                     let id = ExecutingLAId {
