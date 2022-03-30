@@ -194,10 +194,7 @@ impl WFStream {
                                 let _ = gsi.response_tx.send(WorkflowStateInfo {
                                     cached_workflows: state.runs.len(),
                                     outstanding_wft: state.outstanding_wfts(),
-                                    available_wft_permits: state
-                                        .wft_semaphore
-                                        .sem
-                                        .available_permits(),
+                                    available_wft_permits: state.wft_semaphore.available_permits(),
                                 });
                                 None
                             }
@@ -900,7 +897,7 @@ impl WFStream {
 
     fn should_allow_poll(&self) -> bool {
         self.runs.can_accept_new()
-            && self.wft_semaphore.sem.available_permits() > 0
+            && self.wft_semaphore.available_permits() > 0
             && self.buffered_polls_need_cache_slot.is_empty()
     }
 

@@ -1649,9 +1649,12 @@ async fn tasks_from_completion_are_delivered() {
 
     let mut mock = mock_workflow_client();
     let complete_resp = RespondWorkflowTaskCompletedResponse {
-        workflow_task: Some(
-            hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()).resp,
-        ),
+        workflow_task: Some(hist_to_poll_resp(
+            &t,
+            wfid.to_owned(),
+            2.into(),
+            TEST_Q.to_string(),
+        )),
         activity_tasks: vec![],
     };
     mock.expect_complete_workflow_task()

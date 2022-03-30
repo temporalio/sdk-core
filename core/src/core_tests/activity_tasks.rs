@@ -1,9 +1,10 @@
 use crate::{
     job_assert,
     test_help::{
-        build_fake_worker, canned_histories, gen_assert_and_reply, mock_manual_poller, mock_poller,
-        mock_worker, poll_and_reply, test_worker_cfg, MockWorkerInputs, MocksHolder,
-        WorkflowCachingPolicy,
+        build_fake_worker, build_mock_pollers, canned_histories, gen_assert_and_reply,
+        hist_to_poll_resp, mock_manual_poller, mock_poller, mock_poller_from_resps, mock_worker,
+        poll_and_reply, single_hist_mock_sg, test_worker_cfg, MockPollCfg, MockWorkerInputs,
+        MocksHolder, ResponseType, WorkflowCachingPolicy, TEST_Q,
     },
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     ActivityHeartbeat, Worker, WorkerConfigBuilder,
@@ -633,12 +634,6 @@ async fn activity_tasks_from_completion_are_delivered() {
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
-    let tasks = [hist_to_poll_resp(
-        &t,
-        wfid.to_owned(),
-        1.into(),
-        TEST_Q.to_string(),
-    )];
     let mut mock = mock_workflow_client();
     mock.expect_complete_workflow_task()
         .times(1)
@@ -655,7 +650,7 @@ async fn activity_tasks_from_completion_are_delivered() {
     mock.expect_complete_activity_task()
         .times(1)
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
-    let mut mock = MocksHolder::from_client_with_responses(mock, tasks, []);
+    let mut mock = single_hist_mock_sg(wfid, t, [1], mock, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 2);
     let core = mock_worker(mock);
 

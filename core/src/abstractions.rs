@@ -30,7 +30,6 @@ impl MeteredSemaphore {
         }
     }
 
-    #[cfg(test)]
     pub fn available_permits(&self) -> usize {
         self.sem.available_permits()
     }
@@ -49,27 +48,28 @@ impl MeteredSemaphore {
 
     pub fn try_acquire_owned(&self) -> Result<OwnedSemaphorePermit, TryAcquireError> {
         let res = self.sem.clone().try_acquire_owned();
-        (self.record_fn)(&self.metrics_ctx, self.sem.available_permits());
+        self.record();
         res
     }
 
     /// Adds just one permit. Will not add if already at the initial/max capacity.
     pub fn add_permit(&self) {
-        if self.sem.available_permits() < self.max_permits {
-            self.add_permits(1);
+        self.add_permits(1);
     }
 
+    /// Adds a number of permits. Will not add if already at the initial/max capacity.
     pub fn add_permits(&self, amount: usize) {
-        self.sem.add_permits(amount);
-        self.record();
-    }
-
-    fn record(&self) {
-            (self.record_fn)(&self.metrics_ctx, self.sem.available_permits());
+        if self.sem.available_permits() + amount <= self.max_permits {
+            self.sem.add_permits(amount);
+            self.record();
         } else if cfg!(debug_assertions) {
             // Panic only during debug mode if this happens
             panic!("Tried to add permit to a semaphore that already was at capacity!");
         }
+    }
+
+    fn record(&self) {
+        (self.record_fn)(&self.metrics_ctx, self.sem.available_permits());
     }
 }
 

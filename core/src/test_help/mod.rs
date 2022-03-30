@@ -61,7 +61,7 @@ pub fn test_worker_cfg() -> WorkerConfigBuilder {
 }
 
 /// When constructing responses for mocks, indicates how a given response should be built
-#[derive(derive_more::From, Debug, Clone)]
+#[derive(derive_more::From)]
 #[allow(clippy::large_enum_variant)] // Test only code, whatever.
 pub enum ResponseType {
     ToTaskNum(usize),
@@ -78,6 +78,7 @@ pub enum ResponseType {
 pub enum HashableResponseType {
     ToTaskNum(usize),
     OneTask(usize),
+    UntilResolved(usize),
     AllHistory,
     Raw(TaskToken),
 }
@@ -88,16 +89,7 @@ impl ResponseType {
             ResponseType::OneTask(x) => HashableResponseType::OneTask(*x),
             ResponseType::AllHistory => HashableResponseType::AllHistory,
             ResponseType::Raw(r) => HashableResponseType::Raw(r.task_token.clone().into()),
-        }
-    }
-}
-impl ResponseType {
-    pub fn as_num(&self) -> usize {
-        match self {
-            ResponseType::ToTaskNum(n) => *n,
-            ResponseType::OneTask(n) => *n,
-            ResponseType::UntilResolved(_, n) => *n,
-            ResponseType::AllHistory => usize::MAX,
+            ResponseType::UntilResolved(_, x) => HashableResponseType::UntilResolved(*x),
         }
     }
 }
@@ -176,7 +168,7 @@ impl MocksHolder {
         mutator(&mut self.inputs.config);
     }
     pub fn set_act_poller(&mut self, poller: BoxedActPoller) {
-        self.mock_worker.act_poller = Some(poller);
+        self.inputs.act_poller = Some(poller);
     }
 }
 
@@ -227,7 +219,7 @@ impl MocksHolder {
         act_tasks: ACT,
     ) -> Self
     where
-        ACT: IntoIterator<Item = PollActivityTaskQueueResponse>,
+        ACT: IntoIterator<Item = QueueResponse<PollActivityTaskQueueResponse>>,
         <ACT as IntoIterator>::IntoIter: Send + 'static,
     {
         let wft_stream = stream::pending().boxed();
@@ -514,7 +506,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
                 // Must extract run id from a workflow task associated with this workflow
                 // TODO: Case where run id changes for same workflow id is not handled here
                 if let Some(t) = tasks.get(0) {
-                    let rid = t.resp.workflow_execution.as_ref().unwrap().run_id.clone();
+                    let rid = t.workflow_execution.as_ref().unwrap().run_id.clone();
                     if !outstanding.has_run(&rid) {
                         let t = tasks.pop_front().unwrap();
                         outstanding.put_token(rid, TaskToken(t.task_token.clone()));
@@ -613,26 +605,24 @@ pub fn hist_to_poll_resp(
     wf_id: String,
     response_type: ResponseType,
     task_queue: impl Into<String>,
-) -> QueueResponse<PollWorkflowTaskQueueResponse> {
+) -> PollWorkflowTaskQueueResponse {
     let run_id = t.get_orig_run_id();
     let wf = WorkflowExecution {
         workflow_id: wf_id,
         run_id: run_id.to_string(),
     };
-    let mut delay_until = None;
     let hist_info = match response_type {
         ResponseType::ToTaskNum(tn) => t.get_history_info(tn).unwrap(),
         ResponseType::OneTask(tn) => t.get_one_wft(tn).unwrap(),
         ResponseType::AllHistory => t.get_full_history_info().unwrap(),
         ResponseType::Raw(r) => return r,
         ResponseType::UntilResolved(fut, tn) => {
-            delay_until = Some(fut);
-            t.get_history_info(tn).unwrap()
+            panic!("UntilResolved response type not supported by this fn")
         }
     };
     let mut resp = hist_info.as_poll_wft_response(task_queue);
     resp.workflow_execution = Some(wf);
-    QueueResponse { resp, delay_until }
+    resp
 }
 
 type AsserterWithReply<'a> = (

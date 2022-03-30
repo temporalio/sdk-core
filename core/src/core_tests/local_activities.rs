@@ -162,7 +162,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 2], mock);
     mh.enforce_correct_number_of_polls = false;
     let mut worker = mock_sdk_cfg(mh, |wc| wc.max_cached_workflows = 1);
-    let core = worker.orig_core_worker.clone();
+    let core = worker.core_worker.clone();
 
     let shutdown_barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
 
