@@ -47,7 +47,7 @@ use tonic::{
     metadata::{MetadataKey, MetadataValue},
     service::Interceptor,
     transport::{Certificate, Channel, Endpoint, Identity},
-    Status,
+    Code, Status,
 };
 use tower::ServiceBuilder;
 use url::Url;
@@ -325,12 +325,18 @@ impl ClientOptions {
             options: self.clone(),
             capabilities: None,
         };
-        let sysinfo = client
+        match client
             .get_system_info(GetSystemInfoRequest::default())
             .await
-            .map_err(ClientInitError::SystemInfoCallError)?
-            .into_inner();
-        client.capabilities = sysinfo.capabilities;
+        {
+            Ok(sysinfo) => {
+                client.capabilities = sysinfo.into_inner().capabilities;
+            }
+            Err(status) => match status.code() {
+                Code::Unimplemented => {}
+                _ => return Err(ClientInitError::SystemInfoCallError(status)),
+            },
+        };
         Ok(RetryClient::new(client, self.retry_config.clone()))
     }
 
