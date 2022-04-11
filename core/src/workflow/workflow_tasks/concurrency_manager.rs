@@ -22,7 +22,7 @@ pub(crate) struct WorkflowConcurrencyManager {
 }
 
 struct ManagedRun {
-    wfm: Mutex<WorkflowManager>,
+    wfm: Mutex<Option<WorkflowManager>>,
     wft: Option<OutstandingTask>,
     activation: Option<OutstandingActivation>,
     metrics: MetricsContext,
@@ -36,7 +36,7 @@ struct ManagedRun {
 impl ManagedRun {
     fn new(wfm: WorkflowManager, metrics: MetricsContext) -> Self {
         Self {
-            wfm: Mutex::new(wfm),
+            wfm: Mutex::new(Some(wfm)),
             wft: None,
             activation: None,
             metrics,
@@ -266,15 +266,35 @@ impl WorkflowConcurrencyManager {
         F: for<'a> FnOnce(&'a mut WorkflowManager) -> BoxFuture<Result<Fout>>,
         Fout: Send + Debug,
     {
-        let readlock = self.runs.read();
-        let m = readlock
-            .get(run_id)
-            .ok_or_else(|| WFMachinesError::Fatal("Missing workflow machines".to_string()))?;
-        // This holds a non-async mutex across an await point which is technically a no-no, but
-        // we never access the machines for the same run simultaneously anyway. This should all
-        // get fixed with a generally different approach which moves the runs inside workers.
-        let mut wfm_mutex = m.wfm.lock();
-        let res = mutator(&mut wfm_mutex).await;
+        // TODO: This is less than ideal. We must avoid holding the read lock on the overall machine
+        //  map while async-ly mutating the inner machine. So, we take it out of the map and put
+        //  it back when we're done. We should restructure things to avoid the top-level lock
+        //  on the map.
+
+        let mut wfm = {
+            let readlock = self.runs.read();
+            let m = readlock
+                .get(run_id)
+                .ok_or_else(|| WFMachinesError::Fatal("Missing workflow machines".to_string()))?;
+            let x = m
+                .wfm
+                .lock()
+                .take()
+                .expect("WorkflowManager inside a ManagedRun is never None");
+            x
+        };
+
+        let res = mutator(&mut wfm).await;
+
+        {
+            let readlock = self.runs.read();
+            // SAFETY: Since runs are accessed serially the machines cannot go missing while
+            // we are modifying them for a given run
+            let m = readlock
+                .get(run_id)
+                .expect("Machine cannot be missing as each run is accessed serially");
+            *m.wfm.lock() = Some(wfm);
+        }
 
         res
     }
@@ -293,7 +313,7 @@ impl WorkflowConcurrencyManager {
             run_id: run_id.to_string(),
         })?;
         let mut wfm_mutex = m.wfm.lock();
-        Ok(mutator(&mut wfm_mutex))
+        Ok(mutator(wfm_mutex.as_mut().unwrap()))
     }
 
     /// Remove the workflow with the provided run id from management
