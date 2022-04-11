@@ -8,6 +8,7 @@ use crate::{
 };
 use futures::future::{BoxFuture, FutureExt};
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::Arc;
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -22,7 +23,7 @@ pub(crate) struct WorkflowConcurrencyManager {
 }
 
 struct ManagedRun {
-    wfm: Mutex<WorkflowManager>,
+    wfm: Arc<Mutex<WorkflowManager>>,
     wft: Option<OutstandingTask>,
     activation: Option<OutstandingActivation>,
     metrics: MetricsContext,
@@ -36,7 +37,7 @@ struct ManagedRun {
 impl ManagedRun {
     fn new(wfm: WorkflowManager, metrics: MetricsContext) -> Self {
         Self {
-            wfm: Mutex::new(wfm),
+            wfm: Arc::new(Mutex::new(wfm)),
             wft: None,
             activation: None,
             metrics,
@@ -266,16 +267,19 @@ impl WorkflowConcurrencyManager {
         F: for<'a> FnOnce(&'a mut WorkflowManager) -> BoxFuture<Result<Fout>>,
         Fout: Send + Debug,
     {
-        let readlock = self.runs.read();
-        let m = readlock
-            .get(run_id)
-            .ok_or_else(|| WFMachinesError::Fatal("Missing workflow machines".to_string()))?;
-        // This holds a non-async mutex across an await point which is technically a no-no, but
-        // we never access the machines for the same run simultaneously anyway. This should all
-        // get fixed with a generally different approach which moves the runs inside workers.
-        let mut wfm_mutex = m.wfm.lock();
-        let res = mutator(&mut wfm_mutex).await;
+        // TODO: Slightly less than ideal. We must avoid holding the read lock on the overall
+        //  machine map while async-ly mutating the inner machine. So, we clone the inner ArcMutex.
+        //  We should restructure things to avoid the top-level lock on the map.
 
+        let wfm = {
+            let readlock = self.runs.read();
+            let m = readlock
+                .get(run_id)
+                .ok_or_else(|| WFMachinesError::Fatal("Missing workflow machines".to_string()))?;
+            m.wfm.clone()
+        };
+
+        let res = mutator(&mut wfm.lock()).await;
         res
     }
 
@@ -321,6 +325,8 @@ impl WorkflowConcurrencyManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_help::canned_histories;
+    use tokio::sync::Barrier;
 
     // We test mostly error paths here since the happy paths are well covered by the tests of the
     // core sdk itself, and setting up the fake data is onerous here. If we make the concurrency
@@ -341,5 +347,58 @@ mod tests {
             .await;
         // Should whine that the machines have nothing to do (history empty)
         assert_matches!(res.unwrap_err(), WFMachinesError::Fatal { .. });
+    }
+
+    /// This test makes sure that if we're stuck on an await within the machine mutator we don't
+    /// cause a deadlock if a write happens during that. This test will hang without proper
+    /// implementation.
+    #[tokio::test]
+    async fn aba_deadlock_prevented() {
+        let run_id = "some_run_id";
+        let timer_hist = canned_histories::single_timer("t");
+        let access_barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
+        let wft = timer_hist.get_history_info(1).unwrap();
+
+        let mgr = WorkflowConcurrencyManager::new();
+        mgr.create_or_update(
+            run_id,
+            wft.clone().into(),
+            "fake_wf_id",
+            "fake_namespace",
+            "fake_wf_type",
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+        // Perform access which blocks
+        let access_fut = mgr.access(run_id, |_wfm| {
+            async {
+                // Wait to make sure access has started
+                access_barr.wait().await;
+                // Wait to make sure write has finished
+                access_barr.wait().await;
+                Ok(())
+            }
+            .boxed()
+        });
+        let write_fut = async {
+            // Wait to make sure access has started
+            access_barr.wait().await;
+            // Now try writing
+            mgr.create_or_update(
+                "different_run_id",
+                wft.clone().into(),
+                "fake_wf_id",
+                "fake_namespace",
+                "fake_wf_type",
+                &Default::default(),
+            )
+            .await
+            .unwrap();
+            // Indicate write has finished
+            access_barr.wait().await;
+        };
+        let (r1, _) = tokio::join!(access_fut, write_fut);
+        r1.unwrap();
     }
 }
