@@ -15,6 +15,8 @@ use temporal_sdk_core_protos::{
         common::WorkflowExecution,
     },
     temporal::api::enums::v1::TimeoutType,
+    temporal::api::failure::v1::failure::FailureInfo,
+    temporal::api::failure::v1::ApplicationFailureInfo,
 };
 use tokio::{
     sync::{
@@ -420,10 +422,13 @@ impl LocalActivityManager {
                 LocalActivityExecutionResult::Failed(f) => {
                     if let Some(backoff_dur) = info.la_info.schedule_cmd.retry_policy.should_retry(
                         info.attempt as usize,
-                        &f.failure
-                            .as_ref()
-                            .map(|f| format!("{:?}", f))
-                            .unwrap_or_else(|| "".to_string()),
+                        f.failure.as_ref().map_or("", |f| match &f.failure_info {
+                            Some(FailureInfo::ApplicationFailureInfo(ApplicationFailureInfo {
+                                r#type,
+                                ..
+                            })) => r#type.as_str(),
+                            _ => "",
+                        }),
                     ) {
                         let will_use_timer =
                             backoff_dur > info.la_info.schedule_cmd.local_retry_threshold;
@@ -638,6 +643,7 @@ mod tests {
     use super::*;
     use crate::protosext::LACloseTimeouts;
     use temporal_sdk_core_protos::coresdk::common::RetryPolicy;
+    use temporal_sdk_core_protos::temporal::api::failure::v1::Failure;
     use tokio::{sync::mpsc::error::TryRecvError, task::yield_now};
 
     impl DispatchOrTimeoutLA {
@@ -783,6 +789,50 @@ mod tests {
         assert_matches!(res, LACompleteAction::LangDoesTimerBackoff(dur, info)
             if dur.seconds == 10 && info.attempt == 5
         )
+    }
+
+    #[tokio::test]
+    async fn respects_non_retryable_error_types() {
+        let lam = LocalActivityManager::test(1);
+        lam.enqueue([NewLocalAct {
+            schedule_cmd: ValidScheduleLA {
+                seq: 1,
+                activity_id: "1".to_string(),
+                attempt: 1,
+                retry_policy: RetryPolicy {
+                    initial_interval: Some(Duration::from_secs(1).into()),
+                    backoff_coefficient: 10.0,
+                    maximum_interval: Some(Duration::from_secs(10).into()),
+                    maximum_attempts: 10,
+                    non_retryable_error_types: vec!["TestError".to_string()],
+                },
+                local_retry_threshold: Duration::from_secs(5),
+                ..Default::default()
+            },
+            workflow_type: "".to_string(),
+            workflow_exec_info: Default::default(),
+            schedule_time: SystemTime::now(),
+        }
+        .into()]);
+
+        let next = lam.next_pending().await.unwrap().unwrap();
+        let tt = TaskToken(next.task_token);
+        let res = lam.complete(
+            &tt,
+            &LocalActivityExecutionResult::Failed(ActFail {
+                failure: Some(Failure {
+                    failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                        ApplicationFailureInfo {
+                            r#type: "TestError".to_string(),
+                            non_retryable: false,
+                            ..Default::default()
+                        },
+                    )),
+                    ..Default::default()
+                }),
+            }),
+        );
+        assert_matches!(res, LACompleteAction::Report(_));
     }
 
     #[tokio::test]
