@@ -21,38 +21,6 @@ use temporal_sdk_core_test_utils::start_timer_cmd;
 use tokio::sync::{watch, Barrier};
 
 #[tokio::test]
-async fn multi_workers() {
-    // TODO: Turn this into a test with multiple independent workers
-    // Make histories for 5 different workflows on 5 different task queues
-    // let hists = (0..5).into_iter().map(|i| {
-    //     let wf_id = format!("fake-wf-{}", i);
-    //     let hist = canned_histories::single_timer("1");
-    //     FakeWfResponses {
-    //         wf_id,
-    //         hist,
-    //         response_batches: vec![1.into(), 2.into()],
-    //         task_q: format!("q-{}", i),
-    //     }
-    // });
-    // let mock = build_multihist_mock_sg(hists, false, None);
-    //
-    // let core = &mock_worker(mock);
-    //
-    // for i in 0..5 {
-    //     let tq = format!("q-{}", i);
-    //     let res = core.poll_workflow_activation().await.unwrap();
-    //     assert_matches!(
-    //         res.jobs[0].variant,
-    //         Some(workflow_activation_job::Variant::StartWorkflow(_))
-    //     );
-    //     core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
-    //         .await
-    //         .unwrap();
-    // }
-    // core.shutdown().await;
-}
-
-#[tokio::test]
 async fn after_shutdown_of_worker_get_shutdown_err() {
     let t = canned_histories::single_timer("1");
     let worker = build_fake_worker("fake_wf_id", t, &[1]);

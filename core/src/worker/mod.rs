@@ -258,6 +258,11 @@ impl Worker {
         Self::new(config, None, Arc::new(client.into()), Default::default())
     }
 
+    /// Returns number of currently cached workflows
+    pub fn cached_workflows(&self) -> usize {
+        self.wft_manager.cached_workflows()
+    }
+
     pub(crate) fn new_with_pollers(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,

@@ -3,11 +3,12 @@ use futures::future::join_all;
 use std::time::Duration;
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{
-    act_cancelled, act_is_cancelled, ActivityCancelledError, CancellableFuture,
-    LocalActivityOptions, WfContext, WorkflowResult,
+    act_cancelled, act_is_cancelled, interceptors::WorkerInterceptor, ActivityCancelledError,
+    CancellableFuture, LocalActivityOptions, WfContext, WorkflowResult,
 };
 use temporal_sdk_core_protos::coresdk::{
-    common::RetryPolicy, workflow_commands::ActivityCancellationType, AsJsonPayloadExt,
+    common::RetryPolicy, workflow_commands::ActivityCancellationType,
+    workflow_completion::WorkflowActivationCompletion, AsJsonPayloadExt,
 };
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio_util::sync::CancellationToken;
@@ -269,9 +270,21 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
         .await
         .unwrap();
     worker
-        .run_until_done_shutdown_hook(move || manual_cancel.cancel())
+        .run_until_done_intercepted(Some(LACancellerInterceptor {
+            token: manual_cancel,
+        }))
         .await
         .unwrap();
+}
+
+struct LACancellerInterceptor {
+    token: CancellationToken,
+}
+impl WorkerInterceptor for LACancellerInterceptor {
+    fn on_workflow_activation_completion(&self, _: &WorkflowActivationCompletion) {}
+    fn on_shutdown(&self, _: &temporal_sdk::Worker) {
+        self.token.cancel()
+    }
 }
 
 #[rstest::rstest]
@@ -363,7 +376,9 @@ async fn cancel_after_act_starts(
         .await
         .unwrap();
     worker
-        .run_until_done_shutdown_hook(move || manual_cancel.cancel())
+        .run_until_done_intercepted(Some(LACancellerInterceptor {
+            token: manual_cancel,
+        }))
         .await
         .unwrap();
 }

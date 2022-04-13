@@ -24,7 +24,7 @@ use std::{
     time::Duration,
 };
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{WfContext, WorkflowResult};
+use temporal_sdk::{interceptors::WorkerInterceptor, WfContext, WorkflowResult};
 use temporal_sdk_core_api::{errors::PollWfError, Worker};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -128,7 +128,14 @@ async fn workflow_lru_cache_evictions() {
             .await
             .unwrap();
     }
-    worker.run_until_done().await.unwrap();
+    struct CacheAsserter {}
+    impl WorkerInterceptor for CacheAsserter {
+        fn on_workflow_activation_completion(&self, _: &WorkflowActivationCompletion) {}
+        fn on_shutdown(&self, sdk_worker: &temporal_sdk::Worker) {
+            assert_eq!(sdk_worker.cached_workflows(), 1)
+        }
+    }
+    worker.run_until_done_intercepted(Some(CacheAsserter{})).await.unwrap();
     // The wf must have started more than # workflows times, since all but one must experience
     // an eviction
     assert!(RUN_CT.load(Ordering::SeqCst) > n_workflows);

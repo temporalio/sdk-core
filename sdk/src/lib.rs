@@ -49,7 +49,7 @@ use crate::{
     workflow_context::{ChildWfCommon, PendingChildWorkflow},
 };
 use anyhow::{anyhow, bail};
-use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::{future::BoxFuture, FutureExt};
 use once_cell::sync::OnceCell;
 use std::{
     collections::HashMap,
@@ -120,13 +120,16 @@ struct CommonWorker {
 }
 
 struct WorkflowHalf {
-    /// Maps run id to the driver
-    workflows: HashMap<String, UnboundedSender<WorkflowActivation>>,
+    /// Maps run id to cached workflow state
+    workflows: HashMap<String, WorkflowData>,
     /// Maps workflow type to the function for executing workflow runs with that ID
     workflow_fns: HashMap<String, WorkflowFunction>,
-    /// Handles for each spawned workflow run are inserted here to be cleaned up when all runs
-    /// are finished
-    join_handles: FuturesUnordered<BoxFuture<'static, Result<WorkflowResult<()>, JoinError>>>,
+}
+struct WorkflowData {
+    /// Channel used to send the workflow activations
+    activation_chan: UnboundedSender<WorkflowActivation>,
+    /// Join handle for the spawned workflow future
+    join_handle: BoxFuture<'static, Result<WorkflowResult<()>, JoinError>>,
 }
 
 struct ActivityHalf {
@@ -136,8 +139,6 @@ struct ActivityHalf {
 }
 
 impl Worker {
-    // pub fn new(cfg: WorkerConfig) -> Self {}
-
     #[doc(hidden)]
     /// Create a new rust worker from a core worker
     pub fn new_from_core(worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
@@ -150,7 +151,6 @@ impl Worker {
             workflow_half: WorkflowHalf {
                 workflows: Default::default(),
                 workflow_fns: Default::default(),
-                join_handles: FuturesUnordered::new(),
             },
             activity_half: ActivityHalf {
                 activity_fns: Default::default(),
@@ -204,12 +204,12 @@ impl Worker {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let pollers = async move {
             let (common, wf_half, act_half) = self.split_apart();
+            // TODO: This channel can just be moved inside the activation handler?
             let (completions_tx, mut completions_rx) = unbounded_channel();
             let (wf_poll_res, act_poll_res) = tokio::join!(
                 // Workflow polling loop
                 async {
                     loop {
-                        info!("Polling");
                         let activation = match common.worker.poll_workflow_activation().await {
                             Err(PollWfError::ShutDown) => {
                                 break Result::<_, anyhow::Error>::Ok(());
@@ -255,13 +255,16 @@ impl Worker {
         };
 
         let myself = pollers.await?;
-        info!("Polling loop exited");
+        info!("Polling loops exited");
         let _ = shutdown_tx.send(true);
-        while let Some(h) = myself.workflow_half.join_handles.next().await {
-            h??;
+        if let Some(i) = myself.common.worker_interceptor.as_ref() {
+            i.on_shutdown(myself);
         }
         myself.common.worker.shutdown().await;
-        myself.workflow_half.workflows.clear();
+        // Clean up any still-extant workflows
+        for (_, wf_dat) in myself.workflow_half.workflows.drain() {
+            wf_dat.join_handle.await??;
+        }
         Ok(())
     }
 
@@ -275,6 +278,12 @@ impl Worker {
     /// a replay worker, change task queues, etc.
     pub fn with_new_core_worker(&mut self, new_core_worker: Arc<dyn CoreWorker>) {
         self.common.worker = new_core_worker;
+    }
+
+    /// Returns number of currently cached workflows as understood by the SDK. Importantly, this
+    /// is not the same as understood by core, though they *should* always be in sync.
+    pub fn cached_workflows(&self) -> usize {
+        self.workflow_half.workflows.len()
     }
 
     fn split_apart(&mut self) -> (&mut CommonWorker, &mut WorkflowHalf, &mut ActivityHalf) {
@@ -295,6 +304,11 @@ impl WorkflowHalf {
         completions_rx: &mut UnboundedReceiver<WorkflowActivationCompletion>,
         activation: WorkflowActivation,
     ) -> Result<(), anyhow::Error> {
+        let shall_be_evicted = activation
+            .jobs
+            .iter()
+            .any(|j| matches!(j.variant, Some(Variant::RemoveFromCache(_))));
+        let run_id = activation.run_id.clone();
         // If the activation is to start a workflow, create a new workflow driver for it,
         // using the function associated with that workflow id
         if let Some(WorkflowActivationJob {
@@ -321,15 +335,20 @@ impl WorkflowHalf {
                     _ = shutdown_rx.changed() => Ok(WfExitValue::Evicted)
                 }
             });
-            self.workflows
-                .insert(activation.run_id.clone(), activations);
-            self.join_handles.push(jh.boxed());
+            self.workflows.insert(
+                run_id.clone(),
+                WorkflowData {
+                    activation_chan: activations,
+                    join_handle: jh.boxed(),
+                },
+            );
         }
 
         // The activation is expected to apply to some workflow we know about. Use it to
         // unblock things and advance the workflow.
-        if let Some(tx) = self.workflows.get_mut(&activation.run_id) {
-            tx.send(activation)
+        if let Some(dat) = self.workflows.get_mut(&run_id) {
+            dat.activation_chan
+                .send(activation)
                 .expect("Workflow should exist if we're sending it an activation");
         } else {
             bail!("Got activation for unknown workflow");
@@ -343,6 +362,18 @@ impl WorkflowHalf {
             .worker
             .complete_workflow_activation(completion)
             .await?;
+
+        // Join the workflow handle if it was to be evicted
+        if shall_be_evicted {
+            if let Some(dat) = self.workflows.remove(&run_id) {
+                // TODO: Probably need to not double-q here. Shouldn't blow up whole workflow
+                // handler b/c of a panic in one.
+                let res = dat.join_handle.await??;
+                if !matches!(res, WfExitValue::Evicted) {
+                    error!("Workflow was supposed to evict, but exited with non-evict status!");
+                }
+            }
+        }
         Ok(())
     }
 }

@@ -320,6 +320,11 @@ impl WorkflowConcurrencyManager {
             .filter(|(_, run)| run.wft.is_some())
             .count()
     }
+
+    /// Returns number of currently cached workflows
+    pub fn cached_workflows(&self) -> usize {
+        self.runs.read().len()
+    }
 }
 
 #[cfg(test)]

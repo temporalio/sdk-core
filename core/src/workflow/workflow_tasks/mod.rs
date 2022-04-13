@@ -187,6 +187,11 @@ impl WorkflowTaskManager {
         }
     }
 
+    /// Returns number of currently cached workflows
+    pub fn cached_workflows(&self) -> usize {
+        self.workflow_machines.cached_workflows()
+    }
+
     pub(crate) fn next_pending_activation(&self) -> Option<WorkflowActivation> {
         // Dispatch pending legacy queries first
         if let leg_q @ Some(_) = self.pending_legacy_queries.pop() {
