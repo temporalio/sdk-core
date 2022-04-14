@@ -35,7 +35,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         enums::v1::{EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
-        history::v1::{history_event, TimerFiredEventAttributes},
+        history::v1::{history_event, History, TimerFiredEventAttributes},
         workflowservice::v1::{
             GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
         },
@@ -1684,5 +1684,48 @@ async fn tasks_from_completion_are_delivered() {
     ))
     .await
     .unwrap();
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn evict_missing_wf_during_poll_doesnt_eat_permit() {
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_we_signaled("sig", vec![]);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let tasks = [hist_to_poll_resp(
+        &t,
+        wfid.to_owned(),
+        // Use a partial task so that we'll fetch history
+        ResponseType::OneTask(2),
+        TEST_Q.to_string(),
+    )];
+    let mut mock = mock_workflow_client();
+    mock.expect_get_workflow_execution_history()
+        .times(1)
+        .returning(move |_, _, _| {
+            Ok(GetWorkflowExecutionHistoryResponse {
+                // Empty history so we error applying it (no jobs)
+                history: Some(History { events: vec![] }),
+                raw_history: vec![],
+                next_page_token: vec![],
+                archived: false,
+            })
+        });
+    let mut mock = MocksHolder::from_client_with_responses(mock, tasks, []);
+    mock.worker_cfg(|wc| {
+        wc.max_cached_workflows = 1;
+        wc.max_outstanding_workflow_tasks = 1;
+    });
+    let core = mock_worker(mock);
+
+    // Should error because mock is out of work
+    assert_matches!(core.poll_workflow_activation().await, Err(_));
+    assert_eq!(core.available_wft_permits(), 1);
+
     core.shutdown().await;
 }

@@ -66,6 +66,7 @@ use tracing_futures::Instrument;
 
 #[cfg(test)]
 use crate::worker::client::WorkerClient;
+use crate::workflow::workflow_tasks::EvictionRequestResult;
 
 /// A worker polls on a certain task queue
 pub struct Worker {
@@ -532,13 +533,18 @@ impl Worker {
         self.workflows_semaphore.add_permit();
     }
 
+    /// Request a workflow eviction. Returns true if we actually queued up a new eviction request.
     pub(crate) fn request_wf_eviction(
         &self,
         run_id: &str,
         message: impl Into<String>,
         reason: EvictionReason,
-    ) {
-        self.wft_manager.request_eviction(run_id, message, reason);
+    ) -> bool {
+        match self.wft_manager.request_eviction(run_id, message, reason) {
+            EvictionRequestResult::EvictionIssued(_) => true,
+            EvictionRequestResult::NotFound => false,
+            EvictionRequestResult::EvictionAlreadyOutstanding => false,
+        }
     }
 
     /// Sets a function to be called at the end of each activation completion
@@ -677,11 +683,16 @@ impl Worker {
             }
             NewWfTaskOutcome::Evict(e) => {
                 warn!(error=?e, run_id=%we.run_id, "Error while applying poll response to workflow");
-                self.request_wf_eviction(
+                let did_issue_eviction = self.request_wf_eviction(
                     &we.run_id,
                     format!("Error while applying poll response to workflow: {:?}", e),
                     e.evict_reason(),
                 );
+                // If we didn't actually need to issue an eviction, then return the WFT permit.
+                // EX: The workflow we tried to evict wasn't in the cache.
+                if !did_issue_eviction {
+                    self.return_workflow_task_permit();
+                }
                 None
             }
         })
