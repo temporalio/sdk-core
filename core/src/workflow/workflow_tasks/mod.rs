@@ -150,6 +150,12 @@ pub(crate) enum ActivationAction {
     RespondLegacyQuery { result: QueryResult },
 }
 
+#[derive(Debug, Eq, PartialEq, Hash)]
+pub(crate) enum EvictionRequestResult {
+    EvictionIssued(Option<u32>),
+    NotFound,
+}
+
 macro_rules! machine_mut {
     ($myself:ident, $run_id:ident, $clos:expr) => {{
         $myself
@@ -247,7 +253,7 @@ impl WorkflowTaskManager {
         run_id: &str,
         message: impl Into<String>,
         reason: EvictionReason,
-    ) -> Option<u32> {
+    ) -> EvictionRequestResult {
         if self.workflow_machines.exists(run_id) {
             if !self.activation_has_eviction(run_id) {
                 let message = message.into();
@@ -257,12 +263,15 @@ impl WorkflowTaskManager {
                     .notify_needs_eviction(run_id, message, reason);
                 self.pending_activations_notifier.notify_waiters();
             }
-            self.workflow_machines
-                .get_task(run_id)
-                .map(|wt| wt.info.attempt)
+            // TODO: Maybe need another branch since only issued if above branch is true
+            EvictionRequestResult::EvictionIssued(
+                self.workflow_machines
+                    .get_task(run_id)
+                    .map(|wt| wt.info.attempt),
+            )
         } else {
             warn!(%run_id, "Eviction requested for unknown run");
-            None
+            EvictionRequestResult::NotFound
         }
     }
 
@@ -561,9 +570,10 @@ impl WorkflowTaskManager {
             FailedActivationOutcome::ReportLegacyQueryFailure(tt)
         } else {
             // Blow up any cached data associated with the workflow
-            let should_report = self
-                .request_eviction(run_id, failstr, reason)
-                .map_or(true, |attempt| attempt <= 1);
+            let should_report = match self.request_eviction(run_id, failstr, reason) {
+                EvictionRequestResult::EvictionIssued(Some(attempt)) => attempt <= 1,
+                _ => false,
+            };
             if should_report {
                 FailedActivationOutcome::Report(tt)
             } else {

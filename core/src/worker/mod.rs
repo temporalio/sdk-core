@@ -65,6 +65,7 @@ use tracing_futures::Instrument;
 
 #[cfg(test)]
 use crate::worker::client::WorkerClient;
+use crate::workflow::workflow_tasks::EvictionRequestResult;
 
 /// A worker polls on a certain task queue
 pub struct Worker {
@@ -535,8 +536,11 @@ impl Worker {
         run_id: &str,
         message: impl Into<String>,
         reason: EvictionReason,
-    ) {
-        self.wft_manager.request_eviction(run_id, message, reason);
+    ) -> bool {
+        match self.wft_manager.request_eviction(run_id, message, reason) {
+            EvictionRequestResult::EvictionIssued(_) => true,
+            EvictionRequestResult::NotFound => false,
+        }
     }
 
     /// Sets a function to be called at the end of each activation completion
@@ -675,11 +679,14 @@ impl Worker {
             }
             NewWfTaskOutcome::Evict(e) => {
                 warn!(error=?e, run_id=%we.run_id, "Error while applying poll response to workflow");
-                self.request_wf_eviction(
+                let did_issue_eviction = self.request_wf_eviction(
                     &we.run_id,
                     format!("Error while applying poll response to workflow: {:?}", e),
                     e.evict_reason(),
                 );
+                if !did_issue_eviction {
+                    self.return_workflow_task_permit();
+                }
                 None
             }
         })
