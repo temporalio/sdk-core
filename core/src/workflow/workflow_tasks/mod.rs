@@ -154,6 +154,7 @@ pub(crate) enum ActivationAction {
 pub(crate) enum EvictionRequestResult {
     EvictionIssued(Option<u32>),
     NotFound,
+    EvictionAlreadyOutstanding,
 }
 
 macro_rules! machine_mut {
@@ -262,13 +263,14 @@ impl WorkflowTaskManager {
                 self.pending_activations
                     .notify_needs_eviction(run_id, message, reason);
                 self.pending_activations_notifier.notify_waiters();
+                EvictionRequestResult::EvictionIssued(
+                    self.workflow_machines
+                        .get_task(run_id)
+                        .map(|wt| wt.info.attempt),
+                )
+            } else {
+                EvictionRequestResult::EvictionAlreadyOutstanding
             }
-            // TODO: Maybe need another branch since only issued if above branch is true
-            EvictionRequestResult::EvictionIssued(
-                self.workflow_machines
-                    .get_task(run_id)
-                    .map(|wt| wt.info.attempt),
-            )
         } else {
             warn!(%run_id, "Eviction requested for unknown run");
             EvictionRequestResult::NotFound

@@ -2,7 +2,6 @@ use crate::{
     errors::PollWfError,
     job_assert,
     replay::TestHistoryBuilder,
-    telemetry::test_telem_console,
     test_help::{
         build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_worker, poll_and_reply,
@@ -1698,8 +1697,6 @@ async fn tasks_from_completion_are_delivered() {
 
 #[tokio::test]
 async fn evict_missing_wf_during_poll_doesnt_eat_permit() {
-    test_telem_console();
-
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);

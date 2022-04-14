@@ -531,6 +531,7 @@ impl Worker {
         self.workflows_semaphore.add_permit();
     }
 
+    /// Request a workflow eviction. Returns true if we actually queued up a new eviction request.
     pub(crate) fn request_wf_eviction(
         &self,
         run_id: &str,
@@ -540,6 +541,7 @@ impl Worker {
         match self.wft_manager.request_eviction(run_id, message, reason) {
             EvictionRequestResult::EvictionIssued(_) => true,
             EvictionRequestResult::NotFound => false,
+            EvictionRequestResult::EvictionAlreadyOutstanding => false,
         }
     }
 
