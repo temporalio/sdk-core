@@ -1,8 +1,8 @@
-use crate::telemetry::test_telem_console;
 use crate::{
     errors::PollWfError,
     job_assert,
     replay::TestHistoryBuilder,
+    telemetry::test_telem_console,
     test_help::{
         build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_worker, poll_and_reply,

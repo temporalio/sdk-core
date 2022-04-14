@@ -389,7 +389,7 @@ impl ActivityHalf {
                 tokio::spawn(ACT_CANCEL_TOK.scope(ct, async move {
                     let mut inputs = start.input;
                     let arg = inputs.pop().unwrap_or_default();
-                    let output = (&act_fn.act_func)(arg).await;
+                    let output = (act_fn.act_func)(arg).await;
                     let result = match output {
                         Ok(res) => ActivityExecutionResult::ok(res),
                         Err(err) => match err.downcast::<ActivityCancelledError>() {
