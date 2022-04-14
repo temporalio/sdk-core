@@ -304,9 +304,11 @@ impl WorkflowTaskManager {
             return NewWfTaskOutcome::TaskBuffered;
         };
 
+        let start_event_id = work.history.events.first().map(|e| e.event_id);
         debug!(
             task_token = %&work.task_token,
             history_length = %work.history.events.len(),
+            start_event_id = ?start_event_id,
             attempt = %work.attempt,
             run_id = %work.workflow_execution.run_id,
             "Applying new workflow task from server"
