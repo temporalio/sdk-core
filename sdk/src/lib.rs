@@ -374,6 +374,7 @@ impl WorkflowHalf {
                 }
             }
         }
+        info!("SDK cache size: {}", self.workflows.len());
         Ok(())
     }
 }

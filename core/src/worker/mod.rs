@@ -165,7 +165,6 @@ impl WorkerTrait for Worker {
     }
 
     /// Begins the shutdown process, tells pollers they should stop. Is idempotent.
-    // TODO: will be in trait after Roey's shutdown refactor
     fn initiate_shutdown(&self) {
         self.shutdown_token.cancel();
         // First, we want to stop polling of both activity and workflow tasks
@@ -517,6 +516,9 @@ impl Worker {
         self.wft_manager
             .after_wft_report(&completion.run_id, report_outcome.reported_to_server);
         if report_outcome.reported_to_server || report_outcome.failed {
+            if report_outcome.failed {
+                warn!("Return failed WFT permit");
+            }
             // If we failed the WFT but didn't report anything, we still want to release the WFT
             // permit since the server will eventually time out the task and we've already evicted
             // the run.
@@ -991,6 +993,7 @@ mod tests {
 
         let cfg = test_worker_cfg()
             .max_outstanding_workflow_tasks(5_usize)
+            .max_cached_workflows(5_usize)
             .build()
             .unwrap();
         let worker = Worker::new_test(cfg, mock_client);
@@ -1023,6 +1026,7 @@ mod tests {
 
         let cfg = test_worker_cfg()
             .max_outstanding_workflow_tasks(5_usize)
+            .max_cached_workflows(5_usize)
             .build()
             .unwrap();
         let worker = Worker::new_test(cfg, mock_client);

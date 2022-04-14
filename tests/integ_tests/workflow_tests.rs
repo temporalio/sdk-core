@@ -135,7 +135,10 @@ async fn workflow_lru_cache_evictions() {
             assert_eq!(sdk_worker.cached_workflows(), 1)
         }
     }
-    worker.run_until_done_intercepted(Some(CacheAsserter{})).await.unwrap();
+    worker
+        .run_until_done_intercepted(Some(CacheAsserter {}))
+        .await
+        .unwrap();
     // The wf must have started more than # workflows times, since all but one must experience
     // an eviction
     assert!(RUN_CT.load(Ordering::SeqCst) > n_workflows);

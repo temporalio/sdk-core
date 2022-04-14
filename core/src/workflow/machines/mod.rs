@@ -175,7 +175,7 @@ where
         event: HistoryEvent,
         has_next_event: bool,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        debug!(
+        trace!(
             event = %event,
             machine_name = %self.name(),
             state = %self.state(),

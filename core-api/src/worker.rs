@@ -20,6 +20,8 @@ pub struct WorkerConfig {
     /// The maximum allowed number of workflow tasks that will ever be given to this worker at one
     /// time. Note that one workflow task may require multiple activations - so the WFT counts as
     /// "outstanding" until all activations it requires have been completed.
+    ///
+    /// Cannot be larger than `max_cached_workflows`.
     #[builder(default = "100")]
     pub max_outstanding_workflow_tasks: usize,
     /// The maximum number of activity tasks that will ever be given to this worker concurrently
@@ -89,6 +91,11 @@ impl WorkerConfigBuilder {
     fn validate(&self) -> Result<(), String> {
         if self.max_concurrent_wft_polls == Some(0) {
             return Err("`max_concurrent_wft_polls` must be at least 1".to_owned());
+        }
+        if self.max_outstanding_workflow_tasks > self.max_cached_workflows {
+            return Err(
+                "`max_outstanding_workflow_tasks` cannot exceed `max_cached_workflows`".to_owned(),
+            );
         }
         Ok(())
     }
