@@ -684,6 +684,8 @@ impl Worker {
                     format!("Error while applying poll response to workflow: {:?}", e),
                     e.evict_reason(),
                 );
+                // If we didn't actually need to issue an eviction, then return the WFT permit.
+                // EX: The workflow we tried to evict wasn't in the cache.
                 if !did_issue_eviction {
                     self.return_workflow_task_permit();
                 }
