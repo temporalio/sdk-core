@@ -8,11 +8,11 @@ use crate::{
 };
 use futures::future::{BoxFuture, FutureExt};
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::sync::Arc;
 use std::{
     collections::HashMap,
     fmt::Debug,
     ops::{Deref, DerefMut},
+    sync::Arc,
 };
 use temporal_sdk_core_protos::coresdk::workflow_activation::WorkflowActivation;
 
