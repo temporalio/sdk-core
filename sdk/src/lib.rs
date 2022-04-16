@@ -9,7 +9,7 @@
 //! An example of running an activity worker:
 //! ```no_run
 //! use std::{sync::Arc, str::FromStr};
-//! use temporal_sdk::{sdk_client_options, Worker};
+//! use temporal_sdk::{sdk_client_options, Worker, ActContext};
 //! use temporal_sdk_core::{init_worker, Url};
 //! use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
 //!
@@ -23,7 +23,7 @@
 //!     let mut worker = Worker::new_from_core(Arc::new(core_worker), "task_queue");
 //!     worker.register_activity(
 //!         "echo_activity",
-//!         |echo_me: String| async move { Ok(echo_me) },
+//!         |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
 //!     );
 //!     worker.run().await?;
 //!     Ok(())

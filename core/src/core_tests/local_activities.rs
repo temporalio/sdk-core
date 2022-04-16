@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{LocalActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{LocalActivityOptions, WfContext, WorkflowResult, ActContext};
 use temporal_sdk_core_protos::{
     coresdk::{common::RetryPolicy, AsJsonPayloadExt},
     temporal::api::{enums::v1::EventType, failure::v1::Failure},
@@ -21,7 +21,7 @@ use temporal_sdk_core_protos::{
 use temporal_sdk_core_test_utils::TestWorker;
 use tokio::sync::Barrier;
 
-async fn echo(e: String) -> anyhow::Result<String> {
+async fn echo(_ctx: ActContext, e: String) -> anyhow::Result<String> {
     Ok(e)
 }
 
@@ -124,7 +124,7 @@ async fn local_act_many_concurrent() {
     let mut worker = TestWorker::new(Arc::new(core), TEST_Q.to_string());
 
     worker.register_wf(DEFAULT_WORKFLOW_TYPE.to_owned(), local_act_fanout_wf);
-    worker.register_activity("echo", |str: String| async move { Ok(str) });
+    worker.register_activity("echo", |_ctx: ActContext, str: String| async move { Ok(str) });
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -185,7 +185,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
             Ok(().into())
         },
     );
-    worker.register_activity("echo", move |str: String| async move {
+    worker.register_activity("echo", move |_ctx: ActContext, str: String| async move {
         if shutdown_middle {
             shutdown_barr.wait().await;
         }
@@ -256,7 +256,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
         },
     );
     let attempts: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
-    worker.register_activity("echo", move |_: String| async move {
+    worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
         // Succeed on 3rd attempt (which is ==2 since fetch_add returns prev val)
         if 2 == attempts.fetch_add(1, Ordering::Relaxed) && eventually_pass {
             Ok(())
@@ -338,7 +338,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
             Ok(().into())
         },
     );
-    worker.register_activity("echo", move |_: String| async move {
+    worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
     worker
