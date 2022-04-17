@@ -110,8 +110,8 @@ impl ActContext {
     /// Retrieve the rest of the parameters
     /// #NOTE the first parameter is popped for convenience, the rest is still stored in the
     /// activity state.  There are no variadic parameters in Rust.
-    pub fn inputs(&self) -> &[Payload] {
-        &self.input
+    pub fn inputs(&mut self) -> &mut [Payload] {
+        &mut self.input
     }
 
     /// Extract heartbeat details from last failed attempt. This is used in combination with retry policy.
