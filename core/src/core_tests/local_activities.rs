@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{LocalActivityOptions, WfContext, WorkflowResult, ActContext};
+use temporal_sdk::{ActContext, LocalActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{common::RetryPolicy, AsJsonPayloadExt},
     temporal::api::{enums::v1::EventType, failure::v1::Failure},
@@ -124,7 +124,10 @@ async fn local_act_many_concurrent() {
     let mut worker = TestWorker::new(Arc::new(core), TEST_Q.to_string());
 
     worker.register_wf(DEFAULT_WORKFLOW_TYPE.to_owned(), local_act_fanout_wf);
-    worker.register_activity("echo", |_ctx: ActContext, str: String| async move { Ok(str) });
+    worker.register_activity(
+        "echo",
+        |_ctx: ActContext, str: String| async move { Ok(str) },
+    );
     worker
         .submit_wf(
             wf_id.to_owned(),

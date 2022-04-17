@@ -3,7 +3,7 @@ use futures::future::join_all;
 use std::time::Duration;
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{
-    act_cancelled, act_is_cancelled, ActivityCancelledError, CancellableFuture,
+    act_cancelled, act_is_cancelled, ActContext, ActivityCancelledError, CancellableFuture,
     LocalActivityOptions, WfContext, WorkflowResult,
 };
 use temporal_sdk_core_protos::coresdk::{
@@ -12,7 +12,7 @@ use temporal_sdk_core_protos::coresdk::{
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio_util::sync::CancellationToken;
 
-pub async fn echo(e: String) -> anyhow::Result<String> {
+pub async fn echo(_ctx: ActContext, e: String) -> anyhow::Result<String> {
     Ok(e)
 }
 
@@ -119,7 +119,7 @@ async fn long_running_local_act_with_timer() {
     starter.wft_timeout(Duration::from_secs(1));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
-    worker.register_activity("echo_activity", |str: String| async {
+    worker.register_activity("echo_activity", |_ctx: ActContext, str: String| async {
         tokio::time::sleep(Duration::from_secs(4)).await;
         Ok(str)
     });
@@ -199,7 +199,7 @@ async fn local_act_retry_timer_backoff() {
         assert!(res.failed());
         Ok(().into())
     });
-    worker.register_activity("echo", |_: String| async {
+    worker.register_activity("echo", |_: ActContext, _: String| async {
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
 
@@ -245,7 +245,7 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
     let manual_cancel = CancellationToken::new();
     let manual_cancel_act = manual_cancel.clone();
 
-    worker.register_activity("echo", move |_: String| {
+    worker.register_activity("echo", move |_: ActContext, _: String| {
         let manual_cancel_act = manual_cancel_act.clone();
         async move {
             tokio::select! {
@@ -329,7 +329,7 @@ async fn cancel_after_act_starts(
     let manual_cancel = CancellationToken::new();
     let manual_cancel_act = manual_cancel.clone();
 
-    worker.register_activity("echo", move |_: String| {
+    worker.register_activity("echo", move |_: ActContext, _: String| {
         let manual_cancel_act = manual_cancel_act.clone();
         async move {
             if cancel_on_backoff.is_some() {
@@ -406,7 +406,7 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
         assert!(res.timed_out());
         Ok(().into())
     });
-    worker.register_activity("echo", |_: String| async {
+    worker.register_activity("echo", |_: ActContext, _: String| async {
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(100)) => {},
             _ = act_cancelled() => {
@@ -462,7 +462,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
         assert!(res.timed_out());
         Ok(().into())
     });
-    worker.register_activity("echo", |_: String| async {
+    worker.register_activity("echo", |_: ActContext, _: String| async {
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
 
@@ -486,7 +486,7 @@ async fn eviction_wont_make_local_act_get_dropped() {
     starter.wft_timeout(Duration::from_secs(1));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
-    worker.register_activity("echo_activity", |str: String| async {
+    worker.register_activity("echo_activity", |_ctx: ActContext, str: String| async {
         tokio::time::sleep(Duration::from_secs(4)).await;
         Ok(str)
     });
@@ -540,7 +540,7 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
         assert!(r2.failed());
         Ok(().into())
     });
-    worker.register_activity("echo", |_: String| async {
+    worker.register_activity("echo", |_: ActContext, _: String| async {
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
 
