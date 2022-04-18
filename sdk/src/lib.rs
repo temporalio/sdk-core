@@ -83,8 +83,7 @@ use temporal_sdk_core_protos::{
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        oneshot, watch,
-        watch::Receiver,
+        oneshot,
     },
     task::JoinError,
 };
@@ -130,6 +129,8 @@ struct WorkflowData {
     activation_chan: UnboundedSender<WorkflowActivation>,
     /// Join handle for the spawned workflow future
     join_handle: BoxFuture<'static, Result<WorkflowResult<()>, JoinError>>,
+    /// Token used to terminate workflow function
+    shutdown: CancellationToken,
 }
 
 struct ActivityHalf {
@@ -201,7 +202,8 @@ impl Worker {
     /// Runs the worker. Eventually resolves after the worker has been explicitly shut down,
     /// or may return early with an error in the event of some unresolvable problem.
     pub async fn run(&mut self) -> Result<(), anyhow::Error> {
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let shutdown_token = CancellationToken::new();
+        let shutdown_token_c = shutdown_token.clone();
         let pollers = async move {
             let (common, wf_half, act_half) = self.split_apart();
             // TODO: This channel can just be moved inside the activation handler?
@@ -219,7 +221,7 @@ impl Worker {
                         wf_half
                             .workflow_activation_handler(
                                 common,
-                                &shutdown_rx,
+                                &shutdown_token,
                                 &completions_tx,
                                 &mut completions_rx,
                                 activation,
@@ -230,8 +232,8 @@ impl Worker {
                 // Only poll on the activity queue if activity functions have been registered. This
                 // makes tests which use mocks dramatically more manageable.
                 async {
-                    let mut shutdown_rx = shutdown_rx.clone();
                     if !act_half.activity_fns.is_empty() {
+                        let shutdown_token = shutdown_token.clone();
                         loop {
                             tokio::select! {
                                 activity = common.worker.poll_activity_task() => {
@@ -241,7 +243,7 @@ impl Worker {
                                     act_half.activity_task_handler(common.worker.clone(),
                                                                    activity?)?;
                                 },
-                                _ = shutdown_rx.changed() => { break }
+                                _ = shutdown_token.cancelled() => { break }
                             }
                         }
                     };
@@ -256,7 +258,7 @@ impl Worker {
 
         let myself = pollers.await?;
         info!("Polling loops exited");
-        let _ = shutdown_tx.send(true);
+        shutdown_token_c.cancel();
         if let Some(i) = myself.common.worker_interceptor.as_ref() {
             i.on_shutdown(myself);
         }
@@ -299,7 +301,7 @@ impl WorkflowHalf {
     async fn workflow_activation_handler(
         &mut self,
         common: &CommonWorker,
-        shutdown_rx: &Receiver<bool>,
+        shutdown_token: &CancellationToken,
         completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
         completions_rx: &mut UnboundedReceiver<WorkflowActivationCompletion>,
         activation: WorkflowActivation,
@@ -328,17 +330,20 @@ impl WorkflowHalf {
                 sw.arguments.clone(),
                 completions_tx.clone(),
             );
-            let mut shutdown_rx = shutdown_rx.clone();
+            // Must be a child to avoid stopping all workflows when this one is evicted
+            let shutdown = shutdown_token.child_token();
+            let task_shutdown = shutdown.clone();
             let jh = tokio::spawn(async move {
                 tokio::select! {
                     r = wff => r,
-                    _ = shutdown_rx.changed() => Ok(WfExitValue::Evicted)
+                    _ = task_shutdown.cancelled() => Ok(WfExitValue::Evicted)
                 }
             });
             self.workflows.insert(
                 run_id.clone(),
                 WorkflowData {
                     activation_chan: activations,
+                    shutdown,
                     join_handle: jh.boxed(),
                 },
             );
@@ -366,6 +371,7 @@ impl WorkflowHalf {
         // Join the workflow handle if it was to be evicted
         if shall_be_evicted {
             if let Some(dat) = self.workflows.remove(&run_id) {
+                dat.shutdown.cancel();
                 // TODO: Probably need to not double-q here. Shouldn't blow up whole workflow
                 // handler b/c of a panic in one.
                 let res = dat.join_handle.await??;
