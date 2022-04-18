@@ -107,21 +107,16 @@ impl ActContext {
         }
     }
 
-    /// Retrieve the rest of the parameters
-    /// #NOTE the first parameter is popped for convenience, the rest is still stored in the
-    /// activity state.  There are no variadic parameters in Rust.
-    pub fn inputs(&mut self) -> &mut [Payload] {
+    /// Retrieve extra parameters.  The first input is always popped and passed to the
+    /// ActivityFuntion for the currently executing activity.  However, if more parameters are
+    /// passed, perhaps from another language's SDK, explicit access is available from extra_inputs
+    pub fn extra_inputs(&mut self) -> &mut [Payload] {
         &mut self.input
     }
 
     /// Extract heartbeat details from last failed attempt. This is used in combination with retry policy.
     pub fn get_heartbeat_details(&self) -> &[Payload] {
         &self.heartbeat_details
-    }
-
-    /// Helper function to check if details exist from previous execution of this activity
-    pub fn has_heartbeat_details(&self) -> bool {
-        !self.heartbeat_details.is_empty()
     }
 
     /// RecordHeartbeat sends heartbeat for the currently executing activity
