@@ -612,10 +612,6 @@ impl Worker {
             return Err(PollWfError::ShutDown);
         }
 
-        if self.config.max_cached_workflows > 0 {
-            self.wft_manager.wait_for_cache_capacity().await;
-        }
-
         let sem = self
             .workflows_semaphore
             .acquire()
@@ -648,6 +644,19 @@ impl Worker {
                 ),
             ))
         })?;
+
+        let work = if self.config.max_cached_workflows > 0 {
+            // Add the workflow to cache management. We do not even attempt insert if cache
+            // size is zero because we do not want to generate eviction requests for
+            // workflows which may immediately generate pending activations.
+            if let Some(ready_to_work) = self.wft_manager.add_new_run_to_cache(work) {
+                ready_to_work
+            } else {
+                return Ok(None);
+            }
+        } else {
+            work
+        };
 
         // Only permanently take a permit in the event the poll finished completely
         sem.forget();

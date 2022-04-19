@@ -204,13 +204,36 @@ impl WorkflowTaskManager {
         self.workflow_machines.cached_workflows()
     }
 
-    /// Resolves once there is an open slot in the cache
-    pub async fn wait_for_cache_capacity(&self) {
-        let fut = {
-            let lock = self.cache_manager.lock();
-            lock.wait_for_capacity()
-        };
-        fut.await;
+    /// Add a new run (as just received from polling) to the cache. If doing so would overflow the
+    /// cache, an eviction is queued to make room and the passed-in task is buffered and `None` is
+    /// returned.
+    ///
+    /// If the task is for a run already in the cache, the poll response is returned right away
+    /// and should be issued.
+    pub fn add_new_run_to_cache(
+        &self,
+        poll_resp: ValidPollWFTQResponse,
+    ) -> Option<ValidPollWFTQResponse> {
+        let maybe_evicted = self
+            .cache_manager
+            .lock()
+            .insert(&poll_resp.workflow_execution.run_id);
+
+        if let Some(evicted) = maybe_evicted {
+            self.request_eviction(&evicted, "Workflow cache full", EvictionReason::CacheFull);
+            debug!("Received a WFT for a new run while at the cache limit. Buffering the task.");
+            // Buffer the task
+            if let Some(not_buffered) = self
+                .workflow_machines
+                .buffer_resp_if_outstanding_work(poll_resp)
+            {
+                self.make_buffered_poll_ready(not_buffered);
+            }
+
+            return None;
+        }
+
+        Some(poll_resp)
     }
 
     pub(crate) fn next_pending_activation(&self) -> Option<WorkflowActivation> {
@@ -683,23 +706,6 @@ impl WorkflowTaskManager {
                         .into_iter()
                         .map(|q| workflow_activation_job::Variant::QueryWorkflow(q).into());
                     activation.jobs.extend(query_jobs);
-                }
-
-                {
-                    // Add the workflow to cache management. We do not even attempt insert if cache
-                    // size is zero because we do not want to generate eviction requests for
-                    // workflows which may immediately generate pending activations.
-                    let mut c_lock = self.cache_manager.lock();
-                    if c_lock.capacity() > 0 {
-                        let maybe_evicted = c_lock.insert(&run_id);
-                        if let Some(evicted_run_id) = maybe_evicted {
-                            self.request_eviction(
-                                &evicted_run_id,
-                                "Workflow cache full",
-                                EvictionReason::CacheFull,
-                            );
-                        }
-                    }
                 }
 
                 Ok((wft_info, activation))
