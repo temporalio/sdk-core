@@ -421,9 +421,10 @@ impl WorkflowTaskManager {
     ) -> Result<Option<ServerCommandsWithWorkflowInfo>, WorkflowUpdateError> {
         // There used to be code here that would return right away if the run reply had no commands
         // and the activation that was just completed only had an eviction in it. That was bad
-        // because we wouldn't have yet sent the commands since there was a pending activation
-        // (the eviction) and then we would *skip* doing anything with them here, because there
-        // were no new commands. In general it seems best to avoid short-circuiting here.
+        // because we wouldn't have yet sent any previously buffered commands since there was a
+        // pending activation (the eviction) and then we would *skip* doing anything with them here,
+        // because there were no new commands. In general it seems best to avoid short-circuiting
+        // here.
 
         let activation_was_only_eviction = self.activation_has_only_eviction(run_id);
         let (task_token, is_leg_query_task, start_time) =

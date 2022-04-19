@@ -1835,4 +1835,13 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
     // The final task yet again pushed us one above the cache limit since it was for a new run
     // and we have only evicted one
     assert_eq!(core.cached_workflows(), 4);
+
+    // Hence the next poll should be another evict
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
+        }]
+    );
 }

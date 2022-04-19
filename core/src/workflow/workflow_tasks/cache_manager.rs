@@ -1,8 +1,7 @@
 use crate::{telemetry::metrics::MetricsContext, workflow::WorkflowCachingPolicy};
 use futures::future;
 use lru::LruCache;
-use std::future::Future;
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 use tokio::sync::{watch, Mutex};
 
 /// Helps to maintain an LRU ordering in which workflow runs have been accessed so that old runs may
@@ -206,5 +205,22 @@ mod tests {
         assert_matches!(wcm.insert("2"), Some(run_id) => {
             assert_eq!(run_id, "2");
         });
+    }
+
+    #[test]
+    fn outstanding_eviction_not_reinserted() {
+        let mut wcm = WorkflowCacheManager::new_test(WorkflowCachingPolicy::Sticky {
+            max_cached_workflows: 2,
+        });
+        assert_matches!(wcm.insert("1"), None);
+        assert_matches!(wcm.insert("2"), None);
+        assert_matches!(wcm.insert("3"), Some(run_id) => {
+            assert_eq!(run_id, "1");
+        });
+        assert_matches!(wcm.insert("1"), None);
+        assert!(!wcm.cache.contains("1"));
+        wcm.remove("1");
+        assert_eq!(wcm.insert("1"), Some("2".to_string()));
+        assert!(wcm.cache.contains("1"));
     }
 }
