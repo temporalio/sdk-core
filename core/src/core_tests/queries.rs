@@ -131,10 +131,10 @@ async fn legacy_query(#[case] include_history: bool) {
 
     let task = worker.poll_workflow_activation().await.unwrap();
     assert_matches!(
-        task.jobs.as_slice()[0],
-        WorkflowActivationJob {
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
             variant: Some(workflow_activation_job::Variant::FireTimer(_)),
-        }
+        }]
     );
     worker
         .complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
