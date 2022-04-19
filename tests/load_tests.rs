@@ -180,6 +180,5 @@ async fn workflow_load() {
 
     worker.incr_expected_run_count(200);
     let run_fut = worker.run_until_done();
-    let (r1, _) = tokio::join!(run_fut, sig_sender);
-    r1.unwrap();
+    tokio::select! {r1 = run_fut => {r1.unwrap()}, _ = sig_sender => {}};
 }
