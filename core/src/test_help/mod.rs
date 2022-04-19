@@ -498,10 +498,13 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
                 }
             };
 
+            let ends_execution = reply.has_execution_ending();
+
             worker.complete_workflow_activation(reply).await.unwrap();
 
-            // Restart assertions from the beginning if it was an eviction
-            if contains_eviction.is_some() {
+            // Restart assertions from the beginning if it was an eviction (and workflow execution
+            // isn't over)
+            if contains_eviction.is_some() && !ends_execution {
                 continue 'outer;
             }
 

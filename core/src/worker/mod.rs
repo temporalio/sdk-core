@@ -102,7 +102,6 @@ pub struct Worker {
 
 #[async_trait::async_trait]
 impl WorkerTrait for Worker {
-    #[instrument(level = "debug", skip(self), fields(run_id))]
     async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
         self.next_workflow_activation().await
     }
@@ -120,8 +119,6 @@ impl WorkerTrait for Worker {
         }
     }
 
-    #[instrument(level = "debug", skip(self, completion),
-    fields(completion=%&completion, run_id=%completion.run_id))]
     async fn complete_workflow_activation(
         &self,
         completion: WorkflowActivationCompletion,
@@ -440,6 +437,8 @@ impl Worker {
             Ok(())
         }
     }
+
+    #[instrument(level = "debug", skip(self), fields(run_id))]
     pub(crate) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
         // The poll needs to be in a loop because we can't guarantee tail call optimization in Rust
         // (simply) and we really, really need that for long-poll retries.
@@ -485,6 +484,8 @@ impl Worker {
         }
     }
 
+    #[instrument(level = "debug", skip(self, completion),
+    fields(completion=%&completion, run_id=%completion.run_id))]
     pub(crate) async fn complete_workflow_activation(
         &self,
         completion: WorkflowActivationCompletion,
@@ -516,9 +517,6 @@ impl Worker {
         self.wft_manager
             .after_wft_report(&completion.run_id, report_outcome.reported_to_server);
         if report_outcome.reported_to_server || report_outcome.failed {
-            if report_outcome.failed {
-                warn!("Return failed WFT permit");
-            }
             // If we failed the WFT but didn't report anything, we still want to release the WFT
             // permit since the server will eventually time out the task and we've already evicted
             // the run.
@@ -548,7 +546,7 @@ impl Worker {
         match self.wft_manager.request_eviction(run_id, message, reason) {
             EvictionRequestResult::EvictionIssued(_) => true,
             EvictionRequestResult::NotFound => false,
-            EvictionRequestResult::EvictionAlreadyOutstanding => false,
+            EvictionRequestResult::EvictionAlreadyOutstanding(_) => false,
         }
     }
 
@@ -612,6 +610,10 @@ impl Worker {
             && self.local_act_mgr.num_outstanding() == 0
         {
             return Err(PollWfError::ShutDown);
+        }
+
+        if self.config.max_cached_workflows > 0 {
+            self.wft_manager.wait_for_cache_capacity().await;
         }
 
         let sem = self
@@ -957,6 +959,7 @@ impl Worker {
     }
 }
 
+#[derive(Debug)]
 struct WFTReportOutcome {
     reported_to_server: bool,
     failed: bool,

@@ -114,7 +114,7 @@ async fn activity_load() {
 async fn workflow_load() {
     const SIGNAME: &str = "signame";
     let wf_name = "workflow_load";
-    let mut starter = CoreWfStarter::new_tq_name("workflow_load_ew2B4apK");
+    let mut starter = CoreWfStarter::new("workflow_load");
     starter
         .max_wft(5)
         .max_cached_workflows(5)
@@ -126,7 +126,7 @@ async fn workflow_load() {
         let drained_fut = sigchan.forward(sink::drain());
 
         let real_stuff = async move {
-            for _ in 0..100 {
+            for _ in 0..20 {
                 ctx.activity(ActivityOptions {
                     activity_type: "echo_activity".to_string(),
                     start_to_close_timeout: Some(Duration::from_secs(5)),
@@ -148,17 +148,17 @@ async fn workflow_load() {
         "echo_activity",
         |echo_me: String| async move { Ok(echo_me) },
     );
-    // for i in 0..200 {
-    //     worker
-    //         .submit_wf(
-    //             format!("{}_{}", wf_name, i),
-    //             wf_name.to_owned(),
-    //             vec![],
-    //             WorkflowOptions::default(),
-    //         )
-    //         .await
-    //         .unwrap();
-    // }
+    for i in 0..200 {
+        worker
+            .submit_wf(
+                format!("{}_{}", wf_name, i),
+                wf_name.to_owned(),
+                vec![],
+                WorkflowOptions::default(),
+            )
+            .await
+            .unwrap();
+    }
 
     let client = starter.get_client().await;
     let sig_sender = async {

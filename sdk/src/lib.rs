@@ -373,14 +373,13 @@ impl WorkflowHalf {
             if let Some(dat) = self.workflows.remove(&run_id) {
                 dat.shutdown.cancel();
                 // TODO: Probably need to not double-q here. Shouldn't blow up whole workflow
-                // handler b/c of a panic in one.
+                //  handler b/c of a panic in one.
                 let res = dat.join_handle.await??;
                 if !matches!(res, WfExitValue::Evicted) {
                     error!("Workflow was supposed to evict, but exited with non-evict status!");
                 }
             }
         }
-        info!("SDK cache size: {}", self.workflows.len());
         Ok(())
     }
 }

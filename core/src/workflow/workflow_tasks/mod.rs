@@ -86,17 +86,29 @@ pub(crate) enum OutstandingActivation {
     Normal {
         /// True if there is an eviction in the joblist
         contains_eviction: bool,
+        /// Number of jobs in the activation
+        num_jobs: usize,
     },
     /// An activation for a legacy query
     LegacyQuery,
 }
 
 impl OutstandingActivation {
+    const fn has_only_eviction(self) -> bool {
+        matches!(
+            self,
+            OutstandingActivation::Normal {
+                contains_eviction: true,
+                num_jobs: nj
+            }
+        if nj == 1)
+    }
     const fn has_eviction(self) -> bool {
         matches!(
             self,
             OutstandingActivation::Normal {
-                contains_eviction: true
+                contains_eviction: true,
+                ..
             }
         )
     }
@@ -154,7 +166,7 @@ pub(crate) enum ActivationAction {
 pub(crate) enum EvictionRequestResult {
     EvictionIssued(Option<u32>),
     NotFound,
-    EvictionAlreadyOutstanding,
+    EvictionAlreadyOutstanding(Option<u32>),
 }
 
 macro_rules! machine_mut {
@@ -190,6 +202,15 @@ impl WorkflowTaskManager {
     /// Returns number of currently cached workflows
     pub fn cached_workflows(&self) -> usize {
         self.workflow_machines.cached_workflows()
+    }
+
+    /// Resolves once there is an open slot in the cache
+    pub async fn wait_for_cache_capacity(&self) {
+        let fut = {
+            let lock = self.cache_manager.lock();
+            lock.wait_for_capacity()
+        };
+        fut.await;
     }
 
     pub(crate) fn next_pending_activation(&self) -> Option<WorkflowActivation> {
@@ -261,6 +282,10 @@ impl WorkflowTaskManager {
         reason: EvictionReason,
     ) -> EvictionRequestResult {
         if self.workflow_machines.exists(run_id) {
+            let attempts = self
+                .workflow_machines
+                .get_task(run_id)
+                .map(|wt| wt.info.attempt);
             if !self.activation_has_eviction(run_id) {
                 let message = message.into();
                 debug!(%run_id, %message, "Eviction requested");
@@ -268,13 +293,9 @@ impl WorkflowTaskManager {
                 self.pending_activations
                     .notify_needs_eviction(run_id, message, reason);
                 self.pending_activations_notifier.notify_waiters();
-                EvictionRequestResult::EvictionIssued(
-                    self.workflow_machines
-                        .get_task(run_id)
-                        .map(|wt| wt.info.attempt),
-                )
+                EvictionRequestResult::EvictionIssued(attempts)
             } else {
-                EvictionRequestResult::EvictionAlreadyOutstanding
+                EvictionRequestResult::EvictionAlreadyOutstanding(attempts)
             }
         } else {
             warn!(%run_id, "Eviction requested for unknown run");
@@ -282,11 +303,8 @@ impl WorkflowTaskManager {
         }
     }
 
-    /// Evict a workflow from the cache by its run id and enqueue a pending activation to evict the
-    /// workflow. Any existing pending activations will be destroyed, and any outstanding
-    /// activations invalidated.
-    ///
-    /// Returns that workflow's task info if it was present.
+    /// Evict a workflow from the cache by its run id. Any existing pending activations will be
+    /// destroyed, and any outstanding activations invalidated.
     fn evict_run(&self, run_id: &str) {
         debug!(run_id=%run_id, "Evicting run");
 
@@ -401,11 +419,13 @@ impl WorkflowTaskManager {
         mut commands: Vec<WFCommand>,
         local_activity_request_sink: impl FnOnce(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>,
     ) -> Result<Option<ServerCommandsWithWorkflowInfo>, WorkflowUpdateError> {
-        // No-command replies to evictions can simply skip everything
-        if commands.is_empty() && self.activation_has_eviction(run_id) {
-            return Ok(None);
-        }
+        // There used to be code here that would return right away if the run reply had no commands
+        // and the activation that was just completed only had an eviction in it. That was bad
+        // because we wouldn't have yet sent the commands since there was a pending activation
+        // (the eviction) and then we would *skip* doing anything with them here, because there
+        // were no new commands. In general it seems best to avoid short-circuiting here.
 
+        let activation_was_only_eviction = self.activation_has_only_eviction(run_id);
         let (task_token, is_leg_query_task, start_time) =
             if let Some(entry) = self.workflow_machines.get_task(run_id) {
                 (
@@ -414,7 +434,7 @@ impl WorkflowTaskManager {
                     entry.start_time,
                 )
             } else {
-                if !self.activation_has_eviction(run_id) {
+                if !activation_was_only_eviction {
                     // Don't bother warning if this was an eviction, since it's normal to issue
                     // eviction activations without an associated workflow task in that case.
                     warn!(
@@ -463,6 +483,7 @@ impl WorkflowTaskManager {
                 }
             }
 
+            let activation_was_eviction = self.activation_has_eviction(run_id);
             let (are_pending, server_cmds, local_activities, wft_timeout) = machine_mut!(
                 self,
                 run_id,
@@ -471,7 +492,13 @@ impl WorkflowTaskManager {
                         // Send commands from lang into the machines then check if the workflow run
                         // needs another activation and mark it if so
                         wfm.push_commands(commands).await?;
-                        let are_pending = wfm.apply_next_task_if_ready().await?;
+                        // Don't bother applying the next task if we're evicting at the end of
+                        // this activation
+                        let are_pending = if !activation_was_eviction {
+                            wfm.apply_next_task_if_ready().await?
+                        } else {
+                            false
+                        };
                         // We want to fetch the outgoing commands only after a next WFT may have
                         // been applied, as outgoing server commands may be affected.
                         let outgoing_cmds = wfm.get_server_commands();
@@ -513,6 +540,8 @@ impl WorkflowTaskManager {
                 .await;
             let is_query_playback = is_leg_query_task && query_responses.is_empty();
 
+            let no_commands_and_evicting =
+                server_cmds.commands.is_empty() && activation_was_only_eviction;
             // We only actually want to send commands back to the server if there are no more
             // pending activations and we are caught up on replay. We don't want to complete a wft
             // if we already saw the final event in the workflow, or if we are playing back for the
@@ -520,6 +549,7 @@ impl WorkflowTaskManager {
             if !self.pending_activations.has_pending(run_id)
                 && !server_cmds.replaying
                 && !is_query_playback
+                && !no_commands_and_evicting
             {
                 Some(ServerCommandsWithWorkflowInfo {
                     task_token,
@@ -578,7 +608,8 @@ impl WorkflowTaskManager {
         } else {
             // Blow up any cached data associated with the workflow
             let should_report = match self.request_eviction(run_id, failstr, reason) {
-                EvictionRequestResult::EvictionIssued(Some(attempt)) => attempt <= 1,
+                EvictionRequestResult::EvictionIssued(Some(attempt))
+                | EvictionRequestResult::EvictionAlreadyOutstanding(Some(attempt)) => attempt <= 1,
                 _ => false,
             };
             if should_report {
@@ -653,6 +684,23 @@ impl WorkflowTaskManager {
                     activation.jobs.extend(query_jobs);
                 }
 
+                {
+                    // Add the workflow to cache management. We do not even attempt insert if cache
+                    // size is zero because we do not want to generate eviction requests for
+                    // workflows which may immediately generate pending activations.
+                    let mut c_lock = self.cache_manager.lock();
+                    if c_lock.capacity() > 0 {
+                        let maybe_evicted = c_lock.insert(&run_id);
+                        if let Some(evicted_run_id) = maybe_evicted {
+                            self.request_eviction(
+                                &evicted_run_id,
+                                "Workflow cache full",
+                                EvictionReason::CacheFull,
+                            );
+                        }
+                    }
+                }
+
                 Ok((wft_info, activation))
             }
             Err(source) => Err(WorkflowUpdateError { source, run_id }),
@@ -668,9 +716,11 @@ impl WorkflowTaskManager {
     pub(crate) fn after_wft_report(&self, run_id: &str, did_complete_wft: bool) -> bool {
         let mut just_evicted = false;
 
-        if let Some(OutstandingActivation::Normal {
-            contains_eviction: true,
-        }) = self.workflow_machines.get_activation(run_id)
+        if self
+            .workflow_machines
+            .get_activation(run_id)
+            .map(|a| a.has_eviction())
+            .unwrap_or_default()
         {
             self.evict_run(run_id);
             just_evicted = true;
@@ -770,6 +820,7 @@ impl WorkflowTaskManager {
         } else {
             OutstandingActivation::Normal {
                 contains_eviction: act.eviction_index().is_some(),
+                num_jobs: act.jobs.len(),
             }
         };
         match self
@@ -788,6 +839,13 @@ impl WorkflowTaskManager {
             }
             Err(e) => Err(e),
         }
+    }
+
+    fn activation_has_only_eviction(&self, run_id: &str) -> bool {
+        self.workflow_machines
+            .get_activation(run_id)
+            .map(OutstandingActivation::has_only_eviction)
+            .unwrap_or_default()
     }
 
     fn activation_has_eviction(&self, run_id: &str) -> bool {

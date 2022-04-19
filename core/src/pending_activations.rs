@@ -41,6 +41,7 @@ impl PendingActivations {
             inner.queue.push_back(key);
         };
     }
+
     pub fn notify_needs_eviction(&self, run_id: &str, message: String, reason: EvictionReason) {
         let mut inner = self.inner.write();
 
