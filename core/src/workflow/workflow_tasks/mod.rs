@@ -207,12 +207,18 @@ impl WorkflowTaskManager {
                     if let Some(reason) = pending_info.needs_eviction {
                         act.append_evict_job(reason);
                     }
-                    self.insert_outstanding_activation(&act)?;
-                    Ok(act)
+                    // If for whatever reason we triggered a pending activation but there wasn't
+                    // actually any work to be done, just ignore that.
+                    if !act.jobs.is_empty() {
+                        self.insert_outstanding_activation(&act)?;
+                        self.cache_manager.lock().touch(&act.run_id);
+                        Ok(Some(act))
+                    } else {
+                        Ok(None)
+                    }
                 })
             {
-                self.cache_manager.lock().touch(&act.run_id);
-                Some(act)
+                act
             } else {
                 self.request_eviction(
                     &pending_info.run_id,
@@ -765,7 +771,8 @@ impl WorkflowTaskManager {
         run_id: &str,
         resolved: LocalResolution,
     ) -> Result<(), WorkflowUpdateError> {
-        self.workflow_machines
+        let result_was_important = self
+            .workflow_machines
             .access_sync(run_id, |wfm: &mut WorkflowManager| {
                 wfm.notify_of_local_result(resolved)
             })?
@@ -774,7 +781,9 @@ impl WorkflowTaskManager {
                 run_id: run_id.to_string(),
             })?;
 
-        self.needs_activation(run_id);
+        if result_was_important {
+            self.needs_activation(run_id);
+        }
         Ok(())
     }
 

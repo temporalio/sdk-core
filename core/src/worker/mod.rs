@@ -436,6 +436,7 @@ impl Worker {
             Ok(())
         }
     }
+
     pub(crate) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
         // The poll needs to be in a loop because we can't guarantee tail call optimization in Rust
         // (simply) and we really, really need that for long-poll retries.
@@ -664,9 +665,9 @@ impl Worker {
                 Some(a)
             }
             NewWfTaskOutcome::TaskBuffered => {
-                // If the task was buffered, it's not actually outstanding, so we can
-                // immediately return a permit.
-                self.return_workflow_task_permit();
+                // Though the task is not outstanding in the lang sense, it is outstanding from the
+                // server perspective. We used to return a permit here, but that doesn't actually
+                // make much sense.
                 None
             }
             NewWfTaskOutcome::Autocomplete | NewWfTaskOutcome::LocalActsOutstanding => {

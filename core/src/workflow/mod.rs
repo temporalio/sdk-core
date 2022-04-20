@@ -96,7 +96,10 @@ impl WorkflowManager {
 
     /// Let this workflow know that something we've been waiting locally on has resolved, like a
     /// local activity or side effect
-    pub fn notify_of_local_result(&mut self, resolved: LocalResolution) -> Result<()> {
+    ///
+    /// Returns true if the resolution did anything. EX: If the activity is already canceled and
+    /// used the TryCancel or Abandon modes, the resolution is uninteresting.
+    pub fn notify_of_local_result(&mut self, resolved: LocalResolution) -> Result<bool> {
         self.machines.local_resolution(resolved)
     }
 
@@ -407,7 +410,7 @@ pub mod managed_wf {
             &mut self,
             seq_num: u32,
             result: ActivityExecutionResult,
-        ) -> Result<()> {
+        ) -> Result<bool> {
             self.mgr
                 .notify_of_local_result(LocalResolution::LocalActivity(LocalActivityResolution {
                     seq: seq_num,
