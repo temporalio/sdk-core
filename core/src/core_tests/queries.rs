@@ -1,4 +1,3 @@
-use crate::telemetry::test_telem_console;
 use crate::{
     test_help::{
         canned_histories, hist_to_poll_resp, mock_worker, MocksHolder, ResponseType, TEST_Q,
@@ -386,7 +385,6 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
 
 #[tokio::test]
 async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early() {
-    test_telem_console();
     let wfid = "fake_wf_id";
     let query_resp = "response";
     let t = canned_histories::single_timer("1");

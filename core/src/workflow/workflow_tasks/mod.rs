@@ -187,7 +187,7 @@ impl WorkflowTaskManager {
     }
 
     pub(crate) fn next_pending_activation(&self) -> Option<WorkflowActivation> {
-        // Dispatch pending legacy queries first
+        // Dispatch pending queries first
         if let leg_q @ Some(_) = self.pending_queries.pop() {
             return leg_q;
         }
@@ -340,7 +340,19 @@ impl WorkflowTaskManager {
                 }
             };
 
-        // TODO Explode if there are pending quersies and legacy query
+        if !pending_queries.is_empty() && legacy_query.is_some() {
+            error!(
+                "Server issued both normal and legacy queries. This should not happen. Please \
+                 file a bug report."
+            );
+            return NewWfTaskOutcome::Evict(WorkflowUpdateError {
+                source: WFMachinesError::Fatal(
+                    "Server issued both normal and legacy query".to_string(),
+                ),
+                run_id: next_activation.run_id,
+            });
+        }
+
         // Immediately dispatch query activation if no other jobs
         if let Some(lq) = legacy_query {
             if next_activation.jobs.is_empty() {
