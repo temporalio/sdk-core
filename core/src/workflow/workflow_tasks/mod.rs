@@ -57,7 +57,7 @@ pub struct WorkflowTaskManager {
     pending_activations: PendingActivations,
     /// Holds activations which are purely query activations needed to respond to legacy queries.
     /// Activations may only be added here for runs which do not have other pending activations.
-    pending_legacy_queries: SegQueue<WorkflowActivation>,
+    pending_queries: SegQueue<WorkflowActivation>,
     /// Holds poll wft responses from the server that need to be applied
     ready_buffered_wft: SegQueue<ValidPollWFTQResponse>,
     /// Used to wake blocked workflow task polling
@@ -74,9 +74,8 @@ pub struct WorkflowTaskManager {
 #[derive(Clone, Debug)]
 pub(crate) struct OutstandingTask {
     pub info: WorkflowTaskInfo,
-    /// If set the outstanding task has query from the old `query` field which must be fulfilled
-    /// upon finishing replay
-    pub legacy_query: Option<QueryWorkflow>,
+    /// Set if the outstanding task has quer(ies) which must be fulfilled upon finishing replay
+    pub pending_queries: Vec<QueryWorkflow>,
     start_time: Instant,
 }
 
@@ -179,7 +178,7 @@ impl WorkflowTaskManager {
         Self {
             workflow_machines: WorkflowConcurrencyManager::new(),
             pending_activations: Default::default(),
-            pending_legacy_queries: Default::default(),
+            pending_queries: Default::default(),
             ready_buffered_wft: Default::default(),
             pending_activations_notifier,
             cache_manager: Mutex::new(WorkflowCacheManager::new(eviction_policy, metrics.clone())),
@@ -189,7 +188,7 @@ impl WorkflowTaskManager {
 
     pub(crate) fn next_pending_activation(&self) -> Option<WorkflowActivation> {
         // Dispatch pending legacy queries first
-        if let leg_q @ Some(_) = self.pending_legacy_queries.pop() {
+        if let leg_q @ Some(_) = self.pending_queries.pop() {
             return leg_q;
         }
         // It is important that we do not issue pending activations for any workflows which already
@@ -333,33 +332,33 @@ impl WorkflowTaskManager {
             .take()
             .map(|q| query_to_job(LEGACY_QUERY_ID.to_string(), q));
 
-        let (info, mut next_activation) =
+        let (info, mut next_activation, mut pending_queries) =
             match self.instantiate_or_update_workflow(work, client).await {
-                Ok((info, next_activation)) => (info, next_activation),
+                Ok(res) => res,
                 Err(e) => {
                     return NewWfTaskOutcome::Evict(e);
                 }
             };
 
+        // TODO Explode if there are pending quersies and legacy query
         // Immediately dispatch query activation if no other jobs
-        let legacy_query = if next_activation.jobs.is_empty() {
-            if let Some(lq) = legacy_query {
+        if let Some(lq) = legacy_query {
+            if next_activation.jobs.is_empty() {
                 debug!("Dispatching legacy query {}", &lq);
                 next_activation
                     .jobs
                     .push(workflow_activation_job::Variant::QueryWorkflow(lq).into());
+            } else {
+                pending_queries.push(lq);
             }
-            None
-        } else {
-            legacy_query
-        };
+        }
 
         self.workflow_machines
             .insert_wft(
                 &next_activation.run_id,
                 OutstandingTask {
                     info,
-                    legacy_query,
+                    pending_queries,
                     start_time: task_start_time,
                 },
             )
@@ -401,11 +400,11 @@ impl WorkflowTaskManager {
             return Ok(None);
         }
 
-        let (task_token, is_leg_query_task, start_time) =
+        let (task_token, has_pending_query, start_time) =
             if let Some(entry) = self.workflow_machines.get_task(run_id) {
                 (
                     entry.info.task_token.clone(),
-                    entry.legacy_query.is_some(),
+                    !entry.pending_queries.is_empty(),
                     entry.start_time,
                 )
             } else {
@@ -506,7 +505,7 @@ impl WorkflowTaskManager {
             let must_heartbeat = self
                 .wait_for_local_acts_or_heartbeat(run_id, wft_heartbeat_deadline)
                 .await;
-            let is_query_playback = is_leg_query_task && query_responses.is_empty();
+            let is_query_playback = has_pending_query && query_responses.is_empty();
 
             // We only actually want to send commands back to the server if there are no more
             // pending activations and we are caught up on replay. We don't want to complete a wft
@@ -592,7 +591,8 @@ impl WorkflowTaskManager {
         &self,
         poll_wf_resp: ValidPollWFTQResponse,
         client: Arc<WorkerClientBag>,
-    ) -> Result<(WorkflowTaskInfo, WorkflowActivation), WorkflowUpdateError> {
+    ) -> Result<(WorkflowTaskInfo, WorkflowActivation, Vec<QueryWorkflow>), WorkflowUpdateError>
+    {
         let run_id = poll_wf_resp.workflow_execution.run_id.clone();
 
         let wft_info = WorkflowTaskInfo {
@@ -607,10 +607,12 @@ impl WorkflowTaskManager {
             .map(|ev| ev.event_id > 1)
             .unwrap_or_default();
 
+        let mut did_miss_cache = false;
         let page_token = if !self.workflow_machines.exists(&run_id) && poll_resp_is_incremental {
             debug!(run_id=?run_id, "Workflow task has partial history, but workflow is not in \
                    cache. Will fetch history");
             self.metrics.sticky_cache_miss();
+            did_miss_cache = true;
             NextPageToken::FetchFromStart
         } else {
             poll_wf_resp.next_page_token.into()
@@ -639,16 +641,26 @@ impl WorkflowTaskManager {
             .await
         {
             Ok(mut activation) => {
-                // If there are in-poll queries, insert jobs for those queries into the activation
+                // If there are in-poll queries, insert jobs for those queries into the activation,
+                // but only if we hit the cache. If we didn't, those queries will need to be dealt
+                // with once replay is over
+                let mut pending_queries = vec![];
                 if !poll_wf_resp.query_requests.is_empty() {
-                    let query_jobs = poll_wf_resp
-                        .query_requests
-                        .into_iter()
-                        .map(|q| workflow_activation_job::Variant::QueryWorkflow(q).into());
-                    activation.jobs.extend(query_jobs);
+                    if !did_miss_cache {
+                        let query_jobs = poll_wf_resp
+                            .query_requests
+                            .into_iter()
+                            .map(|q| workflow_activation_job::Variant::QueryWorkflow(q).into());
+                        activation.jobs.extend(query_jobs);
+                    } else {
+                        poll_wf_resp
+                            .query_requests
+                            .into_iter()
+                            .for_each(|q| pending_queries.push(q));
+                    }
                 }
 
-                Ok((wft_info, activation))
+                Ok((wft_info, activation, pending_queries))
             }
             Err(source) => Err(WorkflowUpdateError { source, run_id }),
         }
@@ -675,16 +687,18 @@ impl WorkflowTaskManager {
         // removed from the outstanding tasks map
         let retme = if !self.pending_activations.has_pending(run_id) {
             if !just_evicted {
-                // Check if there was a legacy query which must be fulfilled, and if there is create
-                // a new pending activation for it.
+                // Check if there was a pending query which must be fulfilled, and if there is
+                // create a new pending activation for it.
                 if let Some(ref mut ot) = &mut *self
                     .workflow_machines
                     .get_task_mut(run_id)
                     .expect("Machine must exist")
                 {
-                    if let Some(query) = ot.legacy_query.take() {
-                        let na = create_query_activation(run_id.to_string(), [query]);
-                        self.pending_legacy_queries.push(na);
+                    if !ot.pending_queries.is_empty() {
+                        for query in ot.pending_queries.drain(..) {
+                            let na = create_query_activation(run_id.to_string(), [query]);
+                            self.pending_queries.push(na);
+                        }
                         self.pending_activations_notifier.notify_waiters();
                         return false;
                     }

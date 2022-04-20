@@ -1,3 +1,4 @@
+use crate::telemetry::test_telem_console;
 use crate::{
     test_help::{
         canned_histories, hist_to_poll_resp, mock_worker, MocksHolder, ResponseType, TEST_Q,
@@ -21,7 +22,8 @@ use temporal_sdk_core_protos::{
         history::v1::History,
         query::v1::WorkflowQuery,
         workflowservice::v1::{
-            RespondQueryTaskCompletedResponse, RespondWorkflowTaskCompletedResponse,
+            GetWorkflowExecutionHistoryResponse, RespondQueryTaskCompletedResponse,
+            RespondWorkflowTaskCompletedResponse,
         },
     },
 };
@@ -378,6 +380,114 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
         .await
         .unwrap();
     }
+
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early() {
+    test_telem_console();
+    let wfid = "fake_wf_id";
+    let query_resp = "response";
+    let t = canned_histories::single_timer("1");
+    let full_hist = t.get_full_history_info().unwrap();
+    let tasks = VecDeque::from(vec![{
+        // Create a partial task
+        let mut pr = hist_to_poll_resp(
+            &t,
+            wfid.to_owned(),
+            ResponseType::OneTask(2),
+            TEST_Q.to_string(),
+        );
+        pr.queries = HashMap::new();
+        pr.queries.insert(
+            "the-query".to_string(),
+            WorkflowQuery {
+                query_type: "query-type".to_string(),
+                query_args: Some(b"hi".into()),
+                header: None,
+            },
+        );
+        pr
+    }]);
+    let mut mock_client = mock_workflow_client();
+    mock_client
+        .expect_get_workflow_execution_history()
+        .returning(move |_, _, _| {
+            Ok(GetWorkflowExecutionHistoryResponse {
+                history: Some(full_hist.clone().into()),
+                ..Default::default()
+            })
+        });
+    mock_client
+        .expect_complete_workflow_task()
+        .times(1)
+        .returning(|resp| {
+            // Verify both the complete command and the query response are sent
+            assert_eq!(resp.commands.len(), 1);
+            assert_eq!(resp.query_responses.len(), 1);
+
+            Ok(RespondWorkflowTaskCompletedResponse::default())
+        });
+
+    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = mock_worker(mock);
+    let task = core.poll_workflow_activation().await.unwrap();
+    // The first task should *only* start the workflow. It should *not* have a query in it, which
+    // was the bug. Query should only appear after we have caught up on replay.
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+        }]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        start_timer_cmd(1, Duration::from_secs(1)),
+    ))
+    .await
+    .unwrap();
+
+    warn!("Done first compl");
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::FireTimer(_)),
+        }]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        CompleteWorkflowExecution { result: None }.into(),
+    ))
+    .await
+    .unwrap();
+
+    // Now the query shall arrive
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs[0],
+        WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(_)),
+        }
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        QueryResult {
+            query_id: "the-query".to_string(),
+            variant: Some(
+                QuerySuccess {
+                    response: Some(query_resp.into()),
+                }
+                .into(),
+            ),
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
 
     core.shutdown().await;
 }
