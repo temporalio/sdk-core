@@ -1,3 +1,4 @@
+use crate::telemetry::test_telem_console;
 use crate::{
     errors::PollWfError,
     job_assert,
@@ -1740,6 +1741,7 @@ async fn evict_missing_wf_during_poll_doesnt_eat_permit() {
 
 #[tokio::test]
 async fn poll_faster_than_complete_wont_overflow_cache() {
+    test_telem_console();
     // Make workflow tasks for 5 different runs
     let tasks: Vec<_> = (1..=5)
         .map(|i| {
@@ -1779,33 +1781,54 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
     ))
     .await
     .unwrap();
-    // Now we're at cache limit, but there's an open WFT slot. Next poll should return a new
-    // WFT, but also generate an eviction since we're now over the cache size
-    let p4 = core.poll_workflow_activation().await.unwrap();
+    // Now we're at cache limit. We will poll for a task, discover it is for a new run, issue
+    // an eviction, and buffer the new run task. However, the run we're trying to evict has pending
+    // activations! Thus, we must complete them first before this poll will unblock, and then it
+    // will unblock with the eviciton.
+    let p4 = async {
+        let p4 = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            &p4.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
+            }]
+        );
+    };
+    let p2_pending_completer = async {
+        // Sleep needed because otherwise the complete unblocks waiting for the cache to free a slot
+        // before we have a chance to actually... wait for it.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            p2.run_id,
+            start_timer_cmd(1, Duration::from_secs(1)),
+        ))
+        .await
+        .unwrap();
+    };
+    tokio::join!(p4, p2_pending_completer);
+    warn!("Done complete");
+    assert_eq!(core.cached_workflows(), 3);
+
+    // This poll should also block until the eviction is actually completed
+    let p5 = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
-        &p4.jobs[0].variant,
+        &p5.jobs[0].variant,
         Some(workflow_activation_job::Variant::StartWorkflow(sw))
         if sw.workflow_id == format!("wf-{}", 4)
     );
-    // Free another WFT slot
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        p2.run_id,
-        start_timer_cmd(1, Duration::from_secs(1)),
-    ))
-    .await
-    .unwrap();
+    assert_eq!(core.cached_workflows(), 3);
     // Cache size is now 4, since there is an un-received eviction, and 3 outstanding
     // workflow tasks.
     // We should get the eviction from when we polled and got p4
-    let p5 = core.poll_workflow_activation().await.unwrap();
+    let p6 = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
-        p5.jobs.as_slice(),
+        p6.jobs.as_slice(),
         [WorkflowActivationJob {
             variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
         }]
     );
     let complete_evict = async {
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(p5.run_id))
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(p6.run_id))
             .await
             .unwrap();
         // Now the cache size is back to 3, but we are at max concurrent WFT, so complete another

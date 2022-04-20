@@ -451,6 +451,18 @@ impl Worker {
                 return Ok(pa);
             }
 
+            if self.config.max_cached_workflows > 0 {
+                warn!("Is there outstanding evict activation? {}", self.work);
+                tokio::select! {
+                    biased;
+                    // We must loop up if there's a new pending activation, since those are for
+                    // already-cached workflows and may include evictions which will change if
+                    // we are still waiting or not.
+                    _ = self.pending_activations_notify.notified() => continue,
+                    _ = self.wft_manager.wait_for_cache_capacity() => {}
+                };
+            }
+
             // Apply any buffered poll responses from the server. Must come after pending
             // activations, since there may be an eviction etc for whatever run is popped here.
             if let Some(buff_wft) = self.wft_manager.next_buffered_poll() {
@@ -598,8 +610,8 @@ impl Worker {
     /// Wait until not at the outstanding workflow task limit, and then poll this worker's task
     /// queue for new workflow tasks.
     ///
-    /// Returns `Ok(None)` in the event of a poll timeout, or if there was some gRPC error that
-    /// callers can't do anything about.
+    /// Returns `Ok(None)` in the event of a poll timeout, if there was some gRPC error that
+    /// callers can't do anything about, or any other reason to restart the poll loop.
     async fn workflow_poll(&self) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
         // We can't say we're shut down if there are outstanding LAs, as they could end up WFT
         // heartbeating which is a "new" workflow task that we need to accept and process as long as
@@ -649,7 +661,7 @@ impl Worker {
             // Add the workflow to cache management. We do not even attempt insert if cache
             // size is zero because we do not want to generate eviction requests for
             // workflows which may immediately generate pending activations.
-            if let Some(ready_to_work) = self.wft_manager.add_new_run_to_cache(work) {
+            if let Some(ready_to_work) = self.wft_manager.add_new_run_to_cache(work).await {
                 ready_to_work
             } else {
                 return Ok(None);

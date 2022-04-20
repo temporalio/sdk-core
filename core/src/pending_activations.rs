@@ -22,6 +22,7 @@ struct PaInner {
     queue: VecDeque<ActivationKey>,
 }
 
+#[derive(Debug)]
 pub struct PendingActInfo {
     pub needs_eviction: Option<RemoveFromCache>,
     pub run_id: String,
@@ -63,6 +64,7 @@ impl PendingActivations {
             });
             inner.by_run_id.insert(run_id.to_string(), key);
             inner.queue.push_back(key);
+            // inner.queue.push_front(key);
         };
     }
 
@@ -106,6 +108,14 @@ impl PendingActivations {
         if let Some(k) = inner.by_run_id.remove(run_id) {
             inner.activations.remove(k);
         }
+    }
+
+    pub fn is_some_eviction(&self) -> bool {
+        self.inner
+            .read()
+            .activations
+            .values()
+            .any(|act| act.needs_eviction.is_some())
     }
 }
 

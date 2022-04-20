@@ -7,6 +7,7 @@ use crate::{
     },
 };
 use futures::future::{BoxFuture, FutureExt};
+use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{
     collections::HashMap,
@@ -313,6 +314,7 @@ impl WorkflowConcurrencyManager {
         val.and_then(|v| v.buffered_resp.take())
     }
 
+    /// Sounds the total number of outstanding workflow tasks
     pub fn outstanding_wft(&self) -> usize {
         self.runs
             .read()
@@ -324,6 +326,13 @@ impl WorkflowConcurrencyManager {
     /// Returns number of currently cached workflows
     pub fn cached_workflows(&self) -> usize {
         self.runs.read().len()
+    }
+
+    pub fn are_outstanding_evictions(&self) -> bool {
+        self.runs
+            .read()
+            .values()
+            .any(|mr| mr.activation.map(|a| a.has_eviction()).unwrap_or_default())
     }
 }
 
