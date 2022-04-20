@@ -1261,38 +1261,6 @@ async fn buffered_work_drained_on_shutdown() {
 }
 
 #[tokio::test]
-async fn buffering_tasks_doesnt_count_toward_outstanding_max() {
-    let wfid = "fake_wf_id";
-    let t = canned_histories::single_timer("1");
-    let mock = mock_workflow_client();
-    let mut tasks = VecDeque::new();
-    // A way bigger task list than allowed outstanding tasks
-    tasks.extend(
-        std::iter::repeat(hist_to_poll_resp(
-            &t,
-            wfid.to_owned(),
-            2.into(),
-            TEST_Q.to_string(),
-        ))
-        .take(20),
-    );
-    let mut mock = MocksHolder::from_client_with_responses(mock, tasks, []);
-    mock.worker_cfg(|wc| {
-        wc.max_cached_workflows = 10;
-        wc.max_outstanding_workflow_tasks = 5;
-    });
-    let core = mock_worker(mock);
-    // Poll for first WFT
-    core.poll_workflow_activation().await.unwrap();
-    // This will error out when the mock runs out of responses. Otherwise it would hang when we
-    // hit the max
-    assert_matches!(
-        core.poll_workflow_activation().await.unwrap_err(),
-        PollWfError::TonicError(_)
-    );
-}
-
-#[tokio::test]
 async fn fail_wft_then_recover() {
     let t = canned_histories::long_sequential_timers(1);
     let mut mh = MockPollCfg::from_resp_batches(

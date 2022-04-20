@@ -7,6 +7,7 @@ use tokio::sync::{AcquireError, Semaphore, SemaphorePermit};
 /// acquired or restored through the provided methods
 pub(crate) struct MeteredSemaphore {
     pub sem: Semaphore,
+    max_permits: usize,
     metrics_ctx: MetricsContext,
     record_fn: fn(&MetricsContext, usize),
 }
@@ -19,6 +20,7 @@ impl MeteredSemaphore {
     ) -> Self {
         Self {
             sem: Semaphore::new(inital_permits),
+            max_permits: inital_permits,
             metrics_ctx,
             record_fn,
         }
@@ -30,9 +32,14 @@ impl MeteredSemaphore {
         res
     }
 
-    /// Adds just one permit
+    /// Adds just one permit. Will not add if already at the initial/max capacity.
     pub fn add_permit(&self) {
-        self.sem.add_permits(1);
-        (self.record_fn)(&self.metrics_ctx, self.sem.available_permits());
+        if self.sem.available_permits() < self.max_permits {
+            self.sem.add_permits(1);
+            (self.record_fn)(&self.metrics_ctx, self.sem.available_permits());
+        } else if cfg!(debug_assertions) {
+            // Panic only during debug mode if this happens
+            panic!("Tried to add permit to a semaphore that already was at capacity!");
+        }
     }
 }

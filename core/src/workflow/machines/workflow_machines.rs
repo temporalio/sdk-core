@@ -252,7 +252,11 @@ impl WorkflowMachines {
 
     /// Let this workflow know that something we've been waiting locally on has resolved, like a
     /// local activity or side effect
-    pub(crate) fn local_resolution(&mut self, resolution: LocalResolution) -> Result<()> {
+    ///
+    /// Returns true if the resolution did anything. EX: If the activity is already canceled and
+    /// used the TryCancel or Abandon modes, the resolution is uninteresting.
+    pub(crate) fn local_resolution(&mut self, resolution: LocalResolution) -> Result<bool> {
+        let mut result_important = true;
         match resolution {
             LocalResolution::LocalActivity(LocalActivityResolution {
                 seq,
@@ -268,6 +272,9 @@ impl WorkflowMachines {
                 if let Machines::LocalActivityMachine(ref mut lam) = *mach {
                     let resps =
                         lam.try_resolve(result, runtime, attempt, backoff, original_schedule_time)?;
+                    if resps.is_empty() {
+                        result_important = false;
+                    }
                     self.process_machine_responses(mk, resps)?;
                 } else {
                     return Err(WFMachinesError::Nondeterminism(format!(
@@ -279,7 +286,7 @@ impl WorkflowMachines {
                 self.local_activity_data.done_executing(seq);
             }
         }
-        Ok(())
+        Ok(result_important)
     }
 
     /// Drain all queued local activities that need executing or cancellation
