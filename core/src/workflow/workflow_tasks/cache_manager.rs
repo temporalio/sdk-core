@@ -1,7 +1,6 @@
 use crate::{telemetry::metrics::MetricsContext, workflow::WorkflowCachingPolicy};
 use futures::future;
 use lru::LruCache;
-use std::sync::atomic::AtomicUsize;
 use std::{future::Future, sync::Arc};
 use tokio::sync::{watch, Mutex};
 
@@ -14,7 +13,6 @@ pub(crate) struct WorkflowCacheManager {
     watch_tx: watch::Sender<usize>,
     watch_rx: watch::Receiver<usize>,
     cap_mutex: Arc<tokio::sync::Mutex<()>>,
-    outstanding_eviction_count: AtomicUsize,
 }
 
 impl WorkflowCacheManager {
@@ -32,7 +30,6 @@ impl WorkflowCacheManager {
             watch_tx,
             watch_rx,
             cap_mutex: Arc::new(Mutex::new(())),
-            outstanding_eviction_count: AtomicUsize::new(0),
         }
     }
 
@@ -73,7 +70,6 @@ impl WorkflowCacheManager {
             None
         } else if self.cache.cap() == 0 {
             // Run id should be evicted right away as cache size is 0.
-            *self.outstanding_eviction_count.get_mut() += 1;
             Some(run_id.to_owned())
         } else {
             let maybe_got_evicted = self.cache.peek_lru().map(|r| r.0.clone());

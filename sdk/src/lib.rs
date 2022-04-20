@@ -206,7 +206,6 @@ impl Worker {
         let shutdown_token_c = shutdown_token.clone();
         let pollers = async move {
             let (common, wf_half, act_half) = self.split_apart();
-            // TODO: This channel can just be moved inside the activation handler?
             let (completions_tx, mut completions_rx) = unbounded_channel();
             let (wf_poll_res, act_poll_res) = tokio::join!(
                 // Workflow polling loop

@@ -327,6 +327,7 @@ impl WorkflowConcurrencyManager {
         self.runs.read().len()
     }
 
+    /// Returns true if any outstanding activation contains an eviction
     pub fn are_outstanding_evictions(&self) -> bool {
         self.runs
             .read()

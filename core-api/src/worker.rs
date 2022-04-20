@@ -94,7 +94,9 @@ impl WorkerConfigBuilder {
         }
         if self.max_outstanding_workflow_tasks > self.max_cached_workflows {
             return Err(
-                "`max_outstanding_workflow_tasks` cannot exceed `max_cached_workflows`".to_owned(),
+                "Maximum concurrent workflow tasks cannot exceed the maximum number of cached \
+                 workflows"
+                    .to_owned(),
             );
         }
         Ok(())

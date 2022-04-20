@@ -64,7 +64,6 @@ impl PendingActivations {
             });
             inner.by_run_id.insert(run_id.to_string(), key);
             inner.queue.push_back(key);
-            // inner.queue.push_front(key);
         };
     }
 
@@ -110,6 +109,7 @@ impl PendingActivations {
         }
     }
 
+    /// Returns true if any pending activation contains an eviction
     pub fn is_some_eviction(&self) -> bool {
         self.inner
             .read()

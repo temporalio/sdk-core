@@ -203,10 +203,11 @@ impl WorkflowTaskManager {
         self.workflow_machines.cached_workflows()
     }
 
+    /// Resolves once there is either capacity in the cache, or there are no pending evictions.
+    /// Inversely: Waits while there are pending evictions and the cache is full.
+    /// Waiting while there are no pending evictions must be avoided because it would block forever,
+    /// since there is no way for the cache size to be reduced.
     pub async fn wait_for_cache_capacity(&self) {
-        // We should wait for cache capacity if there is either a pending eviction that hasn't been
-        // issued, or an eviction that has been sent to lang. We also can exit waiting early if
-        // that is no longer true.
         let are_no_pending_evictions = || {
             !self.pending_activations.is_some_eviction()
                 && !self.workflow_machines.are_outstanding_evictions()
