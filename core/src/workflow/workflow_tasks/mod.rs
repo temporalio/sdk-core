@@ -196,6 +196,7 @@ impl WorkflowTaskManager {
         // completion may appear to be the last in a task (no more pending activations) because
         // concurrently a poll happened to dequeue the pending activation at the right time.
         // NOTE: This all goes away with the handles-per-workflow poll approach.
+        // TODO: Don't send nonsense empty job lists
         let maybe_act = self
             .pending_activations
             .pop_first_matching(|rid| self.workflow_machines.get_activation(rid).is_none());
@@ -765,7 +766,8 @@ impl WorkflowTaskManager {
         run_id: &str,
         resolved: LocalResolution,
     ) -> Result<(), WorkflowUpdateError> {
-        self.workflow_machines
+        let result_was_important = self
+            .workflow_machines
             .access_sync(run_id, |wfm: &mut WorkflowManager| {
                 wfm.notify_of_local_result(resolved)
             })?
@@ -774,7 +776,9 @@ impl WorkflowTaskManager {
                 run_id: run_id.to_string(),
             })?;
 
-        self.needs_activation(run_id);
+        if result_was_important {
+            self.needs_activation(run_id);
+        }
         Ok(())
     }
 
