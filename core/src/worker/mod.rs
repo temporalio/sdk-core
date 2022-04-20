@@ -656,6 +656,9 @@ impl Worker {
             ))
         })?;
 
+        // Only permanently take a permit in the event the poll finished completely
+        sem.forget();
+
         let work = if self.config.max_cached_workflows > 0 {
             // Add the workflow to cache management. We do not even attempt insert if cache
             // size is zero because we do not want to generate eviction requests for
@@ -669,8 +672,6 @@ impl Worker {
             work
         };
 
-        // Only permanently take a permit in the event the poll finished completely
-        sem.forget();
         Ok(Some(work))
     }
 
