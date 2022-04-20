@@ -447,8 +447,6 @@ async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early() {
     .await
     .unwrap();
 
-    warn!("Done first compl");
-
     let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
