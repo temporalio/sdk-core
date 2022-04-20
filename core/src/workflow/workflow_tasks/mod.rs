@@ -204,14 +204,22 @@ impl WorkflowTaskManager {
     }
 
     pub async fn wait_for_cache_capacity(&self) {
-        if self.pending_activations.is_some_eviction() {
-            warn!("Waiting cache");
+        // We should wait for cache capacity if there is either a pending eviction that hasn't been
+        // issued, or an eviction that has been sent to lang. We also can exit waiting early if
+        // that is no longer true.
+        let are_no_pending_evictions = || {
+            !self.pending_activations.is_some_eviction()
+                && !self.workflow_machines.are_outstanding_evictions()
+        };
+        if !are_no_pending_evictions() {
             let wait_fut = {
-                let r = self.cache_manager.lock().wait_for_capacity();
+                let r = self
+                    .cache_manager
+                    .lock()
+                    .wait_for_capacity(are_no_pending_evictions);
                 r
             };
             wait_fut.await;
-            warn!("Done");
         }
     }
 
@@ -241,7 +249,6 @@ impl WorkflowTaskManager {
                 .workflow_machines
                 .buffer_resp_if_outstanding_work(poll_resp)
             {
-                warn!("task immediately ready");
                 self.make_buffered_poll_ready(not_buffered);
             }
 
@@ -591,16 +598,15 @@ impl WorkflowTaskManager {
                 .await;
             let is_query_playback = has_pending_query && query_responses.is_empty();
 
-            let no_commands_and_evicting =
-                server_cmds.commands.is_empty() && activation_was_only_eviction;
             // We only actually want to send commands back to the server if there are no more
             // pending activations and we are caught up on replay. We don't want to complete a wft
             // if we already saw the final event in the workflow, or if we are playing back for the
-            // express purpose of fulfilling a query
+            // express purpose of fulfilling a query. If the activation we send was *only* an
+            // eviction, we shouldn't send anything back either.
             if !self.pending_activations.has_pending(run_id)
                 && !server_cmds.replaying
                 && !is_query_playback
-                && !no_commands_and_evicting
+                && !activation_was_only_eviction
             {
                 Some(ServerCommandsWithWorkflowInfo {
                     task_token,

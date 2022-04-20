@@ -1,4 +1,3 @@
-use crate::telemetry::test_telem_console;
 use crate::{
     errors::PollWfError,
     job_assert,
@@ -1741,7 +1740,6 @@ async fn evict_missing_wf_during_poll_doesnt_eat_permit() {
 
 #[tokio::test]
 async fn poll_faster_than_complete_wont_overflow_cache() {
-    test_telem_console();
     // Make workflow tasks for 5 different runs
     let tasks: Vec<_> = (1..=5)
         .map(|i| {
@@ -1793,6 +1791,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
                 variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
             }]
         );
+        p4
     };
     let p2_pending_completer = async {
         // Sleep needed because otherwise the complete unblocks waiting for the cache to free a slot
@@ -1805,34 +1804,40 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
         .await
         .unwrap();
     };
-    tokio::join!(p4, p2_pending_completer);
-    warn!("Done complete");
+    let (p4, _) = tokio::join!(p4, p2_pending_completer);
     assert_eq!(core.cached_workflows(), 3);
 
     // This poll should also block until the eviction is actually completed
-    let p5 = core.poll_workflow_activation().await.unwrap();
-    assert_matches!(
-        &p5.jobs[0].variant,
-        Some(workflow_activation_job::Variant::StartWorkflow(sw))
-        if sw.workflow_id == format!("wf-{}", 4)
-    );
-    assert_eq!(core.cached_workflows(), 3);
-    // Cache size is now 4, since there is an un-received eviction, and 3 outstanding
-    // workflow tasks.
-    // We should get the eviction from when we polled and got p4
-    let p6 = core.poll_workflow_activation().await.unwrap();
-    assert_matches!(
-        p6.jobs.as_slice(),
-        [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-        }]
-    );
+    let blocking_poll = async {
+        let res = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            &res.jobs[0].variant,
+            Some(workflow_activation_job::Variant::StartWorkflow(sw))
+            if sw.workflow_id == format!("wf-{}", 4)
+        );
+        res
+    };
     let complete_evict = async {
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(p6.run_id))
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(p4.run_id))
             .await
             .unwrap();
-        // Now the cache size is back to 3, but we are at max concurrent WFT, so complete another
-        // outstanding task
+    };
+
+    let (_p5, _) = tokio::join!(blocking_poll, complete_evict);
+    assert_eq!(core.cached_workflows(), 3);
+    // The next poll will get an buffer a task for a new run, and generate an eviction for p3 but
+    // that eviction cannot be obtained until we complete the existing outstanding task.
+    let p6 = async {
+        let p6 = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            p6.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
+            }]
+        );
+        p6
+    };
+    let completer = async {
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             p3.run_id,
             start_timer_cmd(1, Duration::from_secs(1)),
@@ -1840,27 +1845,25 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
         .await
         .unwrap();
     };
+    let (p6, _) = tokio::join!(p6, completer);
+    let complete_evict = async {
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(p6.run_id))
+            .await
+            .unwrap();
+    };
     let blocking_poll = async {
-        // We are at cache limit, so another poll will buffer the next task and produce an eviction
+        // This poll will also block until the last eviction goes through, and when it does it'll
+        // produce the final start workflow task
         let res = core.poll_workflow_activation().await.unwrap();
         assert_matches!(
-            &res.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-            }]
+            &res.jobs[0].variant,
+            Some(workflow_activation_job::Variant::StartWorkflow(sw))
+            if sw.workflow_id == "wf-5"
         );
     };
 
     tokio::join!(blocking_poll, complete_evict);
-    // p4 outstanding -- hence two permits available
-    assert_eq!(core.available_wft_permits(), 2);
+    // p5 outstanding and final poll outstanding -- hence one permit available
+    assert_eq!(core.available_wft_permits(), 1);
     assert_eq!(core.cached_workflows(), 3);
-
-    // Now the next poll should return the buffered final WFT
-    let task = core.poll_workflow_activation().await.unwrap();
-    assert_matches!(
-        &task.jobs[0].variant,
-        Some(workflow_activation_job::Variant::StartWorkflow(sw))
-        if sw.workflow_id == "wf-5"
-    );
 }

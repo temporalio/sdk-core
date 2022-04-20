@@ -452,7 +452,6 @@ impl Worker {
             }
 
             if self.config.max_cached_workflows > 0 {
-                warn!("Is there outstanding evict activation? {}", self.work);
                 tokio::select! {
                     biased;
                     // We must loop up if there's a new pending activation, since those are for

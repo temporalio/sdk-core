@@ -41,9 +41,13 @@ impl WorkflowCacheManager {
         Self::new(policy, Default::default())
     }
 
-    /// Resolves once there is an open slot in the cache
+    /// Resolves once there is an open slot in the cache. The passed in closure can be used to
+    /// exit the wait loop if it returns true even if the cache is not below the limit. It will be
+    /// re-evaluated every time there is an insert or remove to the cache, even if it did not change
+    /// the siz.e
     pub fn wait_for_capacity(
         &self,
+        early_exit: impl Fn() -> bool,
     ) -> future::Either<impl Future<Output = ()>, impl Future<Output = ()>> {
         if self.cache.cap() == 0 {
             return future::Either::Left(future::ready(()));
@@ -54,7 +58,7 @@ impl WorkflowCacheManager {
         let mx = self.cap_mutex.clone();
         future::Either::Right(async move {
             let _l = mx.lock();
-            while dbg!(*rx.borrow_and_update()) >= cap {
+            while !early_exit() && *rx.borrow_and_update() >= cap {
                 let _ = rx.changed().await;
             }
         })

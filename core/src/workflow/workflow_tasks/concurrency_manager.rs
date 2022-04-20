@@ -7,7 +7,6 @@ use crate::{
     },
 };
 use futures::future::{BoxFuture, FutureExt};
-use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{
     collections::HashMap,
