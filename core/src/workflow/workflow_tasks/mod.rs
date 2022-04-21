@@ -791,40 +791,38 @@ impl WorkflowTaskManager {
 
         // Workflows with no more pending activations (IE: They have completed a WFT) must be
         // removed from the outstanding tasks map
-        if !self.pending_activations.has_pending(run_id) {
-            if !just_evicted {
-                if let Some(ref mut ot) = &mut *self
-                    .workflow_machines
-                    .get_task_mut(run_id)
-                    .expect("Machine must exist")
-                {
-                    // Check if there was a pending query which must be fulfilled, and if there is
-                    // create a new pending activation for it.
-                    if !ot.pending_queries.is_empty() {
-                        for query in ot.pending_queries.drain(..) {
-                            let na = create_query_activation(run_id.to_string(), [query]);
-                            self.pending_queries.push(na);
-                        }
-                        self.pending_activations_notifier.notify_waiters();
-                        return false;
+        if !self.pending_activations.has_pending(run_id) && !just_evicted {
+            if let Some(ref mut ot) = &mut *self
+                .workflow_machines
+                .get_task_mut(run_id)
+                .expect("Machine must exist")
+            {
+                // Check if there was a pending query which must be fulfilled, and if there is
+                // create a new pending activation for it.
+                if !ot.pending_queries.is_empty() {
+                    for query in ot.pending_queries.drain(..) {
+                        let na = create_query_activation(run_id.to_string(), [query]);
+                        self.pending_queries.push(na);
                     }
+                    self.pending_activations_notifier.notify_waiters();
+                    return false;
                 }
+            }
 
-                // Evict run id if cache is full. Non-sticky will always evict.
-                let maybe_evicted = self.cache_manager.lock().insert(run_id);
-                if let Some(evicted_run_id) = maybe_evicted {
-                    self.request_eviction(
-                        &evicted_run_id,
-                        "Workflow cache full",
-                        EvictionReason::CacheFull,
-                    );
-                }
+            // Evict run id if cache is full. Non-sticky will always evict.
+            let maybe_evicted = self.cache_manager.lock().insert(run_id);
+            if let Some(evicted_run_id) = maybe_evicted {
+                self.request_eviction(
+                    &evicted_run_id,
+                    "Workflow cache full",
+                    EvictionReason::CacheFull,
+                );
+            }
 
-                // If there was a buffered poll response from the server, it is now ready to
-                // be handled.
-                if let Some(buffd) = self.workflow_machines.take_buffered_poll(run_id) {
-                    self.make_buffered_poll_ready(buffd);
-                }
+            // If there was a buffered poll response from the server, it is now ready to
+            // be handled.
+            if let Some(buffd) = self.workflow_machines.take_buffered_poll(run_id) {
+                self.make_buffered_poll_ready(buffd);
             }
         }
 
