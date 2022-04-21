@@ -1,27 +1,29 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration as StdDuration, SystemTime};
-
 use prost_types::{Duration, Timestamp};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration as StdDuration, SystemTime},
+};
 use temporal_sdk_core_api::Worker;
-use temporal_sdk_core_protos::coresdk::{
-    activity_task,
-    common::{Payload, RetryPolicy, WorkflowExecution},
-    ActivityHeartbeat,
+use temporal_sdk_core_protos::{
+    coresdk::{
+        activity_task,
+        common::{Payload, RetryPolicy, WorkflowExecution},
+        ActivityHeartbeat,
+    },
+    utilities::TryIntoOrNone,
 };
 use tokio_util::sync::CancellationToken;
 
 /// Used within activities to get info, heartbeat management etc.
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct ActContext {
-    pub(crate) worker: Arc<dyn Worker>,
-    pub(crate) cancellation_token: CancellationToken,
-    pub(crate) input: Vec<Payload>,
-    pub(crate) heartbeat_details: Vec<Payload>,
-    /// #NOTE future usage?
-    pub(crate) header_fields: HashMap<String, Payload>,
-    pub(crate) info: ActivityInfo,
+    worker: Arc<dyn Worker>,
+    cancellation_token: CancellationToken,
+    input: Vec<Payload>,
+    heartbeat_details: Vec<Payload>,
+    header_fields: HashMap<String, Payload>,
+    info: ActivityInfo,
 }
 
 #[derive(Clone)]
@@ -33,31 +35,31 @@ pub struct ActivityInfo {
     pub activity_id: String,
     pub activity_type: String,
     pub task_queue: String,
-    pub heartbeat_timeout: Option<Duration>,
-    /// Time of activity scheduled by a workflow
-    pub scheduled_time: Option<Timestamp>,
+    pub heartbeat_timeout: Option<StdDuration>,
+    /// Time activity was scheduled by a workflow
+    pub scheduled_time: Option<SystemTime>,
     /// Time of activity start
-    pub started_time: Option<Timestamp>,
+    pub started_time: Option<SystemTime>,
     /// Time of activity timeout
-    pub deadline: Option<Timestamp>,
-    /// Attempt starts from 1, and increased by 1 for every retry if retry policy is specified.
+    pub deadline: Option<SystemTime>,
+    /// Attempt starts from 1, and increase by 1 for every retry, if retry policy is specified.
     pub attempt: u32,
-
-    /// #NOTE Not in sdk-go
-    pub current_attempt_scheduled_time: Option<Timestamp>,
+    /// Time this attempt at the activity was scheduled
+    pub current_attempt_scheduled_time: Option<SystemTime>,
     pub retry_policy: Option<RetryPolicy>,
     pub is_local: bool,
 }
 
 impl ActContext {
-    /// Construct new Activity Context
-    pub fn new(
+    /// Construct new Activity Context, returning the context and the first argument to the activity
+    /// (which may be a default [Payload]).
+    pub(crate) fn new(
         worker: Arc<dyn Worker>,
         cancellation_token: CancellationToken,
         task_queue: String,
         task_token: Vec<u8>,
         task: activity_task::Start,
-    ) -> Self {
+    ) -> (Self, Payload) {
         let activity_task::Start {
             workflow_namespace,
             workflow_type,
@@ -65,7 +67,7 @@ impl ActContext {
             activity_id,
             activity_type,
             header_fields,
-            input,
+            mut input,
             heartbeat_details,
             scheduled_time,
             current_attempt_scheduled_time,
@@ -83,32 +85,36 @@ impl ActContext {
             start_to_close_timeout.as_ref(),
             schedule_to_close_timeout.as_ref(),
         );
+        let first_arg = input.pop().unwrap_or_default();
 
-        ActContext {
-            worker,
-            cancellation_token,
-            input,
-            heartbeat_details,
-            header_fields,
-            info: ActivityInfo {
-                task_token,
-                task_queue,
-                workflow_type,
-                workflow_namespace,
-                workflow_execution,
-                activity_id,
-                activity_type,
-                heartbeat_timeout,
-                scheduled_time,
-                started_time,
-                deadline,
-                attempt,
-
-                current_attempt_scheduled_time,
-                retry_policy,
-                is_local,
+        (
+            ActContext {
+                worker,
+                cancellation_token,
+                input,
+                heartbeat_details,
+                header_fields,
+                info: ActivityInfo {
+                    task_token,
+                    task_queue,
+                    workflow_type,
+                    workflow_namespace,
+                    workflow_execution,
+                    activity_id,
+                    activity_type,
+                    heartbeat_timeout: heartbeat_timeout.try_into_or_none(),
+                    scheduled_time: scheduled_time.try_into_or_none(),
+                    started_time: started_time.try_into_or_none(),
+                    deadline,
+                    attempt,
+                    current_attempt_scheduled_time: current_attempt_scheduled_time
+                        .try_into_or_none(),
+                    retry_policy,
+                    is_local,
+                },
             },
-        }
+            first_arg,
+        )
     }
 
     /// Returns a future the completes if and when the activity this was called inside has been
@@ -122,8 +128,8 @@ impl ActContext {
         self.cancellation_token.is_cancelled()
     }
 
-    /// Retrieve extra parameters.  The first input is always popped and passed to the
-    /// ActivityFuntion for the currently executing activity.  However, if more parameters are
+    /// Retrieve extra parameters to the Activity. The first input is always popped and passed to
+    /// the Activity function for the currently executing activity. However, if more parameters are
     /// passed, perhaps from another language's SDK, explicit access is available from extra_inputs
     pub fn extra_inputs(&mut self) -> &mut [Payload] {
         &mut self.input
@@ -146,6 +152,11 @@ impl ActContext {
     pub fn get_info(&self) -> &ActivityInfo {
         &self.info
     }
+
+    /// Get headers attached to this activity
+    pub fn headers(&self) -> &HashMap<String, Payload> {
+        &self.header_fields
+    }
 }
 
 /// Deadline calculation.  This is a port of
@@ -155,7 +166,7 @@ fn calculate_deadline(
     started_time: Option<&Timestamp>,
     start_to_close_timeout: Option<&Duration>,
     schedule_to_close_timeout: Option<&Duration>,
-) -> Option<Timestamp> {
+) -> Option<SystemTime> {
     match (
         scheduled_time,
         started_time,
@@ -182,12 +193,12 @@ fn calculate_deadline(
                     scheduled.checked_add(schedule_to_close_timeout)?;
                 // Minimum of the two deadlines.
                 if schedule_to_close_deadline < start_to_close_deadline {
-                    Some(schedule_to_close_deadline.into())
+                    Some(schedule_to_close_deadline)
                 } else {
-                    Some(start_to_close_deadline.into())
+                    Some(start_to_close_deadline)
                 }
             } else {
-                Some(start_to_close_deadline.into())
+                Some(start_to_close_deadline)
             }
         }
         _ => None,

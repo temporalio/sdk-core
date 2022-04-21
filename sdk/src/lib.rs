@@ -358,7 +358,7 @@ impl ActivityHalf {
         task_queue: String,
         activity: ActivityTask,
     ) -> Result<(), anyhow::Error> {
-        match activity.variant.clone() {
+        match activity.variant {
             Some(activity_task::Variant::Start(start)) => {
                 let act_fn = self
                     .activity_fns
@@ -375,10 +375,9 @@ impl ActivityHalf {
                 self.task_tokens_to_cancels
                     .insert(task_token.clone().into(), ct.clone());
 
-                let mut ctx =
+                let (ctx, arg) =
                     ActContext::new(worker.clone(), ct, task_queue, task_token.clone(), start);
                 tokio::spawn(async move {
-                    let arg = ctx.input.pop().unwrap_or_default();
                     let output = (act_fn.act_func)(ctx, arg).await;
                     let result = match output {
                         Ok(res) => ActivityExecutionResult::ok(res),
