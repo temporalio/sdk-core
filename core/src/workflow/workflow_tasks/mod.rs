@@ -627,7 +627,8 @@ impl WorkflowTaskManager {
         let poll_resp_is_incremental =
             poll_resp_is_incremental || poll_wf_resp.history.events.len() == 0;
 
-        let mut did_miss_cache = false;
+        let mut did_miss_cache = !poll_resp_is_incremental;
+
         let page_token = if !self.workflow_machines.exists(&run_id) && poll_resp_is_incremental {
             debug!(run_id=?run_id, "Workflow task has partial history, but workflow is not in \
                    cache. Will fetch history");

@@ -117,17 +117,13 @@ impl HistoryInfo {
     /// Remove events from the beginning of this history such that it looks like what would've been
     /// delivered on a sticky queue where the previously started task was the one before the last
     /// task in this history.
-    ///
-    /// This is not *fully* accurate in that it will include commands that were part of the last
-    /// WFT completion, which the server would typically not include, but it's good enough for
-    /// testing.
     pub fn make_incremental(&mut self) {
         let last_complete_ix = self
             .events
             .iter()
             .rposition(|he| he.event_type() == EventType::WorkflowTaskCompleted)
             .expect("Must be a WFT completed event in history");
-        self.events.drain(0..=last_complete_ix);
+        self.events.drain(0..last_complete_ix);
     }
 
     pub fn events(&self) -> &[HistoryEvent] {
@@ -223,7 +219,7 @@ mod tests {
     fn incremental_works() {
         let t = single_timer("timer1");
         let hi = t.get_one_wft(2).unwrap();
-        assert_eq!(hi.events().len(), 4);
-        assert_eq!(hi.events()[0].event_id, 5);
+        assert_eq!(hi.events().len(), 5);
+        assert_eq!(hi.events()[0].event_id, 4);
     }
 }

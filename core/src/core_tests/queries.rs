@@ -156,7 +156,12 @@ async fn new_queries(#[case] num_queries: usize) {
     let tasks = VecDeque::from(vec![
         hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
         {
-            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string());
+            let mut pr = hist_to_poll_resp(
+                &t,
+                wfid.to_owned(),
+                ResponseType::OneTask(2),
+                TEST_Q.to_string(),
+            );
             pr.queries = HashMap::new();
             for i in 1..=num_queries {
                 pr.queries.insert(
@@ -383,35 +388,49 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
     core.shutdown().await;
 }
 
+enum QueryHists {
+    Empty,
+    Full,
+    Partial,
+}
 #[rstest::rstest]
 #[tokio::test]
 async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early(
-    #[values(false, true)] empty_history: bool,
+    #[values(QueryHists::Empty, QueryHists::Full, QueryHists::Partial)] hist_type: QueryHists,
 ) {
     let wfid = "fake_wf_id";
     let query_resp = "response";
     let t = canned_histories::single_timer("1");
     let full_hist = t.get_full_history_info().unwrap();
     let tasks = VecDeque::from(vec![{
-        let mut pr = if empty_history {
-            // Create a no-history poll response. This happens to be easiest to do by just ripping
-            // out the history after making a normal one.
-            let mut pr = hist_to_poll_resp(
+        let mut pr = match hist_type {
+            QueryHists::Empty => {
+                // Create a no-history poll response. This happens to be easiest to do by just ripping
+                // out the history after making a normal one.
+                let mut pr = hist_to_poll_resp(
+                    &t,
+                    wfid.to_owned(),
+                    ResponseType::AllHistory,
+                    TEST_Q.to_string(),
+                );
+                pr.history = Some(Default::default());
+                pr
+            }
+            QueryHists::Full => hist_to_poll_resp(
                 &t,
                 wfid.to_owned(),
                 ResponseType::AllHistory,
                 TEST_Q.to_string(),
-            );
-            pr.history = Some(Default::default());
-            pr
-        } else {
-            // Create a partial task
-            hist_to_poll_resp(
-                &t,
-                wfid.to_owned(),
-                ResponseType::OneTask(2),
-                TEST_Q.to_string(),
-            )
+            ),
+            QueryHists::Partial => {
+                // Create a partial task
+                hist_to_poll_resp(
+                    &t,
+                    wfid.to_owned(),
+                    ResponseType::OneTask(2),
+                    TEST_Q.to_string(),
+                )
+            }
         };
         pr.queries = HashMap::new();
         pr.queries.insert(
@@ -425,14 +444,16 @@ async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early(
         pr
     }]);
     let mut mock_client = mock_workflow_client();
-    mock_client
-        .expect_get_workflow_execution_history()
-        .returning(move |_, _, _| {
-            Ok(GetWorkflowExecutionHistoryResponse {
-                history: Some(full_hist.clone().into()),
-                ..Default::default()
-            })
-        });
+    if !matches!(hist_type, QueryHists::Full) {
+        mock_client
+            .expect_get_workflow_execution_history()
+            .returning(move |_, _, _| {
+                Ok(GetWorkflowExecutionHistoryResponse {
+                    history: Some(full_hist.clone().into()),
+                    ..Default::default()
+                })
+            });
+    }
     mock_client
         .expect_complete_workflow_task()
         .times(1)
