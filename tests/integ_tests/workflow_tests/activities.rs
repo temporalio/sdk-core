@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{ActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
@@ -47,7 +47,7 @@ async fn one_activity() {
     worker.register_wf(wf_name.to_owned(), one_activity_wf);
     worker.register_activity(
         "echo_activity",
-        |echo_me: String| async move { Ok(echo_me) },
+        |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
     );
 
     worker

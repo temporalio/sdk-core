@@ -2,7 +2,7 @@ use assert_matches::assert_matches;
 use futures::{future::join_all, sink, stream::FuturesUnordered, StreamExt};
 use std::time::{Duration, Instant};
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{ActivityOptions, WfContext};
+use temporal_sdk::{ActContext, ActivityOptions, WfContext};
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityExecutionResult, activity_task::activity_task as act_task,
     workflow_commands::ActivityCancellationType, ActivityTaskCompletion, AsJsonPayloadExt,
@@ -146,7 +146,7 @@ async fn workflow_load() {
     });
     worker.register_activity(
         "echo_activity",
-        |echo_me: String| async move { Ok(echo_me) },
+        |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
     );
     for i in 0..200 {
         worker
