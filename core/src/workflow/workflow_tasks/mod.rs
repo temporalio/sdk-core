@@ -625,7 +625,7 @@ impl WorkflowTaskManager {
             .map(|ev| ev.event_id > 1)
             .unwrap_or_default();
         let poll_resp_is_incremental =
-            poll_resp_is_incremental || poll_wf_resp.history.events.len() == 0;
+            poll_resp_is_incremental || poll_wf_resp.history.events.is_empty();
 
         let mut did_miss_cache = !poll_resp_is_incremental;
 
