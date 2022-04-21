@@ -3,8 +3,8 @@ use futures::future::join_all;
 use std::time::Duration;
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{
-    act_cancelled, act_is_cancelled, ActContext, ActivityCancelledError, CancellableFuture,
-    LocalActivityOptions, WfContext, WorkflowResult,
+    ActContext, ActivityCancelledError, CancellableFuture, LocalActivityOptions, WfContext,
+    WorkflowResult,
 };
 use temporal_sdk_core_protos::coresdk::{
     common::RetryPolicy, workflow_commands::ActivityCancellationType, AsJsonPayloadExt,
@@ -245,12 +245,12 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
     let manual_cancel = CancellationToken::new();
     let manual_cancel_act = manual_cancel.clone();
 
-    worker.register_activity("echo", move |_: ActContext, _: String| {
+    worker.register_activity("echo", move |ctx: ActContext, _: String| {
         let manual_cancel_act = manual_cancel_act.clone();
         async move {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(10)) => {},
-                _ = act_cancelled() => {
+                _ = ctx.cancelled() => {
                     return Err(anyhow!(ActivityCancelledError::default()))
                 }
                 _ = manual_cancel_act.cancelled() => {}
@@ -329,11 +329,11 @@ async fn cancel_after_act_starts(
     let manual_cancel = CancellationToken::new();
     let manual_cancel_act = manual_cancel.clone();
 
-    worker.register_activity("echo", move |_: ActContext, _: String| {
+    worker.register_activity("echo", move |ctx: ActContext, _: String| {
         let manual_cancel_act = manual_cancel_act.clone();
         async move {
             if cancel_on_backoff.is_some() {
-                if act_is_cancelled() {
+                if ctx.is_cancelled() {
                     return Err(anyhow!(ActivityCancelledError::default()));
                 }
                 // Just fail constantly so we get stuck on the backoff timer
@@ -341,7 +341,7 @@ async fn cancel_after_act_starts(
             } else {
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(100)) => {},
-                    _ = act_cancelled() => {
+                    _ = ctx.cancelled() => {
                         return Err(anyhow!(ActivityCancelledError::default()))
                     }
                     _ = manual_cancel_act.cancelled() => {
@@ -406,10 +406,10 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
         assert!(res.timed_out());
         Ok(().into())
     });
-    worker.register_activity("echo", |_: ActContext, _: String| async {
+    worker.register_activity("echo", |ctx: ActContext, _: String| async move {
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(100)) => {},
-            _ = act_cancelled() => {
+            _ = ctx.cancelled() => {
                 return Err(anyhow!(ActivityCancelledError::default()))
             }
         };
