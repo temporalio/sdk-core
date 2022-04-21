@@ -608,12 +608,15 @@ impl WorkflowTaskManager {
             // We only actually want to send commands back to the server if there are no more
             // pending activations and we are caught up on replay. We don't want to complete a wft
             // if we already saw the final event in the workflow, or if we are playing back for the
-            // express purpose of fulfilling a query. If the activation we send was *only* an
-            // eviction, we shouldn't send anything back either.
+            // express purpose of fulfilling a query. If the activation we sent was *only* an
+            // eviction, and there were no commands produced during iteration, don't send that
+            // either.
+            let no_commands_and_evicting =
+                server_cmds.commands.is_empty() && activation_was_only_eviction;
             if !self.pending_activations.has_pending(run_id)
                 && !server_cmds.replaying
                 && !is_query_playback
-                && !activation_was_only_eviction
+                && !no_commands_and_evicting
             {
                 Some(ServerCommandsWithWorkflowInfo {
                     task_token,
@@ -773,7 +776,7 @@ impl WorkflowTaskManager {
     /// eviction, which could be avoided if this is called too early.
     ///
     /// Returns true if WFT was marked completed internally
-    pub(crate) fn after_wft_report(&self, run_id: &str, did_complete_wft: bool) -> bool {
+    pub(crate) fn after_wft_report(&self, run_id: &str, reported_wft_to_server: bool) -> bool {
         let mut just_evicted = false;
 
         if self
@@ -788,15 +791,15 @@ impl WorkflowTaskManager {
 
         // Workflows with no more pending activations (IE: They have completed a WFT) must be
         // removed from the outstanding tasks map
-        let retme = if !self.pending_activations.has_pending(run_id) {
+        if !self.pending_activations.has_pending(run_id) {
             if !just_evicted {
-                // Check if there was a pending query which must be fulfilled, and if there is
-                // create a new pending activation for it.
                 if let Some(ref mut ot) = &mut *self
                     .workflow_machines
                     .get_task_mut(run_id)
                     .expect("Machine must exist")
                 {
+                    // Check if there was a pending query which must be fulfilled, and if there is
+                    // create a new pending activation for it.
                     if !ot.pending_queries.is_empty() {
                         for query in ot.pending_queries.drain(..) {
                             let na = create_query_activation(run_id.to_string(), [query]);
@@ -823,17 +826,15 @@ impl WorkflowTaskManager {
                     self.make_buffered_poll_ready(buffd);
                 }
             }
+        }
 
-            // The evict may or may not have already done this, but even when we aren't evicting
-            // we want to clear the outstanding workflow task since it's now complete.
-            self.workflow_machines
-                .complete_wft(run_id, did_complete_wft)
-                .is_some()
-        } else {
-            false
-        };
+        // If we reported to server, we always want to mark it complete.
+        let wft_marked_complete = self
+            .workflow_machines
+            .complete_wft(run_id, reported_wft_to_server)
+            .is_some();
         self.on_activation_done(run_id);
-        retme
+        wft_marked_complete
     }
 
     /// Must be called after *every* activation is replied to, regardless of whether or not we

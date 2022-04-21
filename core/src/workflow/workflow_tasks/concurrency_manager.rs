@@ -154,7 +154,7 @@ impl WorkflowConcurrencyManager {
     pub fn complete_wft(
         &self,
         run_id: &str,
-        send_wft_complete_to_srv: bool,
+        sent_wft_complete_to_srv: bool,
     ) -> Option<OutstandingTask> {
         // If the WFT completion wasn't sent to the server, but we did see the final event, we still
         // want to clear the workflow task. This can really only happen in replay testing, where we
@@ -164,7 +164,7 @@ impl WorkflowConcurrencyManager {
         let saw_final = self
             .access_sync(run_id, |wfm| wfm.machines.have_seen_terminal_event)
             .unwrap_or_default();
-        if !saw_final && !send_wft_complete_to_srv {
+        if !saw_final && !sent_wft_complete_to_srv {
             return None;
         }
 

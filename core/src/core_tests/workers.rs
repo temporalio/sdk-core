@@ -163,7 +163,7 @@ async fn can_shutdown_local_act_only_worker_when_act_polling() {
 }
 
 #[tokio::test]
-async fn complete_with_task_not_found_during_shutdwn() {
+async fn complete_with_task_not_found_during_shutdown() {
     let t = canned_histories::single_timer("1");
     let mut mock = mock_workflow_client();
     mock.expect_complete_workflow_task()
@@ -204,5 +204,7 @@ async fn complete_with_task_not_found_during_shutdwn() {
         complete_order.borrow_mut().push(1);
     };
     tokio::join!(shutdown_fut, poll_fut, complete_fut);
-    assert_eq!(&complete_order.into_inner(), &[1, 2, 3])
+    // Shutdown will currently complete first before the actual eviction reply since the
+    // workflow task is marked complete as soon as we get not found back from the server.
+    assert_eq!(&complete_order.into_inner(), &[1, 3, 2])
 }

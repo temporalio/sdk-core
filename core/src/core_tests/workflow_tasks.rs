@@ -1722,6 +1722,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
         .collect();
     let mut mock = mock_workflow_client();
     mock.expect_complete_workflow_task()
+        .times(3)
         .returning(|_| Ok(Default::default()));
     let mut mock = MocksHolder::from_client_with_responses(mock, tasks, []);
     mock.worker_cfg(|wc| {
