@@ -9,7 +9,7 @@
 //! An example of running an activity worker:
 //! ```no_run
 //! use std::{sync::Arc, str::FromStr};
-//! use temporal_sdk::{sdk_client_options, Worker};
+//! use temporal_sdk::{sdk_client_options, Worker, ActContext};
 //! use temporal_sdk_core::{init_worker, Url};
 //! use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
 //!
@@ -23,7 +23,7 @@
 //!     let mut worker = Worker::new_from_core(Arc::new(core_worker), "task_queue");
 //!     worker.register_activity(
 //!         "echo_activity",
-//!         |echo_me: String| async move { Ok(echo_me) },
+//!         |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
 //!     );
 //!     worker.run().await?;
 //!     Ok(())
@@ -33,11 +33,14 @@
 #[macro_use]
 extern crate tracing;
 
+mod activity_context;
 mod conversions;
 pub mod interceptors;
 mod payload_converter;
 mod workflow_context;
 mod workflow_future;
+
+pub use activity_context::ActContext;
 
 pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
@@ -238,7 +241,7 @@ impl Worker {
                                     if matches!(activity, Err(PollActivityError::ShutDown)) {
                                         break;
                                     }
-                                    act_half.activity_task_handler(common.worker.clone(),
+                                    act_half.activity_task_handler(common.worker.clone(), common.task_queue.clone(),
                                                                    activity?)?;
                                 },
                                 _ = shutdown_rx.changed() => { break }
@@ -347,27 +350,12 @@ impl WorkflowHalf {
     }
 }
 
-tokio::task_local! {
-    // This works, but maybe just passing a context object for activities like WFs is better
-    static ACT_CANCEL_TOK: CancellationToken
-}
-
-/// Returns a future the completes if and when the activity this was called inside has been
-/// cancelled
-pub async fn act_cancelled() {
-    ACT_CANCEL_TOK.with(|ct| ct.clone()).cancelled().await
-}
-
-/// Returns true if this activity has already been cancelled
-pub fn act_is_cancelled() -> bool {
-    ACT_CANCEL_TOK.with(|ct| ct.is_cancelled())
-}
-
 impl ActivityHalf {
     /// Spawns off a task to handle the provided activity task
     fn activity_task_handler(
         &mut self,
         worker: Arc<dyn CoreWorker>,
+        task_queue: String,
         activity: ActivityTask,
     ) -> Result<(), anyhow::Error> {
         match activity.variant {
@@ -383,13 +371,14 @@ impl ActivityHalf {
                     })?
                     .clone();
                 let ct = CancellationToken::new();
+                let task_token = activity.task_token;
                 self.task_tokens_to_cancels
-                    .insert(activity.task_token.clone().into(), ct.clone());
+                    .insert(task_token.clone().into(), ct.clone());
 
-                tokio::spawn(ACT_CANCEL_TOK.scope(ct, async move {
-                    let mut inputs = start.input;
-                    let arg = inputs.pop().unwrap_or_default();
-                    let output = (act_fn.act_func)(arg).await;
+                let (ctx, arg) =
+                    ActContext::new(worker.clone(), ct, task_queue, task_token.clone(), start);
+                tokio::spawn(async move {
+                    let output = (act_fn.act_func)(ctx, arg).await;
                     let result = match output {
                         Ok(res) => ActivityExecutionResult::ok(res),
                         Err(err) => match err.downcast::<ActivityCancelledError>() {
@@ -399,12 +388,12 @@ impl ActivityHalf {
                     };
                     worker
                         .complete_activity_task(ActivityTaskCompletion {
-                            task_token: activity.task_token,
+                            task_token,
                             result: Some(result),
                         })
                         .await?;
                     Result::<_, anyhow::Error>::Ok(())
-                }));
+                });
             }
             Some(activity_task::Variant::Cancel(_)) => {
                 if let Some(ct) = self.task_tokens_to_cancels.get(&activity.task_token.into()) {
@@ -622,8 +611,9 @@ impl<T: Debug> WfExitValue<T> {
     }
 }
 
-type BoxActFn =
-    Arc<dyn Fn(Payload) -> BoxFuture<'static, Result<Payload, anyhow::Error>> + Send + Sync>;
+type BoxActFn = Arc<
+    dyn Fn(ActContext, Payload) -> BoxFuture<'static, Result<Payload, anyhow::Error>> + Send + Sync,
+>;
 /// Container for user-defined activity functions
 #[derive(Clone)]
 pub struct ActivityFunction {
@@ -650,16 +640,16 @@ pub trait IntoActivityFunc<Args, Res> {
 
 impl<A, Rf, R, F> IntoActivityFunc<A, Rf> for F
 where
-    F: (Fn(A) -> Rf) + Sync + Send + 'static,
+    F: (Fn(ActContext, A) -> Rf) + Sync + Send + 'static,
     A: FromJsonPayloadExt + Send,
     Rf: Future<Output = Result<R, anyhow::Error>> + Send + 'static,
     R: AsJsonPayloadExt,
 {
     fn into_activity_fn(self) -> BoxActFn {
-        let wrapper = move |input: Payload| {
+        let wrapper = move |ctx: ActContext, input: Payload| {
             // Some minor gymnastics are required to avoid needing to clone the function
             match A::from_json_payload(&input) {
-                Ok(deser) => (self)(deser)
+                Ok(deser) => (self)(ctx, deser)
                     .map(|r| r.map(|r| r.as_json_payload())?)
                     .boxed(),
                 Err(e) => async move { Err(e.into()) }.boxed(),
