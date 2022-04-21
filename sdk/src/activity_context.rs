@@ -9,12 +9,14 @@ use temporal_sdk_core_protos::coresdk::{
     common::{Payload, RetryPolicy, WorkflowExecution},
     ActivityHeartbeat,
 };
+use tokio_util::sync::CancellationToken;
 
 /// Used within activities to get info, heartbeat management etc.
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct ActContext {
     pub(crate) worker: Arc<dyn Worker>,
+    pub(crate) cancellation_token: CancellationToken,
     pub(crate) input: Vec<Payload>,
     pub(crate) heartbeat_details: Vec<Payload>,
     /// #NOTE future usage?
@@ -51,6 +53,7 @@ impl ActContext {
     /// Construct new Activity Context
     pub fn new(
         worker: Arc<dyn Worker>,
+        cancellation_token: CancellationToken,
         task_queue: String,
         task_token: Vec<u8>,
         task: activity_task::Start,
@@ -83,6 +86,7 @@ impl ActContext {
 
         ActContext {
             worker,
+            cancellation_token,
             input,
             heartbeat_details,
             header_fields,
@@ -105,6 +109,17 @@ impl ActContext {
                 is_local,
             },
         }
+    }
+
+    /// Returns a future the completes if and when the activity this was called inside has been
+    /// cancelled
+    pub async fn cancelled(&self) {
+        self.cancellation_token.clone().cancelled().await
+    }
+
+    /// Returns true if this activity has already been cancelled
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation_token.is_cancelled()
     }
 
     /// Retrieve extra parameters.  The first input is always popped and passed to the

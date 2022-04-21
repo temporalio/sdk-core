@@ -350,22 +350,6 @@ impl WorkflowHalf {
     }
 }
 
-tokio::task_local! {
-    // This works, but maybe just passing a context object for activities like WFs is better
-    static ACT_CANCEL_TOK: CancellationToken
-}
-
-/// Returns a future the completes if and when the activity this was called inside has been
-/// cancelled
-pub async fn act_cancelled() {
-    ACT_CANCEL_TOK.with(|ct| ct.clone()).cancelled().await
-}
-
-/// Returns true if this activity has already been cancelled
-pub fn act_is_cancelled() -> bool {
-    ACT_CANCEL_TOK.with(|ct| ct.is_cancelled())
-}
-
 impl ActivityHalf {
     /// Spawns off a task to handle the provided activity task
     fn activity_task_handler(
@@ -387,13 +371,13 @@ impl ActivityHalf {
                     })?
                     .clone();
                 let ct = CancellationToken::new();
-                let task_token = activity.task_token.clone();
+                let task_token = activity.task_token;
                 self.task_tokens_to_cancels
                     .insert(task_token.clone().into(), ct.clone());
 
                 let mut ctx =
-                    ActContext::new(worker.clone(), task_queue, task_token.clone(), start);
-                tokio::spawn(ACT_CANCEL_TOK.scope(ct, async move {
+                    ActContext::new(worker.clone(), ct, task_queue, task_token.clone(), start);
+                tokio::spawn(async move {
                     let arg = ctx.input.pop().unwrap_or_default();
                     let output = (act_fn.act_func)(ctx, arg).await;
                     let result = match output {
@@ -405,12 +389,12 @@ impl ActivityHalf {
                     };
                     worker
                         .complete_activity_task(ActivityTaskCompletion {
-                            task_token: task_token.clone(),
+                            task_token,
                             result: Some(result),
                         })
                         .await?;
                     Result::<_, anyhow::Error>::Ok(())
-                }));
+                });
             }
             Some(activity_task::Variant::Cancel(_)) => {
                 if let Some(ct) = self.task_tokens_to_cancels.get(&activity.task_token.into()) {
