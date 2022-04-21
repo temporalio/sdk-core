@@ -353,8 +353,10 @@ struct TestWorkerInterceptor {
     shutdown_handle: Box<dyn Fn()>,
     next: Option<Box<dyn WorkerInterceptor>>,
 }
+
+#[async_trait::async_trait(?Send)]
 impl WorkerInterceptor for TestWorkerInterceptor {
-    fn on_workflow_activation_completion(&self, completion: &WorkflowActivationCompletion) {
+    async fn on_workflow_activation_completion(&self, completion: &WorkflowActivationCompletion) {
         if completion.has_execution_ending() {
             info!("Workflow {} says it's finishing", &completion.run_id);
             let prev = self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
@@ -364,7 +366,7 @@ impl WorkerInterceptor for TestWorkerInterceptor {
             }
         }
         if let Some(n) = self.next.as_ref() {
-            n.on_workflow_activation_completion(completion);
+            n.on_workflow_activation_completion(completion).await;
         }
     }
 

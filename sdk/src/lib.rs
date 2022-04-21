@@ -206,67 +206,61 @@ impl Worker {
     /// or may return early with an error in the event of some unresolvable problem.
     pub async fn run(&mut self) -> Result<(), anyhow::Error> {
         let shutdown_token = CancellationToken::new();
-        let shutdown_token_c = shutdown_token.clone();
-        let pollers = async move {
-            let (common, wf_half, act_half) = self.split_apart();
-            let (completions_tx, mut completions_rx) = unbounded_channel();
-            let (wf_poll_res, act_poll_res) = tokio::join!(
-                // Workflow polling loop
-                async {
-                    loop {
-                        let activation = match common.worker.poll_workflow_activation().await {
-                            Err(PollWfError::ShutDown) => {
-                                break Result::<_, anyhow::Error>::Ok(());
-                            }
-                            o => o?,
-                        };
-                        wf_half
-                            .workflow_activation_handler(
-                                common,
-                                &shutdown_token,
-                                &completions_tx,
-                                &mut completions_rx,
-                                activation,
-                            )
-                            .await?;
-                    }
-                },
-                // Only poll on the activity queue if activity functions have been registered. This
-                // makes tests which use mocks dramatically more manageable.
-                async {
-                    if !act_half.activity_fns.is_empty() {
-                        let shutdown_token = shutdown_token.clone();
-                        loop {
-                            tokio::select! {
-                                activity = common.worker.poll_activity_task() => {
-                                    if matches!(activity, Err(PollActivityError::ShutDown)) {
-                                        break;
-                                    }
-                                    act_half.activity_task_handler(common.worker.clone(), common.task_queue.clone(),
-                                                                   activity?)?;
-                                },
-                                _ = shutdown_token.cancelled() => { break }
-                            }
+        // let workflow_activations
+        let (common, wf_half, act_half) = self.split_apart();
+        let (completions_tx, mut completions_rx) = unbounded_channel();
+        tokio::try_join!(
+            // Workflow polling loop
+            async {
+                loop {
+                    let activation = match common.worker.poll_workflow_activation().await {
+                        Err(PollWfError::ShutDown) => {
+                            break Result::<_, anyhow::Error>::Ok(());
                         }
+                        o => o?,
                     };
-                    Result::<_, anyhow::Error>::Ok(())
+                    wf_half
+                        .workflow_activation_handler(
+                            common,
+                            &shutdown_token,
+                            &completions_tx,
+                            &mut completions_rx,
+                            activation,
+                        )
+                        .await?;
                 }
-            );
-            wf_poll_res?;
-            // TODO: Activity loop errors don't show up until wf loop exits/errors
-            act_poll_res?;
-            Result::<_, anyhow::Error>::Ok(self)
-        };
+            },
+            // Only poll on the activity queue if activity functions have been registered. This
+            // makes tests which use mocks dramatically more manageable.
+            async {
+                if !act_half.activity_fns.is_empty() {
+                    let shutdown_token = shutdown_token.clone();
+                    loop {
+                        tokio::select! {
+                            activity = common.worker.poll_activity_task() => {
+                                if matches!(activity, Err(PollActivityError::ShutDown)) {
+                                    break;
+                                }
+                                act_half.activity_task_handler(common.worker.clone(),
+                                                               common.task_queue.clone(),
+                                                               activity?)?;
+                            },
+                            _ = shutdown_token.cancelled() => { break }
+                        }
+                    }
+                };
+                Result::<_, anyhow::Error>::Ok(())
+            }
+        )?;
 
-        let myself = pollers.await?;
         info!("Polling loops exited");
-        shutdown_token_c.cancel();
-        if let Some(i) = myself.common.worker_interceptor.as_ref() {
-            i.on_shutdown(myself);
+        shutdown_token.cancel();
+        if let Some(i) = self.common.worker_interceptor.as_ref() {
+            i.on_shutdown(self);
         }
-        myself.common.worker.shutdown().await;
+        self.common.worker.shutdown().await;
         // Clean up any still-extant workflows
-        for (_, wf_dat) in myself.workflow_half.workflows.drain() {
+        for (_, wf_dat) in self.workflow_half.workflows.drain() {
             wf_dat.join_handle.await??;
         }
         Ok(())
@@ -363,7 +357,7 @@ impl WorkflowHalf {
 
         let completion = completions_rx.recv().await.expect("No workflows left?");
         if let Some(ref i) = common.worker_interceptor {
-            i.on_workflow_activation_completion(&completion);
+            i.on_workflow_activation_completion(&completion).await;
         }
         common
             .worker
