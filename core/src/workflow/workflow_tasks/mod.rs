@@ -624,6 +624,8 @@ impl WorkflowTaskManager {
             .get(0)
             .map(|ev| ev.event_id > 1)
             .unwrap_or_default();
+        let poll_resp_is_incremental =
+            poll_resp_is_incremental || poll_wf_resp.history.events.len() == 0;
 
         let mut did_miss_cache = false;
         let page_token = if !self.workflow_machines.exists(&run_id) && poll_resp_is_incremental {

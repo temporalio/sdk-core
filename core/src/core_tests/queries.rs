@@ -383,20 +383,36 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
     core.shutdown().await;
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early() {
+async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early(
+    #[values(false, true)] empty_history: bool,
+) {
     let wfid = "fake_wf_id";
     let query_resp = "response";
     let t = canned_histories::single_timer("1");
     let full_hist = t.get_full_history_info().unwrap();
     let tasks = VecDeque::from(vec![{
-        // Create a partial task
-        let mut pr = hist_to_poll_resp(
-            &t,
-            wfid.to_owned(),
-            ResponseType::OneTask(2),
-            TEST_Q.to_string(),
-        );
+        let mut pr = if empty_history {
+            // Create a no-history poll response. This happens to be easiest to do by just ripping
+            // out the history after making a normal one.
+            let mut pr = hist_to_poll_resp(
+                &t,
+                wfid.to_owned(),
+                ResponseType::AllHistory,
+                TEST_Q.to_string(),
+            );
+            pr.history = Some(Default::default());
+            pr
+        } else {
+            // Create a partial task
+            hist_to_poll_resp(
+                &t,
+                wfid.to_owned(),
+                ResponseType::OneTask(2),
+                TEST_Q.to_string(),
+            )
+        };
         pr.queries = HashMap::new();
         pr.queries.insert(
             "the-query".to_string(),
