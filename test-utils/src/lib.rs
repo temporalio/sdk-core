@@ -252,7 +252,8 @@ impl CoreWfStarter {
 
 /// Provides conveniences for running integ tests with the SDK
 pub struct TestWorker {
-    pub inner: Worker,
+    inner: Worker,
+    pub orig_core_worker: Arc<dyn CoreWorker>,
     client: Option<Arc<dyn WorkflowClientTrait>>,
     incomplete_workflows: Arc<AtomicUsize>,
 }
@@ -260,9 +261,10 @@ impl TestWorker {
     /// Create a new test worker
     pub fn new(core_worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         let ct = Arc::new(AtomicUsize::new(0));
-        let inner = Worker::new_from_core(core_worker, task_queue);
+        let inner = Worker::new_from_core(core_worker.clone(), task_queue);
         Self {
             inner,
+            orig_core_worker: core_worker,
             client: None,
             incomplete_workflows: ct,
         }
@@ -361,6 +363,7 @@ impl WorkerInterceptor for TestWorkerInterceptor {
             info!("Workflow {} says it's finishing", &completion.run_id);
             let prev = self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
             if prev <= 1 {
+                info!("Test worker calling shutdown");
                 // There are now zero, we just subtracted one
                 (self.shutdown_handle)()
             }

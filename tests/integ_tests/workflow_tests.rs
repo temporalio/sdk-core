@@ -28,14 +28,13 @@ use temporal_sdk::{
     interceptors::WorkerInterceptor, ActContext, ActivityOptions, WfContext, WorkflowResult,
 };
 use temporal_sdk_core_api::{errors::PollWfError, Worker};
-use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
         workflow_activation::{workflow_activation_job, WorkflowActivation, WorkflowActivationJob},
         workflow_commands::{ActivityCancellationType, FailWorkflowExecution, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
-        ActivityTaskCompletion, IntoCompletion,
+        ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
     },
     temporal::api::failure::v1::Failure,
 };

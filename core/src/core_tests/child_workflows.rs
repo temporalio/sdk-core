@@ -1,18 +1,14 @@
 use crate::{
     replay::DEFAULT_WORKFLOW_TYPE,
-    test_help::{
-        build_mock_pollers, canned_histories, mock_worker, MockPollCfg, ResponseType, TEST_Q,
-    },
+    test_help::{canned_histories, mock_sdk, MockPollCfg, ResponseType},
     worker::client::mocks::mock_workflow_client,
     workflow::managed_wf::ManagedWFFunc,
 };
-use std::sync::Arc;
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ChildWorkflowOptions, Signal, WfContext, WorkflowFunction, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::child_workflow::{
     child_workflow_result, ChildWorkflowCancellationType,
 };
-use temporal_sdk_core_test_utils::TestWorker;
 use tokio::join;
 
 const SIGNAME: &str = "SIGNAME";
@@ -26,10 +22,12 @@ async fn signal_child_workflow(#[case] serial: bool) {
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let t = canned_histories::single_child_workflow_signaled("child-id-1", SIGNAME);
     let mock = mock_workflow_client();
-    let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::AllHistory], mock);
-    let mock = build_mock_pollers(mh);
-    let core = mock_worker(mock);
-    let mut worker = TestWorker::new(Arc::new(core), TEST_Q.to_string());
+    let mut worker = mock_sdk(MockPollCfg::from_resp_batches(
+        wf_id,
+        t,
+        [ResponseType::AllHistory],
+        mock,
+    ));
 
     let wf = move |ctx: WfContext| async move {
         let child = ctx.child_workflow(ChildWorkflowOptions {
