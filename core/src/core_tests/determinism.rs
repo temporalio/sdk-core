@@ -58,7 +58,7 @@ async fn test_panic_wf_task_rejected_properly() {
 #[case::with_cache(true)]
 #[case::without_cache(false)]
 #[tokio::test]
-async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] _use_cache: bool) {
+async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache: bool) {
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let t = canned_histories::single_timer_wf_completes("1");
@@ -75,7 +75,9 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] _use_cache
     mh.expect_fail_wft_matcher =
         Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::NonDeterministicError));
     let mut worker = mock_sdk_cfg(mh, |cfg| {
-        cfg.max_cached_workflows = 2;
+        if use_cache {
+            cfg.max_cached_workflows = 2;
+        }
     });
 
     let started_count: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
