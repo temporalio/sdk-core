@@ -27,7 +27,6 @@ pub async fn timer_wf_fails_once(ctx: WfContext) -> WorkflowResult<()> {
 /// failures) are turned into unspecified WFT failures.
 #[tokio::test]
 async fn test_panic_wf_task_rejected_properly() {
-    crate::telemetry::test_telem_console();
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let t = canned_histories::workflow_fails_with_failure_after_timer("1");
@@ -60,7 +59,6 @@ async fn test_panic_wf_task_rejected_properly() {
 #[case::without_cache(false)]
 #[tokio::test]
 async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] _use_cache: bool) {
-    crate::telemetry::test_telem_console();
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let t = canned_histories::single_timer_wf_completes("1");

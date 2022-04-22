@@ -40,7 +40,7 @@ use crate::{
 };
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
 use futures::{Future, TryFutureExt};
-use std::{convert::TryInto, sync::Arc};
+use std::{convert::TryInto, future, sync::Arc};
 use temporal_client::WorkflowTaskCompletion;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -169,6 +169,7 @@ impl WorkerTrait for Worker {
             atm.notify_shutdown();
         }
         self.wf_task_source.stop_pollers();
+        info!("Initiated shutdown");
     }
 
     async fn shutdown(&self) {
@@ -314,7 +315,6 @@ impl Worker {
     /// completed
     pub(crate) async fn shutdown(&self) {
         self.initiate_shutdown();
-        info!("Initiated shutdown");
         // Next we need to wait for all local activities to finish so no more workflow task
         // heartbeats will be generated
         self.local_act_mgr.shutdown_and_wait_all_finished().await;
@@ -588,7 +588,17 @@ impl Worker {
     async fn workflow_poll_or_wfts_drained(
         &self,
     ) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
+        let mut shutdown_seen = false;
         loop {
+            // If we've already seen shutdown once it's important we don't freak out and
+            // restart the loop constantly while waiting for poll to finish shutting down.
+            let shutdown_restarter = async {
+                if shutdown_seen {
+                    future::pending::<()>().await;
+                } else {
+                    self.shutdown_token.cancelled().await;
+                };
+            };
             tokio::select! {
                 biased;
 
@@ -601,7 +611,9 @@ impl Worker {
                     }
                     return r
                 },
-                _ = self.shutdown_token.cancelled() => {},
+                _ = shutdown_restarter => {
+                    shutdown_seen = true;
+                },
             }
         }
     }
