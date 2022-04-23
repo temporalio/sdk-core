@@ -130,16 +130,17 @@ async fn workflow_lru_cache_evictions() {
             .await
             .unwrap();
     }
-    struct CacheAsserter {}
+    struct CacheAsserter;
     #[async_trait::async_trait(?Send)]
     impl WorkerInterceptor for CacheAsserter {
         async fn on_workflow_activation_completion(&self, _: &WorkflowActivationCompletion) {}
         fn on_shutdown(&self, sdk_worker: &temporal_sdk::Worker) {
-            assert_eq!(sdk_worker.cached_workflows(), 1)
+            // 0 since the sdk worker force-evicts and drains everything on shutdown.
+            assert_eq!(sdk_worker.cached_workflows(), 0);
         }
     }
     worker
-        .run_until_done_intercepted(Some(CacheAsserter {}))
+        .run_until_done_intercepted(Some(CacheAsserter))
         .await
         .unwrap();
     // The wf must have started more than # workflows times, since all but one must experience
@@ -573,7 +574,7 @@ async fn slow_completes_with_small_cache() {
     impl WorkerInterceptor for SlowCompleter {
         async fn on_workflow_activation_completion(&self, _: &WorkflowActivationCompletion) {
             // They don't need to be much slower
-            // tokio::time::sleep(Duration::from_millis(200)).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
         fn on_shutdown(&self, _: &temporal_sdk::Worker) {}
     }

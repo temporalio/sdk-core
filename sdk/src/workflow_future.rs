@@ -478,7 +478,6 @@ impl Future for WorkflowFuture {
             self.send_completion(run_id, activation_cmds);
 
             if die_of_eviction_when_done {
-                warn!("WF Future dying of eviction");
                 return Ok(WfExitValue::Evicted).into();
             }
 

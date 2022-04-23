@@ -36,6 +36,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_test_utils::TestWorker;
+use tokio::sync::Notify;
 
 pub const TEST_Q: &str = "q";
 pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";
@@ -372,6 +373,8 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
     // The poller will return history from any workflow runs that do not have currently
     // outstanding tasks.
     let outstanding = outstanding_wf_task_tokens.clone();
+    let outstanding_wakeup_orig = Arc::new(Notify::new());
+    let outstanding_wakeup = outstanding_wakeup_orig.clone();
     mock_poller
         .expect_poll()
         .times(correct_num_polls.map_or_else(|| RangeFull.into(), Into::<TimesRange>::into))
@@ -392,16 +395,19 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
                     }
                 }
             }
+            let outstanding_wakeup = outstanding_wakeup.clone();
             async move {
                 if resp.is_some() {
                     return resp;
                 }
 
                 if cfg.for_sdk {
-                    // Simulate poll timeout
-                    // TODO: Ugh this blocks everything b/c poll happens again before completion
-                    //  unlocks next task
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    // Simulate poll timeout, or just send an empty response and then try again
+                    // if we're told a new one might be ready.
+                    tokio::select! {
+                        _ = outstanding_wakeup.notified() => {}
+                        _ = tokio::time::sleep(Duration::from_secs(60)) => {}
+                    };
                     Some(Ok(Default::default()))
                 } else {
                     Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG)))
@@ -412,13 +418,16 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
     let mock_worker = MockWorker::new(Box::from(mock_poller));
 
     let outstanding = outstanding_wf_task_tokens.clone();
+    let outstanding_wakeup = outstanding_wakeup_orig.clone();
     cfg.mock_client
         .expect_complete_workflow_task()
         .returning(move |comp| {
             outstanding.write().remove_by_right(&comp.task_token);
+            outstanding_wakeup.notify_one();
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
     let outstanding = outstanding_wf_task_tokens.clone();
+    let outstanding_wakeup = outstanding_wakeup_orig.clone();
     cfg.mock_client
         .expect_fail_workflow_task()
         .withf(cfg.expect_fail_wft_matcher)
@@ -428,6 +437,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
         )
         .returning(move |tt, _, _| {
             outstanding.write().remove_by_right(&tt);
+            outstanding_wakeup.notify_one();
             Ok(Default::default())
         });
 

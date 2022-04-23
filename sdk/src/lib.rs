@@ -132,8 +132,11 @@ struct WorkflowHalf {
 struct WorkflowData {
     /// Channel used to send the workflow activations
     activation_chan: UnboundedSender<WorkflowActivation>,
-    /// Token used to terminate workflow function
-    shutdown: CancellationToken,
+}
+
+struct WorkflowFutureHandle<F: Future<Output = Result<WorkflowResult<()>, JoinError>>> {
+    join_handle: F,
+    run_id: String,
 }
 
 struct ActivityHalf {
@@ -210,13 +213,25 @@ impl Worker {
         let (common, wf_half, act_half) = self.split_apart();
         let (wf_future_tx, wf_future_rx) = unbounded_channel();
         let (completions_tx, completions_rx) = unbounded_channel();
-        // TODO: Turn into join handle joiner
-        // let wf_future_joiner = async {
-        //     UnboundedReceiverStream::new(wf_future_rx)
-        //         .map(Ok)
-        //         .try_for_each_concurrent(None, |act_fut| act_fut)
-        //         .await
-        // };
+        let wf_future_joiner = async {
+            UnboundedReceiverStream::new(wf_future_rx)
+                .map(Result::<_, anyhow::Error>::Ok)
+                .try_for_each_concurrent(
+                    None,
+                    |WorkflowFutureHandle {
+                         join_handle,
+                         run_id,
+                     }| {
+                        let wf_half = &*wf_half;
+                        async move {
+                            join_handle.await??;
+                            wf_half.workflows.borrow_mut().remove(&run_id);
+                            Ok(())
+                        }
+                    },
+                )
+                .await
+        };
         let wf_completion_processor = async {
             let r = UnboundedReceiverStream::new(completions_rx)
                 .map(Ok)
@@ -228,34 +243,31 @@ impl Worker {
                 })
                 .map_err(Into::into)
                 .await;
-            info!("Done completion processor");
             r
         };
         tokio::try_join!(
             // Workflow polling loop
             async {
                 loop {
-                    info!("Pollin'");
                     let activation = match common.worker.poll_workflow_activation().await {
                         Err(PollWfError::ShutDown) => {
                             break;
                         }
                         o => o?,
                     };
-                    if let Some(activation_fut) = wf_half.workflow_activation_handler(
+                    if let Some(wf_fut) = wf_half.workflow_activation_handler(
                         common,
-                        &shutdown_token,
+                        shutdown_token.clone(),
                         activation,
                         &completions_tx,
                     )? {
-                        if wf_future_tx.send(activation_fut).is_err() {
+                        if wf_future_tx.send(wf_fut).is_err() {
                             panic!(
                                 "Receive half of completion processor channel cannot be dropped"
                             );
                         }
                     }
                 }
-                info!("Left workflow polling loop");
                 // Tell still-alive workflows to evict themselves
                 shutdown_token.cancel();
                 // It's important to drop these so the future and completion processors will
@@ -283,10 +295,9 @@ impl Worker {
                         }
                     }
                 };
-                info!("Left activity polling loop");
                 Result::<_, anyhow::Error>::Ok(())
             },
-            // wf_future_joiner,
+            wf_future_joiner,
             wf_completion_processor,
         )?;
 
@@ -295,10 +306,6 @@ impl Worker {
             i.on_shutdown(self);
         }
         self.common.worker.shutdown().await;
-        // Clean up any still-extant workflows
-        // for (_, wf_dat) in self.workflow_half.workflows.get_mut().drain() {
-        //     wf_dat.join_handle.await??;
-        // }
         Ok(())
     }
 
@@ -333,16 +340,14 @@ impl WorkflowHalf {
     fn workflow_activation_handler(
         &self,
         common: &CommonWorker,
-        shutdown_token: &CancellationToken,
+        shutdown_token: CancellationToken,
         activation: WorkflowActivation,
         completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
-    ) -> Result<Option<impl Future<Output = Result<WorkflowResult<()>, JoinError>>>, anyhow::Error>
-    {
+    ) -> Result<
+        Option<WorkflowFutureHandle<impl Future<Output = Result<WorkflowResult<()>, JoinError>>>>,
+        anyhow::Error,
+    > {
         let mut res = None;
-        let shall_be_evicted = activation
-            .jobs
-            .iter()
-            .any(|j| matches!(j.variant, Some(Variant::RemoveFromCache(_))));
         let run_id = activation.run_id.clone();
 
         // If the activation is to start a workflow, create a new workflow driver for it,
@@ -364,23 +369,24 @@ impl WorkflowHalf {
                 sw.arguments.clone(),
                 completions_tx.clone(),
             );
-            // Must be a child to avoid stopping all workflows when this one is evicted
-            let shutdown = shutdown_token.child_token();
-            let task_shutdown = shutdown.clone();
             let jh = tokio::spawn(async move {
                 tokio::select! {
                     r = wff => r,
                     // TODO: This probably shouldn't abort early, as it could cause an in-progress
                     //  complete to abort. Send synthetic remove activation
-                    _ = task_shutdown.cancelled() => Ok(WfExitValue::Evicted)
+                    _ = shutdown_token.cancelled() => {
+                        Ok(WfExitValue::Evicted)
+                    }
                 }
             });
-            res = Some(jh);
+            res = Some(WorkflowFutureHandle {
+                join_handle: jh,
+                run_id: run_id.clone(),
+            });
             self.workflows.borrow_mut().insert(
                 run_id.clone(),
                 WorkflowData {
                     activation_chan: activations,
-                    shutdown,
                 },
             );
         }
