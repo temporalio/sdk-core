@@ -919,7 +919,6 @@ impl Worker {
                         Ok(())
                     }
                     tonic::Code::NotFound => {
-                        // TODO: Remove outstanding workflow task from workflow task manager
                         warn!(error = %err, run_id, "Task not found when completing");
                         should_evict = Some(EvictionReason::TaskNotFound);
                         Ok(())

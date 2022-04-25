@@ -271,7 +271,7 @@ pub(crate) fn test_telem_console() {
 pub(crate) fn test_telem_collector() {
     telemetry_init(&TelemetryOptions {
         otel_collector_url: Some("grpc://localhost:4317".parse().unwrap()),
-        tracing_filter: "temporal_sdk_core=DEBUG".to_string(),
+        tracing_filter: "temporal_sdk_core=DEBUG,temporal_sdk=DEBUG".to_string(),
         log_forwarding_level: LevelFilter::Off,
         prometheus_export_bind_address: None,
         totally_disable: false,
