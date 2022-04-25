@@ -623,14 +623,11 @@ impl WorkflowTaskManager {
                     query_responses,
                 },
             };
-            if !self.pending_activations.has_pending(run_id)
-                && !server_cmds.replaying
-                && !is_query_playback
-                && !no_commands_and_evicting
-            {
-                Some(to_be_sent)
-            } else if has_query_responses {
-                // If there were query responses, we should send regardless of the other conditions.
+            let should_respond = !(self.pending_activations.has_pending(run_id)
+                || server_cmds.replaying
+                || is_query_playback
+                || no_commands_and_evicting);
+            if should_respond || has_query_responses {
                 Some(to_be_sent)
             } else {
                 None
