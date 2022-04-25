@@ -11,7 +11,6 @@ use log::LevelFilter;
 use prost::Message;
 use rand::{distributions::Standard, Rng};
 use std::{
-    cell::RefCell,
     convert::TryFrom,
     env,
     future::Future,
@@ -253,7 +252,7 @@ impl CoreWfStarter {
 
 /// Provides conveniences for running integ tests with the SDK
 pub struct TestWorker {
-    inner: Worker,
+    pub inner: Worker,
     client: Option<Arc<dyn WorkflowClientTrait>>,
     incomplete_workflows: Arc<AtomicUsize>,
 }
@@ -261,12 +260,7 @@ impl TestWorker {
     /// Create a new test worker
     pub fn new(core_worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         let ct = Arc::new(AtomicUsize::new(0));
-        let mut inner = Worker::new_from_core(core_worker, task_queue);
-        let iceptor = WorkflowCompletionCountingInterceptor {
-            incomplete_workflows: ct.clone(),
-            shutdown_handle: Box::new(inner.shutdown_handle()),
-        };
-        inner.set_worker_interceptor(Box::new(iceptor));
+        let inner = Worker::new_from_core(core_worker, task_queue);
         Self {
             inner,
             client: None,
@@ -333,37 +327,33 @@ impl TestWorker {
 
     /// Runs until all expected workflows have completed
     pub async fn run_until_done(&mut self) -> Result<(), anyhow::Error> {
-        self.inner.run().await
+        self.run_until_done_intercepted(Option::<TestWorkerInterceptor>::None)
+            .await
     }
 
     /// See [Self::run_until_done], except calls the provided callback just before performing core
     /// shutdown.
-    pub async fn run_until_done_shutdown_hook(
+    pub async fn run_until_done_intercepted(
         &mut self,
-        before_shutdown: impl FnOnce() + 'static,
+        interceptor: Option<impl WorkerInterceptor + 'static>,
     ) -> Result<(), anyhow::Error> {
-        // Replace shutdown interceptor with one that calls the before hook first
-        let b4shut = RefCell::new(Some(before_shutdown));
-        let shutdown_handle = self.inner.shutdown_handle();
-        let iceptor = WorkflowCompletionCountingInterceptor {
+        let iceptor = TestWorkerInterceptor {
             incomplete_workflows: self.incomplete_workflows.clone(),
-            shutdown_handle: Box::new(move || {
-                if let Some(s) = b4shut.borrow_mut().take() {
-                    s();
-                }
-                shutdown_handle();
-            }),
+            shutdown_handle: Box::new(self.inner.shutdown_handle()),
+            next: interceptor.map(|i| Box::new(i) as Box<dyn WorkerInterceptor>),
         };
         self.inner.set_worker_interceptor(Box::new(iceptor));
         self.inner.run().await
     }
 }
 
-struct WorkflowCompletionCountingInterceptor {
+/// Implements calling the shutdown handle when the expected number of test workflows has completed
+struct TestWorkerInterceptor {
     incomplete_workflows: Arc<AtomicUsize>,
     shutdown_handle: Box<dyn Fn()>,
+    next: Option<Box<dyn WorkerInterceptor>>,
 }
-impl WorkerInterceptor for WorkflowCompletionCountingInterceptor {
+impl WorkerInterceptor for TestWorkerInterceptor {
     fn on_workflow_activation_completion(&self, completion: &WorkflowActivationCompletion) {
         if completion.has_execution_ending() {
             info!("Workflow {} says it's finishing", &completion.run_id);
@@ -372,6 +362,15 @@ impl WorkerInterceptor for WorkflowCompletionCountingInterceptor {
                 // There are now zero, we just subtracted one
                 (self.shutdown_handle)()
             }
+        }
+        if let Some(n) = self.next.as_ref() {
+            n.on_workflow_activation_completion(completion);
+        }
+    }
+
+    fn on_shutdown(&self, sdk_worker: &Worker) {
+        if let Some(n) = self.next.as_ref() {
+            n.on_shutdown(sdk_worker);
         }
     }
 }

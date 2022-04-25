@@ -154,7 +154,7 @@ impl WorkflowConcurrencyManager {
     pub fn complete_wft(
         &self,
         run_id: &str,
-        send_wft_complete_to_srv: bool,
+        sent_wft_complete_to_srv: bool,
     ) -> Option<OutstandingTask> {
         // If the WFT completion wasn't sent to the server, but we did see the final event, we still
         // want to clear the workflow task. This can really only happen in replay testing, where we
@@ -164,7 +164,7 @@ impl WorkflowConcurrencyManager {
         let saw_final = self
             .access_sync(run_id, |wfm| wfm.machines.have_seen_terminal_event)
             .unwrap_or_default();
-        if !saw_final && !send_wft_complete_to_srv {
+        if !saw_final && !sent_wft_complete_to_srv {
             return None;
         }
 
@@ -313,12 +313,26 @@ impl WorkflowConcurrencyManager {
         val.and_then(|v| v.buffered_resp.take())
     }
 
+    /// Sounds the total number of outstanding workflow tasks
     pub fn outstanding_wft(&self) -> usize {
         self.runs
             .read()
             .iter()
             .filter(|(_, run)| run.wft.is_some())
             .count()
+    }
+
+    /// Returns number of currently cached workflows
+    pub fn cached_workflows(&self) -> usize {
+        self.runs.read().len()
+    }
+
+    /// Returns true if any outstanding activation contains an eviction
+    pub fn are_outstanding_evictions(&self) -> bool {
+        self.runs
+            .read()
+            .values()
+            .any(|mr| mr.activation.map(|a| a.has_eviction()).unwrap_or_default())
     }
 }
 

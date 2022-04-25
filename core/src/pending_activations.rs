@@ -22,6 +22,7 @@ struct PaInner {
     queue: VecDeque<ActivationKey>,
 }
 
+#[derive(Debug)]
 pub struct PendingActInfo {
     pub needs_eviction: Option<RemoveFromCache>,
     pub run_id: String,
@@ -41,6 +42,7 @@ impl PendingActivations {
             inner.queue.push_back(key);
         };
     }
+
     pub fn notify_needs_eviction(&self, run_id: &str, message: String, reason: EvictionReason) {
         let mut inner = self.inner.write();
 
@@ -105,6 +107,15 @@ impl PendingActivations {
         if let Some(k) = inner.by_run_id.remove(run_id) {
             inner.activations.remove(k);
         }
+    }
+
+    /// Returns true if any pending activation contains an eviction
+    pub fn is_some_eviction(&self) -> bool {
+        self.inner
+            .read()
+            .activations
+            .values()
+            .any(|act| act.needs_eviction.is_some())
     }
 }
 

@@ -21,38 +21,6 @@ use temporal_sdk_core_test_utils::start_timer_cmd;
 use tokio::sync::{watch, Barrier};
 
 #[tokio::test]
-async fn multi_workers() {
-    // TODO: Turn this into a test with multiple independent workers
-    // Make histories for 5 different workflows on 5 different task queues
-    // let hists = (0..5).into_iter().map(|i| {
-    //     let wf_id = format!("fake-wf-{}", i);
-    //     let hist = canned_histories::single_timer("1");
-    //     FakeWfResponses {
-    //         wf_id,
-    //         hist,
-    //         response_batches: vec![1.into(), 2.into()],
-    //         task_q: format!("q-{}", i),
-    //     }
-    // });
-    // let mock = build_multihist_mock_sg(hists, false, None);
-    //
-    // let core = &mock_worker(mock);
-    //
-    // for i in 0..5 {
-    //     let tq = format!("q-{}", i);
-    //     let res = core.poll_workflow_activation().await.unwrap();
-    //     assert_matches!(
-    //         res.jobs[0].variant,
-    //         Some(workflow_activation_job::Variant::StartWorkflow(_))
-    //     );
-    //     core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
-    //         .await
-    //         .unwrap();
-    // }
-    // core.shutdown().await;
-}
-
-#[tokio::test]
 async fn after_shutdown_of_worker_get_shutdown_err() {
     let t = canned_histories::single_timer("1");
     let worker = build_fake_worker("fake_wf_id", t, &[1]);
@@ -195,7 +163,7 @@ async fn can_shutdown_local_act_only_worker_when_act_polling() {
 }
 
 #[tokio::test]
-async fn complete_with_task_not_found_during_shutdwn() {
+async fn complete_with_task_not_found_during_shutdown() {
     let t = canned_histories::single_timer("1");
     let mut mock = mock_workflow_client();
     mock.expect_complete_workflow_task()
@@ -236,5 +204,7 @@ async fn complete_with_task_not_found_during_shutdwn() {
         complete_order.borrow_mut().push(1);
     };
     tokio::join!(shutdown_fut, poll_fut, complete_fut);
-    assert_eq!(&complete_order.into_inner(), &[1, 2, 3])
+    // Shutdown will currently complete first before the actual eviction reply since the
+    // workflow task is marked complete as soon as we get not found back from the server.
+    assert_eq!(&complete_order.into_inner(), &[1, 3, 2])
 }

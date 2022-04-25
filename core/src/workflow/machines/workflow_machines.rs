@@ -463,7 +463,7 @@ impl WorkflowMachines {
         event: HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
-        debug!(
+        trace!(
             event = %event,
             "handling non-stateful event"
         );

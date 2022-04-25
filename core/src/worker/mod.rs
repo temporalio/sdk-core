@@ -102,7 +102,6 @@ pub struct Worker {
 
 #[async_trait::async_trait]
 impl WorkerTrait for Worker {
-    #[instrument(level = "debug", skip(self), fields(run_id))]
     async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
         self.next_workflow_activation().await
     }
@@ -120,8 +119,6 @@ impl WorkerTrait for Worker {
         }
     }
 
-    #[instrument(level = "debug", skip(self, completion),
-    fields(completion=%&completion, run_id=%completion.run_id))]
     async fn complete_workflow_activation(
         &self,
         completion: WorkflowActivationCompletion,
@@ -165,7 +162,6 @@ impl WorkerTrait for Worker {
     }
 
     /// Begins the shutdown process, tells pollers they should stop. Is idempotent.
-    // TODO: will be in trait after Roey's shutdown refactor
     fn initiate_shutdown(&self) {
         self.shutdown_token.cancel();
         // First, we want to stop polling of both activity and workflow tasks
@@ -256,6 +252,11 @@ impl Worker {
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
         Self::new(config, None, Arc::new(client.into()), Default::default())
+    }
+
+    /// Returns number of currently cached workflows
+    pub fn cached_workflows(&self) -> usize {
+        self.wft_manager.cached_workflows()
     }
 
     pub(crate) fn new_with_pollers(
@@ -437,6 +438,7 @@ impl Worker {
         }
     }
 
+    #[instrument(level = "debug", skip(self), fields(run_id))]
     pub(crate) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
         // The poll needs to be in a loop because we can't guarantee tail call optimization in Rust
         // (simply) and we really, really need that for long-poll retries.
@@ -447,6 +449,17 @@ impl Worker {
             if let Some(pa) = self.wft_manager.next_pending_activation() {
                 debug!(activation=%pa, "Sending pending activation to lang");
                 return Ok(pa);
+            }
+
+            if self.config.max_cached_workflows > 0 {
+                tokio::select! {
+                    biased;
+                    // We must loop up if there's a new pending activation, since those are for
+                    // already-cached workflows and may include evictions which will change if
+                    // we are still waiting or not.
+                    _ = self.pending_activations_notify.notified() => continue,
+                    _ = self.wft_manager.wait_for_cache_capacity() => {}
+                };
             }
 
             // Apply any buffered poll responses from the server. Must come after pending
@@ -482,6 +495,8 @@ impl Worker {
         }
     }
 
+    #[instrument(level = "debug", skip(self, completion),
+    fields(completion=%&completion, run_id=%completion.run_id))]
     pub(crate) async fn complete_workflow_activation(
         &self,
         completion: WorkflowActivationCompletion,
@@ -542,7 +557,7 @@ impl Worker {
         match self.wft_manager.request_eviction(run_id, message, reason) {
             EvictionRequestResult::EvictionIssued(_) => true,
             EvictionRequestResult::NotFound => false,
-            EvictionRequestResult::EvictionAlreadyOutstanding => false,
+            EvictionRequestResult::EvictionAlreadyOutstanding(_) => false,
         }
     }
 
@@ -594,8 +609,8 @@ impl Worker {
     /// Wait until not at the outstanding workflow task limit, and then poll this worker's task
     /// queue for new workflow tasks.
     ///
-    /// Returns `Ok(None)` in the event of a poll timeout, or if there was some gRPC error that
-    /// callers can't do anything about.
+    /// Returns `Ok(None)` in the event of a poll timeout, if there was some gRPC error that
+    /// callers can't do anything about, or any other reason to restart the poll loop.
     async fn workflow_poll(&self) -> Result<Option<ValidPollWFTQResponse>, PollWfError> {
         // We can't say we're shut down if there are outstanding LAs, as they could end up WFT
         // heartbeating which is a "new" workflow task that we need to accept and process as long as
@@ -643,6 +658,20 @@ impl Worker {
 
         // Only permanently take a permit in the event the poll finished completely
         sem.forget();
+
+        let work = if self.config.max_cached_workflows > 0 {
+            // Add the workflow to cache management. We do not even attempt insert if cache
+            // size is zero because we do not want to generate eviction requests for
+            // workflows which may immediately generate pending activations.
+            if let Some(ready_to_work) = self.wft_manager.add_new_run_to_cache(work).await {
+                ready_to_work
+            } else {
+                return Ok(None);
+            }
+        } else {
+            work
+        };
+
         Ok(Some(work))
     }
 
@@ -878,6 +907,7 @@ impl Worker {
                         Ok(())
                     }
                     tonic::Code::NotFound => {
+                        // TODO: Remove outstanding workflow task from workflow task manager
                         warn!(error = %err, run_id, "Task not found when completing");
                         should_evict = Some(EvictionReason::TaskNotFound);
                         Ok(())
@@ -951,6 +981,7 @@ impl Worker {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
 struct WFTReportOutcome {
     reported_to_server: bool,
     failed: bool,
@@ -987,6 +1018,7 @@ mod tests {
 
         let cfg = test_worker_cfg()
             .max_outstanding_workflow_tasks(5_usize)
+            .max_cached_workflows(5_usize)
             .build()
             .unwrap();
         let worker = Worker::new_test(cfg, mock_client);
@@ -1019,6 +1051,7 @@ mod tests {
 
         let cfg = test_worker_cfg()
             .max_outstanding_workflow_tasks(5_usize)
+            .max_cached_workflows(5_usize)
             .build()
             .unwrap();
         let worker = Worker::new_test(cfg, mock_client);

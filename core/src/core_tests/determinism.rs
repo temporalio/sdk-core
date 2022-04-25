@@ -32,7 +32,7 @@ pub async fn timer_wf_fails_once(ctx: WfContext) -> WorkflowResult<()> {
 /// Verifies that workflow panics (which in this case the Rust SDK turns into workflow activation
 /// failures) are turned into unspecified WFT failures.
 #[tokio::test]
-async fn test_wf_task_rejected_properly() {
+async fn test_panic_wf_task_rejected_properly() {
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let t = canned_histories::workflow_fails_with_failure_after_timer("1");

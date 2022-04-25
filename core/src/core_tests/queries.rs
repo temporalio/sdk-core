@@ -81,6 +81,10 @@ async fn legacy_query(#[case] include_history: bool) {
     };
     let clear_eviction = || async {
         let t = worker.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            t.jobs[0].variant,
+            Some(workflow_activation_job::Variant::RemoveFromCache(_))
+        );
         worker
             .complete_workflow_activation(WorkflowActivationCompletion::empty(t.run_id))
             .await

@@ -9,7 +9,7 @@ services:
   #      - '9042:9042'
 
   temporal:
-    image: temporalio/auto-setup:1.15.0
+    image: temporalio/auto-setup:1.16.0
     ports:
       - "7233:7233"
       - "7234:7234"
@@ -26,12 +26,13 @@ services:
       - cassandra
 
   temporal-web:
-    image: temporalio/web:1.13.0
+    image: temporalio/ui:0.10.2
     logging:
       driver: none
     ports:
-      - "8088:8088"
+      - "8080:8080"
     environment:
-      - "TEMPORAL_GRPC_ENDPOINT=temporal:7233"
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
     depends_on:
       - temporal
