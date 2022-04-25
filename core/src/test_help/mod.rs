@@ -113,7 +113,7 @@ pub(crate) fn mock_sdk_cfg(
     mut poll_cfg: MockPollCfg,
     mutator: impl FnOnce(&mut WorkerConfig),
 ) -> TestWorker {
-    poll_cfg.for_sdk = true;
+    poll_cfg.using_rust_sdk = true;
     let mut mock = build_mock_pollers(poll_cfg);
     mock.worker_cfg(mutator);
     let core = mock_worker(mock);
@@ -284,7 +284,7 @@ pub(crate) struct MockPollCfg {
     /// If being used with the Rust SDK, this is set true. It ensures pollers will not error out
     /// early with no work, since we cannot know the exact number of times polling will happen.
     /// Instead, they will just block forever.
-    pub for_sdk: bool,
+    pub using_rust_sdk: bool,
 }
 
 impl MockPollCfg {
@@ -299,7 +299,7 @@ impl MockPollCfg {
             num_expected_fails,
             mock_client: mock_workflow_client(),
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
-            for_sdk: false,
+            using_rust_sdk: false,
         }
     }
     pub fn from_resp_batches(
@@ -318,7 +318,7 @@ impl MockPollCfg {
             num_expected_fails: None,
             mock_client,
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
-            for_sdk: false,
+            using_rust_sdk: false,
         }
     }
 }
@@ -343,7 +343,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
             }
         }
 
-        if cfg.enforce_correct_number_of_polls && !cfg.for_sdk {
+        if cfg.enforce_correct_number_of_polls && !cfg.using_rust_sdk {
             *correct_num_polls.get_or_insert(0) += hist.response_batches.len();
         }
 
@@ -401,7 +401,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
                     return resp;
                 }
 
-                if cfg.for_sdk {
+                if cfg.using_rust_sdk {
                     // Simulate poll timeout, or just send an empty response and then try again
                     // if we're told a new one might be ready.
                     tokio::select! {
@@ -427,7 +427,6 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
     let outstanding = outstanding_wf_task_tokens.clone();
-    let outstanding_wakeup = outstanding_wakeup_orig.clone();
     cfg.mock_client
         .expect_fail_workflow_task()
         .withf(cfg.expect_fail_wft_matcher)
@@ -437,7 +436,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
         )
         .returning(move |tt, _, _| {
             outstanding.write().remove_by_right(&tt);
-            outstanding_wakeup.notify_one();
+            outstanding_wakeup_orig.notify_one();
             Ok(Default::default())
         });
 
