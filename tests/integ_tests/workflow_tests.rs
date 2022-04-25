@@ -574,7 +574,7 @@ async fn slow_completes_with_small_cache() {
     impl WorkerInterceptor for SlowCompleter {
         async fn on_workflow_activation_completion(&self, _: &WorkflowActivationCompletion) {
             // They don't need to be much slower
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
         fn on_shutdown(&self, _: &temporal_sdk::Worker) {}
     }
