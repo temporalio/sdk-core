@@ -252,7 +252,8 @@ impl CoreWfStarter {
 
 /// Provides conveniences for running integ tests with the SDK
 pub struct TestWorker {
-    pub inner: Worker,
+    inner: Worker,
+    pub orig_core_worker: Arc<dyn CoreWorker>,
     client: Option<Arc<dyn WorkflowClientTrait>>,
     incomplete_workflows: Arc<AtomicUsize>,
 }
@@ -260,9 +261,10 @@ impl TestWorker {
     /// Create a new test worker
     pub fn new(core_worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         let ct = Arc::new(AtomicUsize::new(0));
-        let inner = Worker::new_from_core(core_worker, task_queue);
+        let inner = Worker::new_from_core(core_worker.clone(), task_queue);
         Self {
             inner,
+            orig_core_worker: core_worker,
             client: None,
             incomplete_workflows: ct,
         }
@@ -353,18 +355,21 @@ struct TestWorkerInterceptor {
     shutdown_handle: Box<dyn Fn()>,
     next: Option<Box<dyn WorkerInterceptor>>,
 }
+
+#[async_trait::async_trait(?Send)]
 impl WorkerInterceptor for TestWorkerInterceptor {
-    fn on_workflow_activation_completion(&self, completion: &WorkflowActivationCompletion) {
+    async fn on_workflow_activation_completion(&self, completion: &WorkflowActivationCompletion) {
         if completion.has_execution_ending() {
             info!("Workflow {} says it's finishing", &completion.run_id);
             let prev = self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
             if prev <= 1 {
+                info!("Test worker calling shutdown");
                 // There are now zero, we just subtracted one
                 (self.shutdown_handle)()
             }
         }
         if let Some(n) = self.next.as_ref() {
-            n.on_workflow_activation_completion(completion);
+            n.on_workflow_activation_completion(completion).await;
         }
     }
 

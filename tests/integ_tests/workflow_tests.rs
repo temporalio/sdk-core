@@ -24,7 +24,9 @@ use std::{
     time::Duration,
 };
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{interceptors::WorkerInterceptor, WfContext, WorkflowResult};
+use temporal_sdk::{
+    interceptors::WorkerInterceptor, ActContext, ActivityOptions, WfContext, WorkflowResult,
+};
 use temporal_sdk_core_api::{errors::PollWfError, Worker};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -32,7 +34,7 @@ use temporal_sdk_core_protos::{
         workflow_activation::{workflow_activation_job, WorkflowActivation, WorkflowActivationJob},
         workflow_commands::{ActivityCancellationType, FailWorkflowExecution, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
-        ActivityTaskCompletion, IntoCompletion,
+        ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
     },
     temporal::api::failure::v1::Failure,
 };
@@ -128,15 +130,17 @@ async fn workflow_lru_cache_evictions() {
             .await
             .unwrap();
     }
-    struct CacheAsserter {}
+    struct CacheAsserter;
+    #[async_trait::async_trait(?Send)]
     impl WorkerInterceptor for CacheAsserter {
-        fn on_workflow_activation_completion(&self, _: &WorkflowActivationCompletion) {}
+        async fn on_workflow_activation_completion(&self, _: &WorkflowActivationCompletion) {}
         fn on_shutdown(&self, sdk_worker: &temporal_sdk::Worker) {
-            assert_eq!(sdk_worker.cached_workflows(), 1)
+            // 0 since the sdk worker force-evicts and drains everything on shutdown.
+            assert_eq!(sdk_worker.cached_workflows(), 0);
         }
     }
     worker
-        .run_until_done_intercepted(Some(CacheAsserter {}))
+        .run_until_done_intercepted(Some(CacheAsserter))
         .await
         .unwrap();
     // The wf must have started more than # workflows times, since all but one must experience
@@ -524,4 +528,58 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     // Do it all over again, without timing out this time
     let wf_task = poll_sched_act_poll().await;
     core.complete_execution(&wf_task.run_id).await;
+}
+
+/// We had a bug related to polling being faster than completion causing issues with cache
+/// overflow. This test intentionally makes completes slower than polls to evaluate that.
+///
+/// It's expected that this test may generate some task timeouts.
+#[tokio::test]
+async fn slow_completes_with_small_cache() {
+    let wf_name = "slow_completes_with_small_cache";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.max_wft(5).max_cached_workflows(5);
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        for _ in 0..3 {
+            ctx.activity(ActivityOptions {
+                activity_type: "echo_activity".to_string(),
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                input: "hi!".as_json_payload().expect("serializes fine"),
+                ..Default::default()
+            })
+            .await;
+            ctx.timer(Duration::from_secs(1)).await;
+        }
+        Ok(().into())
+    });
+    worker.register_activity(
+        "echo_activity",
+        |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
+    );
+    for i in 0..20 {
+        worker
+            .submit_wf(
+                format!("{}_{}", wf_name, i),
+                wf_name.to_owned(),
+                vec![],
+                WorkflowOptions::default(),
+            )
+            .await
+            .unwrap();
+    }
+
+    struct SlowCompleter {}
+    #[async_trait::async_trait(?Send)]
+    impl WorkerInterceptor for SlowCompleter {
+        async fn on_workflow_activation_completion(&self, _: &WorkflowActivationCompletion) {
+            // They don't need to be much slower
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        fn on_shutdown(&self, _: &temporal_sdk::Worker) {}
+    }
+    worker
+        .run_until_done_intercepted(Some(SlowCompleter {}))
+        .await
+        .unwrap();
 }

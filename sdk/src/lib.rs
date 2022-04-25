@@ -52,9 +52,10 @@ use crate::{
     workflow_context::{ChildWfCommon, PendingChildWorkflow},
 };
 use anyhow::{anyhow, bail};
-use futures::{future::BoxFuture, FutureExt};
+use futures::{future::BoxFuture, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use once_cell::sync::OnceCell;
 use std::{
+    cell::RefCell,
     collections::HashMap,
     fmt::{Debug, Display, Formatter},
     future::Future,
@@ -85,11 +86,12 @@ use temporal_sdk_core_protos::{
 };
 use tokio::{
     sync::{
-        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+        mpsc::{unbounded_channel, UnboundedSender},
         oneshot,
     },
     task::JoinError,
 };
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -123,17 +125,18 @@ struct CommonWorker {
 
 struct WorkflowHalf {
     /// Maps run id to cached workflow state
-    workflows: HashMap<String, WorkflowData>,
+    workflows: RefCell<HashMap<String, WorkflowData>>,
     /// Maps workflow type to the function for executing workflow runs with that ID
-    workflow_fns: HashMap<String, WorkflowFunction>,
+    workflow_fns: RefCell<HashMap<String, WorkflowFunction>>,
 }
 struct WorkflowData {
     /// Channel used to send the workflow activations
     activation_chan: UnboundedSender<WorkflowActivation>,
-    /// Join handle for the spawned workflow future
-    join_handle: BoxFuture<'static, Result<WorkflowResult<()>, JoinError>>,
-    /// Token used to terminate workflow function
-    shutdown: CancellationToken,
+}
+
+struct WorkflowFutureHandle<F: Future<Output = Result<WorkflowResult<()>, JoinError>>> {
+    join_handle: F,
+    run_id: String,
 }
 
 struct ActivityHalf {
@@ -184,6 +187,7 @@ impl Worker {
     ) {
         self.workflow_half
             .workflow_fns
+            .get_mut()
             .insert(workflow_type.into(), wf_function.into());
     }
 
@@ -206,69 +210,102 @@ impl Worker {
     /// or may return early with an error in the event of some unresolvable problem.
     pub async fn run(&mut self) -> Result<(), anyhow::Error> {
         let shutdown_token = CancellationToken::new();
-        let shutdown_token_c = shutdown_token.clone();
-        let pollers = async move {
-            let (common, wf_half, act_half) = self.split_apart();
-            let (completions_tx, mut completions_rx) = unbounded_channel();
-            let (wf_poll_res, act_poll_res) = tokio::join!(
-                // Workflow polling loop
-                async {
-                    loop {
-                        let activation = match common.worker.poll_workflow_activation().await {
-                            Err(PollWfError::ShutDown) => {
-                                break Result::<_, anyhow::Error>::Ok(());
-                            }
-                            o => o?,
-                        };
-                        wf_half
-                            .workflow_activation_handler(
-                                common,
-                                &shutdown_token,
-                                &completions_tx,
-                                &mut completions_rx,
-                                activation,
-                            )
-                            .await?;
-                    }
-                },
-                // Only poll on the activity queue if activity functions have been registered. This
-                // makes tests which use mocks dramatically more manageable.
-                async {
-                    if !act_half.activity_fns.is_empty() {
-                        let shutdown_token = shutdown_token.clone();
-                        loop {
-                            tokio::select! {
-                                activity = common.worker.poll_activity_task() => {
-                                    if matches!(activity, Err(PollActivityError::ShutDown)) {
-                                        break;
-                                    }
-                                    act_half.activity_task_handler(common.worker.clone(), common.task_queue.clone(),
-                                                                   activity?)?;
-                                },
-                                _ = shutdown_token.cancelled() => { break }
-                            }
+        let (common, wf_half, act_half) = self.split_apart();
+        let (wf_future_tx, wf_future_rx) = unbounded_channel();
+        let (completions_tx, completions_rx) = unbounded_channel();
+        let wf_future_joiner = async {
+            UnboundedReceiverStream::new(wf_future_rx)
+                .map(Result::<_, anyhow::Error>::Ok)
+                .try_for_each_concurrent(
+                    None,
+                    |WorkflowFutureHandle {
+                         join_handle,
+                         run_id,
+                     }| {
+                        let wf_half = &*wf_half;
+                        async move {
+                            join_handle.await??;
+                            wf_half.workflows.borrow_mut().remove(&run_id);
+                            Ok(())
                         }
-                    };
-                    Result::<_, anyhow::Error>::Ok(())
-                }
-            );
-            wf_poll_res?;
-            // TODO: Activity loop errors don't show up until wf loop exits/errors
-            act_poll_res?;
-            Result::<_, anyhow::Error>::Ok(self)
+                    },
+                )
+                .await
         };
+        let wf_completion_processor = async {
+            let r = UnboundedReceiverStream::new(completions_rx)
+                .map(Ok)
+                .try_for_each_concurrent(None, |completion| async {
+                    if let Some(ref i) = common.worker_interceptor {
+                        i.on_workflow_activation_completion(&completion).await;
+                    }
+                    common.worker.complete_workflow_activation(completion).await
+                })
+                .map_err(Into::into)
+                .await;
+            r
+        };
+        tokio::try_join!(
+            // Workflow polling loop
+            async {
+                loop {
+                    let activation = match common.worker.poll_workflow_activation().await {
+                        Err(PollWfError::ShutDown) => {
+                            break;
+                        }
+                        o => o?,
+                    };
+                    if let Some(wf_fut) = wf_half.workflow_activation_handler(
+                        common,
+                        shutdown_token.clone(),
+                        activation,
+                        &completions_tx,
+                    )? {
+                        if wf_future_tx.send(wf_fut).is_err() {
+                            panic!(
+                                "Receive half of completion processor channel cannot be dropped"
+                            );
+                        }
+                    }
+                }
+                // Tell still-alive workflows to evict themselves
+                shutdown_token.cancel();
+                // It's important to drop these so the future and completion processors will
+                // terminate.
+                drop(wf_future_tx);
+                drop(completions_tx);
+                Result::<_, anyhow::Error>::Ok(())
+            },
+            // Only poll on the activity queue if activity functions have been registered. This
+            // makes tests which use mocks dramatically more manageable.
+            async {
+                if !act_half.activity_fns.is_empty() {
+                    let shutdown_token = shutdown_token.clone();
+                    loop {
+                        tokio::select! {
+                            activity = common.worker.poll_activity_task() => {
+                                if matches!(activity, Err(PollActivityError::ShutDown)) {
+                                    break;
+                                }
+                                act_half.activity_task_handler(common.worker.clone(),
+                                                               common.task_queue.clone(),
+                                                               activity?)?;
+                            },
+                            _ = shutdown_token.cancelled() => { break }
+                        }
+                    }
+                };
+                Result::<_, anyhow::Error>::Ok(())
+            },
+            wf_future_joiner,
+            wf_completion_processor,
+        )?;
 
-        let myself = pollers.await?;
         info!("Polling loops exited");
-        shutdown_token_c.cancel();
-        if let Some(i) = myself.common.worker_interceptor.as_ref() {
-            i.on_shutdown(myself);
+        if let Some(i) = self.common.worker_interceptor.as_ref() {
+            i.on_shutdown(self);
         }
-        myself.common.worker.shutdown().await;
-        // Clean up any still-extant workflows
-        for (_, wf_dat) in myself.workflow_half.workflows.drain() {
-            wf_dat.join_handle.await??;
-        }
+        self.common.worker.shutdown().await;
         Ok(())
     }
 
@@ -287,7 +324,7 @@ impl Worker {
     /// Returns number of currently cached workflows as understood by the SDK. Importantly, this
     /// is not the same as understood by core, though they *should* always be in sync.
     pub fn cached_workflows(&self) -> usize {
-        self.workflow_half.workflows.len()
+        self.workflow_half.workflows.borrow().len()
     }
 
     fn split_apart(&mut self) -> (&mut CommonWorker, &mut WorkflowHalf, &mut ActivityHalf) {
@@ -300,19 +337,19 @@ impl Worker {
 }
 
 impl WorkflowHalf {
-    async fn workflow_activation_handler(
-        &mut self,
+    fn workflow_activation_handler(
+        &self,
         common: &CommonWorker,
-        shutdown_token: &CancellationToken,
-        completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
-        completions_rx: &mut UnboundedReceiver<WorkflowActivationCompletion>,
+        shutdown_token: CancellationToken,
         activation: WorkflowActivation,
-    ) -> Result<(), anyhow::Error> {
-        let shall_be_evicted = activation
-            .jobs
-            .iter()
-            .any(|j| matches!(j.variant, Some(Variant::RemoveFromCache(_))));
+        completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
+    ) -> Result<
+        Option<WorkflowFutureHandle<impl Future<Output = Result<WorkflowResult<()>, JoinError>>>>,
+        anyhow::Error,
+    > {
+        let mut res = None;
         let run_id = activation.run_id.clone();
+
         // If the activation is to start a workflow, create a new workflow driver for it,
         // using the function associated with that workflow id
         if let Some(WorkflowActivationJob {
@@ -320,8 +357,8 @@ impl WorkflowHalf {
         }) = activation.jobs.get(0)
         {
             let workflow_type = &sw.workflow_type;
-            let wf_function = self
-                .workflow_fns
+            let wf_fns_borrow = self.workflow_fns.borrow();
+            let wf_function = wf_fns_borrow
                 .get(workflow_type)
                 .ok_or_else(|| anyhow!("Workflow type {workflow_type} not found"))?;
 
@@ -332,28 +369,31 @@ impl WorkflowHalf {
                 sw.arguments.clone(),
                 completions_tx.clone(),
             );
-            // Must be a child to avoid stopping all workflows when this one is evicted
-            let shutdown = shutdown_token.child_token();
-            let task_shutdown = shutdown.clone();
             let jh = tokio::spawn(async move {
                 tokio::select! {
                     r = wff => r,
-                    _ = task_shutdown.cancelled() => Ok(WfExitValue::Evicted)
+                    // TODO: This probably shouldn't abort early, as it could cause an in-progress
+                    //  complete to abort. Send synthetic remove activation
+                    _ = shutdown_token.cancelled() => {
+                        Ok(WfExitValue::Evicted)
+                    }
                 }
             });
-            self.workflows.insert(
+            res = Some(WorkflowFutureHandle {
+                join_handle: jh,
+                run_id: run_id.clone(),
+            });
+            self.workflows.borrow_mut().insert(
                 run_id.clone(),
                 WorkflowData {
                     activation_chan: activations,
-                    shutdown,
-                    join_handle: jh.boxed(),
                 },
             );
         }
 
         // The activation is expected to apply to some workflow we know about. Use it to
         // unblock things and advance the workflow.
-        if let Some(dat) = self.workflows.get_mut(&run_id) {
+        if let Some(dat) = self.workflows.borrow_mut().get_mut(&run_id) {
             dat.activation_chan
                 .send(activation)
                 .expect("Workflow should exist if we're sending it an activation");
@@ -361,28 +401,7 @@ impl WorkflowHalf {
             bail!("Got activation for unknown workflow");
         };
 
-        let completion = completions_rx.recv().await.expect("No workflows left?");
-        if let Some(ref i) = common.worker_interceptor {
-            i.on_workflow_activation_completion(&completion);
-        }
-        common
-            .worker
-            .complete_workflow_activation(completion)
-            .await?;
-
-        // Join the workflow handle if it was to be evicted
-        if shall_be_evicted {
-            if let Some(dat) = self.workflows.remove(&run_id) {
-                dat.shutdown.cancel();
-                // TODO: Probably need to not double-q here. Shouldn't blow up whole workflow
-                //  handler b/c of a panic in one.
-                let res = dat.join_handle.await??;
-                if !matches!(res, WfExitValue::Evicted) {
-                    error!("Workflow was supposed to evict, but exited with non-evict status!");
-                }
-            }
-        }
-        Ok(())
+        Ok(res)
     }
 }
 

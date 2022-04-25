@@ -1,21 +1,15 @@
 use crate::{
     replay::DEFAULT_WORKFLOW_TYPE,
-    test_help::{
-        build_mock_pollers, canned_histories, mock_worker, MockPollCfg, ResponseType, TEST_Q,
-    },
+    test_help::{canned_histories, mock_sdk, mock_sdk_cfg, MockPollCfg, ResponseType},
     worker::client::mocks::mock_workflow_client,
 };
 use std::{
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
-use temporal_sdk_core_test_utils::TestWorker;
 
 static DID_FAIL: AtomicBool = AtomicBool::new(false);
 pub async fn timer_wf_fails_once(ctx: WfContext) -> WorkflowResult<()> {
@@ -43,9 +37,7 @@ async fn test_panic_wf_task_rejected_properly() {
     mh.num_expected_fails = Some(1);
     mh.expect_fail_wft_matcher =
         Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::Unspecified));
-    let mock = build_mock_pollers(mh);
-    let core = mock_worker(mock);
-    let mut worker = TestWorker::new(Arc::new(core), TEST_Q.to_string());
+    let mut worker = mock_sdk(mh);
 
     worker.register_wf(wf_type.to_owned(), timer_wf_fails_once);
     worker
@@ -82,14 +74,11 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
     mh.num_expected_fails = Some(1);
     mh.expect_fail_wft_matcher =
         Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::NonDeterministicError));
-    let mut mock = build_mock_pollers(mh);
-    if use_cache {
-        mock.worker_cfg(|cfg| {
+    let mut worker = mock_sdk_cfg(mh, |cfg| {
+        if use_cache {
             cfg.max_cached_workflows = 2;
-        });
-    }
-    let core = mock_worker(mock);
-    let mut worker = TestWorker::new(Arc::new(core), TEST_Q.to_string());
+        }
+    });
 
     let started_count: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
     worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {

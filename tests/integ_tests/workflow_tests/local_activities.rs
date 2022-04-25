@@ -280,8 +280,9 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
 struct LACancellerInterceptor {
     token: CancellationToken,
 }
+#[async_trait::async_trait(?Send)]
 impl WorkerInterceptor for LACancellerInterceptor {
-    fn on_workflow_activation_completion(&self, _: &WorkflowActivationCompletion) {}
+    async fn on_workflow_activation_completion(&self, _: &WorkflowActivationCompletion) {}
     fn on_shutdown(&self, _: &temporal_sdk::Worker) {
         self.token.cancel()
     }

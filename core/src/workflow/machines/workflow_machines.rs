@@ -477,6 +477,10 @@ impl WorkflowMachines {
                     if let Some(st) = event.event_time {
                         let as_systime: SystemTime = st.try_into()?;
                         self.workflow_start_time = Some(as_systime);
+                        // Set the workflow time to be the event time of the first event, so that
+                        // if there is a query issued before first WFT started event, there is some
+                        // workflow time set.
+                        self.set_current_time(as_systime);
                     }
                     // Notify the lang sdk that it's time to kick off a workflow
                     self.drive_me.start(

@@ -16,6 +16,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     ops::RangeFull,
     sync::Arc,
+    time::Duration,
 };
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
@@ -34,6 +35,8 @@ use temporal_sdk_core_protos::{
         },
     },
 };
+use temporal_sdk_core_test_utils::TestWorker;
+use tokio::sync::Notify;
 
 pub const TEST_Q: &str = "q";
 pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";
@@ -101,6 +104,20 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
         mocks.mock_worker.act_poller,
         Default::default(),
     )
+}
+
+pub(crate) fn mock_sdk(poll_cfg: MockPollCfg) -> TestWorker {
+    mock_sdk_cfg(poll_cfg, |_| {})
+}
+pub(crate) fn mock_sdk_cfg(
+    mut poll_cfg: MockPollCfg,
+    mutator: impl FnOnce(&mut WorkerConfig),
+) -> TestWorker {
+    poll_cfg.using_rust_sdk = true;
+    let mut mock = build_mock_pollers(poll_cfg);
+    mock.worker_cfg(mutator);
+    let core = mock_worker(mock);
+    TestWorker::new(Arc::new(core), TEST_Q.to_string())
 }
 
 pub struct FakeWfResponses {
@@ -264,6 +281,10 @@ pub(crate) struct MockPollCfg {
     /// All calls to fail WFTs must match this predicate
     pub expect_fail_wft_matcher:
         Box<dyn Fn(&TaskToken, &WorkflowTaskFailedCause, &Option<Failure>) -> bool + Send>,
+    /// If being used with the Rust SDK, this is set true. It ensures pollers will not error out
+    /// early with no work, since we cannot know the exact number of times polling will happen.
+    /// Instead, they will just block forever.
+    pub using_rust_sdk: bool,
 }
 
 impl MockPollCfg {
@@ -278,6 +299,7 @@ impl MockPollCfg {
             num_expected_fails,
             mock_client: mock_workflow_client(),
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
+            using_rust_sdk: false,
         }
     }
     pub fn from_resp_batches(
@@ -296,6 +318,7 @@ impl MockPollCfg {
             num_expected_fails: None,
             mock_client,
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
+            using_rust_sdk: false,
         }
     }
 }
@@ -320,7 +343,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
             }
         }
 
-        if cfg.enforce_correct_number_of_polls {
+        if cfg.enforce_correct_number_of_polls && !cfg.using_rust_sdk {
             *correct_num_polls.get_or_insert(0) += hist.response_batches.len();
         }
 
@@ -346,14 +369,17 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
         task_q_resps.insert(hist.wf_id, tasks);
     }
 
-    let mut mock_poller = mock_poller();
+    let mut mock_poller = mock_manual_poller();
     // The poller will return history from any workflow runs that do not have currently
     // outstanding tasks.
     let outstanding = outstanding_wf_task_tokens.clone();
+    let outstanding_wakeup_orig = Arc::new(Notify::new());
+    let outstanding_wakeup = outstanding_wakeup_orig.clone();
     mock_poller
         .expect_poll()
         .times(correct_num_polls.map_or_else(|| RangeFull.into(), Into::<TimesRange>::into))
         .returning(move || {
+            let mut resp = None;
             for (_, tasks) in task_q_resps.iter_mut() {
                 // Must extract run id from a workflow task associated with this workflow
                 // TODO: Case where run id changes for same workflow id is not handled here
@@ -364,19 +390,40 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
                         outstanding
                             .write()
                             .insert(rid, TaskToken(t.task_token.clone()));
-                        return Some(Ok(t));
+                        resp = Some(Ok(t));
+                        break;
                     }
                 }
             }
-            Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG)))
+            let outstanding_wakeup = outstanding_wakeup.clone();
+            async move {
+                if resp.is_some() {
+                    return resp;
+                }
+
+                if cfg.using_rust_sdk {
+                    // Simulate poll timeout, or just send an empty response and then try again
+                    // if we're told a new one might be ready.
+                    tokio::select! {
+                        _ = outstanding_wakeup.notified() => {}
+                        _ = tokio::time::sleep(Duration::from_secs(60)) => {}
+                    };
+                    Some(Ok(Default::default()))
+                } else {
+                    Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG)))
+                }
+            }
+            .boxed()
         });
     let mock_worker = MockWorker::new(Box::from(mock_poller));
 
     let outstanding = outstanding_wf_task_tokens.clone();
+    let outstanding_wakeup = outstanding_wakeup_orig.clone();
     cfg.mock_client
         .expect_complete_workflow_task()
         .returning(move |comp| {
             outstanding.write().remove_by_right(&comp.task_token);
+            outstanding_wakeup.notify_one();
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
     let outstanding = outstanding_wf_task_tokens.clone();
@@ -389,6 +436,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
         )
         .returning(move |tt, _, _| {
             outstanding.write().remove_by_right(&tt);
+            outstanding_wakeup_orig.notify_one();
             Ok(Default::default())
         });
 
