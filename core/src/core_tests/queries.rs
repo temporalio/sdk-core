@@ -11,8 +11,13 @@ use std::{
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
-        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
-        workflow_commands::{CompleteWorkflowExecution, QueryResult, QuerySuccess},
+        workflow_activation::{
+            remove_from_cache::EvictionReason, workflow_activation_job, WorkflowActivationJob,
+        },
+        workflow_commands::{
+            ActivityCancellationType, CompleteWorkflowExecution, ContinueAsNewWorkflowExecution,
+            QueryResult, QuerySuccess, RequestCancelActivity,
+        },
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{
@@ -26,7 +31,7 @@ use temporal_sdk_core_protos::{
         },
     },
 };
-use temporal_sdk_core_test_utils::start_timer_cmd;
+use temporal_sdk_core_test_utils::{schedule_activity_cmd, start_timer_cmd};
 
 #[rstest::rstest]
 #[case::with_history(true)]
@@ -525,6 +530,121 @@ async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early(
     ))
     .await
     .unwrap();
+
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn query_replay_with_continue_as_new_doesnt_reply_empty_command() {
+    let wfid = "fake_wf_id";
+    let t = canned_histories::single_timer("1");
+    let query_with_hist_task = {
+        let mut pr = hist_to_poll_resp(
+            &t,
+            wfid.to_owned(),
+            ResponseType::ToTaskNum(1),
+            TEST_Q.to_string(),
+        );
+        pr.queries = HashMap::new();
+        pr.queries.insert(
+            "the-query".to_string(),
+            WorkflowQuery {
+                query_type: "query-type".to_string(),
+                query_args: Some(b"hi".into()),
+                header: None,
+            },
+        );
+        pr
+    };
+    let tasks = VecDeque::from(vec![query_with_hist_task]);
+    let mut mock_client = mock_workflow_client();
+    mock_client
+        .expect_complete_workflow_task()
+        .times(1)
+        .returning(|resp| {
+            // Verify both the complete command and the query response are sent
+            assert_eq!(resp.commands.len(), 1);
+            assert_eq!(resp.query_responses.len(), 1);
+            Ok(RespondWorkflowTaskCompletedResponse::default())
+        });
+
+    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = mock_worker(mock);
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    // Scheduling and immediately canceling an activity produces another activation which is
+    // important in this repro
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        task.run_id,
+        vec![
+            schedule_activity_cmd(
+                0,
+                "whatever",
+                "act-id",
+                ActivityCancellationType::TryCancel,
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+            ),
+            RequestCancelActivity { seq: 0 }.into(),
+            ContinueAsNewWorkflowExecution {
+                ..Default::default()
+            }
+            .into(),
+        ],
+    ))
+    .await
+    .unwrap();
+
+    // Activity unblocked
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::ResolveActivity(_)),
+        }]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+        .await
+        .unwrap();
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    let query = assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
+        }] => q
+    );
+    // Throw an evict in there. Repro required a pending eviction during complete.
+    core.request_wf_eviction(&task.run_id, "I said so", EvictionReason::LangRequested);
+
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        QueryResult {
+            query_id: query.query_id.clone(),
+            variant: Some(
+                QuerySuccess {
+                    response: Some("whatever".into()),
+                }
+                .into(),
+            ),
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
+
+    // Need to complete the eviction to finally send commands and finish
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_))
+        }]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+        .await
+        .unwrap();
 
     core.shutdown().await;
 }

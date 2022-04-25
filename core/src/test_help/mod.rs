@@ -12,11 +12,11 @@ use bimap::BiMap;
 use futures::FutureExt;
 use mockall::TimesRange;
 use parking_lot::RwLock;
-use std::time::Duration;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     ops::RangeFull,
     sync::Arc,
+    time::Duration,
 };
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{

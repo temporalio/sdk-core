@@ -603,7 +603,8 @@ impl WorkflowTaskManager {
             let must_heartbeat = self
                 .wait_for_local_acts_or_heartbeat(run_id, wft_heartbeat_deadline)
                 .await;
-            let is_query_playback = has_pending_query && query_responses.is_empty();
+            let has_query_responses = !query_responses.is_empty();
+            let is_query_playback = has_pending_query && !has_query_responses;
 
             // We only actually want to send commands back to the server if there are no more
             // pending activations and we are caught up on replay. We don't want to complete a wft
@@ -613,31 +614,26 @@ impl WorkflowTaskManager {
             // either.
             let no_commands_and_evicting =
                 server_cmds.commands.is_empty() && activation_was_only_eviction;
+            let to_be_sent = ServerCommandsWithWorkflowInfo {
+                task_token,
+                action: ActivationAction::WftComplete {
+                    // TODO: Don't force if also sending complete execution cmd
+                    force_new_wft: must_heartbeat,
+                    commands: server_cmds.commands,
+                    query_responses,
+                },
+            };
             if !self.pending_activations.has_pending(run_id)
                 && !server_cmds.replaying
                 && !is_query_playback
                 && !no_commands_and_evicting
             {
-                Some(ServerCommandsWithWorkflowInfo {
-                    task_token,
-                    action: ActivationAction::WftComplete {
-                        // TODO: Don't force if also sending complete execution cmd
-                        force_new_wft: must_heartbeat,
-                        commands: server_cmds.commands,
-                        query_responses,
-                    },
-                })
-            } else if query_responses.is_empty() {
-                None
+                Some(to_be_sent)
+            } else if has_query_responses {
+                // If there were query responses, we should send regardless of the other conditions.
+                Some(to_be_sent)
             } else {
-                Some(ServerCommandsWithWorkflowInfo {
-                    task_token,
-                    action: ActivationAction::WftComplete {
-                        commands: vec![],
-                        query_responses,
-                        force_new_wft: false,
-                    },
-                })
+                None
             }
         };
         Ok(ret)
