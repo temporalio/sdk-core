@@ -555,9 +555,9 @@ impl Worker {
         reason: EvictionReason,
     ) -> bool {
         match self.wft_manager.request_eviction(run_id, message, reason) {
-            EvictionRequestResult::EvictionIssued(_) => true,
+            EvictionRequestResult::EvictionRequested(_) => true,
             EvictionRequestResult::NotFound => false,
-            EvictionRequestResult::EvictionAlreadyOutstanding(_) => false,
+            EvictionRequestResult::EvictionAlreadyRequested(_) => false,
         }
     }
 
@@ -785,7 +785,7 @@ impl Worker {
                     commands,
                     query_responses,
                     sticky_attributes: None,
-                    return_new_workflow_task: force_new_wft,
+                    return_new_workflow_task: true,
                     force_create_new_workflow_task: force_new_wft,
                 };
                 let sticky_attrs = self.get_sticky_attrs();

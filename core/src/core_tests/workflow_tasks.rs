@@ -1114,14 +1114,9 @@ async fn complete_after_eviction() {
     let eviction_activation = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         eviction_activation.jobs.as_slice(),
-        [
-            WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::FireTimer(_)),
-            },
-            WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-            }
-        ]
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::FireTimer(_)),
+        },]
     );
     // Complete the activation containing the eviction, the way we normally would have
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
@@ -1130,6 +1125,13 @@ async fn complete_after_eviction() {
     ))
     .await
     .unwrap();
+    let eviction = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        eviction.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
+        }]
+    );
     core.shutdown().await;
 }
 
@@ -1835,4 +1837,59 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
     // p5 outstanding and final poll outstanding -- hence one permit available
     assert_eq!(core.available_wft_permits(), 1);
     assert_eq!(core.cached_workflows(), 3);
+}
+
+#[tokio::test]
+async fn eviction_waits_until_replay_finished() {
+    let wfid = "fake_wf_id";
+    let t = canned_histories::long_sequential_timers(3);
+    let mock = mock_workflow_client();
+    let mock = single_hist_mock_sg(wfid, t, &[3], mock, true);
+    let core = mock_worker(mock);
+
+    let activation = core.poll_workflow_activation().await.unwrap();
+    // Immediately request eviction after getting start workflow
+    core.request_workflow_eviction(&activation.run_id);
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        activation.run_id,
+        start_timer_cmd(1, Duration::from_secs(1)),
+    ))
+    .await
+    .unwrap();
+    let t1_fired = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        t1_fired.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::FireTimer(_)),
+        }]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        t1_fired.run_id,
+        start_timer_cmd(2, Duration::from_secs(1)),
+    ))
+    .await
+    .unwrap();
+    let t2_fired = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        t2_fired.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::FireTimer(_)),
+        }]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        t2_fired.run_id,
+        vec![CompleteWorkflowExecution { result: None }.into()],
+    ))
+    .await
+    .unwrap();
+    // The first two WFTs were replay, and now that we've caught up, the eviction will be sent
+    let eviction = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        eviction.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
+        }]
+    );
+
+    core.shutdown().await;
 }
