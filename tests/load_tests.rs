@@ -162,7 +162,7 @@ async fn workflow_load() {
 
     let client = starter.get_client().await;
     let sig_sender = async {
-        for _ in 1..=90 {
+        loop {
             let sends: FuturesUnordered<_> = (0..200)
                 .map(|i| {
                     client.signal_workflow_execution(
@@ -174,11 +174,10 @@ async fn workflow_load() {
                 })
                 .collect();
             sends.map(|_| Ok(())).forward(sink::drain()).await.unwrap();
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
         }
     };
 
-    worker.incr_expected_run_count(200);
     let run_fut = worker.run_until_done();
     tokio::select! {r1 = run_fut => {r1.unwrap()}, _ = sig_sender => {}};
 }

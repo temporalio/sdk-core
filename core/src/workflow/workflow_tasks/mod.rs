@@ -163,9 +163,9 @@ pub(crate) enum ActivationAction {
 
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub(crate) enum EvictionRequestResult {
-    EvictionIssued(Option<u32>),
+    EvictionRequested(Option<u32>),
     NotFound,
-    EvictionAlreadyOutstanding(Option<u32>),
+    EvictionAlreadyRequested(Option<u32>),
 }
 
 macro_rules! machine_mut {
@@ -277,16 +277,19 @@ impl WorkflowTaskManager {
                 .workflow_machines
                 .access_sync(&pending_info.run_id, |wfm| wfm.machines.get_wf_activation())
                 .and_then(|mut act| {
-                    if let Some(reason) = pending_info.needs_eviction {
-                        act.append_evict_job(reason);
+                    // Only evict workflows after all other pending work is complete.
+                    if act.jobs.is_empty() {
+                        if let Some(reason) = pending_info.needs_eviction {
+                            act.append_evict_job(reason);
+                        }
                     }
-                    // If for whatever reason we triggered a pending activation but there wasn't
-                    // actually any work to be done, just ignore that.
                     if !act.jobs.is_empty() {
                         self.insert_outstanding_activation(&act)?;
                         self.cache_manager.lock().touch(&act.run_id);
                         Ok(Some(act))
                     } else {
+                        // If for whatever reason we triggered a pending activation but there wasn't
+                        // actually any work to be done, just ignore that.
                         Ok(None)
                     }
                 })
@@ -345,9 +348,9 @@ impl WorkflowTaskManager {
                 self.pending_activations
                     .notify_needs_eviction(run_id, message, reason);
                 self.pending_activations_notifier.notify_waiters();
-                EvictionRequestResult::EvictionIssued(attempts)
+                EvictionRequestResult::EvictionRequested(attempts)
             } else {
-                EvictionRequestResult::EvictionAlreadyOutstanding(attempts)
+                EvictionRequestResult::EvictionAlreadyRequested(attempts)
             }
         } else {
             warn!(%run_id, "Eviction requested for unknown run");
@@ -668,8 +671,8 @@ impl WorkflowTaskManager {
         } else {
             // Blow up any cached data associated with the workflow
             let should_report = match self.request_eviction(run_id, failstr, reason) {
-                EvictionRequestResult::EvictionIssued(Some(attempt))
-                | EvictionRequestResult::EvictionAlreadyOutstanding(Some(attempt)) => attempt <= 1,
+                EvictionRequestResult::EvictionRequested(Some(attempt))
+                | EvictionRequestResult::EvictionAlreadyRequested(Some(attempt)) => attempt <= 1,
                 _ => false,
             };
             if should_report {
