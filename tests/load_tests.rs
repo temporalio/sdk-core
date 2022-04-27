@@ -1,7 +1,9 @@
 use assert_matches::assert_matches;
-use futures::{future::join_all, sink, stream::FuturesUnordered, StreamExt};
+use futures::{
+    future, future::join_all, sink, stream, stream::FuturesUnordered, StreamExt, TryStreamExt,
+};
 use std::time::{Duration, Instant};
-use temporal_client::{WorkflowClientTrait, WorkflowOptions};
+use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext};
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityExecutionResult, activity_task::activity_task as act_task,
@@ -121,6 +123,7 @@ async fn workflow_load() {
         .max_at_polls(10)
         .max_at(100);
     let mut worker = starter.worker().await;
+    worker.auto_shutdown = false;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
@@ -148,19 +151,23 @@ async fn workflow_load() {
         "echo_activity",
         |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
     );
+    let client = starter.get_client().await;
+
+    let mut workflow_handles = vec![];
     for i in 0..200 {
-        worker
+        let wfid = format!("{}_{}", wf_name, i);
+        let rid = worker
             .submit_wf(
-                format!("{}_{}", wf_name, i),
+                wfid.clone(),
                 wf_name.to_owned(),
                 vec![],
                 WorkflowOptions::default(),
             )
             .await
             .unwrap();
+        workflow_handles.push(client.get_untyped_workflow_handle(wfid, Some(rid)));
     }
 
-    let client = starter.get_client().await;
     let sig_sender = async {
         loop {
             let sends: FuturesUnordered<_> = (0..200)
@@ -177,7 +184,19 @@ async fn workflow_load() {
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
     };
+    let workflow_waiter = async {
+        stream::iter(workflow_handles)
+            .map(Ok)
+            .try_for_each_concurrent(None, |wh| async move {
+                let ww = wh.get_workflow_result().await?;
+                assert_matches!(ww, WorkflowExecutionResult::Succeeded(_));
+                Ok::<_, anyhow::Error>(())
+            })
+            .await
+            .unwrap();
+        starter.shutdown().await;
+    };
 
-    let run_fut = worker.run_until_done();
-    tokio::select! {r1 = run_fut => {r1.unwrap()}, _ = sig_sender => {}};
+    let run_fut = future::join(worker.run_until_done(), workflow_waiter);
+    tokio::select! {(r1,_) = run_fut => {r1.unwrap()}, _ = sig_sender => {}};
 }

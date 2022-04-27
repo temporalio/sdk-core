@@ -256,6 +256,11 @@ pub struct TestWorker {
     pub orig_core_worker: Arc<dyn CoreWorker>,
     client: Option<Arc<dyn WorkflowClientTrait>>,
     incomplete_workflows: Arc<AtomicUsize>,
+    /// Defaults true, and if set, auto-shutdown the worker once number of workflows reporting
+    /// completion exceeds the expected count. That technique can possibly fail if there are signals
+    /// being sent at the last moment, causing unhandled command retries, in which case the workflow
+    /// will send a completion with execution ending, but execution won't actually end.
+    pub auto_shutdown: bool,
 }
 impl TestWorker {
     /// Create a new test worker
@@ -267,6 +272,7 @@ impl TestWorker {
             orig_core_worker: core_worker,
             client: None,
             incomplete_workflows: ct,
+            auto_shutdown: true,
         }
     }
 
@@ -341,7 +347,11 @@ impl TestWorker {
     ) -> Result<(), anyhow::Error> {
         let iceptor = TestWorkerInterceptor {
             incomplete_workflows: self.incomplete_workflows.clone(),
-            shutdown_handle: Box::new(self.inner.shutdown_handle()),
+            shutdown_handle: if self.auto_shutdown {
+                Some(Box::new(self.inner.shutdown_handle()))
+            } else {
+                None
+            },
             next: interceptor.map(|i| Box::new(i) as Box<dyn WorkerInterceptor>),
         };
         self.inner.set_worker_interceptor(Box::new(iceptor));
@@ -352,7 +362,7 @@ impl TestWorker {
 /// Implements calling the shutdown handle when the expected number of test workflows has completed
 struct TestWorkerInterceptor {
     incomplete_workflows: Arc<AtomicUsize>,
-    shutdown_handle: Box<dyn Fn()>,
+    shutdown_handle: Option<Box<dyn Fn()>>,
     next: Option<Box<dyn WorkerInterceptor>>,
 }
 
@@ -363,9 +373,11 @@ impl WorkerInterceptor for TestWorkerInterceptor {
             info!("Workflow {} says it's finishing", &completion.run_id);
             let prev = self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
             if prev <= 1 {
-                info!("Test worker calling shutdown");
-                // There are now zero, we just subtracted one
-                (self.shutdown_handle)()
+                if let Some(sh) = self.shutdown_handle.as_ref() {
+                    info!("Test worker calling shutdown");
+                    // There are now zero, we just subtracted one
+                    sh()
+                }
             }
         }
         if let Some(n) = self.next.as_ref() {

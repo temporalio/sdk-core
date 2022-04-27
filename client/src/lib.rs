@@ -10,13 +10,17 @@ extern crate tracing;
 mod metrics;
 mod raw;
 mod retry;
+mod workflow_handle;
 
 pub use crate::retry::{CallType, RetryClient};
 pub use raw::WorkflowService;
+pub use workflow_handle::WorkflowExecutionResult;
 
 use crate::{
     metrics::{GrpcMetricSvc, MetricsContext},
     raw::{sealed::RawClientLike, AttachMetricLabels},
+    sealed::{RawClientLikeUser, WfHandleClient},
+    workflow_handle::UntypedWorkflowHandle,
 };
 use backoff::{ExponentialBackoff, SystemClock};
 use http::uri::InvalidUri;
@@ -37,7 +41,7 @@ use temporal_sdk_core_protos::{
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
         query::v1::{WorkflowQuery, WorkflowQueryResult},
-        taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
+        taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
         workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
     },
     TaskToken,
@@ -52,8 +56,6 @@ use tonic::{
 use tower::ServiceBuilder;
 use url::Url;
 use uuid::Uuid;
-
-use temporal_sdk_core_protos::temporal::api::taskqueue::v1::TaskQueueMetadata;
 
 static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivityTaskQueue"];
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
@@ -474,11 +476,6 @@ impl Client {
     /// Return the options this client was initialized with
     pub fn options(&self) -> &ClientOptions {
         &self.inner.options
-    }
-
-    /// Used to access the client as a [WorkflowService] implementor rather than the raw struct
-    fn wf_svc(&self) -> impl RawClientLike<SvcType = InterceptedMetricsSvc> {
-        self.raw_client().clone()
     }
 }
 
@@ -1036,3 +1033,46 @@ impl WorkflowClientTrait for Client {
         &self.namespace
     }
 }
+
+mod sealed {
+    use crate::{InterceptedMetricsSvc, RawClientLike, WorkflowClientTrait};
+
+    pub trait RawClientLikeUser {
+        type RawClientT: RawClientLike<SvcType = InterceptedMetricsSvc>;
+        /// Used to access the client as a [WorkflowService] implementor rather than the raw struct
+        fn wf_svc(&self) -> Self::RawClientT;
+    }
+
+    pub trait WfHandleClient: WorkflowClientTrait + RawClientLikeUser {}
+    impl<T> WfHandleClient for T where T: WorkflowClientTrait + RawClientLikeUser {}
+}
+
+impl RawClientLikeUser for Client {
+    type RawClientT = WorkflowServiceClientWithMetrics;
+
+    fn wf_svc(&self) -> Self::RawClientT {
+        self.raw_client().clone()
+    }
+}
+
+/// Additional methods for workflow clients
+pub trait WfClientExt: WfHandleClient + Sized {
+    /// Create an untyped handle for a workflow execution, which can be used to do things like
+    /// wait for that workflow's result.
+    fn get_untyped_workflow_handle(
+        &self,
+        workflow_id: impl Into<String>,
+        run_id: Option<impl Into<String>>,
+    ) -> UntypedWorkflowHandle<Self::RawClientT>
+    where
+        Self::RawClientT: Clone,
+    {
+        UntypedWorkflowHandle::new(
+            self.wf_svc(),
+            self.namespace().to_string(),
+            workflow_id.into(),
+            run_id.map(Into::into),
+        )
+    }
+}
+impl<T> WfClientExt for T where T: WfHandleClient + Sized {}
