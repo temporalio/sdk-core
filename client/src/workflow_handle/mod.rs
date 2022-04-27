@@ -13,6 +13,7 @@ use temporal_sdk_core_protos::{
 /// Enumerates terminal states for a particular workflow execution
 // TODO: Add non-proto failure types, flesh out details, etc.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum WorkflowExecutionResult<T> {
     /// The workflow finished successfully
     Succeeded(T),
@@ -87,7 +88,7 @@ where
 
             let mut history = server_res
                 .history
-                .ok_or(anyhow!("Server returned an empty history!"))?;
+                .ok_or_else(|| anyhow!("Server returned an empty history!"))?;
 
             if history.events.is_empty() {
                 next_page_tok = server_res.next_page_token;
