@@ -1,5 +1,5 @@
 use crate::{InterceptedMetricsSvc, RawClientLike};
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use std::marker::PhantomData;
 use temporal_sdk_core_protos::{
     coresdk::{common::Payload, FromPayloadsExt},
@@ -20,13 +20,26 @@ pub enum WorkflowExecutionResult<T> {
     /// The workflow finished in failure
     Failed(Failure),
     /// The workflow was cancelled
-    Cancelled,
+    Cancelled(Vec<Payload>),
     /// The workflow was terminated
-    Terminated,
+    Terminated(Vec<Payload>),
     /// The workflow timed out
     TimedOut,
     /// The workflow continued as new
     ContinuedAsNew,
+}
+
+/// Options for fetching workflow results
+#[derive(Debug, Clone, Copy)]
+pub struct GetWorkflowResultOpts {
+    /// If true (the default), follows to the next workflow run in the execution chain while
+    /// retrieving results.
+    pub follow_runs: bool,
+}
+impl Default for GetWorkflowResultOpts {
+    fn default() -> Self {
+        Self { follow_runs: true }
+    }
 }
 
 /// A workflow handle which can refer to a specific workflow run, or a chain of workflow runs with
@@ -64,8 +77,12 @@ where
         }
     }
 
-    pub async fn get_workflow_result(&self) -> Result<WorkflowExecutionResult<RT>, anyhow::Error> {
+    pub async fn get_workflow_result(
+        &self,
+        opts: GetWorkflowResultOpts,
+    ) -> Result<WorkflowExecutionResult<RT>, anyhow::Error> {
         let mut next_page_tok = vec![];
+        let mut run_id = self.run_id.clone().unwrap_or_default();
         loop {
             let server_res = self
                 .client
@@ -75,7 +92,7 @@ where
                     namespace: self.namespace.to_string(),
                     execution: Some(WorkflowExecution {
                         workflow_id: self.workflow_id.clone(),
-                        run_id: self.run_id.clone().unwrap_or_default(),
+                        run_id: run_id.clone(),
                     }),
                     skip_archival: true,
                     wait_new_event: true,
@@ -94,28 +111,54 @@ where
                 next_page_tok = server_res.next_page_token;
                 continue;
             }
+            // If page token was previously set, clear it.
+            next_page_tok = vec![];
 
             let event_attrs = history.events.pop().and_then(|ev| ev.attributes);
 
+            macro_rules! follow {
+                ($attrs:ident) => {
+                    if opts.follow_runs && $attrs.new_execution_run_id != "" {
+                        run_id = $attrs.new_execution_run_id;
+                        continue;
+                    }
+                };
+            }
+
             break match event_attrs {
-                Some(Attributes::WorkflowExecutionCompletedEventAttributes(attrs)) => Ok(
-                    WorkflowExecutionResult::Succeeded(RT::from_payloads(attrs.result)),
-                ),
-                Some(Attributes::WorkflowExecutionFailedEventAttributes(attrs)) => Ok(
-                    WorkflowExecutionResult::Failed(attrs.failure.unwrap_or_default()),
-                ),
-                Some(Attributes::WorkflowExecutionCanceledEventAttributes(_attrs)) => {
-                    Ok(WorkflowExecutionResult::Cancelled)
+                Some(Attributes::WorkflowExecutionCompletedEventAttributes(attrs)) => {
+                    follow!(attrs);
+                    Ok(WorkflowExecutionResult::Succeeded(RT::from_payloads(
+                        attrs.result,
+                    )))
                 }
-                Some(Attributes::WorkflowExecutionTimedOutEventAttributes(_attrs)) => {
+                Some(Attributes::WorkflowExecutionFailedEventAttributes(attrs)) => {
+                    follow!(attrs);
+                    Ok(WorkflowExecutionResult::Failed(
+                        attrs.failure.unwrap_or_default(),
+                    ))
+                }
+                Some(Attributes::WorkflowExecutionCanceledEventAttributes(attrs)) => Ok(
+                    WorkflowExecutionResult::Cancelled(Vec::from_payloads(attrs.details)),
+                ),
+                Some(Attributes::WorkflowExecutionTimedOutEventAttributes(attrs)) => {
+                    follow!(attrs);
                     Ok(WorkflowExecutionResult::TimedOut)
                 }
-                Some(Attributes::WorkflowExecutionTerminatedEventAttributes(_attrs)) => {
-                    Ok(WorkflowExecutionResult::Terminated)
-                }
-                Some(Attributes::WorkflowExecutionContinuedAsNewEventAttributes(_attrs)) => {
-                    // TODO: Follow chains
-                    Ok(WorkflowExecutionResult::ContinuedAsNew)
+                Some(Attributes::WorkflowExecutionTerminatedEventAttributes(attrs)) => Ok(
+                    WorkflowExecutionResult::Terminated(Vec::from_payloads(attrs.details)),
+                ),
+                Some(Attributes::WorkflowExecutionContinuedAsNewEventAttributes(attrs)) => {
+                    if opts.follow_runs {
+                        if attrs.new_execution_run_id != "" {
+                            run_id = attrs.new_execution_run_id;
+                            continue;
+                        } else {
+                            bail!("New execution run id was empty in continue as new event!");
+                        }
+                    } else {
+                        Ok(WorkflowExecutionResult::ContinuedAsNew)
+                    }
                 }
                 o => Err(anyhow!(
                     "Server returned an event that didn't match the CloseEvent filter. \
