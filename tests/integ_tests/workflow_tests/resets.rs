@@ -1,6 +1,6 @@
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
-use temporal_client::{WorkflowClientTrait, WorkflowOptions, WorkflowService};
+use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions, WorkflowService};
 use temporal_sdk::WfContext;
 use temporal_sdk_core_protos::temporal::api::{
     common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,
@@ -15,6 +15,7 @@ async fn reset_workflow() {
     let wf_name = "reset_me_wf";
     let mut starter = CoreWfStarter::new(wf_name);
     let mut worker = starter.worker().await;
+    worker.auto_shutdown = false;
     let notify = Arc::new(Notify::new());
 
     let wf_notify = notify.clone();
@@ -77,6 +78,14 @@ async fn reset_workflow() {
             )
             .await
             .unwrap();
+
+        // Wait for the now-reset workflow to finish
+        client
+            .get_untyped_workflow_handle(wf_name.to_owned(), "")
+            .get_workflow_result(Default::default())
+            .await
+            .unwrap();
+        starter.shutdown().await;
     };
     let run_fut = worker.run_until_done();
     let (_, rr) = tokio::join!(resetter_fut, run_fut);

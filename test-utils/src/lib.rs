@@ -6,8 +6,10 @@ extern crate tracing;
 
 pub mod canned_histories;
 
-use futures::{stream::FuturesUnordered, StreamExt};
+use crate::stream::TryStreamExt;
+use futures::{stream, stream::FuturesUnordered, StreamExt};
 use log::LevelFilter;
+use parking_lot::Mutex;
 use prost::Message;
 use rand::{distributions::Standard, Rng};
 use std::{
@@ -22,7 +24,9 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{Client, RetryClient, WorkflowClientTrait, WorkflowOptions};
+use temporal_client::{
+    Client, RetryClient, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowOptions,
+};
 use temporal_sdk::{interceptors::WorkerInterceptor, IntoActivityFunc, Worker, WorkflowFunction};
 use temporal_sdk_core::{
     init_replay_worker, init_worker, telemetry_init, ClientOptions, ClientOptionsBuilder,
@@ -250,11 +254,17 @@ impl CoreWfStarter {
     }
 }
 
-/// Provides conveniences for running integ tests with the SDK
+/// Provides conveniences for running integ tests with the SDK (against real server or mocks)
 pub struct TestWorker {
     inner: Worker,
     pub orig_core_worker: Arc<dyn CoreWorker>,
-    client: Option<Arc<dyn WorkflowClientTrait>>,
+    client: Option<Arc<RetryClient<Client>>>,
+    /// Defaults true, and if set, auto-shutdown the worker once all workflows started via
+    /// `submit_wf` have completed (as determined by fetching their result with following runs).
+    pub auto_shutdown: bool,
+    started_workflows: Mutex<Vec<WorkflowExecutionInfo>>,
+    /// Used only for mocked testing, where fetching results to determine if a WF is finished is too
+    /// annoying to make work.
     incomplete_workflows: Arc<AtomicUsize>,
 }
 impl TestWorker {
@@ -266,17 +276,14 @@ impl TestWorker {
             inner,
             orig_core_worker: core_worker,
             client: None,
+            auto_shutdown: true,
+            started_workflows: Mutex::new(vec![]),
             incomplete_workflows: ct,
         }
     }
 
     pub fn inner_mut(&mut self) -> &mut Worker {
         &mut self.inner
-    }
-
-    pub fn incr_expected_run_count(&self, amount: usize) {
-        self.incomplete_workflows
-            .fetch_add(amount, Ordering::AcqRel);
     }
 
     // TODO: Maybe trait-ify?
@@ -309,7 +316,6 @@ impl TestWorker {
         input: Vec<Payload>,
         options: WorkflowOptions,
     ) -> Result<String, anyhow::Error> {
-        self.incr_expected_run_count(1);
         if let Some(c) = self.client.as_ref() {
             let wfid = workflow_id.into();
             let res = c
@@ -321,6 +327,11 @@ impl TestWorker {
                     options,
                 )
                 .await?;
+            self.started_workflows.lock().push(WorkflowExecutionInfo {
+                namespace: c.namespace().to_string(),
+                workflow_id: wfid,
+                run_id: Some(res.run_id.clone()),
+            });
             Ok(res.run_id)
         } else {
             Ok("fake_run_id".to_string())
@@ -341,18 +352,42 @@ impl TestWorker {
     ) -> Result<(), anyhow::Error> {
         let iceptor = TestWorkerInterceptor {
             incomplete_workflows: self.incomplete_workflows.clone(),
-            shutdown_handle: Box::new(self.inner.shutdown_handle()),
+            // Only use counting-based shutdown in the interceptor in mocked tests
+            shutdown_handle: if self.auto_shutdown && self.client.is_none() {
+                Some(Box::new(self.inner.shutdown_handle()))
+            } else {
+                None
+            },
             next: interceptor.map(|i| Box::new(i) as Box<dyn WorkerInterceptor>),
         };
         self.inner.set_worker_interceptor(Box::new(iceptor));
-        self.inner.run().await
+        let workflows_complete_fut = async {
+            if self.auto_shutdown && self.client.is_some() {
+                let wfs = std::mem::take(self.started_workflows.get_mut());
+                let client = self.client.clone().expect("Client must exist when running");
+                stream::iter(
+                    wfs.into_iter()
+                        .map(|info| info.bind_untyped((*client).clone())),
+                )
+                .map(Ok)
+                .try_for_each_concurrent(None, |wh| async move {
+                    wh.get_workflow_result(Default::default()).await?;
+                    Ok::<_, anyhow::Error>(())
+                })
+                .await?;
+                self.orig_core_worker.initiate_shutdown();
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        tokio::try_join!(self.inner.run(), workflows_complete_fut)?;
+        Ok(())
     }
 }
 
 /// Implements calling the shutdown handle when the expected number of test workflows has completed
 struct TestWorkerInterceptor {
     incomplete_workflows: Arc<AtomicUsize>,
-    shutdown_handle: Box<dyn Fn()>,
+    shutdown_handle: Option<Box<dyn Fn()>>,
     next: Option<Box<dyn WorkerInterceptor>>,
 }
 
@@ -363,9 +398,11 @@ impl WorkerInterceptor for TestWorkerInterceptor {
             info!("Workflow {} says it's finishing", &completion.run_id);
             let prev = self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
             if prev <= 1 {
-                info!("Test worker calling shutdown");
-                // There are now zero, we just subtracted one
-                (self.shutdown_handle)()
+                if let Some(sh) = self.shutdown_handle.as_ref() {
+                    info!("Test worker calling shutdown");
+                    // There are now zero, we just subtracted one
+                    sh()
+                }
             }
         }
         if let Some(n) = self.next.as_ref() {

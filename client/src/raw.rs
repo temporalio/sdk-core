@@ -15,7 +15,7 @@ use tonic::{body::BoxBody, client::GrpcService, metadata::KeyAndValueRef};
 
 pub(super) mod sealed {
     use super::*;
-    use crate::{ConfiguredClient, RetryClient};
+    use crate::{Client, ConfiguredClient, InterceptedMetricsSvc, RetryClient};
     use futures::TryFutureExt;
     use tonic::{Request, Response, Status};
 
@@ -102,6 +102,14 @@ pub(super) mod sealed {
 
         fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
             &mut self.client
+        }
+    }
+
+    impl RawClientLike for Client {
+        type SvcType = InterceptedMetricsSvc;
+
+        fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+            &mut self.inner
         }
     }
 }

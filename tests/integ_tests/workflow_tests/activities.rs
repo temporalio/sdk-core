@@ -1,6 +1,6 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporal_client::{WorkflowClientTrait, WorkflowOptions};
+use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -44,13 +44,14 @@ async fn one_activity() {
     let wf_name = "one_activity";
     let mut starter = CoreWfStarter::new(wf_name);
     let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), one_activity_wf);
     worker.register_activity(
         "echo_activity",
         |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
     );
 
-    worker
+    let run_id = worker
         .submit_wf(
             wf_name.to_owned(),
             wf_name.to_owned(),
@@ -60,6 +61,12 @@ async fn one_activity() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
+    let handle = client.get_untyped_workflow_handle(wf_name, run_id);
+    let res = handle
+        .get_workflow_result(Default::default())
+        .await
+        .unwrap();
+    assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
 }
 
 #[tokio::test]

@@ -107,7 +107,6 @@ async fn sends_signal_to_child() {
     worker.register_wf("child_signaler", signals_child);
     worker.register_wf("child_receiver", signal_receiver);
 
-    worker.incr_expected_run_count(1); // Expect another WF to be run as child
     worker
         .submit_wf(
             "sends-signal-to-child",
