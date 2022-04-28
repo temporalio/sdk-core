@@ -1058,21 +1058,22 @@ impl RawClientLikeUser for Client {
 /// Additional methods for workflow clients
 pub trait WfClientExt: WfHandleClient + Sized {
     /// Create an untyped handle for a workflow execution, which can be used to do things like
-    /// wait for that workflow's result.
+    /// wait for that workflow's result. `run_id` may be left blank to target the latest run.
     fn get_untyped_workflow_handle(
         &self,
         workflow_id: impl Into<String>,
-        run_id: Option<impl Into<String>>,
+        run_id: impl Into<String>,
     ) -> UntypedWorkflowHandle<Self::RawClientT>
     where
         Self::RawClientT: Clone,
     {
+        let rid = run_id.into();
         UntypedWorkflowHandle::new(
             self.wf_svc(),
             WorkflowExecutionInfo {
                 namespace: self.namespace().to_string(),
                 workflow_id: workflow_id.into(),
-                run_id: run_id.map(Into::into),
+                run_id: if rid.is_empty() { None } else { Some(rid) },
             },
         )
     }

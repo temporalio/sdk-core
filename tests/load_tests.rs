@@ -162,7 +162,7 @@ async fn workflow_load() {
             )
             .await
             .unwrap();
-        workflow_handles.push(client.get_untyped_workflow_handle(wfid, Some(rid)));
+        workflow_handles.push(client.get_untyped_workflow_handle(wfid, rid));
     }
 
     let sig_sender = async {

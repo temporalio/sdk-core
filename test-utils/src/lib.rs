@@ -379,9 +379,7 @@ impl TestWorker {
             }
             Ok::<_, anyhow::Error>(())
         };
-        let (r1, r2) = tokio::join!(self.inner.run(), workflows_complete_fut);
-        r1?;
-        r2?;
+        tokio::try_join!(self.inner.run(), workflows_complete_fut)?;
         Ok(())
     }
 }

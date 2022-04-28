@@ -62,7 +62,7 @@ pub struct WorkflowExecutionInfo {
 }
 
 impl WorkflowExecutionInfo {
-    /// Bind the workflow info to a specific client, turning it into a [WorkflowHandle]
+    /// Bind the workflow info to a specific client, turning it into a workflow handle
     pub fn bind_untyped<CT>(self, client: CT) -> UntypedWorkflowHandle<CT>
     where
         CT: RawClientLike<SvcType = InterceptedMetricsSvc> + Clone,
@@ -161,7 +161,7 @@ where
                 ),
                 Some(Attributes::WorkflowExecutionContinuedAsNewEventAttributes(attrs)) => {
                     if opts.follow_runs {
-                        if attrs.new_execution_run_id.is_empty() {
+                        if !attrs.new_execution_run_id.is_empty() {
                             run_id = attrs.new_execution_run_id;
                             continue;
                         } else {
