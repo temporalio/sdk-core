@@ -62,7 +62,10 @@ async fn one_activity() {
         .unwrap();
     worker.run_until_done().await.unwrap();
     let handle = client.get_untyped_workflow_handle(wf_name, Some(run_id));
-    let res = handle.get_workflow_result().await.unwrap();
+    let res = handle
+        .get_workflow_result(Default::default())
+        .await
+        .unwrap();
     assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
 }
 

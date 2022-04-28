@@ -14,7 +14,7 @@ mod workflow_handle;
 
 pub use crate::retry::{CallType, RetryClient};
 pub use raw::WorkflowService;
-pub use workflow_handle::WorkflowExecutionResult;
+pub use workflow_handle::{WorkflowExecutionInfo, WorkflowExecutionResult};
 
 use crate::{
     metrics::{GrpcMetricSvc, MetricsContext},
@@ -433,7 +433,7 @@ pub type WorkflowServiceClientWithMetrics = WorkflowServiceClient<InterceptedMet
 type InterceptedMetricsSvc = InterceptedService<GrpcMetricSvc, ServiceCallInterceptor>;
 
 /// Contains an instance of a namespace-bound client for interacting with the Temporal server
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Client {
     /// Client for interacting with workflow service
     inner: ConfiguredClient<WorkflowServiceClientWithMetrics>,
@@ -1069,9 +1069,11 @@ pub trait WfClientExt: WfHandleClient + Sized {
     {
         UntypedWorkflowHandle::new(
             self.wf_svc(),
-            self.namespace().to_string(),
-            workflow_id.into(),
-            run_id.map(Into::into),
+            WorkflowExecutionInfo {
+                namespace: self.namespace().to_string(),
+                workflow_id: workflow_id.into(),
+                run_id: run_id.map(Into::into),
+            },
         )
     }
 }

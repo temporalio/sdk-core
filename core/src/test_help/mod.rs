@@ -126,7 +126,6 @@ pub struct FakeWfResponses {
     pub response_batches: Vec<ResponseType>,
 }
 
-// TODO: Rename to mock TQ or something?
 pub struct MocksHolder {
     client_bag: WorkerClientBag,
     mock_worker: MockWorker,

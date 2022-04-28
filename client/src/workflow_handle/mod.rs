@@ -46,11 +46,29 @@ impl Default for GetWorkflowResultOpts {
 /// the same workflow id.
 pub struct WorkflowHandle<ClientT, ResultT> {
     client: ClientT,
-    namespace: String,
-    workflow_id: String,
-    run_id: Option<String>,
+    info: WorkflowExecutionInfo,
 
     _res_type: PhantomData<ResultT>,
+}
+
+/// Holds needed information to refer to a specific workflow run, or workflow execution chain
+pub struct WorkflowExecutionInfo {
+    /// Namespace the workflow lives in
+    pub namespace: String,
+    /// The workflow's id
+    pub workflow_id: String,
+    /// If set, target this specific run of the workflow
+    pub run_id: Option<String>,
+}
+
+impl WorkflowExecutionInfo {
+    /// Bind the workflow info to a specific client, turning it into a [WorkflowHandle]
+    pub fn bind_untyped<CT>(self, client: CT) -> UntypedWorkflowHandle<CT>
+    where
+        CT: RawClientLike<SvcType = InterceptedMetricsSvc> + Clone,
+    {
+        UntypedWorkflowHandle::new(client, self)
+    }
 }
 
 /// A workflow handle to a workflow with unknown types. Uses raw payloads.
@@ -62,17 +80,10 @@ where
     // TODO: Make more generic, capable of (de)serialization w/ serde
     RT: FromPayloadsExt,
 {
-    pub(crate) fn new(
-        client: CT,
-        namespace: String,
-        workflow_id: String,
-        run_id: Option<String>,
-    ) -> Self {
+    pub(crate) fn new(client: CT, info: WorkflowExecutionInfo) -> Self {
         Self {
             client,
-            namespace,
-            workflow_id,
-            run_id,
+            info,
             _res_type: PhantomData::<RT>,
         }
     }
@@ -82,16 +93,16 @@ where
         opts: GetWorkflowResultOpts,
     ) -> Result<WorkflowExecutionResult<RT>, anyhow::Error> {
         let mut next_page_tok = vec![];
-        let mut run_id = self.run_id.clone().unwrap_or_default();
+        let mut run_id = self.info.run_id.clone().unwrap_or_default();
         loop {
             let server_res = self
                 .client
                 .clone()
                 .client()
                 .get_workflow_execution_history(GetWorkflowExecutionHistoryRequest {
-                    namespace: self.namespace.to_string(),
+                    namespace: self.info.namespace.to_string(),
                     execution: Some(WorkflowExecution {
-                        workflow_id: self.workflow_id.clone(),
+                        workflow_id: self.info.workflow_id.clone(),
                         run_id: run_id.clone(),
                     }),
                     skip_archival: true,
@@ -150,7 +161,7 @@ where
                 ),
                 Some(Attributes::WorkflowExecutionContinuedAsNewEventAttributes(attrs)) => {
                     if opts.follow_runs {
-                        if attrs.new_execution_run_id != "" {
+                        if attrs.new_execution_run_id.is_empty() {
                             run_id = attrs.new_execution_run_id;
                             continue;
                         } else {

@@ -33,8 +33,6 @@ async fn continue_as_new_happy_path() {
         )
         .await
         .unwrap();
-    // The four additional runs
-    worker.incr_expected_run_count(4);
     worker.run_until_done().await.unwrap();
 }
 
@@ -58,6 +56,5 @@ async fn continue_as_new_multiple_concurrent() {
             .await
             .unwrap();
     }
-    worker.incr_expected_run_count(20 * 4);
     worker.run_until_done().await.unwrap();
 }

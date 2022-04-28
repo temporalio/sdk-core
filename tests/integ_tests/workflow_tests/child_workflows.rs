@@ -36,7 +36,6 @@ async fn child_workflow_happy_path() {
 
     worker.register_wf(PARENT_WF_TYPE.to_string(), parent_wf);
     worker.register_wf(CHILD_WF_TYPE.to_string(), child_wf);
-    worker.incr_expected_run_count(1); // Expect another WF to be run as child
 
     worker
         .submit_wf(
