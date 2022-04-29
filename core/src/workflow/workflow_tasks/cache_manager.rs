@@ -54,7 +54,7 @@ impl WorkflowCacheManager {
         let cap = self.cache.cap();
         let mx = self.cap_mutex.clone();
         future::Either::Right(async move {
-            let _l = mx.lock();
+            let _l = mx.lock().await;
             while !early_exit() && *rx.borrow_and_update() >= cap {
                 let _ = rx.changed().await;
             }
