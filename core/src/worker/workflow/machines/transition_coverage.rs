@@ -67,7 +67,7 @@ fn spawn_save_coverage_at_end() -> SyncSender<(String, CoveredTransition)> {
 #[cfg(test)]
 mod machine_coverage_report {
     use super::*;
-    use crate::workflow::machines::{
+    use crate::worker::workflow::machines::{
         activity_state_machine::ActivityMachine,
         cancel_external_state_machine::CancelExternalMachine,
         cancel_workflow_state_machine::CancelWorkflowMachine,

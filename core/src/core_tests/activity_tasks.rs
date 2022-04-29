@@ -4,8 +4,10 @@ use crate::{
         build_fake_worker, canned_histories, gen_assert_and_reply, mock_manual_poller, mock_poller,
         mock_worker, poll_and_reply, test_worker_cfg, MockWorker, MocksHolder,
     },
-    worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
-    workflow::WorkflowCachingPolicy::NonSticky,
+    worker::{
+        client::mocks::{mock_manual_workflow_client, mock_workflow_client},
+        WorkflowCachingPolicy::NonSticky,
+    },
     ActivityHeartbeat, Worker, WorkerConfigBuilder,
 };
 use futures::FutureExt;

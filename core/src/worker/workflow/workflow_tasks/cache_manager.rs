@@ -1,4 +1,4 @@
-use crate::{telemetry::metrics::MetricsContext, workflow::WorkflowCachingPolicy};
+use crate::{telemetry::metrics::MetricsContext, worker::workflow::WorkflowCachingPolicy};
 use lru::LruCache;
 use std::{
     future::Future,

@@ -748,7 +748,7 @@ mod test {
     use super::*;
     use crate::{
         replay::TestHistoryBuilder, test_help::canned_histories,
-        workflow::managed_wf::ManagedWFFunc,
+        worker::workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::{fixture, rstest};
     use std::mem::discriminant;

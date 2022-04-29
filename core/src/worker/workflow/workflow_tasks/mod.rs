@@ -4,18 +4,22 @@ mod cache_manager;
 mod concurrency_manager;
 
 use crate::{
-    pending_activations::PendingActivations,
     protosext::{ValidPollWFTQResponse, WorkflowActivationExt},
     telemetry::metrics::MetricsContext,
-    worker::{client::WorkerClientBag, LocalActRequest, LocalActivityResolution},
-    workflow::{
-        history_update::NextPageToken,
-        machines::WFMachinesError,
-        workflow_tasks::{
-            cache_manager::WorkflowCacheManager, concurrency_manager::WorkflowConcurrencyManager,
+    worker::{
+        client::WorkerClientBag,
+        workflow::{
+            history_update::NextPageToken,
+            machines::WFMachinesError,
+            pending_activations::PendingActivations,
+            workflow_tasks::{
+                cache_manager::WorkflowCacheManager,
+                concurrency_manager::WorkflowConcurrencyManager,
+            },
+            HistoryPaginator, HistoryUpdate, LocalResolution, WFCommand, WorkflowCachingPolicy,
+            WorkflowManager, LEGACY_QUERY_ID,
         },
-        HistoryPaginator, HistoryUpdate, LocalResolution, WFCommand, WorkflowCachingPolicy,
-        WorkflowManager, LEGACY_QUERY_ID,
+        LocalActRequest, LocalActivityResolution,
     },
 };
 use crossbeam::queue::SegQueue;
@@ -594,8 +598,7 @@ impl WorkflowTaskManager {
             }
             let immediate_resolutions = local_activity_request_sink(local_activities);
             for resolution in immediate_resolutions {
-                self.notify_of_local_result(run_id, LocalResolution::LocalActivity(resolution))
-                    .await?;
+                self.notify_of_local_result(run_id, LocalResolution::LocalActivity(resolution))?;
             }
 
             // The heartbeat deadline is 80% of the WFT timeout
@@ -850,7 +853,7 @@ impl WorkflowTaskManager {
     /// Let a workflow know that something we've been waiting locally on has resolved, like a local
     /// activity or side effect
     #[instrument(level = "debug", skip(self, resolved))]
-    pub(crate) async fn notify_of_local_result(
+    pub(crate) fn notify_of_local_result(
         &self,
         run_id: &str,
         resolved: LocalResolution,

@@ -1,7 +1,7 @@
 use crate::{
     protosext::ValidPollWFTQResponse,
     telemetry::metrics::{workflow_type, MetricsContext},
-    workflow::{
+    worker::workflow::{
         workflow_tasks::{OutstandingActivation, OutstandingTask, WorkflowMissingError},
         HistoryUpdate, Result, WFMachinesError, WorkflowManager,
     },

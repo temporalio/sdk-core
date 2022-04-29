@@ -785,7 +785,7 @@ mod tests {
     use super::*;
     use crate::{
         replay::TestHistoryBuilder, test_help::canned_histories,
-        workflow::managed_wf::ManagedWFFunc,
+        worker::workflow::managed_wf::ManagedWFFunc,
     };
     use rstest::rstest;
     use std::time::Duration;

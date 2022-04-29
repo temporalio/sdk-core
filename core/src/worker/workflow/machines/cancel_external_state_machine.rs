@@ -230,7 +230,7 @@ impl Cancellable for CancelExternalMachine {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{replay::TestHistoryBuilder, workflow::managed_wf::ManagedWFFunc};
+    use crate::{replay::TestHistoryBuilder, worker::workflow::managed_wf::ManagedWFFunc};
     use temporal_sdk::{WfContext, WorkflowFunction, WorkflowResult};
 
     async fn cancel_sender(ctx: WfContext) -> WorkflowResult<()> {

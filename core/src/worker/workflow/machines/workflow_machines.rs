@@ -19,11 +19,11 @@ use crate::{
     protosext::{HistoryEventExt, ValidScheduleLA},
     telemetry::{metrics::MetricsContext, VecDisplayer},
     worker::{
+        workflow::{
+            CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WFCommand, WorkflowFetcher,
+            WorkflowStartedInfo,
+        },
         ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
-    },
-    workflow::{
-        CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WFCommand, WorkflowFetcher,
-        WorkflowStartedInfo,
     },
 };
 use siphasher::sip::SipHasher13;

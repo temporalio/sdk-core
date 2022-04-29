@@ -1,6 +1,7 @@
 mod activities;
 pub(crate) mod client;
 mod wft_delivery;
+mod workflow;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
 
@@ -8,6 +9,9 @@ pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     NewLocalAct,
 };
+#[cfg(test)]
+pub(crate) use workflow::managed_wf::ManagedWFFunc;
+pub(crate) use workflow::{WorkflowCachingPolicy, LEGACY_QUERY_ID};
 
 use crate::{
     abstractions::MeteredSemaphore,
@@ -28,13 +32,13 @@ use crate::{
         activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
         client::WorkerClientBag,
         wft_delivery::WFTSource,
-    },
-    workflow::{
-        workflow_tasks::{
-            ActivationAction, FailedActivationOutcome, NewWfTaskOutcome,
-            ServerCommandsWithWorkflowInfo, WorkflowTaskManager,
+        workflow::{
+            workflow_tasks::{
+                ActivationAction, EvictionRequestResult, FailedActivationOutcome, NewWfTaskOutcome,
+                ServerCommandsWithWorkflowInfo, WorkflowTaskManager,
+            },
+            EmptyWorkflowCommandErr, LocalResolution, WFMachinesError,
         },
-        EmptyWorkflowCommandErr, LocalResolution, WFMachinesError, WorkflowCachingPolicy,
     },
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
 };
@@ -65,7 +69,6 @@ use tracing_futures::Instrument;
 
 #[cfg(test)]
 use crate::worker::client::WorkerClient;
-use crate::workflow::workflow_tasks::EvictionRequestResult;
 
 /// A worker polls on a certain task queue
 pub struct Worker {
@@ -372,7 +375,7 @@ impl Worker {
                     Some(DispatchOrTimeoutLA::Dispatch(r)) => Ok(Some(r)),
                     Some(DispatchOrTimeoutLA::Timeout { run_id, resolution, task }) => {
                         self.notify_local_result(
-                            &run_id, LocalResolution::LocalActivity(resolution)).await;
+                            &run_id, LocalResolution::LocalActivity(resolution));
                         Ok(task)
                     },
                     None => {
@@ -405,9 +408,7 @@ impl Worker {
         if task_token.is_local_activity_task() {
             let as_la_res: LocalActivityExecutionResult = status.try_into()?;
             match self.local_act_mgr.complete(&task_token, &as_la_res) {
-                LACompleteAction::Report(info) => {
-                    self.complete_local_act(as_la_res, info, None).await
-                }
+                LACompleteAction::Report(info) => self.complete_local_act(as_la_res, info, None),
                 LACompleteAction::LangDoesTimerBackoff(backoff, info) => {
                     // This la needs to write a failure marker, and then we will tell lang how
                     // long of a timer to schedule to back off for. We do this because there are
@@ -415,7 +416,6 @@ impl Worker {
                     // simpler for lang to reply with the timer / next LA command than to do it
                     // internally. Plus, this backoff hack we'd like to eliminate eventually.
                     self.complete_local_act(as_la_res, info, Some(backoff))
-                        .await
                 }
                 LACompleteAction::WillBeRetried => {
                     // Nothing to do here
@@ -938,7 +938,7 @@ impl Worker {
         res.map_err(Into::into)
     }
 
-    async fn complete_local_act(
+    fn complete_local_act(
         &self,
         la_res: LocalActivityExecutionResult,
         info: LocalInFlightActInfo,
@@ -955,11 +955,10 @@ impl Worker {
                 original_schedule_time: Some(info.la_info.schedule_time),
             }),
         )
-        .await
     }
 
-    async fn notify_local_result(&self, run_id: &str, res: LocalResolution) {
-        if let Err(e) = self.wft_manager.notify_of_local_result(run_id, res).await {
+    fn notify_local_result(&self, run_id: &str, res: LocalResolution) {
+        if let Err(e) = self.wft_manager.notify_of_local_result(run_id, res) {
             error!(
                 "Problem with local resolution on run {}: {:?} -- will evict the workflow",
                 run_id, e

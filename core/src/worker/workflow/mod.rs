@@ -4,6 +4,7 @@ mod bridge;
 mod driven_workflow;
 mod history_update;
 mod machines;
+mod pending_activations;
 
 pub(crate) use bridge::WorkflowBridge;
 pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
@@ -288,7 +289,7 @@ pub mod managed_wf {
     use crate::{
         replay::TestHistoryBuilder,
         test_help::TEST_Q,
-        workflow::{history_update::TestHBExt, WFCommand, WorkflowFetcher},
+        worker::workflow::{history_update::TestHBExt, WFCommand, WorkflowFetcher},
     };
     use std::{convert::TryInto, time::Duration};
     use temporal_sdk::{WorkflowFunction, WorkflowResult};

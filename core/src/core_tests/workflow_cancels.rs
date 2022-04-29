@@ -3,7 +3,7 @@ use crate::{
     test_help::{
         build_fake_worker, canned_histories, gen_assert_and_reply, poll_and_reply, ResponseType,
     },
-    workflow::WorkflowCachingPolicy::NonSticky,
+    worker::WorkflowCachingPolicy::NonSticky,
 };
 use rstest::rstest;
 use std::time::Duration;

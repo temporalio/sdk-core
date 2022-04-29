@@ -4,8 +4,10 @@ use crate::{
     pollers::{BoxedActPoller, BoxedPoller, BoxedWFPoller, MockManualPoller, MockPoller},
     replay::TestHistoryBuilder,
     sticky_q_name_for_worker,
-    worker::client::{mocks::mock_workflow_client, MockWorkerClient, WorkerClient},
-    workflow::WorkflowCachingPolicy,
+    worker::{
+        client::{mocks::mock_workflow_client, MockWorkerClient, WorkerClient},
+        WorkflowCachingPolicy,
+    },
     TaskToken, Worker, WorkerClientBag, WorkerConfig, WorkerConfigBuilder,
 };
 use bimap::BiMap;

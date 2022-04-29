@@ -1,6 +1,6 @@
 use crate::{
     telemetry::VecDisplayer,
-    workflow::{WFCommand, WorkflowFetcher},
+    worker::workflow::{WFCommand, WorkflowFetcher},
 };
 use std::sync::mpsc::{self, Receiver, Sender};
 

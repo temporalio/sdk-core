@@ -1,8 +1,7 @@
 use crate::{
     replay::DEFAULT_WORKFLOW_TYPE,
     test_help::{canned_histories, mock_sdk, MockPollCfg, ResponseType},
-    worker::client::mocks::mock_workflow_client,
-    workflow::managed_wf::ManagedWFFunc,
+    worker::{client::mocks::mock_workflow_client, ManagedWFFunc},
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ChildWorkflowOptions, Signal, WfContext, WorkflowFunction, WorkflowResult};

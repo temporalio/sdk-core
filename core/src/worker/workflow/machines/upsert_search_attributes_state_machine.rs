@@ -2,7 +2,7 @@ use super::{
     workflow_machines::{MachineResponse, WFMachinesError},
     NewMachineWithCommand,
 };
-use crate::workflow::machines::{Cancellable, EventInfo, MachineKind, WFMachinesAdapter};
+use crate::worker::workflow::machines::{Cancellable, EventInfo, MachineKind, WFMachinesAdapter};
 use rustfsm::{fsm, TransitionResult};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::UpsertWorkflowSearchAttributes,
@@ -167,7 +167,7 @@ mod tests {
         coresdk::common::Payload, temporal::api::command::v1::command::Attributes,
     };
 
-    use crate::{replay::TestHistoryBuilder, workflow::managed_wf::ManagedWFFunc};
+    use crate::{replay::TestHistoryBuilder, worker::workflow::managed_wf::ManagedWFFunc};
 
     use super::{super::OnEventWrapper, *};
 

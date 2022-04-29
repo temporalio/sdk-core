@@ -8,8 +8,10 @@ use crate::{
         poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, FakeWfResponses,
         MockPollCfg, MocksHolder, ResponseType, NO_MORE_WORK_ERROR_MSG, TEST_Q,
     },
-    worker::client::mocks::mock_workflow_client,
-    workflow::WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
+    worker::{
+        client::mocks::mock_workflow_client,
+        WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
+    },
     Worker,
 };
 use rstest::{fixture, rstest};
