@@ -215,12 +215,9 @@ impl WorkflowTaskManager {
         };
         if !are_no_pending_evictions() {
             let wait_fut = {
-                let clock = self.cache_manager.lock();
-                let r = clock.wait_for_capacity(are_no_pending_evictions);
-                if r.is_none() {
-                    return None;
-                }
-                r.unwrap()
+                self.cache_manager
+                    .lock()
+                    .wait_for_capacity(are_no_pending_evictions)?
             };
             return Some(wait_fut);
         }
