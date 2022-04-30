@@ -1,8 +1,13 @@
 use crate::{telemetry::metrics::MetricsContext, workflow::WorkflowCachingPolicy};
-use futures::future;
 use lru::LruCache;
-use std::{future::Future, sync::Arc};
-use tokio::sync::{watch, Mutex};
+use std::{
+    future::Future,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
+use tokio::sync::Notify;
 
 /// Helps to maintain an LRU ordering in which workflow runs have been accessed so that old runs may
 /// be evicted once we reach the cap.
@@ -10,8 +15,8 @@ use tokio::sync::{watch, Mutex};
 pub(crate) struct WorkflowCacheManager {
     cache: LruCache<String, ()>,
     metrics: MetricsContext,
-    watch_tx: watch::Sender<usize>,
-    watch_rx: watch::Receiver<usize>,
+    cap_notify: Arc<Notify>,
+    cache_size: Arc<AtomicUsize>,
     cap_mutex: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -23,13 +28,12 @@ impl WorkflowCacheManager {
             } => max_cached_workflows,
             _ => 0,
         };
-        let (watch_tx, watch_rx) = watch::channel(0);
         Self {
             cache: LruCache::new(cap),
             metrics,
-            watch_tx,
-            watch_rx,
-            cap_mutex: Arc::new(Mutex::new(())),
+            cap_notify: Arc::new(Notify::new()),
+            cache_size: Arc::new(AtomicUsize::new(0)),
+            cap_mutex: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -41,22 +45,23 @@ impl WorkflowCacheManager {
     /// Resolves once there is an open slot in the cache. The passed in closure can be used to
     /// exit the wait loop if it returns true even if the cache is not below the limit. It will be
     /// re-evaluated every time there is an insert or remove to the cache, even if it did not change
-    /// the siz.e
-    pub fn wait_for_capacity(
-        &self,
-        early_exit: impl Fn() -> bool,
-    ) -> future::Either<impl Future<Output = ()>, impl Future<Output = ()>> {
+    /// the size.
+    pub fn wait_for_capacity<Fun>(&self, early_exit: Fun) -> Option<impl Future<Output = ()>>
+    where
+        Fun: Fn() -> bool,
+    {
         if self.cache.cap() == 0 {
-            return future::Either::Left(future::ready(()));
+            return None;
         }
 
-        let mut rx = self.watch_rx.clone();
+        let size = self.cache_size.clone();
+        let notify = self.cap_notify.clone();
         let cap = self.cache.cap();
         let mx = self.cap_mutex.clone();
-        future::Either::Right(async move {
+        Some(async move {
             let _l = mx.lock().await;
-            while !early_exit() && *rx.borrow_and_update() >= cap {
-                let _ = rx.changed().await;
+            while !early_exit() && size.load(Ordering::Acquire) >= cap {
+                notify.notified().await;
             }
         })
     }
@@ -95,7 +100,8 @@ impl WorkflowCacheManager {
     fn size_changed(&self) {
         let size = self.cache.len();
         self.metrics.cache_size(size as u64);
-        let _ = self.watch_tx.send(size);
+        self.cache_size.store(size, Ordering::Release);
+        self.cap_notify.notify_one();
     }
 }
 

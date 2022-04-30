@@ -110,7 +110,7 @@ async fn activity_load() {
     dbg!(running.elapsed());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn workflow_load() {
     const SIGNAME: &str = "signame";
     let wf_name = "workflow_load";

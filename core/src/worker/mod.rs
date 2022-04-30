@@ -452,14 +452,18 @@ impl Worker {
             }
 
             if self.config.max_cached_workflows > 0 {
-                tokio::select! {
-                    biased;
-                    // We must loop up if there's a new pending activation, since those are for
-                    // already-cached workflows and may include evictions which will change if
-                    // we are still waiting or not.
-                    _ = self.pending_activations_notify.notified() => continue,
-                    _ = self.wft_manager.wait_for_cache_capacity() => {}
-                };
+                if let Some(cache_cap_fut) = self.wft_manager.wait_for_cache_capacity() {
+                    tokio::select! {
+                        biased;
+                        // We must loop up if there's a new pending activation, since those are for
+                        // already-cached workflows and may include evictions which will change if
+                        // we are still waiting or not.
+                        _ = self.pending_activations_notify.notified() => {
+                            continue
+                        },
+                        _ = cache_cap_fut => {}
+                    };
+                }
             }
 
             // Apply any buffered poll responses from the server. Must come after pending
@@ -501,6 +505,7 @@ impl Worker {
         &self,
         completion: WorkflowActivationCompletion,
     ) -> Result<(), CompleteWfError> {
+        info!("Completing WF act");
         let wfstatus = completion.status;
         let report_outcome = match wfstatus {
             Some(workflow_activation_completion::Status::Successful(success)) => {
@@ -525,8 +530,10 @@ impl Worker {
             }
         }?;
 
+        info!("Completed WF act");
         self.wft_manager
             .after_wft_report(&completion.run_id, report_outcome.reported_to_server);
+        info!("WF act after report");
         if report_outcome.reported_to_server || report_outcome.failed {
             // If we failed the WFT but didn't report anything, we still want to release the WFT
             // permit since the server will eventually time out the task and we've already evicted
@@ -538,6 +545,7 @@ impl Worker {
         if let Some(h) = &self.post_activate_hook {
             h(self);
         }
+        info!("WF act done");
 
         Ok(())
     }
