@@ -747,8 +747,7 @@ fn convert_payloads(
 mod test {
     use super::*;
     use crate::{
-        replay::TestHistoryBuilder, test_help::canned_histories,
-        worker::workflow::managed_wf::ManagedWFFunc,
+        replay::TestHistoryBuilder, test_help::canned_histories, worker::workflow::ManagedWFFunc,
     };
     use rstest::{fixture, rstest};
     use std::mem::discriminant;

@@ -1050,7 +1050,7 @@ async fn lots_of_workflows() {
         }
     })
     .await;
-    assert_eq!(worker.outstanding_workflow_tasks(), 0);
+    assert_eq!(worker.outstanding_workflow_tasks().await, 0);
     worker.shutdown().await;
 }
 
@@ -1106,27 +1106,27 @@ async fn complete_after_eviction() {
     let activation = core.poll_workflow_activation().await.unwrap();
     // We just got start workflow, immediately evict
     core.request_workflow_eviction(&activation.run_id);
-    // Original task must be completed before we get the eviction
+    // Since we got whole history, we must finish replay before eviction will appear
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         activation.run_id,
         start_timer_cmd(1, Duration::from_secs(1)),
     ))
     .await
     .unwrap();
-    let eviction_activation = core.poll_workflow_activation().await.unwrap();
+    let next_activation = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
-        eviction_activation.jobs.as_slice(),
+        next_activation.jobs.as_slice(),
         [WorkflowActivationJob {
             variant: Some(workflow_activation_job::Variant::FireTimer(_)),
         },]
     );
-    // Complete the activation containing the eviction, the way we normally would have
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        eviction_activation.run_id,
+        next_activation.run_id,
         vec![CompleteWorkflowExecution { result: None }.into()],
     ))
     .await
     .unwrap();
+    // Now replay is done, complete the activation containing the eviction.
     let eviction = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         eviction.jobs.as_slice(),
@@ -1515,8 +1515,8 @@ async fn failing_wft_doesnt_eat_permit_forever() {
             .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
             .await
             .unwrap();
-        assert_eq!(worker.outstanding_workflow_tasks(), 0);
-        assert_eq!(worker.available_wft_permits(), 2);
+        assert_eq!(worker.outstanding_workflow_tasks().await, 0);
+        assert_eq!(worker.available_wft_permits().await, 2);
     }
     // We should be "out of work" because the mock service thinks we didn't complete the last task,
     // which we didn't, because we don't spam failures. The real server would eventually time out
@@ -1584,8 +1584,23 @@ async fn cache_miss_will_fetch_history() {
         EvictionReason::LangRequested,
     );
     // Handle the eviction, and the restart
-    for _ in 1..=2 {
+    for i in 1..=2 {
         let activation = worker.poll_workflow_activation().await.unwrap();
+        if i == 1 {
+            assert_matches!(
+                activation.jobs.as_slice(),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
+                }]
+            );
+        } else {
+            assert_matches!(
+                activation.jobs.as_slice(),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+                }]
+            );
+        }
         worker
             .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
             .await
@@ -1605,7 +1620,7 @@ async fn cache_miss_will_fetch_history() {
         ))
         .await
         .unwrap();
-    assert_eq!(worker.outstanding_workflow_tasks(), 0);
+    assert_eq!(worker.outstanding_workflow_tasks().await, 0);
     worker.shutdown().await;
 }
 
@@ -1705,7 +1720,7 @@ async fn evict_missing_wf_during_poll_doesnt_eat_permit() {
 
     // Should error because mock is out of work
     assert_matches!(core.poll_workflow_activation().await, Err(_));
-    assert_eq!(core.available_wft_permits(), 1);
+    assert_eq!(core.available_wft_permits().await, 1);
 
     core.shutdown().await;
 }
@@ -1778,7 +1793,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
         .unwrap();
     };
     let (p4, _) = tokio::join!(p4, p2_pending_completer);
-    assert_eq!(core.cached_workflows(), 3);
+    assert_eq!(core.cached_workflows().await, 3);
 
     // This poll should also block until the eviction is actually completed
     let blocking_poll = async {
@@ -1797,7 +1812,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
     };
 
     let (_p5, _) = tokio::join!(blocking_poll, complete_evict);
-    assert_eq!(core.cached_workflows(), 3);
+    assert_eq!(core.cached_workflows().await, 3);
     // The next poll will get an buffer a task for a new run, and generate an eviction for p3 but
     // that eviction cannot be obtained until we complete the existing outstanding task.
     let p6 = async {
@@ -1837,8 +1852,8 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
 
     tokio::join!(blocking_poll, complete_evict);
     // p5 outstanding and final poll outstanding -- hence one permit available
-    assert_eq!(core.available_wft_permits(), 1);
-    assert_eq!(core.cached_workflows(), 3);
+    assert_eq!(core.available_wft_permits().await, 1);
+    assert_eq!(core.cached_workflows().await, 3);
 }
 
 #[tokio::test]

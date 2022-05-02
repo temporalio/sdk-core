@@ -5,6 +5,7 @@ use crate::{
 use futures::{future::BoxFuture, stream, stream::BoxStream, FutureExt, Stream, StreamExt};
 use std::{
     collections::VecDeque,
+    fmt::Debug,
     future::Future,
     pin::Pin,
     sync::Arc,
@@ -27,6 +28,15 @@ pub struct HistoryUpdate {
     /// be async.
     buffered: VecDeque<HistoryEvent>,
     pub previous_started_event_id: i64,
+}
+impl Debug for HistoryUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "HistoryUpdate(previous_started_event_id: {})",
+            self.previous_started_event_id
+        )
+    }
 }
 
 pub struct HistoryPaginator {

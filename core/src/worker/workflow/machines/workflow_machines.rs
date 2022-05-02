@@ -598,7 +598,8 @@ impl WorkflowMachines {
     }
 
     /// Apply the next (unapplied) entire workflow task from history to these machines. Will replay
-    /// any events that need to be replayed until caught up to the newest WFT.
+    /// any events that need to be replayed until caught up to the newest WFT. May also fetch
+    /// history from server if needed.
     pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<usize> {
         // A much higher-up span (ex: poll) may want this field filled
         tracing::Span::current().record("run_id", &self.run_id.as_str());

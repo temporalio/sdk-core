@@ -121,7 +121,7 @@ impl Cancellable for ContinueAsNewWorkflowMachine {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test_help::canned_histories, worker::workflow::managed_wf::ManagedWFFunc};
+    use crate::{test_help::canned_histories, worker::workflow::ManagedWFFunc};
     use std::time::Duration;
     use temporal_sdk::{WfContext, WfExitValue, WorkflowFunction, WorkflowResult};
 

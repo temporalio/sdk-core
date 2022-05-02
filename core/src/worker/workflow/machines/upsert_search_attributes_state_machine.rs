@@ -167,7 +167,7 @@ mod tests {
         coresdk::common::Payload, temporal::api::command::v1::command::Attributes,
     };
 
-    use crate::{replay::TestHistoryBuilder, worker::workflow::managed_wf::ManagedWFFunc};
+    use crate::{replay::TestHistoryBuilder, worker::workflow::ManagedWFFunc};
 
     use super::{super::OnEventWrapper, *};
 

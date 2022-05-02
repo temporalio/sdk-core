@@ -347,6 +347,8 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
         if cfg.enforce_correct_number_of_polls && !cfg.using_rust_sdk {
             *correct_num_polls.get_or_insert(0) += hist.response_batches.len();
         }
+        // TODO: Move expectation to be per-run or some shit?
+        correct_num_polls = None;
 
         // Convert history batches into poll responses, while also tracking how many times a given
         // history has been returned so we can increment the associated attempt number on the WFT.
@@ -577,7 +579,7 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
     }
 
     assert_eq!(expected_fail_count, executed_failures.len());
-    assert_eq!(worker.outstanding_workflow_tasks(), 0);
+    assert_eq!(worker.outstanding_workflow_tasks().await, 0);
 }
 
 pub(crate) fn gen_assert_and_reply(
