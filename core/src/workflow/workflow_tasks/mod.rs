@@ -23,6 +23,7 @@ use futures::FutureExt;
 use parking_lot::Mutex;
 use std::{
     fmt::Debug,
+    future::Future,
     ops::Add,
     sync::Arc,
     time::{Duration, Instant},
@@ -207,21 +208,20 @@ impl WorkflowTaskManager {
     /// Inversely: Waits while there are pending evictions and the cache is full.
     /// Waiting while there are no pending evictions must be avoided because it would block forever,
     /// since there is no way for the cache size to be reduced.
-    pub async fn wait_for_cache_capacity(&self) {
+    pub fn wait_for_cache_capacity(&self) -> Option<impl Future<Output = ()> + '_> {
         let are_no_pending_evictions = || {
             !self.pending_activations.is_some_eviction()
                 && !self.workflow_machines.are_outstanding_evictions()
         };
         if !are_no_pending_evictions() {
             let wait_fut = {
-                let r = self
-                    .cache_manager
+                self.cache_manager
                     .lock()
-                    .wait_for_capacity(are_no_pending_evictions);
-                r
+                    .wait_for_capacity(are_no_pending_evictions)?
             };
-            wait_fut.await;
+            return Some(wait_fut);
         }
+        None
     }
 
     /// Add a new run (as just received from polling) to the cache. If doing so would overflow the
@@ -840,10 +840,11 @@ impl WorkflowTaskManager {
     ///
     /// Any subsequent action that needs to be taken will be created as a new activation
     fn on_activation_done(&self, run_id: &str) {
-        if self.workflow_machines.delete_activation(run_id).is_some() {
-            self.pending_activations_notifier.notify_waiters();
-        }
-        // It's possible the activation is already removed due to completing an eviction
+        self.workflow_machines.delete_activation(run_id);
+        // It's important to use `notify_one` here to avoid possible races where we're waiting
+        // on a cache slot and fail to realize pending activations must be issued before a slot
+        // will free up.
+        self.pending_activations_notifier.notify_one();
     }
 
     /// Let a workflow know that something we've been waiting locally on has resolved, like a local
