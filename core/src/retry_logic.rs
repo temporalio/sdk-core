@@ -7,6 +7,11 @@ pub(crate) trait RetryPolicyExt {
     ///
     /// Returns `None` if it should not, otherwise a duration indicating how long to wait before
     /// performing the retry.
+    ///
+    /// Applies defaults to missing fields:
+    /// initial_interval - 1 second
+    /// maximum_interval - 100 x initial_interval
+    /// backoff_coefficient - 2.0
     fn should_retry(&self, attempt_number: usize, err_type_str: &str) -> Option<Duration>;
 }
 
@@ -23,7 +28,11 @@ impl RetryPolicyExt for RetryPolicy {
             }
         }
 
-        let converted_interval = self.initial_interval.clone().try_into_or_none();
+        let converted_interval = self
+            .initial_interval
+            .clone()
+            .try_into_or_none()
+            .or(Some(Duration::from_secs(1)));
         if attempt_number == 1 {
             return converted_interval;
         }
