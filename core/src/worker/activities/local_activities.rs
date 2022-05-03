@@ -1,4 +1,3 @@
-use crate::protosext::FailureExt;
 use crate::{
     abstractions::MeteredSemaphore, protosext::ValidScheduleLA, retry_logic::RetryPolicyExt,
     MetricsContext, TaskToken,
