@@ -9,9 +9,9 @@ pub(crate) trait RetryPolicyExt {
     /// performing the retry.
     ///
     /// Applies defaults to missing fields:
-    /// initial_interval - 1 second
-    /// maximum_interval - 100 x initial_interval
-    /// backoff_coefficient - 2.0
+    /// `initial_interval` - 1 second
+    /// `maximum_interval` - 100 x initial_interval
+    /// `backoff_coefficient` - 2.0
     fn should_retry(&self, attempt_number: usize, err_type_str: &str) -> Option<Duration>;
 }
 
