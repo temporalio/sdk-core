@@ -103,12 +103,12 @@ mod tests {
     fn no_interval_no_backoff() {
         let rp = RetryPolicy {
             initial_interval: None,
-            backoff_coefficient: 2.0,
+            backoff_coefficient: 0.,
             maximum_interval: None,
             maximum_attempts: 10,
             non_retryable_error_types: vec![],
         };
-        assert!(rp.should_retry(1, "").is_none());
+        assert!(rp.should_retry(1, "").is_some());
     }
 
     #[test]

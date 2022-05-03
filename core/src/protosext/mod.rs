@@ -359,7 +359,7 @@ impl ValidScheduleLA {
                 ))
             }
         };
-        let retry_policy = v.retry_policy.unwrap_or_else(Default::default);
+        let retry_policy = v.retry_policy.unwrap_or_default();
         let local_retry_threshold = v
             .local_retry_threshold
             .clone()
