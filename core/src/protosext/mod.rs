@@ -30,7 +30,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         common::v1::{Payload, WorkflowExecution},
         enums::v1::EventType,
-        failure::v1::Failure,
+        failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
         history::v1::{history_event, History, HistoryEvent, MarkerRecordedEventAttributes},
         query::v1::WorkflowQuery,
         workflowservice::v1::PollWorkflowTaskQueueResponse,
@@ -217,6 +217,25 @@ impl HistoryEventExt for HistoryEvent {
                 }
                 _ => None,
             }
+        } else {
+            None
+        }
+    }
+}
+
+pub(crate) trait FailureExt {
+    /// Extracts an ApplicationFailureInfo from a Failure instance if it exists
+    fn maybe_application_failure(&self) -> Option<&ApplicationFailureInfo>;
+}
+
+impl FailureExt for Failure {
+    fn maybe_application_failure(&self) -> Option<&ApplicationFailureInfo> {
+        if let Failure {
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(f)),
+            ..
+        } = self
+        {
+            Some(f)
         } else {
             None
         }
