@@ -34,6 +34,7 @@
 extern crate tracing;
 
 mod activity_context;
+mod app_data;
 mod conversions;
 pub mod interceptors;
 mod payload_converter;
@@ -52,6 +53,7 @@ use crate::{
     workflow_context::{ChildWfCommon, PendingChildWorkflow},
 };
 use anyhow::{anyhow, bail};
+use app_data::AppData;
 use futures::{future::BoxFuture, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use once_cell::sync::OnceCell;
 use std::{
@@ -115,6 +117,7 @@ pub struct Worker {
     common: CommonWorker,
     workflow_half: WorkflowHalf,
     activity_half: ActivityHalf,
+    app_data: Arc<AppData>,
 }
 
 struct CommonWorker {
@@ -163,6 +166,7 @@ impl Worker {
                 activity_fns: Default::default(),
                 task_tokens_to_cancels: Default::default(),
             },
+            app_data: Default::default(),
         }
     }
 
@@ -206,11 +210,18 @@ impl Worker {
         );
     }
 
+    /// Insert Custom App Context for Workflows and Activities
+    pub fn insert_app_data<T: Send + Sync + 'static>(&mut self, data: T) {
+        (*Arc::get_mut(&mut self.app_data)
+            .expect("app_data can only be inserted during initial setup"))
+        .insert(data);
+    }
+
     /// Runs the worker. Eventually resolves after the worker has been explicitly shut down,
     /// or may return early with an error in the event of some unresolvable problem.
     pub async fn run(&mut self) -> Result<(), anyhow::Error> {
         let shutdown_token = CancellationToken::new();
-        let (common, wf_half, act_half) = self.split_apart();
+        let (common, wf_half, act_half, app_data) = self.split_apart();
         let (wf_future_tx, wf_future_rx) = unbounded_channel();
         let (completions_tx, completions_rx) = unbounded_channel();
         let wf_future_joiner = async {
@@ -257,6 +268,7 @@ impl Worker {
                     };
                     if let Some(wf_fut) = wf_half.workflow_activation_handler(
                         common,
+                        app_data.clone(),
                         shutdown_token.clone(),
                         activation,
                         &completions_tx,
@@ -287,9 +299,12 @@ impl Worker {
                                 if matches!(activity, Err(PollActivityError::ShutDown)) {
                                     break;
                                 }
-                                act_half.activity_task_handler(common.worker.clone(),
-                                                               common.task_queue.clone(),
-                                                               activity?)?;
+                                act_half.activity_task_handler(
+                                    common.worker.clone(),
+                                    app_data.clone(),
+                                    common.task_queue.clone(),
+                                    activity?
+                                )?;
                             },
                             _ = shutdown_token.cancelled() => { break }
                         }
@@ -327,11 +342,19 @@ impl Worker {
         self.workflow_half.workflows.borrow().len()
     }
 
-    fn split_apart(&mut self) -> (&mut CommonWorker, &mut WorkflowHalf, &mut ActivityHalf) {
+    fn split_apart(
+        &mut self,
+    ) -> (
+        &mut CommonWorker,
+        &mut WorkflowHalf,
+        &mut ActivityHalf,
+        Arc<AppData>,
+    ) {
         (
             &mut self.common,
             &mut self.workflow_half,
             &mut self.activity_half,
+            self.app_data.clone(),
         )
     }
 }
@@ -340,6 +363,7 @@ impl WorkflowHalf {
     fn workflow_activation_handler(
         &self,
         common: &CommonWorker,
+        app_data: Arc<AppData>,
         shutdown_token: CancellationToken,
         activation: WorkflowActivation,
         completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
@@ -365,6 +389,7 @@ impl WorkflowHalf {
             let (wff, activations) = wf_function.start_workflow(
                 common.worker.get_config().namespace.clone(),
                 common.task_queue.clone(),
+                app_data,
                 // NOTE: Don't clone args if this gets ported to be a non-test rust worker
                 sw.arguments.clone(),
                 completions_tx.clone(),
@@ -410,6 +435,7 @@ impl ActivityHalf {
     fn activity_task_handler(
         &mut self,
         worker: Arc<dyn CoreWorker>,
+        app_data: Arc<AppData>,
         task_queue: String,
         activity: ActivityTask,
     ) -> Result<(), anyhow::Error> {
@@ -430,8 +456,14 @@ impl ActivityHalf {
                 self.task_tokens_to_cancels
                     .insert(task_token.clone().into(), ct.clone());
 
-                let (ctx, arg) =
-                    ActContext::new(worker.clone(), ct, task_queue, task_token.clone(), start);
+                let (ctx, arg) = ActContext::new(
+                    worker.clone(),
+                    app_data,
+                    ct,
+                    task_queue,
+                    task_token.clone(),
+                    start,
+                );
                 tokio::spawn(async move {
                     let output = (act_fn.act_func)(ctx, arg).await;
                     let result = match output {

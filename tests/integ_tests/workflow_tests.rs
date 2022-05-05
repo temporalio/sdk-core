@@ -1,4 +1,5 @@
 mod activities;
+mod appdata_propagation;
 mod cancel_external;
 mod cancel_wf;
 mod child_workflows;
