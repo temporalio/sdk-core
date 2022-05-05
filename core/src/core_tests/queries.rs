@@ -1,6 +1,6 @@
 use crate::{
     test_help::{
-        canned_histories, hist_to_poll_resp, mock_worker, MocksHolder, ResponseType, TEST_Q,
+        canned_histories, hist_to_poll_resp, mock_worker, single_hist_mock_sg, ResponseType, TEST_Q,
     },
     worker::client::mocks::mock_workflow_client,
 };
@@ -67,8 +67,7 @@ async fn legacy_query(#[case] include_history: bool) {
         .expect_respond_legacy_query()
         .times(1)
         .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
-
-    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
+    let mut mock = single_hist_mock_sg(wfid, t, tasks, mock_client, true);
     if !include_history {
         mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     }
@@ -190,8 +189,7 @@ async fn new_queries(#[case] num_queries: usize) {
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
     mock_client.expect_respond_legacy_query().times(0);
-
-    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
+    let mut mock = single_hist_mock_sg(wfid, t, tasks, mock_client, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
 
@@ -271,7 +269,7 @@ async fn legacy_query_failure_on_wft_failure() {
         .times(1)
         .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
 
-    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
+    let mut mock = single_hist_mock_sg(wfid, t, tasks, mock_client, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
 
@@ -349,7 +347,7 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
         .times(2)
         .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
 
-    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
+    let mut mock = single_hist_mock_sg(wfid, t, tasks, mock_client, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
 
@@ -474,7 +472,7 @@ async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early(
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
 
-    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
+    let mut mock = single_hist_mock_sg(wfid, t, tasks, mock_client, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
     let task = core.poll_workflow_activation().await.unwrap();
@@ -568,7 +566,7 @@ async fn query_replay_with_continue_as_new_doesnt_reply_empty_command() {
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
 
-    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
+    let mut mock = single_hist_mock_sg(wfid, t, tasks, mock_client, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
 

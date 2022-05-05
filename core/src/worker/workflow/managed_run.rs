@@ -14,15 +14,17 @@ use crate::{
     },
     MetricsContext,
 };
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use std::{sync::mpsc::Sender, time::Duration};
 use temporal_sdk_core_api::errors::WFMachinesError;
-use temporal_sdk_core_protos::coresdk::workflow_activation::{
-    workflow_activation_job, RemoveFromCache, WorkflowActivation,
+use temporal_sdk_core_protos::coresdk::workflow_activation::{RemoveFromCache, WorkflowActivation};
+use tokio::sync::{
+    mpsc::{UnboundedReceiver, UnboundedSender},
+    oneshot,
 };
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
+use crate::worker::workflow::{FailRunUpdateResponse, GoodRunUpdateResponse};
 #[cfg(test)]
 pub(crate) use managed_wf_test::ManagedWFFunc;
 
@@ -30,164 +32,174 @@ type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
 pub(super) struct ManagedRun {
     wfm: WorkflowManager,
-    activation_tx: UnboundedSender<RunUpdateResponse>,
+    update_tx: UnboundedSender<RunUpdateResponse>,
 }
 
 impl ManagedRun {
-    pub(super) fn new(
-        wfm: WorkflowManager,
-        activation_tx: UnboundedSender<RunUpdateResponse>,
-    ) -> Self {
-        Self { wfm, activation_tx }
+    pub(super) fn new(wfm: WorkflowManager, update_tx: UnboundedSender<RunUpdateResponse>) -> Self {
+        Self { wfm, update_tx }
     }
 
     pub(super) async fn run(self, run_actions_rx: UnboundedReceiver<RunActions>) {
-        if let Err(e) = UnboundedReceiverStream::new(run_actions_rx)
-            .map(Ok)
-            .try_fold(self, |mut me, action| async {
+        UnboundedReceiverStream::new(run_actions_rx)
+            .fold(self, |mut me, action| async {
                 let res = match action {
-                    RunActions::NewIncomingWFT(wft) => {
-                        let (act, wft_update) = me.incoming_wft(wft).await?;
-                        (Some(act), Some(wft_update))
-                    }
+                    RunActions::NewIncomingWFT(wft) => me
+                        .incoming_wft(wft)
+                        .await
+                        .map(|(act, wft_update)| (Some(act), Some(wft_update))),
                     RunActions::ActivationCompletion(completion) => {
-                        me.completion(completion).await?;
-                        (None, None)
+                        me.completion(completion).await.map(|_| (None, None))
                     }
-                    RunActions::CheckMoreWork { want_to_evict } => {
-                        let maybe_activation = me.check_more_work(want_to_evict).await?;
-                        (maybe_activation, None)
-                    }
+                    RunActions::CheckMoreWork { want_to_evict } => me
+                        .check_more_work(want_to_evict)
+                        .await
+                        .map(|maybe_activation| (maybe_activation, None)),
                 };
-                me.send_update_response(res.0, res.1);
-                Ok::<_, WFMachinesError>(me)
+                match res {
+                    Ok((maybe_act, maybe_wft_update)) => {
+                        me.send_update_response(maybe_act, maybe_wft_update);
+                    }
+                    Err(e) => {
+                        // TODO: Assert we don't try to do non-evict stuff after this path taken
+                        error!(error=?e, "Error in run machines");
+                        me.update_tx
+                            .send(RunUpdateResponse::Fail(FailRunUpdateResponse {
+                                run_id: me.wfm.machines.run_id.clone(),
+                                err: e.source,
+                                completion_resp: e.complete_resp_chan,
+                            }))
+                            .expect("Machine can send update");
+                    }
+                }
+                me
             })
-            .await
-        {
-            error!(error=?e, "Error in run machines");
-            // TODO: Evict etc
-        }
+            .await;
     }
 
     async fn incoming_wft(
         &mut self,
         wft: NewIncomingWFT,
-    ) -> Result<(WorkflowActivation, RunUpdatedFromWft), WFMachinesError> {
+    ) -> Result<(WorkflowActivation, RunUpdatedFromWft), RunUpdateErr> {
         debug!("Machine handling incoming wft");
-        let mut activation = if let Some(h) = wft.history_update {
+        let activation = if let Some(h) = wft.history_update {
             self.wfm.feed_history_from_server(h).await?
         } else {
             // TODO: Keep machines created w/ no jobs check?
-            self.wfm.get_next_activation().await?
+            let r = self.wfm.get_next_activation().await?;
+            if r.jobs.is_empty() {
+                return Err(RunUpdateErr {
+                    source: WFMachinesError::Fatal(format!(
+                        "Machines created for {} with no jobs",
+                        self.wfm.machines.run_id
+                    )),
+                    complete_resp_chan: None,
+                });
+            }
+            r
         };
 
-        // If there are in-poll queries, insert jobs for those queries into the
-        // activation, but only if we hit the cache. If we didn't, those queries
-        // will need to be dealt with once replay is over
-        let mut pending_queries = vec![];
-        if !wft.query_requests.is_empty() {
-            if !wft.did_miss_cache {
-                let query_jobs = wft
-                    .query_requests
-                    .into_iter()
-                    .map(|q| workflow_activation_job::Variant::QueryWorkflow(q).into());
-                activation.jobs.extend(query_jobs);
-            } else {
-                wft.query_requests
-                    .into_iter()
-                    .for_each(|q| pending_queries.push(q));
-            }
-        }
-        Ok((
-            activation,
-            RunUpdatedFromWft {
-                wf_info: wft.wft_info,
-                pending_queries,
-                legacy_query: wft.legacy_query_from_poll,
-            },
-        ))
+        Ok((activation, RunUpdatedFromWft {}))
     }
 
     async fn completion(
         &mut self,
-        completion: RunActivationCompletion,
-    ) -> Result<(), WFMachinesError> {
+        mut completion: RunActivationCompletion,
+    ) -> Result<(), RunUpdateErr> {
         debug!("Machine handling completion");
-        // Send commands from lang into the machines then check if the workflow run
-        // needs another activation and mark it if so
-        self.wfm.push_commands(completion.commands).await?;
-        // Don't bother applying the next task if we're evicting at the end of
-        // this activation
-        let are_pending = if !completion.activation_was_eviction {
-            self.wfm.apply_next_task_if_ready().await?
-        } else {
-            false
-        };
-        // We want to fetch the outgoing commands only after a next WFT may have
-        // been applied, as outgoing server commands may be affected.
-        let outgoing_cmds = self.wfm.get_server_commands();
-        let new_local_acts = self.wfm.drain_queued_local_activities();
-
-        let wft_timeout: Duration = self
-            .wfm
-            .machines
-            .get_started_info()
-            .and_then(|attrs| attrs.workflow_task_timeout)
-            .ok_or_else(|| {
-                WFMachinesError::Fatal(
-                    "Workflow's start attribs were missing a well formed task timeout".to_string(),
-                )
-            })?;
-
-        // TODO: Local activity insanity
-
-        let query_responses = completion.query_responses;
-        let has_query_responses = !query_responses.is_empty();
-        let is_query_playback = completion.has_pending_query && !has_query_responses;
-
-        // We only actually want to send commands back to the server if there are no more
-        // pending activations and we are caught up on replay. We don't want to complete a wft
-        // if we already saw the final event in the workflow, or if we are playing back for the
-        // express purpose of fulfilling a query. If the activation we sent was *only* an
-        // eviction, and there were no commands produced during iteration, don't send that
-        // either.
-        let no_commands_and_evicting =
-            outgoing_cmds.commands.is_empty() && completion.activation_was_only_eviction;
-        let to_be_sent = ServerCommandsWithWorkflowInfo {
-            task_token: completion.task_token,
-            action: ActivationAction::WftComplete {
-                // TODO: Local activity insanity
-                // TODO: Don't force if also sending complete execution cmd
-                force_new_wft: false,
-                commands: outgoing_cmds.commands,
-                query_responses,
-            },
-        };
-        let should_respond = !(are_pending
-            || outgoing_cmds.replaying
-            || is_query_playback
-            || no_commands_and_evicting);
-        let resp = if should_respond || has_query_responses {
-            ActivationCompleteOutcome::ReportWFTSuccess(to_be_sent)
-        } else {
-            ActivationCompleteOutcome::DoNothing
-        };
-        completion
+        let resp_chan = completion
             .resp_chan
-            .send(resp)
-            .expect("Activation response channel not dropped");
+            .take()
+            .expect("Completion response channel must be populated");
 
-        if are_pending {
-            // TODO: Wait on LAs somehow
+        let resp = async move {
+            // Send commands from lang into the machines then check if the workflow run
+            // needs another activation and mark it if so
+            self.wfm.push_commands(completion.commands).await?;
+            // Don't bother applying the next task if we're evicting at the end of
+            // this activation
+            let are_pending = if !completion.activation_was_eviction {
+                self.wfm.apply_next_task_if_ready().await?
+            } else {
+                false
+            };
+            // We want to fetch the outgoing commands only after a next WFT may have
+            // been applied, as outgoing server commands may be affected.
+            let outgoing_cmds = self.wfm.get_server_commands();
+            let new_local_acts = self.wfm.drain_queued_local_activities();
+
+            let wft_timeout: Duration = self
+                .wfm
+                .machines
+                .get_started_info()
+                .and_then(|attrs| attrs.workflow_task_timeout)
+                .ok_or_else(|| {
+                    WFMachinesError::Fatal(
+                        "Workflow's start attribs were missing a well formed task timeout"
+                            .to_string(),
+                    )
+                })?;
+
+            // TODO: Local activity insanity
+
+            let query_responses = completion.query_responses;
+            let has_query_responses = !query_responses.is_empty();
+            let is_query_playback = completion.has_pending_query && !has_query_responses;
+
+            // We only actually want to send commands back to the server if there are no more
+            // pending activations and we are caught up on replay. We don't want to complete a wft
+            // if we already saw the final event in the workflow, or if we are playing back for the
+            // express purpose of fulfilling a query. If the activation we sent was *only* an
+            // eviction, and there were no commands produced during iteration, don't send that
+            // either.
+            let no_commands_and_evicting =
+                outgoing_cmds.commands.is_empty() && completion.activation_was_only_eviction;
+            let to_be_sent = ServerCommandsWithWorkflowInfo {
+                task_token: completion.task_token,
+                action: ActivationAction::WftComplete {
+                    // TODO: Local activity insanity
+                    // TODO: Don't force if also sending complete execution cmd
+                    force_new_wft: false,
+                    commands: outgoing_cmds.commands,
+                    query_responses,
+                },
+            };
+
+            if are_pending {
+                // TODO: Wait on LAs somehow
+            }
+
+            let should_respond = !(are_pending
+                || outgoing_cmds.replaying
+                || is_query_playback
+                || no_commands_and_evicting);
+
+            Ok::<_, WFMachinesError>(if should_respond || has_query_responses {
+                ActivationCompleteOutcome::ReportWFTSuccess(to_be_sent)
+            } else {
+                ActivationCompleteOutcome::DoNothing
+            })
         }
+        .await;
 
-        Ok(())
+        match resp {
+            Ok(resp) => {
+                resp_chan
+                    .send(resp)
+                    .expect("Activation response channel not dropped");
+                Ok(())
+            }
+            Err(e) => Err(RunUpdateErr {
+                source: e,
+                complete_resp_chan: Some(resp_chan),
+            }),
+        }
     }
 
     async fn check_more_work(
         &mut self,
         want_to_evict: Option<RequestEvictMsg>,
-    ) -> Result<Option<WorkflowActivation>, WFMachinesError> {
+    ) -> Result<Option<WorkflowActivation>, RunUpdateErr> {
         info!(want_to_evict=%want_to_evict.is_some(), "Checking more work");
         // TODO:
         // We cannot always immediately send activation, b/c we may need to wait on LAs. If
@@ -217,8 +229,8 @@ impl ManagedRun {
         outgoing_activation: Option<WorkflowActivation>,
         from_wft: Option<RunUpdatedFromWft>,
     ) {
-        self.activation_tx
-            .send(RunUpdateResponse {
+        self.update_tx
+            .send(RunUpdateResponse::Good(GoodRunUpdateResponse {
                 run_id: self.wfm.machines.run_id.clone(),
                 outgoing_activation,
                 have_seen_terminal_event: self.wfm.machines.have_seen_terminal_event,
@@ -228,8 +240,23 @@ impl ManagedRun {
                     .machines
                     .outstanding_local_activity_count(),
                 in_response_to_wft: from_wft,
-            })
-            .expect("Machine can send outgoing activation");
+            }))
+            .expect("Machine can send update");
+    }
+}
+
+#[derive(Debug)]
+struct RunUpdateErr {
+    source: WFMachinesError,
+    complete_resp_chan: Option<oneshot::Sender<ActivationCompleteOutcome>>,
+}
+
+impl From<WFMachinesError> for RunUpdateErr {
+    fn from(e: WFMachinesError) -> Self {
+        RunUpdateErr {
+            source: e,
+            complete_resp_chan: None,
+        }
     }
 }
 

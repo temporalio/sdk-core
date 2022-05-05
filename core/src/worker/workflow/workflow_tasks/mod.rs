@@ -1,6 +1,6 @@
 //! Management of workflow tasks
 
-use crate::worker::workflow::machines::WFMachinesError;
+use crate::worker::workflow::{machines::WFMachinesError, FailRunUpdateResponse};
 use std::{fmt::Debug, time::Instant};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -21,6 +21,7 @@ const WFT_HEARTBEAT_TIMEOUT_FRACTION: f32 = 0.8;
 #[derive(Clone, Debug)]
 pub(crate) struct OutstandingTask {
     pub info: WorkflowTaskInfo,
+    pub hit_cache: bool,
     /// Set if the outstanding task has quer(ies) which must be fulfilled upon finishing replay
     pub pending_queries: Vec<QueryWorkflow>,
     pub start_time: Instant,
@@ -69,7 +70,7 @@ pub struct WorkflowTaskInfo {
 }
 
 #[derive(Debug, derive_more::From)]
-pub(crate) enum NewWfTaskOutcome {
+pub(crate) enum RunUpdateOutcome {
     /// A new activation for the workflow should be issued to lang
     IssueActivation(WorkflowActivation),
     /// The poll loop should be restarted, there is nothing to do
@@ -77,8 +78,9 @@ pub(crate) enum NewWfTaskOutcome {
     /// The workflow task should be auto-completed with an empty command list, as it must be replied
     /// to but there is no meaningful work for lang to do.
     Autocomplete,
-    /// The workflow task ran into problems while being applied and we must now evict the workflow
-    Evict(WorkflowUpdateError),
+    /// The run instance ran into problems while being applied and we must now evict the workflow,
+    /// and possibly fail the workflow task.
+    Failure(FailRunUpdateResponse),
     /// No action should be taken. Possibly we are waiting for local activities to complete
     LocalActsOutstanding,
 }
@@ -120,7 +122,6 @@ pub(crate) struct WorkflowUpdateError {
     /// Underlying workflow error
     pub source: WFMachinesError,
     /// The run id of the erring workflow
-    #[allow(dead_code)] // Useful in debug output
     pub run_id: String,
 }
 

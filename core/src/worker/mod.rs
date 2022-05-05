@@ -8,17 +8,17 @@ pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     NewLocalAct,
 };
-pub(crate) use workflow::LEGACY_QUERY_ID;
+pub(crate) use workflow::{wft_poller::new_wft_poller, LEGACY_QUERY_ID};
 #[cfg(test)]
 pub(crate) use workflow::{ManagedWFFunc, WorkflowCachingPolicy};
 
 use crate::{
     errors::CompleteWfError,
     pollers::{
-        new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, BoxedWFPoller, Poller,
+        new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, Poller,
         WorkflowTaskPoller,
     },
-    protosext::legacy_query_failure,
+    protosext::{legacy_query_failure, ValidPollWFTQResponse},
     telemetry::{
         metrics::{
             activity_poller, local_activity_worker_type, workflow_poller, workflow_sticky_poller,
@@ -30,14 +30,16 @@ use crate::{
         activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
         client::WorkerClientBag,
         workflow::{
-            workflow_tasks::{ActivationAction, ServerCommandsWithWorkflowInfo},
-            LocalResolution, Workflows,
+            workflow_tasks::{
+                ActivationAction, FailedActivationOutcome, ServerCommandsWithWorkflowInfo,
+            },
+            ActivationCompleteOutcome, LocalResolution, PostActivationMsg, Workflows,
         },
     },
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
 };
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
-use futures::Future;
+use futures::{Future, Stream};
 use std::{convert::TryInto, sync::Arc};
 use temporal_client::WorkflowTaskCompletion;
 use temporal_sdk_core_protos::{
@@ -60,9 +62,7 @@ use tracing_futures::Instrument;
 
 #[cfg(test)]
 use crate::worker::client::WorkerClient;
-use crate::worker::workflow::{
-    workflow_tasks::FailedActivationOutcome, ActivationCompleteOutcome, PostActivationMsg,
-};
+use crate::worker::workflow::wft_poller::validate_wft;
 
 /// A worker polls on a certain task queue
 pub struct Worker {
@@ -225,11 +225,12 @@ impl Worker {
             wf_task_poll_buffer,
             sticky_queue_poller,
         ));
+        let wft_stream = new_wft_poller(wf_task_poll_buffer, metrics.clone());
         Self::new_with_pollers(
             config,
             sticky_queue_name,
             client,
-            wf_task_poll_buffer,
+            wft_stream,
             act_poll_buffer,
             metrics,
         )
@@ -244,10 +245,11 @@ impl Worker {
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
         client: Arc<WorkerClientBag>,
-        wft_poller: BoxedWFPoller,
+        wft_stream: impl Stream<Item = ValidPollWFTQResponse> + Send + 'static,
         act_poller: Option<BoxedActPoller>,
         metrics: MetricsContext,
     ) -> Self {
+        let shutdown_token = CancellationToken::new();
         Self {
             wf_client: client.clone(),
             sticky_name: sticky_queue_name,
@@ -255,7 +257,8 @@ impl Worker {
                 config.max_cached_workflows,
                 config.max_outstanding_workflow_tasks,
                 client.clone(),
-                wft_poller,
+                wft_stream,
+                shutdown_token.child_token(),
                 metrics.clone(),
             ),
             at_task_mgr: act_poller.map(|ap| {
@@ -274,7 +277,7 @@ impl Worker {
                 metrics.with_new_attrs([local_activity_worker_type()]),
             ),
             config,
-            shutdown_token: CancellationToken::new(),
+            shutdown_token,
             post_activate_hook: None,
             metrics,
         }
@@ -461,8 +464,8 @@ impl Worker {
                             .complete_workflow_task(completion)
                             .instrument(span!(tracing::Level::DEBUG, "Complete WFT call"))
                             .await?;
-                        if let Some(_wft) = maybe_wft.workflow_task {
-                            // self.wf_task_source.add_wft_from_completion(wft);
+                        if let Some(wft) = maybe_wft.workflow_task {
+                            self.workflows.new_wft(validate_wft(wft)?);
                         }
                         Ok(())
                     })
@@ -487,7 +490,7 @@ impl Worker {
             },
             ActivationCompleteOutcome::ReportWFTFail(outcome) => match outcome {
                 FailedActivationOutcome::Report(tt, cause, failure) => {
-                    warn!(run_id=%run_id, failure=?failure, "Failing workflow activation");
+                    warn!(run_id=%run_id, failure=?failure, "Failing workflow task");
                     self.handle_wft_reporting_errs(&run_id, || async {
                         self.wf_client
                             .fail_workflow_task(tt, cause, failure.failure.map(Into::into))

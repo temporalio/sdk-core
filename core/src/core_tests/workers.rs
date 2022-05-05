@@ -1,7 +1,7 @@
 use crate::{
     test_help::{
         build_fake_worker, build_mock_pollers, canned_histories, mock_manual_poller, mock_worker,
-        MockPollCfg, MockWorker, MocksHolder,
+        MockPollCfg, MockWorkerInputs, MocksHolder,
     },
     worker::client::mocks::mock_workflow_client,
     PollActivityError, PollWfError,
@@ -109,7 +109,7 @@ async fn worker_shutdown_during_poll_doesnt_deadlock() {
         }
         .boxed()
     });
-    let mw = MockWorker::new(Box::new(mock_poller));
+    let mw = MockWorkerInputs::new_from_poller(Box::new(mock_poller));
     let mut mock_client = mock_workflow_client();
     mock_client
         .expect_complete_workflow_task()
