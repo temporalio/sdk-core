@@ -1,7 +1,7 @@
 use crate::{
-    app_data::AppData, conversions::anyhow_to_fail, workflow_context::WfContextSharedData,
-    CancellableID, RustWfCmd, SignalData, TimerResult, UnblockEvent, WfContext, WfExitValue,
-    WorkflowFunction, WorkflowResult,
+    conversions::anyhow_to_fail, workflow_context::WfContextSharedData, CancellableID, RustWfCmd,
+    SignalData, TimerResult, UnblockEvent, WfContext, WfExitValue, WorkflowFunction,
+    WorkflowResult,
 };
 use anyhow::{anyhow, bail, Context as AnyhowContext, Error};
 use crossbeam::channel::Receiver;
@@ -49,7 +49,6 @@ impl WorkflowFunction {
         &self,
         namespace: String,
         task_queue: String,
-        app_data: Arc<AppData>,
         args: Vec<Payload>,
         outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
     ) -> (
@@ -57,8 +56,7 @@ impl WorkflowFunction {
         UnboundedSender<WorkflowActivation>,
     ) {
         let (cancel_tx, cancel_rx) = watch::channel(false);
-        let (wf_context, cmd_receiver) =
-            WfContext::new(namespace, task_queue, args, cancel_rx, app_data);
+        let (wf_context, cmd_receiver) = WfContext::new(namespace, task_queue, args, cancel_rx);
         let (tx, incoming_activations) = unbounded_channel();
         (
             WorkflowFuture {

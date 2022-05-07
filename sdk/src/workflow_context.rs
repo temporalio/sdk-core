@@ -6,8 +6,8 @@ pub use options::{
 };
 
 use crate::{
-    app_data::AppData, workflow_context::options::IntoWorkflowCommand, CancelExternalWfResult,
-    CancellableID, CommandCreateRequest, CommandSubscribeChildWorkflowCompletion, RustWfCmd,
+    workflow_context::options::IntoWorkflowCommand, CancelExternalWfResult, CancellableID,
+    CommandCreateRequest, CommandSubscribeChildWorkflowCompletion, RustWfCmd,
     SignalExternalWfResult, TimerResult, UnblockEvent, Unblockable,
 };
 use crossbeam::channel::{Receiver, Sender};
@@ -45,7 +45,6 @@ pub struct WfContext {
     namespace: String,
     task_queue: String,
     args: Vec<Payload>,
-    app_data: Arc<AppData>,
 
     chan: Sender<RustWfCmd>,
     am_cancelled: watch::Receiver<bool>,
@@ -114,7 +113,6 @@ impl WfContext {
         task_queue: String,
         args: Vec<Payload>,
         am_cancelled: watch::Receiver<bool>,
-        app_data: Arc<AppData>,
     ) -> (Self, Receiver<RustWfCmd>) {
         // We need to use a normal std channel since our receiving side is non-async
         let (chan, rx) = crossbeam::channel::unbounded();
@@ -123,7 +121,6 @@ impl WfContext {
                 namespace,
                 task_queue,
                 args,
-                app_data,
                 chan,
                 am_cancelled,
                 shared: Arc::new(RwLock::new(Default::default())),
@@ -148,11 +145,6 @@ impl WfContext {
     /// Get the arguments provided to the workflow upon execution start
     pub fn get_args(&self) -> &[Payload] {
         self.args.as_slice()
-    }
-
-    /// Get custom Application Data
-    pub fn app_data<T: Send + Sync + 'static>(&self) -> Option<&T> {
-        self.app_data.get::<T>()
     }
 
     /// Return the current time according to the workflow (which is not wall-clock time).

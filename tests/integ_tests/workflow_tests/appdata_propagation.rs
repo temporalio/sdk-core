@@ -12,8 +12,6 @@ struct Data {
 }
 
 pub async fn appdata_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
-    let data = ctx.app_data::<Data>().expect("appdata exists. qed");
-    assert_eq!(data.message, TEST_APPDATA_MESSAGE.to_owned());
     ctx.activity(ActivityOptions {
         activity_type: "echo_activity".to_string(),
         start_to_close_timeout: Some(Duration::from_secs(5)),

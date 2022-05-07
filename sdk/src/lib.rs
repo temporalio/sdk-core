@@ -117,7 +117,7 @@ pub struct Worker {
     common: CommonWorker,
     workflow_half: WorkflowHalf,
     activity_half: ActivityHalf,
-    app_data: Arc<AppData>,
+    app_data: Option<AppData>,
 }
 
 struct CommonWorker {
@@ -166,7 +166,7 @@ impl Worker {
                 activity_fns: Default::default(),
                 task_tokens_to_cancels: Default::default(),
             },
-            app_data: Default::default(),
+            app_data: Some(Default::default()),
         }
     }
 
@@ -212,9 +212,7 @@ impl Worker {
 
     /// Insert Custom App Context for Workflows and Activities
     pub fn insert_app_data<T: Send + Sync + 'static>(&mut self, data: T) {
-        (*Arc::get_mut(&mut self.app_data)
-            .expect("app_data can only be inserted during initial setup"))
-        .insert(data);
+        self.app_data.as_mut().map(|a| a.insert(data));
     }
 
     /// Runs the worker. Eventually resolves after the worker has been explicitly shut down,
@@ -222,6 +220,11 @@ impl Worker {
     pub async fn run(&mut self) -> Result<(), anyhow::Error> {
         let shutdown_token = CancellationToken::new();
         let (common, wf_half, act_half, app_data) = self.split_apart();
+        let safe_app_data = Arc::new(
+            app_data
+                .take()
+                .ok_or_else(|| anyhow!("app_data should exist on run"))?,
+        );
         let (wf_future_tx, wf_future_rx) = unbounded_channel();
         let (completions_tx, completions_rx) = unbounded_channel();
         let wf_future_joiner = async {
@@ -268,7 +271,6 @@ impl Worker {
                     };
                     if let Some(wf_fut) = wf_half.workflow_activation_handler(
                         common,
-                        app_data.clone(),
                         shutdown_token.clone(),
                         activation,
                         &completions_tx,
@@ -301,7 +303,7 @@ impl Worker {
                                 }
                                 act_half.activity_task_handler(
                                     common.worker.clone(),
-                                    app_data.clone(),
+                                    safe_app_data.clone(),
                                     common.task_queue.clone(),
                                     activity?
                                 )?;
@@ -321,6 +323,10 @@ impl Worker {
             i.on_shutdown(self);
         }
         self.common.worker.shutdown().await;
+        self.app_data = Some(
+            Arc::try_unwrap(safe_app_data)
+                .map_err(|_| anyhow!("some references of AppData exist on worker shutdown"))?,
+        );
         Ok(())
     }
 
@@ -348,13 +354,13 @@ impl Worker {
         &mut CommonWorker,
         &mut WorkflowHalf,
         &mut ActivityHalf,
-        Arc<AppData>,
+        &mut Option<AppData>,
     ) {
         (
             &mut self.common,
             &mut self.workflow_half,
             &mut self.activity_half,
-            self.app_data.clone(),
+            &mut self.app_data,
         )
     }
 }
@@ -363,7 +369,6 @@ impl WorkflowHalf {
     fn workflow_activation_handler(
         &self,
         common: &CommonWorker,
-        app_data: Arc<AppData>,
         shutdown_token: CancellationToken,
         activation: WorkflowActivation,
         completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
@@ -389,7 +394,6 @@ impl WorkflowHalf {
             let (wff, activations) = wf_function.start_workflow(
                 common.worker.get_config().namespace.clone(),
                 common.task_queue.clone(),
-                app_data,
                 // NOTE: Don't clone args if this gets ported to be a non-test rust worker
                 sw.arguments.clone(),
                 completions_tx.clone(),

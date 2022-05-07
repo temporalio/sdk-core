@@ -354,7 +354,6 @@ pub mod managed_wf {
             let (wff, activations) = func.start_workflow(
                 "testnamespace".to_string(),
                 TEST_Q.to_string(),
-                Default::default(),
                 args,
                 completions_tx,
             );

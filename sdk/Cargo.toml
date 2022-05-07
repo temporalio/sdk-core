@@ -29,7 +29,6 @@ tokio-util = { version = "0.7" }
 tokio-stream = "0.1"
 tonic = "0.6"
 tracing = { version = "0.1", features = ["log-always"] }
-ahash = "0.7"
 
 [dependencies.temporal-sdk-core]
 path = "../core"

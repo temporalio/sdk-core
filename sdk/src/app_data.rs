@@ -1,14 +1,13 @@
 use std::{
     any::{Any, TypeId},
+    collections::HashMap,
     fmt,
 };
-
-use ahash::AHashMap;
 
 /// A Wrapper Type for workflow and activity app data
 #[derive(Default)]
 pub struct AppData {
-    map: AHashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
 impl AppData {
