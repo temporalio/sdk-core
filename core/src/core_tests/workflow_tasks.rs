@@ -1,12 +1,11 @@
 use crate::{
-    errors::PollWfError,
     job_assert,
     replay::TestHistoryBuilder,
     test_help::{
         build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_worker, poll_and_reply,
         poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, FakeWfResponses,
-        MockPollCfg, MocksHolder, ResponseType, NO_MORE_WORK_ERROR_MSG, TEST_Q,
+        MockPollCfg, MocksHolder, ResponseType, TEST_Q,
     },
     worker::{
         client::mocks::mock_workflow_client,
@@ -1093,10 +1092,10 @@ async fn sends_appropriate_sticky_task_queue_responses() {
 
 #[tokio::test]
 async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation() {
-    crate::telemetry::test_telem_console();
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("1");
     let mock = single_hist_mock_sg(wfid, t, &[1, 2], mock_workflow_client(), false);
+    let taskmap = mock.outstanding_task_map.clone().unwrap();
     let core = mock_worker(mock);
 
     // Poll for and complete first workflow task
@@ -1107,19 +1106,25 @@ async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation(
     ))
     .await
     .unwrap();
-    let eviction_activation = core.poll_workflow_activation().await.unwrap();
+    let evict_act = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
-        eviction_activation.jobs.as_slice(),
+        evict_act.jobs.as_slice(),
         [WorkflowActivationJob {
             variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
         }]
     );
-    // Poll again. We should not overwrite the eviction with the new work from the server to fire
-    // the timer, so polling will try again, and run into the mock being out of responses.
-    let act = core.poll_workflow_activation().await;
-    assert_matches!(act, Err(PollWfError::TonicError(err))
-                    if err.message() == NO_MORE_WORK_ERROR_MSG);
-    core.shutdown().await;
+    // Ensure mock has delivered both tasks
+    assert!(taskmap.all_work_delivered());
+    // Now we can complete the evict
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(evict_act.run_id))
+        .await
+        .unwrap();
+    // The task buffered during eviction is applied and we start over
+    let start_again = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        start_again.jobs[0].variant,
+        Some(workflow_activation_job::Variant::StartWorkflow(_))
+    );
 }
 
 #[tokio::test]
@@ -1271,21 +1276,22 @@ async fn poll_response_triggers_wf_error() {
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
-    let mut mh = MockPollCfg::from_resp_batches(
+    let mh = MockPollCfg::from_resp_batches(
         "fake_wf_id",
         t,
         [ResponseType::AllHistory],
         mock_workflow_client(),
     );
-    // Since applying the poll response immediately generates an error core will start polling again
-    // Rather than panic on bad expectation we want to return the magic "no more work" error
-    mh.enforce_correct_number_of_polls = false;
     let mock = build_mock_pollers(mh);
     let core = mock_worker(mock);
     // Poll for first WFT, which is immediately an eviction
-    let act = core.poll_workflow_activation().await;
-    assert_matches!(act, Err(PollWfError::TonicError(err))
-                    if err.message() == NO_MORE_WORK_ERROR_MSG);
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        act.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
+        }]
+    );
 }
 
 // Verifies we can handle multiple wft timeouts in a row if lang is being very slow in responding
@@ -1415,8 +1421,8 @@ async fn failing_wft_doesnt_eat_permit_forever() {
     let worker = mock_worker(mock);
 
     let mut run_id = "".to_string();
-    // Fail twice, verifying a permit is eaten. We cannot fail the same run more than twice in a row
-    // because we purposefully time out rather than spamming.
+    // Fail twice, verifying a permit is not eaten. We cannot fail the same run more than twice in a
+    // row because we purposefully time out rather than spamming.
     for _ in 1..=2 {
         let activation = worker.poll_workflow_activation().await.unwrap();
         // Issue a nonsense completion that will trigger a WFT failure
@@ -1439,9 +1445,9 @@ async fn failing_wft_doesnt_eat_permit_forever() {
             .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
             .await
             .unwrap();
-        assert_eq!(worker.outstanding_workflow_tasks().await, 0);
-        assert_eq!(worker.available_wft_permits().await, 2);
     }
+    assert_eq!(worker.outstanding_workflow_tasks().await, 0);
+    assert_eq!(worker.available_wft_permits().await, 2);
     // We should be "out of work" because the mock service thinks we didn't complete the last task,
     // which we didn't, because we don't spam failures. The real server would eventually time out
     // the task. Mock doesn't understand that, so the WFT permit is released because eventually a
@@ -1619,7 +1625,13 @@ async fn evict_missing_wf_during_poll_doesnt_eat_permit() {
                 archived: false,
             })
         });
-    let mut mock = single_hist_mock_sg(wfid, t, [ResponseType::OneTask(2)], mock, true);
+    let mut mock = single_hist_mock_sg(
+        wfid,
+        t,
+        [ResponseType::OneTask(2), ResponseType::AllHistory],
+        mock,
+        true,
+    );
     mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 1;
         wc.max_outstanding_workflow_tasks = 1;
@@ -1627,8 +1639,8 @@ async fn evict_missing_wf_during_poll_doesnt_eat_permit() {
     let core = mock_worker(mock);
 
     // We will get an eviction for the workflow (which lang never saw in the first place, but,
-    // that's fine) since it had an error while being created, and then we will
-    // TODO: FInish
+    // that's fine) since it had an error while being created, and then we will evict it and
+    // the permit shall be restored.
     let act = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         act.jobs.as_slice(),
@@ -1636,6 +1648,10 @@ async fn evict_missing_wf_during_poll_doesnt_eat_permit() {
             variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
         }]
     );
+    assert_eq!(core.available_wft_permits().await, 0);
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
+        .await
+        .unwrap();
     assert_eq!(core.available_wft_permits().await, 1);
 
     core.shutdown().await;
@@ -1697,9 +1713,6 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
         p4
     };
     let p2_pending_completer = async {
-        // Sleep needed because otherwise the complete unblocks waiting for the cache to free a slot
-        // before we have a chance to actually... wait for it.
-        tokio::time::sleep(Duration::from_millis(100)).await;
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             p2.run_id,
             start_timer_cmd(1, Duration::from_secs(1)),

@@ -6,12 +6,14 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use tokio::sync::{AcquireError, Notify, Semaphore, SemaphorePermit};
+use tokio::sync::{
+    AcquireError, Notify, OwnedSemaphorePermit, Semaphore, SemaphorePermit, TryAcquireError,
+};
 
 /// Wraps a [Semaphore] with a function call that is fed the available permits any time a permit is
 /// acquired or restored through the provided methods
 pub(crate) struct MeteredSemaphore {
-    pub sem: Semaphore,
+    pub sem: Arc<Semaphore>,
     max_permits: usize,
     metrics_ctx: MetricsContext,
     record_fn: fn(&MetricsContext, usize),
@@ -24,7 +26,7 @@ impl MeteredSemaphore {
         record_fn: fn(&MetricsContext, usize),
     ) -> Self {
         Self {
-            sem: Semaphore::new(inital_permits),
+            sem: Arc::new(Semaphore::new(inital_permits)),
             max_permits: inital_permits,
             metrics_ctx,
             record_fn,
@@ -33,6 +35,12 @@ impl MeteredSemaphore {
 
     pub async fn acquire(&self) -> Result<SemaphorePermit<'_>, AcquireError> {
         let res = self.sem.acquire().await;
+        (self.record_fn)(&self.metrics_ctx, self.sem.available_permits());
+        res
+    }
+
+    pub fn try_acquire_owned(&self) -> Result<OwnedSemaphorePermit, TryAcquireError> {
+        let res = self.sem.clone().try_acquire_owned();
         (self.record_fn)(&self.metrics_ctx, self.sem.available_permits());
         res
     }

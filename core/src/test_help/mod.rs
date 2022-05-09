@@ -379,6 +379,7 @@ impl MockPollCfg {
 pub struct OutstandingWFTMap {
     map: Arc<RwLock<BiMap<String, TaskToken>>>,
     waker: Arc<Notify>,
+    all_work_delivered: Arc<AtomicBool>,
 }
 impl OutstandingWFTMap {
     fn has_run(&self, run_id: &str) -> bool {
@@ -394,6 +395,9 @@ impl OutstandingWFTMap {
     pub fn release_run(&self, run_id: &str) {
         self.map.write().remove_by_left(run_id);
         self.waker.notify_waiters();
+    }
+    pub fn all_work_delivered(&self) -> bool {
+        self.all_work_delivered.load(Ordering::Acquire)
     }
 }
 
@@ -421,7 +425,17 @@ impl Drop for EnsuresWorkDoneWFTStream {
 /// Given an iterable of fake responses, return the mocks & associated data to work with them
 pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
     let mut task_q_resps: BTreeMap<String, VecDeque<_>> = BTreeMap::new();
-    let outstanding_wf_task_tokens = OutstandingWFTMap::default();
+    let all_work_delivered = if cfg.enforce_correct_number_of_polls && !cfg.using_rust_sdk {
+        Arc::new(AtomicBool::new(false))
+    } else {
+        Arc::new(AtomicBool::new(true))
+    };
+
+    let outstanding_wf_task_tokens = OutstandingWFTMap {
+        map: Arc::new(Default::default()),
+        waker: Arc::new(Default::default()),
+        all_work_delivered: all_work_delivered.clone(),
+    };
 
     for hist in cfg.hists {
         let full_hist_info = hist.hist.get_full_history_info().unwrap();
@@ -459,17 +473,10 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
         task_q_resps.insert(hist.wf_id, tasks);
     }
 
-    let all_work_was_completed = if cfg.enforce_correct_number_of_polls && !cfg.using_rust_sdk {
-        Arc::new(AtomicBool::new(false))
-    } else {
-        Arc::new(AtomicBool::new(true))
-    };
-
     // The poller will return history from any workflow runs that do not have currently
     // outstanding tasks.
     let outstanding = outstanding_wf_task_tokens.clone();
     let outstanding_wakeup = outstanding.waker.clone();
-    let all_work_done = all_work_was_completed.clone();
     let (wft_tx, wft_rx) = unbounded_channel();
     tokio::task::spawn(async move {
         let num_wfids = task_q_resps.len();
@@ -503,7 +510,9 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
 
             // No more work to do
             if task_q_resps.values().all(|q| q.is_empty()) {
-                all_work_done.store(true, Ordering::Release);
+                outstanding
+                    .all_work_delivered
+                    .store(true, Ordering::Release);
                 break;
             }
 
@@ -529,7 +538,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
     let mock_worker = MockWorkerInputs::new(
         EnsuresWorkDoneWFTStream {
             inner: UnboundedReceiverStream::new(wft_rx),
-            all_work_was_completed,
+            all_work_was_completed: all_work_delivered,
         }
         .boxed(),
     );

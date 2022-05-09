@@ -1,15 +1,12 @@
 use crate::{pollers::BoxedWFPoller, protosext::ValidPollWFTQResponse, MetricsContext};
-use futures::Stream;
+use futures::{stream, Stream};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
-use tokio::{sync::mpsc::unbounded_channel, task};
-use tokio_stream::wrappers::UnboundedReceiverStream;
 
 pub(crate) fn new_wft_poller(
     poller: BoxedWFPoller,
     metrics: MetricsContext,
 ) -> impl Stream<Item = ValidPollWFTQResponse> {
-    let (new_wft_tx, new_wft_rx) = unbounded_channel();
-    task::spawn(async move {
+    stream::unfold((poller, metrics), |(poller, metrics)| async move {
         loop {
             match poller.poll().await {
                 Some(Ok(wft)) => {
@@ -22,23 +19,22 @@ pub(crate) fn new_wft_poller(
                     if let Some(dur) = wft.sched_to_start() {
                         metrics.wf_task_sched_to_start_latency(dur);
                     }
-                    let work = validate_wft(wft)?;
-                    new_wft_tx
-                        .send(work)
-                        .expect("Rcv half of new wft channel not dropped");
+                    let work = match validate_wft(wft) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            warn!(error=?e, "Server returned an unparseable workflow task");
+                            continue;
+                        }
+                    };
+                    return Some((work, (poller, metrics)));
                 }
                 Some(Err(e)) => {
                     warn!(error=?e, "Error polling for workflow tasks");
                 }
-                None => {
-                    unimplemented!("Handle shutdown");
-                }
+                None => return None,
             }
-            // TODO: Error/panic/shutdown handling, wait for request
         }
-        Ok::<_, tonic::Status>(())
-    });
-    UnboundedReceiverStream::new(new_wft_rx)
+    })
 }
 
 pub(crate) fn validate_wft(

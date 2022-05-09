@@ -13,18 +13,21 @@ use temporal_sdk_core_protos::{
     temporal::api::{command::v1::Command as ProtoCommand, enums::v1::WorkflowTaskFailedCause},
     TaskToken,
 };
+use tokio::sync::OwnedSemaphorePermit;
 
 /// What percentage of a WFT timeout we are willing to wait before sending a WFT heartbeat when
 /// necessary.
 const WFT_HEARTBEAT_TIMEOUT_FRACTION: f32 = 0.8;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct OutstandingTask {
     pub info: WorkflowTaskInfo,
     pub hit_cache: bool,
     /// Set if the outstanding task has quer(ies) which must be fulfilled upon finishing replay
     pub pending_queries: Vec<QueryWorkflow>,
     pub start_time: Instant,
+    /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT
+    pub permit: OwnedSemaphorePermit,
 }
 
 #[derive(Copy, Clone, Debug)]

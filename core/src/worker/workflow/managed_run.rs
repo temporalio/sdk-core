@@ -33,11 +33,18 @@ type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 pub(super) struct ManagedRun {
     wfm: WorkflowManager,
     update_tx: UnboundedSender<RunUpdateResponse>,
+    // Is set to true if the machines encounter an error and the only subsequent thing we should
+    // do is be evicted.
+    am_broken: bool,
 }
 
 impl ManagedRun {
     pub(super) fn new(wfm: WorkflowManager, update_tx: UnboundedSender<RunUpdateResponse>) -> Self {
-        Self { wfm, update_tx }
+        Self {
+            wfm,
+            update_tx,
+            am_broken: false,
+        }
     }
 
     pub(super) async fn run(self, run_actions_rx: UnboundedReceiver<RunActions>) {
@@ -61,8 +68,8 @@ impl ManagedRun {
                         me.send_update_response(maybe_act, maybe_wft_update);
                     }
                     Err(e) => {
-                        // TODO: Assert we don't try to do non-evict stuff after this path taken
                         error!(error=?e, "Error in run machines");
+                        me.am_broken = true;
                         me.update_tx
                             .send(RunUpdateResponse::Fail(FailRunUpdateResponse {
                                 run_id: me.wfm.machines.run_id.clone(),
@@ -208,11 +215,14 @@ impl ManagedRun {
         //     && self.wfm.machines.outstanding_local_activity_count() == 0
         // {}
 
-        if self.wfm.machines.has_pending_jobs() {
+        if self.wfm.machines.has_pending_jobs() && !self.am_broken {
             Ok(Some(self.wfm.get_next_activation().await?))
         } else {
             if let Some(wte) = want_to_evict {
                 let mut act = self.wfm.machines.get_wf_activation();
+                if self.am_broken {
+                    act.jobs = vec![];
+                }
                 act.append_evict_job(RemoveFromCache {
                     message: wte.message,
                     reason: wte.reason as i32,

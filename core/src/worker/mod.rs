@@ -306,17 +306,29 @@ impl Worker {
 
     /// Returns number of currently cached workflows
     pub async fn cached_workflows(&self) -> usize {
-        self.workflows.get_state_info().await.cached_workflows
+        self.workflows
+            .get_state_info()
+            .await
+            .map(|r| r.cached_workflows)
+            .unwrap_or_default()
     }
 
     /// Returns number of currently outstanding workflow tasks
     pub(crate) async fn outstanding_workflow_tasks(&self) -> usize {
-        self.workflows.get_state_info().await.outstanding_wft
+        self.workflows
+            .get_state_info()
+            .await
+            .map(|r| r.outstanding_wft)
+            .unwrap_or_default()
     }
 
     #[cfg(test)]
     pub(crate) async fn available_wft_permits(&self) -> usize {
-        self.workflows.get_state_info().await.available_wft_permits
+        self.workflows
+            .get_state_info()
+            .await
+            .expect("You can only check for available permits before shutdown")
+            .available_wft_permits
     }
 
     /// Get new activity tasks (may be local or nonlocal). Local activities are returned first
