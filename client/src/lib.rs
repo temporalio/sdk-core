@@ -25,12 +25,13 @@ use crate::{
 use backoff::{ExponentialBackoff, SystemClock};
 use http::uri::InvalidUri;
 use opentelemetry::metrics::Meter;
+use parking_lot::Mutex;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
     ops::{Deref, DerefMut},
     str::FromStr,
-    sync::Arc,
+    sync::{Arc},
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
@@ -80,9 +81,9 @@ pub struct ClientOptions {
     /// in all RPC calls. The server decides if the client is supported based on this.
     pub client_version: String,
 
-    /// Other non-required static headers which should be attached to every request
+    /// Other non-required headers which should be attached to every request
     #[builder(default)]
-    pub static_headers: HashMap<String, String>,
+    pub headers: Arc<Mutex<HashMap<String, String>>>,
 
     /// A human-readable string that can identify this process. Defaults to empty string.
     #[builder(default)]
@@ -415,7 +416,8 @@ impl Interceptor for ServiceCallInterceptor {
                 .parse()
                 .unwrap_or_else(|_| MetadataValue::from_static("")),
         );
-        for (k, v) in &self.opts.static_headers {
+        let headers = &*self.opts.headers.lock();
+        for (k, v) in headers {
             if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), MetadataValue::from_str(v)) {
                 metadata.insert(k, v);
             }
