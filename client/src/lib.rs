@@ -304,8 +304,9 @@ impl ClientOptions {
         &self,
         namespace: impl Into<String>,
         metrics_meter: Option<&Meter>,
+        dynamic_headers: Option<Arc<Mutex<HashMap<String, String>>>>
     ) -> Result<RetryClient<Client>, ClientInitError> {
-        let client = self.connect_no_namespace(metrics_meter).await?.into_inner();
+        let client = self.connect_no_namespace(metrics_meter, dynamic_headers).await?.into_inner();
         let client = Client::new(client, namespace.into());
         let retry_client = RetryClient::new(client, self.retry_config.clone());
         Ok(retry_client)
@@ -318,6 +319,7 @@ impl ClientOptions {
     pub async fn connect_no_namespace(
         &self,
         metrics_meter: Option<&Meter>,
+        dynamic_headers: Option<Arc<Mutex<HashMap<String, String>>>>
     ) -> Result<RetryClient<ConfiguredClient<WorkflowServiceClientWithMetrics>>, ClientInitError>
     {
         let channel = Channel::from_shared(self.target_url.to_string())?;
@@ -329,7 +331,7 @@ impl ClientOptions {
                 metrics: metrics_meter.map(|mm| MetricsContext::new(vec![], mm)),
             })
             .service(channel);
-        let dynamic_headers = Arc::new(Mutex::new(HashMap::<String, String>::new()));
+        let dynamic_headers = dynamic_headers.unwrap_or_default();
         let interceptor = ServiceCallInterceptor { opts: self.clone(), dynamic_headers: dynamic_headers.clone() };
 
         let mut client = ConfiguredClient {

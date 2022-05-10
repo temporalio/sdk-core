@@ -240,7 +240,7 @@ impl CoreWfStarter {
                 telemetry_init(&self.telemetry_options).expect("Telemetry inits cleanly");
                 let client = Arc::new(
                     get_integ_server_options()
-                        .connect(self.worker_config.namespace.clone(), None)
+                        .connect(self.worker_config.namespace.clone(), None, None)
                         .await
                         .expect("Must connect"),
                 );
