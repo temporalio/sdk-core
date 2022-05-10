@@ -81,7 +81,7 @@ pub struct ClientOptions {
     /// in all RPC calls. The server decides if the client is supported based on this.
     pub client_version: String,
 
-    /// TODO: Other non-required headers which should be attached to every request
+    /// Other non-required static headers which should be attached to every request
     #[builder(default)]
     pub static_headers: HashMap<String, String>,
 
@@ -259,6 +259,8 @@ pub struct ConfiguredClient<C> {
 }
 
 impl<C> ConfiguredClient<C> {
+    /// Set dynamic HTTP request headers.
+    /// Any values set here will override `static_headers` defined in [ClientOptions].
     pub fn set_dynamic_headers(&self, headers: HashMap<String, String>) {
         let mut guard = self.dynamic_headers.lock();
         *guard = headers;
