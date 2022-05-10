@@ -81,9 +81,9 @@ pub struct ClientOptions {
     /// in all RPC calls. The server decides if the client is supported based on this.
     pub client_version: String,
 
-    /// Other non-required headers which should be attached to every request
+    /// TODO: Other non-required headers which should be attached to every request
     #[builder(default)]
-    pub headers: Arc<Mutex<HashMap<String, String>>>,
+    pub static_headers: HashMap<String, String>,
 
     /// A human-readable string that can identify this process. Defaults to empty string.
     #[builder(default)]
@@ -253,11 +253,17 @@ impl From<ConfiguredClient<WorkflowServiceClientWithMetrics>> for AnyClient {
 pub struct ConfiguredClient<C> {
     client: C,
     options: ClientOptions,
+    dynamic_headers: Arc<Mutex<HashMap<String, String>>>,
     /// Capabilities as read from the `get_system_info` RPC call made on client connection
     capabilities: Option<get_system_info_response::Capabilities>,
 }
 
 impl<C> ConfiguredClient<C> {
+    pub fn set_dynamic_headers(&self, headers: HashMap<String, String>) {
+        let mut guard = self.dynamic_headers.lock();
+        *guard = headers;
+    }
+
     /// Returns the options the client is configured with
     pub fn options(&self) -> &ClientOptions {
         &self.options
@@ -321,9 +327,11 @@ impl ClientOptions {
                 metrics: metrics_meter.map(|mm| MetricsContext::new(vec![], mm)),
             })
             .service(channel);
-        let interceptor = ServiceCallInterceptor { opts: self.clone() };
+        let dynamic_headers = Arc::new(Mutex::new(HashMap::<String, String>::new()));
+        let interceptor = ServiceCallInterceptor { opts: self.clone(), dynamic_headers: dynamic_headers.clone() };
 
         let mut client = ConfiguredClient {
+            dynamic_headers,
             client: WorkflowServiceClient::with_interceptor(service, interceptor),
             options: self.clone(),
             capabilities: None,
@@ -395,6 +403,7 @@ pub struct WorkflowTaskCompletion {
 #[derive(Clone)]
 pub struct ServiceCallInterceptor {
     opts: ClientOptions,
+    dynamic_headers: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl Interceptor for ServiceCallInterceptor {
@@ -416,7 +425,12 @@ impl Interceptor for ServiceCallInterceptor {
                 .parse()
                 .unwrap_or_else(|_| MetadataValue::from_static("")),
         );
-        let headers = &*self.opts.headers.lock();
+        for (k, v) in &self.opts.static_headers {
+            if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), MetadataValue::from_str(v)) {
+                metadata.insert(k, v);
+            }
+        }
+        let headers = &*self.dynamic_headers.lock();
         for (k, v) in headers {
             if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), MetadataValue::from_str(v)) {
                 metadata.insert(k, v);
