@@ -259,8 +259,7 @@ pub struct ConfiguredClient<C> {
 }
 
 impl<C> ConfiguredClient<C> {
-    /// Set dynamic HTTP request headers.
-    /// Any values set here will override `static_headers` defined in [ClientOptions].
+    /// Set dynamic HTTP request headers overwriting previous headers
     pub fn set_dynamic_headers(&self, headers: HashMap<String, String>) {
         let mut guard = self.dynamic_headers.lock();
         *guard = headers;
