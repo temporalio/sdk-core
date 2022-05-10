@@ -1,6 +1,5 @@
 use log::LevelFilter;
-use parking_lot::Mutex;
-use std::{net::SocketAddr, str::FromStr, sync::Arc};
+use std::{net::SocketAddr, str::FromStr};
 use temporal_sdk_core::{TelemetryOptionsBuilder, Url};
 use temporal_sdk_core_protos::coresdk::bridge;
 
@@ -74,8 +73,8 @@ impl TryFrom<ClientOptions> for temporal_sdk_core::ClientOptions {
         if !req.client_version.is_empty() {
             client_opts.client_version(req.client_version);
         }
-        if !req.headers.is_empty() {
-            client_opts.headers(Arc::new(Mutex::new(req.headers)));
+        if !req.static_headers.is_empty() {
+            client_opts.static_headers(req.static_headers);
         }
         if !req.identity.is_empty() {
             client_opts.identity(req.identity);
