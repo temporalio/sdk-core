@@ -81,10 +81,6 @@ pub struct ClientOptions {
     /// in all RPC calls. The server decides if the client is supported based on this.
     pub client_version: String,
 
-    /// Other non-required static headers which should be attached to every request
-    #[builder(default)]
-    pub static_headers: HashMap<String, String>,
-
     /// A human-readable string that can identify this process. Defaults to empty string.
     #[builder(default)]
     pub identity: String,
@@ -253,15 +249,15 @@ impl From<ConfiguredClient<WorkflowServiceClientWithMetrics>> for AnyClient {
 pub struct ConfiguredClient<C> {
     client: C,
     options: ClientOptions,
-    dynamic_headers: Arc<Mutex<HashMap<String, String>>>,
+    headers: Arc<Mutex<HashMap<String, String>>>,
     /// Capabilities as read from the `get_system_info` RPC call made on client connection
     capabilities: Option<get_system_info_response::Capabilities>,
 }
 
 impl<C> ConfiguredClient<C> {
-    /// Set dynamic HTTP request headers overwriting previous headers
-    pub fn set_dynamic_headers(&self, headers: HashMap<String, String>) {
-        let mut guard = self.dynamic_headers.lock();
+    /// Set HTTP request headers overwriting previous headers
+    pub fn set_headers(&self, headers: HashMap<String, String>) {
+        let mut guard = self.headers.lock();
         *guard = headers;
     }
 
@@ -303,9 +299,9 @@ impl ClientOptions {
         &self,
         namespace: impl Into<String>,
         metrics_meter: Option<&Meter>,
-        dynamic_headers: Option<Arc<Mutex<HashMap<String, String>>>>
+        headers: Option<Arc<Mutex<HashMap<String, String>>>>
     ) -> Result<RetryClient<Client>, ClientInitError> {
-        let client = self.connect_no_namespace(metrics_meter, dynamic_headers).await?.into_inner();
+        let client = self.connect_no_namespace(metrics_meter, headers).await?.into_inner();
         let client = Client::new(client, namespace.into());
         let retry_client = RetryClient::new(client, self.retry_config.clone());
         Ok(retry_client)
@@ -318,7 +314,7 @@ impl ClientOptions {
     pub async fn connect_no_namespace(
         &self,
         metrics_meter: Option<&Meter>,
-        dynamic_headers: Option<Arc<Mutex<HashMap<String, String>>>>
+        headers: Option<Arc<Mutex<HashMap<String, String>>>>
     ) -> Result<RetryClient<ConfiguredClient<WorkflowServiceClientWithMetrics>>, ClientInitError>
     {
         let channel = Channel::from_shared(self.target_url.to_string())?;
@@ -330,11 +326,11 @@ impl ClientOptions {
                 metrics: metrics_meter.map(|mm| MetricsContext::new(vec![], mm)),
             })
             .service(channel);
-        let dynamic_headers = dynamic_headers.unwrap_or_default();
-        let interceptor = ServiceCallInterceptor { opts: self.clone(), dynamic_headers: dynamic_headers.clone() };
+        let headers = headers.unwrap_or_default();
+        let interceptor = ServiceCallInterceptor { opts: self.clone(), headers: headers.clone() };
 
         let mut client = ConfiguredClient {
-            dynamic_headers,
+            headers,
             client: WorkflowServiceClient::with_interceptor(service, interceptor),
             options: self.clone(),
             capabilities: None,
@@ -406,7 +402,7 @@ pub struct WorkflowTaskCompletion {
 #[derive(Clone)]
 pub struct ServiceCallInterceptor {
     opts: ClientOptions,
-    dynamic_headers: Arc<Mutex<HashMap<String, String>>>,
+    headers: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl Interceptor for ServiceCallInterceptor {
@@ -428,12 +424,7 @@ impl Interceptor for ServiceCallInterceptor {
                 .parse()
                 .unwrap_or_else(|_| MetadataValue::from_static("")),
         );
-        for (k, v) in &self.opts.static_headers {
-            if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), MetadataValue::from_str(v)) {
-                metadata.insert(k, v);
-            }
-        }
-        let headers = &*self.dynamic_headers.lock();
+        let headers = &*self.headers.lock();
         for (k, v) in headers {
             if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), MetadataValue::from_str(v)) {
                 metadata.insert(k, v);
