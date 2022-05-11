@@ -31,7 +31,7 @@ use std::{
     fmt::{Debug, Formatter},
     ops::{Deref, DerefMut},
     str::FromStr,
-    sync::{Arc},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
@@ -299,9 +299,12 @@ impl ClientOptions {
         &self,
         namespace: impl Into<String>,
         metrics_meter: Option<&Meter>,
-        headers: Option<Arc<Mutex<HashMap<String, String>>>>
+        headers: Option<Arc<Mutex<HashMap<String, String>>>>,
     ) -> Result<RetryClient<Client>, ClientInitError> {
-        let client = self.connect_no_namespace(metrics_meter, headers).await?.into_inner();
+        let client = self
+            .connect_no_namespace(metrics_meter, headers)
+            .await?
+            .into_inner();
         let client = Client::new(client, namespace.into());
         let retry_client = RetryClient::new(client, self.retry_config.clone());
         Ok(retry_client)
@@ -314,7 +317,7 @@ impl ClientOptions {
     pub async fn connect_no_namespace(
         &self,
         metrics_meter: Option<&Meter>,
-        headers: Option<Arc<Mutex<HashMap<String, String>>>>
+        headers: Option<Arc<Mutex<HashMap<String, String>>>>,
     ) -> Result<RetryClient<ConfiguredClient<WorkflowServiceClientWithMetrics>>, ClientInitError>
     {
         let channel = Channel::from_shared(self.target_url.to_string())?;
@@ -327,7 +330,10 @@ impl ClientOptions {
             })
             .service(channel);
         let headers = headers.unwrap_or_default();
-        let interceptor = ServiceCallInterceptor { opts: self.clone(), headers: headers.clone() };
+        let interceptor = ServiceCallInterceptor {
+            opts: self.clone(),
+            headers: headers.clone(),
+        };
 
         let mut client = ConfiguredClient {
             headers,
