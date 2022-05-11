@@ -32,7 +32,6 @@ message CreateClientRequest {
   string namespace = 2;
   string client_name = 3;
   string client_version = 4;
-  map<string, string> static_headers = 5;
   string identity = 6;
   string worker_binary_id = 7;
   TlsConfig tls_config = 8;

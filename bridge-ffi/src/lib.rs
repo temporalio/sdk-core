@@ -397,7 +397,7 @@ pub extern "C" fn tmprl_client_init(
 
     let user_data = UserDataHandle(user_data);
     runtime.tokio_runtime.spawn(async move {
-        match req.connect(namespace, None).await {
+        match req.connect(namespace, None, None).await {
             Ok(client) => unsafe {
                 callback(
                     user_data.into(),

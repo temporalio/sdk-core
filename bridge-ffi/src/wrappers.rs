@@ -73,9 +73,6 @@ impl TryFrom<ClientOptions> for temporal_sdk_core::ClientOptions {
         if !req.client_version.is_empty() {
             client_opts.client_version(req.client_version);
         }
-        if !req.static_headers.is_empty() {
-            client_opts.static_headers(req.static_headers);
-        }
         if !req.identity.is_empty() {
             client_opts.identity(req.identity);
         }
