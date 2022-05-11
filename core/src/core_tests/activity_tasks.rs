@@ -523,7 +523,7 @@ async fn can_heartbeat_acts_during_shutdown() {
         .unwrap();
         complete_order.borrow_mut().push(2);
     };
-    join!(shutdown_fut, complete_fut);
+    join!(complete_fut, shutdown_fut);
     assert_eq!(&complete_order.into_inner(), &[2, 1])
 }
 

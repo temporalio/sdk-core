@@ -17,14 +17,15 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
 use tokio::{
     sync::{
         mpsc::{channel, Receiver},
-        watch, Mutex, Semaphore,
+        Mutex, Semaphore,
     },
     task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 
 pub struct LongPollBuffer<T> {
     buffered_polls: Mutex<Receiver<pollers::Result<T>>>,
-    shutdown: watch::Sender<bool>,
+    shutdown: CancellationToken,
     /// This semaphore exists to ensure that we only poll server as many times as core actually
     /// *asked* it to be polled - otherwise we might spin and buffer polls constantly. This also
     /// means unit tests can continue to function in a predictable manner when calling mocks.
@@ -63,28 +64,28 @@ where
         let (tx, rx) = channel(buffer_size);
         let polls_requested = Arc::new(Semaphore::new(0));
         let active_pollers = Arc::new(AtomicUsize::new(0));
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let shutdown = CancellationToken::new();
         let join_handles = FuturesUnordered::new();
         let pf = Arc::new(poll_fn);
         for _ in 0..max_pollers {
             let tx = tx.clone();
             let pf = pf.clone();
-            let mut shutdown = shutdown_rx.clone();
+            let shutdown = shutdown.clone();
             let polls_requested = polls_requested.clone();
             let ap = active_pollers.clone();
             let jh = tokio::spawn(async move {
                 loop {
-                    if *shutdown.borrow() {
+                    if shutdown.is_cancelled() {
                         break;
                     }
                     let sp = tokio::select! {
                         sp = polls_requested.acquire() => sp.expect("Polls semaphore not dropped"),
-                        _ = shutdown.changed() => continue,
+                        _ = shutdown.cancelled() => continue,
                     };
                     let _active_guard = ActiveCounter::new(ap.as_ref());
                     let r = tokio::select! {
                         r = pf() => r,
-                        _ = shutdown.changed() => continue,
+                        _ = shutdown.cancelled() => continue,
                     };
                     sp.forget();
                     let _ = tx.send(r).await;
@@ -94,7 +95,7 @@ where
         }
         Self {
             buffered_polls: Mutex::new(rx),
-            shutdown: shutdown_tx,
+            shutdown,
             polls_requested,
             join_handles,
             num_pollers_changed: None,
@@ -142,11 +143,11 @@ where
     }
 
     fn notify_shutdown(&self) {
-        let _ = self.shutdown.send(true);
+        self.shutdown.cancel();
     }
 
     async fn shutdown(mut self) {
-        let _ = self.shutdown.send(true);
+        self.notify_shutdown();
         while self.join_handles.next().await.is_some() {}
     }
 

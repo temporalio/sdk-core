@@ -25,12 +25,12 @@ use crate::{
             managed_run::{ManagedRun, WorkflowManager},
             run_cache::RunCache,
             workflow_tasks::{
-                EvictionRequestResult, FailedActivationOutcome, OutstandingActivation,
-                OutstandingTask, RunUpdateOutcome, ServerCommandsWithWorkflowInfo,
-                WorkflowTaskInfo, WorkflowUpdateError,
+                ActivationAction, EvictionRequestResult, FailedActivationOutcome,
+                OutstandingActivation, OutstandingTask, RunUpdateOutcome,
+                ServerCommandsWithWorkflowInfo, WorkflowTaskInfo, WorkflowUpdateError,
             },
         },
-        LocalActivityResolution,
+        LocalActRequest, LocalActivityResolution,
     },
     MetricsContext, WorkerClientBag,
 };
@@ -53,8 +53,8 @@ use temporal_sdk_core_api::errors::{CompleteWfError, PollWfError};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
-            create_evict_activation, create_query_activation, query_to_job,
-            remove_from_cache::EvictionReason, workflow_activation_job, WorkflowActivation,
+            create_evict_activation, query_to_job, remove_from_cache::EvictionReason,
+            workflow_activation_job, WorkflowActivation,
         },
         workflow_commands::*,
         workflow_completion::{
@@ -73,7 +73,7 @@ use tokio::{
         oneshot,
     },
     task,
-    task::JoinHandle,
+    task::{JoinError, JoinHandle},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -86,12 +86,34 @@ type Result<T, E = WFMachinesError> = result::Result<T, E>;
 pub(crate) struct Workflows {
     new_wft_tx: UnboundedSender<ValidPollWFTQResponse>,
     local_tx: UnboundedSender<LocalInputs>,
-    processing_task: JoinHandle<()>,
+    processing_task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     activation_stream: tokio::sync::Mutex<(
-        BoxStream<'static, Result<WorkflowActivation, PollWfError>>,
+        BoxStream<'static, Result<ActivationOrAuto, PollWfError>>,
         // Used to indicate polling may begin
         Option<oneshot::Sender<()>>,
     )>,
+}
+
+#[derive(Debug)]
+pub(crate) enum ActivationOrAuto {
+    LangActivation(WorkflowActivation),
+    /// This type should only be filled with an empty activation which is ready to have queries
+    /// inserted into the joblist
+    ReadyForQueries(WorkflowActivation),
+    Autocomplete {
+        // TODO: Can I delete this?
+        run_id: String,
+        is_wft_heartbeat: bool,
+    },
+}
+impl ActivationOrAuto {
+    pub fn run_id(&self) -> &str {
+        match self {
+            ActivationOrAuto::LangActivation(act) => &act.run_id,
+            ActivationOrAuto::Autocomplete { run_id, .. } => &run_id,
+            ActivationOrAuto::ReadyForQueries(act) => &act.run_id,
+        }
+    }
 }
 
 impl Workflows {
@@ -100,6 +122,10 @@ impl Workflows {
         max_outstanding_wfts: usize,
         client: Arc<WorkerClientBag>,
         wft_stream: impl Stream<Item = ValidPollWFTQResponse> + Send + 'static,
+        local_activity_request_sink: impl Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>
+            + Send
+            + Sync
+            + 'static,
         shutdown_token: CancellationToken,
         metrics: MetricsContext,
     ) -> Self {
@@ -115,6 +141,7 @@ impl Workflows {
                 .map(ExternalPollerInputs::NewWft)
                 .boxed(),
         ]);
+        let shutdown_tok = shutdown_token.clone();
         let mut stream = WFActivationStream::new(
             max_cached_workflows,
             max_outstanding_wfts,
@@ -122,6 +149,7 @@ impl Workflows {
             allow_handle,
             UnboundedReceiverStream::new(local_rx),
             client,
+            local_activity_request_sink,
             shutdown_token,
             metrics.clone(),
         );
@@ -130,9 +158,19 @@ impl Workflows {
         // We must spawn a task to constantly poll the activation stream, because otherwise
         // activation completions would not cause anything to happen until the next poll.
         let processing_task = task::spawn(async move {
-            start_polling_rx
-                .await
-                .expect("Start polling send half not dropped");
+            // However, we want to avoid plowing ahead until we've been asked to poll at least once.
+            // This supports activity-only workers.
+            let do_poll = tokio::select! {
+                sp = start_polling_rx => {
+                    sp.is_ok()
+                }
+                _ = shutdown_tok.cancelled() => {
+                    false
+                }
+            };
+            if !do_poll {
+                return;
+            }
             while let Some(act) = stream.next().await {
                 activation_tx
                     .send(act)
@@ -142,7 +180,7 @@ impl Workflows {
         Self {
             new_wft_tx,
             local_tx,
-            processing_task,
+            processing_task: tokio::sync::Mutex::new(Some(processing_task)),
             activation_stream: tokio::sync::Mutex::new((
                 UnboundedReceiverStream::new(activation_rx).boxed(),
                 Some(start_polling_tx),
@@ -150,13 +188,11 @@ impl Workflows {
         }
     }
 
-    pub async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
+    pub async fn next_workflow_activation(&self) -> Result<ActivationOrAuto, PollWfError> {
         let mut lock = self.activation_stream.lock().await;
         let (ref mut stream, ref mut beginner) = lock.deref_mut();
         if let Some(beginner) = beginner.take() {
-            beginner
-                .send(())
-                .expect("Start polling receive half not dropped");
+            let _ = beginner.send(());
         }
         stream.next().await.unwrap_or(Err(PollWfError::ShutDown))
     }
@@ -221,13 +257,29 @@ impl Workflows {
         async move { rx.await.ok() }
     }
 
+    pub async fn shutdown(&self) -> Result<(), JoinError> {
+        let maybe_jh = self.processing_task.lock().await.take();
+        if let Some(jh) = maybe_jh {
+            // This acts as a final wake up in case the stream is still alive and wouldn't otherwise
+            // receive another message. It allows it to shut itself down.
+            let _ = self.get_state_info();
+            jh.await
+        } else {
+            Ok(())
+        }
+    }
+
     fn send_local(&self, msg: impl Into<LocalInputs>) {
-        if let Err(e) = self.local_tx.send(msg.into()) {
-            error!(
+        let msg = msg.into();
+        let print_err = !matches!(msg, LocalInputs::GetStateInfo(_));
+        if let Err(e) = self.local_tx.send(msg) {
+            if print_err {
+                error!(
                 "Tried to interact with workflow state after it shut down. This is not allowed. \
                  A worker cannot be interacted with after shutdown has finished. When sending {:?}",
                 e.0
-            )
+                )
+            }
         }
     }
 }
@@ -263,11 +315,6 @@ struct RequestEvictMsg {
 struct GetStateInfoMsg {
     response_tx: oneshot::Sender<WorkflowStateInfo>,
 }
-#[derive(Debug)]
-enum CheckBufferedPollMsg {
-    NeedsCacheSlot,
-    ForExistingRun,
-}
 
 /// What needs to be done after calling [Workflows::activation_completed]
 #[derive(Debug)]
@@ -281,17 +328,13 @@ pub(crate) enum ActivationCompleteOutcome {
 }
 
 pub(crate) struct WFActivationStream {
-    /// Used to wake up the stream when we've buffered a poll
-    check_buffered_polls_tx: UnboundedSender<CheckBufferedPollMsg>,
-    /// Buffered polls for runs we already have in the cache
-    buffered_polls: VecDeque<ValidPollWFTQResponse>,
+    runs: RunCache,
     /// Buffered polls for new runs which need a cache slot to open up before we can handle them
     buffered_polls_need_cache_slot: VecDeque<ValidPollWFTQResponse>,
 
     /// Client for accessing server for history pagination etc. TODO: Smaller type w/ only that?
     client: Arc<WorkerClientBag>,
 
-    runs: RunCache,
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
     wft_semaphore: MeteredSemaphore,
     shutdown_token: CancellationToken,
@@ -306,7 +349,6 @@ enum WFActStreamInput {
     RunUpdateResponse(RunUpdateResponse),
     RequestEviction(RequestEvictMsg),
     GetStateInfo(GetStateInfoMsg),
-    CheckBufferedPoll(CheckBufferedPollMsg),
     // The stream given to us which represents the poller (or a mock) terminated.
     PollerDead,
 }
@@ -355,23 +397,21 @@ impl WFActivationStream {
         external_wft_allow_handle: StreamAllowHandle,
         local_rx: impl Stream<Item = LocalInputs> + Send + 'static,
         client: Arc<WorkerClientBag>,
+        local_activity_request_sink: impl Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>
+            + Send
+            + Sync
+            + 'static,
         shutdown_token: CancellationToken,
         metrics: MetricsContext,
-    ) -> impl Stream<Item = Result<WorkflowActivation, PollWfError>> {
+    ) -> impl Stream<Item = Result<ActivationOrAuto, PollWfError>> {
         let (run_update_tx, run_update_rx) = unbounded_channel();
-        let (check_buffered_polls_tx, check_buffered_polls_rx) = unbounded_channel();
         let local_rx = stream::select_all([
             local_rx.map(Into::into).boxed(),
             UnboundedReceiverStream::new(run_update_rx)
                 .map(WFActStreamInput::RunUpdateResponse)
                 .boxed(),
         ]);
-        let low_pri_streams = stream::select_all([
-            UnboundedReceiverStream::new(check_buffered_polls_rx)
-                .map(WFActStreamInput::CheckBufferedPoll)
-                .boxed(),
-            new_wft_rx.map(Into::into).boxed(),
-        ]);
+        let low_pri_streams = stream::select_all([new_wft_rx.map(Into::into).boxed()]);
         let all_inputs = stream::select_with_strategy(
             local_rx,
             low_pri_streams,
@@ -379,13 +419,12 @@ impl WFActivationStream {
             |_: &mut ()| PollNext::Left,
         );
         let mut state = WFActivationStream {
-            check_buffered_polls_tx,
-            buffered_polls: Default::default(),
             buffered_polls_need_cache_slot: Default::default(),
             runs: RunCache::new(
                 max_cached_workflows,
                 client.namespace().to_string(),
                 run_update_tx,
+                Arc::new(local_activity_request_sink),
                 metrics.clone(),
             ),
             client,
@@ -404,37 +443,18 @@ impl WFActivationStream {
                         state.instantiate_or_update(wft);
                         None
                     }
-                    WFActStreamInput::CheckBufferedPoll(msg) => {
-                        match msg {
-                            CheckBufferedPollMsg::ForExistingRun => {
-                                if let Some(wft) = state.buffered_polls.pop_front() {
-                                    state.instantiate_or_update(wft);
-                                } else {
-                                    warn!(
-                                        "Workflow state wanted to ready a buffered poll, \
-                                           but there was none."
-                                    );
-                                }
-                            }
-                            CheckBufferedPollMsg::NeedsCacheSlot => {
-                                if let Some(wft) = state.buffered_polls_need_cache_slot.pop_front()
-                                {
-                                    state.instantiate_or_update(wft);
-                                } else {
-                                    warn!(
-                                        "Workflow state wanted to ready a buffered poll, \
-                                           but there was none."
-                                    );
-                                }
-                            }
-                        }
-                        None
-                    }
                     WFActStreamInput::RunUpdateResponse(resp) => {
                         match state.process_run_update_response(resp) {
-                            RunUpdateOutcome::IssueActivation(act) => Some(act),
-                            RunUpdateOutcome::TaskBuffered => None,
-                            RunUpdateOutcome::Autocomplete => None,
+                            RunUpdateOutcome::IssueActivation(act) => {
+                                Some(ActivationOrAuto::LangActivation(act))
+                            }
+                            RunUpdateOutcome::Autocomplete {
+                                run_id,
+                                is_wft_heartbeat,
+                            } => Some(ActivationOrAuto::Autocomplete {
+                                run_id,
+                                is_wft_heartbeat,
+                            }),
                             RunUpdateOutcome::Failure(err) => {
                                 if let Some(resp_chan) = err.completion_resp {
                                     // Automatically fail the workflow task in the event we couldn't
@@ -470,7 +490,7 @@ impl WFActivationStream {
                                 }
                                 None
                             }
-                            RunUpdateOutcome::LocalActsOutstanding => None,
+                            RunUpdateOutcome::DoNothing => None,
                         }
                     }
                     WFActStreamInput::Completion(completion) => {
@@ -481,18 +501,9 @@ impl WFActivationStream {
                         state.process_post_activation(report);
                         None
                     }
-                    WFActStreamInput::LocalResolution(_) => {
-                        unimplemented!()
-                        // error!(
-                        //     "Problem with local resolution on run {}: {:?} -- will evict the \
-                        //      workflow",
-                        //     run_id, e
-                        // );
-                        // self.request_wf_eviction(
-                        //     run_id,
-                        //     "Issue while processing local resolution",
-                        //     e.evict_reason(),
-                        // );
+                    WFActStreamInput::LocalResolution(res) => {
+                        state.local_resolution(res);
+                        None
                     }
                     WFActStreamInput::RequestEviction(evict) => {
                         state.request_eviction(evict);
@@ -518,7 +529,7 @@ impl WFActivationStream {
                 }
 
                 if let Some(ref act) = maybe_activation {
-                    if let Some(run_handle) = state.runs.get_mut(&act.run_id) {
+                    if let Some(run_handle) = state.runs.get_mut(act.run_id()) {
                         run_handle.insert_outstanding_activation(&act);
                     } else {
                         // TODO: Don't panic
@@ -559,58 +570,93 @@ impl WFActivationStream {
                     .get_mut(&resp.run_id)
                     .expect("Workflow must exist, it just sent us an update response");
 
-                if let Some(mut activation) = resp.outgoing_activation {
-                    if let Some(RunUpdatedFromWft {}) = resp.in_response_to_wft {
-                        let wft = run_handle
-                            .wft
-                            .as_mut()
-                            .expect("WFT must exist for run just updated with one");
-                        // If there are in-poll queries, insert jobs for those queries into the
-                        // activation, but only if we hit the cache. If we didn't, those queries
-                        // will need to be dealt with once replay is over
-                        if !wft.pending_queries.is_empty() {
-                            if wft.hit_cache {
-                                let query_jobs = wft.pending_queries.drain(..).map(|q| {
-                                    workflow_activation_job::Variant::QueryWorkflow(q).into()
-                                });
-                                activation.jobs.extend(query_jobs);
+                let r = match resp.outgoing_activation {
+                    Some(ActivationOrAuto::LangActivation(mut activation)) => {
+                        if let Some(RunUpdatedFromWft {}) = resp.in_response_to_wft {
+                            let wft = run_handle
+                                .wft
+                                .as_mut()
+                                .expect("WFT must exist for run just updated with one");
+                            // If there are in-poll queries, insert jobs for those queries into the
+                            // activation, but only if we hit the cache. If we didn't, those queries
+                            // will need to be dealt with once replay is over
+                            // TODO: Probably should be *and replay is finished*??
+                            if !wft.pending_queries.is_empty() {
+                                if wft.hit_cache {
+                                    warn!("Draining queries!!!");
+                                    let query_jobs = wft.pending_queries.drain(..).map(|q| {
+                                        workflow_activation_job::Variant::QueryWorkflow(q).into()
+                                    });
+                                    activation.jobs.extend(query_jobs);
+                                }
                             }
                         }
-                    }
 
-                    if activation.jobs.is_empty() {
-                        // TODO: Probably must be sent in outgoing act
-                        if resp.current_outstanding_local_act_count > 0 {
-                            // If there are outstanding local activities, we don't want to
-                            // autocomplete the workflow task. We want to give them a chance to
-                            // complete. If they take longer than the WFT timeout, we will force a
-                            // new WFT just before the timeout.
-                            RunUpdateOutcome::LocalActsOutstanding
+                        if activation.jobs.is_empty() {
+                            panic!("Should not send lang activation with no jobs");
                         } else {
-                            RunUpdateOutcome::Autocomplete
-                        }
-                    } else {
-                        RunUpdateOutcome::IssueActivation(activation)
-                    }
-                } else {
-                    warn!("No activation in process run update resp");
-                    // If a run update came back and had nothing to do, but we're trying to evict,
-                    // just do that now as long as there's no other outstanding work.
-                    if let Some(reason) = run_handle.trying_to_evict.as_ref() {
-                        if run_handle.activation.is_none() && !run_handle.more_pending_work {
-                            warn!("Making evict activation since no other work");
-                            let evict_act = create_evict_activation(
-                                resp.run_id,
-                                reason.message.clone(),
-                                reason.reason,
-                            );
-                            return RunUpdateOutcome::IssueActivation(evict_act);
+                            RunUpdateOutcome::IssueActivation(activation)
                         }
                     }
-
-                    // TODO: Do nothing??
-                    RunUpdateOutcome::Autocomplete
+                    Some(ActivationOrAuto::ReadyForQueries(mut act)) => {
+                        if let Some(wft) = run_handle.wft.as_mut() {
+                            info!("Queries? {:?}", wft.pending_queries);
+                            let query_jobs = wft
+                                .pending_queries
+                                .drain(..)
+                                .map(|q| workflow_activation_job::Variant::QueryWorkflow(q).into());
+                            act.jobs.extend(query_jobs);
+                            RunUpdateOutcome::IssueActivation(act)
+                        } else {
+                            panic!("Ready for queries but no WFT!");
+                        }
+                    }
+                    Some(ActivationOrAuto::Autocomplete {
+                        run_id,
+                        is_wft_heartbeat,
+                    }) => {
+                        warn!("Autocomplete run response");
+                        RunUpdateOutcome::Autocomplete {
+                            run_id,
+                            is_wft_heartbeat,
+                        }
+                    }
+                    None => {
+                        warn!("No activation in process run update resp");
+                        // If the response indicates there are outstanding local activities,
+                        // we should check again since we might be in the process of completing them
+                        // TODO: This spins too much right now
+                        if resp.current_outstanding_local_act_count > 0 {
+                            run_handle.check_more_activations();
+                            return RunUpdateOutcome::DoNothing;
+                        }
+                        // If a run update came back and had nothing to do, but we're trying to
+                        // evict, just do that now as long as there's no other outstanding work.
+                        if let Some(reason) = run_handle.trying_to_evict.as_ref() {
+                            if run_handle.activation.is_none() && !run_handle.more_pending_work {
+                                warn!("Making evict activation since no other work");
+                                let evict_act = create_evict_activation(
+                                    resp.run_id,
+                                    reason.message.clone(),
+                                    reason.reason,
+                                );
+                                return RunUpdateOutcome::IssueActivation(evict_act);
+                            }
+                        }
+                        RunUpdateOutcome::DoNothing
+                    }
+                };
+                // After each run update, check if it's ready to handle any buffered poll
+                if matches!(
+                    &r,
+                    RunUpdateOutcome::Autocomplete { .. } | RunUpdateOutcome::DoNothing
+                ) && !run_handle.has_any_pending_work(false, true)
+                {
+                    if let Some(bufft) = run_handle.buffered_resp.take() {
+                        self.instantiate_or_update(bufft);
+                    }
                 }
+                r
             }
             RunUpdateResponse::Fail(fail) => {
                 if let Some(r) = self.runs.get_mut(&fail.run_id) {
@@ -646,11 +692,12 @@ impl WFActivationStream {
 
         let start_event_id = work.history.events.first().map(|e| e.event_id);
         debug!(
+            run_id = %run_id,
             task_token = %&work.task_token,
             history_length = %work.history.events.len(),
             start_event_id = ?start_event_id,
+            has_legacy_query = %work.legacy_query.is_some(),
             attempt = %work.attempt,
-            run_id = %run_id,
             "Applying new workflow task from server"
         );
 
@@ -698,29 +745,30 @@ impl WFActivationStream {
                 "Server issued both normal and legacy queries. This should not happen. Please \
                  file a bug report."
             );
-            todo!("Evict here");
-            // return NewWfTaskOutcome::Evict(WorkflowUpdateError {
-            //     source: WFMachinesError::Fatal(
-            //         "Server issued both normal and legacy query".to_string(),
-            //     ),
-            //     run_id: activation.run_id,
-            // });
+            self.request_eviction(RequestEvictMsg {
+                run_id,
+                message: "Server issued both normal and legacy query".to_string(),
+                reason: EvictionReason::Fatal,
+            });
+            return;
         }
         if let Some(lq) = legacy_query_from_poll {
             pending_queries.push(lq);
         }
 
+        let start_time = Instant::now();
         let run_handle = self.runs.instantiate_or_update(
             run_id,
             work.workflow_execution.workflow_id,
             work.workflow_type,
             history_update,
+            start_time,
         );
         run_handle.wft = Some(OutstandingTask {
             info: wft_info,
             hit_cache: !did_miss_cache,
             pending_queries,
-            start_time: Instant::now(),
+            start_time,
             // TODO: Probably shouldn't/can't be expect
             permit: self
                 .wft_semaphore
@@ -788,18 +836,21 @@ impl WFActivationStream {
 
         // If the only command from the activation is a legacy query response, that means we need
         // to respond differently than a typical activation.
-        let ret = if matches!(&commands.as_slice(),
+        if matches!(&commands.as_slice(),
                     &[WFCommand::QueryResponse(qr)] if qr.query_id == LEGACY_QUERY_ID)
         {
             let qr = match commands.remove(0) {
                 WFCommand::QueryResponse(qr) => qr,
                 _ => unreachable!("We just verified this is the only command"),
             };
-            todo!("Tell worker to reply to legacy query")
-            // Some(ServerCommandsWithWorkflowInfo {
-            //     task_token,
-            //     action: ActivationAction::RespondLegacyQuery { result: qr },
-            // })
+            resp_chan
+                .send(ActivationCompleteOutcome::ReportWFTSuccess(
+                    ServerCommandsWithWorkflowInfo {
+                        task_token,
+                        action: ActivationAction::RespondLegacyQuery { result: qr },
+                    },
+                ))
+                .expect("Rcv half of activation reply not dropped");
         } else {
             // First strip out query responses from other commands that actually affect machines
             // Would be prettier with `drain_filter`
@@ -833,6 +884,7 @@ impl WFActivationStream {
                 .expect("TODO: no expect here")
                 .send_completion(RunActivationCompletion {
                     task_token,
+                    start_time,
                     commands,
                     activation_was_eviction,
                     activation_was_only_eviction,
@@ -910,33 +962,6 @@ impl WFActivationStream {
             self.evict_run(run_id);
             just_evicted = true;
         };
-        let more_pending_work = self
-            .runs
-            .get(run_id)
-            .map(|r| r.more_pending_work)
-            .unwrap_or_default();
-
-        // Workflows with no more pending activations (IE: They have completed a WFT) must be
-        // removed from the outstanding tasks map
-        if !more_pending_work && !just_evicted {
-            warn!("No more pending work");
-            if let Some(ot) = self.get_task_mut(run_id) {
-                // Check if there was a pending query which must be fulfilled, and if there is
-                // create a new pending activation for it.
-                if !ot.pending_queries.is_empty() {
-                    for query in ot.pending_queries.drain(..) {
-                        let na = create_query_activation(run_id.to_string(), [query]);
-                        // TODO: Handle pending query
-                        // self.pending_queries.push(na);
-                    }
-                    // self.pending_activations_notifier.notify_waiters();
-                }
-            }
-
-            // If there was a buffered poll response from the server, it is now ready to
-            // be handled.
-            self.make_buffered_poll_ready_if_exists(run_id);
-        }
 
         // If we reported to server, we always want to mark it complete.
         self.complete_wft(run_id, report.reported_wft_to_server);
@@ -948,9 +973,28 @@ impl WFActivationStream {
         }
     }
 
+    fn local_resolution(&mut self, msg: LocalResolutionMsg) {
+        let run_id = msg.run_id;
+        if let Some(rh) = self.runs.get_mut(&run_id) {
+            rh.send_local_resolution(msg.res)
+        } else {
+            todo!("fail run due to local resolution w/ missing run")
+        }
+        // error!(
+        //     "Problem with local resolution on run {}: {:?} -- will evict the \
+        //      workflow",
+        //     run_id, e
+        // );
+        // self.request_wf_eviction(
+        //     run_id,
+        //     "Issue while processing local resolution",
+        //     e.evict_reason(),
+        // );
+    }
+
     /// Fail a workflow task because of some internal error, rather than a reported activation
     /// failure from lang
-    fn auto_fail(&mut self, run_id: String, err: WorkflowUpdateError) {
+    fn auto_fail(&mut self, _run_id: String, _err: WorkflowUpdateError) {
         unimplemented!()
     }
 
@@ -1028,20 +1072,26 @@ impl WFActivationStream {
     /// destroyed, and any outstanding activations invalidated.
     fn evict_run(&mut self, run_id: &str) {
         debug!(run_id=%run_id, "Evicting run");
-        // If we just evicted something and there was a buffered poll response for the workflow,
-        // it is now ready to be produced by the next poll. (Not immediate next, since, ignoring
-        // other workflows, the next poll will be the eviction we just produced. Buffered polls
-        // always are popped after pending activations)
-        let was_buffered = self.make_buffered_poll_ready_if_exists(run_id);
-        if !was_buffered {
-            // If this run didn't have a buffered task, we should check to see if there is a
-            // buffered task for a new run waiting for a cache slot
-            self.check_buffered_polls_tx
-                .send(CheckBufferedPollMsg::NeedsCacheSlot)
-                .expect("Buffered poll check chan not dropped");
-        }
-        // Now it can safely be deleted, it'll get recreated once the un-buffered poll is handled.
+
+        // Remove buffered poll if it exists
+        let maybe_buff = self
+            .runs
+            .get_mut(run_id)
+            .and_then(|rh| rh.buffered_resp.take());
+
+        // Now it can safely be deleted, it'll get recreated once the un-buffered poll is handled if
+        // there was one.
         self.runs.remove(run_id);
+
+        if let Some(buff) = maybe_buff {
+            self.instantiate_or_update(buff);
+        } else {
+            // If there wasn't a buffered poll, there might be one for a different run which needs
+            // a free cache slot, and now there is.
+            if let Some(buff) = self.buffered_polls_need_cache_slot.pop_front() {
+                self.instantiate_or_update(buff);
+            }
+        }
     }
 
     fn complete_wft(
@@ -1063,13 +1113,30 @@ impl WFActivationStream {
             return None;
         }
 
-        let retme = self.runs.get_mut(run_id).and_then(|r| r.wft.take());
-        if let Some(ot) = &retme {
-            if let Some(m) = self.run_metrics(run_id) {
-                m.wf_task_latency(ot.start_time.elapsed());
+        if let Some(rh) = self.runs.get_mut(run_id) {
+            // TODO: Not right I think
+            // Can't mark the WFT complete if there are pending queries, as doing so would destroy
+            // them.
+            if rh
+                .wft
+                .as_ref()
+                .map(|wft| !wft.pending_queries.is_empty())
+                .unwrap_or_default()
+            {
+                return None;
             }
+
+            debug!("Marking WFT completed");
+            let retme = rh.wft.take();
+            if let Some(ot) = &retme {
+                if let Some(m) = self.run_metrics(run_id) {
+                    m.wf_task_latency(ot.start_time.elapsed());
+                }
+            }
+            retme
+        } else {
+            None
         }
-        retme
     }
 
     /// Stores some work if there is any outstanding WFT or activation for the run. If there was
@@ -1083,7 +1150,12 @@ impl WFActivationStream {
             let about_to_issue_evict = run.trying_to_evict.is_some() && !run.last_action_acked;
             let has_wft = run.wft.is_some();
             let has_activation = run.activation.is_some();
-            if has_wft || has_activation || about_to_issue_evict {
+            if has_wft
+                || has_activation
+                || about_to_issue_evict
+                || run.more_pending_work
+                || !run.last_action_acked
+            {
                 debug!(run_id = %run_id, has_wft, has_activation, about_to_issue_evict,
                        "Got new WFT for a run with outstanding work");
                 run.buffered_resp = Some(work);
@@ -1097,29 +1169,13 @@ impl WFActivationStream {
     }
 
     fn shutdown_done(&self) -> bool {
-        if self.shutdown_token.is_cancelled() && !self.any_run_has_pending_work() {
-            info!("Workflow shutdown is done");
-            true
-        } else {
-            false
-        }
-    }
-
-    /// For the provided run, if it has a buffered task, move it into the ready list and notify
-    /// ourselves to check.
-    ///
-    /// Returns true if there was a buffered run
-    fn make_buffered_poll_ready_if_exists(&mut self, run_id: &str) -> bool {
-        if let Some(buf) = self
+        // let no_buffered_poll = self.buffered_polls.is_empty();
+        let all_runs_ready = self
             .runs
-            .get_mut(run_id)
-            .and_then(|r| r.buffered_resp.take())
-        {
-            info!("New wft making buff ready");
-            self.buffered_polls.push_back(buf);
-            self.check_buffered_polls_tx
-                .send(CheckBufferedPollMsg::ForExistingRun)
-                .expect("Buffered poll check chan not dropped");
+            .handles()
+            .all(|r| !r.has_any_pending_work(true, false));
+        if self.shutdown_token.is_cancelled() && /*no_buffered_poll &&*/ all_runs_ready {
+            info!("Workflow shutdown is done");
             true
         } else {
             false
@@ -1166,11 +1222,6 @@ impl WFActivationStream {
         self.runs.can_accept_new() && self.wft_semaphore.sem.available_permits() > 0
     }
 
-    fn any_run_has_pending_work(&self) -> bool {
-        let is_buffered_poll = !self.buffered_polls.is_empty();
-        is_buffered_poll || self.runs.handles().any(|r| r.has_any_pending_work())
-    }
-
     // Useful when debugging
     #[allow(dead_code)]
     fn info_dump(&self, run_id: &str) {
@@ -1195,6 +1246,7 @@ enum ValidatedCompletion {
     },
 }
 
+#[derive(Debug)]
 struct ManagedRunHandle {
     wft: Option<OutstandingTask>,
     activation: Option<OutstandingActivation>,
@@ -1204,6 +1256,7 @@ struct ManagedRunHandle {
     /// to be returned from polling
     buffered_resp: Option<ValidPollWFTQResponse>,
     have_seen_terminal_event: bool,
+    /// Is set true when the machines indicate that there is additional known work to be processed
     more_pending_work: bool,
     /// Is set if an eviction has been requested for this run
     trying_to_evict: Option<RequestEvictMsg>,
@@ -1211,6 +1264,7 @@ struct ManagedRunHandle {
     /// [RunUpdateResponse] for it has been seen.
     last_action_acked: bool,
 
+    // TODO: Also should be joined
     handle: JoinHandle<()>,
     run_actions_tx: UnboundedSender<RunActions>,
     metrics: MetricsContext,
@@ -1219,10 +1273,11 @@ impl ManagedRunHandle {
     fn new(
         wfm: WorkflowManager,
         activations_tx: UnboundedSender<RunUpdateResponse>,
+        local_activity_request_sink: LocalActivityRequestSink,
         metrics: MetricsContext,
     ) -> Self {
         let (run_actions_tx, run_actions_rx) = unbounded_channel();
-        let managed = ManagedRun::new(wfm, activations_tx);
+        let managed = ManagedRun::new(wfm, activations_tx, local_activity_request_sink);
         let handle = tokio::task::spawn(managed.run(run_actions_rx));
         Self {
             wft: None,
@@ -1239,6 +1294,9 @@ impl ManagedRunHandle {
     }
 
     fn incoming_wft(&mut self, wft: NewIncomingWFT) {
+        if self.wft.is_some() {
+            error!("Trying to send a new WFT for a run which already has one!");
+        }
         info!(last_acked=%self.last_action_acked, "Sending incoming wft");
         self.send_run_action(RunActions::NewIncomingWFT(wft));
     }
@@ -1249,6 +1307,11 @@ impl ManagedRunHandle {
             info!(last_acked=%self.last_action_acked, "Sending check more work");
             self.send_run_action(RunActions::CheckMoreWork {
                 want_to_evict: self.trying_to_evict.clone(),
+                has_pending_queries: self
+                    .wft
+                    .as_ref()
+                    .map(|wft| !wft.pending_queries.is_empty())
+                    .unwrap_or_default(),
             });
         }
     }
@@ -1256,21 +1319,30 @@ impl ManagedRunHandle {
         info!(last_acked=%self.last_action_acked, "Sending completion");
         self.send_run_action(RunActions::ActivationCompletion(c));
     }
+    fn send_local_resolution(&mut self, r: LocalResolution) {
+        info!(last_acked=%self.last_action_acked, "Sending local resolution");
+        self.send_run_action(RunActions::LocalResolution(r));
+    }
 
-    fn insert_outstanding_activation(&mut self, act: &WorkflowActivation) {
-        let act_type = if act.is_legacy_query() {
-            OutstandingActivation::LegacyQuery
-        } else {
-            OutstandingActivation::Normal {
-                contains_eviction: act.eviction_index().is_some(),
-                num_jobs: act.jobs.len(),
+    fn insert_outstanding_activation(&mut self, act: &ActivationOrAuto) {
+        let act_type = match &act {
+            ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
+                if act.is_legacy_query() {
+                    OutstandingActivation::LegacyQuery
+                } else {
+                    OutstandingActivation::Normal {
+                        contains_eviction: act.eviction_index().is_some(),
+                        num_jobs: act.jobs.len(),
+                    }
+                }
             }
+            ActivationOrAuto::Autocomplete { .. } => OutstandingActivation::Autocomplete,
         };
         if let Some(old_act) = self.activation {
             // This is a panic because we have screwed up core logic if this is violated. It must be
             // upheld.
             panic!(
-                "Attempted to insert a new outstanding activation {}, but there already was \
+                "Attempted to insert a new outstanding activation {:?}, but there already was \
                  one outstanding: {:?}",
                 act, old_act
             );
@@ -1286,13 +1358,33 @@ impl ManagedRunHandle {
     }
 
     /// Returns true if the managed run has any form of pending work
-    fn has_any_pending_work(&self) -> bool {
+    /// If `ignore_evicts` is true, pending evictions do not count as pending work.
+    fn has_any_pending_work(&self, ignore_evicts: bool, ignore_buffered: bool) -> bool {
+        let evict_work = if ignore_evicts {
+            false
+        } else {
+            self.trying_to_evict.is_some()
+        };
+        let act_work = if ignore_evicts {
+            if let Some(ref act) = self.activation {
+                !act.has_only_eviction()
+            } else {
+                false
+            }
+        } else {
+            self.activation.is_some()
+        };
+        let buffered = if ignore_buffered {
+            false
+        } else {
+            self.buffered_resp.is_some()
+        };
         self.wft.is_some()
-            || self.buffered_resp.is_some()
+            || buffered
             || !self.last_action_acked
             || self.more_pending_work
-            || self.activation.is_some()
-            || self.trying_to_evict.is_some()
+            || act_work
+            || evict_work
     }
 }
 
@@ -1303,17 +1395,23 @@ enum RunActions {
     ActivationCompletion(RunActivationCompletion),
     CheckMoreWork {
         want_to_evict: Option<RequestEvictMsg>,
+        has_pending_queries: bool,
     },
+    LocalResolution(LocalResolution),
+    HeartbeatTimeout,
 }
 #[derive(Debug)]
 struct NewIncomingWFT {
     /// This field is only populated if the machines already exist. Otherwise the machines
     /// are instantiated with the workflow history.
     history_update: Option<HistoryUpdate>,
+    /// Wft start time
+    start_time: Instant,
 }
 #[derive(Debug)]
 struct RunActivationCompletion {
     task_token: TaskToken,
+    start_time: Instant,
     commands: Vec<WFCommand>,
     activation_was_eviction: bool,
     activation_was_only_eviction: bool,
@@ -1333,7 +1431,7 @@ enum RunUpdateResponse {
 #[derive(Debug)]
 struct GoodRunUpdateResponse {
     run_id: String,
-    outgoing_activation: Option<WorkflowActivation>,
+    outgoing_activation: Option<ActivationOrAuto>,
     have_seen_terminal_event: bool,
     /// Is true if there are more jobs that need to be sent to lang
     more_pending_work: bool,
@@ -1473,3 +1571,6 @@ pub struct WorkflowStartedInfo {
     workflow_task_timeout: Option<Duration>,
     workflow_execution_timeout: Option<Duration>,
 }
+
+type LocalActivityRequestSink =
+    Arc<dyn Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution> + Send + Sync>;

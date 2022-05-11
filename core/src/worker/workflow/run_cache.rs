@@ -1,12 +1,13 @@
 use crate::{
     telemetry::metrics::workflow_type,
     worker::workflow::{
-        managed_run::WorkflowManager, HistoryUpdate, ManagedRunHandle, NewIncomingWFT,
-        RunUpdateResponse,
+        managed_run::WorkflowManager, HistoryUpdate, LocalActivityRequestSink, ManagedRunHandle,
+        NewIncomingWFT, RunUpdateResponse,
     },
     MetricsContext,
 };
 use lru::LruCache;
+use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 
 pub(super) struct RunCache {
@@ -15,6 +16,7 @@ pub(super) struct RunCache {
     run_update_tx: UnboundedSender<RunUpdateResponse>,
     /// Run id -> Data
     runs: LruCache<String, ManagedRunHandle>,
+    local_activity_request_sink: LocalActivityRequestSink,
 
     metrics: MetricsContext,
 }
@@ -24,6 +26,7 @@ impl RunCache {
         max_cache_size: usize,
         namespace: String,
         run_update_tx: UnboundedSender<RunUpdateResponse>,
+        local_activity_request_sink: LocalActivityRequestSink,
         metrics: MetricsContext,
     ) -> Self {
         // The cache needs room for at least one run, otherwise we couldn't do anything. In
@@ -38,6 +41,7 @@ impl RunCache {
             namespace,
             run_update_tx,
             runs: LruCache::new(lru_size),
+            local_activity_request_sink,
             metrics,
         }
     }
@@ -49,6 +53,7 @@ impl RunCache {
         workflow_id: String,
         wf_type: String,
         history_update: HistoryUpdate,
+        start_time: Instant,
     ) -> &mut ManagedRunHandle {
         let cur_num_cached_runs = self.runs.len();
 
@@ -61,6 +66,7 @@ impl RunCache {
             run_handle.metrics.sticky_cache_hit();
             run_handle.incoming_wft(NewIncomingWFT {
                 history_update: Some(history_update),
+                start_time,
             });
             self.metrics.cache_size(cur_num_cached_runs as u64);
             return run_handle;
@@ -79,9 +85,15 @@ impl RunCache {
             run_id.clone(),
             metrics.clone(),
         );
-        let mut mrh = ManagedRunHandle::new(wfm, self.run_update_tx.clone(), metrics);
+        let mut mrh = ManagedRunHandle::new(
+            wfm,
+            self.run_update_tx.clone(),
+            self.local_activity_request_sink.clone(),
+            metrics,
+        );
         mrh.incoming_wft(NewIncomingWFT {
             history_update: None,
+            start_time,
         });
         if self.runs.push(run_id.clone(), mrh).is_some() {
             panic!("Overflowed run cache! Cache owner is expected to avoid this!");
@@ -130,6 +142,7 @@ impl RunCache {
         }
         // If we are full, but any run has finished all its pending work, then it's also OK to poll
         // because such a run is acceptable to evict in favor of new work
-        self.handles().any(|r| !r.has_any_pending_work())
+        self.handles()
+            .any(|r| !r.has_any_pending_work(false, false))
     }
 }

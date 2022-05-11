@@ -22,14 +22,14 @@ pub(crate) fn new_wft_poller(
                     let work = match validate_wft(wft) {
                         Ok(w) => w,
                         Err(e) => {
-                            warn!(error=?e, "Server returned an unparseable workflow task");
+                            error!(error=?e, "Server returned an unparseable workflow task");
                             continue;
                         }
                     };
                     return Some((work, (poller, metrics)));
                 }
                 Some(Err(e)) => {
-                    warn!(error=?e, "Error polling for workflow tasks");
+                    warn!(error=?e, "Error while polling for workflow tasks");
                 }
                 None => return None,
             }
@@ -49,4 +49,37 @@ pub(crate) fn validate_wft(
             ),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_help::mock_poller;
+    use futures::{pin_mut, StreamExt};
+
+    #[tokio::test]
+    async fn poll_timeouts_do_not_produce_responses() {
+        let mut mock_poller = mock_poller();
+        mock_poller
+            .expect_poll()
+            .times(1)
+            .returning(|| Some(Ok(PollWorkflowTaskQueueResponse::default())));
+        mock_poller.expect_poll().times(1).returning(|| None);
+        let stream = new_wft_poller(Box::new(mock_poller), Default::default());
+        pin_mut!(stream);
+        assert_eq!(stream.next().await, None);
+    }
+
+    #[tokio::test]
+    async fn poll_errors_do_not_produce_responses() {
+        let mut mock_poller = mock_poller();
+        mock_poller
+            .expect_poll()
+            .times(1)
+            .returning(|| Some(Err(tonic::Status::internal("ahhh"))));
+        mock_poller.expect_poll().times(1).returning(|| None);
+        let stream = new_wft_poller(Box::new(mock_poller), Default::default());
+        pin_mut!(stream);
+        assert_eq!(stream.next().await, None);
+    }
 }

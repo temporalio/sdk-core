@@ -40,16 +40,8 @@ async fn after_shutdown_of_worker_get_shutdown_err() {
             ))
             .await
             .unwrap();
-        // Since non-sticky, one more activation for eviction
-        let res = worker.poll_workflow_activation().await.unwrap();
-        assert_matches!(
-            res.jobs[0].variant,
-            Some(workflow_activation_job::Variant::RemoveFromCache(_))
-        );
-        worker
-            .complete_workflow_activation(WorkflowActivationCompletion::empty(run_id.clone()))
-            .await
-            .unwrap();
+
+        // Shutdown proceeds if the only outstanding activations are evictions
         assert_matches!(
             worker.poll_workflow_activation().await.unwrap_err(),
             PollWfError::ShutDown
@@ -83,9 +75,7 @@ async fn shutdown_worker_can_complete_pending_activation() {
             ))
             .await
             .unwrap();
-        // Since non-sticky, one more activation for eviction
-        worker.poll_workflow_activation().await.unwrap();
-        // Now it's shut down
+        // Shutdown proceeds if the only outstanding activations are evictions
         assert_matches!(
             worker.poll_workflow_activation().await.unwrap_err(),
             PollWfError::ShutDown
@@ -182,16 +172,11 @@ async fn complete_with_task_not_found_during_shutdown() {
         complete_order.borrow_mut().push(3);
     };
     let poll_fut = async {
-        // This should *not* return shutdown, but instead should do nothing until the complete
-        // goes through, at which point it will return the eviction.
-        let res = core.poll_workflow_activation().await.unwrap();
+        // This will return shutdown once the completion goes through
         assert_matches!(
-            res.jobs[0].variant,
-            Some(workflow_activation_job::Variant::RemoveFromCache(_))
+            core.poll_workflow_activation().await.unwrap_err(),
+            PollWfError::ShutDown
         );
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
-            .await
-            .unwrap();
         complete_order.borrow_mut().push(2);
     };
     let complete_fut = async {

@@ -47,6 +47,7 @@ use temporal_sdk_core_protos::{
         activity_result::activity_execution_result,
         activity_task::ActivityTask,
         workflow_activation::{remove_from_cache::EvictionReason, WorkflowActivation},
+        workflow_completion,
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion,
     },
@@ -62,7 +63,7 @@ use tracing_futures::Instrument;
 
 #[cfg(test)]
 use crate::worker::client::WorkerClient;
-use crate::worker::workflow::wft_poller::validate_wft;
+use crate::worker::workflow::{wft_poller::validate_wft, ActivationOrAuto};
 
 /// A worker polls on a certain task queue
 pub struct Worker {
@@ -76,7 +77,7 @@ pub struct Worker {
     /// Manages activity tasks for this worker/task queue
     at_task_mgr: Option<WorkerActivityTasks>,
     /// Manages local activities
-    local_act_mgr: LocalActivityManager,
+    local_act_mgr: Arc<LocalActivityManager>,
     /// Has shutdown been called?
     shutdown_token: CancellationToken,
     /// Will be called at the end of each activation completion
@@ -153,7 +154,6 @@ impl WorkerTrait for Worker {
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.notify_shutdown();
         }
-        // TODO: Start shutdown of workflows
         info!("Initiated shutdown");
     }
 
@@ -250,6 +250,13 @@ impl Worker {
         metrics: MetricsContext,
     ) -> Self {
         let shutdown_token = CancellationToken::new();
+        let local_act_mgr = Arc::new(LocalActivityManager::new(
+            config.max_outstanding_local_activities,
+            config.namespace.clone(),
+            metrics.with_new_attrs([local_activity_worker_type()]),
+        ));
+        let lam_clone = local_act_mgr.clone();
+        let local_act_req_sink = move |requests| lam_clone.enqueue(requests);
         Self {
             wf_client: client.clone(),
             sticky_name: sticky_queue_name,
@@ -258,6 +265,7 @@ impl Worker {
                 config.max_outstanding_workflow_tasks,
                 client.clone(),
                 wft_stream,
+                local_act_req_sink,
                 shutdown_token.child_token(),
                 metrics.clone(),
             ),
@@ -271,11 +279,7 @@ impl Worker {
                     config.default_heartbeat_throttle_interval,
                 )
             }),
-            local_act_mgr: LocalActivityManager::new(
-                config.max_outstanding_local_activities,
-                config.namespace.clone(),
-                metrics.with_new_attrs([local_activity_worker_type()]),
-            ),
+            local_act_mgr,
             config,
             shutdown_token,
             post_activate_hook: None,
@@ -290,6 +294,11 @@ impl Worker {
         // Next we need to wait for all local activities to finish so no more workflow task
         // heartbeats will be generated
         self.local_act_mgr.shutdown_and_wait_all_finished().await;
+        // Wait for workflows to finish
+        self.workflows
+            .shutdown()
+            .await
+            .expect("Workflow processing terminates cleanly");
         // Wait for activities to finish
         if let Some(acts) = self.at_task_mgr.as_ref() {
             acts.wait_all_finished().await;
@@ -420,11 +429,29 @@ impl Worker {
     #[instrument(level = "debug", skip(self), fields(run_id))]
     pub(crate) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
         debug!("Getting next activation");
-        let r = self.workflows.next_workflow_activation().await;
-        if let Ok(ref act) = r {
-            debug!(activation=?act, "Sending activation to lang");
+        loop {
+            let r = self.workflows.next_workflow_activation().await;
+            match r {
+                Ok(
+                    ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act),
+                ) => {
+                    debug!(activation=?act, "Sending activation to lang");
+                    break Ok(act);
+                }
+                Ok(ActivationOrAuto::Autocomplete {
+                    run_id,
+                    is_wft_heartbeat,
+                }) => {
+                    info!("Autocompleting wft");
+                    self.complete_workflow_activation(WorkflowActivationCompletion {
+                        run_id,
+                        status: Some(workflow_completion::Success::from_variants(vec![]).into()),
+                    })
+                    .await?;
+                }
+                Err(e) => break Err(e),
+            }
         }
-        r
     }
 
     #[instrument(level = "debug", skip(self, completion),
@@ -435,6 +462,7 @@ impl Worker {
     ) -> Result<(), CompleteWfError> {
         debug!("Completing wf activation");
         let run_id = completion.run_id.clone();
+        // TODO: This can all be shoved inside workflows too
         let completion_outcome = self.workflows.activation_completed(completion).await;
         let report_outcome = match completion_outcome {
             ActivationCompleteOutcome::ReportWFTSuccess(report) => match report {
@@ -668,9 +696,7 @@ struct WFTReportOutcome {
 mod tests {
     use super::*;
     use crate::{test_help::test_worker_cfg, worker::client::mocks::mock_workflow_client};
-    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
-        PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
-    };
+    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 
     #[tokio::test]
     async fn activity_timeouts_dont_eat_permits() {
@@ -689,24 +715,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workflow_timeouts_dont_eat_permits() {
-        // TODO: Move into workflows test
-        let mut mock_client = mock_workflow_client();
-        mock_client
-            .expect_poll_workflow_task()
-            .returning(|_, _| Ok(PollWorkflowTaskQueueResponse::default()));
-
-        let cfg = test_worker_cfg()
-            .max_outstanding_workflow_tasks(5_usize)
-            .max_cached_workflows(5_usize)
-            .build()
-            .unwrap();
-        let worker = Worker::new_test(cfg, mock_client);
-        // assert_eq!(worker.next_workflow_activation().await.unwrap(), None);
-        assert_eq!(worker.available_wft_permits().await, 5);
-    }
-
-    #[tokio::test]
     async fn activity_errs_dont_eat_permits() {
         let mut mock_client = mock_workflow_client();
         mock_client
@@ -722,27 +730,15 @@ mod tests {
         assert_eq!(worker.at_task_mgr.unwrap().remaining_activity_capacity(), 5);
     }
 
-    #[tokio::test]
-    async fn workflow_errs_dont_eat_permits() {
-        // TODO: Move into workflows test
-        let mut mock_client = mock_workflow_client();
-        mock_client
-            .expect_poll_workflow_task()
-            .returning(|_, _| Err(tonic::Status::internal("ahhh")));
-
-        let cfg = test_worker_cfg()
-            .max_outstanding_workflow_tasks(5_usize)
-            .max_cached_workflows(5_usize)
-            .build()
-            .unwrap();
-        let worker = Worker::new_test(cfg, mock_client);
-        assert!(worker.next_workflow_activation().await.is_err());
-        assert_eq!(worker.available_wft_permits().await, 5);
-    }
-
     #[test]
     fn max_polls_calculated_properly() {
-        let cfg = test_worker_cfg().build().unwrap();
+        let mut wcb = WorkerConfigBuilder::default();
+        let cfg = wcb
+            .namespace("default")
+            .task_queue("whatever")
+            .max_concurrent_wft_polls(5_usize)
+            .build()
+            .unwrap();
         assert_eq!(cfg.max_nonsticky_polls(), 1);
         assert_eq!(cfg.max_sticky_polls(), 4);
     }

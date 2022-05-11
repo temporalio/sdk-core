@@ -17,7 +17,7 @@ use tokio::sync::OwnedSemaphorePermit;
 
 /// What percentage of a WFT timeout we are willing to wait before sending a WFT heartbeat when
 /// necessary.
-const WFT_HEARTBEAT_TIMEOUT_FRACTION: f32 = 0.8;
+pub(crate) const WFT_HEARTBEAT_TIMEOUT_FRACTION: f32 = 0.8;
 
 #[derive(Debug)]
 pub(crate) struct OutstandingTask {
@@ -41,6 +41,8 @@ pub(crate) enum OutstandingActivation {
     },
     /// An activation for a legacy query
     LegacyQuery,
+    /// A fake activation which is never sent to lang, but used internally
+    Autocomplete,
 }
 
 impl OutstandingActivation {
@@ -76,16 +78,18 @@ pub struct WorkflowTaskInfo {
 pub(crate) enum RunUpdateOutcome {
     /// A new activation for the workflow should be issued to lang
     IssueActivation(WorkflowActivation),
-    /// The poll loop should be restarted, there is nothing to do
-    TaskBuffered,
     /// The workflow task should be auto-completed with an empty command list, as it must be replied
-    /// to but there is no meaningful work for lang to do.
-    Autocomplete,
+    /// to but there is no meaningful work for lang to do. For example, we are waiting on a signal
+    /// or we are WFT heartbeating.
+    Autocomplete {
+        run_id: String,
+        is_wft_heartbeat: bool,
+    },
     /// The run instance ran into problems while being applied and we must now evict the workflow,
     /// and possibly fail the workflow task.
     Failure(FailRunUpdateResponse),
-    /// No action should be taken. Possibly we are waiting for local activities to complete
-    LocalActsOutstanding,
+    /// Nothing needs to be done as a result of the update
+    DoNothing,
 }
 
 #[derive(Debug)]

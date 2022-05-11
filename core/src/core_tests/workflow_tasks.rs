@@ -4,8 +4,8 @@ use crate::{
     test_help::{
         build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_worker, poll_and_reply,
-        poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, FakeWfResponses,
-        MockPollCfg, MocksHolder, ResponseType, TEST_Q,
+        poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, ExpectationAmount,
+        FakeWfResponses, MockPollCfg, MocksHolder, ResponseType, TEST_Q,
     },
     worker::{
         client::mocks::mock_workflow_client,
@@ -690,7 +690,7 @@ async fn complete_activation_with_failure(
             response_batches: batches.iter().map(Into::into).collect(),
         }],
         true,
-        Some(1),
+        ExpectationAmount::Specific(1),
     );
     let core = mock_worker(mock_sg);
 
@@ -798,7 +798,7 @@ async fn workflow_failures_only_reported_once() {
         }],
         true,
         // We should only call the server to say we failed twice (once after each success)
-        Some(2),
+        ExpectationAmount::Specific(2),
     );
     let omap = mocks.outstanding_task_map.clone();
     let core = mock_worker(mocks);
@@ -938,7 +938,7 @@ async fn lots_of_workflows() {
             response_batches: vec![1.into(), 2.into()],
         }
     });
-    let mock = build_multihist_mock_sg(hists, false, None);
+    let mock = build_multihist_mock_sg(hists, false, ExpectationAmount::Zero);
     let worker = &mock_worker(mock);
     let completed_count = Arc::new(Semaphore::new(0));
     let killer = async {
@@ -1166,7 +1166,6 @@ async fn buffered_work_drained_on_shutdown() {
     mock.expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
     let mut mock = MocksHolder::from_wft_stream(mock, stream::iter(tasks));
-    // let mut mock = single_hist_mock_sg(wfid, t, tasks, mock, true);
     // Cache on to avoid being super repetitive
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = &mock_worker(mock);
@@ -1209,7 +1208,7 @@ async fn fail_wft_then_recover() {
         [ResponseType::AllHistory, ResponseType::AllHistory],
         mock_workflow_client(),
     );
-    mh.num_expected_fails = Some(1);
+    mh.num_expected_fails = ExpectationAmount::Specific(1);
     mh.expect_fail_wft_matcher =
         Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::NonDeterministicError));
     let mut mock = build_mock_pollers(mh);
@@ -1412,7 +1411,9 @@ async fn failing_wft_doesnt_eat_permit_forever() {
     t.add_workflow_task_scheduled_and_started();
 
     let mock = mock_workflow_client();
-    let mut mock = single_hist_mock_sg("fake_wf_id", t, [1, 1, 1], mock, true);
+    let mut mock = MockPollCfg::from_resp_batches("fake_wf_id", t, [1, 1, 1], mock);
+    mock.num_expected_fails = ExpectationAmount::Specific(1);
+    let mut mock = build_mock_pollers(mock);
     mock.worker_cfg(|cfg| {
         cfg.max_cached_workflows = 2;
         cfg.max_outstanding_workflow_tasks = 2;
@@ -1482,7 +1483,6 @@ async fn cache_miss_will_fetch_history() {
         [ResponseType::ToTaskNum(1), ResponseType::OneTask(2)],
         mock_workflow_client(),
     );
-    mh.num_expected_fails = Some(0);
     mh.mock_client
         .expect_get_workflow_execution_history()
         .times(1)
@@ -1625,13 +1625,7 @@ async fn evict_missing_wf_during_poll_doesnt_eat_permit() {
                 archived: false,
             })
         });
-    let mut mock = single_hist_mock_sg(
-        wfid,
-        t,
-        [ResponseType::OneTask(2), ResponseType::AllHistory],
-        mock,
-        true,
-    );
+    let mut mock = single_hist_mock_sg(wfid, t, [ResponseType::OneTask(2)], mock, true);
     mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 1;
         wc.max_outstanding_workflow_tasks = 1;
@@ -1672,7 +1666,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
         .expect_complete_workflow_task()
         .times(3)
         .returning(|_| Ok(Default::default()));
-    let mut mock_cfg = MockPollCfg::new(tasks, true, None);
+    let mut mock_cfg = MockPollCfg::new(tasks, true, ExpectationAmount::Zero);
     mock_cfg.mock_client = mock_client;
     let mut mock = build_mock_pollers(mock_cfg);
     mock.worker_cfg(|wc| {
