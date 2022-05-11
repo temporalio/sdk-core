@@ -1,6 +1,8 @@
 use log::LevelFilter;
 use std::{net::SocketAddr, str::FromStr};
-use temporal_sdk_core::{TelemetryOptionsBuilder, Url};
+use temporal_sdk_core::{
+    Logger, MetricsExporter, OtelCollectorOptions, TelemetryOptionsBuilder, TraceExporter, Url,
+};
 use temporal_sdk_core_protos::coresdk::bridge;
 
 // Present for try-from only
@@ -11,41 +13,68 @@ impl TryFrom<InitTelemetryRequest> for temporal_sdk_core::TelemetryOptions {
 
     fn try_from(InitTelemetryRequest(req): InitTelemetryRequest) -> Result<Self, Self::Error> {
         let mut telemetry_opts = TelemetryOptionsBuilder::default();
-        if !req.otel_collector_url.is_empty() {
-            telemetry_opts.otel_collector_url(
-                Url::parse(&req.otel_collector_url)
-                    .map_err(|err| format!("invalid OpenTelemetry collector URL: {}", err))?,
-            );
-        }
-        if !req.tracing_filter.is_empty() {
-            telemetry_opts.tracing_filter(req.tracing_filter.clone());
-        }
-        match req.log_forwarding_level() {
-            bridge::LogLevel::Unspecified => {}
-            bridge::LogLevel::Off => {
-                telemetry_opts.log_forwarding_level(LevelFilter::Off);
+        telemetry_opts.tracing_filter(req.tracing_filter.clone());
+        match req.logging {
+            None => {}
+            Some(bridge::init_telemetry_request::Logging::Console(_)) => {
+                telemetry_opts.logging(Logger::Console);
             }
-            bridge::LogLevel::Error => {
-                telemetry_opts.log_forwarding_level(LevelFilter::Error);
-            }
-            bridge::LogLevel::Warn => {
-                telemetry_opts.log_forwarding_level(LevelFilter::Warn);
-            }
-            bridge::LogLevel::Info => {
-                telemetry_opts.log_forwarding_level(LevelFilter::Info);
-            }
-            bridge::LogLevel::Debug => {
-                telemetry_opts.log_forwarding_level(LevelFilter::Debug);
-            }
-            bridge::LogLevel::Trace => {
-                telemetry_opts.log_forwarding_level(LevelFilter::Trace);
+            Some(bridge::init_telemetry_request::Logging::Forward(
+                bridge::init_telemetry_request::ForwardLoggerOptions { level },
+            )) => {
+                if let Some(level) = bridge::LogLevel::from_i32(level) {
+                    let level = match level {
+                        bridge::LogLevel::Unspecified => {
+                            return Err("Must specify log level".to_string())
+                        }
+                        bridge::LogLevel::Off => LevelFilter::Off,
+                        bridge::LogLevel::Error => LevelFilter::Error,
+                        bridge::LogLevel::Warn => LevelFilter::Warn,
+                        bridge::LogLevel::Info => LevelFilter::Info,
+                        bridge::LogLevel::Debug => LevelFilter::Debug,
+                        bridge::LogLevel::Trace => LevelFilter::Trace,
+                    };
+                    telemetry_opts.logging(Logger::Forward(level));
+                } else {
+                    return Err(format!("Unknown LogLevel: {}", level));
+                }
             }
         }
-        if !req.prometheus_export_bind_address.is_empty() {
-            telemetry_opts.prometheus_export_bind_address(
-                SocketAddr::from_str(&req.prometheus_export_bind_address)
-                    .map_err(|err| format!("invalid Prometheus address: {}", err))?,
-            );
+        match req.metrics {
+            None => {}
+            Some(bridge::init_telemetry_request::Metrics::Prometheus(
+                bridge::init_telemetry_request::PrometheusOptions {
+                    export_bind_address,
+                },
+            )) => {
+                telemetry_opts.metrics(MetricsExporter::Prometheus(
+                    SocketAddr::from_str(&export_bind_address)
+                        .map_err(|err| format!("invalid Prometheus address: {}", err))?,
+                ));
+            }
+            Some(bridge::init_telemetry_request::Metrics::OtelMetrics(
+                bridge::init_telemetry_request::OtelCollectorOptions { url, headers },
+            )) => {
+                telemetry_opts.metrics(MetricsExporter::Otel(OtelCollectorOptions {
+                    url: Url::parse(&url).map_err(|err| {
+                        format!("invalid OpenTelemetry collector URL for metrics: {}", err)
+                    })?,
+                    headers,
+                }));
+            }
+        }
+        match req.tracing {
+            None => {}
+            Some(bridge::init_telemetry_request::Tracing::OtelTracing(
+                bridge::init_telemetry_request::OtelCollectorOptions { url, headers },
+            )) => {
+                telemetry_opts.tracing(TraceExporter::Otel(OtelCollectorOptions {
+                    url: Url::parse(&url).map_err(|err| {
+                        format!("invalid OpenTelemetry collector URL for tracing: {}", err)
+                    })?,
+                    headers,
+                }));
+            }
         }
 
         telemetry_opts

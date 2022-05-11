@@ -13,7 +13,6 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         .unwrap();
     telemetry_init(
         &TelemetryOptionsBuilder::default()
-            .totally_disable(true)
             .build()
             .unwrap(),
     )
