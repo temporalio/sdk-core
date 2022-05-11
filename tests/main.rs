@@ -84,7 +84,9 @@ mod integ_tests {
             })
             .build()
             .unwrap();
-        let con = sgo.connect(NAMESPACE.to_string(), None, None).await.unwrap();
+        let con = sgo.connect(NAMESPACE.to_string(), None, None)
+            .await
+            .unwrap();
         con.list_namespaces().await.unwrap();
     }
 }
