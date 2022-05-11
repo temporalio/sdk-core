@@ -25,7 +25,7 @@ use crate::{
 use backoff::{ExponentialBackoff, SystemClock};
 use http::uri::InvalidUri;
 use opentelemetry::metrics::Meter;
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
@@ -249,7 +249,7 @@ impl From<ConfiguredClient<WorkflowServiceClientWithMetrics>> for AnyClient {
 pub struct ConfiguredClient<C> {
     client: C,
     options: ClientOptions,
-    headers: Arc<Mutex<HashMap<String, String>>>,
+    headers: Arc<RwLock<HashMap<String, String>>>,
     /// Capabilities as read from the `get_system_info` RPC call made on client connection
     capabilities: Option<get_system_info_response::Capabilities>,
 }
@@ -257,7 +257,7 @@ pub struct ConfiguredClient<C> {
 impl<C> ConfiguredClient<C> {
     /// Set HTTP request headers overwriting previous headers
     pub fn set_headers(&self, headers: HashMap<String, String>) {
-        let mut guard = self.headers.lock();
+        let mut guard = self.headers.write();
         *guard = headers;
     }
 
@@ -299,7 +299,7 @@ impl ClientOptions {
         &self,
         namespace: impl Into<String>,
         metrics_meter: Option<&Meter>,
-        headers: Option<Arc<Mutex<HashMap<String, String>>>>,
+        headers: Option<Arc<RwLock<HashMap<String, String>>>>,
     ) -> Result<RetryClient<Client>, ClientInitError> {
         let client = self
             .connect_no_namespace(metrics_meter, headers)
@@ -317,7 +317,7 @@ impl ClientOptions {
     pub async fn connect_no_namespace(
         &self,
         metrics_meter: Option<&Meter>,
-        headers: Option<Arc<Mutex<HashMap<String, String>>>>,
+        headers: Option<Arc<RwLock<HashMap<String, String>>>>,
     ) -> Result<RetryClient<ConfiguredClient<WorkflowServiceClientWithMetrics>>, ClientInitError>
     {
         let channel = Channel::from_shared(self.target_url.to_string())?;
@@ -408,7 +408,8 @@ pub struct WorkflowTaskCompletion {
 #[derive(Clone)]
 pub struct ServiceCallInterceptor {
     opts: ClientOptions,
-    headers: Arc<Mutex<HashMap<String, String>>>,
+    /// Only accessed as a reader
+    headers: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl Interceptor for ServiceCallInterceptor {
@@ -430,7 +431,7 @@ impl Interceptor for ServiceCallInterceptor {
                 .parse()
                 .unwrap_or_else(|_| MetadataValue::from_static("")),
         );
-        let headers = &*self.headers.lock();
+        let headers = &*self.headers.read();
         for (k, v) in headers {
             if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), MetadataValue::from_str(v)) {
                 metadata.insert(k, v);
