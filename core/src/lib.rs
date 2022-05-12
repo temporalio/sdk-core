@@ -34,8 +34,8 @@ pub use pollers::{
     TlsConfig, WorkflowClientTrait,
 };
 pub use telemetry::{
-    fetch_global_buffered_logs, telemetry_init, TelemetryOptions, TelemetryOptionsBuilder,
-    Logger, TraceExporter, MetricsExporter, OtelCollectorOptions
+    fetch_global_buffered_logs, telemetry_init, Logger, MetricsExporter, OtelCollectorOptions,
+    TelemetryOptions, TelemetryOptionsBuilder, TraceExporter,
 };
 pub use temporal_sdk_core_api as api;
 pub use temporal_sdk_core_protos as protos;

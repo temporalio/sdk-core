@@ -18,12 +18,12 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::WithExportConfig;
 use parking_lot::{const_mutex, Mutex};
-use std::{collections::VecDeque, net::SocketAddr, time::Duration};
 use std::collections::HashMap;
 use std::convert::TryInto;
+use std::{collections::VecDeque, net::SocketAddr, time::Duration};
 use temporal_sdk_core_api::CoreTelemetry;
 use tonic::metadata::MetadataMap;
-use tracing_subscriber::{layer::SubscriberExt, EnvFilter, filter::ParseError};
+use tracing_subscriber::{filter::ParseError, layer::SubscriberExt, EnvFilter};
 use url::Url;
 
 const TELEM_SERVICE_NAME: &str = "temporal-core-sdk";
@@ -52,17 +52,17 @@ pub struct OtelCollectorOptions {
 /// Control where traces are exported
 #[derive(Debug, Clone)]
 pub enum TraceExporter {
-    /// Export traces to an OpenTelemetry Collector (https://opentelemetry.io/docs/collector/).
+    /// Export traces to an OpenTelemetry Collector <https://opentelemetry.io/docs/collector/>.
     Otel(OtelCollectorOptions),
 }
 
 /// Control where metrics are exported
 #[derive(Debug, Clone)]
 pub enum MetricsExporter {
-    /// Export metrics to an OpenTelemetry Collector (https://opentelemetry.io/docs/collector/).
+    /// Export metrics to an OpenTelemetry Collector <https://opentelemetry.io/docs/collector/>.
     Otel(OtelCollectorOptions),
     /// Expose metrics directly via an embedded http server bound to the provided address.
-    Prometheus(SocketAddr)
+    Prometheus(SocketAddr),
 }
 
 /// Control where logs go
@@ -98,13 +98,11 @@ pub struct TelemetryOptions {
 impl TelemetryOptions {
     /// Construct an [EnvFilter] from given `tracing_filter`.
     pub fn try_get_env_filter(&self) -> Result<EnvFilter, ParseError> {
-        EnvFilter::try_new(
-            if self.tracing_filter.is_empty() {
-                DEFAULT_FILTER
-            } else {
-                &self.tracing_filter
-            }
-        )
+        EnvFilter::try_new(if self.tracing_filter.is_empty() {
+            DEFAULT_FILTER
+        } else {
+            &self.tracing_filter
+        })
     }
 }
 
@@ -186,20 +184,24 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
             if let Some(ref logger) = opts.logging {
                 match logger {
                     Logger::Console => {
-                        let pretty_fmt = tracing_subscriber::fmt::format()
-                            .pretty()
-                            .with_source_location(false);
-                        let reg = tracing_subscriber::registry().with((&opts).try_get_env_filter()?).with(
-                            tracing_subscriber::fmt::layer()
-                                .with_target(false)
-                                .event_format(pretty_fmt),
-                        );
-                        tracing::subscriber::set_global_default(reg)?;
+                        // TODO: this is duplicated below and is quite ugly, remove the duplication
+                        if opts.tracing.is_none() {
+                            let pretty_fmt = tracing_subscriber::fmt::format()
+                                .pretty()
+                                .with_source_location(false);
+                            let reg = tracing_subscriber::registry()
+                                .with((&opts).try_get_env_filter()?)
+                                .with(
+                                    tracing_subscriber::fmt::layer()
+                                        .with_target(false)
+                                        .event_format(pretty_fmt),
+                                );
+                            tracing::subscriber::set_global_default(reg)?;
+                        }
                     }
                     Logger::Forward(filter) => {
                         log::set_max_level(*filter);
-                        globaldat.core_export_logger =
-                            Some(CoreExportLogger::new(*filter));
+                        globaldat.core_export_logger = Some(CoreExportLogger::new(*filter));
                     }
                 };
             };
@@ -223,7 +225,9 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
                                     opentelemetry_otlp::new_exporter()
                                         .tonic()
                                         .with_endpoint(url.to_string())
-                                        .with_metadata(MetadataMap::from_headers(headers.try_into()?)),
+                                        .with_metadata(MetadataMap::from_headers(
+                                            headers.try_into()?,
+                                        )),
                                 )
                                 .build()?;
                             global::set_meter_provider(metrics.provider());
@@ -236,29 +240,48 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
 
             if let Some(ref tracing) = opts.tracing {
                 match tracing {
-                    TraceExporter::Otel(OtelCollectorOptions{ url, headers }) => {
-                            runtime.block_on(async {
-                                let tracer_cfg = Config::default().with_resource(default_resource());
-                                let tracer = opentelemetry_otlp::new_pipeline()
-                                    .tracing()
-                                    .with_exporter(
-                                        opentelemetry_otlp::new_exporter()
-                                            .tonic()
-                                            .with_endpoint(url.to_string())
-                                            .with_metadata(MetadataMap::from_headers(headers.try_into()?)),
-                                    )
-                                    .with_trace_config(tracer_cfg)
-                                    .install_batch(opentelemetry::runtime::Tokio)?;
+                    TraceExporter::Otel(OtelCollectorOptions { url, headers }) => {
+                        runtime.block_on(async {
+                            let tracer_cfg = Config::default().with_resource(default_resource());
+                            let tracer = opentelemetry_otlp::new_pipeline()
+                                .tracing()
+                                .with_exporter(
+                                    opentelemetry_otlp::new_exporter()
+                                        .tonic()
+                                        .with_endpoint(url.to_string())
+                                        .with_metadata(MetadataMap::from_headers(
+                                            headers.try_into()?,
+                                        )),
+                                )
+                                .with_trace_config(tracer_cfg)
+                                .install_batch(opentelemetry::runtime::Tokio)?;
 
-                                let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+                            let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
+                            // TODO: remove all of this duplicate code
+                            if let Some(Logger::Console) = opts.logging {
+                                let pretty_fmt = tracing_subscriber::fmt::format()
+                                    .pretty()
+                                    .with_source_location(false);
+                                let reg = tracing_subscriber::registry()
+                                    .with(opentelemetry)
+                                    .with(opts.try_get_env_filter()?)
+                                    .with(
+                                        tracing_subscriber::fmt::layer()
+                                            .with_target(false)
+                                            .event_format(pretty_fmt),
+                                    );
+                                // Can't use try_init here as it will blow away our custom logger if we do
+                                tracing::subscriber::set_global_default(reg)?;
+                            } else {
                                 let reg = tracing_subscriber::registry()
                                     .with(opentelemetry)
                                     .with(opts.try_get_env_filter()?);
                                 // Can't use try_init here as it will blow away our custom logger if we do
                                 tracing::subscriber::set_global_default(reg)?;
-                                Result::<(), anyhow::Error>::Ok(())
-                            })?;
+                            }
+                            Result::<(), anyhow::Error>::Ok(())
+                        })?;
                     }
                 };
             };
@@ -305,7 +328,10 @@ pub(crate) fn test_telem_collector() {
     telemetry_init(&TelemetryOptions {
         tracing_filter: "temporal_sdk_core=DEBUG,temporal_sdk=DEBUG".to_string(),
         logging: Some(Logger::Console),
-        tracing: Some(TraceExporter::Otel(OtelCollectorOptions{ url: "grpc://localhost:4317".parse().unwrap(), headers: Default::default() })),
+        tracing: Some(TraceExporter::Otel(OtelCollectorOptions {
+            url: "grpc://localhost:4317".parse().unwrap(),
+            headers: Default::default(),
+        })),
         metrics: None,
     })
     .unwrap();

@@ -28,9 +28,9 @@ use temporal_client::{
 };
 use temporal_sdk::{interceptors::WorkerInterceptor, IntoActivityFunc, Worker, WorkflowFunction};
 use temporal_sdk_core::{
-    init_replay_worker, init_worker, telemetry_init, ClientOptions, ClientOptionsBuilder,
-    TelemetryOptions, TelemetryOptionsBuilder, WorkerConfig, WorkerConfigBuilder,
-    MetricsExporter,TraceExporter, OtelCollectorOptions, Logger
+    init_replay_worker, init_worker, telemetry_init, ClientOptions, ClientOptionsBuilder, Logger,
+    MetricsExporter, OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder,
+    TraceExporter, WorkerConfig, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::Worker as CoreWorker;
 use temporal_sdk_core_protos::{
@@ -439,7 +439,10 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
         .ok()
         .map(|x| x.parse::<Url>().unwrap())
     {
-        ob.tracing(TraceExporter::Otel(OtelCollectorOptions{ url, headers: Default::default() }));
+        ob.tracing(TraceExporter::Otel(OtelCollectorOptions {
+            url,
+            headers: Default::default(),
+        }));
     }
     if let Some(addr) = env::var(PROM_ENABLE_ENV_VAR)
         .ok()
