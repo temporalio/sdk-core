@@ -57,6 +57,7 @@ where
         poll_fn: impl Fn() -> FT + Send + Sync + 'static,
         max_pollers: usize,
         buffer_size: usize,
+        shutdown: CancellationToken,
     ) -> Self
     where
         FT: Future<Output = pollers::Result<T>> + Send,
@@ -64,7 +65,6 @@ where
         let (tx, rx) = channel(buffer_size);
         let polls_requested = Arc::new(Semaphore::new(0));
         let active_pollers = Arc::new(AtomicUsize::new(0));
-        let shutdown = CancellationToken::new();
         let join_handles = FuturesUnordered::new();
         let pf = Arc::new(poll_fn);
         for _ in 0..max_pollers {
@@ -204,6 +204,7 @@ pub(crate) fn new_workflow_task_buffer(
     is_sticky: bool,
     concurrent_pollers: usize,
     buffer_size: usize,
+    shutdown: CancellationToken,
 ) -> PollWorkflowTaskBuffer {
     LongPollBuffer::new(
         move || {
@@ -213,6 +214,7 @@ pub(crate) fn new_workflow_task_buffer(
         },
         concurrent_pollers,
         buffer_size,
+        shutdown,
     )
 }
 
@@ -223,6 +225,7 @@ pub(crate) fn new_activity_task_buffer(
     concurrent_pollers: usize,
     buffer_size: usize,
     max_tps: Option<f64>,
+    shutdown: CancellationToken,
 ) -> PollActivityTaskBuffer {
     LongPollBuffer::new(
         move || {
@@ -232,6 +235,7 @@ pub(crate) fn new_activity_task_buffer(
         },
         concurrent_pollers,
         buffer_size,
+        shutdown,
     )
 }
 
@@ -263,6 +267,7 @@ mod tests {
             false,
             1,
             1,
+            CancellationToken::new(),
         );
 
         // Poll a bunch of times, "interrupting" it each time, we should only actually have polled

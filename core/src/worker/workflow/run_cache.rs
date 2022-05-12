@@ -118,6 +118,10 @@ impl RunCache {
     pub fn current_lru_run(&self) -> Option<&str> {
         self.runs.peek_lru().map(|(run_id, _)| run_id.as_str())
     }
+    /// Returns an iterator yielding cached runs in LRU order
+    pub fn runs_lru_order(&self) -> impl Iterator<Item = (&str, &ManagedRunHandle)> {
+        self.runs.iter().rev().map(|(k, v)| (k.as_str(), v))
+    }
     pub fn peek(&self, k: &str) -> Option<&ManagedRunHandle> {
         self.runs.peek(k)
     }

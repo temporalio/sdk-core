@@ -26,6 +26,7 @@ pub(crate) fn new_wft_poller(
                             continue;
                         }
                     };
+                    metrics.wf_tq_poll_ok();
                     return Some((work, (poller, metrics)));
                 }
                 Some(Err(e)) => {

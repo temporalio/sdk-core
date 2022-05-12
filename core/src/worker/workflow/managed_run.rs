@@ -36,12 +36,13 @@ use tokio::{
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::worker::workflow::{
-    workflow_tasks::WFT_HEARTBEAT_TIMEOUT_FRACTION, ActivationOrAuto, FailRunUpdateResponse,
-    GoodRunUpdateResponse, LocalActivityRequestSink,
+    workflow_tasks::WFT_HEARTBEAT_TIMEOUT_FRACTION, ActivationCompleteResult, ActivationOrAuto,
+    FailRunUpdateResponse, GoodRunUpdateResponse, LocalActivityRequestSink,
 };
+use temporal_sdk_core_protos::TaskToken;
+
 #[cfg(test)]
 pub(crate) use managed_wf_test::ManagedWFFunc;
-use temporal_sdk_core_protos::TaskToken;
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 
@@ -58,14 +59,13 @@ pub(super) struct ManagedRun {
 /// If an activation completion needed to wait on LA completions (or heartbeat timeout) we use
 /// this struct to store the data we need to finish the completion once that has happened
 struct WaitingOnLAs {
-    task_token: TaskToken,
     wft_timeout: Duration,
     /// If set, we are waiting for LAs to complete as part of a just-finished workflow activation.
     /// If unset, we already had a heartbeat timeout and got a new WFT without any new work while
     /// there are still incomplete LAs.
     completion_dat: Option<(
         CompletionDataForWFT,
-        oneshot::Sender<ActivationCompleteOutcome>,
+        oneshot::Sender<ActivationCompleteResult>,
     )>,
     hb_chan: UnboundedSender<()>,
     heartbeat_timeout_task: JoinHandle<()>,
@@ -235,11 +235,9 @@ impl ManagedRun {
             self.wfm.push_commands(completion.commands).await?;
             // Don't bother applying the next task if we're evicting at the end of
             // this activation
-            let are_pending = if !completion.activation_was_eviction {
-                self.wfm.apply_next_task_if_ready().await?
-            } else {
-                false
-            };
+            if !completion.activation_was_eviction {
+                self.wfm.apply_next_task_if_ready().await?;
+            }
             let new_local_acts = self.wfm.drain_queued_local_activities();
 
             let immediate_resolutions = (self.local_activity_request_sink)(new_local_acts);
@@ -257,10 +255,6 @@ impl ManagedRun {
             if self.wfm.machines.outstanding_local_activity_count() <= 0 {
                 Ok((None, data, self))
             } else {
-                if are_pending {
-                    todo!("There are pending jobs and outstanding LAs, this doesn't make sense?");
-                }
-
                 let wft_timeout: Duration = self
                     .wfm
                     .machines
@@ -289,7 +283,6 @@ impl ManagedRun {
             }
             Ok((Some((chan, start_t, wft_timeout)), data, me)) => {
                 me.waiting_on_la = Some(WaitingOnLAs {
-                    task_token: data.task_token.clone(),
                     wft_timeout,
                     completion_dat: Some((data, resp_chan)),
                     hb_chan: chan.clone(),
@@ -344,7 +337,7 @@ impl ManagedRun {
 
     fn finish_completion(
         &mut self,
-        resp_chan: oneshot::Sender<ActivationCompleteOutcome>,
+        resp_chan: oneshot::Sender<ActivationCompleteResult>,
         data: CompletionDataForWFT,
         due_to_heartbeat_timeout: bool,
     ) {
@@ -364,7 +357,6 @@ impl ManagedRun {
         let to_be_sent = ServerCommandsWithWorkflowInfo {
             task_token: data.task_token,
             action: ActivationAction::WftComplete {
-                // TODO: Don't force if also sending complete execution cmd
                 force_new_wft: due_to_heartbeat_timeout,
                 commands: outgoing_cmds.commands,
                 query_responses,
@@ -381,7 +373,10 @@ impl ManagedRun {
             ActivationCompleteOutcome::DoNothing
         };
         resp_chan
-            .send(outcome)
+            .send(ActivationCompleteResult {
+                most_recently_processed_event: self.wfm.machines.last_processed_event as usize,
+                outcome,
+            })
             .expect("Activation response channel not dropped");
     }
 
@@ -427,10 +422,8 @@ impl ManagedRun {
                 outgoing_activation,
                 have_seen_terminal_event: self.wfm.machines.have_seen_terminal_event,
                 more_pending_work: self.wfm.machines.has_pending_jobs(),
-                current_outstanding_local_act_count: self
-                    .wfm
-                    .machines
-                    .outstanding_local_activity_count(),
+                most_recently_processed_event_number: self.wfm.machines.last_processed_event
+                    as usize,
                 in_response_to_wft: from_wft,
             }))
             .expect("Machine can send update");
@@ -454,7 +447,7 @@ fn start_heartbeat_timeout_task(
 #[derive(Debug)]
 struct RunUpdateErr {
     source: WFMachinesError,
-    complete_resp_chan: Option<oneshot::Sender<ActivationCompleteOutcome>>,
+    complete_resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
 }
 
 impl From<WFMachinesError> for RunUpdateErr {

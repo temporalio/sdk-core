@@ -8,9 +8,9 @@ pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     NewLocalAct,
 };
-pub(crate) use workflow::{wft_poller::new_wft_poller, LEGACY_QUERY_ID};
 #[cfg(test)]
-pub(crate) use workflow::{ManagedWFFunc, WorkflowCachingPolicy};
+pub(crate) use workflow::ManagedWFFunc;
+pub(crate) use workflow::{wft_poller::new_wft_poller, LEGACY_QUERY_ID};
 
 use crate::{
     errors::CompleteWfError,
@@ -81,9 +81,7 @@ pub struct Worker {
     /// Has shutdown been called?
     shutdown_token: CancellationToken,
     /// Will be called at the end of each activation completion
-    post_activate_hook: Option<Box<dyn Fn(&Self) + Send + Sync>>,
-
-    metrics: MetricsContext,
+    post_activate_hook: Option<Box<dyn Fn(&Self, &str, usize) + Send + Sync>>,
 }
 
 #[async_trait::async_trait]
@@ -177,6 +175,7 @@ impl Worker {
         info!(task_queue = %config.task_queue, "Initializing worker");
         metrics.worker_registered();
 
+        let shutdown_token = CancellationToken::new();
         let max_nonsticky_polls = if sticky_queue_name.is_some() {
             config.max_nonsticky_polls()
         } else {
@@ -190,6 +189,7 @@ impl Worker {
             false,
             max_nonsticky_polls,
             max_nonsticky_polls * 2,
+            shutdown_token.child_token(),
         );
         wf_task_poll_buffer.set_num_pollers_handler(move |np| wft_metrics.record_num_pollers(np));
         let sticky_queue_poller = sticky_queue_name.as_ref().map(|sqn| {
@@ -200,6 +200,7 @@ impl Worker {
                 true,
                 max_sticky_polls,
                 max_sticky_polls * 2,
+                shutdown_token.child_token(),
             );
             sp.set_num_pollers_handler(move |np| sticky_metrics.record_num_pollers(np));
             sp
@@ -213,6 +214,7 @@ impl Worker {
                 config.max_concurrent_at_polls,
                 config.max_concurrent_at_polls * 2,
                 config.max_task_queue_activities_per_second,
+                shutdown_token.child_token(),
             );
             let act_metrics = metrics.with_new_attrs([activity_poller()]);
             ap.set_num_pollers_handler(move |np| act_metrics.record_num_pollers(np));
@@ -233,6 +235,7 @@ impl Worker {
             wft_stream,
             act_poll_buffer,
             metrics,
+            shutdown_token,
         )
     }
 
@@ -248,8 +251,8 @@ impl Worker {
         wft_stream: impl Stream<Item = ValidPollWFTQResponse> + Send + 'static,
         act_poller: Option<BoxedActPoller>,
         metrics: MetricsContext,
+        shutdown_token: CancellationToken,
     ) -> Self {
-        let shutdown_token = CancellationToken::new();
         let local_act_mgr = Arc::new(LocalActivityManager::new(
             config.max_outstanding_local_activities,
             config.namespace.clone(),
@@ -274,7 +277,7 @@ impl Worker {
                     config.max_outstanding_activities,
                     ap,
                     client.clone(),
-                    metrics.clone(),
+                    metrics,
                     config.max_heartbeat_throttle_interval,
                     config.default_heartbeat_throttle_interval,
                 )
@@ -283,13 +286,12 @@ impl Worker {
             config,
             shutdown_token,
             post_activate_hook: None,
-            metrics,
         }
     }
 
     /// Will shutdown the worker. Does not resolve until all outstanding workflow tasks have been
     /// completed
-    pub(crate) async fn shutdown(&self) {
+    async fn shutdown(&self) {
         self.initiate_shutdown();
         // Next we need to wait for all local activities to finish so no more workflow task
         // heartbeats will be generated
@@ -306,8 +308,7 @@ impl Worker {
     }
 
     /// Finish shutting down by consuming the background pollers and freeing all resources
-    pub(crate) async fn finalize_shutdown(self) {
-        // TODO: Wait on shutdown of workflows
+    async fn finalize_shutdown(self) {
         if let Some(b) = self.at_task_mgr {
             b.shutdown().await;
         }
@@ -323,6 +324,7 @@ impl Worker {
     }
 
     /// Returns number of currently outstanding workflow tasks
+    #[cfg(test)]
     pub(crate) async fn outstanding_workflow_tasks(&self) -> usize {
         self.workflows
             .get_state_info()
@@ -462,9 +464,9 @@ impl Worker {
     ) -> Result<(), CompleteWfError> {
         debug!("Completing wf activation");
         let run_id = completion.run_id.clone();
-        // TODO: This can all be shoved inside workflows too
+        // TODO: This can mostly be shoved inside workflows too
         let completion_outcome = self.workflows.activation_completed(completion).await;
-        let report_outcome = match completion_outcome {
+        let report_outcome = match completion_outcome.outcome {
             ActivationCompleteOutcome::ReportWFTSuccess(report) => match report {
                 ServerCommandsWithWorkflowInfo {
                     task_token,
@@ -563,14 +565,18 @@ impl Worker {
             },
         };
 
+        if let Some(h) = &self.post_activate_hook {
+            h(
+                self,
+                &run_id,
+                completion_outcome.most_recently_processed_event,
+            );
+        }
+
         self.workflows.post_activation(PostActivationMsg {
             run_id,
             reported_wft_to_server: report_outcome.reported_to_server,
         });
-
-        if let Some(h) = &self.post_activate_hook {
-            h(self);
-        }
 
         Ok(())
     }
@@ -588,24 +594,18 @@ impl Worker {
     /// Sets a function to be called at the end of each activation completion
     pub(crate) fn set_post_activate_hook(
         &mut self,
-        callback: impl Fn(&Self) + Send + Sync + 'static,
+        callback: impl Fn(&Self, &str, usize) + Send + Sync + 'static,
     ) {
         self.post_activate_hook = Some(Box::new(callback))
     }
 
     /// Used for replay workers - causes the worker to shutdown when the given run reaches the
     /// given event number
-    pub(crate) fn set_shutdown_on_run_reaches_event(&mut self, _run_id: String, _last_event: i64) {
-        self.set_post_activate_hook(move |_worker| {
-            unimplemented!()
-            // if worker
-            //     .wft_manager
-            //     .most_recently_processed_event(&run_id)
-            //     .unwrap_or_default()
-            //     >= last_event
-            // {
-            //     worker.initiate_shutdown();
-            // }
+    pub(crate) fn set_shutdown_on_run_reaches_event(&mut self, run_id: String, last_event: i64) {
+        self.set_post_activate_hook(move |worker, activated_run_id, last_processed_event| {
+            if activated_run_id == run_id && last_processed_event >= last_event as usize {
+                worker.initiate_shutdown();
+            }
         });
     }
 

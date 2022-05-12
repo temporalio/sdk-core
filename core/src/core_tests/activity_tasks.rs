@@ -3,11 +3,9 @@ use crate::{
     test_help::{
         build_fake_worker, canned_histories, gen_assert_and_reply, mock_manual_poller, mock_poller,
         mock_worker, poll_and_reply, test_worker_cfg, MockWorkerInputs, MocksHolder,
+        WorkflowCachingPolicy,
     },
-    worker::{
-        client::mocks::{mock_manual_workflow_client, mock_workflow_client},
-        WorkflowCachingPolicy::NonSticky,
-    },
+    worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     ActivityHeartbeat, Worker, WorkerConfigBuilder,
 };
 use futures::FutureExt;
@@ -431,7 +429,7 @@ async fn activity_timeout_no_double_resolve() {
 
     poll_and_reply(
         &core,
-        NonSticky,
+        WorkflowCachingPolicy::NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),

@@ -49,7 +49,6 @@ impl WorkflowFetcher for WFFutureDriver {
     }
 }
 
-// TODO: Probably move into submodule
 #[must_use]
 pub struct ManagedWFFunc {
     mgr: WorkflowManager,

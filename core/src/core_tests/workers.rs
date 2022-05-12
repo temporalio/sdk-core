@@ -11,7 +11,6 @@ use std::{cell::RefCell, time::Duration};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
-        workflow_activation::workflow_activation_job,
         workflow_commands::{workflow_command, CompleteWorkflowExecution, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
     },

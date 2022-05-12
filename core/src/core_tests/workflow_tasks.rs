@@ -5,12 +5,11 @@ use crate::{
         build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_worker, poll_and_reply,
         poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, ExpectationAmount,
-        FakeWfResponses, MockPollCfg, MocksHolder, ResponseType, TEST_Q,
-    },
-    worker::{
-        client::mocks::mock_workflow_client,
+        FakeWfResponses, MockPollCfg, MocksHolder, ResponseType,
         WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
+        TEST_Q,
     },
+    worker::client::mocks::mock_workflow_client,
     Worker,
 };
 use futures::stream;

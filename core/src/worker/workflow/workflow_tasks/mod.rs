@@ -1,12 +1,10 @@
 //! Management of workflow tasks
 
-use crate::worker::workflow::{machines::WFMachinesError, FailRunUpdateResponse};
+use crate::worker::workflow::FailRunUpdateResponse;
 use std::{fmt::Debug, time::Instant};
 use temporal_sdk_core_protos::{
     coresdk::{
-        workflow_activation::{
-            remove_from_cache::EvictionReason, QueryWorkflow, WorkflowActivation,
-        },
+        workflow_activation::{QueryWorkflow, WorkflowActivation},
         workflow_commands::QueryResult,
         workflow_completion::Failure,
     },
@@ -26,8 +24,9 @@ pub(crate) struct OutstandingTask {
     /// Set if the outstanding task has quer(ies) which must be fulfilled upon finishing replay
     pub pending_queries: Vec<QueryWorkflow>,
     pub start_time: Instant,
-    /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT
-    pub permit: OwnedSemaphorePermit,
+    /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT, and makes
+    /// sure the permit is automatically freed when we delete the task.
+    pub _permit: OwnedSemaphorePermit,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -122,34 +121,4 @@ pub(crate) enum EvictionRequestResult {
     EvictionRequested(Option<u32>),
     NotFound,
     EvictionAlreadyRequested(Option<u32>),
-}
-
-#[derive(Debug)]
-pub(crate) struct WorkflowUpdateError {
-    /// Underlying workflow error
-    pub source: WFMachinesError,
-    /// The run id of the erring workflow
-    pub run_id: String,
-}
-
-impl WorkflowUpdateError {
-    pub fn evict_reason(&self) -> EvictionReason {
-        self.source.evict_reason()
-    }
-}
-
-impl From<WorkflowMissingError> for WorkflowUpdateError {
-    fn from(wme: WorkflowMissingError) -> Self {
-        Self {
-            source: WFMachinesError::Fatal("Workflow machines missing".to_string()),
-            run_id: wme.run_id,
-        }
-    }
-}
-
-/// The workflow machines were expected to be in the cache but were not
-#[derive(Debug)]
-pub(crate) struct WorkflowMissingError {
-    /// The run id of the erring workflow
-    pub run_id: String,
 }

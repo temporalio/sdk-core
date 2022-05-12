@@ -7,7 +7,7 @@ use crate::{
     sticky_q_name_for_worker,
     worker::{
         client::{mocks::mock_workflow_client, MockWorkerClient, WorkerClient},
-        new_wft_poller, WorkflowCachingPolicy,
+        new_wft_poller,
     },
     TaskToken, Worker, WorkerClientBag, WorkerConfig, WorkerConfigBuilder,
 };
@@ -17,7 +17,6 @@ use mockall::TimesRange;
 use parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
-    ops::RangeFull,
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -46,6 +45,7 @@ use temporal_sdk_core_protos::{
 use temporal_sdk_core_test_utils::TestWorker;
 use tokio::sync::{mpsc::unbounded_channel, Notify};
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_util::sync::CancellationToken;
 
 pub const TEST_Q: &str = "q";
 pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";
@@ -127,6 +127,7 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
         mocks.inputs.wft_stream,
         mocks.inputs.act_poller,
         Default::default(),
+        CancellationToken::new(),
     )
 }
 
@@ -343,14 +344,12 @@ pub(crate) struct MockPollCfg {
 pub(crate) enum ExpectationAmount {
     Zero,
     Specific(usize),
-    Unlimited,
 }
 impl From<ExpectationAmount> for TimesRange {
     fn from(ea: ExpectationAmount) -> Self {
         match ea {
             ExpectationAmount::Zero => 0.into(),
             ExpectationAmount::Specific(n) => n.into(),
-            ExpectationAmount::Unlimited => RangeFull.into(),
         }
     }
 }
@@ -620,6 +619,19 @@ type AsserterWithReply<'a> = (
     workflow_activation_completion::Status,
 );
 
+/// Determines when workflows are kept in the cache or evicted for [poll_and_reply] type tests
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum WorkflowCachingPolicy {
+    /// Workflows are evicted after each workflow task completion. Note that this is *not* after
+    /// each workflow activation - there are often multiple activations per workflow task.
+    NonSticky,
+
+    /// Not a real mode, but good for imitating crashes. Evict workflows after *every* reply,
+    /// even if there are pending activations
+    #[cfg(test)]
+    AfterEveryReply,
+}
+
 /// This function accepts a list of asserts and replies to workflow activations to run against the
 /// provided instance of fake core.
 ///
@@ -712,7 +724,6 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
             }
 
             match eviction_mode {
-                WorkflowCachingPolicy::Sticky { .. } => unimplemented!(),
                 WorkflowCachingPolicy::NonSticky => (),
                 WorkflowCachingPolicy::AfterEveryReply => {
                     if evictions < expected_evictions {
