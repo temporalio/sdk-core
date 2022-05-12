@@ -8,7 +8,6 @@ pub mod canned_histories;
 
 use crate::stream::TryStreamExt;
 use futures::{stream, stream::FuturesUnordered, StreamExt};
-use log::LevelFilter;
 use parking_lot::Mutex;
 use prost::Message;
 use rand::{distributions::Standard, Rng};
@@ -29,8 +28,9 @@ use temporal_client::{
 };
 use temporal_sdk::{interceptors::WorkerInterceptor, IntoActivityFunc, Worker, WorkflowFunction};
 use temporal_sdk_core::{
-    init_replay_worker, init_worker, telemetry_init, ClientOptions, ClientOptionsBuilder,
-    TelemetryOptions, TelemetryOptionsBuilder, WorkerConfig, WorkerConfigBuilder,
+    init_replay_worker, init_worker, telemetry_init, ClientOptions, ClientOptionsBuilder, Logger,
+    MetricsExporter, OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder,
+    TraceExporter, WorkerConfig, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::Worker as CoreWorker;
 use temporal_sdk_core_protos::{
@@ -439,16 +439,19 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
         .ok()
         .map(|x| x.parse::<Url>().unwrap())
     {
-        ob.otel_collector_url(url);
+        ob.tracing(TraceExporter::Otel(OtelCollectorOptions {
+            url,
+            headers: Default::default(),
+        }));
     }
     if let Some(addr) = env::var(PROM_ENABLE_ENV_VAR)
         .ok()
         .map(|x| SocketAddr::new([127, 0, 0, 1].into(), x.parse().unwrap()))
     {
-        ob.prometheus_export_bind_address(addr);
+        ob.metrics(MetricsExporter::Prometheus(addr));
     }
     ob.tracing_filter(env::var("RUST_LOG").unwrap_or_else(|_| "temporal_sdk_core=INFO".to_string()))
-        .log_forwarding_level(LevelFilter::Off)
+        .logging(Logger::Console)
         .build()
         .unwrap()
 }

@@ -11,13 +11,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         .enable_time()
         .build()
         .unwrap();
-    telemetry_init(
-        &TelemetryOptionsBuilder::default()
-            .totally_disable(true)
-            .build()
-            .unwrap(),
-    )
-    .unwrap();
+    telemetry_init(&TelemetryOptionsBuilder::default().build().unwrap()).unwrap();
     let _g = tokio_runtime.enter();
 
     let num_timers = 10;
