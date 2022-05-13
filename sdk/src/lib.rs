@@ -16,7 +16,7 @@
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let server_options = sdk_client_options(Url::from_str("http://localhost:7233")?).build()?;
-//!     let client = server_options.connect("my_namespace", None).await?;
+//!     let client = server_options.connect("my_namespace", None, None).await?;
 //!     let worker_config = WorkerConfigBuilder::default().build()?;
 //!     let core_worker = init_worker(worker_config, client);
 //!
