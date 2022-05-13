@@ -61,6 +61,7 @@ pub fn test_worker_cfg() -> WorkerConfigBuilder {
 
 /// When constructing responses for mocks, indicates how a given response should be built
 #[derive(derive_more::From, Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // Test only code, whatever.
 pub enum ResponseType {
     ToTaskNum(usize),
     /// Returns just the history after the WFT completed of the provided task number - 1, through to
@@ -432,8 +433,6 @@ impl Stream for EnsuresWorkDoneWFTStream {
 impl Drop for EnsuresWorkDoneWFTStream {
     fn drop(&mut self) {
         if !self.all_work_was_completed.load(Ordering::Acquire) && !std::thread::panicking() {
-            // TODO: This still somehow causes aborts, but I need it. Ideally fix by joining
-            //   mock task somewhere. May need to just do a full wrapper.
             panic!("Not all workflow tasks were taken from mock!");
         }
     }
@@ -496,7 +495,6 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
     let outstanding_wakeup = outstanding.waker.clone();
     let (wft_tx, wft_rx) = unbounded_channel();
     tokio::task::spawn(async move {
-        let num_wfids = task_q_resps.len();
         loop {
             let mut resp = None;
             let mut resp_iter = task_q_resps.iter_mut();
@@ -539,17 +537,6 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
                     _ = tokio::time::sleep(Duration::from_secs(60)) => {}
                 };
             }
-            // if cfg.using_rust_sdk {
-            //     // Simulate poll timeout, or just send an empty response and then try again
-            //     // if we're told a new one might be ready.
-            //     tokio::select! {
-            //         _ = outstanding_wakeup.notified() => {}
-            //         _ = tokio::time::sleep(Duration::from_secs(60)) => {}
-            //     };
-            //     Some(Ok(Default::default()))
-            // } else {
-            //     Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG)))
-            // }
         }
     });
     let mock_worker = MockWorkerInputs::new(

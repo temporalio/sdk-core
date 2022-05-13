@@ -102,9 +102,10 @@ impl RunCache {
         // This is safe, we just inserted.
         self.runs.get_mut(&run_id).unwrap()
     }
-    pub fn remove(&mut self, k: &str) {
-        self.runs.pop(k);
+    pub fn remove(&mut self, k: &str) -> Option<ManagedRunHandle> {
+        let r = self.runs.pop(k);
         self.metrics.cache_size(self.len() as u64);
+        r
     }
 
     pub fn get_mut(&mut self, k: &str) -> Option<&mut ManagedRunHandle> {

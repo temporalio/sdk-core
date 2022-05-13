@@ -81,6 +81,7 @@ pub struct Worker {
     /// Has shutdown been called?
     shutdown_token: CancellationToken,
     /// Will be called at the end of each activation completion
+    #[allow(clippy::type_complexity)] // Sorry clippy, there's no simple way to re-use here.
     post_activate_hook: Option<Box<dyn Fn(&Self, &str, usize) + Send + Sync>>,
 }
 
@@ -430,21 +431,16 @@ impl Worker {
 
     #[instrument(level = "debug", skip(self), fields(run_id))]
     pub(crate) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
-        debug!("Getting next activation");
         loop {
             let r = self.workflows.next_workflow_activation().await;
             match r {
                 Ok(
                     ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act),
                 ) => {
-                    debug!(activation=?act, "Sending activation to lang");
+                    debug!(activation=%act, "Sending activation to lang");
                     break Ok(act);
                 }
-                Ok(ActivationOrAuto::Autocomplete {
-                    run_id,
-                    is_wft_heartbeat,
-                }) => {
-                    info!("Autocompleting wft");
+                Ok(ActivationOrAuto::Autocomplete { run_id }) => {
                     self.complete_workflow_activation(WorkflowActivationCompletion {
                         run_id,
                         status: Some(workflow_completion::Success::from_variants(vec![]).into()),
@@ -462,7 +458,6 @@ impl Worker {
         &self,
         completion: WorkflowActivationCompletion,
     ) -> Result<(), CompleteWfError> {
-        debug!("Completing wf activation");
         let run_id = completion.run_id.clone();
         // TODO: This can mostly be shoved inside workflows too
         let completion_outcome = self.workflows.activation_completed(completion).await;
@@ -477,20 +472,15 @@ impl Worker {
                             force_new_wft,
                         },
                 } => {
-                    debug!("Sending commands to server: {}", commands.display());
-                    if !query_responses.is_empty() {
-                        debug!(
-                            "Sending query responses to server: {}",
-                            query_responses.display()
-                        );
-                    }
+                    debug!(commands=%commands.display(), query_responses=%query_responses.display(),
+                           "Sending responses to server");
                     let mut completion = WorkflowTaskCompletion {
                         task_token,
                         commands,
                         query_responses,
                         sticky_attributes: None,
                         return_new_workflow_task: true,
-                        force_create_new_workflow_task: force_new_wft,
+                        force_create_new_workflow_task: dbg!(force_new_wft),
                     };
                     let sticky_attrs = self.get_sticky_attrs();
                     // Do not return new WFT if we would not cache, because returned new WFTs are always
@@ -514,7 +504,6 @@ impl Worker {
                     .await?;
                     WFTReportOutcome {
                         reported_to_server: true,
-                        failed: false,
                     }
                 }
                 ServerCommandsWithWorkflowInfo {
@@ -526,7 +515,6 @@ impl Worker {
                         .await?;
                     WFTReportOutcome {
                         reported_to_server: true,
-                        failed: false,
                     }
                 }
             },
@@ -541,7 +529,6 @@ impl Worker {
                     .await?;
                     WFTReportOutcome {
                         reported_to_server: true,
-                        failed: true,
                     }
                 }
                 FailedActivationOutcome::ReportLegacyQueryFailure(task_token, failure) => {
@@ -551,17 +538,14 @@ impl Worker {
                         .await?;
                     WFTReportOutcome {
                         reported_to_server: true,
-                        failed: true,
                     }
                 }
                 FailedActivationOutcome::NoReport => WFTReportOutcome {
                     reported_to_server: false,
-                    failed: true,
                 },
             },
             ActivationCompleteOutcome::DoNothing => WFTReportOutcome {
                 reported_to_server: false,
-                failed: false,
             },
         };
 
@@ -689,7 +673,6 @@ impl Worker {
 #[derive(Debug, Copy, Clone)]
 struct WFTReportOutcome {
     reported_to_server: bool,
-    failed: bool,
 }
 
 #[cfg(test)]

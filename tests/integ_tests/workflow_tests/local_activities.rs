@@ -494,12 +494,15 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
     worker.run_until_done().await.unwrap();
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn eviction_wont_make_local_act_get_dropped() {
-    let wf_name = "eviction_wont_make_local_act_get_dropped";
-    let mut starter = CoreWfStarter::new(wf_name);
+async fn eviction_wont_make_local_act_get_dropped(#[values(true, false)] short_wft_timeout: bool) {
+    let wf_name = format!(
+        "eviction_wont_make_local_act_get_dropped_{}",
+        short_wft_timeout
+    );
+    let mut starter = CoreWfStarter::new(&wf_name);
     starter.max_cached_workflows(0);
-    starter.wft_timeout(Duration::from_secs(1));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
     worker.register_activity("echo_activity", |_ctx: ActContext, str: String| async {
@@ -507,13 +510,16 @@ async fn eviction_wont_make_local_act_get_dropped() {
         Ok(str)
     });
 
+    let opts = if short_wft_timeout {
+        WorkflowOptions {
+            task_timeout: Some(Duration::from_secs(1)),
+            ..Default::default()
+        }
+    } else {
+        Default::default()
+    };
     worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![], opts)
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

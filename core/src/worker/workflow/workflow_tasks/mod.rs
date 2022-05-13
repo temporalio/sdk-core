@@ -80,10 +80,7 @@ pub(crate) enum RunUpdateOutcome {
     /// The workflow task should be auto-completed with an empty command list, as it must be replied
     /// to but there is no meaningful work for lang to do. For example, we are waiting on a signal
     /// or we are WFT heartbeating.
-    Autocomplete {
-        run_id: String,
-        is_wft_heartbeat: bool,
-    },
+    Autocomplete { run_id: String },
     /// The run instance ran into problems while being applied and we must now evict the workflow,
     /// and possibly fail the workflow task.
     Failure(FailRunUpdateResponse),
