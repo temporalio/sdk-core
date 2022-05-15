@@ -429,7 +429,7 @@ impl Worker {
     }
 
     #[instrument(level = "debug", skip(self, completion),
-    fields(completion=%&completion, run_id=%completion.run_id))]
+      fields(completion=%&completion, run_id=%completion.run_id))]
     pub(crate) async fn complete_workflow_activation(
         &self,
         completion: WorkflowActivationCompletion,

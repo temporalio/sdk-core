@@ -472,9 +472,9 @@ impl WFStream {
 
         let start_time = Instant::now();
         let run_handle = self.runs.instantiate_or_update(
-            run_id,
-            work.workflow_execution.workflow_id,
-            work.workflow_type,
+            &run_id,
+            &work.workflow_execution.workflow_id,
+            &work.workflow_type,
             history_update,
             start_time,
         );

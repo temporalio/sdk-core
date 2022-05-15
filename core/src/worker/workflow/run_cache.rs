@@ -48,20 +48,19 @@ impl RunCache {
 
     pub fn instantiate_or_update(
         &mut self,
-        // TODO: can be strs
-        run_id: String,
-        workflow_id: String,
-        wf_type: String,
+        run_id: &str,
+        workflow_id: &str,
+        wf_type: &str,
         history_update: HistoryUpdate,
         start_time: Instant,
     ) -> &mut ManagedRunHandle {
         let cur_num_cached_runs = self.runs.len();
 
-        if self.runs.contains(&run_id) {
+        if self.runs.contains(run_id) {
             // For some weird reason, maybe a NLL bug, there are double-mutable-borrow errors if I
             // use get_mut above instead of in here (even though we always return from this branch).
             // So, forced to do this.
-            let run_handle = self.runs.get_mut(&run_id).unwrap();
+            let run_handle = self.runs.get_mut(run_id).unwrap();
 
             run_handle.metrics.sticky_cache_hit();
             run_handle.incoming_wft(NewIncomingWFT {
@@ -76,13 +75,13 @@ impl RunCache {
         // track it.
         let metrics = self
             .metrics
-            .with_new_attrs([workflow_type(wf_type.clone())]);
+            .with_new_attrs([workflow_type(wf_type.to_string())]);
         let wfm = WorkflowManager::new(
             history_update,
             self.namespace.clone(),
-            workflow_id,
-            wf_type,
-            run_id.clone(),
+            workflow_id.to_string(),
+            wf_type.to_string(),
+            run_id.to_string(),
             metrics.clone(),
         );
         let mut mrh = ManagedRunHandle::new(
@@ -95,12 +94,12 @@ impl RunCache {
             history_update: None,
             start_time,
         });
-        if self.runs.push(run_id.clone(), mrh).is_some() {
+        if self.runs.push(run_id.to_string(), mrh).is_some() {
             panic!("Overflowed run cache! Cache owner is expected to avoid this!");
         }
         self.metrics.cache_size(cur_num_cached_runs as u64 + 1);
         // This is safe, we just inserted.
-        self.runs.get_mut(&run_id).unwrap()
+        self.runs.get_mut(run_id).unwrap()
     }
     pub fn remove(&mut self, k: &str) -> Option<ManagedRunHandle> {
         let r = self.runs.pop(k);
